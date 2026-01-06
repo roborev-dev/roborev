@@ -34,7 +34,7 @@ echo "Using codex to generate changelog..." >&2
 TMPFILE=$(mktemp)
 trap "rm -f $TMPFILE" EXIT
 
-codex exec --skip-git-repo-check -o "$TMPFILE" - >/dev/null 2>&1 <<EOF
+codex exec --skip-git-repo-check -o "$TMPFILE" - >/dev/null <<EOF
 You are generating a changelog for roborev version $VERSION.
 
 Here are the commits since the last release:
