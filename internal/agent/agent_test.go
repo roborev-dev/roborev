@@ -5,25 +5,20 @@ import (
 )
 
 func TestAgentRegistry(t *testing.T) {
-	// Check that default agents are registered
-	codex, err := Get("codex")
-	if err != nil {
-		t.Fatalf("Failed to get codex agent: %v", err)
-	}
-	if codex.Name() != "codex" {
-		t.Errorf("Expected name 'codex', got '%s'", codex.Name())
-	}
-
-	claude, err := Get("claude-code")
-	if err != nil {
-		t.Fatalf("Failed to get claude-code agent: %v", err)
-	}
-	if claude.Name() != "claude-code" {
-		t.Errorf("Expected name 'claude-code', got '%s'", claude.Name())
+	// Check that all agents are registered
+	agents := []string{"codex", "claude-code", "gemini", "copilot", "test"}
+	for _, name := range agents {
+		a, err := Get(name)
+		if err != nil {
+			t.Fatalf("Failed to get %s agent: %v", name, err)
+		}
+		if a.Name() != name {
+			t.Errorf("Expected name '%s', got '%s'", name, a.Name())
+		}
 	}
 
 	// Check unknown agent
-	_, err = Get("unknown-agent")
+	_, err := Get("unknown-agent")
 	if err == nil {
 		t.Error("Expected error for unknown agent")
 	}
@@ -31,25 +26,28 @@ func TestAgentRegistry(t *testing.T) {
 
 func TestAvailableAgents(t *testing.T) {
 	agents := Available()
-	if len(agents) < 2 {
-		t.Errorf("Expected at least 2 agents, got %d", len(agents))
+	// We have 5 agents: codex, claude-code, gemini, copilot, test
+	if len(agents) < 5 {
+		t.Errorf("Expected at least 5 agents, got %d: %v", len(agents), agents)
 	}
 
-	hasCodex := false
-	hasClaude := false
+	expected := map[string]bool{
+		"codex":       false,
+		"claude-code": false,
+		"gemini":      false,
+		"copilot":     false,
+		"test":        false,
+	}
+
 	for _, a := range agents {
-		if a == "codex" {
-			hasCodex = true
-		}
-		if a == "claude-code" {
-			hasClaude = true
+		if _, ok := expected[a]; ok {
+			expected[a] = true
 		}
 	}
 
-	if !hasCodex {
-		t.Error("Expected codex in available agents")
-	}
-	if !hasClaude {
-		t.Error("Expected claude-code in available agents")
+	for name, found := range expected {
+		if !found {
+			t.Errorf("Expected %s in available agents", name)
+		}
 	}
 }
