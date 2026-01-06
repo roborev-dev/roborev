@@ -59,7 +59,7 @@ The range is inclusive of both endpoints. This is useful for reviewing a feature
 Per-repository `.roborev.toml`:
 
 ```toml
-agent = "claude-code"    # or "codex"
+agent = "claude-code"    # codex, claude-code, gemini, or copilot
 review_context_count = 5
 
 # Project-specific review guidelines (multi-line string)
@@ -109,29 +109,41 @@ The daemon starts automatically when needed and handles port conflicts by findin
 
 roborev supports multiple AI review agents:
 
-- `codex` - OpenAI Codex CLI
-- `claude-code` - Anthropic Claude Code CLI
+| Agent | CLI | Install |
+|-------|-----|---------|
+| `codex` | OpenAI Codex | `npm install -g @openai/codex` |
+| `claude-code` | Anthropic Claude Code | `npm install -g @anthropic-ai/claude-code` |
+| `gemini` | Google Gemini | `npm install -g @google/gemini-cli` |
+| `copilot` | GitHub Copilot | `npm install -g @github/copilot` |
 
 ### Automatic Fallback
 
-roborev automatically detects which agents are installed and falls back gracefully:
+roborev automatically detects which agents are installed. If your preferred agent isn't available, it falls back in this order:
 
-- If `codex` is requested but not installed, roborev uses `claude` instead
-- If `claude-code` is requested but not installed, roborev uses `codex` instead
-- If neither is installed, the job fails with a helpful error message
-
-### Explicit Agent Selection
-
-To use a specific agent for a repository, create `.roborev.toml` in the repo root:
-
-```toml
-agent = "claude-code"
+```
+codex → claude-code → gemini → copilot
 ```
 
-Or set a global default in `~/.roborev/config.toml`:
+If none are installed, the job fails with a helpful error message.
+
+### Setting the Default Agent
+
+**Per-repository** - create `.roborev.toml` in the repo root:
+
+```toml
+agent = "gemini"
+```
+
+**Global default** - create or edit `~/.roborev/config.toml`:
 
 ```toml
 default_agent = "claude-code"
+```
+
+**Per-command** - use the `--agent` flag:
+
+```bash
+roborev enqueue HEAD --agent copilot
 ```
 
 ### Selection Priority
@@ -139,7 +151,7 @@ default_agent = "claude-code"
 1. `--agent` flag on enqueue command
 2. Per-repo `.roborev.toml`
 3. Global `~/.roborev/config.toml`
-4. Automatic detection (uses first available: codex, claude-code)
+4. Automatic detection (first available: codex → claude-code → gemini → copilot)
 
 ## Commands
 
