@@ -106,15 +106,18 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReview(42, true)
+	cmd := m.addressReview(42, true, false) // newState=true, oldState=false
 	msg := cmd()
 
-	addressed, ok := msg.(tuiAddressedMsg)
+	result, ok := msg.(tuiAddressedResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiAddressedMsg, got %T: %v", msg, msg)
+		t.Fatalf("Expected tuiAddressedResultMsg, got %T: %v", msg, msg)
 	}
-	if !bool(addressed) {
-		t.Error("Expected addressed to be true")
+	if result.err != nil {
+		t.Errorf("Expected no error, got %v", result.err)
+	}
+	if !result.reviewView {
+		t.Error("Expected reviewView to be true")
 	}
 }
 
@@ -125,15 +128,15 @@ func TestTUIAddressReviewNotFound(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReview(999, true)
+	cmd := m.addressReview(999, true, false) // newState=true, oldState=false
 	msg := cmd()
 
-	errMsg, ok := msg.(tuiErrMsg)
+	result, ok := msg.(tuiAddressedResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiErrMsg for 404, got %T: %v", msg, msg)
+		t.Fatalf("Expected tuiAddressedResultMsg for 404, got %T: %v", msg, msg)
 	}
-	if errMsg.Error() != "review not found" {
-		t.Errorf("Expected 'review not found', got: %v", errMsg)
+	if result.err == nil || result.err.Error() != "review not found" {
+		t.Errorf("Expected 'review not found' error, got: %v", result.err)
 	}
 }
 
@@ -392,5 +395,63 @@ func TestTUISelectionMaintainedOnLargeBatch(t *testing.T) {
 	}
 	if m.selectedIdx != 30 {
 		t.Errorf("Expected selectedIdx=30 (ID=1 at end), got %d", m.selectedIdx)
+	}
+}
+
+func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Initial state with review view showing an unaddressed review
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{ID: 42, Addressed: false}
+
+	// Simulate optimistic update (what happens when 'a' is pressed in review view)
+	m.currentReview.Addressed = true
+
+	// Error result from server
+	errMsg := tuiAddressedResultMsg{
+		reviewView: true,
+		oldState:   false, // Was false before optimistic update
+		err:        fmt.Errorf("server error"),
+	}
+
+	updated, _ := m.Update(errMsg)
+	m = updated.(tuiModel)
+
+	// Should have rolled back to false
+	if m.currentReview.Addressed != false {
+		t.Errorf("Expected currentReview.Addressed=false after rollback, got %v", m.currentReview.Addressed)
+	}
+	if m.err == nil {
+		t.Error("Expected error to be set")
+	}
+}
+
+func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Initial state with review view
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{ID: 42, Addressed: false}
+
+	// Simulate optimistic update
+	m.currentReview.Addressed = true
+
+	// Success result (err is nil)
+	successMsg := tuiAddressedResultMsg{
+		reviewView: true,
+		oldState:   false,
+		err:        nil,
+	}
+
+	updated, _ := m.Update(successMsg)
+	m = updated.(tuiModel)
+
+	// Should stay true (no rollback on success)
+	if m.currentReview.Addressed != true {
+		t.Errorf("Expected currentReview.Addressed=true after success, got %v", m.currentReview.Addressed)
+	}
+	if m.err != nil {
+		t.Errorf("Expected no error, got %v", m.err)
 	}
 }
