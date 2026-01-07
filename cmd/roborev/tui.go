@@ -468,6 +468,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				oldState := m.currentReview.Addressed
 				newState := !oldState
 				m.currentReview.Addressed = newState // Optimistic update
+				// Also update the job in queue so it's consistent when returning
+				if m.currentReview.Job != nil {
+					for i := range m.jobs {
+						if m.jobs[i].ID == m.currentReview.Job.ID && m.jobs[i].Addressed != nil {
+							*m.jobs[i].Addressed = newState
+							break
+						}
+					}
+				}
 				return m, m.addressReview(m.currentReview.ID, newState, oldState)
 			} else if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 				job := &m.jobs[m.selectedIdx]
@@ -554,9 +563,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// Rollback optimistic update on error
 			if msg.reviewView {
-				// Rollback review view
+				// Rollback review view and corresponding job in queue
 				if m.currentReview != nil {
 					m.currentReview.Addressed = msg.oldState
+					if m.currentReview.Job != nil {
+						for i := range m.jobs {
+							if m.jobs[i].ID == m.currentReview.Job.ID && m.jobs[i].Addressed != nil {
+								*m.jobs[i].Addressed = msg.oldState
+								break
+							}
+						}
+					}
 				}
 			} else {
 				// Rollback queue view
