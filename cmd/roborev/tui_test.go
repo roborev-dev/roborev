@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -298,6 +299,72 @@ func TestTUISelectionEmptyList(t *testing.T) {
 	}
 	if m.selectedJobID != 0 {
 		t.Errorf("Expected selectedJobID=0, got %d", m.selectedJobID)
+	}
+}
+
+func TestTUIAddressedRollbackOnError(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Initial state with job addressed=false
+	addressed := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 42, Status: storage.JobStatusDone, Addressed: &addressed},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 42
+
+	// Simulate error result from background update
+	// This would happen if server returned error after optimistic update
+	errMsg := tuiAddressedResultMsg{
+		jobID:    42,
+		oldState: false, // Was false before optimistic update
+		err:      fmt.Errorf("server error"),
+	}
+
+	// First, simulate the optimistic update (what happens when 'a' is pressed)
+	*m.jobs[0].Addressed = true
+
+	// Now handle the error result - should rollback
+	updated, _ := m.Update(errMsg)
+	m = updated.(tuiModel)
+
+	// Should have rolled back to false
+	if m.jobs[0].Addressed == nil || *m.jobs[0].Addressed != false {
+		t.Errorf("Expected addressed=false after rollback, got %v", m.jobs[0].Addressed)
+	}
+	if m.err == nil {
+		t.Error("Expected error to be set")
+	}
+}
+
+func TestTUIAddressedSuccessNoRollback(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Initial state
+	addressed := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 42, Status: storage.JobStatusDone, Addressed: &addressed},
+	}
+
+	// Simulate optimistic update
+	*m.jobs[0].Addressed = true
+
+	// Success result (err is nil)
+	successMsg := tuiAddressedResultMsg{
+		jobID:    42,
+		oldState: false,
+		err:      nil,
+	}
+
+	updated, _ := m.Update(successMsg)
+	m = updated.(tuiModel)
+
+	// Should stay true (no rollback on success)
+	if m.jobs[0].Addressed == nil || *m.jobs[0].Addressed != true {
+		t.Errorf("Expected addressed=true after success, got %v", m.jobs[0].Addressed)
+	}
+	if m.err != nil {
+		t.Errorf("Expected no error, got %v", m.err)
 	}
 }
 
