@@ -331,6 +331,20 @@ func (m *tuiModel) updateSelectedJobID() {
 	}
 }
 
+// setJobAddressed updates the addressed state for a job by ID.
+// Handles nil pointer by allocating if necessary.
+func (m *tuiModel) setJobAddressed(jobID int64, state bool) {
+	for i := range m.jobs {
+		if m.jobs[i].ID == jobID {
+			if m.jobs[i].Addressed == nil {
+				m.jobs[i].Addressed = new(bool)
+			}
+			*m.jobs[i].Addressed = state
+			return
+		}
+	}
+}
+
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -473,12 +487,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var jobID int64
 				if m.currentReview.Job != nil {
 					jobID = m.currentReview.Job.ID
-					for i := range m.jobs {
-						if m.jobs[i].ID == jobID && m.jobs[i].Addressed != nil {
-							*m.jobs[i].Addressed = newState
-							break
-						}
-					}
+					m.setJobAddressed(jobID, newState)
 				}
 				return m, m.addressReview(m.currentReview.ID, jobID, newState, oldState)
 			} else if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
@@ -570,23 +579,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.currentReview != nil && m.currentReview.ID == msg.reviewID {
 					m.currentReview.Addressed = msg.oldState
 				}
-				// Always rollback the job in queue (user may have navigated away)
-				if msg.jobID > 0 {
-					for i := range m.jobs {
-						if m.jobs[i].ID == msg.jobID && m.jobs[i].Addressed != nil {
-							*m.jobs[i].Addressed = msg.oldState
-							break
-						}
-					}
-				}
-			} else {
-				// Rollback queue view
-				for i := range m.jobs {
-					if m.jobs[i].ID == msg.jobID && m.jobs[i].Addressed != nil {
-						*m.jobs[i].Addressed = msg.oldState
-						break
-					}
-				}
+			}
+			// Always rollback the job in queue
+			if msg.jobID > 0 {
+				m.setJobAddressed(msg.jobID, msg.oldState)
 			}
 			m.err = msg.err
 		}

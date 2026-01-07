@@ -507,3 +507,65 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 		t.Errorf("Job B should be unchanged, got Addressed=%v", *m.jobs[1].Addressed)
 	}
 }
+
+func TestTUISetJobAddressedHelper(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Test with nil Addressed pointer - should allocate
+	m.jobs = []storage.ReviewJob{
+		{ID: 100, Status: storage.JobStatusDone, Addressed: nil},
+	}
+
+	m.setJobAddressed(100, true)
+
+	if m.jobs[0].Addressed == nil {
+		t.Fatal("Expected Addressed to be allocated")
+	}
+	if *m.jobs[0].Addressed != true {
+		t.Errorf("Expected Addressed=true, got %v", *m.jobs[0].Addressed)
+	}
+
+	// Test toggle back
+	m.setJobAddressed(100, false)
+	if *m.jobs[0].Addressed != false {
+		t.Errorf("Expected Addressed=false, got %v", *m.jobs[0].Addressed)
+	}
+
+	// Test with non-existent job ID - should be no-op
+	m.setJobAddressed(999, true)
+	if *m.jobs[0].Addressed != false {
+		t.Errorf("Non-existent job should not affect existing job")
+	}
+}
+
+func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Setup: job in queue with addressed=false
+	addr := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 100, Status: storage.JobStatusDone, Addressed: &addr},
+	}
+
+	// User views review for job 100 and presses 'a'
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:        42,
+		Addressed: false,
+		Job:       &storage.ReviewJob{ID: 100},
+	}
+
+	// Simulate the optimistic update that happens when 'a' is pressed
+	oldState := m.currentReview.Addressed
+	newState := !oldState
+	m.currentReview.Addressed = newState
+	m.setJobAddressed(100, newState)
+
+	// Both should be updated
+	if m.currentReview.Addressed != true {
+		t.Errorf("Expected currentReview.Addressed=true, got %v", m.currentReview.Addressed)
+	}
+	if *m.jobs[0].Addressed != true {
+		t.Errorf("Expected job.Addressed=true, got %v", *m.jobs[0].Addressed)
+	}
+}
