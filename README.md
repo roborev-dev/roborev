@@ -115,7 +115,7 @@ roborev supports multiple AI review agents:
 | `claude-code` | Anthropic Claude Code | `npm install -g @anthropic-ai/claude-code` |
 | `gemini` | Google Gemini | `npm install -g @google/gemini-cli` |
 | `copilot` | GitHub Copilot | `npm install -g @github/copilot` |
-| `opencode` | OpenCode | `curl -fsSL https://opencode.ai/install \| bash` |
+| `opencode` | OpenCode | `npm install -g opencode-ai` |
 
 ### Automatic Fallback
 
