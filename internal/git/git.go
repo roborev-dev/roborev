@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -215,6 +216,31 @@ func GetRangeStart(repoPath, rangeRef string) (string, error) {
 
 	// Resolve the start ref
 	return ResolveSHA(repoPath, start)
+}
+
+// IsRebaseInProgress returns true if a rebase operation is in progress
+func IsRebaseInProgress(repoPath string) bool {
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repoPath, gitDir)
+	}
+
+	// Check for rebase-merge (interactive rebase) or rebase-apply (git am, regular rebase)
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		if info, err := os.Stat(filepath.Join(gitDir, dir)); err == nil && info.IsDir() {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetHooksPath returns the path to the hooks directory, respecting core.hooksPath

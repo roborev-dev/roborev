@@ -262,14 +262,7 @@ func initCmd() *cobra.Command {
 			hookPath := filepath.Join(hooksDir, "post-commit")
 			hookContent := `#!/bin/sh
 # RoboRev post-commit hook - auto-reviews every commit
-
-# Skip during rebase to avoid reviewing every replayed commit
-git_dir=$(git rev-parse --git-dir 2>/dev/null)
-if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then
-    exit 0
-fi
-
-roborev enqueue --sha HEAD 2>/dev/null &
+roborev enqueue --quiet &
 `
 			// Ensure hooks directory exists
 			if err := os.MkdirAll(hooksDir, 0755); err != nil {
@@ -368,6 +361,7 @@ func enqueueCmd() *cobra.Command {
 		repoPath string
 		sha      string
 		agent    string
+		quiet    bool
 	)
 
 	cmd := &cobra.Command{
@@ -381,11 +375,6 @@ Examples:
   roborev enqueue abc123 def456  # Review range from abc123 to def456 (inclusive)
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
-				return err
-			}
-
 			// Default to current directory
 			if repoPath == "" {
 				repoPath = "."
@@ -394,7 +383,23 @@ Examples:
 			// Get repo root
 			root, err := git.GetRepoRoot(repoPath)
 			if err != nil {
+				if quiet {
+					return nil // Silent exit in quiet mode
+				}
 				return fmt.Errorf("not a git repository: %w", err)
+			}
+
+			// Skip during rebase to avoid reviewing every replayed commit
+			if git.IsRebaseInProgress(root) {
+				return nil // Silent exit
+			}
+
+			// Ensure daemon is running
+			if err := ensureDaemon(); err != nil {
+				if quiet {
+					return nil
+				}
+				return err
 			}
 
 			var gitRef string
@@ -430,7 +435,9 @@ Examples:
 			var job storage.ReviewJob
 			json.Unmarshal(body, &job)
 
-			fmt.Printf("Enqueued job %d for %s (agent: %s)\n", job.ID, shortRef(job.GitRef), job.Agent)
+			if !quiet {
+				fmt.Printf("Enqueued job %d for %s (agent: %s)\n", job.ID, shortRef(job.GitRef), job.Agent)
+			}
 			return nil
 		},
 	}
@@ -438,6 +445,7 @@ Examples:
 	cmd.Flags().StringVar(&repoPath, "repo", "", "path to git repository (default: current directory)")
 	cmd.Flags().StringVar(&sha, "sha", "HEAD", "commit SHA to review (used when no positional args)")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode)")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
 
 	return cmd
 }
@@ -733,14 +741,7 @@ func installHookCmd() *cobra.Command {
 
 			hookContent := `#!/bin/sh
 # RoboRev post-commit hook - auto-reviews every commit
-
-# Skip during rebase to avoid reviewing every replayed commit
-git_dir=$(git rev-parse --git-dir 2>/dev/null)
-if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then
-    exit 0
-fi
-
-roborev enqueue --sha HEAD 2>/dev/null &
+roborev enqueue --quiet &
 `
 
 			if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
