@@ -260,6 +260,12 @@ func initCmd() *cobra.Command {
 # RoboRev post-commit hook - auto-reviews every commit
 roborev enqueue --sha HEAD 2>/dev/null &
 `
+			// Ensure hooks directory exists
+			hooksDir := filepath.Join(root, ".git", "hooks")
+			if err := os.MkdirAll(hooksDir, 0755); err != nil {
+				return fmt.Errorf("create hooks directory: %w", err)
+			}
+
 			// Check for existing hook
 			if existing, err := os.ReadFile(hookPath); err == nil {
 				if !strings.Contains(string(existing), "roborev") {
@@ -704,6 +710,12 @@ func installHookCmd() *cobra.Command {
 			// Check if hook already exists
 			if _, err := os.Stat(hookPath); err == nil && !force {
 				return fmt.Errorf("hook already exists at %s (use --force to overwrite)", hookPath)
+			}
+
+			// Ensure hooks directory exists
+			hooksDir := filepath.Join(root, ".git", "hooks")
+			if err := os.MkdirAll(hooksDir, 0755); err != nil {
+				return fmt.Errorf("create hooks directory: %w", err)
 			}
 
 			hookContent := `#!/bin/sh

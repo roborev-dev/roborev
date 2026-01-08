@@ -306,3 +306,98 @@ func TestUninstallHookCmd(t *testing.T) {
 		}
 	})
 }
+
+func TestInitCmdCreatesHooksDirectory(t *testing.T) {
+	// Override HOME to prevent reading real daemon.json
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Create a temp git repo WITHOUT a hooks directory
+	tmpDir := t.TempDir()
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(),
+		"HOME="+tmpHome,
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	// Remove .git/hooks directory to simulate the problematic scenario
+	hooksDir := filepath.Join(tmpDir, ".git", "hooks")
+	if err := os.RemoveAll(hooksDir); err != nil {
+		t.Fatalf("Failed to remove hooks directory: %v", err)
+	}
+
+	// Verify hooks directory doesn't exist
+	if _, err := os.Stat(hooksDir); !os.IsNotExist(err) {
+		t.Fatal("hooks directory should not exist before test")
+	}
+
+	// Create a roborevd binary in PATH for the test (init tries to start daemon)
+	// We'll use a fake one that does nothing
+	binDir := filepath.Join(tmpHome, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	fakeDaemon := filepath.Join(binDir, "roborevd")
+	fakeScript := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(fakeDaemon, []byte(fakeScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	origPath := os.Getenv("PATH")
+	os.Setenv("PATH", binDir+":"+origPath)
+	defer os.Setenv("PATH", origPath)
+
+	// Run init command
+	cmd = exec.Command("go", "run", "./cmd/roborev", "init", "--agent", "test")
+	cmd.Dir = filepath.Join(tmpDir, "..", "..", "..") // Go back to project root
+	cmd.Env = append(os.Environ(),
+		"HOME="+tmpHome,
+		"PATH="+binDir+":"+origPath,
+	)
+	// Change to the test repo directory before running
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+
+	// Build init command
+	initCommand := initCmd()
+	initCommand.SetArgs([]string{"--agent", "test"})
+	err := initCommand.Execute()
+
+	// Should succeed (not fail with "no such file or directory")
+	if err != nil {
+		t.Fatalf("init command failed: %v", err)
+	}
+
+	// Verify hooks directory was created
+	if _, err := os.Stat(hooksDir); os.IsNotExist(err) {
+		t.Error("hooks directory was not created")
+	}
+
+	// Verify hook file was created
+	hookPath := filepath.Join(hooksDir, "post-commit")
+	if _, err := os.Stat(hookPath); os.IsNotExist(err) {
+		t.Error("post-commit hook was not created")
+	}
+
+	// Verify hook is executable
+	info, err := os.Stat(hookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Error("post-commit hook is not executable")
+	}
+}
