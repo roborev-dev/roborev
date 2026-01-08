@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"fmt"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -478,7 +477,8 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 
 func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	// Test concurrent registration during CancelJob
-	// This exercises the race condition where a job registers during DB lookup
+	// Uses a test hook to deterministically register the job during CancelJob's
+	// DB lookup window, exercising the "registration during cancel" code path
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -496,53 +496,48 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 		t.Fatalf("GetOrCreateRepo failed: %v", err)
 	}
 
-	// Run multiple iterations to increase chance of hitting race
-	for i := 0; i < 10; i++ {
-		sha := fmt.Sprintf("concurrent-race-%d", i)
-		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "test")
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		_, err = db.ClaimJob("test-worker")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-
-		var canceled int32
-		cancelFunc := func() { atomic.AddInt32(&canceled, 1) }
-
-		// Start CancelJob in goroutine
-		cancelDone := make(chan bool)
-		go func() {
-			cancelDone <- pool.CancelJob(job.ID)
-		}()
-
-		// Concurrently register the job (simulates worker starting)
-		pool.registerRunningJob(job.ID, cancelFunc)
-
-		// Wait for CancelJob to complete
-		result := <-cancelDone
-
-		// Job should have been canceled (either via runningJobs or pendingCancels)
-		if !result {
-			t.Errorf("Iteration %d: CancelJob should return true", i)
-		}
-		if atomic.LoadInt32(&canceled) == 0 {
-			t.Errorf("Iteration %d: Job should have been canceled", i)
-		}
-
-		// Clean up for next iteration
-		pool.unregisterRunningJob(job.ID)
+	sha := "concurrent-register"
+	commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
+	job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "test")
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+	_, err = db.ClaimJob("test-worker")
+	if err != nil {
+		t.Fatalf("ClaimJob failed: %v", err)
+	}
+
+	var canceled int32
+	cancelFunc := func() { atomic.AddInt32(&canceled, 1) }
+
+	// Set up hook to register the job at a deterministic point during CancelJob
+	// This happens after the second runningJobs check, ensuring we exercise
+	// the final check code path where registration occurs during DB lookup
+	pool.testHookAfterSecondCheck = func() {
+		pool.registerRunningJob(job.ID, cancelFunc)
+	}
+
+	// CancelJob should find the job via the final check and cancel it
+	result := pool.CancelJob(job.ID)
+
+	if !result {
+		t.Error("CancelJob should return true")
+	}
+	if atomic.LoadInt32(&canceled) != 1 {
+		t.Error("Job should have been canceled exactly once")
+	}
+
+	// Clean up
+	pool.unregisterRunningJob(job.ID)
 }
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	// Test that cancel() is called without holding the lock (no deadlock)
-	// This verifies the fix for the "final check" path
+	// This verifies the fix for the "final check" path by using a test hook
+	// to deterministically register the job between the second check and final check
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -581,24 +576,30 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 		pool.unregisterRunningJob(job.ID)
 	}
 
-	// Register the job
-	pool.registerRunningJob(job.ID, cancelFunc)
+	// Set up hook to register the job between second check and final check
+	// This ensures we exercise the "final check" code path
+	pool.testHookAfterSecondCheck = func() {
+		pool.registerRunningJob(job.ID, cancelFunc)
+	}
 
 	// CancelJob should complete without deadlock
+	// The job is NOT registered initially, so it passes first and second checks,
+	// then the hook fires and registers it, then the final check finds it
 	done := make(chan bool)
 	go func() {
-		pool.CancelJob(job.ID)
-		done <- true
+		done <- pool.CancelJob(job.ID)
 	}()
 
 	select {
-	case <-done:
-		// Success - no deadlock
+	case result := <-done:
+		if !result {
+			t.Error("CancelJob should return true")
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("CancelJob deadlocked - cancel() called while holding lock")
 	}
 
 	if !canceled {
-		t.Error("Job should have been canceled")
+		t.Error("Job should have been canceled via final check path")
 	}
 }

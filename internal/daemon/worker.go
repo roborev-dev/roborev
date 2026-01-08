@@ -29,6 +29,9 @@ type WorkerPool struct {
 	runningJobs    map[int64]context.CancelFunc
 	pendingCancels map[int64]bool // Jobs canceled before registered
 	runningJobsMu  sync.Mutex
+
+	// Test hooks for deterministic synchronization (nil in production)
+	testHookAfterSecondCheck func() // Called after second runningJobs check, before second DB lookup
 }
 
 // NewWorkerPool creates a new worker pool
@@ -115,6 +118,11 @@ func (wp *WorkerPool) CancelJob(jobID int64) bool {
 		return true
 	}
 	wp.runningJobsMu.Unlock()
+
+	// Test hook: allows tests to register job between second check and final check
+	if wp.testHookAfterSecondCheck != nil {
+		wp.testHookAfterSecondCheck()
+	}
 
 	// Re-verify job is still cancellable before adding to pendingCancels
 	// The job may have registered and finished during our DB lookup window
