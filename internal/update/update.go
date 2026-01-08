@@ -49,6 +49,20 @@ type UpdateInfo struct {
 	Checksum       string // SHA256 if available
 }
 
+// findAssets locates the platform-specific binary and checksums file from release assets
+func findAssets(assets []Asset, assetName string) (asset *Asset, checksumsAsset *Asset) {
+	for i := range assets {
+		a := &assets[i]
+		if a.Name == assetName {
+			asset = a
+		}
+		if a.Name == "SHA256SUMS" || a.Name == "checksums.txt" {
+			checksumsAsset = a
+		}
+	}
+	return asset, checksumsAsset
+}
+
 // cachedCheck stores the last update check result
 type cachedCheck struct {
 	CheckedAt time.Time `json:"checked_at"`
@@ -89,16 +103,7 @@ func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 
 	// Find the right asset for this platform
 	assetName := fmt.Sprintf("roborev_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
-	var asset *Asset
-	var checksumsAsset *Asset
-	for _, a := range release.Assets {
-		if a.Name == assetName {
-			asset = &a
-		}
-		if a.Name == "SHA256SUMS" || a.Name == "checksums.txt" {
-			checksumsAsset = &a
-		}
-	}
+	asset, checksumsAsset := findAssets(release.Assets, assetName)
 	if asset == nil {
 		return nil, fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}

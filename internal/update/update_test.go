@@ -223,3 +223,108 @@ func TestIsNewer(t *testing.T) {
 		})
 	}
 }
+
+func TestFindAssets(t *testing.T) {
+	// Test that findAssets correctly selects assets from a list with multiple items
+	// This specifically tests the loop variable pointer bug fix
+	assets := []Asset{
+		{Name: "roborev_linux_amd64.tar.gz", Size: 1000, BrowserDownloadURL: "https://example.com/linux_amd64"},
+		{Name: "roborev_darwin_arm64.tar.gz", Size: 2000, BrowserDownloadURL: "https://example.com/darwin_arm64"},
+		{Name: "SHA256SUMS", Size: 500, BrowserDownloadURL: "https://example.com/checksums"},
+		{Name: "roborev_darwin_amd64.tar.gz", Size: 3000, BrowserDownloadURL: "https://example.com/darwin_amd64"},
+		{Name: "roborev_windows_amd64.zip", Size: 4000, BrowserDownloadURL: "https://example.com/windows"},
+	}
+
+	tests := []struct {
+		name              string
+		assetName         string
+		wantAssetURL      string
+		wantAssetSize     int64
+		wantChecksumsURL  string
+		wantAssetNil      bool
+		wantChecksumsNil  bool
+	}{
+		{
+			name:             "find darwin_arm64 (second in list)",
+			assetName:        "roborev_darwin_arm64.tar.gz",
+			wantAssetURL:     "https://example.com/darwin_arm64",
+			wantAssetSize:    2000,
+			wantChecksumsURL: "https://example.com/checksums",
+		},
+		{
+			name:             "find linux_amd64 (first in list)",
+			assetName:        "roborev_linux_amd64.tar.gz",
+			wantAssetURL:     "https://example.com/linux_amd64",
+			wantAssetSize:    1000,
+			wantChecksumsURL: "https://example.com/checksums",
+		},
+		{
+			name:             "find darwin_amd64 (after checksums)",
+			assetName:        "roborev_darwin_amd64.tar.gz",
+			wantAssetURL:     "https://example.com/darwin_amd64",
+			wantAssetSize:    3000,
+			wantChecksumsURL: "https://example.com/checksums",
+		},
+		{
+			name:         "asset not found",
+			assetName:    "roborev_freebsd_amd64.tar.gz",
+			wantAssetNil: true,
+			wantChecksumsURL: "https://example.com/checksums",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			asset, checksums := findAssets(assets, tt.assetName)
+
+			if tt.wantAssetNil {
+				if asset != nil {
+					t.Errorf("expected asset to be nil, got %+v", asset)
+				}
+			} else {
+				if asset == nil {
+					t.Fatal("expected asset to be non-nil")
+				}
+				if asset.BrowserDownloadURL != tt.wantAssetURL {
+					t.Errorf("asset URL = %q, want %q", asset.BrowserDownloadURL, tt.wantAssetURL)
+				}
+				if asset.Size != tt.wantAssetSize {
+					t.Errorf("asset size = %d, want %d", asset.Size, tt.wantAssetSize)
+				}
+			}
+
+			if tt.wantChecksumsNil {
+				if checksums != nil {
+					t.Errorf("expected checksums to be nil, got %+v", checksums)
+				}
+			} else {
+				if checksums == nil {
+					t.Fatal("expected checksums to be non-nil")
+				}
+				if checksums.BrowserDownloadURL != tt.wantChecksumsURL {
+					t.Errorf("checksums URL = %q, want %q", checksums.BrowserDownloadURL, tt.wantChecksumsURL)
+				}
+			}
+		})
+	}
+}
+
+func TestFindAssetsNoChecksums(t *testing.T) {
+	// Test case where there's no checksums file
+	assets := []Asset{
+		{Name: "roborev_linux_amd64.tar.gz", Size: 1000, BrowserDownloadURL: "https://example.com/linux"},
+		{Name: "roborev_darwin_arm64.tar.gz", Size: 2000, BrowserDownloadURL: "https://example.com/darwin"},
+	}
+
+	asset, checksums := findAssets(assets, "roborev_darwin_arm64.tar.gz")
+
+	if asset == nil {
+		t.Fatal("expected asset to be non-nil")
+	}
+	if asset.BrowserDownloadURL != "https://example.com/darwin" {
+		t.Errorf("asset URL = %q, want %q", asset.BrowserDownloadURL, "https://example.com/darwin")
+	}
+	if checksums != nil {
+		t.Errorf("expected checksums to be nil, got %+v", checksums)
+	}
+}
