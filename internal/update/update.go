@@ -102,7 +102,8 @@ func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 	}
 
 	// Find the right asset for this platform
-	assetName := fmt.Sprintf("roborev_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	// Asset naming: roborev_<version>_<os>_<arch>.tar.gz (e.g., roborev_0.3.0_darwin_arm64.tar.gz)
+	assetName := fmt.Sprintf("roborev_%s_%s_%s.tar.gz", latestVersion, runtime.GOOS, runtime.GOARCH)
 	asset, checksumsAsset := findAssets(release.Assets, assetName)
 	if asset == nil {
 		return nil, fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
