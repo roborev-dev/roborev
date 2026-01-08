@@ -67,6 +67,12 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Get tag message
         id: tag_message
         run: |
@@ -97,6 +103,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*.tar.gz
+          files: |
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS
           body: ${{ steps.tag_message.outputs.has_body == 'true' && steps.tag_message.outputs.body || '' }}
           generate_release_notes: ${{ steps.tag_message.outputs.has_body != 'true' }}
