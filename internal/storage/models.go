@@ -73,11 +73,12 @@ type Response struct {
 }
 
 type DaemonStatus struct {
-	QueuedJobs    int `json:"queued_jobs"`
-	RunningJobs   int `json:"running_jobs"`
-	CompletedJobs int `json:"completed_jobs"`
-	FailedJobs    int `json:"failed_jobs"`
-	CanceledJobs  int `json:"canceled_jobs"`
-	ActiveWorkers int `json:"active_workers"`
-	MaxWorkers    int `json:"max_workers"`
+	Version       string `json:"version"`
+	QueuedJobs    int    `json:"queued_jobs"`
+	RunningJobs   int    `json:"running_jobs"`
+	CompletedJobs int    `json:"completed_jobs"`
+	FailedJobs    int    `json:"failed_jobs"`
+	CanceledJobs  int    `json:"canceled_jobs"`
+	ActiveWorkers int    `json:"active_workers"`
+	MaxWorkers    int    `json:"max_workers"`
 }

@@ -404,6 +404,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := storage.DaemonStatus{
+		Version:       version.Version,
 		QueuedJobs:    queued,
 		RunningJobs:   running,
 		CompletedJobs: done,

@@ -57,21 +57,37 @@ func TestHandleListRepos(t *testing.T) {
 	})
 
 	// Create repos and jobs
-	repo1, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
-	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
+	repo1, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	repo2, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
 
 	// Add 3 jobs to repo1
 	for i := 0; i < 3; i++ {
 		sha := "repo1sha" + string(rune('a'+i))
-		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo1.ID, commit.ID, sha, "test")
+		commit, err := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit failed: %v", err)
+		}
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test"); err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
 	}
 
 	// Add 2 jobs to repo2
 	for i := 0; i < 2; i++ {
 		sha := "repo2sha" + string(rune('a'+i))
-		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo2.ID, commit.ID, sha, "test")
+		commit, err := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit failed: %v", err)
+		}
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test"); err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
 	}
 
 	t.Run("repos with jobs", func(t *testing.T) {

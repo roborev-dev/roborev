@@ -899,22 +899,41 @@ func TestListReposWithReviewCounts(t *testing.T) {
 	})
 
 	// Create repos and jobs
-	repo1, _ := db.GetOrCreateRepo("/tmp/repo1")
-	repo2, _ := db.GetOrCreateRepo("/tmp/repo2")
-	repo3, _ := db.GetOrCreateRepo("/tmp/repo3") // will have 0 jobs
+	repo1, err := db.GetOrCreateRepo("/tmp/repo1")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	repo2, err := db.GetOrCreateRepo("/tmp/repo2")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	repo3, err := db.GetOrCreateRepo("/tmp/repo3") // will have 0 jobs
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
 
 	// Add jobs to repo1 (3 jobs)
 	for i := 0; i < 3; i++ {
 		sha := fmt.Sprintf("repo1-sha%d", i)
-		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo1.ID, commit.ID, sha, "codex")
+		commit, err := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit failed: %v", err)
+		}
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "codex"); err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
 	}
 
 	// Add jobs to repo2 (2 jobs)
 	for i := 0; i < 2; i++ {
 		sha := fmt.Sprintf("repo2-sha%d", i)
-		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo2.ID, commit.ID, sha, "codex")
+		commit, err := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit failed: %v", err)
+		}
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "codex"); err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
 	}
 
 	// repo3 has no jobs (to test 0 count)

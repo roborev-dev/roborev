@@ -13,7 +13,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-	"github.com/wesm/roborev/internal/daemon"
 	"github.com/wesm/roborev/internal/storage"
 	"github.com/wesm/roborev/internal/update"
 	"github.com/wesm/roborev/internal/version"
@@ -111,15 +110,9 @@ type tuiReposMsg struct {
 }
 
 func newTuiModel(serverAddr string) tuiModel {
-	// Get daemon version from runtime info
-	daemonVersion := "?"
-	if info, err := daemon.ReadRuntime(); err == nil {
-		daemonVersion = info.Version
-	}
-
 	return tuiModel{
 		serverAddr:    serverAddr,
-		daemonVersion: daemonVersion,
+		daemonVersion: "?", // Updated from /api/status response
 		client:        &http.Client{Timeout: 10 * time.Second},
 		jobs:          []storage.ReviewJob{},
 		currentView:   tuiViewQueue,
@@ -146,14 +139,12 @@ func (m tuiModel) tick() tea.Cmd {
 
 func (m tuiModel) fetchJobs() tea.Cmd {
 	return func() tea.Msg {
-		// Use higher limit when filtering to show full repo history
-		limit := 50
+		// No limit when filtering to show full repo history, otherwise limit to 50
+		var url string
 		if m.activeRepoFilter != "" {
-			limit = 500
-		}
-		url := fmt.Sprintf("%s/api/jobs?limit=%d", m.serverAddr, limit)
-		if m.activeRepoFilter != "" {
-			url += "&repo=" + neturl.QueryEscape(m.activeRepoFilter)
+			url = fmt.Sprintf("%s/api/jobs?repo=%s", m.serverAddr, neturl.QueryEscape(m.activeRepoFilter))
+		} else {
+			url = fmt.Sprintf("%s/api/jobs?limit=50", m.serverAddr)
 		}
 		resp, err := m.client.Get(url)
 		if err != nil {
@@ -941,6 +932,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiStatusMsg:
 		m.status = storage.DaemonStatus(msg)
+		if m.status.Version != "" {
+			m.daemonVersion = m.status.Version
+		}
 
 	case tuiUpdateCheckMsg:
 		m.updateAvailable = string(msg)
@@ -1032,12 +1026,9 @@ func (m tuiModel) renderQueueView() string {
 	// Status line - show filtered counts when filter is active
 	var statusLine string
 	if m.activeRepoFilter != "" {
-		// Calculate counts from filtered jobs
+		// Calculate counts from jobs (all pre-filtered by API)
 		var queued, running, done, failed, canceled int
 		for _, job := range m.jobs {
-			if job.RepoName != m.activeRepoFilter {
-				continue
-			}
 			switch job.Status {
 			case storage.JobStatusQueued:
 				queued++
@@ -1051,8 +1042,8 @@ func (m tuiModel) renderQueueView() string {
 				canceled++
 			}
 		}
-		statusLine = fmt.Sprintf("Queued: %d | Running: %d | Done: %d | Failed: %d | Canceled: %d",
-			queued, running, done, failed, canceled)
+		statusLine = fmt.Sprintf("Daemon: %s | Queued: %d | Running: %d | Done: %d | Failed: %d | Canceled: %d",
+			m.daemonVersion, queued, running, done, failed, canceled)
 	} else {
 		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Queued: %d | Running: %d | Done: %d | Failed: %d | Canceled: %d",
 			m.daemonVersion,
