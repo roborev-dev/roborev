@@ -980,20 +980,20 @@ func shortRef(ref string) string {
 }
 
 // generateHookContent creates the post-commit hook script content.
-// It prefers PATH lookup for upgrades, falls back to baked path if not found.
+// It prefers the baked absolute path for security, falls back to PATH if missing.
 func generateHookContent() string {
-	// Get current roborev path as fallback
+	// Get current roborev absolute path
 	roborevPath, err := exec.LookPath("roborev")
 	if err != nil {
 		roborevPath = "roborev"
 	}
 
-	// Prefer PATH lookup (for upgrades), fall back to baked path
+	// Prefer baked path (security), fall back to PATH only if baked is missing
 	return fmt.Sprintf(`#!/bin/sh
 # RoboRev post-commit hook - auto-reviews every commit
-ROBOREV=$(command -v roborev 2>/dev/null)
-if [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ]; then
-    ROBOREV=%q
+ROBOREV=%q
+if [ ! -x "$ROBOREV" ]; then
+    ROBOREV=$(command -v roborev 2>/dev/null) || exit 0
     [ ! -x "$ROBOREV" ] && exit 0
 fi
 "$ROBOREV" enqueue --quiet 2>/dev/null &
