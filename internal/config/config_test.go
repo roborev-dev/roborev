@@ -21,6 +21,61 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestDataDir(t *testing.T) {
+	t.Run("default uses home directory", func(t *testing.T) {
+		// Clear env var to test default
+		origEnv := os.Getenv("ROBOREV_DATA_DIR")
+		os.Unsetenv("ROBOREV_DATA_DIR")
+		defer func() {
+			if origEnv != "" {
+				os.Setenv("ROBOREV_DATA_DIR", origEnv)
+			}
+		}()
+
+		dir := DataDir()
+		home, _ := os.UserHomeDir()
+		expected := filepath.Join(home, ".roborev")
+		if dir != expected {
+			t.Errorf("Expected %s, got %s", expected, dir)
+		}
+	})
+
+	t.Run("env var overrides default", func(t *testing.T) {
+		origEnv := os.Getenv("ROBOREV_DATA_DIR")
+		os.Setenv("ROBOREV_DATA_DIR", "/custom/data/dir")
+		defer func() {
+			if origEnv != "" {
+				os.Setenv("ROBOREV_DATA_DIR", origEnv)
+			} else {
+				os.Unsetenv("ROBOREV_DATA_DIR")
+			}
+		}()
+
+		dir := DataDir()
+		if dir != "/custom/data/dir" {
+			t.Errorf("Expected /custom/data/dir, got %s", dir)
+		}
+	})
+
+	t.Run("GlobalConfigPath uses DataDir", func(t *testing.T) {
+		origEnv := os.Getenv("ROBOREV_DATA_DIR")
+		os.Setenv("ROBOREV_DATA_DIR", "/tmp/roborev-test")
+		defer func() {
+			if origEnv != "" {
+				os.Setenv("ROBOREV_DATA_DIR", origEnv)
+			} else {
+				os.Unsetenv("ROBOREV_DATA_DIR")
+			}
+		}()
+
+		path := GlobalConfigPath()
+		expected := "/tmp/roborev-test/config.toml"
+		if path != expected {
+			t.Errorf("Expected %s, got %s", expected, path)
+		}
+	})
+}
+
 func TestResolveAgent(t *testing.T) {
 	cfg := DefaultConfig()
 	tmpDir := t.TempDir()

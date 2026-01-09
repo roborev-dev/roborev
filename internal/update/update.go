@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesm/roborev/internal/config"
 	"github.com/wesm/roborev/internal/version"
 )
 
@@ -243,8 +244,7 @@ func RestartDaemon() error {
 
 // GetCacheDir returns the roborev cache directory
 func GetCacheDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".roborev")
+	return config.DataDir()
 }
 
 func fetchLatestRelease() (*Release, error) {

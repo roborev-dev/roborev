@@ -41,10 +41,19 @@ func DefaultConfig() *Config {
 	}
 }
 
+// DataDir returns the roborev data directory.
+// Uses ROBOREV_DATA_DIR env var if set, otherwise ~/.roborev
+func DataDir() string {
+	if dir := os.Getenv("ROBOREV_DATA_DIR"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".roborev")
+}
+
 // GlobalConfigPath returns the path to the global config file
 func GlobalConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".roborev", "config.toml")
+	return filepath.Join(DataDir(), "config.toml")
 }
 
 // LoadGlobal loads the global configuration from the default path

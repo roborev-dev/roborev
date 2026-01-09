@@ -224,13 +224,12 @@ func initCmd() *cobra.Command {
 			}
 
 			// 2. Create config directory and default config
-			home, _ := os.UserHomeDir()
-			configDir := filepath.Join(home, ".roborev")
+			configDir := config.DataDir()
 			if err := os.MkdirAll(configDir, 0755); err != nil {
 				return fmt.Errorf("create config dir: %w", err)
 			}
 
-			configPath := filepath.Join(configDir, "config.toml")
+			configPath := config.GlobalConfigPath()
 			if _, err := os.Stat(configPath); os.IsNotExist(err) {
 				cfg := config.DefaultConfig()
 				if agent != "" {

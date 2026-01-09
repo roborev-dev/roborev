@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wesm/roborev/internal/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -75,8 +76,7 @@ type DB struct {
 
 // DefaultDBPath returns the default database path
 func DefaultDBPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".roborev", "reviews.db")
+	return filepath.Join(config.DataDir(), "reviews.db")
 }
 
 // Open opens or creates the database at the given path

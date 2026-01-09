@@ -16,6 +16,7 @@ CLI (roborev) → HTTP API → Daemon (roborevd) → Worker Pool → Agents
 - **Workers**: Pool of 4 (configurable) parallel review workers
 - **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode
 - **Config**: Global at `~/.roborev/config.toml`, per-repo at `.roborev.toml`
+- **Data dir**: Set `ROBOREV_DATA_DIR` env var to override `~/.roborev`
 
 ## Key Files
 

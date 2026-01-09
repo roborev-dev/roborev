@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/wesm/roborev/internal/config"
 )
 
 // RuntimeInfo stores daemon runtime state
@@ -20,8 +22,7 @@ type RuntimeInfo struct {
 
 // RuntimePath returns the path to the runtime info file
 func RuntimePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".roborev", "daemon.json")
+	return filepath.Join(config.DataDir(), "daemon.json")
 }
 
 // WriteRuntime saves the daemon runtime info
