@@ -1272,21 +1272,33 @@ type columnWidths struct {
 }
 
 func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addr'd (5)
+	// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addr'd (6)
 	// Plus spacing: 2 (prefix) + 7 spaces between columns
-	fixedWidth := 2 + idWidth + 10 + 12 + 8 + 5 + 7
+	fixedWidth := 2 + idWidth + 10 + 12 + 8 + 6 + 7
 
 	// Available width for flexible columns (ref, repo, agent)
 	availableWidth := m.width - fixedWidth
-	if availableWidth < 30 {
-		availableWidth = 30 // Minimum
+	if availableWidth < 15 {
+		availableWidth = 15 // Absolute minimum to show anything
 	}
 
 	// Distribute available width: ref (25%), repo (45%), agent (30%)
+	// Scale minimums based on available width to prevent overflow
+	refWidth := availableWidth * 25 / 100
+	repoWidth := availableWidth * 45 / 100
+	agentWidth := availableWidth * 30 / 100
+
+	// Apply minimums only if there's enough space
+	if availableWidth >= 35 {
+		refWidth = max(10, refWidth)
+		repoWidth = max(15, repoWidth)
+		agentWidth = max(10, agentWidth)
+	}
+
 	return columnWidths{
-		ref:   max(10, availableWidth*25/100),
-		repo:  max(15, availableWidth*45/100),
-		agent: max(10, availableWidth*30/100),
+		ref:   max(3, refWidth),
+		repo:  max(5, repoWidth),
+		agent: max(3, agentWidth),
 	}
 }
 
@@ -1432,7 +1444,7 @@ func (m tuiModel) renderReviewView() string {
 	b.WriteString("\n")
 
 	// Wrap text to terminal width minus padding
-	wrapWidth := max(80, m.width-4)
+	wrapWidth := min(max(40, m.width-4), 200)
 	lines := wrapText(review.Output, wrapWidth)
 
 	visibleLines := m.height - 5 // Leave room for title and help
@@ -1474,7 +1486,7 @@ func (m tuiModel) renderPromptView() string {
 	b.WriteString("\n")
 
 	// Wrap text to terminal width minus padding
-	wrapWidth := max(80, m.width-4)
+	wrapWidth := min(max(40, m.width-4), 200)
 	lines := wrapText(review.Prompt, wrapWidth)
 
 	visibleLines := m.height - 5 // Leave room for title and help

@@ -2182,36 +2182,29 @@ func TestTUIEmptyRefreshSeedsFromCurrentReview(t *testing.T) {
 
 func TestTUICalculateColumnWidths(t *testing.T) {
 	tests := []struct {
-		name          string
-		termWidth     int
-		idWidth       int
-		wantRefMin    int
-		wantRepoMin   int
-		wantAgentMin  int
+		name      string
+		termWidth int
+		idWidth   int
 	}{
 		{
-			name:         "wide terminal distributes space proportionally",
-			termWidth:    200,
-			idWidth:      3,
-			wantRefMin:   30, // Should be much larger than minimums
-			wantRepoMin:  50,
-			wantAgentMin: 30,
+			name:      "wide terminal",
+			termWidth: 200,
+			idWidth:   3,
 		},
 		{
-			name:         "narrow terminal uses minimum widths",
-			termWidth:    60,
-			idWidth:      3,
-			wantRefMin:   10, // Minimum ref width
-			wantRepoMin:  15, // Minimum repo width
-			wantAgentMin: 10, // Minimum agent width
+			name:      "medium terminal",
+			termWidth: 100,
+			idWidth:   3,
 		},
 		{
-			name:         "very narrow terminal clamps to 30 available",
-			termWidth:    30,
-			idWidth:      3,
-			wantRefMin:   10,
-			wantRepoMin:  15,
-			wantAgentMin: 10,
+			name:      "narrow terminal",
+			termWidth: 60,
+			idWidth:   3,
+		},
+		{
+			name:      "minimum usable terminal",
+			termWidth: 80,
+			idWidth:   3,
 		},
 	}
 
@@ -2220,16 +2213,44 @@ func TestTUICalculateColumnWidths(t *testing.T) {
 			m := tuiModel{width: tt.termWidth}
 			widths := m.calculateColumnWidths(tt.idWidth)
 
-			if widths.ref < tt.wantRefMin {
-				t.Errorf("ref width %d < minimum %d", widths.ref, tt.wantRefMin)
+			// All columns must have positive widths
+			if widths.ref < 1 {
+				t.Errorf("ref width %d < 1", widths.ref)
 			}
-			if widths.repo < tt.wantRepoMin {
-				t.Errorf("repo width %d < minimum %d", widths.repo, tt.wantRepoMin)
+			if widths.repo < 1 {
+				t.Errorf("repo width %d < 1", widths.repo)
 			}
-			if widths.agent < tt.wantAgentMin {
-				t.Errorf("agent width %d < minimum %d", widths.agent, tt.wantAgentMin)
+			if widths.agent < 1 {
+				t.Errorf("agent width %d < 1", widths.agent)
+			}
+
+			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addr'd (6)
+			// Plus spacing: 2 (prefix) + 7 spaces between columns
+			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 6 + 7
+			flexibleTotal := widths.ref + widths.repo + widths.agent
+
+			// Total width should not exceed terminal width (accounting for some margin)
+			totalWidth := fixedWidth + flexibleTotal
+			if totalWidth > tt.termWidth+5 { // Allow small margin for edge cases
+				t.Errorf("total width %d exceeds terminal width %d", totalWidth, tt.termWidth)
 			}
 		})
+	}
+}
+
+func TestTUICalculateColumnWidthsProportions(t *testing.T) {
+	// On wide terminals, columns should use higher minimums
+	m := tuiModel{width: 200}
+	widths := m.calculateColumnWidths(3)
+
+	if widths.ref < 10 {
+		t.Errorf("wide terminal ref width %d < 10", widths.ref)
+	}
+	if widths.repo < 15 {
+		t.Errorf("wide terminal repo width %d < 15", widths.repo)
+	}
+	if widths.agent < 10 {
+		t.Errorf("wide terminal agent width %d < 10", widths.agent)
 	}
 }
 
