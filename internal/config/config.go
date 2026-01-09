@@ -35,7 +35,7 @@ func DefaultConfig() *Config {
 		MaxWorkers:         4,
 		ReviewContextCount: 3,
 		DefaultAgent:       "codex",
-		JobTimeoutMinutes:  10,
+		JobTimeoutMinutes:  30,
 		CodexCmd:           "codex",
 		ClaudeCodeCmd:      "claude",
 	}
@@ -106,7 +106,7 @@ func ResolveAgent(explicit string, repoPath string, globalCfg *Config) string {
 // ResolveJobTimeout determines job timeout based on config priority:
 // 1. Per-repo config (if set and > 0)
 // 2. Global config (if set and > 0)
-// 3. Default (60 minutes)
+// 3. Default (30 minutes)
 func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.JobTimeoutMinutes > 0 {
 		return repoCfg.JobTimeoutMinutes
@@ -116,7 +116,7 @@ func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 		return globalCfg.JobTimeoutMinutes
 	}
 
-	return 10 // Default: 10 minutes
+	return 30 // Default: 30 minutes
 }
 
 // SaveGlobal saves the global configuration
