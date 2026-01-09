@@ -98,3 +98,57 @@ func TestGetHooksPath(t *testing.T) {
 		}
 	})
 }
+
+func TestIsRebaseInProgress(t *testing.T) {
+	// Create a temp git repo
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	// Configure git user for commits
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").Run()
+
+	t.Run("no rebase", func(t *testing.T) {
+		if IsRebaseInProgress(tmpDir) {
+			t.Error("expected no rebase in progress")
+		}
+	})
+
+	t.Run("rebase-merge directory", func(t *testing.T) {
+		// Simulate interactive rebase by creating rebase-merge directory
+		rebaseMerge := filepath.Join(tmpDir, ".git", "rebase-merge")
+		if err := os.MkdirAll(rebaseMerge, 0755); err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(rebaseMerge)
+
+		if !IsRebaseInProgress(tmpDir) {
+			t.Error("expected rebase in progress with rebase-merge")
+		}
+	})
+
+	t.Run("rebase-apply directory", func(t *testing.T) {
+		// Simulate git am / regular rebase by creating rebase-apply directory
+		rebaseApply := filepath.Join(tmpDir, ".git", "rebase-apply")
+		if err := os.MkdirAll(rebaseApply, 0755); err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(rebaseApply)
+
+		if !IsRebaseInProgress(tmpDir) {
+			t.Error("expected rebase in progress with rebase-apply")
+		}
+	})
+
+	t.Run("non-repo returns false", func(t *testing.T) {
+		nonRepo := t.TempDir()
+		if IsRebaseInProgress(nonRepo) {
+			t.Error("expected false for non-repo")
+		}
+	})
+}

@@ -404,7 +404,10 @@ Examples:
 
 			// Skip during rebase to avoid reviewing every replayed commit
 			if git.IsRebaseInProgress(root) {
-				return nil // Silent exit
+				if !quiet {
+					fmt.Println("Skipping: rebase in progress")
+				}
+				return nil
 			}
 
 			// Ensure daemon is running
@@ -436,12 +439,18 @@ Examples:
 
 			resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
+				if quiet {
+					return nil
+				}
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
 			defer resp.Body.Close()
 
 			body, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode != http.StatusCreated {
+				if quiet {
+					return nil
+				}
 				return fmt.Errorf("enqueue failed: %s", body)
 			}
 
