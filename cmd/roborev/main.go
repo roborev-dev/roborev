@@ -1003,8 +1003,8 @@ func generateHookContent() string {
 # RoboRev post-commit hook - auto-reviews every commit
 ROBOREV=%q
 if [ ! -x "$ROBOREV" ]; then
-    ROBOREV=$(command -v roborev 2>/dev/null) || exit 0
-    [ ! -x "$ROBOREV" ] && exit 0
+    ROBOREV=$(command -v roborev 2>/dev/null)
+    [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
 "$ROBOREV" enqueue --quiet 2>/dev/null &
 `, roborevPath)
