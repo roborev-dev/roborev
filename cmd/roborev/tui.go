@@ -116,7 +116,7 @@ type tuiCancelResultMsg struct {
 	err           error
 }
 type tuiErrMsg error
-type tuiPaginationErrMsg error // Pagination-specific error (clears loadingMore)
+type tuiPaginationErrMsg struct{ err error } // Pagination-specific error (clears loadingMore)
 type tuiUpdateCheckMsg string  // Latest version if available, empty if up to date
 type tuiReposMsg struct {
 	repos      []repoFilterItem
@@ -198,12 +198,12 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 		url := fmt.Sprintf("%s/api/jobs?limit=50&offset=%d", m.serverAddr, offset)
 		resp, err := m.client.Get(url)
 		if err != nil {
-			return tuiPaginationErrMsg(err)
+			return tuiPaginationErrMsg{err: err}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiPaginationErrMsg(fmt.Errorf("fetch more jobs: %s", resp.Status))
+			return tuiPaginationErrMsg{err: fmt.Errorf("fetch more jobs: %s", resp.Status)}
 		}
 
 		var result struct {
@@ -211,7 +211,7 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 			HasMore bool                `json:"has_more"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return tuiPaginationErrMsg(err)
+			return tuiPaginationErrMsg{err: err}
 		}
 		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: true}
 	}
@@ -1179,7 +1179,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiPaginationErrMsg:
-		m.err = msg
+		m.err = msg.err
 		m.loadingMore = false // Clear loading state so user can retry pagination
 
 	case tuiErrMsg:

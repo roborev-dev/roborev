@@ -2469,12 +2469,12 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 	}
 }
 
-func TestTUILoadingMoreClearedOnError(t *testing.T) {
+func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.loadingMore = true
 
 	// Pagination error arrives (only pagination errors clear loadingMore)
-	errMsg := tuiPaginationErrMsg(fmt.Errorf("network error"))
+	errMsg := tuiPaginationErrMsg{err: fmt.Errorf("network error")}
 	updated, _ := m.Update(errMsg)
 	m2 := updated.(tuiModel)
 
@@ -2484,6 +2484,26 @@ func TestTUILoadingMoreClearedOnError(t *testing.T) {
 	}
 
 	// Error should be set
+	if m2.err == nil {
+		t.Error("err should be set")
+	}
+}
+
+func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.loadingMore = true
+
+	// Generic error arrives (should NOT clear loadingMore)
+	errMsg := tuiErrMsg(fmt.Errorf("some other error"))
+	updated, _ := m.Update(errMsg)
+	m2 := updated.(tuiModel)
+
+	// loadingMore should remain true - only pagination errors clear it
+	if !m2.loadingMore {
+		t.Error("loadingMore should NOT be cleared on generic error")
+	}
+
+	// Error should still be set
 	if m2.err == nil {
 		t.Error("err should be set")
 	}
