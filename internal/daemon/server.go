@@ -252,13 +252,14 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse offset from query, default to 0
+	// Offset is ignored when limit=0 (unlimited) since OFFSET requires LIMIT in SQL
 	offset := 0
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
 		if _, err := fmt.Sscanf(offsetStr, "%d", &offset); err != nil {
 			offset = 0
 		}
 	}
-	if offset < 0 {
+	if offset < 0 || limit == 0 {
 		offset = 0
 	}
 

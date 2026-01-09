@@ -152,12 +152,19 @@ func (m tuiModel) tick() tea.Cmd {
 
 func (m tuiModel) fetchJobs() tea.Cmd {
 	return func() tea.Msg {
-		// No limit (limit=0) when filtering to show full repo history, otherwise limit to 50
+		// Determine limit:
+		// - No limit (limit=0) when filtering to show full repo history
+		// - If we've paginated (more than 50 jobs), maintain current view size
+		// - Otherwise default to 50
 		var url string
 		if m.activeRepoFilter != "" {
 			url = fmt.Sprintf("%s/api/jobs?limit=0&repo=%s", m.serverAddr, neturl.QueryEscape(m.activeRepoFilter))
 		} else {
-			url = fmt.Sprintf("%s/api/jobs?limit=50", m.serverAddr)
+			limit := 50
+			if len(m.jobs) > 50 {
+				limit = len(m.jobs) // Maintain paginated view on refresh
+			}
+			url = fmt.Sprintf("%s/api/jobs?limit=%d", m.serverAddr, limit)
 		}
 		resp, err := m.client.Get(url)
 		if err != nil {
@@ -1165,6 +1172,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiErrMsg:
 		m.err = msg
+		m.loadingMore = false // Clear loading state so user can retry
 	}
 
 	return m, nil

@@ -2388,3 +2388,150 @@ func TestTUIRenderJobLineNoTruncation(t *testing.T) {
 		t.Error("Agent name should appear untruncated")
 	}
 }
+
+func TestTUIPaginationAppendMode(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Start with 50 jobs
+	initialJobs := make([]storage.ReviewJob, 50)
+	for i := 0; i < 50; i++ {
+		initialJobs[i] = storage.ReviewJob{ID: int64(50 - i)}
+	}
+	m.jobs = initialJobs
+	m.selectedIdx = 0
+	m.selectedJobID = 50
+	m.hasMore = true
+
+	// Append 25 more jobs
+	moreJobs := make([]storage.ReviewJob, 25)
+	for i := 0; i < 25; i++ {
+		moreJobs[i] = storage.ReviewJob{ID: int64(i + 1)} // IDs 1-25 (older)
+	}
+	appendMsg := tuiJobsMsg{jobs: moreJobs, hasMore: false, append: true}
+
+	updated, _ := m.Update(appendMsg)
+	m2 := updated.(tuiModel)
+
+	// Should now have 75 jobs
+	if len(m2.jobs) != 75 {
+		t.Errorf("Expected 75 jobs after append, got %d", len(m2.jobs))
+	}
+
+	// hasMore should be updated
+	if m2.hasMore {
+		t.Error("hasMore should be false after append with hasMore=false")
+	}
+
+	// loadingMore should be cleared
+	if m2.loadingMore {
+		t.Error("loadingMore should be cleared after append")
+	}
+
+	// Selection should be maintained
+	if m2.selectedJobID != 50 {
+		t.Errorf("Expected selectedJobID=50 maintained, got %d", m2.selectedJobID)
+	}
+}
+
+func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Simulate user has paginated to 100 jobs
+	jobs := make([]storage.ReviewJob, 100)
+	for i := 0; i < 100; i++ {
+		jobs[i] = storage.ReviewJob{ID: int64(100 - i)}
+	}
+	m.jobs = jobs
+	m.selectedIdx = 50
+	m.selectedJobID = 50
+
+	// Refresh arrives (replace mode, not append)
+	refreshedJobs := make([]storage.ReviewJob, 100)
+	for i := 0; i < 100; i++ {
+		refreshedJobs[i] = storage.ReviewJob{ID: int64(101 - i)} // New job at top
+	}
+	refreshMsg := tuiJobsMsg{jobs: refreshedJobs, hasMore: true, append: false}
+
+	updated, _ := m.Update(refreshMsg)
+	m2 := updated.(tuiModel)
+
+	// Should still have 100 jobs
+	if len(m2.jobs) != 100 {
+		t.Errorf("Expected 100 jobs after refresh, got %d", len(m2.jobs))
+	}
+
+	// Selection should find job ID=50 at new index
+	if m2.selectedJobID != 50 {
+		t.Errorf("Expected selectedJobID=50 maintained, got %d", m2.selectedJobID)
+	}
+	if m2.selectedIdx != 51 {
+		t.Errorf("Expected selectedIdx=51 (shifted by new job), got %d", m2.selectedIdx)
+	}
+}
+
+func TestTUILoadingMoreClearedOnError(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.loadingMore = true
+
+	// Error arrives
+	errMsg := tuiErrMsg(fmt.Errorf("network error"))
+	updated, _ := m.Update(errMsg)
+	m2 := updated.(tuiModel)
+
+	// loadingMore should be cleared so user can retry
+	if m2.loadingMore {
+		t.Error("loadingMore should be cleared on error")
+	}
+
+	// Error should be set
+	if m2.err == nil {
+		t.Error("err should be set")
+	}
+}
+
+func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Set up at last job with more available
+	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.hasMore = true
+	m.loadingMore = false
+	m.currentView = tuiViewQueue
+
+	// Press down at bottom - should trigger load more
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m2 := updated.(tuiModel)
+
+	if !m2.loadingMore {
+		t.Error("loadingMore should be set when navigating past last job")
+	}
+	if cmd == nil {
+		t.Error("Should return fetchMoreJobs command")
+	}
+}
+
+func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Set up at last job with filter active
+	m.jobs = []storage.ReviewJob{{ID: 1, RepoPath: "/path/to/repo"}}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.hasMore = true
+	m.loadingMore = false
+	m.activeRepoFilter = "/path/to/repo" // Filter active
+	m.currentView = tuiViewQueue
+
+	// Press down at bottom - should NOT trigger load more (filtered view loads all)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m2 := updated.(tuiModel)
+
+	if m2.loadingMore {
+		t.Error("loadingMore should not be set when filter is active")
+	}
+	if cmd != nil {
+		t.Error("Should not return command when filter is active")
+	}
+}

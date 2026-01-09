@@ -261,11 +261,11 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
-	}
-
-	if offset > 0 {
-		query += " OFFSET ?"
-		args = append(args, offset)
+		// OFFSET requires LIMIT in SQLite
+		if offset > 0 {
+			query += " OFFSET ?"
+			args = append(args, offset)
+		}
 	}
 
 	rows, err := db.Query(query, args...)
