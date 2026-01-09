@@ -254,16 +254,24 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			// 4. Install post-commit hook
+				// 4. Install post-commit hook
 			hooksDir, err := git.GetHooksPath(root)
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)
 			}
 			hookPath := filepath.Join(hooksDir, "post-commit")
-			hookContent := `#!/bin/sh
+
+			// Get full path to roborev executable to avoid PATH issues in hooks
+			roborevPath, err := exec.LookPath("roborev")
+			if err != nil {
+				roborevPath = "roborev" // Fallback to PATH lookup
+			}
+
+			hookContent := fmt.Sprintf(`#!/bin/sh
 # RoboRev post-commit hook - auto-reviews every commit
-roborev enqueue --quiet &
-`
+%s enqueue --quiet &
+`, roborevPath)
+
 			// Ensure hooks directory exists
 			if err := os.MkdirAll(hooksDir, 0755); err != nil {
 				return fmt.Errorf("create hooks directory: %w", err)
@@ -739,10 +747,16 @@ func installHookCmd() *cobra.Command {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
 
-			hookContent := `#!/bin/sh
+			// Get full path to roborev executable to avoid PATH issues in hooks
+			roborevPath, err := exec.LookPath("roborev")
+			if err != nil {
+				roborevPath = "roborev" // Fallback to PATH lookup
+			}
+
+			hookContent := fmt.Sprintf(`#!/bin/sh
 # RoboRev post-commit hook - auto-reviews every commit
-roborev enqueue --quiet &
-`
+%s enqueue --quiet &
+`, roborevPath)
 
 			if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
 				return fmt.Errorf("write hook: %w", err)

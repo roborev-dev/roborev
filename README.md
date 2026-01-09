@@ -32,6 +32,8 @@ git commit -m "..."   # Reviews happen automatically
 roborev tui           # View reviews in interactive UI
 ```
 
+**Note**: Hook installation automatically detects your git hook manager (Husky, etc.) via `core.hooksPath`.
+
 ## Commands
 
 | Command | Description |
