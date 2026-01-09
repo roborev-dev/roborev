@@ -314,6 +314,52 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	})
 }
 
+func TestHandleStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open test DB: %v", err)
+	}
+	defer db.Close()
+
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg)
+
+	t.Run("returns status with version", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		w := httptest.NewRecorder()
+
+		server.handleStatus(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var status storage.DaemonStatus
+		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		// Version should be set (non-empty)
+		if status.Version == "" {
+			t.Error("Expected Version to be set in status response")
+		}
+	})
+
+	t.Run("wrong method fails", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/status", nil)
+		w := httptest.NewRecorder()
+
+		server.handleStatus(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405 for POST, got %d", w.Code)
+		}
+	})
+}
+
 func TestHandleCancelJob(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
