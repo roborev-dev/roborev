@@ -226,7 +226,9 @@ const maxRetries = 3
 func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	log.Printf("[%s] Processing job %d for ref %s in %s", workerID, job.ID, job.GitRef, job.RepoName)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Get timeout from config (per-repo or global, default 30 minutes)
+	timeoutMinutes := config.ResolveJobTimeout(job.RepoPath, wp.cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
 	defer cancel()
 
 	// Register for cancellation tracking

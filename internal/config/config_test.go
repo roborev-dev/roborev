@@ -159,3 +159,110 @@ func TestLoadRepoConfigMissing(t *testing.T) {
 	}
 }
 
+func TestResolveJobTimeout(t *testing.T) {
+	t.Run("default when no config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		timeout := ResolveJobTimeout(tmpDir, nil)
+		if timeout != 30 {
+			t.Errorf("Expected default timeout 30, got %d", timeout)
+		}
+	})
+
+	t.Run("default when global config has zero", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{JobTimeoutMinutes: 0}
+		timeout := ResolveJobTimeout(tmpDir, cfg)
+		if timeout != 30 {
+			t.Errorf("Expected default timeout 30 when global is 0, got %d", timeout)
+		}
+	})
+
+	t.Run("negative global config falls through to default", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{JobTimeoutMinutes: -10}
+		timeout := ResolveJobTimeout(tmpDir, cfg)
+		if timeout != 30 {
+			t.Errorf("Expected default timeout 30 when global is negative, got %d", timeout)
+		}
+	})
+
+	t.Run("global config takes precedence over default", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{JobTimeoutMinutes: 45}
+		timeout := ResolveJobTimeout(tmpDir, cfg)
+		if timeout != 45 {
+			t.Errorf("Expected timeout 45 from global config, got %d", timeout)
+		}
+	})
+
+	t.Run("repo config takes precedence over global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`job_timeout_minutes = 15`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{JobTimeoutMinutes: 45}
+		timeout := ResolveJobTimeout(tmpDir, cfg)
+		if timeout != 15 {
+			t.Errorf("Expected timeout 15 from repo config, got %d", timeout)
+		}
+	})
+
+	t.Run("repo config zero falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`job_timeout_minutes = 0`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{JobTimeoutMinutes: 45}
+		timeout := ResolveJobTimeout(tmpDir, cfg)
+		if timeout != 45 {
+			t.Errorf("Expected timeout 45 from global (repo is 0), got %d", timeout)
+		}
+	})
+
+	t.Run("repo config negative falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`job_timeout_minutes = -5`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{JobTimeoutMinutes: 45}
+		timeout := ResolveJobTimeout(tmpDir, cfg)
+		if timeout != 45 {
+			t.Errorf("Expected timeout 45 from global (repo is negative), got %d", timeout)
+		}
+	})
+
+	t.Run("repo config without timeout falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`agent = "codex"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{JobTimeoutMinutes: 60}
+		timeout := ResolveJobTimeout(tmpDir, cfg)
+		if timeout != 60 {
+			t.Errorf("Expected timeout 60 from global (repo has no timeout), got %d", timeout)
+		}
+	})
+
+	t.Run("malformed repo config falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`this is not valid toml {{{`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{JobTimeoutMinutes: 45}
+		timeout := ResolveJobTimeout(tmpDir, cfg)
+		if timeout != 45 {
+			t.Errorf("Expected timeout 45 from global (repo config malformed), got %d", timeout)
+		}
+	})
+}
+

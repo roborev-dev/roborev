@@ -13,6 +13,7 @@ type Config struct {
 	MaxWorkers         int    `toml:"max_workers"`
 	ReviewContextCount int    `toml:"review_context_count"`
 	DefaultAgent       string `toml:"default_agent"`
+	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
@@ -24,6 +25,7 @@ type RepoConfig struct {
 	Agent              string `toml:"agent"`
 	ReviewContextCount int    `toml:"review_context_count"`
 	ReviewGuidelines   string `toml:"review_guidelines"`
+	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
 }
 
 // DefaultConfig returns the default configuration
@@ -33,6 +35,7 @@ func DefaultConfig() *Config {
 		MaxWorkers:         4,
 		ReviewContextCount: 3,
 		DefaultAgent:       "codex",
+		JobTimeoutMinutes:  30,
 		CodexCmd:           "codex",
 		ClaudeCodeCmd:      "claude",
 	}
@@ -98,6 +101,22 @@ func ResolveAgent(explicit string, repoPath string, globalCfg *Config) string {
 	}
 
 	return "codex"
+}
+
+// ResolveJobTimeout determines job timeout based on config priority:
+// 1. Per-repo config (if set and > 0)
+// 2. Global config (if set and > 0)
+// 3. Default (30 minutes)
+func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.JobTimeoutMinutes > 0 {
+		return repoCfg.JobTimeoutMinutes
+	}
+
+	if globalCfg != nil && globalCfg.JobTimeoutMinutes > 0 {
+		return globalCfg.JobTimeoutMinutes
+	}
+
+	return 30 // Default: 30 minutes
 }
 
 // SaveGlobal saves the global configuration
