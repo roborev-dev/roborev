@@ -233,9 +233,10 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := r.URL.Query().Get("status")
+	repo := r.URL.Query().Get("repo")
 	limit := 50 // default
 
-	jobs, err := s.db.ListJobs(status, limit)
+	jobs, err := s.db.ListJobs(status, repo, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list jobs: %v", err))
 		return

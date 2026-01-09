@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -228,8 +229,8 @@ func (db *DB) GetJobRetryCount(jobID int64) (int, error) {
 	return count, err
 }
 
-// ListJobs returns jobs with optional status filter
-func (db *DB) ListJobs(statusFilter string, limit int) ([]ReviewJob, error) {
+// ListJobs returns jobs with optional status and repo filters
+func (db *DB) ListJobs(statusFilter string, repoFilter string, limit int) ([]ReviewJob, error) {
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
@@ -240,10 +241,19 @@ func (db *DB) ListJobs(statusFilter string, limit int) ([]ReviewJob, error) {
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
 	var args []interface{}
+	var conditions []string
 
 	if statusFilter != "" {
-		query += " WHERE j.status = ?"
+		conditions = append(conditions, "j.status = ?")
 		args = append(args, statusFilter)
+	}
+	if repoFilter != "" {
+		conditions = append(conditions, "r.name = ?")
+		args = append(args, repoFilter)
+	}
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	query += " ORDER BY j.enqueued_at DESC"

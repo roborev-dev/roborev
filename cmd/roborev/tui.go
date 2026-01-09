@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -145,7 +146,16 @@ func (m tuiModel) tick() tea.Cmd {
 
 func (m tuiModel) fetchJobs() tea.Cmd {
 	return func() tea.Msg {
-		resp, err := m.client.Get(m.serverAddr + "/api/jobs?limit=50")
+		// Use higher limit when filtering to show full repo history
+		limit := 50
+		if m.activeRepoFilter != "" {
+			limit = 500
+		}
+		url := fmt.Sprintf("%s/api/jobs?limit=%d", m.serverAddr, limit)
+		if m.activeRepoFilter != "" {
+			url += "&repo=" + neturl.QueryEscape(m.activeRepoFilter)
+		}
+		resp, err := m.client.Get(url)
 		if err != nil {
 			return tuiErrMsg(err)
 		}
@@ -615,15 +625,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.activeRepoFilter = selected.name
 					m.currentView = tuiViewQueue
 					m.filterSearch = ""
-					// Reset selection to first visible job, or clear if none
-					visibleJobs := m.getVisibleJobs()
-					if len(visibleJobs) > 0 {
-						m.selectedIdx = m.findVisibleJobIndex(0)
-						m.selectedJobID = visibleJobs[0].ID
-					} else {
-						m.selectedIdx = -1
-						m.selectedJobID = 0
-					}
+					// Reset selection - jobs will be refetched with new filter
+					m.selectedIdx = 0
+					m.selectedJobID = 0
+					// Refetch jobs with the new filter applied at the API level
+					return m, m.fetchJobs()
 				}
 				return m, nil
 			case "backspace":
@@ -838,13 +844,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "esc":
 			if m.currentView == tuiViewQueue && m.activeRepoFilter != "" {
-				// Clear filter
+				// Clear filter and refetch all jobs
 				m.activeRepoFilter = ""
-				// Reset selection to first job
 				m.selectedIdx = 0
-				if len(m.jobs) > 0 {
-					m.selectedJobID = m.jobs[0].ID
-				}
+				m.selectedJobID = 0
+				return m, m.fetchJobs()
 			} else if m.currentView == tuiViewReview {
 				m.currentView = tuiViewQueue
 				m.currentReview = nil
@@ -873,7 +877,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.jobs = msg
 
 		if len(m.jobs) == 0 {
-			m.selectedIdx = 0
+			m.selectedIdx = -1
 			m.selectedJobID = 0
 		} else if m.selectedJobID > 0 {
 			// Try to find the previously selected job by ID
@@ -1375,17 +1379,19 @@ func (m tuiModel) renderFilterView() string {
 
 	visible := m.getVisibleFilterRepos()
 
-	// Calculate visible rows (reserve lines for: title(2) + search(2) + help(2))
-	reservedLines := 6
+	// Calculate visible rows
+	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(1) = 7
+	reservedLines := 7
 	visibleRows := m.height - reservedLines
-	if visibleRows < 3 {
-		visibleRows = 3
+	if visibleRows < 0 {
+		visibleRows = 0
 	}
 
 	// Determine which repos to show, keeping selected item visible
 	start := 0
 	end := len(visible)
-	if len(visible) > visibleRows {
+	needsScroll := len(visible) > visibleRows && visibleRows > 0
+	if needsScroll {
 		start = m.filterSelectedIdx - visibleRows/2
 		if start < 0 {
 			start = 0
@@ -1394,7 +1400,18 @@ func (m tuiModel) renderFilterView() string {
 		if end > len(visible) {
 			end = len(visible)
 			start = end - visibleRows
+			if start < 0 {
+				start = 0
+			}
 		}
+	} else if visibleRows > 0 {
+		// No scrolling needed, show all (up to visibleRows)
+		if end > visibleRows {
+			end = visibleRows
+		}
+	} else {
+		// No room for repos
+		end = 0
 	}
 
 	for i := start; i < end; i++ {
@@ -1417,7 +1434,10 @@ func (m tuiModel) renderFilterView() string {
 	if len(visible) == 0 {
 		b.WriteString(tuiStatusStyle.Render("  No matching repos"))
 		b.WriteString("\n")
-	} else if len(visible) > visibleRows {
+	} else if visibleRows == 0 {
+		b.WriteString(tuiStatusStyle.Render("  (terminal too small)"))
+		b.WriteString("\n")
+	} else if needsScroll {
 		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visible))
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
 		b.WriteString("\n")

@@ -483,8 +483,9 @@ func TestTUISelectionEmptyList(t *testing.T) {
 	updated, _ := m.Update(newJobs)
 	m = updated.(tuiModel)
 
-	if m.selectedIdx != 0 {
-		t.Errorf("Expected selectedIdx=0, got %d", m.selectedIdx)
+	// Empty list should have selectedIdx=-1 (no valid selection)
+	if m.selectedIdx != -1 {
+		t.Errorf("Expected selectedIdx=-1, got %d", m.selectedIdx)
 	}
 	if m.selectedJobID != 0 {
 		t.Errorf("Expected selectedJobID=0, got %d", m.selectedJobID)
@@ -1404,19 +1405,35 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 	}
 	m.filterSelectedIdx = 2 // Select repo-b
 
-	// Press enter to select repo-b (which has no jobs)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Press enter to select repo-b (triggers refetch)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m2 := updated.(tuiModel)
 
-	// Selection should be cleared since no visible jobs
-	if m2.selectedIdx != -1 {
-		t.Errorf("Expected selectedIdx=-1 for zero visible jobs, got %d", m2.selectedIdx)
-	}
-	if m2.selectedJobID != 0 {
-		t.Errorf("Expected selectedJobID=0 for zero visible jobs, got %d", m2.selectedJobID)
-	}
+	// Filter should be applied and a fetchJobs command should be returned
 	if m2.activeRepoFilter != "repo-b" {
 		t.Errorf("Expected activeRepoFilter='repo-b', got '%s'", m2.activeRepoFilter)
+	}
+	if cmd == nil {
+		t.Error("Expected fetchJobs command to be returned")
+	}
+	// Selection is reset to 0 pending the refetch
+	if m2.selectedIdx != 0 {
+		t.Errorf("Expected selectedIdx=0 pending refetch, got %d", m2.selectedIdx)
+	}
+	if m2.selectedJobID != 0 {
+		t.Errorf("Expected selectedJobID=0 pending refetch, got %d", m2.selectedJobID)
+	}
+
+	// Simulate receiving empty jobs from API (repo-b has no jobs)
+	updated2, _ := m2.Update(tuiJobsMsg([]storage.ReviewJob{}))
+	m3 := updated2.(tuiModel)
+
+	// Now selection should be cleared since no jobs
+	if m3.selectedIdx != -1 {
+		t.Errorf("Expected selectedIdx=-1 after receiving empty jobs, got %d", m3.selectedIdx)
+	}
+	if m3.selectedJobID != 0 {
+		t.Errorf("Expected selectedJobID=0 after receiving empty jobs, got %d", m3.selectedJobID)
 	}
 }
 
@@ -1481,4 +1498,135 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 	if cmd != nil {
 		t.Error("Expected no command for address with no visible jobs")
 	}
+}
+
+func TestTUIFilterViewSmallTerminal(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterRepos = []repoFilterItem{
+		{name: "", count: 10},
+		{name: "repo-a", count: 5},
+		{name: "repo-b", count: 3},
+		{name: "repo-c", count: 2},
+	}
+	m.filterSelectedIdx = 0
+
+	t.Run("tiny terminal shows message", func(t *testing.T) {
+		m.height = 5 // Less than reservedLines (7)
+		output := m.renderFilterView()
+
+		if !strings.Contains(output, "(terminal too small)") {
+			t.Errorf("Expected 'terminal too small' message for height=5, got: %s", output)
+		}
+		// Should not contain any repo names
+		if strings.Contains(output, "repo-a") {
+			t.Error("Should not render repo names when terminal too small")
+		}
+	})
+
+	t.Run("exactly reservedLines shows no repos", func(t *testing.T) {
+		m.height = 7 // Exactly reservedLines, visibleRows = 0
+		output := m.renderFilterView()
+
+		if !strings.Contains(output, "(terminal too small)") {
+			t.Errorf("Expected 'terminal too small' message for height=7, got: %s", output)
+		}
+	})
+
+	t.Run("one row available", func(t *testing.T) {
+		m.height = 8 // reservedLines + 1 = visibleRows of 1
+		output := m.renderFilterView()
+
+		if strings.Contains(output, "(terminal too small)") {
+			t.Error("Should not show 'terminal too small' when 1 row available")
+		}
+		// Should show exactly one repo line (All repos)
+		if !strings.Contains(output, "All repos") {
+			t.Error("Should show 'All repos' when 1 row available")
+		}
+		// Should show scroll info since 4 repos > 1 visible row
+		if !strings.Contains(output, "[showing 1-1 of 4]") {
+			t.Errorf("Expected scroll info '[showing 1-1 of 4]', got: %s", output)
+		}
+	})
+
+	t.Run("fits all repos without scroll", func(t *testing.T) {
+		m.height = 15 // reservedLines(7) + 8 = visibleRows of 8, enough for 4 repos
+		output := m.renderFilterView()
+
+		// Should show all repos
+		if !strings.Contains(output, "All repos") {
+			t.Error("Should show 'All repos'")
+		}
+		if !strings.Contains(output, "repo-a") {
+			t.Error("Should show 'repo-a'")
+		}
+		if !strings.Contains(output, "repo-c") {
+			t.Error("Should show 'repo-c'")
+		}
+		// Should NOT show scroll info
+		if strings.Contains(output, "[showing") {
+			t.Error("Should not show scroll info when all repos fit")
+		}
+	})
+
+	t.Run("needs scrolling shows scroll info", func(t *testing.T) {
+		m.height = 9  // visibleRows = 2
+		m.filterSelectedIdx = 2 // Select repo-b
+		output := m.renderFilterView()
+
+		// Should show scroll info
+		if !strings.Contains(output, "[showing") {
+			t.Error("Expected scroll info when repos exceed visible rows")
+		}
+		// Selected item (repo-b) should be visible
+		if !strings.Contains(output, "repo-b") {
+			t.Error("Selected repo should be visible in scroll window")
+		}
+	})
+}
+
+func TestTUIFilterViewScrollWindow(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterRepos = []repoFilterItem{
+		{name: "", count: 20},
+		{name: "repo-1", count: 5},
+		{name: "repo-2", count: 4},
+		{name: "repo-3", count: 3},
+		{name: "repo-4", count: 2},
+		{name: "repo-5", count: 1},
+	}
+	m.height = 10 // visibleRows = 3
+
+	t.Run("scroll keeps selected item visible at top", func(t *testing.T) {
+		m.filterSelectedIdx = 0
+		output := m.renderFilterView()
+
+		if !strings.Contains(output, "[showing 1-3 of 6]") {
+			t.Errorf("Expected '[showing 1-3 of 6]' for top selection, got: %s", output)
+		}
+	})
+
+	t.Run("scroll keeps selected item visible at bottom", func(t *testing.T) {
+		m.filterSelectedIdx = 5 // repo-5
+		output := m.renderFilterView()
+
+		if !strings.Contains(output, "[showing 4-6 of 6]") {
+			t.Errorf("Expected '[showing 4-6 of 6]' for bottom selection, got: %s", output)
+		}
+		if !strings.Contains(output, "repo-5") {
+			t.Error("repo-5 should be visible when selected")
+		}
+	})
+
+	t.Run("scroll centers selected item in middle", func(t *testing.T) {
+		m.filterSelectedIdx = 3 // repo-3
+		output := m.renderFilterView()
+
+		// With 3 visible rows and selecting item 3 (0-indexed), centering puts start at 2
+		if !strings.Contains(output, "repo-3") {
+			t.Error("repo-3 should be visible when selected")
+		}
+	})
 }
