@@ -144,6 +144,21 @@ func TestParseVerdict(t *testing.T) {
 			output: "I found no issues in this commit. The changes are well-structured.",
 			want:   "P",
 		},
+		{
+			name:   "no issues with checked for context",
+			output: "No issues found. I checked for bugs, security issues, testing gaps, regressions, and code quality concerns.",
+			want:   "P",
+		},
+		{
+			name:   "no issues with looking for context",
+			output: "No issues. I was looking for bugs and errors but found none.",
+			want:   "P",
+		},
+		{
+			name:   "no issues with looked for context",
+			output: "No issues found. I looked for crashes and panics.",
+			want:   "P",
+		},
 
 		// Fail cases - findings present or ambiguous
 		{

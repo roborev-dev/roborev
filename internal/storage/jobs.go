@@ -83,6 +83,17 @@ func checkClauseForCaveat(clause string) bool {
 	// Normalize remaining punctuation
 	normalized := strings.ReplaceAll(clause, ",", " ")
 
+	// Skip clauses that describe what was checked, not findings
+	// e.g., "I checked for bugs, security issues..."
+	lc := strings.ToLower(normalized)
+	if strings.Contains(lc, "checked for") ||
+		strings.Contains(lc, "looking for") ||
+		strings.Contains(lc, "looked for") ||
+		strings.Contains(lc, "searching for") ||
+		strings.Contains(lc, "searched for") {
+		return false
+	}
+
 	words := strings.Fields(normalized)
 	for i, w := range words {
 		// Strip punctuation from both sides for word matching
