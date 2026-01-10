@@ -1018,15 +1018,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		wasHeightDetected := m.heightDetected
 		m.width = msg.Width
 		m.height = msg.Height
 		m.heightDetected = true
 
-		// If this is the first resize and we can show more jobs, re-fetch to fill screen
+		// If terminal can show more jobs than we have, re-fetch to fill screen
 		// Gate on !loadingMore to avoid race conditions with pagination in flight
-		if !wasHeightDetected && !m.loadingMore && len(m.jobs) > 0 && m.hasMore && m.activeRepoFilter == "" {
-			// Check if new height allows more rows than initial fetch provided
+		if !m.loadingMore && len(m.jobs) > 0 && m.hasMore && m.activeRepoFilter == "" {
 			newVisibleRows := m.height - 9 + 10
 			if newVisibleRows > len(m.jobs) {
 				return m, m.fetchJobs()

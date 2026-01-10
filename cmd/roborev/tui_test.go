@@ -2613,17 +2613,22 @@ func TestTUIResizeTriggersRefetchWhenNeeded(t *testing.T) {
 	}
 }
 
-func TestTUIResizeNoRefetchAfterHeightDetected(t *testing.T) {
+func TestTUIResizeNoRefetchWhenEnoughJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	// Set up with height already detected (not first resize)
-	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
+	// Set up with enough jobs to fill the terminal
+	jobs := make([]storage.ReviewJob, 100)
+	for i := range jobs {
+		jobs[i] = storage.ReviewJob{ID: int64(i + 1)}
+	}
+	m.jobs = jobs
 	m.hasMore = true
 	m.loadingMore = false
-	m.heightDetected = true // Already detected
+	m.heightDetected = true
 	m.height = 60
 
-	// Simulate another WindowSizeMsg (window resized)
+	// Simulate WindowSizeMsg - terminal grows but we already have enough jobs
+	// newVisibleRows = 80 - 9 + 10 = 81, which is < len(jobs)=100
 	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 80})
 	m2 := updated.(tuiModel)
 
@@ -2632,8 +2637,33 @@ func TestTUIResizeNoRefetchAfterHeightDetected(t *testing.T) {
 		t.Errorf("Expected height 80, got %d", m2.height)
 	}
 
-	// Should NOT trigger a re-fetch because height was already detected
+	// Should NOT trigger a re-fetch because we have enough jobs already
 	if cmd != nil {
-		t.Error("Should not return command on subsequent resize (height already detected)")
+		t.Error("Should not return command when we already have enough jobs to fill screen")
+	}
+}
+
+func TestTUIResizeRefetchOnLaterResize(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Set up with few jobs, height already detected from earlier resize
+	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
+	m.hasMore = true
+	m.loadingMore = false
+	m.heightDetected = true
+	m.height = 30
+
+	// Simulate terminal growing larger - can now show more jobs
+	// newVisibleRows = 80 - 9 + 10 = 81, which is > len(jobs)=3
+	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 80})
+	m2 := updated.(tuiModel)
+
+	if m2.height != 80 {
+		t.Errorf("Expected height 80, got %d", m2.height)
+	}
+
+	// Should trigger a re-fetch because terminal can show more jobs than we have
+	if cmd == nil {
+		t.Error("Should return fetchJobs command when terminal grows and can show more jobs")
 	}
 }
