@@ -17,7 +17,10 @@ func parseVerdict(output string) string {
 
 		// Check for pass indicators at start of line
 		isPass := strings.HasPrefix(trimmed, "no issues") ||
-			strings.HasPrefix(trimmed, "no findings")
+			strings.HasPrefix(trimmed, "no findings") ||
+			strings.HasPrefix(trimmed, "i didn't find any issues") ||
+			strings.HasPrefix(trimmed, "i did not find any issues") ||
+			strings.HasPrefix(trimmed, "i found no issues")
 
 		if isPass {
 			// Reject if line contains caveats (check for word boundaries)

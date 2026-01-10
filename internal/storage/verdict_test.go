@@ -124,6 +124,26 @@ func TestParseVerdict(t *testing.T) {
 			output: "No issues found. Code hasn't crashed.",
 			want:   "P",
 		},
+		{
+			name:   "i didn't find any issues",
+			output: "I didn't find any issues in this commit.",
+			want:   "P",
+		},
+		{
+			name:   "i did not find any issues",
+			output: "I did not find any issues with the code.",
+			want:   "P",
+		},
+		{
+			name:   "i found no issues",
+			output: "I found no issues.",
+			want:   "P",
+		},
+		{
+			name:   "i found no issues in this commit",
+			output: "I found no issues in this commit. The changes are well-structured.",
+			want:   "P",
+		},
 
 		// Fail cases - findings present or ambiguous
 		{
