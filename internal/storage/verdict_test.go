@@ -140,6 +140,11 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "exact review 583 text",
+			output: "I didn't find any issues. I checked for bugs, security issues, testing gaps, regressions, and code\nquality concerns.\nThe change updates selection revalidation during job refresh to respect visibility (repo filter and\n`hideAddressed`) in `cmd/roborev/tui.go`, and adds a focused set of `hideAddressed` tests (toggle,\nfiltering, selection movement, refresh, navigation, and repo filter interaction) in\n`cmd/roborev/tui_test.go`.",
+			want:   "P",
+		},
+		{
 			name:   "i did not find any issues",
 			output: "I did not find any issues with the code.",
 			want:   "P",
