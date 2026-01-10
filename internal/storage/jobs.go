@@ -17,10 +17,11 @@ func parseVerdict(output string) string {
 		trimmed = strings.TrimPrefix(trimmed, "* ")
 		trimmed = strings.TrimSpace(trimmed)
 
-		if strings.HasPrefix(trimmed, "no issues found") ||
-			strings.HasPrefix(trimmed, "no issues.") ||
-			strings.HasPrefix(trimmed, "no findings") ||
-			trimmed == "no issues" {
+		// Check for pass indicators at start of line
+		isPass := strings.HasPrefix(trimmed, "no issues") ||
+			strings.HasPrefix(trimmed, "no findings")
+
+		if isPass {
 			// Reject if line contains caveats
 			if strings.Contains(trimmed, " but ") ||
 				strings.Contains(trimmed, " however") ||
