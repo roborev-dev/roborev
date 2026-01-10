@@ -130,6 +130,16 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "i didn't find any issues with checked for",
+			output: "I didn't find any issues. I checked for bugs, security issues, testing gaps, regressions, and code quality concerns.",
+			want:   "P",
+		},
+		{
+			name:   "i didn't find any issues multiline",
+			output: "I didn't find any issues. I checked for bugs, security issues, testing gaps, regressions, and code\nquality concerns.",
+			want:   "P",
+		},
+		{
 			name:   "i did not find any issues",
 			output: "I did not find any issues with the code.",
 			want:   "P",
