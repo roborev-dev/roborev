@@ -122,6 +122,7 @@ type tuiCancelResultMsg struct {
 	err           error
 }
 type tuiErrMsg error
+type tuiJobsErrMsg struct{ err error }       // Job fetch error (clears loadingJobs)
 type tuiPaginationErrMsg struct{ err error } // Pagination-specific error (clears loadingMore)
 type tuiUpdateCheckMsg string  // Latest version if available, empty if up to date
 type tuiReposMsg struct {
@@ -138,6 +139,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		currentView:   tuiViewQueue,
 		width:         80, // sensible defaults until we get WindowSizeMsg
 		height:        24,
+		loadingJobs:   true, // Init() calls fetchJobs, so mark as loading
 	}
 }
 
@@ -184,12 +186,12 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		}
 		resp, err := m.client.Get(url)
 		if err != nil {
-			return tuiErrMsg(err)
+			return tuiJobsErrMsg{err: err}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiErrMsg(fmt.Errorf("fetch jobs: %s", resp.Status))
+			return tuiJobsErrMsg{err: fmt.Errorf("fetch jobs: %s", resp.Status)}
 		}
 
 		var result struct {
@@ -197,7 +199,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 			HasMore bool                `json:"has_more"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return tuiErrMsg(err)
+			return tuiJobsErrMsg{err: err}
 		}
 		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false}
 	}
@@ -821,7 +823,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && m.activeRepoFilter == "" {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && m.activeRepoFilter == "" {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -839,7 +841,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && m.activeRepoFilter == "" {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && m.activeRepoFilter == "" {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -899,7 +901,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.updateSelectedJobID()
 				// If we hit the end, try to load more
-				if reachedEnd && m.hasMore && !m.loadingMore && m.activeRepoFilter == "" {
+				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && m.activeRepoFilter == "" {
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
 				}
@@ -1257,6 +1259,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+
+	case tuiJobsErrMsg:
+		m.err = msg.err
+		m.loadingJobs = false // Clear loading state so refreshes can resume
 
 	case tuiPaginationErrMsg:
 		m.err = msg.err

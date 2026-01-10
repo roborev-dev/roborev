@@ -46,9 +46,9 @@ func TestTUIFetchJobsError(t *testing.T) {
 	cmd := m.fetchJobs()
 	msg := cmd()
 
-	_, ok := msg.(tuiErrMsg)
+	_, ok := msg.(tuiJobsErrMsg)
 	if !ok {
-		t.Fatalf("Expected tuiErrMsg for 500, got %T: %v", msg, msg)
+		t.Fatalf("Expected tuiJobsErrMsg for 500, got %T: %v", msg, msg)
 	}
 }
 
@@ -385,9 +385,9 @@ func TestTUIHTTPTimeout(t *testing.T) {
 	cmd := m.fetchJobs()
 	msg := cmd()
 
-	_, ok := msg.(tuiErrMsg)
+	_, ok := msg.(tuiJobsErrMsg)
 	if !ok {
-		t.Fatalf("Expected tuiErrMsg for timeout, got %T: %v", msg, msg)
+		t.Fatalf("Expected tuiJobsErrMsg for timeout, got %T: %v", msg, msg)
 	}
 }
 
@@ -2518,6 +2518,7 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 	m.selectedJobID = 1
 	m.hasMore = true
 	m.loadingMore = false
+	m.loadingJobs = false // Must be false to allow pagination
 	m.currentView = tuiViewQueue
 
 	// Press down at bottom - should trigger load more
@@ -2591,6 +2592,7 @@ func TestTUIResizeTriggersRefetchWhenNeeded(t *testing.T) {
 	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
 	m.hasMore = true
 	m.loadingMore = false
+	m.loadingJobs = false // Must be false to allow refetch
 	m.heightDetected = false
 	m.height = 24 // Default height
 
@@ -2650,6 +2652,7 @@ func TestTUIResizeRefetchOnLaterResize(t *testing.T) {
 	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
 	m.hasMore = true
 	m.loadingMore = false
+	m.loadingJobs = false // Must be false to allow refetch
 	m.heightDetected = true
 	m.height = 30
 
@@ -2967,5 +2970,105 @@ func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
 	nextIdx := m.findNextVisibleJob(m.selectedIdx)
 	if nextIdx != 2 {
 		t.Errorf("Expected next visible job at index 2, got %d", nextIdx)
+	}
+}
+
+func TestTUINewModelLoadingJobsTrue(t *testing.T) {
+	// newTuiModel should initialize loadingJobs to true since Init() calls fetchJobs
+	m := newTuiModel("http://localhost")
+	if !m.loadingJobs {
+		t.Error("loadingJobs should be true in new model")
+	}
+}
+
+func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.loadingJobs = true
+
+	// Simulate job fetch error
+	updated, _ := m.Update(tuiJobsErrMsg{err: fmt.Errorf("connection refused")})
+	m2 := updated.(tuiModel)
+
+	if m2.loadingJobs {
+		t.Error("loadingJobs should be cleared on job fetch error")
+	}
+	if m2.err == nil {
+		t.Error("err should be set on job fetch error")
+	}
+}
+
+func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.loadingJobs = true
+	m.hasMore = true
+	m.loadingMore = false
+
+	// Set up at last job
+	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Try to navigate down (would normally trigger pagination)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m2 := updated.(tuiModel)
+
+	// Pagination should NOT be triggered because loadingJobs is true
+	if m2.loadingMore {
+		t.Error("loadingMore should not be set while loadingJobs is true")
+	}
+	if cmd != nil {
+		t.Error("No command should be returned when pagination is blocked")
+	}
+}
+
+func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.loadingJobs = false
+	m.hasMore = true
+	m.loadingMore = false
+
+	// Set up at last job
+	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Navigate down - should trigger pagination
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m2 := updated.(tuiModel)
+
+	// Pagination SHOULD be triggered
+	if !m2.loadingMore {
+		t.Error("loadingMore should be set when pagination is allowed")
+	}
+	if cmd == nil {
+		t.Error("Command should be returned to fetch more jobs")
+	}
+}
+
+func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.loadingJobs = true
+	m.hasMore = true
+	m.loadingMore = false
+	m.height = 30
+
+	// Set up with one job
+	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Try pgdown (would normally trigger pagination at end)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	m2 := updated.(tuiModel)
+
+	// Pagination should NOT be triggered
+	if m2.loadingMore {
+		t.Error("loadingMore should not be set on pgdown while loadingJobs is true")
+	}
+	if cmd != nil {
+		t.Error("No command should be returned when pagination is blocked")
 	}
 }
