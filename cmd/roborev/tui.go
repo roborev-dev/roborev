@@ -601,11 +601,11 @@ func (m tuiModel) isJobVisible(job storage.ReviewJob) bool {
 		return false
 	}
 	if m.hideAddressed {
-		// Hide addressed reviews and failed jobs
+		// Hide addressed reviews, failed jobs, and canceled jobs
 		if job.Addressed != nil && *job.Addressed {
 			return false
 		}
-		if job.Status == storage.JobStatusFailed {
+		if job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {
 			return false
 		}
 	}
