@@ -56,11 +56,27 @@ func stripListMarker(s string) string {
 
 // hasCaveat checks if the line contains contrastive words or additional sentences with issues
 func hasCaveat(s string) bool {
-	// Normalize punctuation that could replace spaces
-	normalized := strings.ReplaceAll(s, "—", " ")
-	normalized = strings.ReplaceAll(normalized, "–", " ")
-	normalized = strings.ReplaceAll(normalized, ",", " ")
-	normalized = strings.ReplaceAll(normalized, ";", " ")
+	// Split on clause boundaries first, then check each clause
+	// Replace clause separators with a marker we can split on
+	normalized := s
+	normalized = strings.ReplaceAll(normalized, "—", "|")
+	normalized = strings.ReplaceAll(normalized, "–", "|")
+	normalized = strings.ReplaceAll(normalized, ";", "|")
+	normalized = strings.ReplaceAll(normalized, ". ", "|")
+
+	clauses := strings.Split(normalized, "|")
+	for _, clause := range clauses {
+		if checkClauseForCaveat(clause) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkClauseForCaveat checks a single clause for caveats
+func checkClauseForCaveat(clause string) bool {
+	// Normalize remaining punctuation
+	normalized := strings.ReplaceAll(clause, ",", " ")
 
 	words := strings.Fields(normalized)
 	for i, w := range words {
@@ -75,18 +91,51 @@ func hasCaveat(s string) bool {
 			w == "break" || w == "breaks" || w == "broken" ||
 			w == "crash" || w == "crashes" || w == "panic" ||
 			w == "error" || w == "errors" || w == "bug" || w == "bugs" {
-			// Check if preceded by negation (within 2 words)
-			negated := false
-			for j := max(0, i-2); j < i; j++ {
-				prev := strings.Trim(words[j], ".,;:!?()[]\"'")
-				if prev == "no" || prev == "zero" || prev == "0" || prev == "without" || prev == "none" {
-					negated = true
-					break
-				}
-			}
-			if negated {
+			// Check if preceded by negation within this clause
+			if isNegated(words, i) {
 				continue
 			}
+			return true
+		}
+	}
+	return false
+}
+
+// isNegated checks if a negative indicator at position i is preceded by a negation word
+// within the same clause. Skips common stopwords when looking back.
+func isNegated(words []string, i int) bool {
+	stopwords := map[string]bool{
+		"the": true, "a": true, "an": true,
+		"of": true, "to": true, "in": true,
+		"have": true, "has": true, "had": true,
+		"been": true, "be": true, "is": true, "are": true, "was": true, "were": true,
+		"tests": true, "test": true, "code": true, "build": true,
+	}
+	negators := map[string]bool{
+		"no": true, "not": true, "never": true, "none": true,
+		"zero": true, "0": true, "without": true,
+		"didn't": true, "didnt": true, "doesn't": true, "doesnt": true,
+		"hasn't": true, "hasnt": true, "haven't": true, "havent": true,
+		"won't": true, "wont": true, "wouldn't": true, "wouldnt": true,
+		"can't": true, "cant": true, "cannot": true,
+	}
+
+	// Look back up to 5 non-stopwords, stopping at clause boundaries
+	checked := 0
+	for j := i - 1; j >= 0 && checked < 5; j-- {
+		raw := words[j]
+		w := strings.Trim(raw, ".,;:!?()[]\"'")
+
+		// Stop at clause boundaries (words ending with sentence/clause punctuation)
+		if strings.ContainsAny(raw, ".;") {
+			break
+		}
+
+		if stopwords[w] {
+			continue // Skip stopwords
+		}
+		checked++
+		if negators[w] {
 			return true
 		}
 	}
