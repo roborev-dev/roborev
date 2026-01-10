@@ -221,6 +221,21 @@ func TestParseVerdict(t *testing.T) {
 			output: "No issues found \"but\" consider refactoring.",
 			want:   "F",
 		},
+		{
+			name:   "double negation not without",
+			output: "No issues found. Not without errors.",
+			want:   "F",
+		},
+		{
+			name:   "question then error",
+			output: "No issues found? Errors occurred.",
+			want:   "F",
+		},
+		{
+			name:   "exclamation then error",
+			output: "No issues found! Error in tests.",
+			want:   "F",
+		},
 	}
 
 	for _, tt := range tests {

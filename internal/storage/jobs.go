@@ -63,6 +63,8 @@ func hasCaveat(s string) bool {
 	normalized = strings.ReplaceAll(normalized, "–", "|")
 	normalized = strings.ReplaceAll(normalized, ";", "|")
 	normalized = strings.ReplaceAll(normalized, ". ", "|")
+	normalized = strings.ReplaceAll(normalized, "? ", "|")
+	normalized = strings.ReplaceAll(normalized, "! ", "|")
 
 	clauses := strings.Split(normalized, "|")
 	for _, clause := range clauses {
@@ -103,6 +105,7 @@ func checkClauseForCaveat(clause string) bool {
 
 // isNegated checks if a negative indicator at position i is preceded by a negation word
 // within the same clause. Skips common stopwords when looking back.
+// Handles double-negation: "not without errors" means errors exist, so returns false.
 func isNegated(words []string, i int) bool {
 	stopwords := map[string]bool{
 		"the": true, "a": true, "an": true,
@@ -127,7 +130,7 @@ func isNegated(words []string, i int) bool {
 		w := strings.Trim(raw, ".,;:!?()[]\"'")
 
 		// Stop at clause boundaries (words ending with sentence/clause punctuation)
-		if strings.ContainsAny(raw, ".;") {
+		if strings.ContainsAny(raw, ".;?!") {
 			break
 		}
 
@@ -136,6 +139,13 @@ func isNegated(words []string, i int) bool {
 		}
 		checked++
 		if negators[w] {
+			// Handle double-negation: "not without" means the problem exists
+			if w == "without" && j > 0 {
+				prev := strings.Trim(words[j-1], ".,;:!?()[]\"'")
+				if prev == "not" {
+					return false // Double-negative = problem exists
+				}
+			}
 			return true
 		}
 	}
