@@ -179,6 +179,36 @@ func TestParseVerdict(t *testing.T) {
 			output: "No issues found. I looked for crashes and panics.",
 			want:   "P",
 		},
+		{
+			name:   "checked for and found no issues",
+			output: "No issues found. I checked for bugs and found no issues.",
+			want:   "P",
+		},
+		{
+			name:   "checked for and found no bugs",
+			output: "No issues found. I checked for security issues and found no bugs.",
+			want:   "P",
+		},
+		{
+			name:   "checked for and found nothing",
+			output: "No issues found. I checked for errors and found nothing.",
+			want:   "P",
+		},
+		{
+			name:   "checked for and found none",
+			output: "No issues found. I checked for crashes and found none.",
+			want:   "P",
+		},
+		{
+			name:   "checked for and found 0 issues",
+			output: "No issues found. I checked for bugs and found 0 issues.",
+			want:   "P",
+		},
+		{
+			name:   "checked for and found zero errors",
+			output: "No issues found. I looked for problems and found zero errors.",
+			want:   "P",
+		},
 
 		// Fail cases - checked for with actual findings
 		{
