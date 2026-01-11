@@ -368,12 +368,11 @@ func hasNotVerbPattern(prefix string) bool {
 		return false
 	}
 	verbs := []string{"find", "finding", "found", "see", "seeing", "detect", "detecting", "have"}
-	// Contractions that imply "not" - these negate the following verb directly
+	// Contractions that imply "not" - only can't/cannot/couldn't which express inability
+	// Excludes won't/wouldn't which are often conditional ("wouldn't have issues if...")
 	contractions := map[string]bool{
 		"can't": true, "cant": true, "cannot": true,
 		"couldn't": true, "couldnt": true,
-		"won't": true, "wont": true,
-		"wouldn't": true, "wouldnt": true,
 	}
 	// Only check last 5 words, stop at clause boundaries
 	checked := 0
