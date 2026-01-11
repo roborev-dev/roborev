@@ -8,13 +8,14 @@ import (
 
 // Event represents a review event that can be broadcast
 type Event struct {
-	Type   string    `json:"type"`
-	TS     time.Time `json:"ts"`
-	JobID  int64     `json:"job_id"`
-	Repo   string    `json:"repo"`
-	SHA    string    `json:"sha"`
-	Agent  string    `json:"agent"`
-	Verdict string   `json:"verdict"`
+	Type    string    `json:"type"`
+	TS      time.Time `json:"ts"`
+	JobID   int64     `json:"job_id"`
+	Repo    string    `json:"repo"`
+	SHA     string    `json:"sha"`
+	Agent   string    `json:"agent,omitempty"`
+	Verdict string    `json:"verdict,omitempty"`
+	Error   string    `json:"error,omitempty"`
 }
 
 // Subscriber represents a client subscribed to events
@@ -106,8 +107,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		JobID   int64  `json:"job_id"`
 		Repo    string `json:"repo"`
 		SHA     string `json:"sha"`
-		Agent   string `json:"agent"`
-		Verdict string `json:"verdict"`
+		Agent   string `json:"agent,omitempty"`
+		Verdict string `json:"verdict,omitempty"`
+		Error   string `json:"error,omitempty"`
 	}{
 		Type:    e.Type,
 		TS:      e.TS.UTC().Format(time.RFC3339),
@@ -116,5 +118,6 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		SHA:     e.SHA,
 		Agent:   e.Agent,
 		Verdict: e.Verdict,
+		Error:   e.Error,
 	})
 }
