@@ -441,6 +441,16 @@ func TestParseVerdict(t *testing.T) {
 			output: "No issues found. No changes; issues exist.",
 			want:   "F",
 		},
+		{
+			name:   "found issues with is caveat",
+			output: "No issues found. We found issues with logging.",
+			want:   "F",
+		},
+		{
+			name:   "not only issues with is caveat",
+			output: "No issues found. Not only issues with X but also Y.",
+			want:   "F",
+		},
 
 		// Fail cases - findings present or ambiguous
 		{

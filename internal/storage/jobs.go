@@ -195,7 +195,10 @@ func checkClauseForCaveat(clause string) bool {
 	// Check "issues/problems with/in" but only if not negated
 	withInPatterns := []string{"issues with", "problems with", "issue with", "problem with",
 		"issues in", "problems in", "issue in", "problem in"}
-	withInNegators := []string{"no", "not", "didn't", "found"}
+	// Simple negators that work as single tokens
+	withInNegators := []string{"no", "didn't"}
+	// Phrase patterns that indicate negation (checked separately)
+	withInNegationPhrases := []string{"did not find", "could not find", "cannot find", "can't find"}
 	for _, pattern := range withInPatterns {
 		if idx := strings.Index(lc, pattern); idx >= 0 {
 			// Check if preceded by negation within last few words
@@ -204,7 +207,17 @@ func checkClauseForCaveat(clause string) bool {
 				start = 0
 			}
 			prefix := strings.TrimSpace(lc[start:idx])
-			if !hasNegatorInLastWords(prefix, withInNegators, 4) {
+			isNegated := hasNegatorInLastWords(prefix, withInNegators, 4)
+			if !isNegated {
+				// Also check for negation phrases
+				for _, phrase := range withInNegationPhrases {
+					if strings.Contains(prefix, phrase) {
+						isNegated = true
+						break
+					}
+				}
+			}
+			if !isNegated {
 				return true
 			}
 		}
