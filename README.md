@@ -130,10 +130,11 @@ The interactive terminal UI (`roborev tui`) provides a real-time view of the rev
 | `a` | Toggle addressed |
 | `x` | Cancel running/queued job |
 | `f` | Filter by repository |
-| `Esc` | Clear filter |
+| `h` | Hide addressed/failed/canceled |
+| `Esc` | Clear all filters |
 | `q` | Quit |
 
-Show just reviews for a single project via the filter modal with `f`
+Filter to a single repository with `f`, or hide completed reviews with `h` to focus on items needing attention
 
 <img src="docs/screenshots/tui-filter.png" width="75%" alt="Filter Modal">
 
@@ -147,6 +148,8 @@ Show just reviews for a single project via the filter modal with `f`
 | `a` | Toggle addressed |
 | `p` | Switch between review/prompt |
 | `Esc`, `q` | Back to queue |
+
+Reviews display a **Verdict** (Pass/Fail) parsed from the AI response, with color coding for quick triage.
 
 <img src="docs/screenshots/tui-review.png" width="75%" alt="Review View">
 
