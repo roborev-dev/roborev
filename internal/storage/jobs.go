@@ -68,6 +68,7 @@ func hasCaveat(s string) bool {
 	normalized = strings.ReplaceAll(normalized, "—", "|")
 	normalized = strings.ReplaceAll(normalized, "–", "|")
 	normalized = strings.ReplaceAll(normalized, ";", "|")
+	normalized = strings.ReplaceAll(normalized, ", ", "|")
 	normalized = strings.ReplaceAll(normalized, ". ", "|")
 	normalized = strings.ReplaceAll(normalized, "? ", "|")
 	normalized = strings.ReplaceAll(normalized, "! ", "|")
@@ -176,24 +177,17 @@ func checkClauseForCaveat(clause string) bool {
 		"has issues", "has problems", "have issues", "have problems",
 		"has vulnerabilit", "have vulnerabilit",
 	}
-	// Negators must appear immediately before the pattern (prefix ends with negator)
-	contextNegationPrefixes := []string{"no ", "no more ", "don't ", "doesn't "}
+	// Negators must appear near the pattern (within last 3 words, allowing adjectives)
+	contextNegators := []string{"no", "don't", "doesn't"}
 	for _, pattern := range contextualPatterns {
 		if idx := strings.Index(lc, pattern); idx >= 0 {
-			// Check if immediately preceded by negation
-			start := idx - 15
+			// Check if preceded by negation within last few words
+			start := idx - 30
 			if start < 0 {
 				start = 0
 			}
-			prefix := lc[start:idx]
-			isNegated := false
-			for _, neg := range contextNegationPrefixes {
-				if strings.HasSuffix(prefix, neg) {
-					isNegated = true
-					break
-				}
-			}
-			if !isNegated {
+			prefix := strings.TrimSpace(lc[start:idx])
+			if !hasNegatorInLastWords(prefix, contextNegators, 3) {
 				return true
 			}
 		}
@@ -201,24 +195,16 @@ func checkClauseForCaveat(clause string) bool {
 	// Check "issues/problems with/in" but only if not negated
 	withInPatterns := []string{"issues with", "problems with", "issue with", "problem with",
 		"issues in", "problems in", "issue in", "problem in"}
-	withInNegationPrefixes := []string{"no ", "didn't find ", "didn't find any ", "did not find ",
-		"did not find any ", "found no ", "not find ", "not find any "}
+	withInNegators := []string{"no", "not", "didn't", "found"}
 	for _, pattern := range withInPatterns {
 		if idx := strings.Index(lc, pattern); idx >= 0 {
-			// Check if immediately preceded by negation
-			start := idx - 25
+			// Check if preceded by negation within last few words
+			start := idx - 30
 			if start < 0 {
 				start = 0
 			}
-			prefix := lc[start:idx]
-			isNegated := false
-			for _, neg := range withInNegationPrefixes {
-				if strings.HasSuffix(prefix, neg) {
-					isNegated = true
-					break
-				}
-			}
-			if !isNegated {
+			prefix := strings.TrimSpace(lc[start:idx])
+			if !hasNegatorInLastWords(prefix, withInNegators, 4) {
 				return true
 			}
 		}
@@ -337,6 +323,33 @@ func isNegated(words []string, i int) bool {
 			}
 			return true
 		}
+	}
+	return false
+}
+
+// hasNegatorInLastWords checks if any negator appears in the last n words of the prefix.
+// This allows adjectives between negator and pattern (e.g., "no significant issues").
+// Stops at clause boundaries (punctuation like comma, semicolon).
+func hasNegatorInLastWords(prefix string, negators []string, n int) bool {
+	words := strings.Fields(prefix)
+	if len(words) == 0 {
+		return false
+	}
+	// Check last n words, but stop at clause boundaries
+	checked := 0
+	for i := len(words) - 1; i >= 0 && checked < n; i-- {
+		raw := words[i]
+		// Stop at clause boundaries (words ending with comma, semicolon, etc.)
+		if strings.ContainsAny(raw, ",;:") {
+			break
+		}
+		w := strings.Trim(raw, ".,;:!?()[]\"'")
+		for _, neg := range negators {
+			if w == neg {
+				return true
+			}
+		}
+		checked++
 	}
 	return false
 }

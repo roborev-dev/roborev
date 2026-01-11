@@ -255,6 +255,31 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "no significant issues remain is pass",
+			output: "No issues found. No significant issues remain.",
+			want:   "P",
+		},
+		{
+			name:   "no known issues exist is pass",
+			output: "No issues found. No known issues exist.",
+			want:   "P",
+		},
+		{
+			name:   "no open issues remain is pass",
+			output: "No issues found. No open issues remain.",
+			want:   "P",
+		},
+		{
+			name:   "found no critical issues with module is pass",
+			output: "No issues found. Found no critical issues with the module.",
+			want:   "P",
+		},
+		{
+			name:   "didn't find any major issues in code is pass",
+			output: "No issues found. I didn't find any major issues in the code.",
+			want:   "P",
+		},
+		{
 			name:   "found colon with spaces normalized",
 			output: "No issues found. Found:   a bug.",
 			want:   "F",
