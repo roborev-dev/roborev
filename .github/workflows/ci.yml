@@ -59,4 +59,4 @@ jobs:
         run: nix build
 
       - name: Verify binary
-        run: ./result/bin/roborev --version
+        run: ./result/bin/roborev version
