@@ -158,8 +158,25 @@ func GetMainRepoRoot(path string) (string, error) {
 	// Only apply worktree resolution if git-dir differs from common-dir
 	// This ensures submodules (where both are the same) use GetRepoRoot
 	if gitDir != commonDir {
-		// This is a worktree - return parent of common dir (main repo root)
-		return filepath.Dir(commonDir), nil
+		// This is a worktree. For regular worktrees, commonDir ends with ".git"
+		// and the main repo is its parent. For submodule worktrees, commonDir
+		// is inside .git/modules/ and we need to read the core.worktree config.
+		if filepath.Base(commonDir) == ".git" {
+			// Regular worktree - parent of .git is the repo root
+			return filepath.Dir(commonDir), nil
+		}
+
+		// Submodule worktree - read core.worktree from config
+		cmd := exec.Command("git", "config", "--file", filepath.Join(commonDir, "config"), "core.worktree")
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("git config core.worktree for submodule worktree: %w", err)
+		}
+		worktree := strings.TrimSpace(string(out))
+		if !filepath.IsAbs(worktree) {
+			worktree = filepath.Join(commonDir, worktree)
+		}
+		return filepath.Clean(worktree), nil
 	}
 
 	// Regular repo or submodule - use standard resolution

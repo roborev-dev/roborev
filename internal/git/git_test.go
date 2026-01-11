@@ -331,6 +331,11 @@ func TestGetMainRepoRoot(t *testing.T) {
 		}
 
 		submoduleDir := filepath.Join(parentDir, "mysub")
+		// Resolve symlinks for comparison (macOS: /var -> /private/var)
+		submoduleDirResolved, _ := filepath.EvalSymlinks(submoduleDir)
+		if submoduleDirResolved == "" {
+			submoduleDirResolved = submoduleDir
+		}
 
 		// GetMainRepoRoot on submodule should return submodule path, not parent
 		subRoot, err := GetMainRepoRoot(submoduleDir)
@@ -347,9 +352,102 @@ func TestGetMainRepoRoot(t *testing.T) {
 			t.Errorf("submodule root should be distinct from parent: sub=%s parent=%s", subRoot, parentRoot)
 		}
 
-		// Submodule root should be the submodule directory
-		if subRoot != submoduleDir {
+		// Submodule root should be the submodule directory (compare resolved paths)
+		subRootResolved, _ := filepath.EvalSymlinks(subRoot)
+		if subRootResolved == "" {
+			subRootResolved = subRoot
+		}
+		if subRootResolved != submoduleDirResolved {
 			t.Errorf("GetMainRepoRoot on submodule returned %s, expected %s", subRoot, submoduleDir)
+		}
+	})
+
+	t.Run("worktree from submodule returns submodule root", func(t *testing.T) {
+		// This tests the scenario where a worktree is created from within a submodule.
+		// The worktree should resolve to the submodule's root, not the parent repo.
+
+		// Create parent repo
+		parentDir := t.TempDir()
+		cmd := exec.Command("git", "init")
+		cmd.Dir = parentDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init parent failed: %v\n%s", err, out)
+		}
+		exec.Command("git", "-C", parentDir, "config", "user.email", "test@test.com").Run()
+		exec.Command("git", "-C", parentDir, "config", "user.name", "Test").Run()
+		exec.Command("git", "-C", parentDir, "config", "protocol.file.allow", "always").Run()
+
+		// Create initial commit in parent
+		if err := os.WriteFile(filepath.Join(parentDir, "parent.txt"), []byte("parent"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		exec.Command("git", "-C", parentDir, "add", ".").Run()
+		exec.Command("git", "-C", parentDir, "commit", "-m", "parent initial").Run()
+
+		// Create a separate repo to use as submodule source
+		subSourceDir := t.TempDir()
+		cmd = exec.Command("git", "init")
+		cmd.Dir = subSourceDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init sub source failed: %v\n%s", err, out)
+		}
+		exec.Command("git", "-C", subSourceDir, "config", "user.email", "test@test.com").Run()
+		exec.Command("git", "-C", subSourceDir, "config", "user.name", "Test").Run()
+		if err := os.WriteFile(filepath.Join(subSourceDir, "sub.txt"), []byte("sub"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		exec.Command("git", "-C", subSourceDir, "add", ".").Run()
+		exec.Command("git", "-C", subSourceDir, "commit", "-m", "sub initial").Run()
+
+		// Add submodule to parent
+		cmd = exec.Command("git", "-c", "protocol.file.allow=always", "submodule", "add", subSourceDir, "mysub")
+		cmd.Dir = parentDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git submodule add failed: %v\n%s", err, out)
+		}
+		exec.Command("git", "-C", parentDir, "add", ".").Run()
+		exec.Command("git", "-C", parentDir, "commit", "-m", "add submodule").Run()
+
+		submoduleDir := filepath.Join(parentDir, "mysub")
+
+		// Create a worktree from within the submodule
+		worktreeDir := t.TempDir()
+		cmd = exec.Command("git", "worktree", "add", worktreeDir, "-b", "sub-wt-branch")
+		cmd.Dir = submoduleDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git worktree add from submodule failed: %v\n%s", err, out)
+		}
+		defer exec.Command("git", "-C", submoduleDir, "worktree", "remove", worktreeDir).Run()
+
+		// GetMainRepoRoot from the submodule's worktree should return the submodule root
+		wtRoot, err := GetMainRepoRoot(worktreeDir)
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot on submodule worktree failed: %v", err)
+		}
+
+		// It should match the submodule directory, not parent or .git/modules path
+		subRoot, err := GetMainRepoRoot(submoduleDir)
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot on submodule failed: %v", err)
+		}
+
+		if wtRoot != subRoot {
+			t.Errorf("worktree from submodule should return submodule root: wt=%s sub=%s", wtRoot, subRoot)
+		}
+
+		// It should NOT return the parent repo root
+		parentRoot, err := GetMainRepoRoot(parentDir)
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot on parent failed: %v", err)
+		}
+
+		if wtRoot == parentRoot {
+			t.Errorf("worktree from submodule should NOT return parent root: wt=%s parent=%s", wtRoot, parentRoot)
+		}
+
+		// The root should be an actual directory that exists
+		if info, err := os.Stat(wtRoot); err != nil || !info.IsDir() {
+			t.Errorf("GetMainRepoRoot returned invalid path: %s", wtRoot)
 		}
 	})
 
