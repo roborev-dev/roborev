@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -750,13 +751,13 @@ Examples:
 
 			// Build URL with optional repo filter
 			addr := getDaemonAddr()
-			url := addr + "/api/stream/events"
+			streamURL := addr + "/api/stream/events"
 			if repoFilter != "" {
-				url += "?repo=" + repoFilter
+				streamURL += "?" + url.Values{"repo": {repoFilter}}.Encode()
 			}
 
 			// Create request
-			req, err := http.NewRequest("GET", url, nil)
+			req, err := http.NewRequest("GET", streamURL, nil)
 			if err != nil {
 				return fmt.Errorf("create request: %w", err)
 			}
