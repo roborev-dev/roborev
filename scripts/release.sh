@@ -2,6 +2,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 VERSION="$1"
 EXTRA_INSTRUCTIONS="$2"
@@ -32,6 +33,72 @@ if ! git diff-index --quiet HEAD --; then
     echo "Error: You have uncommitted changes. Please commit or stash them first."
     exit 1
 fi
+
+# Update nix flake version and vendorHash
+update_nix_flake() {
+    local FLAKE_FILE="$REPO_ROOT/flake.nix"
+
+    if [ ! -f "$FLAKE_FILE" ]; then
+        echo "Warning: flake.nix not found, skipping nix update"
+        return 0
+    fi
+
+    echo "Updating flake.nix version to $VERSION..."
+    sed -i.bak "s/version = \"[^\"]*\"/version = \"$VERSION\"/" "$FLAKE_FILE"
+    rm -f "$FLAKE_FILE.bak"
+
+    # Check if vendorHash needs updating (only if go.mod changed since last release)
+    if command -v nix &> /dev/null; then
+        echo "Checking if vendorHash needs updating..."
+
+        # Temporarily set vendorHash to empty to get the correct hash
+        local OLD_HASH=$(grep 'vendorHash = "' "$FLAKE_FILE" | sed 's/.*vendorHash = "\([^"]*\)".*/\1/')
+        sed -i.bak 's/vendorHash = "[^"]*"/vendorHash = ""/' "$FLAKE_FILE"
+
+        # Try to build and capture the expected hash
+        echo "Running nix build to compute vendorHash (this may take a moment)..."
+        local NIX_OUTPUT
+        if NIX_OUTPUT=$(nix build 2>&1); then
+            # Build succeeded with empty hash - dependencies might be empty or cached
+            echo "Build succeeded, keeping existing vendorHash"
+            sed -i.bak "s/vendorHash = \"\"/vendorHash = \"$OLD_HASH\"/" "$FLAKE_FILE"
+        else
+            # Extract the expected hash from the error message
+            local NEW_HASH=$(echo "$NIX_OUTPUT" | grep -o 'sha256-[A-Za-z0-9+/=]*' | tail -1)
+            if [ -n "$NEW_HASH" ]; then
+                echo "Updating vendorHash to $NEW_HASH"
+                sed -i.bak "s/vendorHash = \"\"/vendorHash = \"$NEW_HASH\"/" "$FLAKE_FILE"
+            else
+                echo "Warning: Could not determine new vendorHash, restoring old value"
+                sed -i.bak "s/vendorHash = \"\"/vendorHash = \"$OLD_HASH\"/" "$FLAKE_FILE"
+            fi
+        fi
+        rm -f "$FLAKE_FILE.bak"
+
+        # Verify the build works
+        echo "Verifying nix build..."
+        if ! nix build 2>/dev/null; then
+            echo "Error: nix build failed after updating flake.nix"
+            echo "Please fix flake.nix manually and try again"
+            git checkout "$FLAKE_FILE"
+            exit 1
+        fi
+        echo "Nix build successful!"
+    else
+        echo "Warning: nix not installed, cannot verify vendorHash"
+        echo "If go.mod changed, you may need to update vendorHash manually"
+    fi
+
+    # Commit flake.nix changes if any
+    if ! git diff --quiet "$FLAKE_FILE"; then
+        echo "Committing flake.nix updates..."
+        git add "$FLAKE_FILE"
+        git commit -m "Update flake.nix for v$VERSION"
+    fi
+}
+
+# Update nix flake before creating the release
+update_nix_flake
 
 # Create a temp file for the changelog
 CHANGELOG_FILE=$(mktemp)
