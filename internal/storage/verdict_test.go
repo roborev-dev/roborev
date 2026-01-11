@@ -280,6 +280,16 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "not finding issues with is pass",
+			output: "No issues found. Not finding issues with the code.",
+			want:   "P",
+		},
+		{
+			name:   "did not see issues in module is pass",
+			output: "No issues found. I did not see issues in the module.",
+			want:   "P",
+		},
+		{
 			name:   "found colon with spaces normalized",
 			output: "No issues found. Found:   a bug.",
 			want:   "F",
@@ -449,6 +459,11 @@ func TestParseVerdict(t *testing.T) {
 		{
 			name:   "not only issues with is caveat",
 			output: "No issues found. Not only issues with X but also Y.",
+			want:   "F",
+		},
+		{
+			name:   "distant negation does not negate later issues with",
+			output: "No issues found. I did not find issues in the first run and there are issues with logging.",
 			want:   "F",
 		},
 

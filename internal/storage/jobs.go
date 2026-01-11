@@ -197,8 +197,6 @@ func checkClauseForCaveat(clause string) bool {
 		"issues in", "problems in", "issue in", "problem in"}
 	// Simple negators that work as single tokens
 	withInNegators := []string{"no", "didn't"}
-	// Phrase patterns that indicate negation (checked separately)
-	withInNegationPhrases := []string{"did not find", "could not find", "cannot find", "can't find"}
 	for _, pattern := range withInPatterns {
 		if idx := strings.Index(lc, pattern); idx >= 0 {
 			// Check if preceded by negation within last few words
@@ -209,13 +207,8 @@ func checkClauseForCaveat(clause string) bool {
 			prefix := strings.TrimSpace(lc[start:idx])
 			isNegated := hasNegatorInLastWords(prefix, withInNegators, 4)
 			if !isNegated {
-				// Also check for negation phrases
-				for _, phrase := range withInNegationPhrases {
-					if strings.Contains(prefix, phrase) {
-						isNegated = true
-						break
-					}
-				}
+				// Check for "not" followed by verb in last few words
+				isNegated = hasNotVerbPattern(prefix)
 			}
 			if !isNegated {
 				return true
@@ -360,6 +353,37 @@ func hasNegatorInLastWords(prefix string, negators []string, n int) bool {
 		for _, neg := range negators {
 			if w == neg {
 				return true
+			}
+		}
+		checked++
+	}
+	return false
+}
+
+// hasNotVerbPattern checks if the last few words contain "not" followed by a verb like "find".
+// This handles patterns like "did not find", "could not find", "not finding", "not see".
+func hasNotVerbPattern(prefix string) bool {
+	words := strings.Fields(prefix)
+	if len(words) < 2 {
+		return false
+	}
+	// Only check last 5 words, stop at clause boundaries
+	checked := 0
+	for i := len(words) - 1; i >= 1 && checked < 5; i-- {
+		raw := words[i]
+		if strings.ContainsAny(raw, ",;:") {
+			break
+		}
+		w := strings.Trim(raw, ".,;:!?()[]\"'")
+		prevRaw := words[i-1]
+		prev := strings.Trim(prevRaw, ".,;:!?()[]\"'")
+		// Check for "not" followed by verb
+		if prev == "not" {
+			verbs := []string{"find", "finding", "found", "see", "seeing", "detect", "detecting", "have"}
+			for _, v := range verbs {
+				if w == v {
+					return true
+				}
 			}
 		}
 		checked++
