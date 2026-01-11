@@ -147,8 +147,9 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve repo root
-	repoRoot, err := git.GetRepoRoot(req.RepoPath)
+	// Resolve repo root - use GetMainRepoRoot to handle worktrees correctly
+	// This ensures worktrees are associated with their main repository
+	repoRoot, err := git.GetMainRepoRoot(req.RepoPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("not a git repository: %v", err))
 		return

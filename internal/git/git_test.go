@@ -207,6 +207,88 @@ func TestIsRebaseInProgress(t *testing.T) {
 	})
 }
 
+func TestGetMainRepoRoot(t *testing.T) {
+	// Create a temp git repo
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	// Configure git user for commits
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").Run()
+
+	t.Run("regular repo returns same as GetRepoRoot", func(t *testing.T) {
+		mainRoot, err := GetMainRepoRoot(tmpDir)
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		repoRoot, err := GetRepoRoot(tmpDir)
+		if err != nil {
+			t.Fatalf("GetRepoRoot failed: %v", err)
+		}
+
+		if mainRoot != repoRoot {
+			t.Errorf("GetMainRepoRoot returned %s, expected %s (same as GetRepoRoot)", mainRoot, repoRoot)
+		}
+	})
+
+	t.Run("worktree returns main repo root", func(t *testing.T) {
+		// Create initial commit so we can create a worktree
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+		exec.Command("git", "-C", tmpDir, "commit", "-m", "initial").Run()
+
+		// Create a worktree
+		worktreeDir := t.TempDir()
+		cmd := exec.Command("git", "-C", tmpDir, "worktree", "add", worktreeDir, "-b", "worktree-branch")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git worktree add failed: %v\n%s", err, out)
+		}
+		defer exec.Command("git", "-C", tmpDir, "worktree", "remove", worktreeDir).Run()
+
+		// GetRepoRoot from worktree returns the worktree path
+		worktreeRoot, err := GetRepoRoot(worktreeDir)
+		if err != nil {
+			t.Fatalf("GetRepoRoot on worktree failed: %v", err)
+		}
+
+		// Worktree root should be different from main repo
+		mainRepoRoot, err := GetRepoRoot(tmpDir)
+		if err != nil {
+			t.Fatalf("GetRepoRoot on main repo failed: %v", err)
+		}
+
+		if worktreeRoot == mainRepoRoot {
+			t.Skip("worktree root equals main repo root - older git version")
+		}
+
+		// GetMainRepoRoot from worktree should return the main repo root
+		mainRoot, err := GetMainRepoRoot(worktreeDir)
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot on worktree failed: %v", err)
+		}
+
+		if mainRoot != mainRepoRoot {
+			t.Errorf("GetMainRepoRoot on worktree returned %s, expected %s", mainRoot, mainRepoRoot)
+		}
+	})
+
+	t.Run("non-repo returns error", func(t *testing.T) {
+		nonRepo := t.TempDir()
+		_, err := GetMainRepoRoot(nonRepo)
+		if err == nil {
+			t.Error("expected error for non-repo")
+		}
+	})
+}
+
 func TestGetBranchName(t *testing.T) {
 	// Create a temp git repo
 	tmpDir := t.TempDir()
