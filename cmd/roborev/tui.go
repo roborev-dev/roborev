@@ -817,6 +817,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if job.Status == storage.JobStatusDone {
 						return m, m.fetchReview(job.ID)
 					} else if job.Status == storage.JobStatusFailed {
+						m.currentBranch = "" // Clear stale branch from previous review
 						m.currentReview = &storage.Review{
 							Agent:  job.Agent,
 							Output: "Job failed:\n\n" + job.Error,
@@ -871,6 +872,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if job.Status == storage.JobStatusDone {
 						return m, m.fetchReview(job.ID)
 					} else if job.Status == storage.JobStatusFailed {
+						m.currentBranch = "" // Clear stale branch from previous review
 						m.currentReview = &storage.Review{
 							Agent:  job.Agent,
 							Output: "Job failed:\n\n" + job.Error,
@@ -932,6 +934,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.fetchReview(job.ID)
 				} else if job.Status == storage.JobStatusFailed {
 					// Show error inline for failed jobs
+					m.currentBranch = "" // Clear stale branch from previous review
 					m.currentReview = &storage.Review{
 						Agent:  job.Agent,
 						Output: "Job failed:\n\n" + job.Error,

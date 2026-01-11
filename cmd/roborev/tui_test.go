@@ -3314,3 +3314,98 @@ func TestTUIRenderReviewViewVerdictOnLine2(t *testing.T) {
 		t.Errorf("Third line should contain content 'Line 1', got: %s", lines[2])
 	}
 }
+
+func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
+	// Test that navigating from a successful review with branch to a failed job clears the branch
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentBranch = "main" // Cached from previous review
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Set up jobs: current is done (idx 0), next is failed (idx 1)
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, GitRef: "abc123"},
+		{ID: 2, Status: storage.JobStatusFailed, GitRef: "def456", Error: "some error"},
+	}
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Output: "Good review",
+		Job:    &m.jobs[0],
+	}
+
+	// Navigate down to failed job (j or down key in review view)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m2 := updated.(tuiModel)
+
+	// Branch should be cleared
+	if m2.currentBranch != "" {
+		t.Errorf("Expected currentBranch to be cleared when navigating to failed job, got '%s'", m2.currentBranch)
+	}
+
+	// Should still be in review view showing the failed job
+	if m2.currentView != tuiViewReview {
+		t.Errorf("Expected to stay in review view, got %d", m2.currentView)
+	}
+	if m2.currentReview == nil || !strings.Contains(m2.currentReview.Output, "Job failed") {
+		t.Error("Expected currentReview to show failed job error")
+	}
+}
+
+func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
+	// Test that pressing Enter on a failed job clears the branch
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewQueue
+	m.currentBranch = "feature/old" // Stale from previous review
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusFailed, GitRef: "abc123", Error: "build failed"},
+	}
+
+	// Press Enter to view the failed job
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := updated.(tuiModel)
+
+	// Branch should be cleared
+	if m2.currentBranch != "" {
+		t.Errorf("Expected currentBranch to be cleared for failed job, got '%s'", m2.currentBranch)
+	}
+
+	// Should show review view with error
+	if m2.currentView != tuiViewReview {
+		t.Errorf("Expected review view, got %d", m2.currentView)
+	}
+}
+
+func TestTUIRenderFailedJobNoBranchShown(t *testing.T) {
+	// Test that failed jobs don't show stale branch in rendered output
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentBranch = "" // Should be cleared
+	m.currentReview = &storage.Review{
+		Agent:  "codex",
+		Output: "Job failed:\n\nsome error",
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc1234",
+			RepoName: "myrepo",
+			Agent:    "codex",
+			Status:   storage.JobStatusFailed,
+		},
+	}
+
+	output := m.View()
+
+	// Should NOT contain "on " when branch is cleared
+	if strings.Contains(output, " on ") {
+		t.Error("Failed job should not show branch in output")
+	}
+}
