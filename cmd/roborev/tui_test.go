@@ -3243,3 +3243,74 @@ func TestTUIRenderReviewViewNoBranchForRange(t *testing.T) {
 		t.Error("Expected output to contain the range ref")
 	}
 }
+
+func TestTUIRenderReviewViewNoBlankLineWithoutVerdict(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Output: "Line 1\nLine 2\nLine 3",
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc1234",
+			RepoName: "myrepo",
+			Agent:    "codex",
+			Verdict:  nil, // No verdict
+		},
+	}
+
+	output := m.View()
+	lines := strings.Split(output, "\n")
+
+	// First line should be the title
+	if !strings.Contains(lines[0], "Review") {
+		t.Errorf("First line should contain 'Review', got: %s", lines[0])
+	}
+
+	// Second line should be content (Line 1), not blank
+	if len(lines) > 1 && strings.TrimSpace(lines[1]) == "" {
+		t.Error("Second line should not be blank when no verdict is present")
+	}
+	if len(lines) > 1 && !strings.Contains(lines[1], "Line 1") {
+		t.Errorf("Second line should contain content 'Line 1', got: %s", lines[1])
+	}
+}
+
+func TestTUIRenderReviewViewVerdictOnLine2(t *testing.T) {
+	verdictPass := "P"
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Output: "Line 1\nLine 2\nLine 3",
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc1234",
+			RepoName: "myrepo",
+			Agent:    "codex",
+			Verdict:  &verdictPass,
+		},
+	}
+
+	output := m.View()
+	lines := strings.Split(output, "\n")
+
+	// First line should be the title
+	if !strings.Contains(lines[0], "Review") {
+		t.Errorf("First line should contain 'Review', got: %s", lines[0])
+	}
+
+	// Second line should be the verdict
+	if len(lines) > 1 && !strings.Contains(lines[1], "Verdict") {
+		t.Errorf("Second line should contain 'Verdict', got: %s", lines[1])
+	}
+
+	// Third line should be content
+	if len(lines) > 2 && !strings.Contains(lines[2], "Line 1") {
+		t.Errorf("Third line should contain content 'Line 1', got: %s", lines[2])
+	}
+}

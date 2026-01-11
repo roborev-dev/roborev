@@ -1667,18 +1667,19 @@ func (m tuiModel) renderReviewView() string {
 			b.WriteString(" ")
 			b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
 		}
-		b.WriteString("\n")
 
-		// Show verdict on line 2
-		if review.Job.Verdict != nil && *review.Job.Verdict != "" {
+		// Show verdict on line 2 (only if present)
+		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != ""
+		if hasVerdict {
+			b.WriteString("\n")
 			v := *review.Job.Verdict
 			if v == "P" {
 				b.WriteString(tuiPassStyle.Render("Verdict: Pass"))
 			} else {
 				b.WriteString(tuiFailStyle.Render("Verdict: Fail"))
 			}
-			b.WriteString("\n")
 		}
+		b.WriteString("\n")
 	} else {
 		b.WriteString(tuiTitleStyle.Render("Review"))
 		b.WriteString("\n")
@@ -1688,7 +1689,12 @@ func (m tuiModel) renderReviewView() string {
 	wrapWidth := max(20, min(m.width-4, 200))
 	lines := wrapText(review.Output, wrapWidth)
 
-	visibleLines := m.height - 6 // Leave room for title, verdict, and help
+	// Header height: title (1) + verdict if present (1) + help (2) + scroll indicator (1) = 5 or 6
+	headerHeight := 5
+	if review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" {
+		headerHeight = 6
+	}
+	visibleLines := m.height - headerHeight
 
 	start := m.reviewScroll
 	if start >= len(lines) {
