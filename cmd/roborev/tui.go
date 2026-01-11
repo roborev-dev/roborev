@@ -1659,27 +1659,28 @@ func (m tuiModel) renderReviewView() string {
 			b.WriteString(" ")
 			b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
 		}
+		b.WriteString("\n")
 
-		// Show verdict with color
+		// Show verdict on line 2
 		if review.Job.Verdict != nil && *review.Job.Verdict != "" {
-			b.WriteString(" ")
 			v := *review.Job.Verdict
 			if v == "P" {
 				b.WriteString(tuiPassStyle.Render("Verdict: Pass"))
 			} else {
 				b.WriteString(tuiFailStyle.Render("Verdict: Fail"))
 			}
+			b.WriteString("\n")
 		}
 	} else {
 		b.WriteString(tuiTitleStyle.Render("Review"))
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 
 	// Wrap text to terminal width minus padding
 	wrapWidth := max(20, min(m.width-4, 200))
 	lines := wrapText(review.Output, wrapWidth)
 
-	visibleLines := m.height - 5 // Leave room for title and help
+	visibleLines := m.height - 6 // Leave room for title, verdict, and help
 
 	start := m.reviewScroll
 	if start >= len(lines) {
