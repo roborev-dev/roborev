@@ -58,7 +58,7 @@ update_nix_flake() {
         # Try to build and capture the expected hash
         echo "Running nix build to compute vendorHash (this may take a moment)..."
         local NIX_OUTPUT
-        if NIX_OUTPUT=$(nix build 2>&1); then
+        if NIX_OUTPUT=$(nix build "$REPO_ROOT" 2>&1); then
             # Build succeeded with empty hash - dependencies might be empty or cached
             echo "Build succeeded, keeping existing vendorHash"
             sed -i.bak "s/vendorHash = \"\"/vendorHash = \"$OLD_HASH\"/" "$FLAKE_FILE"
@@ -77,10 +77,10 @@ update_nix_flake() {
 
         # Verify the build works
         echo "Verifying nix build..."
-        if ! nix build 2>/dev/null; then
+        if ! nix build "$REPO_ROOT" 2>/dev/null; then
             echo "Error: nix build failed after updating flake.nix"
             echo "Please fix flake.nix manually and try again"
-            git checkout "$FLAKE_FILE"
+            git -C "$REPO_ROOT" checkout -- flake.nix
             exit 1
         fi
         echo "Nix build successful!"
@@ -90,10 +90,10 @@ update_nix_flake() {
     fi
 
     # Commit flake.nix changes if any
-    if ! git diff --quiet "$FLAKE_FILE"; then
+    if ! git -C "$REPO_ROOT" diff --quiet -- flake.nix; then
         echo "Committing flake.nix updates..."
-        git add "$FLAKE_FILE"
-        git commit -m "Update flake.nix for v$VERSION"
+        git -C "$REPO_ROOT" add flake.nix
+        git -C "$REPO_ROOT" commit -m "Update flake.nix for v$VERSION"
     fi
 }
 
