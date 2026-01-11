@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -48,6 +50,7 @@ func main() {
 	rootCmd.AddCommand(installHookCmd())
 	rootCmd.AddCommand(uninstallHookCmd())
 	rootCmd.AddCommand(daemonCmd())
+	rootCmd.AddCommand(streamCmd())
 	rootCmd.AddCommand(tuiCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())
@@ -712,6 +715,97 @@ func addressCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&unaddress, "unaddress", false, "mark as unaddressed instead")
+
+	return cmd
+}
+
+func streamCmd() *cobra.Command {
+	var repoFilter string
+
+	cmd := &cobra.Command{
+		Use:   "stream",
+		Short: "Stream review events in real-time",
+		Long: `Stream review events from the daemon in real-time.
+
+Events are printed as JSONL (one JSON object per line).
+
+Examples:
+  roborev stream              # Stream all events
+  roborev stream --repo .     # Stream events for current repo only
+`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Ensure daemon is running
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("daemon not running: %w", err)
+			}
+
+			// Resolve repo filter if set
+			if repoFilter != "" {
+				root, err := git.GetRepoRoot(repoFilter)
+				if err != nil {
+					return fmt.Errorf("resolve repo path: %w", err)
+				}
+				repoFilter = root
+			}
+
+			// Build URL with optional repo filter
+			addr := getDaemonAddr()
+			url := addr + "/api/stream/events"
+			if repoFilter != "" {
+				url += "?repo=" + repoFilter
+			}
+
+			// Create request
+			req, err := http.NewRequest("GET", url, nil)
+			if err != nil {
+				return fmt.Errorf("create request: %w", err)
+			}
+
+			// Set up context for Ctrl+C handling
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			req = req.WithContext(ctx)
+
+			// Handle Ctrl+C
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, os.Interrupt)
+			go func() {
+				<-sigCh
+				cancel()
+			}()
+
+			// Make request
+			client := &http.Client{Timeout: 0} // No timeout for streaming
+			resp, err := client.Do(req)
+			if err != nil {
+				return fmt.Errorf("connect to daemon: %w", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("stream failed: %s", body)
+			}
+
+			// Stream events
+			decoder := json.NewDecoder(resp.Body)
+			for {
+				var event daemon.Event
+				if err := decoder.Decode(&event); err != nil {
+					if err == io.EOF || ctx.Err() != nil {
+						return nil
+					}
+					return fmt.Errorf("decode event: %w", err)
+				}
+
+				// Print event as JSON line
+				data, _ := json.Marshal(event)
+				fmt.Println(string(data))
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&repoFilter, "repo", "", "filter events by repository path")
 
 	return cmd
 }

@@ -60,7 +60,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 
 	// Compute verdict from review output (only if output exists and no error)
 	if r.Output != "" && job.Error == "" {
-		verdict := parseVerdict(r.Output)
+		verdict := ParseVerdict(r.Output)
 		job.Verdict = &verdict
 	}
 
@@ -128,7 +128,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 
 	// Compute verdict from review output (only if output exists and no error)
 	if r.Output != "" && job.Error == "" {
-		verdict := parseVerdict(r.Output)
+		verdict := ParseVerdict(r.Output)
 		job.Verdict = &verdict
 	}
 

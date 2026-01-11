@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// parseVerdict extracts P (pass) or F (fail) from review output.
+// ParseVerdict extracts P (pass) or F (fail) from review output.
 // Returns "P" only if a clear pass indicator appears at the start of a line.
 // Rejects lines containing caveats like "but", "however", "except".
-func parseVerdict(output string) string {
+func ParseVerdict(output string) string {
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(strings.ToLower(line))
 		// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
@@ -718,7 +718,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			j.Addressed = &val
 		}
 		if output.Valid {
-			verdict := parseVerdict(output.String)
+			verdict := ParseVerdict(output.String)
 			j.Verdict = &verdict
 		}
 

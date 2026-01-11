@@ -19,6 +19,7 @@ type WorkerPool struct {
 	db            *storage.DB
 	cfg           *config.Config
 	promptBuilder *prompt.Builder
+	broadcaster   Broadcaster
 
 	numWorkers    int
 	activeWorkers atomic.Int32
@@ -35,11 +36,12 @@ type WorkerPool struct {
 }
 
 // NewWorkerPool creates a new worker pool
-func NewWorkerPool(db *storage.DB, cfg *config.Config, numWorkers int) *WorkerPool {
+func NewWorkerPool(db *storage.DB, cfg *config.Config, numWorkers int, broadcaster Broadcaster) *WorkerPool {
 	return &WorkerPool{
 		db:             db,
 		cfg:            cfg,
 		promptBuilder:  prompt.NewBuilder(db),
+		broadcaster:    broadcaster,
 		numWorkers:     numWorkers,
 		stopCh:         make(chan struct{}),
 		runningJobs:    make(map[int64]context.CancelFunc),
@@ -283,6 +285,18 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	log.Printf("[%s] Completed job %d", workerID, job.ID)
+
+	// Broadcast completion event
+	verdict := storage.ParseVerdict(output)
+	wp.broadcaster.Broadcast(Event{
+		Type:    "review.completed",
+		TS:      time.Now(),
+		JobID:   job.ID,
+		Repo:    job.RepoPath,
+		SHA:     job.GitRef,
+		Agent:   agentName,
+		Verdict: verdict,
+	})
 }
 
 // failOrRetry attempts to retry the job, or marks it as failed if max retries reached

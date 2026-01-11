@@ -43,7 +43,8 @@ func TestWorkerPoolE2E(t *testing.T) {
 	}
 
 	// Create and start worker pool
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 	pool.Start()
 
 	// Wait for job to complete (with timeout)
@@ -105,7 +106,8 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 		db.EnqueueJob(repo.ID, commit.ID, sha, "test")
 	}
 
-	pool := NewWorkerPool(db, cfg, 4)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 4, broadcaster)
 	pool.Start()
 
 	// Wait briefly and check active workers
@@ -144,7 +146,8 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
 
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 	pool.Start()
 	defer pool.Stop()
 
@@ -204,7 +207,8 @@ func TestWorkerPoolPendingCancellation(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.DefaultConfig()
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 
 	// Create a real job in 'running' state (simulating claimed but not yet registered)
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -270,7 +274,8 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.DefaultConfig()
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 
 	// Create and claim a job (simulating worker claimed but not yet registered)
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -345,7 +350,8 @@ func TestWorkerPoolCancelInvalidJob(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.DefaultConfig()
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 
 	// CancelJob for non-existent job should return false
 	if pool.CancelJob(99999) {
@@ -373,7 +379,8 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.DefaultConfig()
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 
 	// Create and claim a job
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -433,7 +440,8 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.DefaultConfig()
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 
 	// Create and claim a job
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -489,7 +497,8 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.DefaultConfig()
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 
 	repo, err := db.GetOrCreateRepo(tmpDir)
 	if err != nil {
@@ -548,7 +557,8 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.DefaultConfig()
-	pool := NewWorkerPool(db, cfg, 1)
+	broadcaster := NewBroadcaster()
+	pool := NewWorkerPool(db, cfg, 1, broadcaster)
 
 	repo, err := db.GetOrCreateRepo(tmpDir)
 	if err != nil {

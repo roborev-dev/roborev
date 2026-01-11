@@ -19,18 +19,21 @@ import (
 
 // Server is the HTTP API server for the daemon
 type Server struct {
-	db         *storage.DB
-	cfg        *config.Config
-	workerPool *WorkerPool
-	httpServer *http.Server
+	db          *storage.DB
+	cfg         *config.Config
+	broadcaster Broadcaster
+	workerPool  *WorkerPool
+	httpServer  *http.Server
 }
 
 // NewServer creates a new daemon server
 func NewServer(db *storage.DB, cfg *config.Config) *Server {
+	broadcaster := NewBroadcaster()
 	s := &Server{
-		db:         db,
-		cfg:        cfg,
-		workerPool: NewWorkerPool(db, cfg, cfg.MaxWorkers),
+		db:          db,
+		cfg:         cfg,
+		broadcaster: broadcaster,
+		workerPool:  NewWorkerPool(db, cfg, cfg.MaxWorkers, broadcaster),
 	}
 
 	mux := http.NewServeMux()
@@ -43,6 +46,7 @@ func NewServer(db *storage.DB, cfg *config.Config) *Server {
 	mux.HandleFunc("/api/respond", s.handleAddResponse)
 	mux.HandleFunc("/api/responses", s.handleListResponses)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/stream/events", s.handleStreamEvents)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
@@ -503,3 +507,49 @@ func (s *Server) handleAddressReview(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
+
+func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Optional repo filter
+	repoFilter := r.URL.Query().Get("repo")
+
+	// Set headers for streaming
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Get flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	// Subscribe to events
+	subID, eventCh := s.broadcaster.Subscribe(repoFilter)
+	defer s.broadcaster.Unsubscribe(subID)
+
+	// Stream events until client disconnects
+	encoder := json.NewEncoder(w)
+	for {
+		select {
+		case <-r.Context().Done():
+			// Client disconnected
+			return
+		case event, ok := <-eventCh:
+			if !ok {
+				// Channel closed (server shutdown)
+				return
+			}
+			if err := encoder.Encode(event); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+

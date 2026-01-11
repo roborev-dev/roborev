@@ -597,9 +597,9 @@ func TestParseVerdict(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseVerdict(tt.output)
+			got := ParseVerdict(tt.output)
 			if got != tt.want {
-				t.Errorf("parseVerdict() = %q, want %q", got, tt.want)
+				t.Errorf("ParseVerdict() = %q, want %q", got, tt.want)
 			}
 		})
 	}
