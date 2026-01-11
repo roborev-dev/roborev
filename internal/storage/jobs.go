@@ -85,11 +85,53 @@ func hasCaveat(s string) bool {
 func checkClauseForCaveat(clause string) bool {
 	// Normalize remaining punctuation
 	normalized := strings.ReplaceAll(clause, ",", " ")
+	lc := strings.ToLower(normalized)
+
+	// Check for "found <issue>" pattern - runs unconditionally since it's specific enough
+	// to avoid false positives (requires "found" + quantifier/adjective + issue keyword)
+	issueKeywords := []string{
+		"issue", "issues", "bug", "bugs", "error", "errors",
+		"crash", "crashes", "panic", "panics", "fail", "failure", "failures",
+		"break", "breaks", "race", "races", "problem", "problems",
+		"vulnerability", "vulnerabilities",
+	}
+	quantifiers := []string{"", "a ", "an ", "the ", "some ", "multiple ", "several ", "many ", "a few ", "few ", "two ", "three ", "various ", "numerous "}
+	adjectives := []string{"", "critical ", "severe ", "serious ", "major ", "minor ", "potential ", "possible ", "obvious ", "subtle ", "important ", "significant "}
+
+	remaining := lc
+	for {
+		idx := strings.Index(remaining, " found ")
+		if idx < 0 {
+			break
+		}
+		afterFound := remaining[idx+7:] // after " found "
+		remaining = afterFound          // continue scanning from here
+
+		// Skip if negated (found no/none/nothing/0/zero/without)
+		isNegated := strings.HasPrefix(afterFound, "no ") ||
+			strings.HasPrefix(afterFound, "none") ||
+			strings.HasPrefix(afterFound, "nothing") ||
+			strings.HasPrefix(afterFound, "0 ") ||
+			strings.HasPrefix(afterFound, "zero ") ||
+			strings.HasPrefix(afterFound, "without ")
+		if isNegated {
+			continue // skip this "found", check for more
+		}
+
+		// Check if followed by issue keywords (skip benign phrases like "found a way")
+		for _, kw := range issueKeywords {
+			for _, q := range quantifiers {
+				for _, adj := range adjectives {
+					if strings.HasPrefix(afterFound, q+adj+kw) {
+						return true // Found an actual issue
+					}
+				}
+			}
+		}
+	}
 
 	// Check if clause describes what was checked (not findings)
 	// e.g., "I checked for bugs, security issues..."
-	// But only skip if it doesn't also contain actual caveats
-	lc := strings.ToLower(normalized)
 	hasCheckPhrase := strings.Contains(lc, "checked for") ||
 		strings.Contains(lc, "looking for") ||
 		strings.Contains(lc, "looked for") ||
@@ -97,103 +139,37 @@ func checkClauseForCaveat(clause string) bool {
 		strings.Contains(lc, "searched for")
 
 	if hasCheckPhrase {
-		// If the clause has a check phrase, look for actual findings.
-		// Skip this clause if it's just describing what was checked (e.g., "I checked for bugs").
-		// But flag it if there are actual findings mentioned.
-
-		// Look for "found" followed by issue keywords (with or without articles)
-		// Skip negated phrases like "found no issues", "found nothing", "found 0 errors"
-		// But continue scanning for subsequent "found" phrases that might have findings
-		hasFinding := false
-		// Include singular and plural forms
-		issueKeywords := []string{
-			"issue", "issues", "bug", "bugs", "error", "errors",
-			"crash", "crashes", "panic", "panics", "fail", "failure", "failures",
-			"break", "breaks", "race", "races", "problem", "problems",
-			"vulnerability", "vulnerabilities",
-		}
-		remaining := lc
-		for {
-			idx := strings.Index(remaining, " found ")
-			if idx < 0 {
-				break
-			}
-			afterFound := remaining[idx+7:] // after " found "
-			remaining = afterFound          // continue scanning from here
-
-			// Skip if negated (found no/none/nothing/0/zero/without)
-			isNegated := strings.HasPrefix(afterFound, "no ") ||
-				strings.HasPrefix(afterFound, "none") ||
-				strings.HasPrefix(afterFound, "nothing") ||
-				strings.HasPrefix(afterFound, "0 ") ||
-				strings.HasPrefix(afterFound, "zero ") ||
-				strings.HasPrefix(afterFound, "without ")
-			if isNegated {
-				continue // skip this "found", check for more
-			}
-
-			// Check if followed by issue keywords (skip benign phrases like "found a way")
-			// Include quantifiers and optional adjectives between quantifier and keyword
-			quantifiers := []string{"", "a ", "an ", "the ", "some ", "multiple ", "several ", "many ", "a few ", "few ", "two ", "three ", "various ", "numerous "}
-			adjectives := []string{"", "critical ", "severe ", "serious ", "major ", "minor ", "potential ", "possible ", "obvious ", "subtle ", "important ", "significant "}
-			for _, kw := range issueKeywords {
-				for _, q := range quantifiers {
-					for _, adj := range adjectives {
-						if strings.HasPrefix(afterFound, q+adj+kw) {
-							hasFinding = true
-							break
-						}
-					}
-					if hasFinding {
-						break
-					}
-				}
-				if hasFinding {
-					break
-				}
-			}
-			if hasFinding {
-				break
-			}
-		}
-
 		// Check for "still <issue>" pattern (e.g., "it still crashes")
-		hasStillIssue := false
 		if idx := strings.Index(lc, " still "); idx >= 0 {
 			afterStill := lc[idx+7:]
 			stillKeywords := []string{"crash", "panic", "fail", "break", "error", "bug"}
 			for _, kw := range stillKeywords {
 				if strings.HasPrefix(afterStill, kw) || strings.Contains(afterStill, " "+kw) {
-					hasStillIssue = true
-					break
+					return true
 				}
 			}
 		}
 
 		// Check for contrastive markers with issue words AFTER the marker
-		// (not before, which would be describing what was checked)
-		hasContrastWithIssue := false
 		for _, marker := range []string{" however ", " but "} {
 			if idx := strings.Index(lc, marker); idx >= 0 {
 				tail := lc[idx+len(marker):]
 				if strings.Contains(tail, "crash") || strings.Contains(tail, "panic") ||
 					strings.Contains(tail, "error") || strings.Contains(tail, "bug") ||
 					strings.Contains(tail, "fail") || strings.Contains(tail, "break") ||
-					strings.Contains(tail, "race") || strings.Contains(tail, "issue") {
+					strings.Contains(tail, "race") || strings.Contains(tail, "issue") ||
+					strings.Contains(tail, "problem") || strings.Contains(tail, "vulnerabilit") {
 					// Make sure it's not negated like "found none"
 					if !strings.Contains(tail, "found none") && !strings.Contains(tail, "found nothing") &&
 						!strings.Contains(tail, "no ") && !strings.Contains(tail, "none") {
-						hasContrastWithIssue = true
-						break
+						return true
 					}
 				}
 			}
 		}
 
-		if hasFinding || hasStillIssue || hasContrastWithIssue {
-			return true // Found an actual issue - this is a caveat
-		}
-		return false // Check phrase with no findings - not a caveat
+		// Check phrase with no findings - not a caveat
+		return false
 	}
 
 	words := strings.Fields(normalized)
@@ -205,12 +181,13 @@ func checkClauseForCaveat(clause string) bool {
 			return true
 		}
 		// Negative indicators that suggest problems (unless negated)
+		// Note: "issue", "problem", "vulnerability" are too ambiguous for unconditional
+		// matching (e.g., "problem statement", "issue tracker", "vulnerability disclosure").
+		// They're handled in check-phrase context and contrast detection instead.
 		if w == "fail" || w == "fails" || w == "failed" || w == "failing" ||
 			w == "break" || w == "breaks" || w == "broken" ||
 			w == "crash" || w == "crashes" || w == "panic" || w == "panics" ||
-			w == "error" || w == "errors" || w == "bug" || w == "bugs" ||
-			w == "issue" || w == "issues" || w == "problem" || w == "problems" ||
-			w == "vulnerability" || w == "vulnerabilities" {
+			w == "error" || w == "errors" || w == "bug" || w == "bugs" {
 			// Check if preceded by negation within this clause
 			if isNegated(words, i) {
 				continue

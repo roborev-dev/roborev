@@ -209,6 +209,26 @@ func TestParseVerdict(t *testing.T) {
 			output: "No issues found. I looked for problems and found zero errors.",
 			want:   "P",
 		},
+		{
+			name:   "benign problem statement",
+			output: "No issues found. The problem statement is clear.",
+			want:   "P",
+		},
+		{
+			name:   "benign issue tracker",
+			output: "No issues found. Issue tracker updated.",
+			want:   "P",
+		},
+		{
+			name:   "benign vulnerability disclosure",
+			output: "No issues found. Vulnerability disclosure policy reviewed.",
+			want:   "P",
+		},
+		{
+			name:   "benign problem domain",
+			output: "No issues found. The problem domain is well understood.",
+			want:   "P",
+		},
 
 		// Fail cases - checked for with actual findings
 		{
