@@ -243,6 +243,27 @@ func IsRebaseInProgress(repoPath string) bool {
 	return false
 }
 
+// GetBranchName returns a human-readable branch reference for a commit.
+// Returns something like "main", "feature/foo", or "main~3" depending on
+// where the commit is relative to branch heads. Returns empty string on error.
+func GetBranchName(repoPath, sha string) string {
+	cmd := exec.Command("git", "name-rev", "--name-only", "--refs=refs/heads/*", sha)
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	name := strings.TrimSpace(string(out))
+	// name-rev returns "undefined" if commit isn't reachable from any branch
+	if name == "" || name == "undefined" {
+		return ""
+	}
+
+	return name
+}
+
 // GetHooksPath returns the path to the hooks directory, respecting core.hooksPath
 func GetHooksPath(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks")

@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	"github.com/wesm/roborev/internal/git"
 	"github.com/wesm/roborev/internal/storage"
 	"github.com/wesm/roborev/internal/update"
 	"github.com/wesm/roborev/internal/version"
@@ -38,8 +39,9 @@ var (
 	tuiFailedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
 	tuiCanceledStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // Orange
 
-	tuiPassStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))  // Green
-	tuiFailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
+	tuiPassStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))  // Green
+	tuiFailStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
+	tuiAddressedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51"))  // Cyan
 
 	tuiHelpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
@@ -1635,17 +1637,28 @@ func (m tuiModel) renderReviewView() string {
 	review := m.currentReview
 	if review.Job != nil {
 		ref := shortRef(review.Job.GitRef)
-		addressedStr := ""
-		if review.Addressed {
-			addressedStr = " [ADDRESSED]"
-		}
 		idStr := fmt.Sprintf("#%d ", review.Job.ID)
 		repoStr := ""
 		if review.Job.RepoName != "" {
 			repoStr = review.Job.RepoName + " "
 		}
-		title := fmt.Sprintf("Review %s%s%s (%s)%s", idStr, repoStr, ref, review.Agent, addressedStr)
+
+		// Get branch name if this is a single commit (not a range)
+		branchStr := ""
+		if review.Job.RepoPath != "" && !strings.Contains(review.Job.GitRef, "..") {
+			if branch := git.GetBranchName(review.Job.RepoPath, review.Job.GitRef); branch != "" {
+				branchStr = " on " + branch
+			}
+		}
+
+		title := fmt.Sprintf("Review %s%s%s (%s)%s", idStr, repoStr, ref, review.Agent, branchStr)
 		b.WriteString(tuiTitleStyle.Render(title))
+
+		// Show [ADDRESSED] with distinct color
+		if review.Addressed {
+			b.WriteString(" ")
+			b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
+		}
 
 		// Show verdict with color
 		if review.Job.Verdict != nil && *review.Job.Verdict != "" {
