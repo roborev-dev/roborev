@@ -2,6 +2,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -245,9 +246,13 @@ func IsRebaseInProgress(repoPath string) bool {
 
 // GetBranchName returns a human-readable branch reference for a commit.
 // Returns something like "main", "feature/foo", or "main~3" depending on
-// where the commit is relative to branch heads. Returns empty string on error.
+// where the commit is relative to branch heads. Returns empty string on error
+// or timeout (2 second limit to avoid blocking UI).
 func GetBranchName(repoPath, sha string) string {
-	cmd := exec.Command("git", "name-rev", "--name-only", "--refs=refs/heads/*", sha)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "name-rev", "--name-only", "--refs=refs/heads/*", sha)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()

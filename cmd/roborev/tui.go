@@ -73,6 +73,7 @@ type tuiModel struct {
 	selectedJobID   int64 // Track selected job by ID to maintain position on refresh
 	currentView     tuiView
 	currentReview   *storage.Review
+	currentBranch   string // Cached branch name for current review (computed on load)
 	reviewScroll    int
 	promptScroll    int
 	promptFromQueue bool // true if prompt view was entered from queue (not review)
@@ -105,8 +106,9 @@ type tuiJobsMsg struct {
 }
 type tuiStatusMsg storage.DaemonStatus
 type tuiReviewMsg struct {
-	review *storage.Review
-	jobID  int64 // The job ID that was requested (for race condition detection)
+	review     *storage.Review
+	jobID      int64  // The job ID that was requested (for race condition detection)
+	branchName string // Pre-computed branch name (empty if not applicable)
 }
 type tuiPromptMsg *storage.Review
 type tuiAddressedMsg bool
@@ -321,7 +323,14 @@ func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
 		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
 			return tuiErrMsg(err)
 		}
-		return tuiReviewMsg{review: &review, jobID: jobID}
+
+		// Compute branch name for single commits (not ranges)
+		var branchName string
+		if review.Job != nil && review.Job.RepoPath != "" && !strings.Contains(review.Job.GitRef, "..") {
+			branchName = git.GetBranchName(review.Job.RepoPath, review.Job.GitRef)
+		}
+
+		return tuiReviewMsg{review: &review, jobID: jobID, branchName: branchName}
 	}
 }
 
@@ -1218,6 +1227,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.currentReview = msg.review
+		m.currentBranch = msg.branchName
 		m.currentView = tuiViewReview
 		m.reviewScroll = 0
 
@@ -1643,12 +1653,10 @@ func (m tuiModel) renderReviewView() string {
 			repoStr = review.Job.RepoName + " "
 		}
 
-		// Get branch name if this is a single commit (not a range)
+		// Use cached branch name (computed when review was loaded)
 		branchStr := ""
-		if review.Job.RepoPath != "" && !strings.Contains(review.Job.GitRef, "..") {
-			if branch := git.GetBranchName(review.Job.RepoPath, review.Job.GitRef); branch != "" {
-				branchStr = " on " + branch
-			}
+		if m.currentBranch != "" {
+			branchStr = " on " + m.currentBranch
 		}
 
 		title := fmt.Sprintf("Review %s%s%s (%s)%s", idStr, repoStr, ref, review.Agent, branchStr)

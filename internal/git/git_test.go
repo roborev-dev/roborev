@@ -206,3 +206,79 @@ func TestIsRebaseInProgress(t *testing.T) {
 		}
 	})
 }
+
+func TestGetBranchName(t *testing.T) {
+	// Create a temp git repo
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	// Configure git user for commits
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").Run()
+
+	// Create initial commit on main/master
+	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "initial").Run()
+
+	// Get the commit SHA
+	shaCmd := exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD")
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD failed: %v", err)
+	}
+	commitSHA := strings.TrimSpace(string(shaOut))
+
+	// Get current branch name
+	branchCmd := exec.Command("git", "-C", tmpDir, "rev-parse", "--abbrev-ref", "HEAD")
+	branchOut, err := branchCmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse --abbrev-ref HEAD failed: %v", err)
+	}
+	expectedBranch := strings.TrimSpace(string(branchOut))
+
+	t.Run("valid commit on branch", func(t *testing.T) {
+		branch := GetBranchName(tmpDir, commitSHA)
+		if branch != expectedBranch {
+			t.Errorf("expected %s, got %s", expectedBranch, branch)
+		}
+	})
+
+	t.Run("commit behind branch head", func(t *testing.T) {
+		// Create another commit
+		if err := os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("content2"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+		exec.Command("git", "-C", tmpDir, "commit", "-m", "second").Run()
+
+		// Original commit should now show as branch~1
+		branch := GetBranchName(tmpDir, commitSHA)
+		expected := expectedBranch + "~1"
+		if branch != expected {
+			t.Errorf("expected %s, got %s", expected, branch)
+		}
+	})
+
+	t.Run("non-existent repo returns empty", func(t *testing.T) {
+		nonRepo := t.TempDir()
+		branch := GetBranchName(nonRepo, commitSHA)
+		if branch != "" {
+			t.Errorf("expected empty string, got %s", branch)
+		}
+	})
+
+	t.Run("invalid SHA returns empty", func(t *testing.T) {
+		branch := GetBranchName(tmpDir, "0000000000000000000000000000000000000000")
+		if branch != "" {
+			t.Errorf("expected empty string, got %s", branch)
+		}
+	})
+}

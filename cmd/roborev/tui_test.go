@@ -3126,3 +3126,120 @@ func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
 		t.Error("No command should be returned when disabling hideAddressed")
 	}
 }
+
+func TestTUIReviewMsgSetsBranchName(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Receive review message with branch name
+	msg := tuiReviewMsg{
+		review:     &storage.Review{ID: 10, Output: "Review text", Job: &storage.ReviewJob{ID: 1}},
+		jobID:      1,
+		branchName: "main",
+	}
+
+	updated, _ := m.Update(msg)
+	m2 := updated.(tuiModel)
+
+	if m2.currentBranch != "main" {
+		t.Errorf("Expected currentBranch to be 'main', got '%s'", m2.currentBranch)
+	}
+}
+
+func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, GitRef: "abc123..def456", Status: storage.JobStatusDone},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Receive review message with empty branch (range commits don't have branches)
+	msg := tuiReviewMsg{
+		review:     &storage.Review{ID: 10, Output: "Review text", Job: &storage.ReviewJob{ID: 1, GitRef: "abc123..def456"}},
+		jobID:      1,
+		branchName: "", // Empty for ranges
+	}
+
+	updated, _ := m.Update(msg)
+	m2 := updated.(tuiModel)
+
+	if m2.currentBranch != "" {
+		t.Errorf("Expected currentBranch to be empty for range, got '%s'", m2.currentBranch)
+	}
+}
+
+func TestTUIRenderReviewViewWithBranchAndAddressed(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentBranch = "feature/test"
+	m.currentReview = &storage.Review{
+		ID:        10,
+		Output:    "Some review output",
+		Addressed: true,
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc1234",
+			RepoName: "myrepo",
+			Agent:    "codex",
+		},
+	}
+
+	output := m.View()
+
+	// Should contain branch info
+	if !strings.Contains(output, "on feature/test") {
+		t.Error("Expected output to contain 'on feature/test'")
+	}
+
+	// Should contain [ADDRESSED]
+	if !strings.Contains(output, "[ADDRESSED]") {
+		t.Error("Expected output to contain '[ADDRESSED]'")
+	}
+
+	// Should contain repo name and ref
+	if !strings.Contains(output, "myrepo") {
+		t.Error("Expected output to contain 'myrepo'")
+	}
+	if !strings.Contains(output, "abc1234") {
+		t.Error("Expected output to contain 'abc1234'")
+	}
+}
+
+func TestTUIRenderReviewViewNoBranchForRange(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentBranch = "" // Empty for range
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Output: "Some review output",
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc123..def456",
+			RepoName: "myrepo",
+			Agent:    "codex",
+		},
+	}
+
+	output := m.View()
+
+	// Should NOT contain "on " prefix when no branch
+	if strings.Contains(output, " on ") {
+		t.Error("Expected output to NOT contain ' on ' for range commits")
+	}
+
+	// Should contain the range ref
+	if !strings.Contains(output, "abc123..def456") {
+		t.Error("Expected output to contain the range ref")
+	}
+}
