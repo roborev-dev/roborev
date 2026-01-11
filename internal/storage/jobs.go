@@ -105,7 +105,13 @@ func checkClauseForCaveat(clause string) bool {
 		// Skip negated phrases like "found no issues", "found nothing", "found 0 errors"
 		// But continue scanning for subsequent "found" phrases that might have findings
 		hasFinding := false
-		issueKeywords := []string{"issue", "bug", "error", "crash", "panic", "fail", "break", "race", "problem", "vulnerability"}
+		// Include singular and plural forms
+		issueKeywords := []string{
+			"issue", "issues", "bug", "bugs", "error", "errors",
+			"crash", "crashes", "panic", "panics", "fail", "failure", "failures",
+			"break", "breaks", "race", "races", "problem", "problems",
+			"vulnerability", "vulnerabilities",
+		}
 		remaining := lc
 		for {
 			idx := strings.Index(remaining, " found ")
@@ -127,12 +133,18 @@ func checkClauseForCaveat(clause string) bool {
 			}
 
 			// Check if followed by issue keywords (skip benign phrases like "found a way")
-			// Include quantifiers: multiple, several, many, a few, etc.
+			// Include quantifiers and optional adjectives between quantifier and keyword
 			quantifiers := []string{"", "a ", "an ", "the ", "some ", "multiple ", "several ", "many ", "a few ", "few ", "two ", "three ", "various ", "numerous "}
+			adjectives := []string{"", "critical ", "severe ", "serious ", "major ", "minor ", "potential ", "possible ", "obvious ", "subtle ", "important ", "significant "}
 			for _, kw := range issueKeywords {
 				for _, q := range quantifiers {
-					if strings.HasPrefix(afterFound, q+kw) {
-						hasFinding = true
+					for _, adj := range adjectives {
+						if strings.HasPrefix(afterFound, q+adj+kw) {
+							hasFinding = true
+							break
+						}
+					}
+					if hasFinding {
 						break
 					}
 				}
@@ -178,10 +190,10 @@ func checkClauseForCaveat(clause string) bool {
 			}
 		}
 
-		if !hasFinding && !hasStillIssue && !hasContrastWithIssue {
-			return false
+		if hasFinding || hasStillIssue || hasContrastWithIssue {
+			return true // Found an actual issue - this is a caveat
 		}
-		// Otherwise continue to check for caveats in the clause
+		return false // Check phrase with no findings - not a caveat
 	}
 
 	words := strings.Fields(normalized)
@@ -195,8 +207,10 @@ func checkClauseForCaveat(clause string) bool {
 		// Negative indicators that suggest problems (unless negated)
 		if w == "fail" || w == "fails" || w == "failed" || w == "failing" ||
 			w == "break" || w == "breaks" || w == "broken" ||
-			w == "crash" || w == "crashes" || w == "panic" ||
-			w == "error" || w == "errors" || w == "bug" || w == "bugs" {
+			w == "crash" || w == "crashes" || w == "panic" || w == "panics" ||
+			w == "error" || w == "errors" || w == "bug" || w == "bugs" ||
+			w == "issue" || w == "issues" || w == "problem" || w == "problems" ||
+			w == "vulnerability" || w == "vulnerabilities" {
 			// Check if preceded by negation within this clause
 			if isNegated(words, i) {
 				continue

@@ -281,6 +281,41 @@ func TestParseVerdict(t *testing.T) {
 			output: "No issues found. Checked for regressions and found many errors.",
 			want:   "F",
 		},
+		{
+			name:   "found a few bugs",
+			output: "No issues found. I checked for problems and found a few bugs.",
+			want:   "F",
+		},
+		{
+			name:   "found two issues",
+			output: "No issues found. I looked for regressions and found two issues.",
+			want:   "F",
+		},
+		{
+			name:   "found various problems",
+			output: "No issues found. Checked for bugs and found various problems.",
+			want:   "F",
+		},
+		{
+			name:   "found multiple critical issues",
+			output: "No issues found. I checked and found multiple critical issues.",
+			want:   "F",
+		},
+		{
+			name:   "found several severe bugs",
+			output: "No issues found. Review found several severe bugs in the code.",
+			want:   "F",
+		},
+		{
+			name:   "found a potential vulnerability",
+			output: "No issues found. I checked for security issues and found a potential vulnerability.",
+			want:   "F",
+		},
+		{
+			name:   "found multiple vulnerabilities plural",
+			output: "No issues found. Security scan found multiple vulnerabilities.",
+			want:   "F",
+		},
 
 		// Fail cases - findings present or ambiguous
 		{
