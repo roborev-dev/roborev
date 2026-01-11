@@ -122,32 +122,48 @@ func GetRepoRoot(path string) (string, error) {
 }
 
 // GetMainRepoRoot returns the main repository root, resolving through worktrees.
-// For a regular repository, this returns the same as GetRepoRoot.
+// For a regular repository or submodule, this returns the same as GetRepoRoot.
 // For a worktree, this returns the main repository's root path.
 func GetMainRepoRoot(path string) (string, error) {
-	// Get the common git dir (works for both regular repos and worktrees)
-	// For regular repos, --git-common-dir returns ".git" or an absolute path to .git
-	// For worktrees, it returns the main repo's .git directory
-	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
-	cmd.Dir = path
+	// Get both --git-dir and --git-common-dir to detect worktrees
+	// For regular repos: both return ".git" (or absolute path)
+	// For submodules: both return the same path (e.g., "../.git/modules/sub")
+	// For worktrees: --git-dir returns worktree-specific dir, --git-common-dir returns main repo's .git
+	gitDirCmd := exec.Command("git", "rev-parse", "--git-dir")
+	gitDirCmd.Dir = path
+	gitDirOut, err := gitDirCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --git-dir: %w", err)
+	}
+	gitDir := strings.TrimSpace(string(gitDirOut))
 
-	out, err := cmd.Output()
+	commonDirCmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	commonDirCmd.Dir = path
+	commonDirOut, err := commonDirCmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
 	}
+	commonDir := strings.TrimSpace(string(commonDirOut))
 
-	gitDir := strings.TrimSpace(string(out))
-
-	// Make path absolute if relative
+	// Make paths absolute for comparison
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(path, gitDir)
 	}
-
-	// Clean up the path to resolve any ".." components
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(path, commonDir)
+	}
 	gitDir = filepath.Clean(gitDir)
+	commonDir = filepath.Clean(commonDir)
 
-	// The repo root is the parent of the .git directory
-	return filepath.Dir(gitDir), nil
+	// Only apply worktree resolution if git-dir differs from common-dir
+	// This ensures submodules (where both are the same) use GetRepoRoot
+	if gitDir != commonDir {
+		// This is a worktree - return parent of common dir (main repo root)
+		return filepath.Dir(commonDir), nil
+	}
+
+	// Regular repo or submodule - use standard resolution
+	return GetRepoRoot(path)
 }
 
 // ReadFile reads a file at a specific commit

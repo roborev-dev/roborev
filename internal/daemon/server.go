@@ -147,7 +147,15 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve repo root - use GetMainRepoRoot to handle worktrees correctly
+	// Get the working directory root for git commands (may be a worktree)
+	// This is needed to resolve refs like HEAD correctly in the worktree context
+	gitCwd, err := git.GetRepoRoot(req.RepoPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("not a git repository: %v", err))
+		return
+	}
+
+	// Get the main repo root for database storage
 	// This ensures worktrees are associated with their main repository
 	repoRoot, err := git.GetMainRepoRoot(req.RepoPath)
 	if err != nil {
@@ -155,14 +163,14 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get or create repo
+	// Get or create repo (uses main repo root for identity)
 	repo, err := s.db.GetOrCreateRepo(repoRoot)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get repo: %v", err))
 		return
 	}
 
-	// Resolve agent
+	// Resolve agent (uses main repo root for config lookup)
 	agentName := config.ResolveAgent(req.Agent, repoRoot, s.cfg)
 
 	// Check if this is a range or single commit
@@ -171,13 +179,14 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var job *storage.ReviewJob
 	if isRange {
 		// For ranges, resolve both endpoints and create range job
+		// Use gitCwd to resolve refs correctly in worktree context
 		parts := strings.SplitN(gitRef, "..", 2)
-		startSHA, err := git.ResolveSHA(repoRoot, parts[0])
+		startSHA, err := git.ResolveSHA(gitCwd, parts[0])
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid start commit: %v", err))
 			return
 		}
-		endSHA, err := git.ResolveSHA(repoRoot, parts[1])
+		endSHA, err := git.ResolveSHA(gitCwd, parts[1])
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid end commit: %v", err))
 			return
@@ -191,14 +200,14 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Single commit
-		sha, err := git.ResolveSHA(repoRoot, gitRef)
+		// Single commit - use gitCwd to resolve refs correctly in worktree context
+		sha, err := git.ResolveSHA(gitCwd, gitRef)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid commit: %v", err))
 			return
 		}
 
-		// Get commit info
+		// Get commit info (SHA is absolute, so main repo root works fine)
 		info, err := git.GetCommitInfo(repoRoot, sha)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("get commit info: %v", err))
