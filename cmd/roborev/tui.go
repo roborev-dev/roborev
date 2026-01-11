@@ -1692,11 +1692,16 @@ func (m tuiModel) renderReviewView() string {
 	wrapWidth := max(20, min(m.width-4, 200))
 	lines := wrapText(review.Output, wrapWidth)
 
-	// Non-content lines: title (1) + verdict if present (1) + scroll indicator (1) + help (1)
-	// = 3 without verdict, 4 with verdict
-	headerHeight := 3
+	// Non-content lines: title (1) + verdict if present (1) + scroll indicator (1) + help (variable)
+	// Help text is 87 chars, wraps at narrow terminals
+	const helpText = "up/down: scroll | j/left: prev | k/right: next | a: addressed | p: prompt | esc/q: back"
+	helpLines := 1
+	if m.width > 0 && m.width < len(helpText) {
+		helpLines = (len(helpText) + m.width - 1) / m.width
+	}
+	headerHeight := 2 + helpLines // title (1) + scroll indicator (1) + help (variable)
 	if review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" {
-		headerHeight = 4
+		headerHeight++ // Add 1 for verdict line
 	}
 	visibleLines := m.height - headerHeight
 
@@ -1718,7 +1723,7 @@ func (m tuiModel) renderReviewView() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(tuiHelpStyle.Render("up/down: scroll | j/left: prev | k/right: next | a: addressed | p: prompt | esc/q: back"))
+	b.WriteString(tuiHelpStyle.Render(helpText))
 
 	return b.String()
 }
