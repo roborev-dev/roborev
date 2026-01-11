@@ -3534,3 +3534,50 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 		t.Errorf("Expected scroll indicator '[1-6 of 20 lines]', output: %s", output)
 	}
 }
+
+func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
+	// Test narrow terminal with verdict - validates extra header line branch
+	// Help text is 87 chars, at width=50 it wraps to 2 lines: ceil(87/50) = 2
+	verdictFail := "F"
+	m := newTuiModel("http://localhost")
+	m.width = 50
+	m.height = 10
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Output: "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
+		Job: &storage.ReviewJob{
+			ID:      1,
+			GitRef:  "abc1234",
+			Agent:   "codex",
+			Verdict: &verdictFail,
+		},
+	}
+
+	output := m.View()
+
+	// With height=10, verdict present, narrow terminal (help wraps to 2 lines):
+	// visibleLines = 10 - 5 = 5
+	// Non-content: title (1) + verdict (1) + scroll indicator (1) + help (2) = 5
+	contentCount := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+			contentCount++
+		}
+	}
+
+	expectedContent := 5
+	if contentCount != expectedContent {
+		t.Errorf("Expected %d content lines with height=10, verdict, and narrow terminal, got %d", expectedContent, contentCount)
+	}
+
+	// Should show scroll indicator
+	if !strings.Contains(output, "[1-5 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-5 of 20 lines]', output: %s", output)
+	}
+
+	// Should show verdict
+	if !strings.Contains(output, "Verdict") {
+		t.Error("Expected output to contain verdict")
+	}
+}

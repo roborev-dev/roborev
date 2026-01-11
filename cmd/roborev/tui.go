@@ -1692,14 +1692,36 @@ func (m tuiModel) renderReviewView() string {
 	wrapWidth := max(20, min(m.width-4, 200))
 	lines := wrapText(review.Output, wrapWidth)
 
-	// Non-content lines: title (1) + verdict if present (1) + scroll indicator (1) + help (variable)
+	// Compute non-content line counts based on terminal width
+	// Title can wrap if repo/branch names are long
+	titleLen := 7 // "Review " base
+	if review.Job != nil {
+		titleLen += len(fmt.Sprintf("#%d ", review.Job.ID))
+		if review.Job.RepoName != "" {
+			titleLen += len(review.Job.RepoName) + 1
+		}
+		titleLen += 7 + 3 + len(review.Job.Agent) // ref (7) + " ()" (3) + agent
+		if m.currentBranch != "" {
+			titleLen += 4 + len(m.currentBranch) // " on " + branch
+		}
+		if review.Addressed {
+			titleLen += 13 // " [ADDRESSED]"
+		}
+	}
+	titleLines := 1
+	if m.width > 0 && titleLen > m.width {
+		titleLines = (titleLen + m.width - 1) / m.width
+	}
+
 	// Help text is 87 chars, wraps at narrow terminals
 	const helpText = "up/down: scroll | j/left: prev | k/right: next | a: addressed | p: prompt | esc/q: back"
 	helpLines := 1
 	if m.width > 0 && m.width < len(helpText) {
 		helpLines = (len(helpText) + m.width - 1) / m.width
 	}
-	headerHeight := 2 + helpLines // title (1) + scroll indicator (1) + help (variable)
+
+	// headerHeight = title + scroll indicator (1) + help + verdict (0|1)
+	headerHeight := titleLines + 1 + helpLines
 	if review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" {
 		headerHeight++ // Add 1 for verdict line
 	}
