@@ -1692,10 +1692,11 @@ func (m tuiModel) renderReviewView() string {
 	wrapWidth := max(20, min(m.width-4, 200))
 	lines := wrapText(review.Output, wrapWidth)
 
-	// Header height: title (1) + verdict if present (1) + help (2) + scroll indicator (1) = 5 or 6
-	headerHeight := 5
+	// Non-content lines: title (1) + verdict if present (1) + scroll indicator (1) + help (1)
+	// = 3 without verdict, 4 with verdict
+	headerHeight := 3
 	if review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" {
-		headerHeight = 6
+		headerHeight = 4
 	}
 	visibleLines := m.height - headerHeight
 

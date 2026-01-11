@@ -3409,3 +3409,87 @@ func TestTUIRenderFailedJobNoBranchShown(t *testing.T) {
 		t.Error("Failed job should not show branch in output")
 	}
 }
+
+func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
+	// Test that visibleLines = height - 3 when no verdict (title + scroll + help)
+	m := newTuiModel("http://localhost")
+	m.width = 80
+	m.height = 10 // Small height to test calculation
+	m.currentView = tuiViewReview
+	// Create 20 lines of content to ensure scrolling
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Output: "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
+		Job: &storage.ReviewJob{
+			ID:      1,
+			GitRef:  "abc1234",
+			Agent:   "codex",
+			Verdict: nil, // No verdict
+		},
+	}
+
+	output := m.View()
+	lines := strings.Split(output, "\n")
+
+	// With height=10 and no verdict: visibleLines = 10 - 3 = 7
+	// Expected lines: title (1) + 7 content lines + scroll indicator (1) + help (1) = 10
+	// Count content lines (L1 through L7)
+	contentCount := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+			contentCount++
+		}
+	}
+
+	expectedContent := 7
+	if contentCount != expectedContent {
+		t.Errorf("Expected %d content lines with height=10 and no verdict, got %d", expectedContent, contentCount)
+	}
+
+	// Should show scroll indicator since we have 20 lines but only showing 7
+	if !strings.Contains(output, "[1-7 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-7 of 20 lines]', output: %s", output)
+	}
+}
+
+func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
+	// Test that visibleLines = height - 4 when verdict present (title + verdict + scroll + help)
+	verdictPass := "P"
+	m := newTuiModel("http://localhost")
+	m.width = 80
+	m.height = 10 // Small height to test calculation
+	m.currentView = tuiViewReview
+	// Create 20 lines of content to ensure scrolling
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Output: "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
+		Job: &storage.ReviewJob{
+			ID:      1,
+			GitRef:  "abc1234",
+			Agent:   "codex",
+			Verdict: &verdictPass,
+		},
+	}
+
+	output := m.View()
+	lines := strings.Split(output, "\n")
+
+	// With height=10 and verdict: visibleLines = 10 - 4 = 6
+	// Expected lines: title (1) + verdict (1) + 6 content lines + scroll indicator (1) + help (1) = 10
+	contentCount := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+			contentCount++
+		}
+	}
+
+	expectedContent := 6
+	if contentCount != expectedContent {
+		t.Errorf("Expected %d content lines with height=10 and verdict, got %d", expectedContent, contentCount)
+	}
+
+	// Should show scroll indicator since we have 20 lines but only showing 6
+	if !strings.Contains(output, "[1-6 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-6 of 20 lines]', output: %s", output)
+	}
+}
