@@ -3581,3 +3581,64 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 		t.Error("Expected output to contain verdict")
 	}
 }
+
+func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
+	// Test that long titles (repo/branch/range) correctly wrap and reduce visible lines
+	// Title: "Review #1 very-long-repository-name-here abc1234..def5678 (claude-code) on feature/very-long-branch-name [ADDRESSED]"
+	// That's about 120 chars, at width=50 it wraps to 3 lines: ceil(120/50) = 3
+	m := newTuiModel("http://localhost")
+	m.width = 50
+	m.height = 12
+	m.currentView = tuiViewReview
+	m.currentBranch = "feature/very-long-branch-name"
+	m.currentReview = &storage.Review{
+		ID:        10,
+		Output:    "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
+		Addressed: true,
+		Agent:     "claude-code",
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc1234567890..def5678901234", // Range ref (17 chars via shortRef)
+			RepoName: "very-long-repository-name-here",
+			Agent:    "claude-code",
+			Verdict:  nil, // No verdict
+		},
+	}
+
+	output := m.View()
+
+	// Calculate expected title length:
+	// "Review #1 very-long-repository-name-here abc1234..def5678 (claude-code) on feature/very-long-branch-name [ADDRESSED]"
+	// = 7 + 3 + 31 + 17 + 14 + 34 + 12 = ~118 chars
+	// At width=50: ceil(118/50) = 3 title lines
+	// Help at width=50: ceil(87/50) = 2 help lines
+	// Non-content: title (3) + scroll (1) + help (2) = 6
+	// visibleLines = 12 - 6 = 6
+	contentCount := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+			contentCount++
+		}
+	}
+
+	expectedContent := 6
+	if contentCount != expectedContent {
+		t.Errorf("Expected %d content lines with long wrapping title, got %d", expectedContent, contentCount)
+	}
+
+	// Should show scroll indicator with correct range
+	if !strings.Contains(output, "[1-6 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-6 of 20 lines]', output: %s", output)
+	}
+
+	// Should contain the long repo name and branch
+	if !strings.Contains(output, "very-long-repository-name-here") {
+		t.Error("Expected output to contain long repo name")
+	}
+	if !strings.Contains(output, "feature/very-long-branch-name") {
+		t.Error("Expected output to contain long branch name")
+	}
+	if !strings.Contains(output, "[ADDRESSED]") {
+		t.Error("Expected output to contain [ADDRESSED]")
+	}
+}

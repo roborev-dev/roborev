@@ -1648,6 +1648,10 @@ func (m tuiModel) renderReviewView() string {
 	var b strings.Builder
 
 	review := m.currentReview
+
+	// Build title string and compute its length for line calculation
+	var title string
+	var titleLen int
 	if review.Job != nil {
 		ref := shortRef(review.Job.GitRef)
 		idStr := fmt.Sprintf("#%d ", review.Job.ID)
@@ -1662,7 +1666,12 @@ func (m tuiModel) renderReviewView() string {
 			branchStr = " on " + m.currentBranch
 		}
 
-		title := fmt.Sprintf("Review %s%s%s (%s)%s", idStr, repoStr, ref, review.Agent, branchStr)
+		title = fmt.Sprintf("Review %s%s%s (%s)%s", idStr, repoStr, ref, review.Agent, branchStr)
+		titleLen = len(title)
+		if review.Addressed {
+			titleLen += len(" [ADDRESSED]")
+		}
+
 		b.WriteString(tuiTitleStyle.Render(title))
 
 		// Show [ADDRESSED] with distinct color
@@ -1684,7 +1693,9 @@ func (m tuiModel) renderReviewView() string {
 		}
 		b.WriteString("\n")
 	} else {
-		b.WriteString(tuiTitleStyle.Render("Review"))
+		title = "Review"
+		titleLen = len(title)
+		b.WriteString(tuiTitleStyle.Render(title))
 		b.WriteString("\n")
 	}
 
@@ -1692,22 +1703,7 @@ func (m tuiModel) renderReviewView() string {
 	wrapWidth := max(20, min(m.width-4, 200))
 	lines := wrapText(review.Output, wrapWidth)
 
-	// Compute non-content line counts based on terminal width
-	// Title can wrap if repo/branch names are long
-	titleLen := 7 // "Review " base
-	if review.Job != nil {
-		titleLen += len(fmt.Sprintf("#%d ", review.Job.ID))
-		if review.Job.RepoName != "" {
-			titleLen += len(review.Job.RepoName) + 1
-		}
-		titleLen += 7 + 3 + len(review.Job.Agent) // ref (7) + " ()" (3) + agent
-		if m.currentBranch != "" {
-			titleLen += 4 + len(m.currentBranch) // " on " + branch
-		}
-		if review.Addressed {
-			titleLen += 13 // " [ADDRESSED]"
-		}
-	}
+	// Compute title line count based on actual title length
 	titleLines := 1
 	if m.width > 0 && titleLen > m.width {
 		titleLines = (titleLen + m.width - 1) / m.width
