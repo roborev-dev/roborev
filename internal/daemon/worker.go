@@ -266,12 +266,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Broadcast started event
 	wp.broadcaster.Broadcast(Event{
-		Type:  "review.started",
-		TS:    time.Now(),
-		JobID: job.ID,
-		Repo:  job.RepoPath,
-		SHA:   job.GitRef,
-		Agent: agentName,
+		Type:     "review.started",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Agent:    agentName,
 	})
 
 	// Run the review
@@ -283,12 +284,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			log.Printf("[%s] Job %d was canceled", workerID, job.ID)
 			// Broadcast cancellation event
 			wp.broadcaster.Broadcast(Event{
-				Type:  "review.canceled",
-				TS:    time.Now(),
-				JobID: job.ID,
-				Repo:  job.RepoPath,
-				SHA:   job.GitRef,
-				Agent: agentName,
+				Type:     "review.canceled",
+				TS:       time.Now(),
+				JobID:    job.ID,
+				Repo:     job.RepoPath,
+				RepoName: job.RepoName,
+				SHA:      job.GitRef,
+				Agent:    agentName,
 			})
 			return // Job already marked as canceled in DB, nothing more to do
 		}
@@ -308,13 +310,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Broadcast completion event
 	verdict := storage.ParseVerdict(output)
 	wp.broadcaster.Broadcast(Event{
-		Type:    "review.completed",
-		TS:      time.Now(),
-		JobID:   job.ID,
-		Repo:    job.RepoPath,
-		SHA:     job.GitRef,
-		Agent:   agentName,
-		Verdict: verdict,
+		Type:     "review.completed",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Agent:    agentName,
+		Verdict:  verdict,
 	})
 }
 
@@ -341,12 +344,13 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 // broadcastFailed sends a review.failed event for a job
 func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMsg string) {
 	wp.broadcaster.Broadcast(Event{
-		Type:  "review.failed",
-		TS:    time.Now(),
-		JobID: job.ID,
-		Repo:  job.RepoPath,
-		SHA:   job.GitRef,
-		Agent: agentName,
-		Error: errorMsg,
+		Type:     "review.failed",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Agent:    agentName,
+		Error:    errorMsg,
 	})
 }

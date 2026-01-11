@@ -189,13 +189,14 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 
 func TestEvent_MarshalJSON(t *testing.T) {
 	event := Event{
-		Type:    "review.completed",
-		TS:      time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
-		JobID:   42,
-		Repo:    "myorg/myrepo",
-		SHA:     "abc123",
-		Agent:   "claude-code",
-		Verdict: "F",
+		Type:     "review.completed",
+		TS:       time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
+		JobID:    42,
+		Repo:     "/path/to/myrepo",
+		RepoName: "myrepo",
+		SHA:      "abc123",
+		Agent:    "claude-code",
+		Verdict:  "F",
 	}
 
 	data, err := event.MarshalJSON()
@@ -203,7 +204,7 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		t.Fatalf("MarshalJSON failed: %v", err)
 	}
 
-	expected := `{"type":"review.completed","ts":"2026-01-11T10:00:30Z","job_id":42,"repo":"myorg/myrepo","sha":"abc123","agent":"claude-code","verdict":"F"}`
+	expected := `{"type":"review.completed","ts":"2026-01-11T10:00:30Z","job_id":42,"repo":"/path/to/myrepo","repo_name":"myrepo","sha":"abc123","agent":"claude-code","verdict":"F"}`
 	got := string(data)
 
 	if got != expected {

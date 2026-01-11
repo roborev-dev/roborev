@@ -775,22 +775,24 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		// Broadcast test events
 		event1 := Event{
-			Type:    "review.completed",
-			TS:      time.Now(),
-			JobID:   1,
-			Repo:    "/test/repo1",
-			SHA:     "abc123",
-			Agent:   "test",
-			Verdict: "pass",
+			Type:     "review.completed",
+			TS:       time.Now(),
+			JobID:    1,
+			Repo:     "/test/repo1",
+			RepoName: "repo1",
+			SHA:      "abc123",
+			Agent:    "test",
+			Verdict:  "pass",
 		}
 		event2 := Event{
-			Type:    "review.failed",
-			TS:      time.Now(),
-			JobID:   2,
-			Repo:    "/test/repo2",
-			SHA:     "def456",
-			Agent:   "test",
-			Verdict: "",
+			Type:     "review.failed",
+			TS:       time.Now(),
+			JobID:    2,
+			Repo:     "/test/repo2",
+			RepoName: "repo2",
+			SHA:      "def456",
+			Agent:    "test",
+			Error:    "agent timeout",
 		}
 		server.broadcaster.Broadcast(event1)
 		server.broadcaster.Broadcast(event2)
@@ -825,8 +827,133 @@ func TestHandleStreamEvents(t *testing.T) {
 		if events[0].Type != "review.completed" || events[0].JobID != 1 {
 			t.Errorf("First event mismatch: %+v", events[0])
 		}
+		if events[0].RepoName != "repo1" {
+			t.Errorf("Expected RepoName 'repo1', got '%s'", events[0].RepoName)
+		}
+		if events[0].Verdict != "pass" {
+			t.Errorf("Expected Verdict 'pass', got '%s'", events[0].Verdict)
+		}
 		if events[1].Type != "review.failed" || events[1].JobID != 2 {
 			t.Errorf("Second event mismatch: %+v", events[1])
+		}
+		if events[1].Error != "agent timeout" {
+			t.Errorf("Expected Error 'agent timeout', got '%s'", events[1].Error)
+		}
+	})
+
+	t.Run("all event types are supported", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
+		w := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			server.handleStreamEvents(w, req)
+			close(done)
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+
+		// Broadcast all event types
+		server.broadcaster.Broadcast(Event{
+			Type:     "review.started",
+			JobID:    1,
+			Repo:     "/test/repo",
+			RepoName: "repo",
+			SHA:      "abc",
+			Agent:    "codex",
+		})
+		server.broadcaster.Broadcast(Event{
+			Type:     "review.completed",
+			JobID:    1,
+			Repo:     "/test/repo",
+			RepoName: "repo",
+			SHA:      "abc",
+			Agent:    "codex",
+			Verdict:  "pass",
+		})
+		server.broadcaster.Broadcast(Event{
+			Type:     "review.failed",
+			JobID:    2,
+			Repo:     "/test/repo",
+			RepoName: "repo",
+			SHA:      "def",
+			Agent:    "codex",
+			Error:    "connection refused",
+		})
+		server.broadcaster.Broadcast(Event{
+			Type:     "review.canceled",
+			JobID:    3,
+			Repo:     "/test/repo",
+			RepoName: "repo",
+			SHA:      "ghi",
+			Agent:    "codex",
+		})
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		<-done
+
+		body := w.Body.String()
+		scanner := bufio.NewScanner(bytes.NewBufferString(body))
+		var eventTypes []string
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var ev Event
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				t.Fatalf("Failed to parse JSONL: %v", err)
+			}
+			eventTypes = append(eventTypes, ev.Type)
+		}
+
+		expected := []string{"review.started", "review.completed", "review.failed", "review.canceled"}
+		if len(eventTypes) != len(expected) {
+			t.Fatalf("Expected %d events, got %d: %v", len(expected), len(eventTypes), eventTypes)
+		}
+		for i, exp := range expected {
+			if eventTypes[i] != exp {
+				t.Errorf("Event %d: expected type '%s', got '%s'", i, exp, eventTypes[i])
+			}
+		}
+	})
+
+	t.Run("omitempty fields are excluded when empty", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
+		w := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			server.handleStreamEvents(w, req)
+			close(done)
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+
+		// Event with no optional fields set
+		server.broadcaster.Broadcast(Event{
+			Type:     "review.started",
+			JobID:    1,
+			Repo:     "/test/repo",
+			RepoName: "repo",
+			SHA:      "abc",
+			// Agent, Verdict, Error all empty
+		})
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		<-done
+
+		body := w.Body.String()
+		// Check that empty fields are not in the JSON output
+		if bytes.Contains([]byte(body), []byte(`"verdict"`)) {
+			t.Error("Expected 'verdict' to be omitted when empty")
+		}
+		if bytes.Contains([]byte(body), []byte(`"error"`)) {
+			t.Error("Expected 'error' to be omitted when empty")
 		}
 	})
 
@@ -848,22 +975,25 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		// Broadcast events for different repos
 		server.broadcaster.Broadcast(Event{
-			Type:  "review.completed",
-			JobID: 10,
-			Repo:  "/test/repo1",
-			SHA:   "aaa",
+			Type:     "review.completed",
+			JobID:    10,
+			Repo:     "/test/repo1",
+			RepoName: "repo1",
+			SHA:      "aaa",
 		})
 		server.broadcaster.Broadcast(Event{
-			Type:  "review.completed",
-			JobID: 11,
-			Repo:  "/test/repo2", // Should be filtered out
-			SHA:   "bbb",
+			Type:     "review.completed",
+			JobID:    11,
+			Repo:     "/test/repo2", // Should be filtered out
+			RepoName: "repo2",
+			SHA:      "bbb",
 		})
 		server.broadcaster.Broadcast(Event{
-			Type:  "review.completed",
-			JobID: 12,
-			Repo:  "/test/repo1",
-			SHA:   "ccc",
+			Type:     "review.completed",
+			JobID:    12,
+			Repo:     "/test/repo1",
+			RepoName: "repo1",
+			SHA:      "ccc",
 		})
 
 		// Give time for events to be written
@@ -920,17 +1050,19 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		// Broadcast event for the repo with spaces
 		server.broadcaster.Broadcast(Event{
-			Type:  "review.completed",
-			JobID: 20,
-			Repo:  repoPath,
-			SHA:   "xyz",
+			Type:     "review.completed",
+			JobID:    20,
+			Repo:     repoPath,
+			RepoName: "my repo with spaces",
+			SHA:      "xyz",
 		})
 		// Broadcast event for different repo (should be filtered)
 		server.broadcaster.Broadcast(Event{
-			Type:  "review.completed",
-			JobID: 21,
-			Repo:  "/test/other",
-			SHA:   "zzz",
+			Type:     "review.completed",
+			JobID:    21,
+			Repo:     "/test/other",
+			RepoName: "other",
+			SHA:      "zzz",
 		})
 
 		time.Sleep(50 * time.Millisecond)
