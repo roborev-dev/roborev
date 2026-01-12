@@ -235,6 +235,16 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "error handling in description is pass",
+			output: "No issues found. The commit hardens the test setup with error handling around filesystem operations.",
+			want:   "P",
+		},
+		{
+			name:   "error messages in description is pass",
+			output: "No issues found. The code improves error messages for better debugging.",
+			want:   "P",
+		},
+		{
 			name:   "no problems exist is pass",
 			output: "No issues found. No problems exist.",
 			want:   "P",

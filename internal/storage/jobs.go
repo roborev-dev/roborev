@@ -99,6 +99,8 @@ func checkClauseForCaveat(clause string) bool {
 		"problem statement", "problem domain", "problem space", "problem definition",
 		"issue tracker", "issue tracking", "issue number", "issue #",
 		"vulnerability disclosure", "vulnerability report", "vulnerability scan",
+		"error handling", "error message", "error messages", "error code", "error codes",
+		"error type", "error types", "error response", "error responses",
 	}
 	for _, bp := range benignPhrases {
 		if strings.Contains(lc, bp) {
@@ -258,7 +260,7 @@ func checkClauseForCaveat(clause string) bool {
 		return false
 	}
 
-	words := strings.Fields(normalized)
+	words := strings.Fields(lc)
 	for i, w := range words {
 		// Strip punctuation from both sides for word matching
 		w = strings.Trim(w, ".,;:!?()[]\"'")
