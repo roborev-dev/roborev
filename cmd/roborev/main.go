@@ -74,21 +74,25 @@ func getDaemonAddr() string {
 func ensureDaemon() error {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 
-	// First check runtime file for daemon address and version
+	// First check runtime file for daemon address
 	if info, err := daemon.ReadRuntime(); err == nil {
 		addr := fmt.Sprintf("http://%s/api/status", info.Addr)
 		resp, err := client.Get(addr)
 		if err == nil {
-			resp.Body.Close()
+			defer resp.Body.Close()
 
-			// Check version match - restart if versions differ
-			// For dirty builds, also restart if daemon is non-dirty (newer clean build)
-			// but don't restart if both are the same dirty version
-			if info.Version != version.Version {
-				if verbose {
-					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", info.Version, version.Version)
+			// Parse response to get actual daemon version
+			var status struct {
+				Version string `json:"version"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&status); err == nil {
+				// Check version match - restart if versions differ
+				if status.Version != version.Version {
+					if verbose {
+						fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
+					}
+					return restartDaemon()
 				}
-				return restartDaemon()
 			}
 
 			serverAddr = fmt.Sprintf("http://%s", info.Addr)
@@ -96,10 +100,21 @@ func ensureDaemon() error {
 		}
 	}
 
-	// Try default address
+	// Try default address - also check version from response
 	resp, err := client.Get(serverAddr + "/api/status")
 	if err == nil {
-		resp.Body.Close()
+		defer resp.Body.Close()
+		var status struct {
+			Version string `json:"version"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&status); err == nil {
+			if status.Version != version.Version {
+				if verbose {
+					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
+				}
+				return restartDaemon()
+			}
+		}
 		return nil
 	}
 

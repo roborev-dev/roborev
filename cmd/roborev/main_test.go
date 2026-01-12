@@ -88,10 +88,12 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			json.NewEncoder(w).Encode(job)
 			return
 		}
-		// Status endpoint for ensureDaemon check
+		// Status endpoint for ensureDaemon check - must include version
 		if r.URL.Path == "/api/status" {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{})
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"version": version.Version,
+			})
 			return
 		}
 	}))
