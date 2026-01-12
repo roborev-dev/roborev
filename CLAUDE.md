@@ -82,3 +82,4 @@ CLI reads this to find the daemon. If port 7373 is busy, daemon auto-increments.
 - No emojis in code or output (except commit messages)
 - Never amend commits; always create new commits for fixes
 - Never push or pull unless explicitly asked by the user
+- Never change git branches unless explicitly asked by the user
