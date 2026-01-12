@@ -34,14 +34,24 @@ if ! git diff-index --quiet HEAD --; then
     exit 1
 fi
 
-# Update nix flake version and vendorHash
+# Check if gh CLI is available (needed for PR creation)
+if ! command -v gh &> /dev/null; then
+    echo "Error: gh CLI is required for creating PRs. Install from https://cli.github.com/"
+    exit 1
+fi
+
+# Update nix flake version and vendorHash, creating a PR if changes are needed
 update_nix_flake() {
     local FLAKE_FILE="$REPO_ROOT/flake.nix"
+    local BRANCH_NAME="release/$TAG-nix-update"
 
     if [ ! -f "$FLAKE_FILE" ]; then
         echo "Warning: flake.nix not found, skipping nix update"
         return 0
     fi
+
+    # Save current branch to return to later
+    local ORIGINAL_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
 
     echo "Updating flake.nix version to $VERSION..."
     sed -i.bak "s/version = \"[^\"]*\"/version = \"$VERSION\"/" "$FLAKE_FILE"
@@ -89,11 +99,28 @@ update_nix_flake() {
         echo "If go.mod changed, you may need to update vendorHash manually"
     fi
 
-    # Commit flake.nix changes if any
+    # Create PR for flake.nix changes if any
     if ! git -C "$REPO_ROOT" diff --quiet -- flake.nix; then
-        echo "Committing flake.nix updates..."
+        echo "Creating PR for flake.nix updates..."
+
+        # Create a new branch for the PR
+        git -C "$REPO_ROOT" checkout -b "$BRANCH_NAME"
         git -C "$REPO_ROOT" add flake.nix
-        git -C "$REPO_ROOT" commit -m "Update flake.nix for v$VERSION"
+        git -C "$REPO_ROOT" commit -m "Update flake.nix for $TAG"
+        git -C "$REPO_ROOT" push -u origin "$BRANCH_NAME"
+
+        # Create the PR
+        gh pr create \
+            --title "Update flake.nix for $TAG" \
+            --body "Updates flake.nix version to $VERSION for the $TAG release." \
+            --base main
+
+        echo "PR created for flake.nix updates"
+
+        # Return to original branch
+        git -C "$REPO_ROOT" checkout "$ORIGINAL_BRANCH"
+    else
+        echo "No flake.nix changes needed"
     fi
 }
 
@@ -133,7 +160,6 @@ $(cat $CHANGELOG_FILE)"
 
 echo "Pushing tag to origin..."
 git push origin "$TAG"
-git push origin HEAD
 
 echo ""
 echo "Release $TAG created and pushed successfully!"
