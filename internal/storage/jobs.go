@@ -102,12 +102,42 @@ func checkClauseForCaveat(clause string) bool {
 		"error handling", "error message", "error messages", "error code", "error codes",
 		"error type", "error types", "error response", "error responses",
 	}
+	// Negative qualifiers that indicate the benign phrase is actually a problem
+	negativeQualifiers := []string{
+		"is missing", "are missing", "missing",
+		"is wrong", "are wrong", "wrong",
+		"is incorrect", "are incorrect", "incorrect",
+		"is broken", "are broken", "broken",
+		"is bad", "are bad",
+		"need", "needs", "needed",
+	}
 	for _, bp := range benignPhrases {
-		if strings.Contains(lc, bp) {
-			// Remove benign phrase to avoid false positives
-			lc = strings.ReplaceAll(lc, bp, "")
+		if idx := strings.Index(lc, bp); idx >= 0 {
+			afterPhrase := lc[idx+len(bp):]
+			// Ensure we matched a complete phrase (followed by space, punctuation, or end)
+			if len(afterPhrase) > 0 && afterPhrase[0] != ' ' && afterPhrase[0] != '.' &&
+				afterPhrase[0] != ',' && afterPhrase[0] != ';' && afterPhrase[0] != ':' {
+				continue // Partial match, skip
+			}
+			// Check if followed by negative qualifier - if so, don't remove
+			hasNegative := false
+			for _, nq := range negativeQualifiers {
+				if strings.HasPrefix(strings.TrimSpace(afterPhrase), nq) {
+					hasNegative = true
+					break
+				}
+			}
+			if !hasNegative {
+				// Remove benign phrase to avoid false positives
+				lc = strings.ReplaceAll(lc, bp, " ")
+			}
 		}
 	}
+	// Collapse multiple spaces after removals
+	for strings.Contains(lc, "  ") {
+		lc = strings.ReplaceAll(lc, "  ", " ")
+	}
+	lc = strings.TrimSpace(lc)
 
 	// Check for "found <issue>" pattern - handle both mid-clause and start-of-clause
 	issueKeywords := []string{

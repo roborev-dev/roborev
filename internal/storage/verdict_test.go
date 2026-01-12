@@ -245,6 +245,26 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "error handling is missing is fail",
+			output: "No issues found. Error handling is missing in the auth module.",
+			want:   "F",
+		},
+		{
+			name:   "error codes are wrong is fail",
+			output: "No issues found. Error codes are wrong in the API response.",
+			want:   "F",
+		},
+		{
+			name:   "error message needs improvement is fail",
+			output: "No issues found. The error message needs to be more descriptive.",
+			want:   "F",
+		},
+		{
+			name:   "error handling is broken is fail",
+			output: "No issues found. Error handling is broken after refactor.",
+			want:   "F",
+		},
+		{
 			name:   "no problems exist is pass",
 			output: "No issues found. No problems exist.",
 			want:   "P",
