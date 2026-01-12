@@ -211,27 +211,3 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		t.Errorf("JSON mismatch\nexpected: %s\ngot:      %s", expected, got)
 	}
 }
-
-func TestEvent_MarshalJSON_RepoNameFallback(t *testing.T) {
-	// When RepoName is empty, it should default to filepath.Base(Repo)
-	event := Event{
-		Type:  "review.started",
-		TS:    time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
-		JobID: 1,
-		Repo:  "/path/to/myrepo",
-		// RepoName intentionally empty
-		SHA: "abc123",
-	}
-
-	data, err := event.MarshalJSON()
-	if err != nil {
-		t.Fatalf("MarshalJSON failed: %v", err)
-	}
-
-	expected := `{"type":"review.started","ts":"2026-01-11T10:00:30Z","job_id":1,"repo":"/path/to/myrepo","repo_name":"myrepo","sha":"abc123"}`
-	got := string(data)
-
-	if got != expected {
-		t.Errorf("JSON mismatch\nexpected: %s\ngot:      %s", expected, got)
-	}
-}

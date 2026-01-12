@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"sync"
 	"time"
 )
@@ -111,12 +110,6 @@ func (b *EventBroadcaster) SubscriberCount() int {
 
 // MarshalJSON converts an Event to JSON for streaming
 func (e Event) MarshalJSON() ([]byte, error) {
-	// Default RepoName to base of Repo path if not set
-	repoName := e.RepoName
-	if repoName == "" && e.Repo != "" {
-		repoName = filepath.Base(e.Repo)
-	}
-
 	return json.Marshal(struct {
 		Type     string `json:"type"`
 		TS       string `json:"ts"`
@@ -132,7 +125,7 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		TS:       e.TS.UTC().Format(time.RFC3339),
 		JobID:    e.JobID,
 		Repo:     e.Repo,
-		RepoName: repoName,
+		RepoName: e.RepoName,
 		SHA:      e.SHA,
 		Agent:    e.Agent,
 		Verdict:  e.Verdict,
