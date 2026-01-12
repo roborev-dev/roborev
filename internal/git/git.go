@@ -56,6 +56,24 @@ func GetCommitInfo(repoPath, sha string) (*CommitInfo, error) {
 	}, nil
 }
 
+// GetCurrentBranch returns the current branch name, or empty string if detached HEAD
+func GetCurrentBranch(repoPath string) string {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	branch := strings.TrimSpace(string(out))
+	if branch == "HEAD" {
+		// Detached HEAD state
+		return ""
+	}
+	return branch
+}
+
 // GetDiff returns the full diff for a commit
 func GetDiff(repoPath, sha string) (string, error) {
 	cmd := exec.Command("git", "show", sha, "--format=")

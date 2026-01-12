@@ -698,3 +698,73 @@ func TestGetBranchName(t *testing.T) {
 		}
 	})
 }
+
+func TestGetCurrentBranch(t *testing.T) {
+	// Create a temp git repo
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	// Configure git user for commits
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").Run()
+
+	// Create initial commit
+	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "initial").Run()
+
+	t.Run("returns current branch", func(t *testing.T) {
+		// Get expected branch name
+		branchCmd := exec.Command("git", "-C", tmpDir, "rev-parse", "--abbrev-ref", "HEAD")
+		branchOut, err := branchCmd.Output()
+		if err != nil {
+			t.Fatalf("git rev-parse --abbrev-ref HEAD failed: %v", err)
+		}
+		expectedBranch := strings.TrimSpace(string(branchOut))
+
+		branch := GetCurrentBranch(tmpDir)
+		if branch != expectedBranch {
+			t.Errorf("expected %s, got %s", expectedBranch, branch)
+		}
+	})
+
+	t.Run("returns branch after checkout", func(t *testing.T) {
+		// Create and checkout a new branch
+		exec.Command("git", "-C", tmpDir, "checkout", "-b", "feature-branch").Run()
+
+		branch := GetCurrentBranch(tmpDir)
+		if branch != "feature-branch" {
+			t.Errorf("expected 'feature-branch', got %s", branch)
+		}
+	})
+
+	t.Run("returns empty for detached HEAD", func(t *testing.T) {
+		// Get current commit SHA
+		shaCmd := exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD")
+		shaOut, _ := shaCmd.Output()
+		sha := strings.TrimSpace(string(shaOut))
+
+		// Detach HEAD
+		exec.Command("git", "-C", tmpDir, "checkout", sha).Run()
+
+		branch := GetCurrentBranch(tmpDir)
+		if branch != "" {
+			t.Errorf("expected empty string for detached HEAD, got %s", branch)
+		}
+	})
+
+	t.Run("returns empty for non-repo", func(t *testing.T) {
+		nonRepo := t.TempDir()
+		branch := GetCurrentBranch(nonRepo)
+		if branch != "" {
+			t.Errorf("expected empty string for non-repo, got %s", branch)
+		}
+	})
+}

@@ -59,6 +59,8 @@ Create `.roborev.toml` in your repo root:
 ```toml
 agent = "claude-code"      # AI agent to use
 review_context_count = 5   # Recent reviews to include as context
+display_name = "backend"   # Custom name shown in TUI (optional)
+excluded_branches = ["wip", "scratch"]  # Branches to skip reviews on
 
 # Project-specific review guidelines
 review_guidelines = """

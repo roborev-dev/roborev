@@ -22,10 +22,12 @@ type Config struct {
 
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
-	Agent              string `toml:"agent"`
-	ReviewContextCount int    `toml:"review_context_count"`
-	ReviewGuidelines   string `toml:"review_guidelines"`
-	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
+	Agent              string   `toml:"agent"`
+	ReviewContextCount int      `toml:"review_context_count"`
+	ReviewGuidelines   string   `toml:"review_guidelines"`
+	JobTimeoutMinutes  int      `toml:"job_timeout_minutes"`
+	ExcludedBranches   []string `toml:"excluded_branches"`
+	DisplayName        string   `toml:"display_name"`
 }
 
 // DefaultConfig returns the default configuration
@@ -126,6 +128,30 @@ func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 	}
 
 	return 30 // Default: 30 minutes
+}
+
+// IsBranchExcluded checks if a branch should be excluded from reviews
+func IsBranchExcluded(repoPath, branch string) bool {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil || repoCfg == nil {
+		return false
+	}
+
+	for _, excluded := range repoCfg.ExcludedBranches {
+		if excluded == branch {
+			return true
+		}
+	}
+	return false
+}
+
+// GetDisplayName returns the display name for a repo, or empty if not set
+func GetDisplayName(repoPath string) string {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil || repoCfg == nil {
+		return ""
+	}
+	return repoCfg.DisplayName
 }
 
 // SaveGlobal saves the global configuration

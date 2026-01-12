@@ -321,3 +321,139 @@ func TestResolveJobTimeout(t *testing.T) {
 	})
 }
 
+func TestIsBranchExcluded(t *testing.T) {
+	t.Run("no config file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if IsBranchExcluded(tmpDir, "main") {
+			t.Error("Expected branch not excluded when no config file")
+		}
+	})
+
+	t.Run("empty excluded_branches", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`agent = "codex"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		if IsBranchExcluded(tmpDir, "main") {
+			t.Error("Expected branch not excluded when excluded_branches not set")
+		}
+	})
+
+	t.Run("branch is excluded", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		configContent := `
+excluded_branches = ["wip", "scratch", "test-branch"]
+`
+		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		if !IsBranchExcluded(tmpDir, "wip") {
+			t.Error("Expected 'wip' branch to be excluded")
+		}
+		if !IsBranchExcluded(tmpDir, "scratch") {
+			t.Error("Expected 'scratch' branch to be excluded")
+		}
+		if !IsBranchExcluded(tmpDir, "test-branch") {
+			t.Error("Expected 'test-branch' branch to be excluded")
+		}
+	})
+
+	t.Run("branch is not excluded", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		configContent := `
+excluded_branches = ["wip", "scratch"]
+`
+		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		if IsBranchExcluded(tmpDir, "main") {
+			t.Error("Expected 'main' branch not to be excluded")
+		}
+		if IsBranchExcluded(tmpDir, "feature/foo") {
+			t.Error("Expected 'feature/foo' branch not to be excluded")
+		}
+	})
+
+	t.Run("exact match required", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		configContent := `
+excluded_branches = ["wip"]
+`
+		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		// Partial matches should not be excluded
+		if IsBranchExcluded(tmpDir, "wip-feature") {
+			t.Error("Expected 'wip-feature' not to be excluded (not exact match)")
+		}
+		if IsBranchExcluded(tmpDir, "my-wip") {
+			t.Error("Expected 'my-wip' not to be excluded (not exact match)")
+		}
+	})
+}
+
+func TestGetDisplayName(t *testing.T) {
+	t.Run("no config file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		name := GetDisplayName(tmpDir)
+		if name != "" {
+			t.Errorf("Expected empty display name when no config file, got '%s'", name)
+		}
+	})
+
+	t.Run("display_name not set", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`agent = "codex"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		name := GetDisplayName(tmpDir)
+		if name != "" {
+			t.Errorf("Expected empty display name when not set, got '%s'", name)
+		}
+	})
+
+	t.Run("display_name is set", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		configContent := `
+display_name = "My Cool Project"
+`
+		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		name := GetDisplayName(tmpDir)
+		if name != "My Cool Project" {
+			t.Errorf("Expected display name 'My Cool Project', got '%s'", name)
+		}
+	})
+
+	t.Run("display_name with other config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		configContent := `
+agent = "claude-code"
+display_name = "Backend Service"
+excluded_branches = ["wip"]
+`
+		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		name := GetDisplayName(tmpDir)
+		if name != "Backend Service" {
+			t.Errorf("Expected display name 'Backend Service', got '%s'", name)
+		}
+	})
+}
+

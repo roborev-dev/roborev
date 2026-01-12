@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	"github.com/wesm/roborev/internal/config"
 	"github.com/wesm/roborev/internal/git"
 	"github.com/wesm/roborev/internal/storage"
 	"github.com/wesm/roborev/internal/update"
@@ -1609,6 +1610,10 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 	}
 
 	repo := job.RepoName
+	// Use display name from config if set
+	if displayName := config.GetDisplayName(job.RepoPath); displayName != "" {
+		repo = displayName
+	}
 	if len(repo) > colWidths.repo {
 		repo = repo[:max(1, colWidths.repo-3)] + "..."
 	}
@@ -1748,7 +1753,12 @@ func (m tuiModel) renderReviewView() string {
 		idStr := fmt.Sprintf("#%d ", review.Job.ID)
 		repoStr := ""
 		if review.Job.RepoName != "" {
-			repoStr = review.Job.RepoName + " "
+			repoStr = review.Job.RepoName
+			// Use display name from config if set
+			if displayName := config.GetDisplayName(review.Job.RepoPath); displayName != "" {
+				repoStr = displayName
+			}
+			repoStr += " "
 		}
 
 		// Use cached branch name (computed when review was loaded)
@@ -1769,6 +1779,12 @@ func (m tuiModel) renderReviewView() string {
 		if review.Addressed {
 			b.WriteString(" ")
 			b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
+		}
+
+		// Show full repo path on next line
+		if review.Job.RepoPath != "" {
+			b.WriteString("\n")
+			b.WriteString(tuiStatusStyle.Render(review.Job.RepoPath))
 		}
 
 		// Show verdict on line 2 (only if present)
