@@ -265,6 +265,36 @@ func TestParseVerdict(t *testing.T) {
 			want:   "F",
 		},
 		{
+			name:   "mixed polarity error handling - positive then negative is fail",
+			output: "No issues found. Error handling improved, but error handling is missing in auth.",
+			want:   "F",
+		},
+		{
+			name:   "mixed polarity error handling - negative then positive is fail",
+			output: "No issues found. Error handling is broken, though error handling in utils is good.",
+			want:   "F",
+		},
+		{
+			name:   "multiple occurrences all positive is pass",
+			output: "No issues found. Error handling added to auth. Error handling also improved in utils.",
+			want:   "P",
+		},
+		{
+			name:   "partial word match problem domains is pass",
+			output: "No issues found. The problem domains are well-defined.",
+			want:   "P",
+		},
+		{
+			name:   "partial word match errorhandling is pass",
+			output: "No issues found. The errorhandling module works well.",
+			want:   "P",
+		},
+		{
+			name:   "problem domain vs problem domains mixed is pass",
+			output: "No issues found. The problem domain is clear, and the problem domains are complex.",
+			want:   "P",
+		},
+		{
 			name:   "no problems exist is pass",
 			output: "No issues found. No problems exist.",
 			want:   "P",

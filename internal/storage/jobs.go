@@ -111,27 +111,45 @@ func checkClauseForCaveat(clause string) bool {
 		"is bad", "are bad",
 		"need", "needs", "needed",
 	}
+	// Process each benign phrase, checking each occurrence individually
 	for _, bp := range benignPhrases {
-		if idx := strings.Index(lc, bp); idx >= 0 {
-			afterPhrase := lc[idx+len(bp):]
-			// Ensure we matched a complete phrase (followed by space, punctuation, or end)
-			if len(afterPhrase) > 0 && afterPhrase[0] != ' ' && afterPhrase[0] != '.' &&
-				afterPhrase[0] != ',' && afterPhrase[0] != ';' && afterPhrase[0] != ':' {
-				continue // Partial match, skip
+		var result strings.Builder
+		remaining := lc
+		for {
+			idx := strings.Index(remaining, bp)
+			if idx < 0 {
+				result.WriteString(remaining)
+				break
 			}
-			// Check if followed by negative qualifier - if so, don't remove
+			// Copy everything before the match
+			result.WriteString(remaining[:idx])
+			afterPhrase := remaining[idx+len(bp):]
+
+			// Check if this is a complete phrase (followed by boundary or end)
+			isCompleteBoundary := len(afterPhrase) == 0 ||
+				afterPhrase[0] == ' ' || afterPhrase[0] == '.' ||
+				afterPhrase[0] == ',' || afterPhrase[0] == ';' || afterPhrase[0] == ':'
+
+			// Check if followed by negative qualifier
 			hasNegative := false
-			for _, nq := range negativeQualifiers {
-				if strings.HasPrefix(strings.TrimSpace(afterPhrase), nq) {
-					hasNegative = true
-					break
+			if isCompleteBoundary {
+				for _, nq := range negativeQualifiers {
+					if strings.HasPrefix(strings.TrimSpace(afterPhrase), nq) {
+						hasNegative = true
+						break
+					}
 				}
 			}
-			if !hasNegative {
-				// Remove benign phrase to avoid false positives
-				lc = strings.ReplaceAll(lc, bp, " ")
+
+			// Only remove if complete boundary match AND no negative qualifier
+			if isCompleteBoundary && !hasNegative {
+				result.WriteString(" ") // Replace with space
+			} else {
+				result.WriteString(bp) // Keep the phrase
 			}
+			remaining = afterPhrase
 		}
+		lc = result.String()
 	}
 	// Collapse multiple spaces after removals
 	for strings.Contains(lc, "  ") {
