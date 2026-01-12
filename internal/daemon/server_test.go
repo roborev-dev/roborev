@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,11 +19,45 @@ import (
 	"github.com/wesm/roborev/internal/storage"
 )
 
-// waitForSubscribers polls until the broadcaster has at least minCount subscribers
-func waitForSubscribers(b Broadcaster, minCount int, timeout time.Duration) bool {
+// safeRecorder wraps httptest.ResponseRecorder with mutex protection for concurrent access
+type safeRecorder struct {
+	*httptest.ResponseRecorder
+	mu sync.Mutex
+}
+
+func newSafeRecorder() *safeRecorder {
+	return &safeRecorder{ResponseRecorder: httptest.NewRecorder()}
+}
+
+func (s *safeRecorder) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ResponseRecorder.Write(p)
+}
+
+func (s *safeRecorder) WriteHeader(code int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ResponseRecorder.WriteHeader(code)
+}
+
+func (s *safeRecorder) Header() http.Header {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ResponseRecorder.Header()
+}
+
+func (s *safeRecorder) bodyString() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Body.String()
+}
+
+// waitForSubscriberIncrease polls until subscriber count increases from initialCount
+func waitForSubscriberIncrease(b Broadcaster, initialCount int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if b.SubscriberCount() >= minCount {
+		if b.SubscriberCount() > initialCount {
 			return true
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -31,10 +66,10 @@ func waitForSubscribers(b Broadcaster, minCount int, timeout time.Duration) bool
 }
 
 // waitForEvents polls until the response body contains at least minEvents newline-delimited events
-func waitForEvents(w *httptest.ResponseRecorder, minEvents int, timeout time.Duration) bool {
+func waitForEvents(w *safeRecorder, minEvents int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		body := w.Body.String()
+		body := w.bodyString()
 		count := strings.Count(body, "\n")
 		if count >= minEvents {
 			return true
@@ -746,7 +781,10 @@ func TestHandleStreamEvents(t *testing.T) {
 		// Create a request with a context that we can cancel
 		ctx, cancel := context.WithCancel(context.Background())
 		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
-		w := httptest.NewRecorder()
+		w := newSafeRecorder()
+
+		// Capture initial subscriber count to detect when this handler subscribes
+		initialCount := server.broadcaster.SubscriberCount()
 
 		// Run handler in goroutine since it blocks
 		done := make(chan struct{})
@@ -756,7 +794,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		}()
 
 		// Wait for handler to subscribe
-		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
 			t.Fatal("Timed out waiting for subscriber")
 		}
 
@@ -790,7 +828,9 @@ func TestHandleStreamEvents(t *testing.T) {
 	t.Run("streams events as JSONL", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
-		w := httptest.NewRecorder()
+		w := newSafeRecorder()
+
+		initialCount := server.broadcaster.SubscriberCount()
 
 		// Run handler in goroutine
 		done := make(chan struct{})
@@ -800,7 +840,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		}()
 
 		// Wait for handler to subscribe
-		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
 			t.Fatal("Timed out waiting for subscriber")
 		}
 
@@ -837,8 +877,8 @@ func TestHandleStreamEvents(t *testing.T) {
 		cancel()
 		<-done
 
-		// Parse JSONL output
-		body := w.Body.String()
+		// Parse JSONL output (safe to read body after handler done)
+		body := w.bodyString()
 		scanner := bufio.NewScanner(bytes.NewBufferString(body))
 		var events []Event
 		for scanner.Scan() {
@@ -877,7 +917,9 @@ func TestHandleStreamEvents(t *testing.T) {
 	t.Run("all event types are supported", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
-		w := httptest.NewRecorder()
+		w := newSafeRecorder()
+
+		initialCount := server.broadcaster.SubscriberCount()
 
 		done := make(chan struct{})
 		go func() {
@@ -885,7 +927,7 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
 			t.Fatal("Timed out waiting for subscriber")
 		}
 
@@ -931,7 +973,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		cancel()
 		<-done
 
-		body := w.Body.String()
+		body := w.bodyString()
 		scanner := bufio.NewScanner(bytes.NewBufferString(body))
 		var events []Event
 		for scanner.Scan() {
@@ -989,7 +1031,9 @@ func TestHandleStreamEvents(t *testing.T) {
 	t.Run("omitempty fields are excluded when empty", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
-		w := httptest.NewRecorder()
+		w := newSafeRecorder()
+
+		initialCount := server.broadcaster.SubscriberCount()
 
 		done := make(chan struct{})
 		go func() {
@@ -997,7 +1041,7 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
 			t.Fatal("Timed out waiting for subscriber")
 		}
 
@@ -1017,7 +1061,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		cancel()
 		<-done
 
-		body := w.Body.String()
+		body := w.bodyString()
 		// Check that empty fields are not in the JSON output
 		if bytes.Contains([]byte(body), []byte(`"verdict"`)) {
 			t.Error("Expected 'verdict' to be omitted when empty")
@@ -1031,7 +1075,9 @@ func TestHandleStreamEvents(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		// Filter for repo1 only
 		req := httptest.NewRequest(http.MethodGet, "/api/stream/events?repo="+url.QueryEscape("/test/repo1"), nil).WithContext(ctx)
-		w := httptest.NewRecorder()
+		w := newSafeRecorder()
+
+		initialCount := server.broadcaster.SubscriberCount()
 
 		// Run handler in goroutine
 		done := make(chan struct{})
@@ -1040,7 +1086,7 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
 			t.Fatal("Timed out waiting for subscriber")
 		}
 
@@ -1077,7 +1123,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		<-done
 
 		// Parse JSONL output
-		body := w.Body.String()
+		body := w.bodyString()
 		scanner := bufio.NewScanner(bytes.NewBufferString(body))
 		var events []Event
 		for scanner.Scan() {
@@ -1109,7 +1155,9 @@ func TestHandleStreamEvents(t *testing.T) {
 		// Repo path with spaces
 		repoPath := "/test/my repo with spaces"
 		req := httptest.NewRequest(http.MethodGet, "/api/stream/events?repo="+url.QueryEscape(repoPath), nil).WithContext(ctx)
-		w := httptest.NewRecorder()
+		w := newSafeRecorder()
+
+		initialCount := server.broadcaster.SubscriberCount()
 
 		// Run handler in goroutine
 		done := make(chan struct{})
@@ -1118,7 +1166,7 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
 			t.Fatal("Timed out waiting for subscriber")
 		}
 
@@ -1147,7 +1195,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		<-done
 
 		// Parse output
-		body := w.Body.String()
+		body := w.bodyString()
 		scanner := bufio.NewScanner(bytes.NewBufferString(body))
 		var events []Event
 		for scanner.Scan() {
