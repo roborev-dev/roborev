@@ -545,6 +545,10 @@ func TestGenerateHookContent(t *testing.T) {
 }
 
 func TestEnqueueSkippedBranch(t *testing.T) {
+	// Save and restore serverAddr to avoid leaking state to other tests
+	origServerAddr := serverAddr
+	t.Cleanup(func() { serverAddr = origServerAddr })
+
 	// Override HOME to prevent reading real daemon.json
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
@@ -613,9 +617,9 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		t.Fatalf("Failed to write daemon.json: %v", err)
 	}
 
-	t.Run("skipped response prints message and exits successfully", func(t *testing.T) {
-		serverAddr = ts.URL
+	serverAddr = ts.URL
 
+	t.Run("skipped response prints message and exits successfully", func(t *testing.T) {
 		var stdout bytes.Buffer
 		cmd := enqueueCmd()
 		cmd.SetOut(&stdout)
@@ -632,8 +636,6 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 	})
 
 	t.Run("skipped response in quiet mode suppresses output", func(t *testing.T) {
-		serverAddr = ts.URL
-
 		var stdout bytes.Buffer
 		cmd := enqueueCmd()
 		cmd.SetOut(&stdout)
