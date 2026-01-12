@@ -79,8 +79,9 @@ type tuiModel struct {
 	promptFromQueue bool // true if prompt view was entered from queue (not review)
 	width           int
 	height          int
-	err             error
-	updateAvailable string // Latest version if update available, empty if up to date
+	err               error
+	updateAvailable   string // Latest version if update available, empty if up to date
+	updateIsDevBuild  bool   // True if running a dev build
 
 	// Pagination state
 	hasMore        bool // true if there are more jobs to load
@@ -136,7 +137,10 @@ type tuiRerunResultMsg struct {
 type tuiErrMsg error
 type tuiJobsErrMsg struct{ err error }       // Job fetch error (clears loadingJobs)
 type tuiPaginationErrMsg struct{ err error } // Pagination-specific error (clears loadingMore)
-type tuiUpdateCheckMsg string  // Latest version if available, empty if up to date
+type tuiUpdateCheckMsg struct {
+	version    string // Latest version if available, empty if up to date
+	isDevBuild bool   // True if running a dev build
+}
 type tuiReposMsg struct {
 	repos      []repoFilterItem
 	totalCount int
@@ -273,9 +277,9 @@ func (m tuiModel) checkForUpdate() tea.Cmd {
 	return func() tea.Msg {
 		info, err := update.CheckForUpdate(false) // Use cache
 		if err != nil || info == nil {
-			return tuiUpdateCheckMsg("") // No update or error
+			return tuiUpdateCheckMsg{} // No update or error
 		}
-		return tuiUpdateCheckMsg(info.LatestVersion)
+		return tuiUpdateCheckMsg{version: info.LatestVersion, isDevBuild: info.IsDevBuild}
 	}
 }
 
@@ -1292,7 +1296,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiUpdateCheckMsg:
-		m.updateAvailable = string(msg)
+		m.updateAvailable = msg.version
+		m.updateIsDevBuild = msg.isDevBuild
 
 	case tuiReviewMsg:
 		// Ignore stale responses from rapid navigation
@@ -1529,7 +1534,13 @@ func (m tuiModel) renderQueueView() string {
 	// Update notification (or blank line if no update)
 	if m.updateAvailable != "" {
 		updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
-		b.WriteString(updateStyle.Render(fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)))
+		var updateMsg string
+		if m.updateIsDevBuild {
+			updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update'", m.updateAvailable)
+		} else {
+			updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
+		}
+		b.WriteString(updateStyle.Render(updateMsg))
 		b.WriteString("\n")
 	} else {
 		b.WriteString("\n")

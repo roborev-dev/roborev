@@ -48,6 +48,7 @@ type UpdateInfo struct {
 	AssetName      string
 	Size           int64
 	Checksum       string // SHA256 if available
+	IsDevBuild     bool   // True if running a dev build (hash version)
 }
 
 // findAssets locates the platform-specific binary and checksums file from release assets
@@ -74,9 +75,11 @@ type cachedCheck struct {
 // Uses a 1-hour cache to avoid hitting GitHub API too often
 func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 	currentVersion := strings.TrimPrefix(version.Version, "v")
+	isDevBuild := extractBaseSemver(currentVersion) == ""
 
 	// Check cache first (unless forced)
-	if !forceCheck {
+	// Skip cache for dev builds - always check so they know about releases
+	if !forceCheck && !isDevBuild {
 		if cached, err := loadCache(); err == nil {
 			if time.Since(cached.CheckedAt) < cacheDuration {
 				latestVersion := strings.TrimPrefix(cached.Version, "v")
@@ -98,7 +101,10 @@ func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 	saveCache(release.TagName)
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	if !isNewer(latestVersion, currentVersion) {
+
+	// For dev builds, always notify about the latest release
+	// For regular builds, only notify if there's a newer version
+	if !isDevBuild && !isNewer(latestVersion, currentVersion) {
 		return nil, nil // Up to date
 	}
 
@@ -127,6 +133,7 @@ func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 		AssetName:      asset.Name,
 		Size:           asset.Size,
 		Checksum:       checksum,
+		IsDevBuild:     isDevBuild,
 	}, nil
 }
 

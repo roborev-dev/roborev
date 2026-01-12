@@ -968,7 +968,11 @@ Requires confirmation before making changes (use --yes to skip).`,
 
 			fmt.Printf("\n  Current version: %s\n", info.CurrentVersion)
 			fmt.Printf("  Latest version:  %s\n", info.LatestVersion)
-			fmt.Println("\nUpdate available!")
+			if info.IsDevBuild {
+				fmt.Println("\nYou're running a dev build. Latest stable release available.")
+			} else {
+				fmt.Println("\nUpdate available!")
+			}
 			fmt.Println("\nDownload:")
 			fmt.Printf("  URL:  %s\n", info.DownloadURL)
 			fmt.Printf("  Size: %s\n", update.FormatSize(info.Size))
