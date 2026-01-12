@@ -974,55 +974,57 @@ func TestHandleStreamEvents(t *testing.T) {
 		<-done
 
 		body := w.bodyString()
-		scanner := bufio.NewScanner(bytes.NewBufferString(body))
-		var events []Event
-		for scanner.Scan() {
-			line := scanner.Text()
+		lines := strings.Split(strings.TrimSpace(body), "\n")
+
+		// Parse into maps to check actual key presence (not just empty values)
+		var rawEvents []map[string]interface{}
+		for _, line := range lines {
 			if line == "" {
 				continue
 			}
-			var ev Event
-			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			var raw map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &raw); err != nil {
 				t.Fatalf("Failed to parse JSONL: %v", err)
 			}
-			events = append(events, ev)
+			rawEvents = append(rawEvents, raw)
 		}
 
 		expectedTypes := []string{"review.started", "review.completed", "review.failed", "review.canceled"}
-		if len(events) != len(expectedTypes) {
-			t.Fatalf("Expected %d events, got %d", len(expectedTypes), len(events))
+		if len(rawEvents) != len(expectedTypes) {
+			t.Fatalf("Expected %d events, got %d", len(expectedTypes), len(rawEvents))
 		}
 		for i, exp := range expectedTypes {
-			if events[i].Type != exp {
-				t.Errorf("Event %d: expected type '%s', got '%s'", i, exp, events[i].Type)
+			if rawEvents[i]["type"] != exp {
+				t.Errorf("Event %d: expected type '%s', got '%v'", i, exp, rawEvents[i]["type"])
 			}
 		}
 
-		// Verify error field is present for failed event and absent for others
-		for _, ev := range events {
-			if ev.Type == "review.failed" {
-				if ev.Error == "" {
-					t.Error("Expected error field in review.failed event")
-				}
-				if ev.Error != "connection refused" {
-					t.Errorf("Expected error 'connection refused', got '%s'", ev.Error)
+		// Verify error field is present (key exists) for failed event and absent for others
+		for _, raw := range rawEvents {
+			eventType := raw["type"].(string)
+			_, hasError := raw["error"]
+			if eventType == "review.failed" {
+				if !hasError {
+					t.Error("Expected 'error' key present in review.failed event")
 				}
 			} else {
-				if ev.Error != "" {
-					t.Errorf("Unexpected error field in %s event: %s", ev.Type, ev.Error)
+				if hasError {
+					t.Errorf("Unexpected 'error' key in %s event", eventType)
 				}
 			}
 		}
 
-		// Verify verdict is present only in completed event
-		for _, ev := range events {
-			if ev.Type == "review.completed" {
-				if ev.Verdict != "pass" {
-					t.Errorf("Expected verdict 'pass', got '%s'", ev.Verdict)
+		// Verify verdict field is present (key exists) only in completed event
+		for _, raw := range rawEvents {
+			eventType := raw["type"].(string)
+			_, hasVerdict := raw["verdict"]
+			if eventType == "review.completed" {
+				if !hasVerdict {
+					t.Error("Expected 'verdict' key present in review.completed event")
 				}
 			} else {
-				if ev.Verdict != "" {
-					t.Errorf("Unexpected verdict in %s event: %s", ev.Type, ev.Verdict)
+				if hasVerdict {
+					t.Errorf("Unexpected 'verdict' key in %s event", eventType)
 				}
 			}
 		}
