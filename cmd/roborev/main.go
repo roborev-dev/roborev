@@ -85,14 +85,14 @@ func ensureDaemon() error {
 			var status struct {
 				Version string `json:"version"`
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&status); err == nil {
-				// Check version match - restart if versions differ
-				if status.Version != version.Version {
-					if verbose {
-						fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
-					}
-					return restartDaemon()
+			decodeErr := json.NewDecoder(resp.Body).Decode(&status)
+
+			// Fail closed: restart if decode fails, version empty, or mismatch
+			if decodeErr != nil || status.Version == "" || status.Version != version.Version {
+				if verbose {
+					fmt.Printf("Daemon version mismatch or unreadable (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
 				}
+				return restartDaemon()
 			}
 
 			serverAddr = fmt.Sprintf("http://%s", info.Addr)
@@ -107,13 +107,14 @@ func ensureDaemon() error {
 		var status struct {
 			Version string `json:"version"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&status); err == nil {
-			if status.Version != version.Version {
-				if verbose {
-					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
-				}
-				return restartDaemon()
+		decodeErr := json.NewDecoder(resp.Body).Decode(&status)
+
+		// Fail closed: restart if decode fails, version empty, or mismatch
+		if decodeErr != nil || status.Version == "" || status.Version != version.Version {
+			if verbose {
+				fmt.Printf("Daemon version mismatch or unreadable (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
 			}
+			return restartDaemon()
 		}
 		return nil
 	}
