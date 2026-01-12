@@ -130,6 +130,7 @@ The interactive terminal UI (`roborev tui`) provides a real-time view of the rev
 | `p` | View prompt |
 | `a` | Toggle addressed |
 | `x` | Cancel running/queued job |
+| `r` | Rerun completed/failed/canceled job |
 | `f` | Filter by repository |
 | `h` | Hide addressed/failed/canceled |
 | `Esc` | Clear all filters |
