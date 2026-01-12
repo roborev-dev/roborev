@@ -128,7 +128,11 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	sb.WriteString("## Current Commit\n\n")
 	sb.WriteString(fmt.Sprintf("**Commit:** %s\n", shortSHA))
 	sb.WriteString(fmt.Sprintf("**Author:** %s\n", info.Author))
-	sb.WriteString(fmt.Sprintf("**Subject:** %s\n\n", info.Subject))
+	sb.WriteString(fmt.Sprintf("**Subject:** %s\n", info.Subject))
+	if info.Body != "" {
+		sb.WriteString(fmt.Sprintf("\n**Message:**\n%s\n", info.Body))
+	}
+	sb.WriteString("\n")
 
 	// Get and include the diff
 	diff, err := git.GetDiff(repoPath, sha)

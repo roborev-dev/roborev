@@ -16,13 +16,15 @@ type CommitInfo struct {
 	SHA       string
 	Author    string
 	Subject   string
+	Body      string // Full commit message body (excluding subject)
 	Timestamp time.Time
 }
 
 // GetCommitInfo retrieves commit metadata
 func GetCommitInfo(repoPath, sha string) (*CommitInfo, error) {
-	// Format: %H|%an|%s|%aI
-	cmd := exec.Command("git", "log", "-1", "--format=%H|%an|%s|%aI", sha)
+	// Use record separator (ASCII 30) to delimit fields - won't appear in commit messages
+	const rs = "\x1e"
+	cmd := exec.Command("git", "log", "-1", "--format=%H"+rs+"%an"+rs+"%s"+rs+"%aI"+rs+"%b", sha)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -30,7 +32,7 @@ func GetCommitInfo(repoPath, sha string) (*CommitInfo, error) {
 		return nil, fmt.Errorf("git log: %w", err)
 	}
 
-	parts := strings.SplitN(strings.TrimSpace(string(out)), "|", 4)
+	parts := strings.SplitN(strings.TrimSuffix(string(out), "\n"), rs, 5)
 	if len(parts) < 4 {
 		return nil, fmt.Errorf("unexpected git log output: %s", out)
 	}
@@ -40,10 +42,16 @@ func GetCommitInfo(repoPath, sha string) (*CommitInfo, error) {
 		ts = time.Now() // Fallback
 	}
 
+	var body string
+	if len(parts) >= 5 {
+		body = strings.TrimSpace(parts[4])
+	}
+
 	return &CommitInfo{
 		SHA:       parts[0],
 		Author:    parts[1],
 		Subject:   parts[2],
+		Body:      body,
 		Timestamp: ts,
 	}, nil
 }

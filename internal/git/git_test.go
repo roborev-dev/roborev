@@ -519,6 +519,110 @@ func TestGetMainRepoRoot(t *testing.T) {
 	})
 }
 
+func TestGetCommitInfo(t *testing.T) {
+	// Create a temp git repo
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	// Configure git user for commits
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test Author").Run()
+
+	t.Run("commit with subject only", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+		exec.Command("git", "-C", tmpDir, "commit", "-m", "Simple subject").Run()
+
+		sha, _ := exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD").Output()
+		commitSHA := strings.TrimSpace(string(sha))
+
+		info, err := GetCommitInfo(tmpDir, commitSHA)
+		if err != nil {
+			t.Fatalf("GetCommitInfo failed: %v", err)
+		}
+
+		if info.Subject != "Simple subject" {
+			t.Errorf("expected subject 'Simple subject', got '%s'", info.Subject)
+		}
+		if info.Body != "" {
+			t.Errorf("expected empty body, got '%s'", info.Body)
+		}
+		if info.Author != "Test Author" {
+			t.Errorf("expected author 'Test Author', got '%s'", info.Author)
+		}
+	})
+
+	t.Run("commit with subject and body", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("content2"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+
+		// Create commit with multi-line message
+		commitMsg := "Subject line\n\nThis is the body.\nIt has multiple lines.\n\nAnd paragraphs."
+		cmd := exec.Command("git", "-C", tmpDir, "commit", "-m", commitMsg)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git commit failed: %v\n%s", err, out)
+		}
+
+		sha, _ := exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD").Output()
+		commitSHA := strings.TrimSpace(string(sha))
+
+		info, err := GetCommitInfo(tmpDir, commitSHA)
+		if err != nil {
+			t.Fatalf("GetCommitInfo failed: %v", err)
+		}
+
+		if info.Subject != "Subject line" {
+			t.Errorf("expected subject 'Subject line', got '%s'", info.Subject)
+		}
+		if !strings.Contains(info.Body, "This is the body") {
+			t.Errorf("expected body to contain 'This is the body', got '%s'", info.Body)
+		}
+		if !strings.Contains(info.Body, "multiple lines") {
+			t.Errorf("expected body to contain 'multiple lines', got '%s'", info.Body)
+		}
+	})
+
+	t.Run("commit with pipe in message", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tmpDir, "file3.txt"), []byte("content3"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+
+		// Create commit with pipe characters (tests delimiter handling)
+		commitMsg := "Fix bug | important\n\nDetails: foo | bar | baz"
+		cmd := exec.Command("git", "-C", tmpDir, "commit", "-m", commitMsg)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git commit failed: %v\n%s", err, out)
+		}
+
+		sha, _ := exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD").Output()
+		commitSHA := strings.TrimSpace(string(sha))
+
+		info, err := GetCommitInfo(tmpDir, commitSHA)
+		if err != nil {
+			t.Fatalf("GetCommitInfo failed: %v", err)
+		}
+
+		// Subject should include the pipe
+		if !strings.Contains(info.Subject, "|") {
+			t.Errorf("expected subject to contain pipe, got '%s'", info.Subject)
+		}
+		// Body should include pipes
+		if !strings.Contains(info.Body, "foo | bar") {
+			t.Errorf("expected body to contain 'foo | bar', got '%s'", info.Body)
+		}
+	})
+}
+
 func TestGetBranchName(t *testing.T) {
 	// Create a temp git repo
 	tmpDir := t.TempDir()
