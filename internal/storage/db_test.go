@@ -1387,6 +1387,66 @@ func TestReenqueueJob(t *testing.T) {
 			t.Error("ReenqueueJob should fail for nonexistent jobs")
 		}
 	})
+
+	t.Run("rerun done job and complete again", func(t *testing.T) {
+		// Use isolated database to avoid interference from other subtests
+		isolatedDB := openTestDB(t)
+		defer isolatedDB.Close()
+
+		isolatedRepo, _ := isolatedDB.GetOrCreateRepo("/tmp/isolated-repo")
+		commit, _ := isolatedDB.GetOrCreateCommit(isolatedRepo.ID, "rerun-complete-cycle", "A", "S", time.Now())
+		job, _ := isolatedDB.EnqueueJob(isolatedRepo.ID, commit.ID, "rerun-complete-cycle", "codex")
+
+		// First completion cycle
+		claimed, _ := isolatedDB.ClaimJob("worker-1")
+		if claimed == nil || claimed.ID != job.ID {
+			t.Fatal("Failed to claim the expected job")
+		}
+		err := isolatedDB.CompleteJob(job.ID, "codex", "first prompt", "first output")
+		if err != nil {
+			t.Fatalf("First CompleteJob failed: %v", err)
+		}
+
+		// Verify first review exists
+		review1, err := isolatedDB.GetReviewByJobID(job.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed after first complete: %v", err)
+		}
+		if review1.Output != "first output" {
+			t.Errorf("Expected first output, got '%s'", review1.Output)
+		}
+
+		// Re-enqueue the done job
+		err = isolatedDB.ReenqueueJob(job.ID)
+		if err != nil {
+			t.Fatalf("ReenqueueJob failed: %v", err)
+		}
+
+		// Verify review was deleted
+		_, err = isolatedDB.GetReviewByJobID(job.ID)
+		if err == nil {
+			t.Error("Expected GetReviewByJobID to fail after re-enqueue (review should be deleted)")
+		}
+
+		// Second completion cycle
+		claimed, _ = isolatedDB.ClaimJob("worker-1")
+		if claimed == nil || claimed.ID != job.ID {
+			t.Fatal("Failed to claim the expected job for second cycle")
+		}
+		err = isolatedDB.CompleteJob(job.ID, "codex", "second prompt", "second output")
+		if err != nil {
+			t.Fatalf("Second CompleteJob failed: %v", err)
+		}
+
+		// Verify second review exists with new content
+		review2, err := isolatedDB.GetReviewByJobID(job.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed after second complete: %v", err)
+		}
+		if review2.Output != "second output" {
+			t.Errorf("Expected second output, got '%s'", review2.Output)
+		}
+	})
 }
 
 func openTestDB(t *testing.T) *DB {

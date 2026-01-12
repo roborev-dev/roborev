@@ -126,9 +126,12 @@ type tuiCancelResultMsg struct {
 	err           error
 }
 type tuiRerunResultMsg struct {
-	jobID    int64
-	oldState storage.JobStatus
-	err      error
+	jobID         int64
+	oldState      storage.JobStatus
+	oldStartedAt  *time.Time
+	oldFinishedAt *time.Time
+	oldError      string
+	err           error
 }
 type tuiErrMsg error
 type tuiJobsErrMsg struct{ err error }       // Job fetch error (clears loadingJobs)
@@ -525,6 +528,26 @@ func (m *tuiModel) setJobFinishedAt(jobID int64, finishedAt *time.Time) {
 	}
 }
 
+// setJobStartedAt updates the StartedAt for a job by ID
+func (m *tuiModel) setJobStartedAt(jobID int64, startedAt *time.Time) {
+	for i := range m.jobs {
+		if m.jobs[i].ID == jobID {
+			m.jobs[i].StartedAt = startedAt
+			return
+		}
+	}
+}
+
+// setJobError updates the Error for a job by ID
+func (m *tuiModel) setJobError(jobID int64, errMsg string) {
+	for i := range m.jobs {
+		if m.jobs[i].ID == jobID {
+			m.jobs[i].Error = errMsg
+			return
+		}
+	}
+}
+
 // findNextViewableJob finds the next job that can be viewed (done or failed).
 // Respects active filters. Returns the index or -1 if none found.
 func (m *tuiModel) findNextViewableJob() int {
@@ -577,27 +600,27 @@ func (m tuiModel) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishe
 }
 
 // rerunJob sends a rerun request to the server for failed/canceled jobs
-func (m tuiModel) rerunJob(jobID int64, oldStatus storage.JobStatus) tea.Cmd {
+func (m tuiModel) rerunJob(jobID int64, oldStatus storage.JobStatus, oldStartedAt, oldFinishedAt *time.Time, oldError string) tea.Cmd {
 	return func() tea.Msg {
 		reqBody, err := json.Marshal(map[string]interface{}{
 			"job_id": jobID,
 		})
 		if err != nil {
-			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: err}
+			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: err}
 		}
 		resp, err := m.client.Post(m.serverAddr+"/api/job/rerun", "application/json", bytes.NewReader(reqBody))
 		if err != nil {
-			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: err}
+			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: err}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: fmt.Errorf("job not rerunnable")}
+			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: fmt.Errorf("job not rerunnable")}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: fmt.Errorf("rerun job: %s", resp.Status)}
+			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: fmt.Errorf("rerun job: %s", resp.Status)}
 		}
-		return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: nil}
+		return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: nil}
 	}
 }
 
@@ -1068,11 +1091,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				job := &m.jobs[m.selectedIdx]
 				if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {
 					oldStatus := job.Status
+					oldStartedAt := job.StartedAt
+					oldFinishedAt := job.FinishedAt
+					oldError := job.Error
 					job.Status = storage.JobStatusQueued // Optimistic update
 					job.StartedAt = nil
 					job.FinishedAt = nil
 					job.Error = ""
-					return m, m.rerunJob(job.ID, oldStatus)
+					return m, m.rerunJob(job.ID, oldStatus, oldStartedAt, oldFinishedAt, oldError)
 				}
 			}
 
@@ -1314,8 +1340,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiRerunResultMsg:
 		if msg.err != nil {
-			// Rollback optimistic update on error
+			// Rollback optimistic update on error (status, timestamps, and error)
 			m.setJobStatus(msg.jobID, msg.oldState)
+			m.setJobStartedAt(msg.jobID, msg.oldStartedAt)
+			m.setJobFinishedAt(msg.jobID, msg.oldFinishedAt)
+			m.setJobError(msg.jobID, msg.oldError)
 			m.err = msg.err
 		}
 

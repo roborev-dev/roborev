@@ -600,8 +600,22 @@ func (db *DB) CancelJob(jobID int64) error {
 
 // ReenqueueJob resets a completed, failed, or canceled job back to queued status.
 // This allows manual re-running of jobs to get a fresh review.
+// For done jobs, the existing review is deleted to avoid unique constraint violations.
 func (db *DB) ReenqueueJob(jobID int64) error {
-	result, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete any existing review for this job (for done jobs being rerun)
+	_, err = tx.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+	if err != nil {
+		return err
+	}
+
+	// Reset job status
+	result, err := tx.Exec(`
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
@@ -616,7 +630,8 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 	if rows == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+
+	return tx.Commit()
 }
 
 // RetryJob atomically resets a running job to queued for retry.
