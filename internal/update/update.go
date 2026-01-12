@@ -21,9 +21,10 @@ import (
 )
 
 const (
-	githubAPIURL  = "https://api.github.com/repos/wesm/roborev/releases/latest"
-	cacheFileName = "update_check.json"
-	cacheDuration = 1 * time.Hour
+	githubAPIURL      = "https://api.github.com/repos/wesm/roborev/releases/latest"
+	cacheFileName     = "update_check.json"
+	cacheDuration     = 1 * time.Hour
+	devCacheDuration  = 15 * time.Minute // Shorter cache for dev builds
 )
 
 // Release represents a GitHub release
@@ -78,15 +79,28 @@ func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 	isDevBuild := extractBaseSemver(currentVersion) == ""
 
 	// Check cache first (unless forced)
-	// Skip cache for dev builds - always check so they know about releases
-	if !forceCheck && !isDevBuild {
+	// Use shorter cache for dev builds so they learn about releases sooner
+	cacheWindow := cacheDuration
+	if isDevBuild {
+		cacheWindow = devCacheDuration
+	}
+	if !forceCheck {
 		if cached, err := loadCache(); err == nil {
-			if time.Since(cached.CheckedAt) < cacheDuration {
+			if time.Since(cached.CheckedAt) < cacheWindow {
 				latestVersion := strings.TrimPrefix(cached.Version, "v")
-				if !isNewer(latestVersion, currentVersion) {
+				if !isDevBuild && !isNewer(latestVersion, currentVersion) {
 					return nil, nil // Up to date (cached)
 				}
-				// Cache says update available, fetch fresh info
+				// For dev builds, return cached version (notification only needs version)
+				// Full download info is fetched when actually updating (forceCheck=true)
+				if isDevBuild {
+					return &UpdateInfo{
+						CurrentVersion: version.Version,
+						LatestVersion:  cached.Version,
+						IsDevBuild:     true,
+					}, nil
+				}
+				// Cache says update available, fetch fresh info for download URLs
 			}
 		}
 	}
