@@ -1446,8 +1446,9 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	}
 
 	t.Run("enqueue on excluded branch returns skipped", func(t *testing.T) {
-		reqBody := bytes.NewBufferString(fmt.Sprintf(`{"repo_path": "%s", "git_ref": "HEAD", "agent": "test"}`, repoDir))
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", reqBody)
+		reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -1485,8 +1486,9 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 			t.Fatalf("git checkout failed: %v\n%s", err, out)
 		}
 
-		reqBody := bytes.NewBufferString(fmt.Sprintf(`{"repo_path": "%s", "git_ref": "HEAD", "agent": "test"}`, repoDir))
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", reqBody)
+		reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 

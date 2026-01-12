@@ -175,8 +175,8 @@ func (m tuiModel) Init() tea.Cmd {
 }
 
 // getDisplayName returns the display name for a repo, using the cache.
-// Falls back to the provided default name if no display name is configured.
-func (m tuiModel) getDisplayName(repoPath, defaultName string) string {
+// Falls back to loading from config on cache miss, then to the provided default name.
+func (m *tuiModel) getDisplayName(repoPath, defaultName string) string {
 	if repoPath == "" {
 		return defaultName
 	}
@@ -184,21 +184,26 @@ func (m tuiModel) getDisplayName(repoPath, defaultName string) string {
 		if displayName != "" {
 			return displayName
 		}
+		return defaultName
+	}
+	// Cache miss - load from config (handles reviews for repos not in jobs list)
+	displayName := config.GetDisplayName(repoPath)
+	m.displayNames[repoPath] = displayName
+	if displayName != "" {
+		return displayName
 	}
 	return defaultName
 }
 
-// updateDisplayNameCache updates the display name cache for the given repo paths.
-// This should be called when jobs are loaded to avoid disk reads during render.
+// updateDisplayNameCache refreshes display names for the given repo paths.
+// Called on each jobs fetch to pick up config changes without restart.
 func (m *tuiModel) updateDisplayNameCache(jobs []storage.ReviewJob) {
 	for _, job := range jobs {
 		if job.RepoPath == "" {
 			continue
 		}
-		if _, ok := m.displayNames[job.RepoPath]; !ok {
-			// Load from config only once per repo path
-			m.displayNames[job.RepoPath] = config.GetDisplayName(job.RepoPath)
-		}
+		// Always refresh to pick up config changes
+		m.displayNames[job.RepoPath] = config.GetDisplayName(job.RepoPath)
 	}
 }
 
