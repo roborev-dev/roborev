@@ -1823,8 +1823,11 @@ func (m tuiModel) renderReviewView() string {
 		helpLines = (len(helpText) + m.width - 1) / m.width
 	}
 
-	// headerHeight = title + scroll indicator (1) + help + verdict (0|1)
+	// headerHeight = title + repo path (0|1) + scroll indicator (1) + help + verdict (0|1)
 	headerHeight := titleLines + 1 + helpLines
+	if review.Job != nil && review.Job.RepoPath != "" {
+		headerHeight++ // Add 1 for repo path line
+	}
 	if review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" {
 		headerHeight++ // Add 1 for verdict line
 	}
