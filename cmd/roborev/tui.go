@@ -1449,13 +1449,9 @@ func (m tuiModel) renderQueueView() string {
 	var statusLine string
 	if m.activeRepoFilter != "" {
 		// Calculate counts from jobs (all pre-filtered by API)
-		var queued, running, done, failed, canceled int
+		var done, failed, canceled int
 		for _, job := range m.jobs {
 			switch job.Status {
-			case storage.JobStatusQueued:
-				queued++
-			case storage.JobStatusRunning:
-				running++
 			case storage.JobStatusDone:
 				done++
 			case storage.JobStatusFailed:
@@ -1464,13 +1460,12 @@ func (m tuiModel) renderQueueView() string {
 				canceled++
 			}
 		}
-		statusLine = fmt.Sprintf("Daemon: %s | Queued: %d | Running: %d | Done: %d | Failed: %d | Canceled: %d",
-			m.daemonVersion, queued, running, done, failed, canceled)
+		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Failed: %d | Canceled: %d",
+			m.daemonVersion, done, failed, canceled)
 	} else {
-		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Queued: %d | Running: %d | Done: %d | Failed: %d | Canceled: %d",
+		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Failed: %d | Canceled: %d",
 			m.daemonVersion,
 			m.status.ActiveWorkers, m.status.MaxWorkers,
-			m.status.QueuedJobs, m.status.RunningJobs,
 			m.status.CompletedJobs, m.status.FailedJobs,
 			m.status.CanceledJobs)
 	}
