@@ -205,8 +205,10 @@ The daemon starts automatically when needed and handles port conflicts gracefull
 git clone https://github.com/wesm/roborev
 cd roborev
 go test ./...
-go install ./cmd/...
+make install    # Installs with version info (e.g., v0.7.0-5-gabcdef)
 ```
+
+Or use `go install ./cmd/...` for quick iteration (version shows commit hash only).
 
 ## License
 

@@ -6,6 +6,7 @@ LDFLAGS := -X github.com/wesm/roborev/internal/version.Version=$(VERSION)
 .PHONY: build install clean test
 
 build:
+	@mkdir -p bin
 	go build -ldflags="$(LDFLAGS)" -o bin/roborev ./cmd/roborev
 	go build -ldflags="$(LDFLAGS)" -o bin/roborevd ./cmd/roborevd
 
