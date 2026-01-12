@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -756,9 +757,9 @@ Examples:
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			// Resolve repo filter if set
+			// Resolve repo filter if set - use main repo root for worktree compatibility
 			if repoFilter != "" {
-				root, err := git.GetRepoRoot(repoFilter)
+				root, err := git.GetMainRepoRoot(repoFilter)
 				if err != nil {
 					return fmt.Errorf("resolve repo path: %w", err)
 				}
@@ -804,21 +805,18 @@ Examples:
 				return fmt.Errorf("stream failed: %s", body)
 			}
 
-			// Stream events
-			decoder := json.NewDecoder(resp.Body)
-			for {
-				var event daemon.Event
-				if err := decoder.Decode(&event); err != nil {
-					if err == io.EOF || ctx.Err() != nil {
-						return nil
-					}
-					return fmt.Errorf("decode event: %w", err)
+			// Stream events - pass through lines directly to preserve all fields
+			scanner := bufio.NewScanner(resp.Body)
+			for scanner.Scan() {
+				if ctx.Err() != nil {
+					return nil
 				}
-
-				// Print event as JSON line
-				data, _ := json.Marshal(event)
-				fmt.Println(string(data))
+				fmt.Println(scanner.Text())
 			}
+			if err := scanner.Err(); err != nil && ctx.Err() == nil {
+				return fmt.Errorf("read stream: %w", err)
+			}
+			return nil
 		},
 	}
 
