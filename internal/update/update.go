@@ -535,14 +535,16 @@ func extractBaseSemver(v string) string {
 // isNewer returns true if v1 is newer than v2
 // Assumes semver format: major.minor.patch
 // Handles git describe format (v0.4.0-5-gabcdef) by extracting base version.
-// Non-semver versions (like "dev" or git hashes) are always considered older.
+// Returns false for pure dev builds (hashes like "9c2baf2") since we can't
+// determine their relationship to releases - skip update notifications for these.
 func isNewer(v1, v2 string) bool {
 	base1 := extractBaseSemver(v1)
 	base2 := extractBaseSemver(v2)
 
-	// If current version has no semver base (pure dev build), any semver release is newer
-	if base2 == "" && base1 != "" {
-		return true
+	// If current version has no semver base (pure hash dev build), skip update notification
+	// We can't determine if they're ahead or behind releases
+	if base2 == "" {
+		return false
 	}
 	// If release version has no semver base, something is wrong - not newer
 	if base1 == "" {

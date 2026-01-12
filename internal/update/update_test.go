@@ -258,11 +258,11 @@ func TestIsNewer(t *testing.T) {
 		{"v1.0.0", "0.9.0", true},
 		{"1.0.0", "v0.9.0", true},
 
-		// Dev versions (git hashes) - any semver is newer
-		{"0.4.2", "88be010", true},
-		{"0.4.2", "dev", true},
-		{"0.4.2", "abc1234-dirty", true},
-		{"v0.4.2", "88be010", true},
+		// Pure hash dev versions - skip update notification (can't determine relationship)
+		{"0.4.2", "88be010", false},
+		{"0.4.2", "dev", false},
+		{"0.4.2", "abc1234-dirty", false},
+		{"v0.4.2", "88be010", false},
 
 		// Non-semver release version - not newer
 		{"badversion", "0.4.0", false},
