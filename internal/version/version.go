@@ -1,13 +1,13 @@
 package version
 
 import (
-	"os/exec"
 	"runtime/debug"
 	"strings"
 )
 
 // Version is the build version. Set via -ldflags for releases,
-// otherwise falls back to git describe or commit hash.
+// otherwise falls back to git commit hash from VCS info.
+// For dev builds with git describe version, use: make install
 var Version = "dev"
 
 func init() {
@@ -26,29 +26,15 @@ func getVersionFromVCS() string {
 		return "dev"
 	}
 
-	var modified bool
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.modified" {
-			modified = setting.Value == "true"
-			break
-		}
-	}
-
-	// Try git describe first - shows tag + commits ahead + short hash
-	// e.g., "v0.7.0-6-g0a5b394"
-	if desc := getGitDescribe(); desc != "" {
-		if modified {
-			desc += "-dirty"
-		}
-		return desc
-	}
-
-	// Fall back to commit hash from build info
 	var revision string
+	var modified bool
+
 	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" {
+		switch setting.Key {
+		case "vcs.revision":
 			revision = setting.Value
-			break
+		case "vcs.modified":
+			modified = setting.Value == "true"
 		}
 	}
 
@@ -61,21 +47,12 @@ func getVersionFromVCS() string {
 		revision = revision[:7]
 	}
 
+	// Mark dirty builds
 	if modified {
 		revision += "-dirty"
 	}
 
 	return revision
-}
-
-// getGitDescribe runs git describe to get version relative to tags
-func getGitDescribe() string {
-	cmd := exec.Command("git", "describe", "--tags", "--always")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // Full returns the full version string with additional build info
