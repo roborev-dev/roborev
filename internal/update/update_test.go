@@ -198,11 +198,56 @@ func TestExtractChecksum(t *testing.T) {
 	}
 }
 
+func TestExtractBaseSemver(t *testing.T) {
+	tests := []struct {
+		version string
+		want    string
+	}{
+		// Clean semver
+		{"0.4.0", "0.4.0"},
+		{"1.2.3", "1.2.3"},
+		{"v0.4.0", "0.4.0"},
+		{"v1.2.3", "1.2.3"},
+		// Git describe format (dev builds)
+		{"0.4.0-5-gabcdef", "0.4.0"},
+		{"v0.4.0-5-gabcdef", "0.4.0"},
+		{"0.4.0-15-g1234567", "0.4.0"},
+		{"1.2.3-100-gdeadbeef", "1.2.3"},
+		// Prerelease tags
+		{"0.4.0-dev", "0.4.0"},
+		{"0.4.0-rc1", "0.4.0"},
+		{"0.4.0-beta.1", "0.4.0"},
+		{"v1.0.0-alpha", "1.0.0"},
+		// Pure dev/hash versions (no semver)
+		{"dev", ""},
+		{"abc1234", ""},
+		{"88be010", ""},
+		{"abc1234-dirty", ""},
+		{"", ""},
+		// Edge cases
+		{"0", ""},           // No dots
+		{"v", ""},           // Just v
+		{"vdev", ""},        // v followed by non-digit
+		{"1.0", "1.0"},      // Two-part version
+		{"1.0.0.0", "1.0.0.0"}, // Four-part version
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			got := extractBaseSemver(tt.version)
+			if got != tt.want {
+				t.Errorf("extractBaseSemver(%q) = %q, want %q", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsNewer(t *testing.T) {
 	tests := []struct {
 		v1, v2 string
 		want   bool
 	}{
+		// Basic semver comparisons
 		{"1.0.0", "0.9.0", true},
 		{"1.1.0", "1.0.0", true},
 		{"1.0.1", "1.0.0", true},
@@ -212,14 +257,38 @@ func TestIsNewer(t *testing.T) {
 		{"v1.0.0", "v0.9.0", true},
 		{"v1.0.0", "0.9.0", true},
 		{"1.0.0", "v0.9.0", true},
+
 		// Dev versions (git hashes) - any semver is newer
 		{"0.4.2", "88be010", true},
 		{"0.4.2", "dev", true},
 		{"0.4.2", "abc1234-dirty", true},
 		{"v0.4.2", "88be010", true},
+
 		// Non-semver release version - not newer
 		{"badversion", "0.4.0", false},
 		{"abc123", "0.4.0", false},
+
+		// Git describe format - KEY TEST CASES for dev builds
+		// Dev build v0.4.0-5-gabcdef should NOT show update for v0.4.0
+		{"0.4.0", "0.4.0-5-gabcdef", false},
+		{"v0.4.0", "v0.4.0-5-gabcdef", false},
+		{"0.4.0", "v0.4.0-15-g1234567", false},
+
+		// Dev build v0.4.0-5-gabcdef SHOULD show update for v0.5.0
+		{"0.5.0", "0.4.0-5-gabcdef", true},
+		{"v0.5.0", "v0.4.0-5-gabcdef", true},
+		{"0.4.1", "0.4.0-5-gabcdef", true},
+		{"1.0.0", "0.4.0-5-gabcdef", true},
+
+		// Dev build v0.4.0-5-gabcdef should NOT show update for v0.3.0
+		{"0.3.0", "0.4.0-5-gabcdef", false},
+		{"0.4.0", "0.5.0-5-gabcdef", false},
+
+		// Prerelease versions
+		{"0.4.0", "0.4.0-rc1", false},
+		{"0.5.0", "0.4.0-rc1", true},
+		{"0.4.0", "0.4.0-dev", false},
+		{"0.5.0", "0.4.0-dev", true},
 	}
 
 	for _, tt := range tests {

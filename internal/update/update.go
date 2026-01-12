@@ -509,37 +509,48 @@ func saveCache(version string) {
 	os.WriteFile(cachePath, data, 0644)
 }
 
-// isSemver returns true if the version looks like semver (contains at least one dot
-// and starts with a digit)
-func isSemver(v string) bool {
+// extractBaseSemver extracts the base semver from a version string.
+// Handles formats like:
+//   - "0.4.0" -> "0.4.0"
+//   - "v0.4.0" -> "0.4.0"
+//   - "0.4.0-5-gabcdef" -> "0.4.0" (git describe format)
+//   - "0.4.0-dev" -> "0.4.0"
+//   - "abc1234" -> "" (no semver)
+//   - "dev" -> "" (no semver)
+func extractBaseSemver(v string) string {
 	v = strings.TrimPrefix(v, "v")
+	if len(v) == 0 || v[0] < '0' || v[0] > '9' {
+		return ""
+	}
 	if !strings.Contains(v, ".") {
-		return false
+		return ""
 	}
-	if len(v) == 0 {
-		return false
+	// Extract up to the first hyphen (for git describe or prerelease tags)
+	if idx := strings.Index(v, "-"); idx > 0 {
+		v = v[:idx]
 	}
-	return v[0] >= '0' && v[0] <= '9'
+	return v
 }
 
 // isNewer returns true if v1 is newer than v2
 // Assumes semver format: major.minor.patch
-// Non-semver versions (like "dev" or git hashes) are always considered older
+// Handles git describe format (v0.4.0-5-gabcdef) by extracting base version.
+// Non-semver versions (like "dev" or git hashes) are always considered older.
 func isNewer(v1, v2 string) bool {
-	v1 = strings.TrimPrefix(v1, "v")
-	v2 = strings.TrimPrefix(v2, "v")
+	base1 := extractBaseSemver(v1)
+	base2 := extractBaseSemver(v2)
 
-	// If current version is not semver (dev build), any semver release is newer
-	if !isSemver(v2) && isSemver(v1) {
+	// If current version has no semver base (pure dev build), any semver release is newer
+	if base2 == "" && base1 != "" {
 		return true
 	}
-	// If release version is not semver, something is wrong - not newer
-	if !isSemver(v1) {
+	// If release version has no semver base, something is wrong - not newer
+	if base1 == "" {
 		return false
 	}
 
-	parts1 := strings.Split(v1, ".")
-	parts2 := strings.Split(v2, ".")
+	parts1 := strings.Split(base1, ".")
+	parts2 := strings.Split(base2, ".")
 
 	for i := 0; i < 3; i++ {
 		var n1, n2 int
