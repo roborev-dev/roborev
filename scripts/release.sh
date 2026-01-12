@@ -50,8 +50,10 @@ update_nix_flake() {
         return 0
     fi
 
-    # Save current branch to return to later
-    local ORIGINAL_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
+    # Save current ref to return to later (handles detached HEAD)
+    local ORIGINAL_REF
+    ORIGINAL_REF=$(git -C "$REPO_ROOT" symbolic-ref --short -q HEAD 2>/dev/null) || \
+        ORIGINAL_REF=$(git -C "$REPO_ROOT" rev-parse HEAD)
 
     echo "Updating flake.nix version to $VERSION..."
     sed -i.bak "s/version = \"[^\"]*\"/version = \"$VERSION\"/" "$FLAKE_FILE"
@@ -103,11 +105,17 @@ update_nix_flake() {
     if ! git -C "$REPO_ROOT" diff --quiet -- flake.nix; then
         echo "Creating PR for flake.nix updates..."
 
-        # Create a new branch for the PR
-        git -C "$REPO_ROOT" checkout -b "$BRANCH_NAME"
+        # Ensure we return to original ref even on failure
+        cleanup_branch() {
+            git -C "$REPO_ROOT" checkout "$ORIGINAL_REF" 2>/dev/null || true
+        }
+        trap cleanup_branch EXIT
+
+        # Create/reset branch for the PR (-B forces creation even if exists)
+        git -C "$REPO_ROOT" checkout -B "$BRANCH_NAME"
         git -C "$REPO_ROOT" add flake.nix
         git -C "$REPO_ROOT" commit -m "Update flake.nix for $TAG"
-        git -C "$REPO_ROOT" push -u origin "$BRANCH_NAME"
+        git -C "$REPO_ROOT" push -u origin "$BRANCH_NAME" --force-with-lease
 
         # Create the PR
         gh pr create \
@@ -117,8 +125,9 @@ update_nix_flake() {
 
         echo "PR created for flake.nix updates"
 
-        # Return to original branch
-        git -C "$REPO_ROOT" checkout "$ORIGINAL_BRANCH"
+        # Return to original ref and clear trap
+        trap - EXIT
+        git -C "$REPO_ROOT" checkout "$ORIGINAL_REF"
     else
         echo "No flake.nix changes needed"
     fi
