@@ -1000,12 +1000,17 @@ func TestHandleStreamEvents(t *testing.T) {
 		}
 
 		// Verify error field is present (key exists) for failed event and absent for others
-		for _, raw := range rawEvents {
-			eventType := raw["type"].(string)
-			_, hasError := raw["error"]
+		for i, raw := range rawEvents {
+			eventType, ok := raw["type"].(string)
+			if !ok {
+				t.Fatalf("Event %d: 'type' key missing or not a string", i)
+			}
+			errorVal, hasError := raw["error"]
 			if eventType == "review.failed" {
 				if !hasError {
 					t.Error("Expected 'error' key present in review.failed event")
+				} else if errorStr, ok := errorVal.(string); !ok || errorStr != "connection refused" {
+					t.Errorf("Expected error 'connection refused', got %v", errorVal)
 				}
 			} else {
 				if hasError {
@@ -1015,12 +1020,17 @@ func TestHandleStreamEvents(t *testing.T) {
 		}
 
 		// Verify verdict field is present (key exists) only in completed event
-		for _, raw := range rawEvents {
-			eventType := raw["type"].(string)
-			_, hasVerdict := raw["verdict"]
+		for i, raw := range rawEvents {
+			eventType, ok := raw["type"].(string)
+			if !ok {
+				t.Fatalf("Event %d: 'type' key missing or not a string", i)
+			}
+			verdictVal, hasVerdict := raw["verdict"]
 			if eventType == "review.completed" {
 				if !hasVerdict {
 					t.Error("Expected 'verdict' key present in review.completed event")
+				} else if verdictStr, ok := verdictVal.(string); !ok || verdictStr != "pass" {
+					t.Errorf("Expected verdict 'pass', got %v", verdictVal)
 				}
 			} else {
 				if hasVerdict {
