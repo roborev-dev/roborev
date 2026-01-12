@@ -1283,6 +1283,112 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 	})
 }
 
+func TestReenqueueJob(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
+
+	t.Run("rerun failed job", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "A", "S", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "codex")
+		db.ClaimJob("worker-1")
+		db.FailJob(job.ID, "some error")
+
+		err := db.ReenqueueJob(job.ID)
+		if err != nil {
+			t.Fatalf("ReenqueueJob failed: %v", err)
+		}
+
+		updated, _ := db.GetJobByID(job.ID)
+		if updated.Status != JobStatusQueued {
+			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+		}
+		if updated.Error != "" {
+			t.Errorf("Expected error to be cleared, got '%s'", updated.Error)
+		}
+		if updated.StartedAt != nil {
+			t.Error("Expected started_at to be nil")
+		}
+		if updated.FinishedAt != nil {
+			t.Error("Expected finished_at to be nil")
+		}
+	})
+
+	t.Run("rerun canceled job", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "A", "S", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "codex")
+		db.CancelJob(job.ID)
+
+		err := db.ReenqueueJob(job.ID)
+		if err != nil {
+			t.Fatalf("ReenqueueJob failed: %v", err)
+		}
+
+		updated, _ := db.GetJobByID(job.ID)
+		if updated.Status != JobStatusQueued {
+			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+		}
+	})
+
+	t.Run("rerun done job", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "A", "S", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "codex")
+		// ClaimJob returns the claimed job; keep claiming until we get ours
+		var claimed *ReviewJob
+		for {
+			claimed, _ = db.ClaimJob("worker-1")
+			if claimed == nil {
+				t.Fatal("No job to claim")
+			}
+			if claimed.ID == job.ID {
+				break
+			}
+			// Complete other jobs to clear them
+			db.CompleteJob(claimed.ID, "codex", "prompt", "output")
+		}
+		db.CompleteJob(job.ID, "codex", "prompt", "output")
+
+		err := db.ReenqueueJob(job.ID)
+		if err != nil {
+			t.Fatalf("ReenqueueJob failed: %v", err)
+		}
+
+		updated, _ := db.GetJobByID(job.ID)
+		if updated.Status != JobStatusQueued {
+			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+		}
+	})
+
+	t.Run("rerun queued job fails", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "A", "S", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "codex")
+
+		err := db.ReenqueueJob(job.ID)
+		if err == nil {
+			t.Error("ReenqueueJob should fail for queued jobs")
+		}
+	})
+
+	t.Run("rerun running job fails", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-running", "A", "S", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-running", "codex")
+		db.ClaimJob("worker-1")
+
+		err := db.ReenqueueJob(job.ID)
+		if err == nil {
+			t.Error("ReenqueueJob should fail for running jobs")
+		}
+	})
+
+	t.Run("rerun nonexistent job fails", func(t *testing.T) {
+		err := db.ReenqueueJob(99999)
+		if err == nil {
+			t.Error("ReenqueueJob should fail for nonexistent jobs")
+		}
+	})
+}
+
 func openTestDB(t *testing.T) *DB {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

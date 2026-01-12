@@ -1230,3 +1230,158 @@ func TestHandleStreamEvents(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleRerunJob(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open test DB: %v", err)
+	}
+	defer db.Close()
+
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg)
+
+	// Create a repo
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	t.Run("rerun failed job", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "test")
+		db.ClaimJob("worker-1")
+		db.FailJob(job.ID, "some error")
+
+		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
+		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		updated, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		if updated.Status != storage.JobStatusQueued {
+			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+		}
+	})
+
+	t.Run("rerun canceled job", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "Author", "Subject", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "test")
+		db.CancelJob(job.ID)
+
+		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
+		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		updated, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		if updated.Status != storage.JobStatusQueued {
+			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+		}
+	})
+
+	t.Run("rerun done job", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "Author", "Subject", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "test")
+		// Claim and complete job
+		var claimed *storage.ReviewJob
+		for {
+			claimed, _ = db.ClaimJob("worker-1")
+			if claimed == nil {
+				t.Fatal("No job to claim")
+			}
+			if claimed.ID == job.ID {
+				break
+			}
+			db.CompleteJob(claimed.ID, "test", "prompt", "output")
+		}
+		db.CompleteJob(job.ID, "test", "prompt", "output")
+
+		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
+		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		updated, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		if updated.Status != storage.JobStatusQueued {
+			t.Errorf("Expected status 'queued', got '%s'", updated.Status)
+		}
+	})
+
+	t.Run("rerun queued job fails", func(t *testing.T) {
+		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "Author", "Subject", time.Now())
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "test")
+
+		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
+		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404 for queued job, got %d", w.Code)
+		}
+	})
+
+	t.Run("rerun nonexistent job fails", func(t *testing.T) {
+		reqBody, _ := json.Marshal(RerunJobRequest{JobID: 99999})
+		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404 for nonexistent job, got %d", w.Code)
+		}
+	})
+
+	t.Run("rerun with missing job_id fails", func(t *testing.T) {
+		reqBody, _ := json.Marshal(map[string]interface{}{})
+		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for missing job_id, got %d", w.Code)
+		}
+	})
+
+	t.Run("rerun with invalid method fails", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/job/rerun", nil)
+		w := httptest.NewRecorder()
+
+		server.handleRerunJob(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405 for GET, got %d", w.Code)
+		}
+	})
+}

@@ -125,6 +125,11 @@ type tuiCancelResultMsg struct {
 	oldFinishedAt *time.Time
 	err           error
 }
+type tuiRerunResultMsg struct {
+	jobID    int64
+	oldState storage.JobStatus
+	err      error
+}
 type tuiErrMsg error
 type tuiJobsErrMsg struct{ err error }       // Job fetch error (clears loadingJobs)
 type tuiPaginationErrMsg struct{ err error } // Pagination-specific error (clears loadingMore)
@@ -568,6 +573,31 @@ func (m tuiModel) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishe
 			return tuiCancelResultMsg{jobID: jobID, oldState: oldStatus, oldFinishedAt: oldFinishedAt, err: fmt.Errorf("cancel job: %s", resp.Status)}
 		}
 		return tuiCancelResultMsg{jobID: jobID, oldState: oldStatus, oldFinishedAt: oldFinishedAt, err: nil}
+	}
+}
+
+// rerunJob sends a rerun request to the server for failed/canceled jobs
+func (m tuiModel) rerunJob(jobID int64, oldStatus storage.JobStatus) tea.Cmd {
+	return func() tea.Msg {
+		reqBody, err := json.Marshal(map[string]interface{}{
+			"job_id": jobID,
+		})
+		if err != nil {
+			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: err}
+		}
+		resp, err := m.client.Post(m.serverAddr+"/api/job/rerun", "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: err}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusNotFound {
+			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: fmt.Errorf("job not rerunnable")}
+		}
+		if resp.StatusCode != http.StatusOK {
+			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: fmt.Errorf("rerun job: %s", resp.Status)}
+		}
+		return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, err: nil}
 	}
 }
 
@@ -1032,6 +1062,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "r":
+			// Rerun a completed, failed, or canceled job (optimistic update)
+			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
+				job := &m.jobs[m.selectedIdx]
+				if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {
+					oldStatus := job.Status
+					job.Status = storage.JobStatusQueued // Optimistic update
+					job.StartedAt = nil
+					job.FinishedAt = nil
+					job.Error = ""
+					return m, m.rerunJob(job.ID, oldStatus)
+				}
+			}
+
 		case "f":
 			// Open filter modal
 			if m.currentView == tuiViewQueue {
@@ -1268,6 +1312,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 		}
 
+	case tuiRerunResultMsg:
+		if msg.err != nil {
+			// Rollback optimistic update on error
+			m.setJobStatus(msg.jobID, msg.oldState)
+			m.err = msg.err
+		}
+
 	case tuiReposMsg:
 		// Populate filter repos with "All repos" as first option
 		m.filterRepos = []repoFilterItem{{name: "", count: msg.totalCount}}
@@ -1457,7 +1508,7 @@ func (m tuiModel) renderQueueView() string {
 
 	// Help (two lines)
 	helpText := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | f: filter | h: hide addressed | q: quit\n" +
-		"a: toggle addressed | x: cancel running/queued job"
+		"a: toggle addressed | x: cancel | r: rerun"
 	if m.activeRepoFilter != "" || m.hideAddressed {
 		helpText += " | esc: clear filters"
 	}

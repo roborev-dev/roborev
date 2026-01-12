@@ -40,6 +40,7 @@ func NewServer(db *storage.DB, cfg *config.Config) *Server {
 	mux.HandleFunc("/api/enqueue", s.handleEnqueue)
 	mux.HandleFunc("/api/jobs", s.handleListJobs)
 	mux.HandleFunc("/api/job/cancel", s.handleCancelJob)
+	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
 	mux.HandleFunc("/api/repos", s.handleListRepos)
 	mux.HandleFunc("/api/review", s.handleGetReview)
 	mux.HandleFunc("/api/review/address", s.handleAddressReview)
@@ -353,6 +354,39 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 
 	// Also cancel the running worker if job was running (kills subprocess)
 	s.workerPool.CancelJob(req.JobID)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+type RerunJobRequest struct {
+	JobID int64 `json:"job_id"`
+}
+
+func (s *Server) handleRerunJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req RerunJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.JobID == 0 {
+		writeError(w, http.StatusBadRequest, "job_id is required")
+		return
+	}
+
+	if err := s.db.ReenqueueJob(req.JobID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "job not found or not rerunnable")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("rerun job: %v", err))
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
