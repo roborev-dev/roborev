@@ -10,12 +10,39 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wesm/roborev/internal/config"
 	"github.com/wesm/roborev/internal/storage"
 )
+
+// waitForSubscribers polls until the broadcaster has at least minCount subscribers
+func waitForSubscribers(b Broadcaster, minCount int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if b.SubscriberCount() >= minCount {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
+}
+
+// waitForEvents polls until the response body contains at least minEvents newline-delimited events
+func waitForEvents(w *httptest.ResponseRecorder, minEvents int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		body := w.Body.String()
+		count := strings.Count(body, "\n")
+		if count >= minEvents {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
+}
 
 func TestHandleListRepos(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -728,8 +755,10 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		// Give handler time to set headers and start streaming
-		time.Sleep(50 * time.Millisecond)
+		// Wait for handler to subscribe
+		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+			t.Fatal("Timed out waiting for subscriber")
+		}
 
 		// Cancel request to stop the handler
 		cancel()
@@ -770,8 +799,10 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		// Give handler time to subscribe
-		time.Sleep(50 * time.Millisecond)
+		// Wait for handler to subscribe
+		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+			t.Fatal("Timed out waiting for subscriber")
+		}
 
 		// Broadcast test events
 		event1 := Event{
@@ -797,8 +828,10 @@ func TestHandleStreamEvents(t *testing.T) {
 		server.broadcaster.Broadcast(event1)
 		server.broadcaster.Broadcast(event2)
 
-		// Give time for events to be written
-		time.Sleep(50 * time.Millisecond)
+		// Wait for events to be written
+		if !waitForEvents(w, 2, time.Second) {
+			t.Fatal("Timed out waiting for events")
+		}
 
 		// Cancel and wait for handler to finish
 		cancel()
@@ -852,7 +885,9 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		time.Sleep(50 * time.Millisecond)
+		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+			t.Fatal("Timed out waiting for subscriber")
+		}
 
 		// Broadcast all event types
 		server.broadcaster.Broadcast(Event{
@@ -890,7 +925,9 @@ func TestHandleStreamEvents(t *testing.T) {
 			Agent:    "codex",
 		})
 
-		time.Sleep(50 * time.Millisecond)
+		if !waitForEvents(w, 4, time.Second) {
+			t.Fatal("Timed out waiting for events")
+		}
 		cancel()
 		<-done
 
@@ -931,7 +968,9 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		time.Sleep(50 * time.Millisecond)
+		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+			t.Fatal("Timed out waiting for subscriber")
+		}
 
 		// Event with no optional fields set
 		server.broadcaster.Broadcast(Event{
@@ -943,7 +982,9 @@ func TestHandleStreamEvents(t *testing.T) {
 			// Agent, Verdict, Error all empty
 		})
 
-		time.Sleep(50 * time.Millisecond)
+		if !waitForEvents(w, 1, time.Second) {
+			t.Fatal("Timed out waiting for events")
+		}
 		cancel()
 		<-done
 
@@ -970,8 +1011,9 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		// Give handler time to subscribe
-		time.Sleep(50 * time.Millisecond)
+		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+			t.Fatal("Timed out waiting for subscriber")
+		}
 
 		// Broadcast events for different repos
 		server.broadcaster.Broadcast(Event{
@@ -996,8 +1038,10 @@ func TestHandleStreamEvents(t *testing.T) {
 			SHA:      "ccc",
 		})
 
-		// Give time for events to be written
-		time.Sleep(50 * time.Millisecond)
+		// Wait for events to be written (expect 2 for repo1, repo2 event is filtered)
+		if !waitForEvents(w, 2, time.Second) {
+			t.Fatal("Timed out waiting for events")
+		}
 
 		// Cancel and wait
 		cancel()
@@ -1045,8 +1089,9 @@ func TestHandleStreamEvents(t *testing.T) {
 			close(done)
 		}()
 
-		// Give handler time to subscribe
-		time.Sleep(50 * time.Millisecond)
+		if !waitForSubscribers(server.broadcaster, 1, time.Second) {
+			t.Fatal("Timed out waiting for subscriber")
+		}
 
 		// Broadcast event for the repo with spaces
 		server.broadcaster.Broadcast(Event{
@@ -1065,7 +1110,10 @@ func TestHandleStreamEvents(t *testing.T) {
 			SHA:      "zzz",
 		})
 
-		time.Sleep(50 * time.Millisecond)
+		// Wait for the event that passes filter
+		if !waitForEvents(w, 1, time.Second) {
+			t.Fatal("Timed out waiting for events")
+		}
 		cancel()
 		<-done
 

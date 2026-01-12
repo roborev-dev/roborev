@@ -31,6 +31,7 @@ type Broadcaster interface {
 	Subscribe(repoPath string) (int, <-chan Event)
 	Unsubscribe(id int)
 	Broadcast(event Event)
+	SubscriberCount() int
 }
 
 // EventBroadcaster implements the Broadcaster interface
@@ -98,6 +99,13 @@ func (b *EventBroadcaster) Broadcast(event Event) {
 			// Channel full, drop event for this subscriber
 		}
 	}
+}
+
+// SubscriberCount returns the current number of subscribers (for testing)
+func (b *EventBroadcaster) SubscriberCount() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subscribers)
 }
 
 // MarshalJSON converts an Event to JSON for streaming
