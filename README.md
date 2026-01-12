@@ -45,6 +45,7 @@ roborev tui           # View reviews in interactive UI
 | `roborev address <id>` | Mark review as addressed |
 | `roborev enqueue <sha>` | Queue a commit for review |
 | `roborev enqueue <start> <end>` | Queue a commit range (inclusive) |
+| `roborev stream` | Stream review events in real-time (JSONL) |
 | `roborev daemon start\|stop\|restart` | Manage the daemon |
 | `roborev install-hook` | Install git post-commit hook |
 | `roborev uninstall-hook` | Remove git post-commit hook |
@@ -152,6 +153,37 @@ Filter to a single repository with `f`, or hide completed reviews with `h` to fo
 Reviews display a **Verdict** (Pass/Fail) parsed from the AI response, with color coding for quick triage.
 
 <img src="docs/screenshots/tui-review.png" width="75%" alt="Review View">
+
+## Streaming Events
+
+Stream review events in real-time for integrations, notifications, or custom tooling:
+
+```bash
+roborev stream              # Stream all events
+roborev stream --repo .     # Stream events for current repo only
+```
+
+Events are emitted as newline-delimited JSON (JSONL):
+
+```json
+{"type":"review.started","ts":"2025-01-11T10:00:00Z","job_id":42,"repo":"/path/to/repo","repo_name":"myrepo","sha":"abc123","agent":"codex"}
+{"type":"review.completed","ts":"2025-01-11T10:01:30Z","job_id":42,"repo":"/path/to/repo","repo_name":"myrepo","sha":"abc123","agent":"codex","verdict":"P"}
+```
+
+**Event types:**
+
+| Type | Description |
+|------|-------------|
+| `review.started` | Review job started processing |
+| `review.completed` | Review finished successfully |
+| `review.failed` | Review failed (includes `error` field) |
+| `review.canceled` | Review was canceled |
+
+Use with tools like `jq` for filtering:
+
+```bash
+roborev stream | jq -c 'select(.type == "review.completed")'
+```
 
 ## Architecture
 
