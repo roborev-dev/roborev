@@ -418,7 +418,7 @@ Examples:
 			// Skip during rebase to avoid reviewing every replayed commit
 			if git.IsRebaseInProgress(root) {
 				if !quiet {
-					fmt.Println("Skipping: rebase in progress")
+					cmd.Println("Skipping: rebase in progress")
 				}
 				return nil // Intentional skip, exit 0
 			}
@@ -463,7 +463,7 @@ Examples:
 				}
 				if err := json.Unmarshal(body, &skipResp); err == nil && skipResp.Skipped {
 					if !quiet {
-						fmt.Printf("Skipped: %s\n", skipResp.Reason)
+						cmd.Printf("Skipped: %s\n", skipResp.Reason)
 					}
 					return nil
 				}
@@ -477,7 +477,7 @@ Examples:
 			json.Unmarshal(body, &job)
 
 			if !quiet {
-				fmt.Printf("Enqueued job %d for %s (agent: %s)\n", job.ID, shortRef(job.GitRef), job.Agent)
+				cmd.Printf("Enqueued job %d for %s (agent: %s)\n", job.ID, shortRef(job.GitRef), job.Agent)
 			}
 			return nil
 		},

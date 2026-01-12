@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -599,31 +600,52 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 
 	// Write fake daemon.json pointing to our mock server
 	roborevDir := filepath.Join(tmpHome, ".roborev")
-	os.MkdirAll(roborevDir, 0755)
+	if err := os.MkdirAll(roborevDir, 0755); err != nil {
+		t.Fatalf("Failed to create roborev dir: %v", err)
+	}
 	mockAddr := ts.URL[7:] // remove "http://"
 	daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-	data, _ := json.Marshal(daemonInfo)
-	os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+	data, err := json.Marshal(daemonInfo)
+	if err != nil {
+		t.Fatalf("Failed to marshal daemon info: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
+		t.Fatalf("Failed to write daemon.json: %v", err)
+	}
 
-	t.Run("skipped response exits successfully", func(t *testing.T) {
+	t.Run("skipped response prints message and exits successfully", func(t *testing.T) {
 		serverAddr = ts.URL
 
+		var stdout bytes.Buffer
 		cmd := enqueueCmd()
+		cmd.SetOut(&stdout)
 		cmd.SetArgs([]string{"--repo", tmpDir})
 		err := cmd.Execute()
 		if err != nil {
 			t.Errorf("enqueue should succeed (exit 0) for skipped branch, got error: %v", err)
 		}
+
+		output := stdout.String()
+		if !strings.Contains(output, "Skipped") {
+			t.Errorf("expected output to contain 'Skipped', got: %q", output)
+		}
 	})
 
-	t.Run("skipped response in quiet mode exits successfully", func(t *testing.T) {
+	t.Run("skipped response in quiet mode suppresses output", func(t *testing.T) {
 		serverAddr = ts.URL
 
+		var stdout bytes.Buffer
 		cmd := enqueueCmd()
+		cmd.SetOut(&stdout)
 		cmd.SetArgs([]string{"--repo", tmpDir, "--quiet"})
 		err := cmd.Execute()
 		if err != nil {
 			t.Errorf("enqueue --quiet should succeed for skipped branch, got error: %v", err)
+		}
+
+		output := stdout.String()
+		if output != "" {
+			t.Errorf("expected no output in quiet mode, got: %q", output)
 		}
 	})
 }
