@@ -454,6 +454,21 @@ Examples:
 			defer resp.Body.Close()
 
 			body, _ := io.ReadAll(resp.Body)
+
+			// Handle skipped response (200 OK with skipped flag)
+			if resp.StatusCode == http.StatusOK {
+				var skipResp struct {
+					Skipped bool   `json:"skipped"`
+					Reason  string `json:"reason"`
+				}
+				if err := json.Unmarshal(body, &skipResp); err == nil && skipResp.Skipped {
+					if !quiet {
+						fmt.Printf("Skipped: %s\n", skipResp.Reason)
+					}
+					return nil
+				}
+			}
+
 			if resp.StatusCode != http.StatusCreated {
 				return fmt.Errorf("enqueue failed: %s", body)
 			}

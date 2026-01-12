@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1382,6 +1384,122 @@ func TestHandleRerunJob(t *testing.T) {
 
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("Expected status 405 for GET, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleEnqueueExcludedBranch(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open test DB: %v", err)
+	}
+	defer db.Close()
+
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg)
+
+	// Create a git repo
+	repoDir := filepath.Join(tmpDir, "testrepo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	// Initialize git repo
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+		{"git", "checkout", "-b", "wip-feature"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	// Create a commit so we have a valid SHA
+	testFile := filepath.Join(repoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	addCmd := exec.Command("git", "add", ".")
+	addCmd.Dir = repoDir
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v\n%s", err, out)
+	}
+	commitCmd := exec.Command("git", "commit", "-m", "initial commit")
+	commitCmd.Dir = repoDir
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
+	}
+
+	// Create .roborev.toml with excluded_branches
+	repoConfig := filepath.Join(repoDir, ".roborev.toml")
+	configContent := `excluded_branches = ["wip-feature", "draft"]`
+	if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write repo config: %v", err)
+	}
+
+	t.Run("enqueue on excluded branch returns skipped", func(t *testing.T) {
+		reqBody := bytes.NewBufferString(fmt.Sprintf(`{"repo_path": "%s", "git_ref": "HEAD", "agent": "test"}`, repoDir))
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", reqBody)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200 for skipped enqueue, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response map[string]interface{}
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if skipped, ok := response["skipped"].(bool); !ok || !skipped {
+			t.Errorf("Expected skipped=true, got %v", response)
+		}
+
+		if reason, ok := response["reason"].(string); !ok || !strings.Contains(reason, "wip-feature") {
+			t.Errorf("Expected reason to mention branch name, got %v", response)
+		}
+
+		// Verify no job was created
+		queued, _, _, _, _, _ := db.GetJobCounts()
+		if queued != 0 {
+			t.Errorf("Expected 0 queued jobs, got %d", queued)
+		}
+	})
+
+	t.Run("enqueue on non-excluded branch succeeds", func(t *testing.T) {
+		// Switch to a non-excluded branch
+		checkoutCmd := exec.Command("git", "checkout", "-b", "feature-ok")
+		checkoutCmd.Dir = repoDir
+		if out, err := checkoutCmd.CombinedOutput(); err != nil {
+			t.Fatalf("git checkout failed: %v\n%s", err, out)
+		}
+
+		reqBody := bytes.NewBufferString(fmt.Sprintf(`{"repo_path": "%s", "git_ref": "HEAD", "agent": "test"}`, repoDir))
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", reqBody)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Errorf("Expected status 201 for successful enqueue, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify job was created
+		queued, _, _, _, _, _ := db.GetJobCounts()
+		if queued != 1 {
+			t.Errorf("Expected 1 queued job, got %d", queued)
 		}
 	})
 }

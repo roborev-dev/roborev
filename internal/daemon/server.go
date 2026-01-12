@@ -171,8 +171,8 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// Check if branch is excluded from reviews
 	currentBranch := git.GetCurrentBranch(gitCwd)
 	if currentBranch != "" && config.IsBranchExcluded(repoRoot, currentBranch) {
-		// Silently skip excluded branches - not an error
-		json.NewEncoder(w).Encode(map[string]any{
+		// Silently skip excluded branches - return 200 OK with skipped flag
+		writeJSON(w, http.StatusOK, map[string]any{
 			"skipped": true,
 			"reason":  fmt.Sprintf("branch %q is excluded from reviews", currentBranch),
 		})

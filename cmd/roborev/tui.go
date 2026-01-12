@@ -98,6 +98,9 @@ type tuiModel struct {
 	// Active filter (applied to queue view)
 	activeRepoFilter string // Empty = show all, otherwise repo root_path to filter by
 	hideAddressed    bool   // When true, hide jobs with addressed reviews
+
+	// Display name cache (keyed by repo path)
+	displayNames map[string]string
 }
 
 type tuiTickMsg time.Time
@@ -156,7 +159,8 @@ func newTuiModel(serverAddr string) tuiModel {
 		currentView:   tuiViewQueue,
 		width:         80, // sensible defaults until we get WindowSizeMsg
 		height:        24,
-		loadingJobs:   true, // Init() calls fetchJobs, so mark as loading
+		loadingJobs:   true,                    // Init() calls fetchJobs, so mark as loading
+		displayNames:  make(map[string]string), // Cache display names to avoid disk reads on render
 	}
 }
 
@@ -168,6 +172,34 @@ func (m tuiModel) Init() tea.Cmd {
 		m.fetchStatus(),
 		m.checkForUpdate(),
 	)
+}
+
+// getDisplayName returns the display name for a repo, using the cache.
+// Falls back to the provided default name if no display name is configured.
+func (m tuiModel) getDisplayName(repoPath, defaultName string) string {
+	if repoPath == "" {
+		return defaultName
+	}
+	if displayName, ok := m.displayNames[repoPath]; ok {
+		if displayName != "" {
+			return displayName
+		}
+	}
+	return defaultName
+}
+
+// updateDisplayNameCache updates the display name cache for the given repo paths.
+// This should be called when jobs are loaded to avoid disk reads during render.
+func (m *tuiModel) updateDisplayNameCache(jobs []storage.ReviewJob) {
+	for _, job := range jobs {
+		if job.RepoPath == "" {
+			continue
+		}
+		if _, ok := m.displayNames[job.RepoPath]; !ok {
+			// Load from config only once per repo path
+			m.displayNames[job.RepoPath] = config.GetDisplayName(job.RepoPath)
+		}
+	}
 }
 
 func (m tuiModel) tick() tea.Cmd {
@@ -1200,6 +1232,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.hasMore = msg.hasMore
 
+		// Update display name cache for new jobs
+		m.updateDisplayNameCache(msg.jobs)
+
 		if msg.append {
 			// Append mode: add new jobs to existing list
 			m.jobs = append(m.jobs, msg.jobs...)
@@ -1609,11 +1644,8 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 		ref = ref[:max(1, colWidths.ref-3)] + "..."
 	}
 
-	repo := job.RepoName
-	// Use display name from config if set
-	if displayName := config.GetDisplayName(job.RepoPath); displayName != "" {
-		repo = displayName
-	}
+	// Use cached display name, falling back to RepoName
+	repo := m.getDisplayName(job.RepoPath, job.RepoName)
 	if len(repo) > colWidths.repo {
 		repo = repo[:max(1, colWidths.repo-3)] + "..."
 	}
@@ -1751,13 +1783,13 @@ func (m tuiModel) renderReviewView() string {
 	if review.Job != nil {
 		ref := shortRef(review.Job.GitRef)
 		idStr := fmt.Sprintf("#%d ", review.Job.ID)
-		repoStr := ""
-		if review.Job.RepoName != "" {
-			repoStr = review.Job.RepoName
-			// Use display name from config if set
-			if displayName := config.GetDisplayName(review.Job.RepoPath); displayName != "" {
-				repoStr = displayName
-			}
+		// Use cached display name, falling back to RepoName, then basename of RepoPath
+		defaultName := review.Job.RepoName
+		if defaultName == "" && review.Job.RepoPath != "" {
+			defaultName = filepath.Base(review.Job.RepoPath)
+		}
+		repoStr := m.getDisplayName(review.Job.RepoPath, defaultName)
+		if repoStr != "" {
 			repoStr += " "
 		}
 
