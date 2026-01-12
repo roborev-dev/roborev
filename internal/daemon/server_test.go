@@ -933,7 +933,7 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		body := w.Body.String()
 		scanner := bufio.NewScanner(bytes.NewBufferString(body))
-		var eventTypes []string
+		var events []Event
 		for scanner.Scan() {
 			line := scanner.Text()
 			if line == "" {
@@ -943,16 +943,45 @@ func TestHandleStreamEvents(t *testing.T) {
 			if err := json.Unmarshal([]byte(line), &ev); err != nil {
 				t.Fatalf("Failed to parse JSONL: %v", err)
 			}
-			eventTypes = append(eventTypes, ev.Type)
+			events = append(events, ev)
 		}
 
-		expected := []string{"review.started", "review.completed", "review.failed", "review.canceled"}
-		if len(eventTypes) != len(expected) {
-			t.Fatalf("Expected %d events, got %d: %v", len(expected), len(eventTypes), eventTypes)
+		expectedTypes := []string{"review.started", "review.completed", "review.failed", "review.canceled"}
+		if len(events) != len(expectedTypes) {
+			t.Fatalf("Expected %d events, got %d", len(expectedTypes), len(events))
 		}
-		for i, exp := range expected {
-			if eventTypes[i] != exp {
-				t.Errorf("Event %d: expected type '%s', got '%s'", i, exp, eventTypes[i])
+		for i, exp := range expectedTypes {
+			if events[i].Type != exp {
+				t.Errorf("Event %d: expected type '%s', got '%s'", i, exp, events[i].Type)
+			}
+		}
+
+		// Verify error field is present for failed event and absent for others
+		for _, ev := range events {
+			if ev.Type == "review.failed" {
+				if ev.Error == "" {
+					t.Error("Expected error field in review.failed event")
+				}
+				if ev.Error != "connection refused" {
+					t.Errorf("Expected error 'connection refused', got '%s'", ev.Error)
+				}
+			} else {
+				if ev.Error != "" {
+					t.Errorf("Unexpected error field in %s event: %s", ev.Type, ev.Error)
+				}
+			}
+		}
+
+		// Verify verdict is present only in completed event
+		for _, ev := range events {
+			if ev.Type == "review.completed" {
+				if ev.Verdict != "pass" {
+					t.Errorf("Expected verdict 'pass', got '%s'", ev.Verdict)
+				}
+			} else {
+				if ev.Verdict != "" {
+					t.Errorf("Unexpected verdict in %s event: %s", ev.Type, ev.Verdict)
+				}
 			}
 		}
 	})
