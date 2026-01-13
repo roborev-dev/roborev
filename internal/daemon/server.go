@@ -300,10 +300,15 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		job, err := s.db.GetJobByID(jobID)
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"jobs":     []storage.ReviewJob{},
-				"has_more": false,
-			})
+			// Distinguish "not found" from actual DB errors
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusOK, map[string]interface{}{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+				return
+			}
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("database error: %v", err))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{

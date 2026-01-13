@@ -571,6 +571,13 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 			return fmt.Errorf("failed to check job status: %w", err)
 		}
 
+		// Handle non-200 responses
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return fmt.Errorf("server error checking job status (%d): %s", resp.StatusCode, body)
+		}
+
 		var jobsResp struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
@@ -635,6 +642,10 @@ func showReview(cmd *cobra.Command, addr string, jobID int64, quiet bool) error 
 
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("no review found for job %d", jobID)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server error fetching review (%d): %s", resp.StatusCode, body)
 	}
 
 	var review storage.Review

@@ -1759,7 +1759,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&response)
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
 
 		if len(response.Jobs) != 1 {
 			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
@@ -1782,7 +1784,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&response)
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
 
 		if len(response.Jobs) != 0 {
 			t.Errorf("Expected 0 jobs for non-existent ID, got %d", len(response.Jobs))
@@ -1812,7 +1816,9 @@ func TestHandleListJobsByID(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&response)
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
 
 		// Should have all 3 jobs
 		if len(response.Jobs) != 3 {
