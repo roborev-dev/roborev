@@ -528,10 +528,14 @@ Examples:
 
 			// If --wait, poll until job completes and show result
 			if wait {
-				// Silence Cobra's error output since exitError is expected for failed reviews
-				cmd.SilenceErrors = true
-				cmd.SilenceUsage = true
-				return waitForJob(cmd, job.ID, quiet)
+				err := waitForJob(cmd, job.ID, quiet)
+				// Only silence Cobra's error output for exitError (verdict-based exit codes)
+				// Keep error output for actual failures (network errors, job not found, etc.)
+				if _, isExitErr := err.(*exitError); isExitErr {
+					cmd.SilenceErrors = true
+					cmd.SilenceUsage = true
+				}
+				return err
 			}
 
 			return nil

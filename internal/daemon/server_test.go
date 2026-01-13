@@ -1505,3 +1505,95 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleEnqueueBodySizeLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open test DB: %v", err)
+	}
+	defer db.Close()
+
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg)
+
+	// Create a git repo
+	repoDir := filepath.Join(tmpDir, "testrepo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	// Initialize git repo with a commit
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	testFile := filepath.Join(repoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "init").Run()
+
+	t.Run("rejects oversized request body", func(t *testing.T) {
+		// Create a request body larger than 250KB
+		largeDiff := strings.Repeat("a", 300*1024) // 300KB
+		reqData := map[string]string{
+			"repo_path":    repoDir,
+			"git_ref":      "dirty",
+			"agent":        "test",
+			"diff_content": largeDiff,
+		}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("Expected status 413, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response map[string]interface{}
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "too large") {
+			t.Errorf("Expected error about body size, got %v", response)
+		}
+	})
+
+	t.Run("accepts valid size dirty request", func(t *testing.T) {
+		// Create a valid-sized diff (under 200KB)
+		validDiff := strings.Repeat("a", 100*1024) // 100KB
+		reqData := map[string]string{
+			"repo_path":    repoDir,
+			"git_ref":      "dirty",
+			"agent":        "test",
+			"diff_content": validDiff,
+		}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+}

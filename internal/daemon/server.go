@@ -136,8 +136,18 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Limit request body size to prevent DoS via large payloads
+	// 250KB allows for 200KB diff content plus JSON overhead
+	const maxBodySize = 250 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
 	var req EnqueueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// MaxBytesReader returns a specific error type for oversized bodies
+		if err.Error() == "http: request body too large" {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large (max 250KB)")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}

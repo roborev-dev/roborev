@@ -325,18 +325,36 @@ func GetDirtyDiff(repoPath string) (string, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
-		// If HEAD doesn't exist (no commits yet), diff against empty tree
-		// This captures both staged and unstaged changes to tracked files
-		cmd = exec.Command("git", "diff", emptyTreeSHA)
+		// If HEAD doesn't exist (no commits yet), we need to combine:
+		// - git diff --cached <empty-tree>: shows staged files (index vs empty)
+		// - git diff: shows unstaged changes (working tree vs index)
+		// This covers the edge case where a file is staged but then removed from working tree
+
+		// Get staged changes vs empty tree
+		cmd = exec.Command("git", "diff", "--cached", emptyTreeSHA)
 		cmd.Dir = repoPath
-		out, err = cmd.Output()
+		stagedOut, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("git diff --cached: %w", err)
+		}
+		if len(stagedOut) > 0 {
+			result.Write(stagedOut)
+		}
+
+		// Get unstaged changes (working tree vs index)
+		cmd = exec.Command("git", "diff")
+		cmd.Dir = repoPath
+		unstagedOut, err := cmd.Output()
 		if err != nil {
 			return "", fmt.Errorf("git diff: %w", err)
 		}
-	}
-
-	if len(out) > 0 {
-		result.Write(out)
+		if len(unstagedOut) > 0 {
+			result.Write(unstagedOut)
+		}
+	} else {
+		if len(out) > 0 {
+			result.Write(out)
+		}
 	}
 
 	// 2. Get list of untracked files

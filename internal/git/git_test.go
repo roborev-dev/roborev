@@ -981,3 +981,37 @@ func TestGetDirtyDiffNoCommits(t *testing.T) {
 		t.Error("expected diff to contain untracked.txt")
 	}
 }
+
+func TestGetDirtyDiffStagedThenDeleted(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Initialize git repo WITHOUT any commits
+	exec.Command("git", "-C", tmpDir, "init").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").Run()
+
+	// Create and stage a file
+	filePath := filepath.Join(tmpDir, "staged.txt")
+	if err := os.WriteFile(filePath, []byte("staged content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", tmpDir, "add", "staged.txt").Run()
+
+	// Delete the file from the working tree (but keep it staged)
+	if err := os.Remove(filePath); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := GetDirtyDiff(tmpDir)
+	if err != nil {
+		t.Fatalf("GetDirtyDiff failed: %v", err)
+	}
+
+	// Should still show the staged file (index-only entry)
+	if !strings.Contains(diff, "staged.txt") {
+		t.Error("expected diff to contain staged.txt (staged but deleted from working tree)")
+	}
+	if !strings.Contains(diff, "staged content") {
+		t.Error("expected diff to contain staged file content")
+	}
+}
