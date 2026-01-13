@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wesm/roborev/internal/daemon"
 	"github.com/wesm/roborev/internal/storage"
@@ -648,6 +649,356 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		output := stdout.String()
 		if output != "" {
 			t.Errorf("expected no output in quiet mode, got: %q", output)
+		}
+	})
+}
+
+func TestWaitQuietVerdictExitCode(t *testing.T) {
+	// Save and restore serverAddr to avoid leaking state to other tests
+	origServerAddr := serverAddr
+	t.Cleanup(func() { serverAddr = origServerAddr })
+
+	// Speed up polling for tests
+	origPollStart := pollStartInterval
+	origPollMax := pollMaxInterval
+	pollStartInterval = 1 * time.Millisecond
+	pollMaxInterval = 1 * time.Millisecond
+	t.Cleanup(func() {
+		pollStartInterval = origPollStart
+		pollMaxInterval = origPollMax
+	})
+
+	// Override HOME to prevent reading real daemon.json
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Create a temp git repo
+	tmpDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(),
+			"HOME="+tmpHome,
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	runGit("init")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "file.txt")
+	runGit("commit", "-m", "initial commit")
+
+	t.Run("passing review exits 0 with no output", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/enqueue" {
+				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(job)
+				return
+			}
+			if r.URL.Path == "/api/status" {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+				return
+			}
+			if r.URL.Path == "/api/jobs" {
+				// Return done immediately
+				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
+				return
+			}
+			if r.URL.Path == "/api/review" {
+				// Passing review - "No issues" triggers pass verdict
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
+				return
+			}
+		}))
+		defer ts.Close()
+
+		// Write fake daemon.json
+		roborevDir := filepath.Join(tmpHome, ".roborev")
+		os.MkdirAll(roborevDir, 0755)
+		mockAddr := ts.URL[7:]
+		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
+		data, _ := json.Marshal(daemonInfo)
+		os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+
+		serverAddr = ts.URL
+
+		var stdout bytes.Buffer
+		cmd := reviewCmd()
+		cmd.SetOut(&stdout)
+		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
+		err := cmd.Execute()
+
+		// Should succeed with exit 0
+		if err != nil {
+			t.Errorf("expected exit 0 for passing review, got error: %v", err)
+		}
+		// Should have no output in quiet mode
+		if stdout.String() != "" {
+			t.Errorf("expected no output in quiet mode, got: %q", stdout.String())
+		}
+	})
+
+	t.Run("failing review exits 1 with no output", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/enqueue" {
+				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(job)
+				return
+			}
+			if r.URL.Path == "/api/status" {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+				return
+			}
+			if r.URL.Path == "/api/jobs" {
+				// Return done immediately
+				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
+				return
+			}
+			if r.URL.Path == "/api/review" {
+				// Failing review - findings present
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling"})
+				return
+			}
+		}))
+		defer ts.Close()
+
+		// Write fake daemon.json
+		roborevDir := filepath.Join(tmpHome, ".roborev")
+		os.MkdirAll(roborevDir, 0755)
+		mockAddr := ts.URL[7:]
+		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
+		data, _ := json.Marshal(daemonInfo)
+		os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+
+		serverAddr = ts.URL
+
+		var stdout bytes.Buffer
+		cmd := reviewCmd()
+		cmd.SetOut(&stdout)
+		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
+		err := cmd.Execute()
+
+		// Should fail with exit 1
+		if err == nil {
+			t.Error("expected exit 1 for failing review, got success")
+		} else {
+			exitErr, ok := err.(*exitError)
+			if !ok {
+				t.Errorf("expected exitError, got: %T %v", err, err)
+			} else if exitErr.code != 1 {
+				t.Errorf("expected exit code 1, got: %d", exitErr.code)
+			}
+		}
+		// Should have no output in quiet mode
+		if stdout.String() != "" {
+			t.Errorf("expected no output in quiet mode, got: %q", stdout.String())
+		}
+	})
+}
+
+func TestWaitForJobUnknownStatus(t *testing.T) {
+	// Save and restore serverAddr to avoid leaking state to other tests
+	origServerAddr := serverAddr
+	t.Cleanup(func() { serverAddr = origServerAddr })
+
+	// Speed up polling for tests
+	origPollStart := pollStartInterval
+	origPollMax := pollMaxInterval
+	pollStartInterval = 1 * time.Millisecond
+	pollMaxInterval = 1 * time.Millisecond
+	t.Cleanup(func() {
+		pollStartInterval = origPollStart
+		pollMaxInterval = origPollMax
+	})
+
+	// Override HOME to prevent reading real daemon.json
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Create a temp git repo
+	tmpDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(),
+			"HOME="+tmpHome,
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	runGit("init")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "file.txt")
+	runGit("commit", "-m", "initial commit")
+
+	t.Run("unknown status exceeds max retries", func(t *testing.T) {
+		callCount := 0
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/enqueue" {
+				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(job)
+				return
+			}
+			if r.URL.Path == "/api/status" {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"version": version.Version,
+				})
+				return
+			}
+			if r.URL.Path == "/api/jobs" {
+				callCount++
+				// Always return unknown status
+				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "future_status"}
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jobs":     []storage.ReviewJob{job},
+					"has_more": false,
+				})
+				return
+			}
+		}))
+		defer ts.Close()
+
+		// Write fake daemon.json
+		roborevDir := filepath.Join(tmpHome, ".roborev")
+		os.MkdirAll(roborevDir, 0755)
+		mockAddr := ts.URL[7:]
+		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
+		data, _ := json.Marshal(daemonInfo)
+		os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+
+		serverAddr = ts.URL
+
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
+		err := cmd.Execute()
+
+		if err == nil {
+			t.Fatal("expected error for unknown status after max retries")
+		}
+		if !strings.Contains(err.Error(), "unknown status") {
+			t.Errorf("error should mention unknown status, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "daemon may be newer than CLI") {
+			t.Errorf("error should mention daemon version, got: %v", err)
+		}
+		// Should have tried exactly 10 times
+		if callCount != 10 {
+			t.Errorf("expected 10 retries, got %d", callCount)
+		}
+	})
+
+	t.Run("counter resets on known status", func(t *testing.T) {
+		callCount := 0
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/enqueue" {
+				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(job)
+				return
+			}
+			if r.URL.Path == "/api/status" {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"version": version.Version,
+				})
+				return
+			}
+			if r.URL.Path == "/api/jobs" {
+				callCount++
+				var status string
+				// Unknown 5 times, then "running" to reset counter,
+				// then unknown 5 more times, then "done"
+				switch {
+				case callCount <= 5:
+					status = "future_status"
+				case callCount == 6:
+					status = "running"
+				case callCount <= 11:
+					status = "future_status"
+				default:
+					status = "done"
+				}
+				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatus(status)}
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jobs":     []storage.ReviewJob{job},
+					"has_more": false,
+				})
+				return
+			}
+			if r.URL.Path == "/api/review" {
+				// Return a review so showReview succeeds
+				// Output must contain "No issues" or similar for ParseVerdict to return "P"
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(storage.Review{
+					ID:     1,
+					JobID:  1,
+					Agent:  "test",
+					Output: "No issues found. LGTM!",
+				})
+				return
+			}
+		}))
+		defer ts.Close()
+
+		// Write fake daemon.json
+		roborevDir := filepath.Join(tmpHome, ".roborev")
+		os.MkdirAll(roborevDir, 0755)
+		mockAddr := ts.URL[7:]
+		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
+		data, _ := json.Marshal(daemonInfo)
+		os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+
+		serverAddr = ts.URL
+
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
+		err := cmd.Execute()
+
+		// Should succeed because counter was reset
+		if err != nil {
+			t.Errorf("expected success (counter should reset on known status), got error: %v", err)
+		}
+		// Should have called 12 times total (5 unknown + 1 running + 5 unknown + 1 done)
+		if callCount != 12 {
+			t.Errorf("expected 12 calls, got %d", callCount)
 		}
 	})
 }
