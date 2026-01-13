@@ -624,8 +624,18 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 			}
 
 		default:
-			// Unknown status - treat as error to avoid infinite loop
-			return fmt.Errorf("unexpected job status: %s", job.Status)
+			// Unknown status - treat as transient for forward-compatibility
+			// (daemon may add new statuses in the future)
+			if !quiet {
+				cmd.Printf("\n(unknown status %q, continuing to poll...)", job.Status)
+			}
+			time.Sleep(pollInterval)
+			if pollInterval < maxInterval {
+				pollInterval = pollInterval * 3 / 2
+				if pollInterval > maxInterval {
+					pollInterval = maxInterval
+				}
+			}
 		}
 	}
 }
