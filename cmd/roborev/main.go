@@ -615,6 +615,10 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 					pollInterval = maxInterval
 				}
 			}
+
+		default:
+			// Unknown status - treat as error to avoid infinite loop
+			return fmt.Errorf("unexpected job status: %s", job.Status)
 		}
 	}
 }
