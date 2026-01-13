@@ -1543,8 +1543,14 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
-	exec.Command("git", "-C", repoDir, "add", ".").Run()
-	exec.Command("git", "-C", repoDir, "commit", "-m", "init").Run()
+	addCmd := exec.Command("git", "-C", repoDir, "add", ".")
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v\n%s", err, out)
+	}
+	commitCmd := exec.Command("git", "-C", repoDir, "commit", "-m", "init")
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
+	}
 
 	t.Run("rejects oversized request body", func(t *testing.T) {
 		// Create a request body larger than 250KB

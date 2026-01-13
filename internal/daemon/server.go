@@ -143,8 +143,9 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	var req EnqueueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// MaxBytesReader returns a specific error type for oversized bodies
-		if err.Error() == "http: request body too large" {
+		// Use errors.As for reliable detection of MaxBytesReader errors
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
 			writeError(w, http.StatusRequestEntityTooLarge, "request body too large (max 250KB)")
 			return
 		}
