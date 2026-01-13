@@ -768,3 +768,216 @@ func TestGetCurrentBranch(t *testing.T) {
 		}
 	})
 }
+
+func TestHasUncommittedChanges(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Initialize git repo
+	exec.Command("git", "-C", tmpDir, "init").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").Run()
+
+	// Create initial commit
+	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("initial"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "initial").Run()
+
+	t.Run("no changes", func(t *testing.T) {
+		hasChanges, err := HasUncommittedChanges(tmpDir)
+		if err != nil {
+			t.Fatalf("HasUncommittedChanges failed: %v", err)
+		}
+		if hasChanges {
+			t.Error("expected no uncommitted changes")
+		}
+	})
+
+	t.Run("staged changes", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("modified"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+		defer func() {
+			exec.Command("git", "-C", tmpDir, "checkout", "file.txt").Run()
+		}()
+
+		hasChanges, err := HasUncommittedChanges(tmpDir)
+		if err != nil {
+			t.Fatalf("HasUncommittedChanges failed: %v", err)
+		}
+		if !hasChanges {
+			t.Error("expected uncommitted changes for staged file")
+		}
+	})
+
+	t.Run("unstaged changes", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("unstaged"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			exec.Command("git", "-C", tmpDir, "checkout", "file.txt").Run()
+		}()
+
+		hasChanges, err := HasUncommittedChanges(tmpDir)
+		if err != nil {
+			t.Fatalf("HasUncommittedChanges failed: %v", err)
+		}
+		if !hasChanges {
+			t.Error("expected uncommitted changes for unstaged file")
+		}
+	})
+
+	t.Run("untracked file", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tmpDir, "untracked.txt"), []byte("new"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(filepath.Join(tmpDir, "untracked.txt"))
+
+		hasChanges, err := HasUncommittedChanges(tmpDir)
+		if err != nil {
+			t.Fatalf("HasUncommittedChanges failed: %v", err)
+		}
+		if !hasChanges {
+			t.Error("expected uncommitted changes for untracked file")
+		}
+	})
+}
+
+func TestGetDirtyDiff(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Initialize git repo
+	exec.Command("git", "-C", tmpDir, "init").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").Run()
+
+	// Create initial commit
+	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("initial\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "initial").Run()
+
+	t.Run("includes tracked file changes", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("modified\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			exec.Command("git", "-C", tmpDir, "checkout", "file.txt").Run()
+		}()
+
+		diff, err := GetDirtyDiff(tmpDir)
+		if err != nil {
+			t.Fatalf("GetDirtyDiff failed: %v", err)
+		}
+		if !strings.Contains(diff, "file.txt") {
+			t.Error("expected diff to contain file.txt")
+		}
+		if !strings.Contains(diff, "+modified") {
+			t.Error("expected diff to contain +modified")
+		}
+	})
+
+	t.Run("includes untracked files", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(tmpDir, "newfile.txt"), []byte("new content\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(filepath.Join(tmpDir, "newfile.txt"))
+
+		diff, err := GetDirtyDiff(tmpDir)
+		if err != nil {
+			t.Fatalf("GetDirtyDiff failed: %v", err)
+		}
+		if !strings.Contains(diff, "newfile.txt") {
+			t.Error("expected diff to contain newfile.txt")
+		}
+		if !strings.Contains(diff, "+new content") {
+			t.Error("expected diff to contain +new content")
+		}
+		if !strings.Contains(diff, "new file mode") {
+			t.Error("expected diff to contain 'new file mode' header")
+		}
+	})
+
+	t.Run("includes both tracked and untracked", func(t *testing.T) {
+		// Modify tracked file
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("changed\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Create untracked file
+		if err := os.WriteFile(filepath.Join(tmpDir, "another.txt"), []byte("another\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			exec.Command("git", "-C", tmpDir, "checkout", "file.txt").Run()
+			os.Remove(filepath.Join(tmpDir, "another.txt"))
+		}()
+
+		diff, err := GetDirtyDiff(tmpDir)
+		if err != nil {
+			t.Fatalf("GetDirtyDiff failed: %v", err)
+		}
+		if !strings.Contains(diff, "file.txt") {
+			t.Error("expected diff to contain file.txt")
+		}
+		if !strings.Contains(diff, "another.txt") {
+			t.Error("expected diff to contain another.txt")
+		}
+	})
+
+	t.Run("handles binary files", func(t *testing.T) {
+		// Create a binary file (contains null byte)
+		if err := os.WriteFile(filepath.Join(tmpDir, "binary.bin"), []byte("hello\x00world"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(filepath.Join(tmpDir, "binary.bin"))
+
+		diff, err := GetDirtyDiff(tmpDir)
+		if err != nil {
+			t.Fatalf("GetDirtyDiff failed: %v", err)
+		}
+		if !strings.Contains(diff, "binary.bin") {
+			t.Error("expected diff to contain binary.bin")
+		}
+		if !strings.Contains(diff, "Binary file") {
+			t.Error("expected diff to indicate binary file")
+		}
+	})
+}
+
+func TestGetDirtyDiffNoCommits(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Initialize git repo WITHOUT any commits
+	exec.Command("git", "-C", tmpDir, "init").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").Run()
+
+	// Add a file but don't commit
+	if err := os.WriteFile(filepath.Join(tmpDir, "newfile.txt"), []byte("content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+
+	// Also create an untracked file
+	if err := os.WriteFile(filepath.Join(tmpDir, "untracked.txt"), []byte("untracked\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := GetDirtyDiff(tmpDir)
+	if err != nil {
+		t.Fatalf("GetDirtyDiff failed on repo with no commits: %v", err)
+	}
+
+	// Should include the staged file
+	if !strings.Contains(diff, "newfile.txt") {
+		t.Error("expected diff to contain newfile.txt (staged)")
+	}
+
+	// Should include untracked file
+	if !strings.Contains(diff, "untracked.txt") {
+		t.Error("expected diff to contain untracked.txt")
+	}
+}

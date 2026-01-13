@@ -310,6 +310,9 @@ func HasUncommittedChanges(repoPath string) (bool, error) {
 	return len(strings.TrimSpace(string(out))) > 0, nil
 }
 
+// emptyTreeSHA is the SHA of an empty tree in git, used for diffing repos with no commits
+const emptyTreeSHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 // GetDirtyDiff returns a diff of all uncommitted changes including untracked files.
 // The diff includes both tracked file changes (via git diff HEAD) and untracked files
 // formatted as new-file diff entries.
@@ -323,7 +326,8 @@ func GetDirtyDiff(repoPath string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		// If HEAD doesn't exist (no commits yet), diff against empty tree
-		cmd = exec.Command("git", "diff", "--cached")
+		// This captures both staged and unstaged changes to tracked files
+		cmd = exec.Command("git", "diff", emptyTreeSHA)
 		cmd.Dir = repoPath
 		out, err = cmd.Output()
 		if err != nil {

@@ -194,6 +194,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	isDirty := gitRef == "dirty" && req.DiffContent != ""
 	isRange := !isDirty && strings.Contains(gitRef, "..")
 
+	// Server-side size validation for dirty diffs (200KB max)
+	const maxDiffSize = 200 * 1024
+	if isDirty && len(req.DiffContent) > maxDiffSize {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("diff_content too large (%d bytes, max %d)", len(req.DiffContent), maxDiffSize))
+		return
+	}
+
 	var job *storage.ReviewJob
 	if isDirty {
 		// Dirty review - use pre-captured diff

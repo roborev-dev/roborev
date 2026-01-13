@@ -58,6 +58,10 @@ func main() {
 	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
+		// Check for exitError to exit with specific code without extra output
+		if exitErr, ok := err.(*exitError); ok {
+			os.Exit(exitErr.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -524,6 +528,9 @@ Examples:
 
 			// If --wait, poll until job completes and show result
 			if wait {
+				// Silence Cobra's error output since exitError is expected for failed reviews
+				cmd.SilenceErrors = true
+				cmd.SilenceUsage = true
 				return waitForJob(cmd, job.ID, quiet)
 			}
 
