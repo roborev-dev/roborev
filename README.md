@@ -43,12 +43,42 @@ roborev tui           # View reviews in interactive UI
 | `roborev tui` | Interactive terminal UI |
 | `roborev show [sha]` | Display review for commit |
 | `roborev address <id>` | Mark review as addressed |
-| `roborev enqueue <sha>` | Queue a commit for review |
-| `roborev enqueue <start> <end>` | Queue a commit range (inclusive) |
+| `roborev review <sha>` | Queue a commit for review |
+| `roborev review <start> <end>` | Queue a commit range (inclusive) |
+| `roborev review --dirty` | Review uncommitted changes |
+| `roborev review --wait` | Wait for review and show result |
 | `roborev stream` | Stream review events in real-time (JSONL) |
 | `roborev daemon start\|stop\|restart` | Manage the daemon |
 | `roborev install-hook` | Install git post-commit hook |
 | `roborev uninstall-hook` | Remove git post-commit hook |
+
+**Note:** `roborev enqueue` is an alias for `roborev review` for backwards compatibility.
+
+## Reviewing Uncommitted Changes
+
+Use `--dirty` to review your working tree changes before committing:
+
+```bash
+roborev review --dirty           # Queue review of uncommitted changes
+roborev review --dirty --wait    # Wait for review and show result
+```
+
+The dirty review includes:
+- Staged changes (files added with `git add`)
+- Unstaged changes to tracked files
+- Untracked files (new files not yet added to git)
+
+Combine with `--wait` to block until the review completes, useful for pre-commit validation:
+
+```bash
+# In a pre-commit hook or CI script
+if ! roborev review --dirty --wait --quiet; then
+    echo "Review failed - please address findings before committing"
+    exit 1
+fi
+```
+
+The `--wait` flag exits with code 0 for passing reviews and code 1 for failing reviews.
 
 ## Configuration
 
@@ -104,7 +134,9 @@ Use `review_guidelines` to give the AI reviewer project-specific context:
 
 ### Large Diffs
 
-When a diff exceeds 250KB, roborev omits it from the prompt and provides only the commit hash. The AI agent can then inspect changes using its own tools (`git show <sha>`).
+When a commit diff exceeds 250KB, roborev omits it from the prompt and provides only the commit hash. The AI agent can then inspect changes using its own tools (`git show <sha>`).
+
+For `--dirty` reviews, diffs are limited to 200KB since uncommitted changes cannot be easily inspected by the agent. If your dirty diff exceeds this limit, commit your changes in smaller chunks.
 
 ## Agents
 
