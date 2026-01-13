@@ -1603,3 +1603,200 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleListJobsByID(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open test DB: %v", err)
+	}
+	defer db.Close()
+
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg)
+
+	// Create a git repo
+	repoDir := filepath.Join(tmpDir, "testrepo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	// Initialize git repo with a commit
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	testFile := filepath.Join(repoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	addCmd := exec.Command("git", "-C", repoDir, "add", ".")
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v\n%s", err, out)
+	}
+	commitCmd := exec.Command("git", "-C", repoDir, "commit", "-m", "init")
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
+	}
+
+	// Create multiple jobs
+	var job1ID, job2ID, job3ID int64
+
+	// Enqueue job 1
+	reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
+	reqBody, _ := json.Marshal(reqData)
+	req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Failed to create job 1: %d %s", w.Code, w.Body.String())
+	}
+	var respJob storage.ReviewJob
+	json.NewDecoder(w.Body).Decode(&respJob)
+	job1ID = respJob.ID
+
+	// Enqueue job 2
+	reqBody, _ = json.Marshal(reqData)
+	req = httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Failed to create job 2: %d %s", w.Code, w.Body.String())
+	}
+	json.NewDecoder(w.Body).Decode(&respJob)
+	job2ID = respJob.ID
+
+	// Enqueue job 3
+	reqBody, _ = json.Marshal(reqData)
+	req = httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Failed to create job 3: %d %s", w.Code, w.Body.String())
+	}
+	json.NewDecoder(w.Body).Decode(&respJob)
+	job3ID = respJob.ID
+
+	t.Run("fetches specific job by ID", func(t *testing.T) {
+		// Request job 1 specifically
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job1ID), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response struct {
+			Jobs    []storage.ReviewJob `json:"jobs"`
+			HasMore bool                `json:"has_more"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if len(response.Jobs) != 1 {
+			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
+		}
+		if response.Jobs[0].ID != job1ID {
+			t.Errorf("Expected job ID %d, got %d", job1ID, response.Jobs[0].ID)
+		}
+	})
+
+	t.Run("fetches middle job correctly", func(t *testing.T) {
+		// Request job 2 specifically (the middle job)
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job2ID), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&response)
+
+		if len(response.Jobs) != 1 {
+			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
+		}
+		if response.Jobs[0].ID != job2ID {
+			t.Errorf("Expected job ID %d, got %d", job2ID, response.Jobs[0].ID)
+		}
+	})
+
+	t.Run("returns empty for non-existent job ID", func(t *testing.T) {
+		// Request a job ID that doesn't exist
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?id=99999", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&response)
+
+		if len(response.Jobs) != 0 {
+			t.Errorf("Expected 0 jobs for non-existent ID, got %d", len(response.Jobs))
+		}
+	})
+
+	t.Run("returns error for invalid job ID", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?id=notanumber", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("without id param returns all jobs", func(t *testing.T) {
+		// Request without id param should return all jobs
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&response)
+
+		// Should have all 3 jobs
+		if len(response.Jobs) != 3 {
+			t.Errorf("Expected 3 jobs, got %d", len(response.Jobs))
+		}
+
+		// Verify all job IDs are present (order may vary due to same-second timestamps)
+		foundIDs := make(map[int64]bool)
+		for _, job := range response.Jobs {
+			foundIDs[job.ID] = true
+		}
+		if !foundIDs[job1ID] || !foundIDs[job2ID] || !foundIDs[job3ID] {
+			t.Errorf("Expected jobs %d, %d, %d but found %v", job1ID, job2ID, job3ID, foundIDs)
+		}
+	})
+}

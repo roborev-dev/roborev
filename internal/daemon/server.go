@@ -285,6 +285,28 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Support fetching a single job by ID
+	if idStr := r.URL.Query().Get("id"); idStr != "" {
+		var jobID int64
+		if _, err := fmt.Sscanf(idStr, "%d", &jobID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid id parameter")
+			return
+		}
+		job, err := s.db.GetJobByID(jobID)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"jobs":     []storage.ReviewJob{},
+				"has_more": false,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"jobs":     []storage.ReviewJob{*job},
+			"has_more": false,
+		})
+		return
+	}
+
 	status := r.URL.Query().Get("status")
 	repo := r.URL.Query().Get("repo")
 
