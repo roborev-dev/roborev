@@ -528,7 +528,7 @@ Examples:
 
 			// If --wait, poll until job completes and show result
 			if wait {
-				err := waitForJob(cmd, job.ID, quiet)
+				err := waitForJob(cmd, serverAddr, job.ID, quiet)
 				// Only silence Cobra's error output for exitError (verdict-based exit codes)
 				// Keep error output for actual failures (network errors, job not found, etc.)
 				if _, isExitErr := err.(*exitError); isExitErr {
@@ -553,8 +553,8 @@ Examples:
 }
 
 // waitForJob polls until a job completes and displays the review
-func waitForJob(cmd *cobra.Command, jobID int64, quiet bool) error {
-	addr := getDaemonAddr()
+// Uses the provided serverAddr to ensure we poll the same daemon that received the job.
+func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	if !quiet {
@@ -566,7 +566,7 @@ func waitForJob(cmd *cobra.Command, jobID int64, quiet bool) error {
 	maxInterval := 5 * time.Second
 
 	for {
-		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID))
+		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
 		if err != nil {
 			return fmt.Errorf("failed to check job status: %w", err)
 		}
@@ -592,7 +592,7 @@ func waitForJob(cmd *cobra.Command, jobID int64, quiet bool) error {
 				cmd.Printf(" done!\n\n")
 			}
 			// Fetch and display the review
-			return showReview(cmd, addr, jobID)
+			return showReview(cmd, serverAddr, jobID, quiet)
 
 		case storage.JobStatusFailed:
 			if !quiet {
@@ -620,7 +620,8 @@ func waitForJob(cmd *cobra.Command, jobID int64, quiet bool) error {
 }
 
 // showReview fetches and displays a review by job ID
-func showReview(cmd *cobra.Command, addr string, jobID int64) error {
+// When quiet is true, suppresses output but still returns exit code based on verdict.
+func showReview(cmd *cobra.Command, addr string, jobID int64, quiet bool) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
 	if err != nil {
@@ -637,9 +638,11 @@ func showReview(cmd *cobra.Command, addr string, jobID int64) error {
 		return fmt.Errorf("failed to parse review: %w", err)
 	}
 
-	cmd.Printf("Review (by %s)\n", review.Agent)
-	cmd.Println(strings.Repeat("-", 60))
-	cmd.Println(review.Output)
+	if !quiet {
+		cmd.Printf("Review (by %s)\n", review.Agent)
+		cmd.Println(strings.Repeat("-", 60))
+		cmd.Println(review.Output)
+	}
 
 	// Return exit code based on verdict
 	verdict := storage.ParseVerdict(review.Output)

@@ -202,8 +202,14 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	agentName := config.ResolveAgent(req.Agent, repoRoot, s.cfg)
 
 	// Check if this is a dirty review, range, or single commit
-	isDirty := gitRef == "dirty" && req.DiffContent != ""
+	isDirty := gitRef == "dirty"
 	isRange := !isDirty && strings.Contains(gitRef, "..")
+
+	// Validate dirty review has diff content
+	if isDirty && req.DiffContent == "" {
+		writeError(w, http.StatusBadRequest, "diff_content required for dirty review")
+		return
+	}
 
 	// Server-side size validation for dirty diffs (200KB max)
 	const maxDiffSize = 200 * 1024

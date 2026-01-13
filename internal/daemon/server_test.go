@@ -1582,6 +1582,35 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects dirty review with empty diff_content", func(t *testing.T) {
+		// git_ref="dirty" with empty diff_content should return a clear error
+		reqData := map[string]string{
+			"repo_path": repoDir,
+			"git_ref":   "dirty",
+			"agent":     "test",
+			// diff_content intentionally omitted/empty
+		}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response map[string]interface{}
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "diff_content required") {
+			t.Errorf("Expected error about diff_content required, got %v", response)
+		}
+	})
+
 	t.Run("accepts valid size dirty request", func(t *testing.T) {
 		// Create a valid-sized diff (under 200KB)
 		validDiff := strings.Repeat("a", 100*1024) // 100KB
