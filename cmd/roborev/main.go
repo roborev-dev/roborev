@@ -564,6 +564,8 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 	// Poll with exponential backoff
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
+	unknownStatusCount := 0
+	const maxUnknownRetries = 10 // Give up after 10 consecutive unknown statuses
 
 	for {
 		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
@@ -615,6 +617,7 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 
 		case storage.JobStatusQueued, storage.JobStatusRunning:
 			// Still in progress, continue polling
+			unknownStatusCount = 0 // Reset counter on known status
 			time.Sleep(pollInterval)
 			if pollInterval < maxInterval {
 				pollInterval = pollInterval * 3 / 2 // 1.5x backoff
@@ -626,6 +629,10 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 		default:
 			// Unknown status - treat as transient for forward-compatibility
 			// (daemon may add new statuses in the future)
+			unknownStatusCount++
+			if unknownStatusCount >= maxUnknownRetries {
+				return fmt.Errorf("received unknown status %q %d times, giving up (CLI may be newer than daemon)", job.Status, unknownStatusCount)
+			}
 			if !quiet {
 				cmd.Printf("\n(unknown status %q, continuing to poll...)", job.Status)
 			}
