@@ -1,5 +1,9 @@
 package main
 
+// NOTE: Tests in this package mutate package-level variables (serverAddr,
+// pollStartInterval, pollMaxInterval) and environment variables (HOME).
+// Do not use t.Parallel() in this package as it will cause race conditions.
+
 import (
 	"bytes"
 	"encoding/json"
@@ -731,27 +735,38 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 
 		// Write fake daemon.json
 		roborevDir := filepath.Join(tmpHome, ".roborev")
-		os.MkdirAll(roborevDir, 0755)
+		if err := os.MkdirAll(roborevDir, 0755); err != nil {
+			t.Fatalf("failed to create roborev dir: %v", err)
+		}
 		mockAddr := ts.URL[7:]
 		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-		data, _ := json.Marshal(daemonInfo)
-		os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+		data, err := json.Marshal(daemonInfo)
+		if err != nil {
+			t.Fatalf("failed to marshal daemon info: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
+			t.Fatalf("failed to write daemon.json: %v", err)
+		}
 
 		serverAddr = ts.URL
 
-		var stdout bytes.Buffer
+		var stdout, stderr bytes.Buffer
 		cmd := reviewCmd()
 		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
 		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
-		err := cmd.Execute()
+		err = cmd.Execute()
 
 		// Should succeed with exit 0
 		if err != nil {
 			t.Errorf("expected exit 0 for passing review, got error: %v", err)
 		}
-		// Should have no output in quiet mode
+		// Should have no output in quiet mode (stdout and stderr)
 		if stdout.String() != "" {
-			t.Errorf("expected no output in quiet mode, got: %q", stdout.String())
+			t.Errorf("expected no stdout in quiet mode, got: %q", stdout.String())
+		}
+		if stderr.String() != "" {
+			t.Errorf("expected no stderr in quiet mode, got: %q", stderr.String())
 		}
 	})
 
@@ -786,19 +801,27 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 
 		// Write fake daemon.json
 		roborevDir := filepath.Join(tmpHome, ".roborev")
-		os.MkdirAll(roborevDir, 0755)
+		if err := os.MkdirAll(roborevDir, 0755); err != nil {
+			t.Fatalf("failed to create roborev dir: %v", err)
+		}
 		mockAddr := ts.URL[7:]
 		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-		data, _ := json.Marshal(daemonInfo)
-		os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+		data, err := json.Marshal(daemonInfo)
+		if err != nil {
+			t.Fatalf("failed to marshal daemon info: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
+			t.Fatalf("failed to write daemon.json: %v", err)
+		}
 
 		serverAddr = ts.URL
 
-		var stdout bytes.Buffer
+		var stdout, stderr bytes.Buffer
 		cmd := reviewCmd()
 		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
 		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
-		err := cmd.Execute()
+		err = cmd.Execute()
 
 		// Should fail with exit 1
 		if err == nil {
@@ -811,9 +834,12 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 				t.Errorf("expected exit code 1, got: %d", exitErr.code)
 			}
 		}
-		// Should have no output in quiet mode
+		// Should have no output in quiet mode (stdout and stderr)
 		if stdout.String() != "" {
-			t.Errorf("expected no output in quiet mode, got: %q", stdout.String())
+			t.Errorf("expected no stdout in quiet mode, got: %q", stdout.String())
+		}
+		if stderr.String() != "" {
+			t.Errorf("expected no stderr in quiet mode, got: %q", stderr.String())
 		}
 	})
 }
@@ -897,17 +923,24 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 		// Write fake daemon.json
 		roborevDir := filepath.Join(tmpHome, ".roborev")
-		os.MkdirAll(roborevDir, 0755)
+		if err := os.MkdirAll(roborevDir, 0755); err != nil {
+			t.Fatalf("failed to create roborev dir: %v", err)
+		}
 		mockAddr := ts.URL[7:]
 		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-		data, _ := json.Marshal(daemonInfo)
-		os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+		data, err := json.Marshal(daemonInfo)
+		if err != nil {
+			t.Fatalf("failed to marshal daemon info: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
+			t.Fatalf("failed to write daemon.json: %v", err)
+		}
 
 		serverAddr = ts.URL
 
 		cmd := reviewCmd()
 		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
-		err := cmd.Execute()
+		err = cmd.Execute()
 
 		if err == nil {
 			t.Fatal("expected error for unknown status after max retries")
@@ -980,17 +1013,24 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 		// Write fake daemon.json
 		roborevDir := filepath.Join(tmpHome, ".roborev")
-		os.MkdirAll(roborevDir, 0755)
+		if err := os.MkdirAll(roborevDir, 0755); err != nil {
+			t.Fatalf("failed to create roborev dir: %v", err)
+		}
 		mockAddr := ts.URL[7:]
 		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-		data, _ := json.Marshal(daemonInfo)
-		os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+		data, err := json.Marshal(daemonInfo)
+		if err != nil {
+			t.Fatalf("failed to marshal daemon info: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
+			t.Fatalf("failed to write daemon.json: %v", err)
+		}
 
 		serverAddr = ts.URL
 
 		cmd := reviewCmd()
 		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
-		err := cmd.Execute()
+		err = cmd.Execute()
 
 		// Should succeed because counter was reset
 		if err != nil {
