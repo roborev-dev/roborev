@@ -109,10 +109,11 @@ func (s *Server) Stop() error {
 // API request/response types
 
 type EnqueueRequest struct {
-	RepoPath  string `json:"repo_path"`
-	CommitSHA string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
-	GitRef    string `json:"git_ref,omitempty"`    // Single commit or range like "abc..def"
-	Agent     string `json:"agent,omitempty"`
+	RepoPath    string `json:"repo_path"`
+	CommitSHA   string `json:"commit_sha,omitempty"`   // Single commit (for backwards compat)
+	GitRef      string `json:"git_ref,omitempty"`      // Single commit, range like "abc..def", or "dirty"
+	Agent       string `json:"agent,omitempty"`
+	DiffContent string `json:"diff_content,omitempty"` // Pre-captured diff for dirty reviews
 }
 
 type ErrorResponse struct {
@@ -189,11 +190,19 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent (uses main repo root for config lookup)
 	agentName := config.ResolveAgent(req.Agent, repoRoot, s.cfg)
 
-	// Check if this is a range or single commit
-	isRange := strings.Contains(gitRef, "..")
+	// Check if this is a dirty review, range, or single commit
+	isDirty := gitRef == "dirty" && req.DiffContent != ""
+	isRange := !isDirty && strings.Contains(gitRef, "..")
 
 	var job *storage.ReviewJob
-	if isRange {
+	if isDirty {
+		// Dirty review - use pre-captured diff
+		job, err = s.db.EnqueueDirtyJob(repo.ID, gitRef, agentName, req.DiffContent)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue dirty job: %v", err))
+			return
+		}
+	} else if isRange {
 		// For ranges, resolve both endpoints and create range job
 		// Use gitCwd to resolve refs correctly in worktree context
 		parts := strings.SplitN(gitRef, "..", 2)

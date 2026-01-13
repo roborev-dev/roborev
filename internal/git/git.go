@@ -296,6 +296,121 @@ func GetRangeDiff(repoPath, rangeRef string) (string, error) {
 	return string(out), nil
 }
 
+// HasUncommittedChanges returns true if there are uncommitted changes (staged, unstaged, or untracked files)
+func HasUncommittedChanges(repoPath string) (bool, error) {
+	// Check for staged or unstaged changes to tracked files
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("git status: %w", err)
+	}
+
+	return len(strings.TrimSpace(string(out))) > 0, nil
+}
+
+// GetDirtyDiff returns a diff of all uncommitted changes including untracked files.
+// The diff includes both tracked file changes (via git diff HEAD) and untracked files
+// formatted as new-file diff entries.
+func GetDirtyDiff(repoPath string) (string, error) {
+	var result strings.Builder
+
+	// 1. Get diff of tracked files (staged + unstaged)
+	cmd := exec.Command("git", "diff", "HEAD")
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		// If HEAD doesn't exist (no commits yet), diff against empty tree
+		cmd = exec.Command("git", "diff", "--cached")
+		cmd.Dir = repoPath
+		out, err = cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("git diff: %w", err)
+		}
+	}
+
+	if len(out) > 0 {
+		result.Write(out)
+	}
+
+	// 2. Get list of untracked files
+	cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	cmd.Dir = repoPath
+
+	untrackedOut, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git ls-files: %w", err)
+	}
+
+	// 3. For each untracked file, create a diff-style "new file" entry
+	untrackedFiles := strings.Split(strings.TrimSpace(string(untrackedOut)), "\n")
+	for _, file := range untrackedFiles {
+		if file == "" {
+			continue
+		}
+
+		// Read file content
+		filePath := filepath.Join(repoPath, file)
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			// Skip files we can't read (permissions, etc.)
+			continue
+		}
+
+		// Check if file is binary
+		if isBinaryContent(content) {
+			result.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", file, file))
+			result.WriteString("new file mode 100644\n")
+			result.WriteString("Binary file (not shown)\n")
+			continue
+		}
+
+		// Format as diff "new file" entry
+		result.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", file, file))
+		result.WriteString("new file mode 100644\n")
+		result.WriteString("--- /dev/null\n")
+		result.WriteString(fmt.Sprintf("+++ b/%s\n", file))
+
+		lines := strings.Split(string(content), "\n")
+		// Add line count header
+		lineCount := len(lines)
+		if lineCount > 0 && lines[lineCount-1] == "" {
+			lineCount-- // Don't count trailing empty line from split
+		}
+		result.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", lineCount))
+
+		// Add each line with + prefix
+		for i, line := range lines {
+			if i == len(lines)-1 && line == "" {
+				// Skip trailing empty line from split
+				continue
+			}
+			result.WriteString("+")
+			result.WriteString(line)
+			result.WriteString("\n")
+		}
+	}
+
+	return result.String(), nil
+}
+
+// isBinaryContent checks if content appears to be binary (contains null bytes in first 8KB)
+func isBinaryContent(content []byte) bool {
+	// Check first 8KB for null bytes
+	checkLen := len(content)
+	if checkLen > 8192 {
+		checkLen = 8192
+	}
+	for i := 0; i < checkLen; i++ {
+		if content[i] == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // GetRangeStart returns the start commit (first parent before range) for context lookup
 func GetRangeStart(repoPath, rangeRef string) (string, error) {
 	start, _, ok := ParseRange(rangeRef)

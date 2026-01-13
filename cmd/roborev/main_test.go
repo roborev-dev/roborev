@@ -115,7 +115,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		serverAddr = ts.URL
 
 		shortFirstSHA := firstSHA[:7]
-		cmd := enqueueCmd()
+		cmd := reviewCmd()
 		cmd.SetArgs([]string{"--repo", tmpDir, shortFirstSHA}) // Use short SHA as positional arg
 		err := cmd.Execute()
 		if err != nil {
@@ -137,7 +137,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		serverAddr = ts.URL
 
 		shortFirstSHA := firstSHA[:7]
-		cmd := enqueueCmd()
+		cmd := reviewCmd()
 		cmd.SetArgs([]string{"--repo", tmpDir, "--sha", shortFirstSHA})
 		err := cmd.Execute()
 		if err != nil {
@@ -154,7 +154,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		receivedSHA = ""
 		serverAddr = ts.URL
 
-		cmd := enqueueCmd()
+		cmd := reviewCmd()
 		cmd.SetArgs([]string{"--repo", tmpDir})
 		err := cmd.Execute()
 		if err != nil {
@@ -621,7 +621,7 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 
 	t.Run("skipped response prints message and exits successfully", func(t *testing.T) {
 		var stdout bytes.Buffer
-		cmd := enqueueCmd()
+		cmd := reviewCmd()
 		cmd.SetOut(&stdout)
 		cmd.SetArgs([]string{"--repo", tmpDir})
 		err := cmd.Execute()
@@ -637,7 +637,7 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 
 	t.Run("skipped response in quiet mode suppresses output", func(t *testing.T) {
 		var stdout bytes.Buffer
-		cmd := enqueueCmd()
+		cmd := reviewCmd()
 		cmd.SetOut(&stdout)
 		cmd.SetArgs([]string{"--repo", tmpDir, "--quiet"})
 		err := cmd.Execute()

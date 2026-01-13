@@ -238,7 +238,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	defer wp.unregisterRunningJob(job.ID)
 
 	// Build the prompt
-	reviewPrompt, err := wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, wp.cfg.ReviewContextCount)
+	var reviewPrompt string
+	var err error
+	if job.DiffContent != nil {
+		// Dirty job - use pre-captured diff
+		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, wp.cfg.ReviewContextCount)
+	} else {
+		// Normal job - build prompt from git ref
+		reviewPrompt, err = wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, wp.cfg.ReviewContextCount)
+	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)
 		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("build prompt: %v", err))

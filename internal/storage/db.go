@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   worker_id TEXT,
   error TEXT,
   prompt TEXT,
-  retry_count INTEGER NOT NULL DEFAULT 0
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  diff_content TEXT
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -149,6 +150,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add diff_content column to review_jobs if missing (for dirty reviews)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'diff_content'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check diff_content column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN diff_content TEXT`)
+		if err != nil {
+			return fmt.Errorf("add diff_content column: %w", err)
+		}
+	}
+
 	// Migration: update CHECK constraint to include 'canceled' status
 	// SQLite requires table recreation to modify CHECK constraints
 	var tableSql string
@@ -196,18 +209,39 @@ func (db *DB) migrate() error {
 				worker_id TEXT,
 				error TEXT,
 				prompt TEXT,
-				retry_count INTEGER NOT NULL DEFAULT 0
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				diff_content TEXT
 			)
 		`)
 		if err != nil {
 			return fmt.Errorf("create new review_jobs table: %w", err)
 		}
 
-		_, err = tx.Exec(`
-			INSERT INTO review_jobs_new (id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count)
-			SELECT id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count
-			FROM review_jobs
-		`)
+		// Check if source table has diff_content column (may not exist in very old DBs)
+		var hasDiffContent bool
+		checkRows, checkErr := tx.Query(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'diff_content'`)
+		if checkErr == nil {
+			if checkRows.Next() {
+				var count int
+				checkRows.Scan(&count)
+				hasDiffContent = count > 0
+			}
+			checkRows.Close()
+		}
+
+		if hasDiffContent {
+			_, err = tx.Exec(`
+				INSERT INTO review_jobs_new (id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count, diff_content)
+				SELECT id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count, diff_content
+				FROM review_jobs
+			`)
+		} else {
+			_, err = tx.Exec(`
+				INSERT INTO review_jobs_new (id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count)
+				SELECT id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count
+				FROM review_jobs
+			`)
+		}
 		if err != nil {
 			return fmt.Errorf("copy review_jobs data: %w", err)
 		}

@@ -31,6 +31,24 @@ If you find issues, list them with:
 
 If you find no issues, state "No issues found." then briefly summarize what the commit does.`
 
+// SystemPromptDirty is the base instruction for reviewing uncommitted (dirty) changes
+const SystemPromptDirty = `You are a code reviewer. Review the following uncommitted changes for:
+
+1. **Bugs**: Logic errors, off-by-one errors, null/undefined issues, race conditions
+2. **Security**: Injection vulnerabilities, auth issues, data exposure
+3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
+4. **Regressions**: Changes that might break existing functionality
+5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
+
+After reviewing against all criteria above:
+
+If you find issues, list them with:
+- Severity (high/medium/low)
+- File and line reference where possible
+- A brief explanation of the problem and suggested fix
+
+If you find no issues, state "No issues found." then briefly summarize what the changes do.`
+
 // SystemPromptRange is the base instruction for commit range reviews
 const SystemPromptRange = `You are a code reviewer. Review the git commit range shown below for:
 
@@ -87,6 +105,66 @@ func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int)
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount)
 	}
 	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount)
+}
+
+// BuildDirty constructs a review prompt for uncommitted (dirty) changes.
+// The diff is provided directly since it was captured at enqueue time.
+func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int) (string, error) {
+	var sb strings.Builder
+
+	// Start with system prompt for dirty changes
+	sb.WriteString(SystemPromptDirty)
+	sb.WriteString("\n")
+
+	// Add project-specific guidelines if configured
+	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
+	}
+
+	// Get previous reviews for context (use HEAD as reference point)
+	if contextCount > 0 && b.db != nil {
+		headSHA, err := git.ResolveSHA(repoPath, "HEAD")
+		if err == nil {
+			contexts, err := b.getPreviousReviewContexts(repoPath, headSHA, contextCount)
+			if err == nil && len(contexts) > 0 {
+				b.writePreviousReviews(&sb, contexts)
+			}
+		}
+	}
+
+	// Uncommitted changes section
+	sb.WriteString("## Uncommitted Changes\n\n")
+	sb.WriteString("The following changes have not yet been committed.\n\n")
+
+	// Build diff section
+	var diffSection strings.Builder
+	diffSection.WriteString("### Diff\n\n")
+	diffSection.WriteString("```diff\n")
+	diffSection.WriteString(diff)
+	if !strings.HasSuffix(diff, "\n") {
+		diffSection.WriteString("\n")
+	}
+	diffSection.WriteString("```\n")
+
+	// Check if adding the diff would exceed max prompt size
+	if sb.Len()+diffSection.Len() > MaxPromptSize {
+		// For dirty changes, we can't tell them to "use git diff" because
+		// the working tree may have changed. Just truncate with a note.
+		sb.WriteString("### Diff\n\n")
+		sb.WriteString("(Diff too large to include in full)\n")
+		// Include truncated diff
+		maxDiffLen := MaxPromptSize - sb.Len() - 100 // Leave room for closing markers
+		if maxDiffLen > 1000 {
+			sb.WriteString("```diff\n")
+			sb.WriteString(diff[:maxDiffLen])
+			sb.WriteString("\n... (truncated)\n")
+			sb.WriteString("```\n")
+		}
+	} else {
+		sb.WriteString(diffSection.String())
+	}
+
+	return sb.String(), nil
 }
 
 // buildSinglePrompt constructs a prompt for a single commit

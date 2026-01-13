@@ -41,8 +41,9 @@ type ReviewJob struct {
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	WorkerID   string     `json:"worker_id,omitempty"`
 	Error      string     `json:"error,omitempty"`
-	Prompt     string     `json:"prompt,omitempty"`
-	RetryCount int        `json:"retry_count"`
+	Prompt      string     `json:"prompt,omitempty"`
+	RetryCount  int        `json:"retry_count"`
+	DiffContent *string    `json:"diff_content,omitempty"` // For dirty reviews (uncommitted changes)
 
 	// Joined fields for convenience
 	RepoPath      string  `json:"repo_path,omitempty"`

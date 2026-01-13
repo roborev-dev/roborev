@@ -44,7 +44,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 
 	rootCmd.AddCommand(initCmd())
-	rootCmd.AddCommand(enqueueCmd())
+	rootCmd.AddCommand(reviewCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(showCmd())
 	rootCmd.AddCommand(respondCmd())
@@ -376,23 +376,31 @@ func daemonCmd() *cobra.Command {
 	return cmd
 }
 
-func enqueueCmd() *cobra.Command {
+// MaxDirtyDiffSize is the maximum size of a dirty diff in bytes (200KB)
+const MaxDirtyDiffSize = 200 * 1024
+
+func reviewCmd() *cobra.Command {
 	var (
 		repoPath string
 		sha      string
 		agent    string
 		quiet    bool
+		dirty    bool
+		wait     bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "enqueue [commit] or enqueue [start] [end]",
-		Short: "Enqueue a commit or commit range for review",
-		Long: `Enqueue a commit or commit range for review.
+		Use:     "review [commit] or review [start] [end]",
+		Aliases: []string{"enqueue"}, // Backwards compatibility
+		Short:   "Review a commit, commit range, or uncommitted changes",
+		Long: `Review a commit, commit range, or uncommitted changes.
 
 Examples:
-  roborev enqueue              # Review HEAD
-  roborev enqueue abc123       # Review specific commit
-  roborev enqueue abc123 def456  # Review range from abc123 to def456 (inclusive)
+  roborev review              # Review HEAD
+  roborev review abc123       # Review specific commit
+  roborev review abc123 def456  # Review range from abc123 to def456 (inclusive)
+  roborev review --dirty      # Review uncommitted changes
+  roborev review --dirty --wait  # Review uncommitted changes and wait for result
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// In quiet mode, suppress cobra's error output (hook uses &, so exit code doesn't matter)
@@ -429,7 +437,36 @@ Examples:
 			}
 
 			var gitRef string
-			if len(args) >= 2 {
+			var diffContent string
+
+			if dirty {
+				// Dirty review - capture uncommitted changes
+				hasChanges, err := git.HasUncommittedChanges(root)
+				if err != nil {
+					return fmt.Errorf("check uncommitted changes: %w", err)
+				}
+				if !hasChanges {
+					return fmt.Errorf("no uncommitted changes to review")
+				}
+
+				// Generate dirty diff (includes untracked files)
+				diffContent, err = git.GetDirtyDiff(root)
+				if err != nil {
+					return fmt.Errorf("get dirty diff: %w", err)
+				}
+
+				// Check size limit
+				if len(diffContent) > MaxDirtyDiffSize {
+					return fmt.Errorf("dirty diff too large (%d bytes, max %d bytes)\nConsider committing changes in smaller chunks",
+						len(diffContent), MaxDirtyDiffSize)
+				}
+
+				if diffContent == "" {
+					return fmt.Errorf("no changes to review (diff is empty)")
+				}
+
+				gitRef = "dirty"
+			} else if len(args) >= 2 {
 				// Range: START END -> START^..END (inclusive)
 				gitRef = args[0] + "^.." + args[1]
 			} else if len(args) == 1 {
@@ -441,10 +478,11 @@ Examples:
 			}
 
 			// Make request - server will validate and resolve refs
-			reqBody, _ := json.Marshal(map[string]string{
-				"repo_path": root,
-				"git_ref":   gitRef,
-				"agent":     agent,
+			reqBody, _ := json.Marshal(map[string]interface{}{
+				"repo_path":    root,
+				"git_ref":      gitRef,
+				"agent":        agent,
+				"diff_content": diffContent,
 			})
 
 			resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
@@ -470,15 +508,25 @@ Examples:
 			}
 
 			if resp.StatusCode != http.StatusCreated {
-				return fmt.Errorf("enqueue failed: %s", body)
+				return fmt.Errorf("review failed: %s", body)
 			}
 
 			var job storage.ReviewJob
 			json.Unmarshal(body, &job)
 
 			if !quiet {
-				cmd.Printf("Enqueued job %d for %s (agent: %s)\n", job.ID, shortRef(job.GitRef), job.Agent)
+				if dirty {
+					cmd.Printf("Enqueued dirty review job %d (agent: %s)\n", job.ID, job.Agent)
+				} else {
+					cmd.Printf("Enqueued job %d for %s (agent: %s)\n", job.ID, shortRef(job.GitRef), job.Agent)
+				}
 			}
+
+			// If --wait, poll until job completes and show result
+			if wait {
+				return waitForJob(cmd, job.ID, quiet)
+			}
+
 			return nil
 		},
 	}
@@ -487,8 +535,118 @@ Examples:
 	cmd.Flags().StringVar(&sha, "sha", "HEAD", "commit SHA to review (used when no positional args)")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode)")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
+	cmd.Flags().BoolVar(&dirty, "dirty", false, "review uncommitted changes instead of a commit")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")
 
 	return cmd
+}
+
+// waitForJob polls until a job completes and displays the review
+func waitForJob(cmd *cobra.Command, jobID int64, quiet bool) error {
+	addr := getDaemonAddr()
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	if !quiet {
+		cmd.Printf("Waiting for review to complete...")
+	}
+
+	// Poll with exponential backoff
+	pollInterval := 1 * time.Second
+	maxInterval := 5 * time.Second
+
+	for {
+		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID))
+		if err != nil {
+			return fmt.Errorf("failed to check job status: %w", err)
+		}
+
+		var jobsResp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+			resp.Body.Close()
+			return fmt.Errorf("failed to parse job status: %w", err)
+		}
+		resp.Body.Close()
+
+		if len(jobsResp.Jobs) == 0 {
+			return fmt.Errorf("job %d not found", jobID)
+		}
+
+		job := jobsResp.Jobs[0]
+
+		switch job.Status {
+		case storage.JobStatusDone:
+			if !quiet {
+				cmd.Printf(" done!\n\n")
+			}
+			// Fetch and display the review
+			return showReview(cmd, addr, jobID)
+
+		case storage.JobStatusFailed:
+			if !quiet {
+				cmd.Printf(" failed!\n")
+			}
+			return fmt.Errorf("review failed: %s", job.Error)
+
+		case storage.JobStatusCanceled:
+			if !quiet {
+				cmd.Printf(" canceled!\n")
+			}
+			return fmt.Errorf("review was canceled")
+
+		case storage.JobStatusQueued, storage.JobStatusRunning:
+			// Still in progress, continue polling
+			time.Sleep(pollInterval)
+			if pollInterval < maxInterval {
+				pollInterval = pollInterval * 3 / 2 // 1.5x backoff
+				if pollInterval > maxInterval {
+					pollInterval = maxInterval
+				}
+			}
+		}
+	}
+}
+
+// showReview fetches and displays a review by job ID
+func showReview(cmd *cobra.Command, addr string, jobID int64) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
+	if err != nil {
+		return fmt.Errorf("failed to fetch review: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("no review found for job %d", jobID)
+	}
+
+	var review storage.Review
+	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+		return fmt.Errorf("failed to parse review: %w", err)
+	}
+
+	cmd.Printf("Review (by %s)\n", review.Agent)
+	cmd.Println(strings.Repeat("-", 60))
+	cmd.Println(review.Output)
+
+	// Return exit code based on verdict
+	verdict := storage.ParseVerdict(review.Output)
+	if verdict == "F" {
+		// Use a special error that cobra will treat as exit code 1
+		return &exitError{code: 1}
+	}
+
+	return nil
+}
+
+// exitError is an error that signals a specific exit code
+type exitError struct {
+	code int
+}
+
+func (e *exitError) Error() string {
+	return fmt.Sprintf("exit code %d", e.code)
 }
 
 func statusCmd() *cobra.Command {

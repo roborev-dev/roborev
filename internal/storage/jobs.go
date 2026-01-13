@@ -512,6 +512,28 @@ func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent string) (*ReviewJob, e
 	}, nil
 }
 
+// EnqueueDirtyJob creates a new review job for uncommitted (dirty) changes.
+// The diff is captured at enqueue time since the working tree may change.
+func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, diffContent string) (*ReviewJob, error) {
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, diff_content) VALUES (?, NULL, ?, ?, 'queued', ?)`,
+		repoID, gitRef, agent, diffContent)
+	if err != nil {
+		return nil, err
+	}
+
+	id, _ := result.LastInsertId()
+	return &ReviewJob{
+		ID:          id,
+		RepoID:      repoID,
+		CommitID:    nil,
+		GitRef:      gitRef,
+		Agent:       agent,
+		Status:      JobStatusQueued,
+		EnqueuedAt:  time.Now(),
+		DiffContent: &diffContent,
+	}, nil
+}
+
 // ClaimJob atomically claims the next queued job for a worker
 func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	now := time.Now()
@@ -547,9 +569,10 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var enqueuedAt string
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
+	var diffContent sql.NullString
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.status, j.enqueued_at,
-		       r.root_path, r.name, c.subject
+		       r.root_path, r.name, c.subject, j.diff_content
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -557,7 +580,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		ORDER BY j.started_at DESC
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Status, &enqueuedAt,
-		&job.RepoPath, &job.RepoName, &commitSubject)
+		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent)
 	if err != nil {
 		return nil, err
 	}
@@ -567,6 +590,9 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	}
 	if commitSubject.Valid {
 		job.CommitSubject = commitSubject.String
+	}
+	if diffContent.Valid {
+		job.DiffContent = &diffContent.String
 	}
 	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	job.Status = JobStatusRunning
