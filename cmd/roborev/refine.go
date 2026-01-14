@@ -31,6 +31,7 @@ func refineCmd() *cobra.Command {
 		maxIterations     int
 		quiet             bool
 		allowUnsafeAgents bool
+		since             string
 	)
 
 	cmd := &cobra.Command{
@@ -49,9 +50,12 @@ Prerequisites:
 - Working tree must be clean (no uncommitted changes)
 - Not in the middle of a rebase
 
-The agent will run tests and verify the build before committing.`,
+The agent will run tests and verify the build before committing.
+
+Use --since to specify a starting commit when on the main branch or to
+limit how far back to look for reviews to address.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRefine(agentName, reasoning, maxIterations, quiet, allowUnsafeAgents)
+			return runRefine(agentName, reasoning, maxIterations, quiet, allowUnsafeAgents, since)
 		},
 	}
 
@@ -60,6 +64,7 @@ The agent will run tests and verify the build before committing.`,
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 10, "maximum refinement iterations")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "suppress agent output, show elapsed time instead")
 	cmd.Flags().BoolVar(&allowUnsafeAgents, "allow-unsafe-agents", false, "allow agents to run without sandboxing")
+	cmd.Flags().StringVar(&since, "since", "", "starting commit (allows running on main branch)")
 
 	return cmd
 }
@@ -121,7 +126,7 @@ func (t *stepTimer) stopLive() {
 	fmt.Printf("\r%s %s\n", t.prefix, t.elapsed())
 }
 
-func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool) error {
+func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool, since string) error {
 	// 1. Validate preconditions
 	repoPath, err := git.GetRepoRoot(".")
 	if err != nil {
@@ -154,16 +159,27 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 	}
 
 	currentBranch := git.GetCurrentBranch(repoPath)
-	if currentBranch == git.LocalBranchName(defaultBranch) {
-		return fmt.Errorf("refusing to refine on %s branch - create a feature branch first", git.LocalBranchName(defaultBranch))
-	}
+	var mergeBase string
 
-	mergeBase, err := git.GetMergeBase(repoPath, defaultBranch, "HEAD")
-	if err != nil {
-		return fmt.Errorf("cannot find merge-base with %s: %w", defaultBranch, err)
-	}
+	if since != "" {
+		// Resolve the --since commit to a full SHA
+		mergeBase, err = git.ResolveSHA(repoPath, since)
+		if err != nil {
+			return fmt.Errorf("cannot resolve --since %q: %w", since, err)
+		}
+		fmt.Printf("Refining commits since %s on branch %q\n", mergeBase[:7], currentBranch)
+	} else {
+		// Default behavior: use merge-base with default branch
+		if currentBranch == git.LocalBranchName(defaultBranch) {
+			return fmt.Errorf("refusing to refine on %s branch without --since flag", git.LocalBranchName(defaultBranch))
+		}
 
-	fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, mergeBase[:7])
+		mergeBase, err = git.GetMergeBase(repoPath, defaultBranch, "HEAD")
+		if err != nil {
+			return fmt.Errorf("cannot find merge-base with %s: %w", defaultBranch, err)
+		}
+		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, mergeBase[:7])
+	}
 
 	// Resolve agent
 	cfg, _ := config.LoadGlobal()
