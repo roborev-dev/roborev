@@ -191,7 +191,8 @@ func TestTUIToggleAddressedNoReview(t *testing.T) {
 
 func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 	// When hideAddressed is on and user marks a review as addressed from review view,
-	// selection should move to next visible job so cursor isn't "swallowed"
+	// selection should move to next visible job when returning to queue (on escape),
+	// not immediately on 'a' press (so j/k navigation still works in review view)
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
@@ -210,17 +211,67 @@ func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 		Job:      &m.jobs[1],
 	}
 
-	// Press 'a' to mark as addressed
+	// Press 'a' to mark as addressed - selection should NOT move yet
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m2 := updated.(tuiModel)
 
+	// Selection stays at index 1 so j/k navigation still works relative to current review
+	if m2.selectedIdx != 1 {
+		t.Errorf("After 'a': expected selectedIdx=1 (unchanged), got %d", m2.selectedIdx)
+	}
+	if m2.selectedJobID != 2 {
+		t.Errorf("After 'a': expected selectedJobID=2 (unchanged), got %d", m2.selectedJobID)
+	}
+
+	// Press escape to return to queue - NOW selection should move
+	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m3 := updated2.(tuiModel)
+
 	// Selection should have moved to next visible job (job 3, index 2)
 	// since job 2 is now addressed and hidden
-	if m2.selectedIdx != 2 {
-		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m2.selectedIdx)
+	if m3.selectedIdx != 2 {
+		t.Errorf("After escape: expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
 	}
-	if m2.selectedJobID != 3 {
-		t.Errorf("Expected selectedJobID=3, got %d", m2.selectedJobID)
+	if m3.selectedJobID != 3 {
+		t.Errorf("After escape: expected selectedJobID=3, got %d", m3.selectedJobID)
+	}
+	if m3.currentView != tuiViewQueue {
+		t.Errorf("After escape: expected view=queue, got %d", m3.currentView)
+	}
+}
+
+func TestTUIAddressFromReviewViewFallbackToPrev(t *testing.T) {
+	// When at end of list and marking addressed, should fall back to previous visible job
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.hideAddressed = true
+	addr1, addr2, addr3 := false, false, false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addr1},
+		{ID: 2, Status: storage.JobStatusDone, Addressed: &addr2},
+		{ID: 3, Status: storage.JobStatusDone, Addressed: &addr3},
+	}
+	m.selectedIdx = 2 // Currently viewing job 3 (last one)
+	m.selectedJobID = 3
+	m.currentReview = &storage.Review{
+		ID:       10,
+		JobID:    3,
+		Addressed: false,
+		Job:      &m.jobs[2],
+	}
+
+	// Press 'a' then escape
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m2 := updated.(tuiModel)
+	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m3 := updated2.(tuiModel)
+
+	// Should fall back to previous visible job (job 2, index 1)
+	if m3.selectedIdx != 1 {
+		t.Errorf("Expected selectedIdx=1 (prev visible job), got %d", m3.selectedIdx)
+	}
+	if m3.selectedJobID != 2 {
+		t.Errorf("Expected selectedJobID=2, got %d", m3.selectedJobID)
 	}
 }
 
