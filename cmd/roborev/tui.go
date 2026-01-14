@@ -58,11 +58,11 @@ const (
 	tuiViewFilter
 )
 
-// repoFilterItem represents a repo in the filter modal with its review count
+// repoFilterItem represents a repo (or group of repos with same display name) in the filter modal
 type repoFilterItem struct {
-	name     string // Display name (basename). Empty string means "All repos"
-	rootPath string // Unique identifier (full path). Empty for "All repos"
-	count    int
+	name      string   // Display name. Empty string means "All repos"
+	rootPaths []string // Repo paths that share this display name. Empty for "All repos"
+	count     int
 }
 
 type tuiModel struct {
@@ -98,8 +98,8 @@ type tuiModel struct {
 	filterSearch      string           // Search/filter text typed by user
 
 	// Active filter (applied to queue view)
-	activeRepoFilter string // Empty = show all, otherwise repo root_path to filter by
-	hideAddressed    bool   // When true, hide jobs with addressed reviews
+	activeRepoFilter []string // Empty = show all, otherwise repo root_paths to filter by
+	hideAddressed    bool     // When true, hide jobs with addressed reviews
 
 	// Display name cache (keyed by repo path)
 	displayNames map[string]string
@@ -232,8 +232,12 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		// - If we've paginated beyond visible area, maintain current view size
 		// - Otherwise fetch enough to fill visible area
 		var url string
-		if m.activeRepoFilter != "" {
-			url = fmt.Sprintf("%s/api/jobs?limit=0&repo=%s", m.serverAddr, neturl.QueryEscape(m.activeRepoFilter))
+		if len(m.activeRepoFilter) == 1 {
+			// Single repo filter - use API filter
+			url = fmt.Sprintf("%s/api/jobs?limit=0&repo=%s", m.serverAddr, neturl.QueryEscape(m.activeRepoFilter[0]))
+		} else if len(m.activeRepoFilter) > 1 {
+			// Multiple repos (shared display name) - fetch all, filter client-side
+			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
 		} else if m.hideAddressed {
 			// Fetch all jobs when hiding addressed - client-side filtering needs full dataset
 			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
@@ -268,7 +272,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 func (m tuiModel) fetchMoreJobs() tea.Cmd {
 	return func() tea.Msg {
 		// Only fetch more when not filtering (filtered view loads all)
-		if m.activeRepoFilter != "" {
+		if len(m.activeRepoFilter) > 0 {
 			return nil
 		}
 		offset := len(m.jobs)
@@ -348,10 +352,29 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 			return tuiErrMsg(err)
 		}
 
-		// Convert to repoFilterItem slice
-		repos := make([]repoFilterItem, len(result.Repos))
-		for i, r := range result.Repos {
-			repos[i] = repoFilterItem{name: r.Name, rootPath: r.RootPath, count: r.Count}
+		// Aggregate repos by display name
+		displayNameMap := make(map[string]*repoFilterItem)
+		var displayNameOrder []string // Preserve order for stable display
+		for _, r := range result.Repos {
+			displayName := config.GetDisplayName(r.RootPath)
+			if displayName == "" {
+				displayName = r.Name
+			}
+			if item, ok := displayNameMap[displayName]; ok {
+				item.rootPaths = append(item.rootPaths, r.RootPath)
+				item.count += r.Count
+			} else {
+				displayNameMap[displayName] = &repoFilterItem{
+					name:      displayName,
+					rootPaths: []string{r.RootPath},
+					count:     r.Count,
+				}
+				displayNameOrder = append(displayNameOrder, displayName)
+			}
+		}
+		repos := make([]repoFilterItem, len(displayNameOrder))
+		for i, name := range displayNameOrder {
+			repos[i] = *displayNameMap[name]
 		}
 		return tuiReposMsg{repos: repos, totalCount: result.TotalCount}
 	}
@@ -726,10 +749,8 @@ func (m *tuiModel) getVisibleFilterRepos() []repoFilterItem {
 			visible = append(visible, r)
 			continue
 		}
-		// Search both original name and display name
-		displayName := m.getDisplayName(r.rootPath, r.name)
-		if strings.Contains(strings.ToLower(r.name), search) ||
-			strings.Contains(strings.ToLower(displayName), search) {
+		// Search by display name (r.name is already the display name after aggregation)
+		if strings.Contains(strings.ToLower(r.name), search) {
 			visible = append(visible, r)
 		}
 	}
@@ -760,9 +781,19 @@ func (m *tuiModel) getSelectedFilterRepo() *repoFilterItem {
 	return nil
 }
 
+// repoMatchesFilter checks if a repo path matches the active filter
+func (m tuiModel) repoMatchesFilter(repoPath string) bool {
+	for _, p := range m.activeRepoFilter {
+		if p == repoPath {
+			return true
+		}
+	}
+	return false
+}
+
 // isJobVisible checks if a job passes all active filters
 func (m tuiModel) isJobVisible(job storage.ReviewJob) bool {
-	if m.activeRepoFilter != "" && job.RepoPath != m.activeRepoFilter {
+	if len(m.activeRepoFilter) > 0 && !m.repoMatchesFilter(job.RepoPath) {
 		return false
 	}
 	if m.hideAddressed {
@@ -779,7 +810,7 @@ func (m tuiModel) isJobVisible(job storage.ReviewJob) bool {
 
 // getVisibleJobs returns jobs filtered by active filters (repo, addressed)
 func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
-	if m.activeRepoFilter == "" && !m.hideAddressed {
+	if len(m.activeRepoFilter) == 0 && !m.hideAddressed {
 		return m.jobs
 	}
 	var visible []storage.ReviewJob
@@ -797,7 +828,7 @@ func (m tuiModel) getVisibleSelectedIdx() int {
 	if m.selectedIdx < 0 {
 		return -1
 	}
-	if m.activeRepoFilter == "" && !m.hideAddressed {
+	if len(m.activeRepoFilter) == 0 && !m.hideAddressed {
 		return m.selectedIdx
 	}
 	count := 0
@@ -875,7 +906,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				selected := m.getSelectedFilterRepo()
 				if selected != nil {
-					m.activeRepoFilter = selected.rootPath
+					m.activeRepoFilter = selected.rootPaths
 					m.currentView = tuiViewQueue
 					m.filterSearch = ""
 					// Invalidate selection until refetch completes - prevents
@@ -987,7 +1018,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && m.activeRepoFilter == "" {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -1005,7 +1036,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && m.activeRepoFilter == "" {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -1066,7 +1097,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.updateSelectedJobID()
 				// If we hit the end, try to load more
-				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && m.activeRepoFilter == "" {
+				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
 				}
@@ -1232,9 +1263,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "esc":
-			if m.currentView == tuiViewQueue && (m.activeRepoFilter != "" || m.hideAddressed) {
+			if m.currentView == tuiViewQueue && (len(m.activeRepoFilter) > 0 || m.hideAddressed) {
 				// Clear filters and refetch all jobs
-				m.activeRepoFilter = ""
+				m.activeRepoFilter = nil
 				m.hideAddressed = false
 				// Reset to default view (clear jobs so fetchJobs uses appropriate limit)
 				m.jobs = nil
@@ -1268,7 +1299,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// If terminal can show more jobs than we have, re-fetch to fill screen
 		// Gate on !loadingMore and !loadingJobs to avoid race conditions
-		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && m.activeRepoFilter == "" {
+		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) == 0 {
 			newVisibleRows := m.height - 9 + 10
 			if newVisibleRows > len(m.jobs) {
 				m.loadingJobs = true
@@ -1326,7 +1357,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Job was removed - clamp index to valid range
 				m.selectedIdx = max(0, min(len(m.jobs)-1, m.selectedIdx))
 				// If any filter is active, ensure we're on a visible job
-				if m.activeRepoFilter != "" || m.hideAddressed {
+				if len(m.activeRepoFilter) > 0 || m.hideAddressed {
 					firstVisible := m.findFirstVisibleJob()
 					if firstVisible >= 0 {
 						m.selectedIdx = firstVisible
@@ -1373,7 +1404,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if firstVisible >= 0 {
 				m.selectedIdx = firstVisible
 				m.selectedJobID = m.jobs[firstVisible].ID
-			} else if m.activeRepoFilter == "" && len(m.jobs) > 0 {
+			} else if len(m.activeRepoFilter) == 0 && len(m.jobs) > 0 {
 				// No filter, just select first job
 				m.selectedIdx = 0
 				m.selectedJobID = m.jobs[0].ID
@@ -1454,11 +1485,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filterRepos = []repoFilterItem{{name: "", count: msg.totalCount}}
 		m.filterRepos = append(m.filterRepos, msg.repos...)
 		// Pre-select current filter if active
-		if m.activeRepoFilter != "" {
+		if len(m.activeRepoFilter) > 0 {
 			for i, r := range m.filterRepos {
-				if r.rootPath == m.activeRepoFilter {
-					m.filterSelectedIdx = i
-					break
+				if len(r.rootPaths) == len(m.activeRepoFilter) && len(r.rootPaths) > 0 {
+					// Check if all paths match
+					match := true
+					for j, p := range r.rootPaths {
+						if p != m.activeRepoFilter[j] {
+							match = false
+							break
+						}
+					}
+					if match {
+						m.filterSelectedIdx = i
+						break
+					}
 				}
 			}
 		}
@@ -1496,8 +1537,10 @@ func (m tuiModel) renderQueueView() string {
 
 	// Title with version, optional update notification, and filter indicators
 	title := fmt.Sprintf("roborev queue (%s)", version.Version)
-	if m.activeRepoFilter != "" {
-		title += fmt.Sprintf(" [f: %s]", filepath.Base(m.activeRepoFilter))
+	if len(m.activeRepoFilter) > 0 {
+		// Show display name for the filter (all paths share the same display name)
+		filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
+		title += fmt.Sprintf(" [f: %s]", filterName)
 	}
 	if m.hideAddressed {
 		title += " [hiding addressed]"
@@ -1507,7 +1550,7 @@ func (m tuiModel) renderQueueView() string {
 
 	// Status line - show filtered counts when filter is active
 	var statusLine string
-	if m.activeRepoFilter != "" {
+	if len(m.activeRepoFilter) > 0 {
 		// Calculate counts from jobs (all pre-filtered by API)
 		var done, failed, canceled int
 		for _, job := range m.jobs {
@@ -1536,7 +1579,7 @@ func (m tuiModel) renderQueueView() string {
 	visibleSelectedIdx := m.getVisibleSelectedIdx()
 
 	if len(visibleJobList) == 0 {
-		if m.activeRepoFilter != "" || m.hideAddressed {
+		if len(m.activeRepoFilter) > 0 || m.hideAddressed {
 			b.WriteString("No jobs matching filters\n")
 		} else {
 			b.WriteString("No jobs in queue\n")
@@ -1610,7 +1653,7 @@ func (m tuiModel) renderQueueView() string {
 			var scrollInfo string
 			if m.loadingMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(visibleJobList))
-			} else if m.hasMore && m.activeRepoFilter == "" {
+			} else if m.hasMore && len(m.activeRepoFilter) == 0 {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d+] scroll down to load more", start+1, end, len(visibleJobList))
 			} else if len(visibleJobList) > visibleRows {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visibleJobList))
@@ -1640,7 +1683,7 @@ func (m tuiModel) renderQueueView() string {
 	// Help (two lines)
 	helpText := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | f: filter | h: hide addressed | q: quit\n" +
 		"a: toggle addressed | x: cancel | r: rerun"
-	if m.activeRepoFilter != "" || m.hideAddressed {
+	if len(m.activeRepoFilter) > 0 || m.hideAddressed {
 		helpText += " | esc: clear filters"
 	}
 	b.WriteString(tuiHelpStyle.Render(helpText))
@@ -2065,8 +2108,8 @@ func (m tuiModel) renderFilterView() string {
 		if repo.name == "" {
 			line = fmt.Sprintf("All repos (%d)", repo.count)
 		} else {
-			displayName := m.getDisplayName(repo.rootPath, repo.name)
-			line = fmt.Sprintf("%s (%d)", displayName, repo.count)
+			// repo.name is already the display name (aggregated in fetchRepos)
+			line = fmt.Sprintf("%s (%d)", repo.name, repo.count)
 		}
 
 		if i == m.filterSelectedIdx {
