@@ -670,7 +670,7 @@ func setupTestGitRepo(t *testing.T) (repoDir string, baseSHA string, runGit func
 	return repoDir, baseSHA, runGit
 }
 
-func TestRunRefine_RefusesMainBranchWithoutSince(t *testing.T) {
+func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -687,10 +687,10 @@ func TestRunRefine_RefusesMainBranchWithoutSince(t *testing.T) {
 	}
 	defer os.Chdir(origDir)
 
-	// Running refine without --since on main should fail
-	err = runRefine("test", "", 1, true, false, "")
+	// Validating without --since on main should fail
+	_, _, _, _, err = validateRefineContext("")
 	if err == nil {
-		t.Fatal("expected error when running refine on main without --since")
+		t.Fatal("expected error when validating on main without --since")
 	}
 	if !strings.Contains(err.Error(), "refusing to refine on main") {
 		t.Errorf("expected 'refusing to refine on main' error, got: %v", err)
@@ -700,7 +700,7 @@ func TestRunRefine_RefusesMainBranchWithoutSince(t *testing.T) {
 	}
 }
 
-func TestRunRefine_AllowsMainBranchWithSince(t *testing.T) {
+func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -723,15 +723,23 @@ func TestRunRefine_AllowsMainBranchWithSince(t *testing.T) {
 	}
 	defer os.Chdir(origDir)
 
-	// Running refine with --since on main should NOT fail with "refusing" error
-	// (it will fail for other reasons like no daemon, but not the main branch check)
-	err = runRefine("test", "", 1, true, false, baseSHA)
-	if err != nil && strings.Contains(err.Error(), "refusing to refine on main") {
-		t.Errorf("should allow refine on main with --since, got: %v", err)
+	// Validating with --since on main should pass
+	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(baseSHA)
+	if err != nil {
+		t.Fatalf("validation should pass with --since on main, got: %v", err)
+	}
+	if repoPath == "" {
+		t.Error("expected non-empty repoPath")
+	}
+	if currentBranch != "main" {
+		t.Errorf("expected currentBranch=main, got %s", currentBranch)
+	}
+	if mergeBase != baseSHA {
+		t.Errorf("expected mergeBase=%s, got %s", baseSHA, mergeBase)
 	}
 }
 
-func TestRunRefine_SinceWorksOnFeatureBranch(t *testing.T) {
+func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -755,15 +763,23 @@ func TestRunRefine_SinceWorksOnFeatureBranch(t *testing.T) {
 	}
 	defer os.Chdir(origDir)
 
-	// --since should work on feature branch too (limits scope)
-	err = runRefine("test", "", 1, true, false, baseSHA)
-	// Should not fail with "refusing" error (will fail for daemon reasons)
-	if err != nil && strings.Contains(err.Error(), "refusing") {
-		t.Errorf("--since should work on feature branch, got: %v", err)
+	// --since should work on feature branch
+	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(baseSHA)
+	if err != nil {
+		t.Fatalf("--since should work on feature branch, got: %v", err)
+	}
+	if repoPath == "" {
+		t.Error("expected non-empty repoPath")
+	}
+	if currentBranch != "feature" {
+		t.Errorf("expected currentBranch=feature, got %s", currentBranch)
+	}
+	if mergeBase != baseSHA {
+		t.Errorf("expected mergeBase=%s, got %s", baseSHA, mergeBase)
 	}
 }
 
-func TestRunRefine_InvalidSinceRef(t *testing.T) {
+func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -780,7 +796,7 @@ func TestRunRefine_InvalidSinceRef(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// Invalid --since ref should fail with clear error
-	err = runRefine("test", "", 1, true, false, "nonexistent-ref-abc123")
+	_, _, _, _, err = validateRefineContext("nonexistent-ref-abc123")
 	if err == nil {
 		t.Fatal("expected error for invalid --since ref")
 	}
@@ -789,12 +805,12 @@ func TestRunRefine_InvalidSinceRef(t *testing.T) {
 	}
 }
 
-func TestRunRefine_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
+func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, runGit := setupTestGitRepo(t)
+	repoDir, baseSHA, runGit := setupTestGitRepo(t)
 
 	// Create feature branch
 	runGit("checkout", "-b", "feature")
@@ -813,10 +829,19 @@ func TestRunRefine_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
 	}
 	defer os.Chdir(origDir)
 
-	// Feature branch without --since should still work (uses merge-base)
-	err = runRefine("test", "", 1, true, false, "")
-	// Should not fail with "refusing" error (will fail for daemon reasons)
-	if err != nil && strings.Contains(err.Error(), "refusing") {
-		t.Errorf("feature branch without --since should work, got: %v", err)
+	// Feature branch without --since should pass validation (uses merge-base)
+	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("")
+	if err != nil {
+		t.Fatalf("feature branch without --since should work, got: %v", err)
+	}
+	if repoPath == "" {
+		t.Error("expected non-empty repoPath")
+	}
+	if currentBranch != "feature" {
+		t.Errorf("expected currentBranch=feature, got %s", currentBranch)
+	}
+	// mergeBase should be the base commit (merge-base of feature and main)
+	if mergeBase != baseSHA {
+		t.Errorf("expected mergeBase=%s (base commit), got %s", baseSHA, mergeBase)
 	}
 }

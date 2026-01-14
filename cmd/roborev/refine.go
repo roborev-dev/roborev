@@ -126,58 +126,72 @@ func (t *stepTimer) stopLive() {
 	fmt.Printf("\r%s %s\n", t.prefix, t.elapsed())
 }
 
-func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool, since string) error {
-	// 1. Validate preconditions
-	repoPath, err := git.GetRepoRoot(".")
+// validateRefineContext validates git and branch preconditions for refine.
+// Returns repoPath, currentBranch, defaultBranch, mergeBase, or an error.
+// This validation happens before any daemon interaction.
+func validateRefineContext(since string) (repoPath, currentBranch, defaultBranch, mergeBase string, err error) {
+	repoPath, err = git.GetRepoRoot(".")
 	if err != nil {
-		return fmt.Errorf("not in a git repository: %w", err)
+		return "", "", "", "", fmt.Errorf("not in a git repository: %w", err)
 	}
 
 	if git.IsRebaseInProgress(repoPath) {
-		return fmt.Errorf("rebase in progress - complete or abort it first")
+		return "", "", "", "", fmt.Errorf("rebase in progress - complete or abort it first")
 	}
 
 	if !git.IsWorkingTreeClean(repoPath) {
-		return fmt.Errorf("working tree not clean - commit or stash your changes first")
+		return "", "", "", "", fmt.Errorf("working tree not clean - commit or stash your changes first")
 	}
 
-	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
-	}
-
-	// Create daemon client
-	client, err := daemon.NewHTTPClientFromRuntime()
+	defaultBranch, err = git.GetDefaultBranch(repoPath)
 	if err != nil {
-		return fmt.Errorf("cannot connect to daemon: %w", err)
+		return "", "", "", "", fmt.Errorf("cannot determine default branch: %w", err)
 	}
 
-	// 2. Find branch context
-	defaultBranch, err := git.GetDefaultBranch(repoPath)
-	if err != nil {
-		return fmt.Errorf("cannot determine default branch: %w", err)
-	}
-
-	currentBranch := git.GetCurrentBranch(repoPath)
-	var mergeBase string
+	currentBranch = git.GetCurrentBranch(repoPath)
 
 	if since != "" {
 		// Resolve the --since commit to a full SHA
 		mergeBase, err = git.ResolveSHA(repoPath, since)
 		if err != nil {
-			return fmt.Errorf("cannot resolve --since %q: %w", since, err)
+			return "", "", "", "", fmt.Errorf("cannot resolve --since %q: %w", since, err)
 		}
-		fmt.Printf("Refining commits since %s on branch %q\n", mergeBase[:7], currentBranch)
 	} else {
 		// Default behavior: use merge-base with default branch
 		if currentBranch == git.LocalBranchName(defaultBranch) {
-			return fmt.Errorf("refusing to refine on %s branch without --since flag", git.LocalBranchName(defaultBranch))
+			return "", "", "", "", fmt.Errorf("refusing to refine on %s branch without --since flag", git.LocalBranchName(defaultBranch))
 		}
 
 		mergeBase, err = git.GetMergeBase(repoPath, defaultBranch, "HEAD")
 		if err != nil {
-			return fmt.Errorf("cannot find merge-base with %s: %w", defaultBranch, err)
+			return "", "", "", "", fmt.Errorf("cannot find merge-base with %s: %w", defaultBranch, err)
 		}
+	}
+
+	return repoPath, currentBranch, defaultBranch, mergeBase, nil
+}
+
+func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool, since string) error {
+	// 1. Validate git and branch context (before touching daemon)
+	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(since)
+	if err != nil {
+		return err
+	}
+
+	// 2. Connect to daemon (only after all validation passes)
+	if err := ensureDaemon(); err != nil {
+		return fmt.Errorf("daemon not running: %w", err)
+	}
+
+	client, err := daemon.NewHTTPClientFromRuntime()
+	if err != nil {
+		return fmt.Errorf("cannot connect to daemon: %w", err)
+	}
+
+	// Print branch context after successful connection
+	if since != "" {
+		fmt.Printf("Refining commits since %s on branch %q\n", mergeBase[:7], currentBranch)
+	} else {
 		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, mergeBase[:7])
 	}
 
