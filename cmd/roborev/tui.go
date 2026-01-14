@@ -749,9 +749,17 @@ func (m *tuiModel) getVisibleFilterRepos() []repoFilterItem {
 			visible = append(visible, r)
 			continue
 		}
-		// Search by display name (r.name is already the display name after aggregation)
+		// Search by display name
 		if strings.Contains(strings.ToLower(r.name), search) {
 			visible = append(visible, r)
+			continue
+		}
+		// Also search by underlying repo path basenames
+		for _, p := range r.rootPaths {
+			if strings.Contains(strings.ToLower(filepath.Base(p)), search) {
+				visible = append(visible, r)
+				break
+			}
 		}
 	}
 	return visible
@@ -1551,9 +1559,12 @@ func (m tuiModel) renderQueueView() string {
 	// Status line - show filtered counts when filter is active
 	var statusLine string
 	if len(m.activeRepoFilter) > 0 {
-		// Calculate counts from jobs (all pre-filtered by API)
+		// Calculate counts from visible jobs (handles multi-path client-side filtering)
 		var done, failed, canceled int
 		for _, job := range m.jobs {
+			if !m.repoMatchesFilter(job.RepoPath) {
+				continue
+			}
 			switch job.Status {
 			case storage.JobStatusDone:
 				done++

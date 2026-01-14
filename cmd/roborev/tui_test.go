@@ -1479,6 +1479,67 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 	}
 }
 
+func TestTUIFilterAggregatedDisplayName(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Jobs from two repos that share a display name
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "backend-dev", RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone},
+		{ID: 2, RepoName: "backend-prod", RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone},
+		{ID: 3, RepoName: "frontend", RepoPath: "/path/to/frontend", Status: storage.JobStatusFailed},
+	}
+	m.currentView = tuiViewFilter
+	// Aggregated group: "backend" covers both backend-dev and backend-prod
+	m.filterRepos = []repoFilterItem{
+		{name: "", rootPaths: nil, count: 3},
+		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
+		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
+	}
+	m.filterSelectedIdx = 1 // Select "backend" group
+
+	// Press enter to select
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := updated.(tuiModel)
+
+	// Should have both paths in the filter
+	if len(m2.activeRepoFilter) != 2 {
+		t.Errorf("Expected 2 paths in activeRepoFilter, got %d", len(m2.activeRepoFilter))
+	}
+
+	// Both backend repos should be visible
+	if !m2.repoMatchesFilter("/path/to/backend-dev") {
+		t.Error("Expected backend-dev to match filter")
+	}
+	if !m2.repoMatchesFilter("/path/to/backend-prod") {
+		t.Error("Expected backend-prod to match filter")
+	}
+	// Frontend should not be visible
+	if m2.repoMatchesFilter("/path/to/frontend") {
+		t.Error("Expected frontend to NOT match filter")
+	}
+}
+
+func TestTUIFilterSearchByRepoPath(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.filterRepos = []repoFilterItem{
+		{name: "", rootPaths: nil, count: 3},
+		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
+		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
+	}
+
+	// Search by underlying repo path basename (not display name)
+	m.filterSearch = "backend-dev"
+	visible := m.getVisibleFilterRepos()
+
+	// Should find the "backend" group (contains backend-dev path)
+	if len(visible) != 2 { // "All repos" + "backend"
+		t.Errorf("Expected 2 visible repos (All + backend), got %d", len(visible))
+	}
+	if visible[1].name != "backend" {
+		t.Errorf("Expected to find 'backend' group, got '%s'", visible[1].name)
+	}
+}
+
 func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
