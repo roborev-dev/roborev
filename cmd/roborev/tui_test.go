@@ -1540,6 +1540,38 @@ func TestTUIFilterSearchByRepoPath(t *testing.T) {
 	}
 }
 
+func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.height = 20
+	m.daemonVersion = "test"
+
+	// Jobs from multiple repos
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone},
+		{ID: 2, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone},
+		{ID: 3, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusFailed},
+		{ID: 4, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone},
+		{ID: 5, RepoPath: "/path/to/frontend", Status: storage.JobStatusCanceled},
+	}
+
+	// Multi-path filter (backend group)
+	m.activeRepoFilter = []string{"/path/to/backend-dev", "/path/to/backend-prod"}
+
+	output := m.renderQueueView()
+
+	// Status line should show counts only for backend repos (2 done, 1 failed, 0 canceled)
+	// Not frontend (1 done, 1 canceled)
+	if !strings.Contains(output, "Done: 2") {
+		t.Errorf("Expected status to show 'Done: 2' for filtered repos, got: %s", output)
+	}
+	if !strings.Contains(output, "Failed: 1") {
+		t.Errorf("Expected status to show 'Failed: 1' for filtered repos, got: %s", output)
+	}
+	if !strings.Contains(output, "Canceled: 0") {
+		t.Errorf("Expected status to show 'Canceled: 0' for filtered repos, got: %s", output)
+	}
+}
+
 func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
