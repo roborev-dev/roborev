@@ -275,6 +275,45 @@ func TestTUIAddressFromReviewViewFallbackToPrev(t *testing.T) {
 	}
 }
 
+func TestTUIAddressFromReviewViewExitWithQ(t *testing.T) {
+	// Same as TestTUIAddressFromReviewViewWithHideAddressed but exits with 'q'
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.hideAddressed = true
+	addr1, addr2, addr3 := false, false, false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addr1},
+		{ID: 2, Status: storage.JobStatusDone, Addressed: &addr2},
+		{ID: 3, Status: storage.JobStatusDone, Addressed: &addr3},
+	}
+	m.selectedIdx = 1
+	m.selectedJobID = 2
+	m.currentReview = &storage.Review{
+		ID:       10,
+		JobID:    2,
+		Addressed: false,
+		Job:      &m.jobs[1],
+	}
+
+	// Press 'a' to mark as addressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m2 := updated.(tuiModel)
+
+	// Press 'q' to return to queue - selection should normalize
+	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m3 := updated2.(tuiModel)
+
+	if m3.selectedIdx != 2 {
+		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
+	}
+	if m3.selectedJobID != 3 {
+		t.Errorf("Expected selectedJobID=3, got %d", m3.selectedJobID)
+	}
+	if m3.currentView != tuiViewQueue {
+		t.Errorf("Expected view=queue, got %d", m3.currentView)
+	}
+}
+
 // addressRequest is used to decode and validate POST body in tests
 type addressRequest struct {
 	ReviewID  int64 `json:"review_id"`

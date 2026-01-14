@@ -686,6 +686,25 @@ func (m *tuiModel) findPrevViewableJob() int {
 	return -1
 }
 
+// normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current
+// selection is hidden (e.g., marked addressed with hideAddressed filter active).
+// Call this when returning to queue view from review view.
+func (m *tuiModel) normalizeSelectionIfHidden() {
+	if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) && !m.isJobVisible(m.jobs[m.selectedIdx]) {
+		nextIdx := m.findNextVisibleJob(m.selectedIdx)
+		if nextIdx < 0 {
+			nextIdx = m.findPrevVisibleJob(m.selectedIdx)
+		}
+		if nextIdx < 0 {
+			nextIdx = m.findFirstVisibleJob()
+		}
+		if nextIdx >= 0 {
+			m.selectedIdx = nextIdx
+			m.updateSelectedJobID()
+		}
+	}
+}
+
 // cancelJob sends a cancel request to the server
 func (m tuiModel) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishedAt *time.Time) tea.Cmd {
 	return func() tea.Msg {
@@ -952,6 +971,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentView = tuiViewQueue
 				m.currentReview = nil
 				m.reviewScroll = 0
+				m.normalizeSelectionIfHidden()
 				return m, nil
 			}
 			if m.currentView == tuiViewPrompt {
@@ -1287,21 +1307,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentView = tuiViewQueue
 				m.currentReview = nil
 				m.reviewScroll = 0
-				// If current selection is now hidden (e.g., marked addressed with filter active),
-				// move to next visible job so cursor isn't "swallowed"
-				if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) && !m.isJobVisible(m.jobs[m.selectedIdx]) {
-					nextIdx := m.findNextVisibleJob(m.selectedIdx)
-					if nextIdx < 0 {
-						nextIdx = m.findPrevVisibleJob(m.selectedIdx)
-					}
-					if nextIdx < 0 {
-						nextIdx = m.findFirstVisibleJob()
-					}
-					if nextIdx >= 0 {
-						m.selectedIdx = nextIdx
-						m.updateSelectedJobID()
-					}
-				}
+				m.normalizeSelectionIfHidden()
 			} else if m.currentView == tuiViewPrompt {
 				// Go back to where we came from
 				if m.promptFromQueue {
