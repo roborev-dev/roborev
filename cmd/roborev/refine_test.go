@@ -529,3 +529,112 @@ func TestFindFailedReviewForBranch_MarkAddressedError(t *testing.T) {
 		t.Errorf("error should mention review ID, got: %v", err)
 	}
 }
+
+func TestFindPendingJobForBranch_FindsRunningJob(t *testing.T) {
+	client := newMockDaemonClient()
+
+	// Jobs: first is done, second is running
+	client.jobs = map[int64]*storage.ReviewJob{
+		100: {ID: 100, GitRef: "commit1", Status: storage.JobStatusDone},
+		200: {ID: 200, GitRef: "commit2", Status: storage.JobStatusRunning},
+	}
+
+	commits := []string{"commit1", "commit2"}
+
+	pending, err := findPendingJobForBranch(client, "/repo", commits)
+	if err != nil {
+		t.Fatalf("findPendingJobForBranch failed: %v", err)
+	}
+
+	if pending == nil {
+		t.Fatal("expected to find a pending job")
+	}
+	if pending.ID != 200 {
+		t.Errorf("expected running job 200, got %d", pending.ID)
+	}
+}
+
+func TestFindPendingJobForBranch_FindsQueuedJob(t *testing.T) {
+	client := newMockDaemonClient()
+
+	// Jobs: first is queued
+	client.jobs = map[int64]*storage.ReviewJob{
+		100: {ID: 100, GitRef: "commit1", Status: storage.JobStatusQueued},
+	}
+
+	commits := []string{"commit1"}
+
+	pending, err := findPendingJobForBranch(client, "/repo", commits)
+	if err != nil {
+		t.Fatalf("findPendingJobForBranch failed: %v", err)
+	}
+
+	if pending == nil {
+		t.Fatal("expected to find a pending job")
+	}
+	if pending.ID != 100 {
+		t.Errorf("expected queued job 100, got %d", pending.ID)
+	}
+}
+
+func TestFindPendingJobForBranch_NoPendingJobs(t *testing.T) {
+	client := newMockDaemonClient()
+
+	// All jobs are done
+	client.jobs = map[int64]*storage.ReviewJob{
+		100: {ID: 100, GitRef: "commit1", Status: storage.JobStatusDone},
+		200: {ID: 200, GitRef: "commit2", Status: storage.JobStatusDone},
+	}
+
+	commits := []string{"commit1", "commit2"}
+
+	pending, err := findPendingJobForBranch(client, "/repo", commits)
+	if err != nil {
+		t.Fatalf("findPendingJobForBranch failed: %v", err)
+	}
+
+	if pending != nil {
+		t.Errorf("expected no pending jobs, got job %d", pending.ID)
+	}
+}
+
+func TestFindPendingJobForBranch_NoJobsForCommits(t *testing.T) {
+	client := newMockDaemonClient()
+	// No jobs in the map
+
+	commits := []string{"unreviewed1", "unreviewed2"}
+
+	pending, err := findPendingJobForBranch(client, "/repo", commits)
+	if err != nil {
+		t.Fatalf("findPendingJobForBranch failed: %v", err)
+	}
+
+	if pending != nil {
+		t.Errorf("expected nil when no jobs exist, got job %d", pending.ID)
+	}
+}
+
+func TestFindPendingJobForBranch_OldestFirst(t *testing.T) {
+	client := newMockDaemonClient()
+
+	// Two running jobs - should return oldest (commit1)
+	client.jobs = map[int64]*storage.ReviewJob{
+		100: {ID: 100, GitRef: "commit1", Status: storage.JobStatusRunning},
+		200: {ID: 200, GitRef: "commit2", Status: storage.JobStatusRunning},
+	}
+
+	commits := []string{"commit1", "commit2"}
+
+	pending, err := findPendingJobForBranch(client, "/repo", commits)
+	if err != nil {
+		t.Fatalf("findPendingJobForBranch failed: %v", err)
+	}
+
+	if pending == nil {
+		t.Fatal("expected to find a pending job")
+	}
+	// Should return oldest pending job (commit1 is first in list)
+	if pending.ID != 100 {
+		t.Errorf("expected oldest pending job 100, got %d", pending.ID)
+	}
+}

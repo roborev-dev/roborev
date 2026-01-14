@@ -190,9 +190,7 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 	// before moving on to the next oldest failed commit
 	var currentFailedReview *storage.Review
 
-	for iteration := 1; iteration <= maxIterations; iteration++ {
-		fmt.Printf("\n=== Refinement iteration %d/%d ===\n", iteration, maxIterations)
-
+	for iteration := 1; iteration <= maxIterations; {
 		// Get commits on current branch
 		commits, err := git.GetCommitsSince(repoPath, mergeBase)
 		if err != nil {
@@ -221,6 +219,7 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 			}
 			if pendingJob != nil {
 				// Wait for the pending job to complete, then loop back to check its result
+				// This does NOT consume an iteration - we only count actual fix attempts
 				fmt.Printf("Waiting for in-progress review (job %d)...\n", pendingJob.ID)
 				review, err := client.WaitForReview(pendingJob.ID)
 				if err != nil {
@@ -268,6 +267,10 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 				currentFailedReview = review
 			}
 		}
+
+		// Now we have a review to address - this counts as an iteration
+		fmt.Printf("\n=== Refinement iteration %d/%d ===\n", iteration, maxIterations)
+		iteration++
 
 		// Address the failed review
 		liveTimer := quiet && isTerminal(os.Stdout.Fd())
