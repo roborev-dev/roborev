@@ -214,30 +214,59 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 		}
 
 		if currentFailedReview == nil {
-			// No individual commit failures - run whole-branch review
-			fmt.Println("No individual failed reviews - running branch review...")
-
-			rangeRef := mergeBase + ".." + "HEAD"
-			jobID, err := client.EnqueueReview(repoPath, rangeRef, resolvedAgent)
+			// Check for pending jobs before triggering a branch review
+			pendingJob, err := findPendingJobForBranch(client, repoPath, commits)
 			if err != nil {
-				return fmt.Errorf("failed to enqueue branch review: %w", err)
+				return fmt.Errorf("error checking pending jobs: %w", err)
 			}
+			if pendingJob != nil {
+				// Wait for the pending job to complete, then loop back to check its result
+				fmt.Printf("Waiting for in-progress review (job %d)...\n", pendingJob.ID)
+				review, err := client.WaitForReview(pendingJob.ID)
+				if err != nil {
+					fmt.Printf("Warning: review failed: %v\n", err)
+					continue // Loop back, will re-check
+				}
+				verdict := storage.ParseVerdict(review.Output)
+				if verdict == "F" && !review.Addressed {
+					currentFailedReview = review
+				} else if verdict == "P" {
+					if err := client.MarkReviewAddressed(review.ID); err != nil {
+						fmt.Printf("Warning: failed to mark review %d as addressed: %v\n", review.ID, err)
+					}
+					continue // Loop back to check for more
+				}
+				// If we have a failed review now, fall through to address it
+				// Otherwise loop back
+				if currentFailedReview == nil {
+					continue
+				}
+			} else {
+				// No pending jobs and no failed reviews - run whole-branch review
+				fmt.Println("No individual failed reviews - running branch review...")
 
-			fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
-			review, err := client.WaitForReview(jobID)
-			if err != nil {
-				return fmt.Errorf("branch review failed: %w", err)
+				rangeRef := mergeBase + ".." + "HEAD"
+				jobID, err := client.EnqueueReview(repoPath, rangeRef, resolvedAgent)
+				if err != nil {
+					return fmt.Errorf("failed to enqueue branch review: %w", err)
+				}
+
+				fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
+				review, err := client.WaitForReview(jobID)
+				if err != nil {
+					return fmt.Errorf("branch review failed: %w", err)
+				}
+
+				verdict := storage.ParseVerdict(review.Output)
+				if verdict == "P" {
+					fmt.Println("\nAll reviews passed! Branch is ready.")
+					return nil
+				}
+
+				// Branch review failed - address its findings
+				fmt.Printf("\nBranch review failed. Addressing findings...\n")
+				currentFailedReview = review
 			}
-
-			verdict := storage.ParseVerdict(review.Output)
-			if verdict == "P" {
-				fmt.Println("\nAll reviews passed! Branch is ready.")
-				return nil
-			}
-
-			// Branch review failed - address its findings
-			fmt.Printf("\nBranch review failed. Addressing findings...\n")
-			currentFailedReview = review
 		}
 
 		// Address the failed review
@@ -432,6 +461,25 @@ func findFailedReviewForBranch(client daemon.Client, commits []string) (*storage
 		}
 	}
 
+	return nil, nil
+}
+
+// findPendingJobForBranch finds a queued or running job for any of the given commits.
+// Returns the first pending job found (oldest commit first), or nil if all jobs are complete.
+func findPendingJobForBranch(client daemon.Client, repoPath string, commits []string) (*storage.ReviewJob, error) {
+	for _, sha := range commits {
+		job, err := client.FindJobForCommit(repoPath, sha)
+		if err != nil {
+			return nil, err
+		}
+		if job == nil {
+			continue
+		}
+		// Check if job is still pending (queued or running)
+		if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
+			return job, nil
+		}
+	}
 	return nil, nil
 }
 
