@@ -7,6 +7,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -73,9 +74,10 @@ type tuiModel struct {
 	selectedIdx     int
 	selectedJobID   int64 // Track selected job by ID to maintain position on refresh
 	currentView     tuiView
-	currentReview   *storage.Review
-	currentBranch   string // Cached branch name for current review (computed on load)
-	reviewScroll    int
+	currentReview      *storage.Review
+	currentResponses   []storage.Response // Responses for current review (fetched with review)
+	currentBranch      string             // Cached branch name for current review (computed on load)
+	reviewScroll       int
 	promptScroll    int
 	promptFromQueue bool // true if prompt view was entered from queue (not review)
 	width           int
@@ -112,8 +114,9 @@ type tuiJobsMsg struct {
 type tuiStatusMsg storage.DaemonStatus
 type tuiReviewMsg struct {
 	review     *storage.Review
-	jobID      int64  // The job ID that was requested (for race condition detection)
-	branchName string // Pre-computed branch name (empty if not applicable)
+	responses  []storage.Response // Responses for this review
+	jobID      int64              // The job ID that was requested (for race condition detection)
+	branchName string             // Pre-computed branch name (empty if not applicable)
 }
 type tuiPromptMsg *storage.Review
 type tuiAddressedMsg bool
@@ -374,13 +377,57 @@ func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
 			return tuiErrMsg(err)
 		}
 
+		// Fetch responses for this job
+		var responses []storage.Response
+		respResp, err := m.client.Get(fmt.Sprintf("%s/api/responses?job_id=%d", m.serverAddr, jobID))
+		if err == nil {
+			defer respResp.Body.Close()
+			if respResp.StatusCode == http.StatusOK {
+				var result struct {
+					Responses []storage.Response `json:"responses"`
+				}
+				json.NewDecoder(respResp.Body).Decode(&result)
+				responses = result.Responses
+			}
+		}
+
+		// Also fetch legacy responses by SHA for single commits (not ranges or dirty reviews)
+		// and merge with job responses to preserve full history during migration
+		if review.Job != nil && !strings.Contains(review.Job.GitRef, "..") && review.Job.GitRef != "dirty" {
+			shaResp, err := m.client.Get(fmt.Sprintf("%s/api/responses?sha=%s", m.serverAddr, review.Job.GitRef))
+			if err == nil {
+				defer shaResp.Body.Close()
+				if shaResp.StatusCode == http.StatusOK {
+					var result struct {
+						Responses []storage.Response `json:"responses"`
+					}
+					json.NewDecoder(shaResp.Body).Decode(&result)
+					// Merge and dedupe by ID
+					seen := make(map[int64]bool)
+					for _, r := range responses {
+						seen[r.ID] = true
+					}
+					for _, r := range result.Responses {
+						if !seen[r.ID] {
+							seen[r.ID] = true
+							responses = append(responses, r)
+						}
+					}
+					// Sort merged responses by CreatedAt for chronological order
+					sort.Slice(responses, func(i, j int) bool {
+						return responses[i].CreatedAt.Before(responses[j].CreatedAt)
+					})
+				}
+			}
+		}
+
 		// Compute branch name for single commits (not ranges)
 		var branchName string
 		if review.Job != nil && review.Job.RepoPath != "" && !strings.Contains(review.Job.GitRef, "..") {
 			branchName = git.GetBranchName(review.Job.RepoPath, review.Job.GitRef)
 		}
 
-		return tuiReviewMsg{review: &review, jobID: jobID, branchName: branchName}
+		return tuiReviewMsg{review: &review, responses: responses, jobID: jobID, branchName: branchName}
 	}
 }
 
@@ -1346,6 +1393,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.currentReview = msg.review
+		m.currentResponses = msg.responses
 		m.currentBranch = msg.branchName
 		m.currentView = tuiViewReview
 		m.reviewScroll = 0
@@ -1838,9 +1886,24 @@ func (m tuiModel) renderReviewView() string {
 		b.WriteString("\n")
 	}
 
+	// Build content: review output + responses
+	var content strings.Builder
+	content.WriteString(review.Output)
+
+	// Append responses if any
+	if len(m.currentResponses) > 0 {
+		content.WriteString("\n\n--- Responses ---\n")
+		for _, r := range m.currentResponses {
+			timestamp := r.CreatedAt.Format("Jan 02 15:04")
+			content.WriteString(fmt.Sprintf("\n[%s] %s:\n", timestamp, r.Responder))
+			content.WriteString(r.Response)
+			content.WriteString("\n")
+		}
+	}
+
 	// Wrap text to terminal width minus padding
 	wrapWidth := max(20, min(m.width-4, 200))
-	lines := wrapText(review.Output, wrapWidth)
+	lines := wrapText(content.String(), wrapWidth)
 
 	// Compute title line count based on actual title length
 	titleLines := 1

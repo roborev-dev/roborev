@@ -127,7 +127,7 @@ func TestBuildPromptWithPreviousReviews(t *testing.T) {
 
 		// Create review for some commits
 		if reviewText, ok := reviewTexts[i]; ok {
-			job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "test")
+			job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "test", "")
 			if err != nil {
 				t.Fatalf("EnqueueJob failed: %v", err)
 			}
@@ -261,7 +261,7 @@ func TestPromptContainsExpectedFormat(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo(repoPath)
 	commit, _ := db.GetOrCreateCommit(repo.ID, commits[4], "Test", "test", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, commits[4], "test")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, commits[4], "test", "")
 	db.ClaimJob("test-worker")
 	db.CompleteJob(job.ID, "test", "prompt", "Found 1 issue:\n1. pkg/cache/store.go:112 - Race condition")
 

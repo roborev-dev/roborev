@@ -74,9 +74,20 @@ func GetCurrentBranch(repoPath string) string {
 	return branch
 }
 
-// GetDiff returns the full diff for a commit
+// LocalBranchName strips the "origin/" prefix from a branch name if present.
+// This normalizes branch names for comparison since GetDefaultBranch may return
+// "origin/main" while GetCurrentBranch returns "main".
+func LocalBranchName(branch string) string {
+	return strings.TrimPrefix(branch, "origin/")
+}
+
+// GetDiff returns the full diff for a commit, excluding generated files like lock files
 func GetDiff(repoPath, sha string) (string, error) {
-	cmd := exec.Command("git", "show", sha, "--format=")
+	args := []string{"show", sha, "--format=", "--"}
+	args = append(args, ".")
+	args = append(args, excludedPathPatterns...)
+
+	cmd := exec.Command("git", args...)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -283,9 +294,13 @@ func GetRangeCommits(repoPath, rangeRef string) ([]string, error) {
 	return commits, nil
 }
 
-// GetRangeDiff returns the combined diff for a range
+// GetRangeDiff returns the combined diff for a range, excluding generated files like lock files
 func GetRangeDiff(repoPath, rangeRef string) (string, error) {
-	cmd := exec.Command("git", "diff", rangeRef)
+	args := []string{"diff", rangeRef, "--"}
+	args = append(args, ".")
+	args = append(args, excludedPathPatterns...)
+
+	cmd := exec.Command("git", args...)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -315,12 +330,20 @@ const emptyTreeSHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 // GetDirtyDiff returns a diff of all uncommitted changes including untracked files.
 // The diff includes both tracked file changes (via git diff HEAD) and untracked files
-// formatted as new-file diff entries.
+// formatted as new-file diff entries. Excludes generated files like lock files.
 func GetDirtyDiff(repoPath string) (string, error) {
 	var result strings.Builder
 
+	// Build diff args with exclusions
+	diffArgs := func(baseArgs ...string) []string {
+		args := append(baseArgs, "--")
+		args = append(args, ".")
+		args = append(args, excludedPathPatterns...)
+		return args
+	}
+
 	// 1. Get diff of tracked files (staged + unstaged)
-	cmd := exec.Command("git", "diff", "HEAD")
+	cmd := exec.Command("git", diffArgs("diff", "HEAD")...)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -331,7 +354,7 @@ func GetDirtyDiff(repoPath string) (string, error) {
 		// This covers the edge case where a file is staged but then removed from working tree
 
 		// Get staged changes vs empty tree
-		cmd = exec.Command("git", "diff", "--cached", emptyTreeSHA)
+		cmd = exec.Command("git", diffArgs("diff", "--cached", emptyTreeSHA)...)
 		cmd.Dir = repoPath
 		stagedOut, err := cmd.Output()
 		if err != nil {
@@ -342,7 +365,7 @@ func GetDirtyDiff(repoPath string) (string, error) {
 		}
 
 		// Get unstaged changes (working tree vs index)
-		cmd = exec.Command("git", "diff")
+		cmd = exec.Command("git", diffArgs("diff")...)
 		cmd.Dir = repoPath
 		unstagedOut, err := cmd.Output()
 		if err != nil {
@@ -370,6 +393,11 @@ func GetDirtyDiff(repoPath string) (string, error) {
 	untrackedFiles := strings.Split(strings.TrimSpace(string(untrackedOut)), "\n")
 	for _, file := range untrackedFiles {
 		if file == "" {
+			continue
+		}
+
+		// Skip excluded files
+		if isExcludedFile(file) {
 			continue
 		}
 
@@ -416,6 +444,55 @@ func GetDirtyDiff(repoPath string) (string, error) {
 	}
 
 	return result.String(), nil
+}
+
+// excludedPathPatterns contains pathspec patterns for files that should be excluded from diffs.
+// These are typically generated files that add noise to code reviews.
+// Uses :(exclude) long form since :! shorthand doesn't work reliably with git show/diff.
+var excludedPathPatterns = []string{
+	":(exclude)uv.lock",
+	":(exclude)package-lock.json",
+	":(exclude)yarn.lock",
+	":(exclude)pnpm-lock.yaml",
+	":(exclude)Cargo.lock", // Rust uses capital C
+	":(exclude)cargo.lock", // Include lowercase for case-insensitive filesystems
+	":(exclude)Gemfile.lock",
+	":(exclude)poetry.lock",
+	":(exclude)composer.lock",
+	":(exclude)go.sum",
+	":(exclude).beads",   // Excludes entire directory tree
+	":(exclude).gocache", // Go build cache (sometimes created by agents)
+	":(exclude).cache",   // Generic cache directory (pip, pre-commit, etc.)
+}
+
+var excludedDirPatterns = map[string]struct{}{
+	".beads":   {},
+	".gocache": {},
+	".cache":   {},
+}
+
+// isExcludedFile checks if a file path matches any of the excluded patterns.
+// Used for filtering untracked files in GetDirtyDiff.
+func isExcludedFile(filePath string) bool {
+	// Check each exclusion pattern
+	for _, pattern := range excludedPathPatterns {
+		// Remove the ":(exclude)" prefix to get the actual pattern
+		p := strings.TrimPrefix(pattern, ":(exclude)")
+
+		if _, ok := excludedDirPatterns[p]; ok {
+			// Directory patterns match any file within that directory
+			if filePath == p || strings.HasPrefix(filePath, p+"/") {
+				return true
+			}
+			continue
+		}
+
+		// Exact filename match (like uv.lock) - matches at root or in subdirs
+		if filePath == p || strings.HasSuffix(filePath, "/"+p) {
+			return true
+		}
+	}
+	return false
 }
 
 // isBinaryContent checks if content appears to be binary (contains null bytes in first 8KB)
@@ -512,4 +589,117 @@ func GetHooksPath(repoPath string) (string, error) {
 	}
 
 	return hooksPath, nil
+}
+
+// GetDefaultBranch detects the default branch (from origin/HEAD, or main/master locally)
+func GetDefaultBranch(repoPath string) (string, error) {
+	// Prefer origin/HEAD as the authoritative source for the default branch
+	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err == nil {
+		// Returns refs/remotes/origin/main -> extract "main"
+		ref := strings.TrimSpace(string(out))
+		branchName := strings.TrimPrefix(ref, "refs/remotes/origin/")
+		if branchName != "" {
+			// Verify the remote-tracking ref exists before using it
+			checkCmd := exec.Command("git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branchName)
+			checkCmd.Dir = repoPath
+			if checkCmd.Run() == nil {
+				return "origin/" + branchName, nil
+			}
+			// Remote-tracking ref doesn't exist, fall back to local branch
+			checkCmd = exec.Command("git", "rev-parse", "--verify", "--quiet", branchName)
+			checkCmd.Dir = repoPath
+			if checkCmd.Run() == nil {
+				return branchName, nil
+			}
+		}
+	}
+
+	// Fall back to common local branch names (for repos without origin)
+	for _, branch := range []string{"main", "master"} {
+		cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", branch)
+		cmd.Dir = repoPath
+		if err := cmd.Run(); err == nil {
+			return branch, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not detect default branch (tried origin/HEAD, main, master)")
+}
+
+// GetMergeBase returns the merge-base (common ancestor) between two refs
+func GetMergeBase(repoPath, ref1, ref2 string) (string, error) {
+	cmd := exec.Command("git", "merge-base", ref1, ref2)
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git merge-base: %w", err)
+	}
+
+	return strings.TrimSpace(string(out)), nil
+}
+
+// GetCommitsSince returns all commits from mergeBase to HEAD (exclusive of mergeBase)
+// Returns commits in chronological order (oldest first)
+func GetCommitsSince(repoPath, mergeBase string) ([]string, error) {
+	rangeRef := mergeBase + "..HEAD"
+	return GetRangeCommits(repoPath, rangeRef)
+}
+
+// CreateCommit stages all changes and creates a commit with the given message
+// Returns the SHA of the new commit
+func CreateCommit(repoPath, message string) (string, error) {
+	// Stage all changes (respects .gitignore)
+	cmd := exec.Command("git", "add", "-A")
+	cmd.Dir = repoPath
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git add: %w: %s", err, stderr.String())
+	}
+
+	// Create commit
+	cmd = exec.Command("git", "commit", "-m", message)
+	cmd.Dir = repoPath
+	stderr.Reset()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git commit: %w: %s", err, stderr.String())
+	}
+
+	// Get the SHA of the new commit
+	sha, err := ResolveSHA(repoPath, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("get new commit SHA: %w", err)
+	}
+
+	return sha, nil
+}
+
+// IsWorkingTreeClean returns true if the working tree has no uncommitted or untracked changes
+func IsWorkingTreeClean(repoPath string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return false // Assume dirty if we can't check
+	}
+	return len(strings.TrimSpace(string(output))) == 0
+}
+
+// ResetWorkingTree discards all uncommitted changes (staged and unstaged)
+func ResetWorkingTree(repoPath string) error {
+	// Reset staged changes
+	resetCmd := exec.Command("git", "-C", repoPath, "reset", "--hard", "HEAD")
+	if err := resetCmd.Run(); err != nil {
+		return fmt.Errorf("git reset --hard: %w", err)
+	}
+	// Clean untracked files
+	cleanCmd := exec.Command("git", "-C", repoPath, "clean", "-fd")
+	if err := cleanCmd.Run(); err != nil {
+		return fmt.Errorf("git clean: %w", err)
+	}
+	return nil
 }

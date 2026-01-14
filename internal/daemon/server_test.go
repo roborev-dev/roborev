@@ -19,6 +19,7 @@ import (
 
 	"github.com/wesm/roborev/internal/config"
 	"github.com/wesm/roborev/internal/storage"
+	"github.com/wesm/roborev/internal/testutil"
 )
 
 // safeRecorder wraps httptest.ResponseRecorder with mutex protection for concurrent access
@@ -82,15 +83,7 @@ func waitForEvents(w *safeRecorder, minEvents int, timeout time.Duration) bool {
 }
 
 func TestHandleListRepos(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -100,9 +93,7 @@ func TestHandleListRepos(t *testing.T) {
 
 		server.handleListRepos(w, req)
 
-		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
+		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
 		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
@@ -141,7 +132,7 @@ func TestHandleListRepos(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test"); err != nil {
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -153,7 +144,7 @@ func TestHandleListRepos(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test"); err != nil {
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -211,15 +202,7 @@ func TestHandleListRepos(t *testing.T) {
 }
 
 func TestHandleListJobsWithFilter(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -240,7 +223,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test"); err != nil {
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -252,7 +235,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test"); err != nil {
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -453,15 +436,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 }
 
 func TestHandleStatus(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -499,15 +474,7 @@ func TestHandleStatus(t *testing.T) {
 }
 
 func TestHandleCancelJob(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -520,7 +487,7 @@ func TestHandleCancelJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "canceltest", "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "canceltest", "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -599,7 +566,7 @@ func TestHandleCancelJob(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		job2, err := db.EnqueueJob(repo.ID, commit2.ID, "cancelrunning", "test")
+		job2, err := db.EnqueueJob(repo.ID, commit2.ID, "cancelrunning", "test", "")
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -628,15 +595,7 @@ func TestHandleCancelJob(t *testing.T) {
 }
 
 func TestListJobsPagination(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -652,7 +611,7 @@ func TestListJobsPagination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		_, err = db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("sha%d", i), "test")
+		_, err = db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("sha%d", i), "test", "")
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -766,16 +725,76 @@ func TestListJobsPagination(t *testing.T) {
 	})
 }
 
-func TestHandleStreamEvents(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+func TestListJobsWithGitRefFilter(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg)
 
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
+	// Create repo and jobs with different git refs
+	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
+	refs := []string{"abc123", "def456", "abc123..def456"}
+	for _, ref := range refs {
+		commit, _ := db.GetOrCreateCommit(repo.ID, ref, "A", "S", time.Now())
+		db.EnqueueJob(repo.ID, commit.ID, ref, "codex", "")
 	}
-	defer db.Close()
 
+	t.Run("git_ref filter returns matching job", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?git_ref=abc123", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d", w.Code)
+		}
+
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if len(result.Jobs) != 1 {
+			t.Errorf("Expected 1 job, got %d", len(result.Jobs))
+		}
+		if len(result.Jobs) > 0 && result.Jobs[0].GitRef != "abc123" {
+			t.Errorf("Expected GitRef 'abc123', got '%s'", result.Jobs[0].GitRef)
+		}
+	})
+
+	t.Run("git_ref filter with no match returns empty", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?git_ref=nonexistent", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&result)
+
+		if len(result.Jobs) != 0 {
+			t.Errorf("Expected 0 jobs, got %d", len(result.Jobs))
+		}
+	})
+
+	t.Run("git_ref filter with range ref", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?git_ref="+url.QueryEscape("abc123..def456"), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&result)
+
+		if len(result.Jobs) != 1 {
+			t.Errorf("Expected 1 job with range ref, got %d", len(result.Jobs))
+		}
+	})
+}
+
+func TestHandleStreamEvents(t *testing.T) {
+	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -1234,15 +1253,7 @@ func TestHandleStreamEvents(t *testing.T) {
 }
 
 func TestHandleRerunJob(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -1254,7 +1265,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun failed job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "test")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "test", "")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "some error")
 
@@ -1279,7 +1290,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun canceled job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "test")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "test", "")
 		db.CancelJob(job.ID)
 
 		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
@@ -1303,7 +1314,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun done job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "test")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "test", "")
 		// Claim and complete job
 		var claimed *storage.ReviewJob
 		for {
@@ -1339,7 +1350,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "test")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "test", "")
 
 		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
 		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
@@ -1389,15 +1400,7 @@ func TestHandleRerunJob(t *testing.T) {
 }
 
 func TestHandleEnqueueExcludedBranch(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -1507,15 +1510,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 }
 
 func TestHandleEnqueueBodySizeLimit(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 
@@ -1634,15 +1629,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 }
 
 func TestHandleListJobsByID(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
-
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg)
 

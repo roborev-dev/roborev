@@ -8,6 +8,17 @@ import (
 	"testing"
 )
 
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func TestGetHooksPath(t *testing.T) {
 	// Create a temp git repo
 	tmpDir := t.TempDir()
@@ -203,6 +214,88 @@ func TestIsRebaseInProgress(t *testing.T) {
 
 		if !IsRebaseInProgress(worktreeDir) {
 			t.Error("expected rebase in progress in worktree")
+		}
+	})
+}
+
+func TestGetDefaultBranchOriginHead(t *testing.T) {
+	bareRepo := t.TempDir()
+	runGit(t, bareRepo, "init", "--bare")
+	runGit(t, bareRepo, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	seedRepo := t.TempDir()
+	runGit(t, seedRepo, "init")
+	runGit(t, seedRepo, "checkout", "-b", "main")
+	runGit(t, seedRepo, "config", "user.email", "test@test.com")
+	runGit(t, seedRepo, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(seedRepo, "file.txt"), []byte("base"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seedRepo, "add", "file.txt")
+	runGit(t, seedRepo, "commit", "-m", "initial")
+	runGit(t, seedRepo, "remote", "add", "origin", bareRepo)
+	runGit(t, seedRepo, "push", "-u", "origin", "main")
+
+	t.Run("missing local branch uses origin ref", func(t *testing.T) {
+		cloneRepo := t.TempDir()
+		runGit(t, "", "clone", bareRepo, cloneRepo)
+		runGit(t, cloneRepo, "remote", "set-head", "origin", "-a")
+		runGit(t, cloneRepo, "checkout", "--detach")
+		runGit(t, cloneRepo, "branch", "-D", "main")
+
+		branch, err := GetDefaultBranch(cloneRepo)
+		if err != nil {
+			t.Fatalf("GetDefaultBranch failed: %v", err)
+		}
+		if branch != "origin/main" {
+			t.Fatalf("expected origin/main, got %s", branch)
+		}
+	})
+
+	t.Run("stale local branch uses origin ref", func(t *testing.T) {
+		cloneRepo := t.TempDir()
+		runGit(t, "", "clone", bareRepo, cloneRepo)
+		runGit(t, cloneRepo, "remote", "set-head", "origin", "-a")
+
+		if err := os.WriteFile(filepath.Join(seedRepo, "file2.txt"), []byte("new"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, seedRepo, "add", "file2.txt")
+		runGit(t, seedRepo, "commit", "-m", "update")
+		runGit(t, seedRepo, "push")
+		runGit(t, cloneRepo, "fetch", "origin")
+
+		branch, err := GetDefaultBranch(cloneRepo)
+		if err != nil {
+			t.Fatalf("GetDefaultBranch failed: %v", err)
+		}
+		if branch != "origin/main" {
+			t.Fatalf("expected origin/main, got %s", branch)
+		}
+	})
+
+	t.Run("origin/HEAD points to missing remote ref, falls back to local branch", func(t *testing.T) {
+		cloneRepo := t.TempDir()
+		runGit(t, "", "clone", bareRepo, cloneRepo)
+		runGit(t, cloneRepo, "remote", "set-head", "origin", "-a")
+
+		// Delete the remote-tracking branch while keeping origin/HEAD symbolic ref intact
+		// This simulates a scenario where origin/HEAD exists but points to a missing ref
+		runGit(t, cloneRepo, "update-ref", "-d", "refs/remotes/origin/main")
+
+		// Local main branch should still exist
+		localBranchOut := runGit(t, cloneRepo, "rev-parse", "--verify", "main")
+		if localBranchOut == "" {
+			t.Fatal("expected local main branch to exist")
+		}
+
+		// GetDefaultBranch should fall back to the local branch
+		branch, err := GetDefaultBranch(cloneRepo)
+		if err != nil {
+			t.Fatalf("GetDefaultBranch failed: %v", err)
+		}
+		if branch != "main" {
+			t.Fatalf("expected main (local branch fallback), got %s", branch)
 		}
 	})
 }
@@ -1013,5 +1106,318 @@ func TestGetDirtyDiffStagedThenDeleted(t *testing.T) {
 	}
 	if !strings.Contains(diff, "staged content") {
 		t.Error("expected diff to contain staged file content")
+	}
+}
+
+func TestIsExcludedFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		file     string
+		excluded bool
+	}{
+		// Lock files should be excluded
+		{"uv.lock at root", "uv.lock", true},
+		{"package-lock.json at root", "package-lock.json", true},
+		{"yarn.lock at root", "yarn.lock", true},
+		{"cargo.lock lowercase", "cargo.lock", true},
+		{"Cargo.lock uppercase", "Cargo.lock", true}, // Rust uses capital C
+		{"go.sum at root", "go.sum", true},
+
+		// .beads directory should be excluded (including nested)
+		{".beads file", ".beads/issues.md", true},
+		{".beads nested", ".beads/foo/bar.md", true},
+		{".beads deeply nested", ".beads/a/b/c/d.md", true},
+
+		// Lock files in subdirs should also be excluded (git pathspec matches anywhere)
+		{"uv.lock in subdir", "vendor/uv.lock", true},
+		{"nested cargo.lock", "subdir/cargo.lock", true},
+		{"nested Cargo.lock uppercase", "rust-crate/Cargo.lock", true},
+
+		// Normal files should NOT be excluded
+		{"go source file", "main.go", false},
+		{"nested source file", "internal/git/git.go", false},
+		{"readme", "README.md", false},
+		{"similar but not lock", "package.json", false},
+		{"lock in name but not exact", "mylock.lock", false},
+
+		// Directories named like lockfiles should not be excluded
+		{"uv.lock directory contents", "uv.lock/readme.md", false},
+		{"go.sum directory contents", "go.sum/checksums.txt", false},
+
+		// Files with similar prefixes should NOT be excluded
+		{".beadsnotes.md", ".beadsnotes.md", false}, // Not in .beads directory
+		{".beads-backup", ".beads-backup", false},   // Not in .beads directory
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isExcludedFile(tt.file)
+			if got != tt.excluded {
+				t.Errorf("isExcludedFile(%q) = %v, want %v", tt.file, got, tt.excluded)
+			}
+		})
+	}
+}
+
+func TestGetDiffExcludesGeneratedFiles(t *testing.T) {
+	tmpDir := setupTestGitRepo(t)
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir .beads failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".beads", "notes.md"), []byte("beads\n"), 0644); err != nil {
+		t.Fatalf("write .beads file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "uv.lock"), []byte("lock\n"), 0644); err != nil {
+		t.Fatalf("write uv.lock failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), []byte("sum\n"), 0644); err != nil {
+		t.Fatalf("write go.sum failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "keep.txt"), []byte("keep\n"), 0644); err != nil {
+		t.Fatalf("write keep.txt failed: %v", err)
+	}
+
+	if out, err := exec.Command("git", "-C", tmpDir, "add", ".").CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", tmpDir, "commit", "-m", "add files").CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
+	}
+
+	shaOut, err := exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse failed: %v", err)
+	}
+	sha := strings.TrimSpace(string(shaOut))
+
+	assertExcluded := func(t *testing.T, diff string) {
+		t.Helper()
+		if !strings.Contains(diff, "keep.txt") {
+			t.Error("expected diff to contain keep.txt")
+		}
+		if strings.Contains(diff, "uv.lock") {
+			t.Error("expected diff to exclude uv.lock")
+		}
+		if strings.Contains(diff, "go.sum") {
+			t.Error("expected diff to exclude go.sum")
+		}
+		if strings.Contains(diff, ".beads/") {
+			t.Error("expected diff to exclude .beads contents")
+		}
+	}
+
+	t.Run("GetDiff", func(t *testing.T) {
+		diff, err := GetDiff(tmpDir, sha)
+		if err != nil {
+			t.Fatalf("GetDiff failed: %v", err)
+		}
+		assertExcluded(t, diff)
+	})
+
+	t.Run("GetRangeDiff", func(t *testing.T) {
+		diff, err := GetRangeDiff(tmpDir, "HEAD~1..HEAD")
+		if err != nil {
+			t.Fatalf("GetRangeDiff failed: %v", err)
+		}
+		assertExcluded(t, diff)
+	})
+}
+
+// setupTestGitRepo creates a git repo with an initial commit and returns the path.
+// It fatals on any setup error to ensure test reliability.
+func setupTestGitRepo(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	// Configure git identity
+	if out, err := exec.Command("git", "-C", tmpDir, "config", "user.email", "test@test.com").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.email failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", tmpDir, "config", "user.name", "Test").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.name failed: %v\n%s", err, out)
+	}
+
+	// Create initial commit so we have HEAD
+	testFile := filepath.Join(tmpDir, "initial.txt")
+	if err := os.WriteFile(testFile, []byte("initial content"), 0644); err != nil {
+		t.Fatalf("write initial file failed: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", tmpDir, "add", ".").CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", tmpDir, "commit", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
+	}
+
+	return tmpDir
+}
+
+func TestIsWorkingTreeClean(t *testing.T) {
+	t.Run("clean tree returns true", func(t *testing.T) {
+		tmpDir := setupTestGitRepo(t)
+
+		if !IsWorkingTreeClean(tmpDir) {
+			t.Error("expected clean tree to return true")
+		}
+	})
+
+	t.Run("dirty tree with modified file returns false", func(t *testing.T) {
+		tmpDir := setupTestGitRepo(t)
+
+		// Modify the file
+		testFile := filepath.Join(tmpDir, "initial.txt")
+		if err := os.WriteFile(testFile, []byte("modified"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		if IsWorkingTreeClean(tmpDir) {
+			t.Error("expected dirty tree with modified file to return false")
+		}
+	})
+
+	t.Run("dirty tree with untracked file returns false", func(t *testing.T) {
+		tmpDir := setupTestGitRepo(t)
+
+		// Add untracked file
+		untrackedFile := filepath.Join(tmpDir, "untracked.txt")
+		if err := os.WriteFile(untrackedFile, []byte("untracked"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		if IsWorkingTreeClean(tmpDir) {
+			t.Error("expected dirty tree with untracked file to return false")
+		}
+	})
+}
+
+func TestResetWorkingTree(t *testing.T) {
+	t.Run("resets modified files", func(t *testing.T) {
+		tmpDir := setupTestGitRepo(t)
+
+		// Modify the file
+		testFile := filepath.Join(tmpDir, "initial.txt")
+		if err := os.WriteFile(testFile, []byte("modified"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify dirty
+		if IsWorkingTreeClean(tmpDir) {
+			t.Fatal("expected tree to be dirty before reset")
+		}
+
+		// Reset
+		if err := ResetWorkingTree(tmpDir); err != nil {
+			t.Fatalf("ResetWorkingTree failed: %v", err)
+		}
+
+		// Should be clean now
+		if !IsWorkingTreeClean(tmpDir) {
+			t.Error("expected tree to be clean after reset")
+		}
+
+		// Verify content was restored
+		content, err := os.ReadFile(testFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != "initial content" {
+			t.Errorf("expected file content 'initial content', got %q", string(content))
+		}
+	})
+
+	t.Run("removes untracked files", func(t *testing.T) {
+		tmpDir := setupTestGitRepo(t)
+
+		// Add untracked file
+		untrackedFile := filepath.Join(tmpDir, "untracked.txt")
+		if err := os.WriteFile(untrackedFile, []byte("untracked"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify dirty
+		if IsWorkingTreeClean(tmpDir) {
+			t.Fatal("expected tree to be dirty before reset")
+		}
+
+		// Reset
+		if err := ResetWorkingTree(tmpDir); err != nil {
+			t.Fatalf("ResetWorkingTree failed: %v", err)
+		}
+
+		// Should be clean now
+		if !IsWorkingTreeClean(tmpDir) {
+			t.Error("expected tree to be clean after reset")
+		}
+
+		// Verify untracked file was removed
+		if _, err := os.Stat(untrackedFile); !os.IsNotExist(err) {
+			t.Error("expected untracked file to be removed")
+		}
+	})
+
+	t.Run("resets staged changes", func(t *testing.T) {
+		tmpDir := setupTestGitRepo(t)
+
+		// Modify and stage
+		testFile := filepath.Join(tmpDir, "initial.txt")
+		if err := os.WriteFile(testFile, []byte("staged changes"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("git", "-C", tmpDir, "add", ".").CombinedOutput(); err != nil {
+			t.Fatalf("git add failed: %v\n%s", err, out)
+		}
+
+		// Verify dirty
+		if IsWorkingTreeClean(tmpDir) {
+			t.Fatal("expected tree to be dirty before reset")
+		}
+
+		// Reset
+		if err := ResetWorkingTree(tmpDir); err != nil {
+			t.Fatalf("ResetWorkingTree failed: %v", err)
+		}
+
+		// Should be clean now
+		if !IsWorkingTreeClean(tmpDir) {
+			t.Error("expected tree to be clean after reset")
+		}
+
+		// Verify content was restored
+		content, err := os.ReadFile(testFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != "initial content" {
+			t.Errorf("expected file content 'initial content', got %q", string(content))
+		}
+	})
+}
+
+func TestLocalBranchName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"main", "main"},
+		{"origin/main", "main"},
+		{"origin/master", "master"},
+		{"feature/foo", "feature/foo"},
+		{"origin/feature/foo", "feature/foo"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := LocalBranchName(tt.input)
+			if got != tt.want {
+				t.Errorf("LocalBranchName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

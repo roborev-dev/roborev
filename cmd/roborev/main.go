@@ -58,6 +58,7 @@ func main() {
 	rootCmd.AddCommand(daemonCmd())
 	rootCmd.AddCommand(streamCmd())
 	rootCmd.AddCommand(tuiCmd())
+	rootCmd.AddCommand(refineCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())
 
@@ -389,12 +390,15 @@ const MaxDirtyDiffSize = 200 * 1024
 
 func reviewCmd() *cobra.Command {
 	var (
-		repoPath string
-		sha      string
-		agent    string
-		quiet    bool
-		dirty    bool
-		wait     bool
+		repoPath   string
+		sha        string
+		agent      string
+		reasoning  string
+		quiet      bool
+		dirty      bool
+		wait       bool
+		branch     bool
+		baseBranch string
 	)
 
 	cmd := &cobra.Command{
@@ -409,6 +413,8 @@ Examples:
   roborev review abc123 def456  # Review range from abc123 to def456 (inclusive)
   roborev review --dirty      # Review uncommitted changes
   roborev review --dirty --wait  # Review uncommitted changes and wait for result
+  roborev review --branch     # Review all commits on current branch since main
+  roborev review --branch --base develop  # Review branch against develop
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// In quiet mode, suppress cobra's error output (hook uses &, so exit code doesn't matter)
@@ -444,10 +450,56 @@ Examples:
 				return err // Return error (quiet mode silences output, not exit code)
 			}
 
+			// Validate mutually exclusive options
+			if branch && dirty {
+				return fmt.Errorf("cannot use --branch with --dirty")
+			}
+			if branch && len(args) > 0 {
+				return fmt.Errorf("cannot specify commits with --branch")
+			}
+
 			var gitRef string
 			var diffContent string
 
-			if dirty {
+			if branch {
+				// Branch review - review all commits since diverging from base
+				base := baseBranch
+				if base == "" {
+					var err error
+					base, err = git.GetDefaultBranch(root)
+					if err != nil {
+						return fmt.Errorf("cannot determine base branch: %w", err)
+					}
+				}
+
+				// Validate not on base branch
+				currentBranch := git.GetCurrentBranch(root)
+				if currentBranch == git.LocalBranchName(base) {
+					return fmt.Errorf("already on %s - create a feature branch first", git.LocalBranchName(base))
+				}
+
+				// Get merge-base
+				mergeBase, err := git.GetMergeBase(root, base, "HEAD")
+				if err != nil {
+					return fmt.Errorf("cannot find merge-base with %s: %w", base, err)
+				}
+
+				// Validate has commits
+				commits, err := git.GetCommitsSince(root, mergeBase)
+				if err != nil {
+					return fmt.Errorf("cannot get commits: %w", err)
+				}
+				if len(commits) == 0 {
+					return fmt.Errorf("no commits on branch since %s", base)
+				}
+
+				gitRef = mergeBase + ".." + "HEAD"
+
+				if !quiet {
+					cmd.Printf("Reviewing branch %q: %d commits since %s\n",
+						currentBranch, len(commits), base)
+				}
+			} else if dirty {
 				// Dirty review - capture uncommitted changes
 				hasChanges, err := git.HasUncommittedChanges(root)
 				if err != nil {
@@ -490,6 +542,7 @@ Examples:
 				"repo_path":    root,
 				"git_ref":      gitRef,
 				"agent":        agent,
+				"reasoning":    reasoning,
 				"diff_content": diffContent,
 			})
 
@@ -549,9 +602,12 @@ Examples:
 	cmd.Flags().StringVar(&repoPath, "repo", "", "path to git repository (default: current directory)")
 	cmd.Flags().StringVar(&sha, "sha", "HEAD", "commit SHA to review (used when no positional args)")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode)")
+	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: thorough (default), standard, or fast")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
 	cmd.Flags().BoolVar(&dirty, "dirty", false, "review uncommitted changes instead of a commit")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")
+	cmd.Flags().BoolVar(&branch, "branch", false, "review all changes since branch diverged from base")
+	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 
 	return cmd
 }
@@ -823,22 +879,63 @@ func showCmd() *cobra.Command {
 
 func respondCmd() *cobra.Command {
 	var (
-		responder string
-		message   string
+		responder  string
+		message    string
+		forceJobID bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "respond [sha]",
+		Use:   "respond <job_id|sha> [message]",
 		Short: "Add a response to a review",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			sha := args[0]
+		Long: `Add a response or note to a review.
 
-			// Resolve SHA
-			if root, err := git.GetRepoRoot("."); err == nil {
-				if resolved, err := git.ResolveSHA(root, sha); err == nil {
-					sha = resolved
+The first argument can be either a job ID (numeric) or a commit SHA.
+Using job IDs is recommended since they are displayed in the TUI.
+
+Examples:
+  roborev respond 42 "Fixed the null pointer issue"
+  roborev respond 42 -m "Added missing error handling"
+  roborev respond abc123 "Addressed by refactoring"
+  roborev respond 42     # Opens editor for message
+  roborev respond --job 1234567 "msg"  # Force numeric arg as job ID`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref := args[0]
+
+			// Check if ref is a job ID (numeric) or SHA
+			var jobID int64
+			var sha string
+
+			if forceJobID {
+				// --job flag: treat ref as job ID
+				id, err := strconv.ParseInt(ref, 10, 64)
+				if err != nil {
+					return fmt.Errorf("--job requires numeric job ID, got %q", ref)
 				}
+				jobID = id
+			} else {
+				// Auto-detect: try git object first, then job ID
+				// A numeric string could be either - check if it resolves as a git object first
+				if root, err := git.GetRepoRoot("."); err == nil {
+					if resolved, err := git.ResolveSHA(root, ref); err == nil {
+						sha = resolved
+					}
+				}
+
+				// If not a valid git object, try parsing as job ID
+				if sha == "" {
+					if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+						jobID = id
+					} else {
+						// Not a valid git object or job ID - use ref as-is
+						sha = ref
+					}
+				}
+			}
+
+			// Message can be positional argument or flag
+			if len(args) > 1 {
+				message = args[1]
 			}
 
 			// If no message provided, open editor
@@ -881,11 +978,18 @@ func respondCmd() *cobra.Command {
 				}
 			}
 
-			reqBody, _ := json.Marshal(map[string]string{
-				"sha":       sha,
+			// Build request with either job_id or sha
+			reqData := map[string]interface{}{
 				"responder": responder,
 				"response":  message,
-			})
+			}
+			if jobID != 0 {
+				reqData["job_id"] = jobID
+			} else {
+				reqData["sha"] = sha
+			}
+
+			reqBody, _ := json.Marshal(reqData)
 
 			addr := getDaemonAddr()
 			resp, err := http.Post(addr+"/api/respond", "application/json", bytes.NewReader(reqBody))
@@ -906,6 +1010,7 @@ func respondCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&responder, "responder", "", "responder name (default: $USER)")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "response message (opens editor if not provided)")
+	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID (not SHA)")
 
 	return cmd
 }
@@ -958,6 +1063,200 @@ func addressCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&unaddress, "unaddress", false, "mark as unaddressed instead")
 
 	return cmd
+}
+
+// findJobForCommit finds a job for the given commit SHA in the specified repo
+func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
+	addr := getDaemonAddr()
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Normalize repo path to handle symlinks/relative paths consistently
+	normalizedRepo := repoPath
+	if resolved, err := filepath.EvalSymlinks(repoPath); err == nil {
+		normalizedRepo = resolved
+	}
+	if abs, err := filepath.Abs(normalizedRepo); err == nil {
+		normalizedRepo = abs
+	}
+
+	// Query by git_ref and repo to avoid matching jobs from different repos
+	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=1",
+		addr, url.QueryEscape(sha), url.QueryEscape(normalizedRepo))
+	resp, err := client.Get(queryURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("query for %s: server returned %s", sha, resp.Status)
+	}
+
+	var result struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("query for %s: decode error: %w", sha, err)
+	}
+
+	if len(result.Jobs) > 0 {
+		return &result.Jobs[0], nil
+	}
+
+	// Fallback: if repo filter yielded no results, try git_ref only
+	// This handles cases where daemon stores paths differently
+	// Fetch jobs and filter client-side to avoid cross-repo mismatch
+	// Use high limit since we're filtering client-side; in practice same SHA
+	// across many repos is rare
+	fallbackURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=100", addr, url.QueryEscape(sha))
+	fallbackResp, err := client.Get(fallbackURL)
+	if err != nil {
+		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
+	}
+	defer fallbackResp.Body.Close()
+
+	if fallbackResp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fallback query for %s: server returned %s", sha, fallbackResp.Status)
+	}
+
+	var fallbackResult struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(fallbackResp.Body).Decode(&fallbackResult); err != nil {
+		return nil, fmt.Errorf("fallback query for %s: decode error: %w", sha, err)
+	}
+
+	// Filter client-side: find a job whose repo path matches when normalized
+	for i := range fallbackResult.Jobs {
+		job := &fallbackResult.Jobs[i]
+		jobRepo := job.RepoPath
+		// Skip empty or relative paths to avoid false matches from cwd resolution
+		if jobRepo == "" || !filepath.IsAbs(jobRepo) {
+			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(jobRepo); err == nil {
+			jobRepo = resolved
+		}
+		if jobRepo == normalizedRepo {
+			return job, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// waitForReview waits for a review to complete and returns it
+func waitForReview(jobID int64) (*storage.Review, error) {
+	return waitForReviewWithInterval(jobID, 2*time.Second)
+}
+
+func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storage.Review, error) {
+	addr := getDaemonAddr()
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	for {
+		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID))
+		if err != nil {
+			return nil, fmt.Errorf("polling job %d: %w", jobID, err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("polling job %d: server returned %s", jobID, resp.Status)
+		}
+
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("polling job %d: decode error: %w", jobID, err)
+		}
+		resp.Body.Close()
+
+		if len(result.Jobs) == 0 {
+			return nil, fmt.Errorf("job %d not found", jobID)
+		}
+
+		job := result.Jobs[0]
+		switch job.Status {
+		case storage.JobStatusDone:
+			// Get the review
+			reviewResp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
+			if err != nil {
+				return nil, err
+			}
+			defer reviewResp.Body.Close()
+
+			var review storage.Review
+			if err := json.NewDecoder(reviewResp.Body).Decode(&review); err != nil {
+				return nil, err
+			}
+			return &review, nil
+
+		case storage.JobStatusFailed:
+			return nil, fmt.Errorf("job failed: %s", job.Error)
+
+		case storage.JobStatusCanceled:
+			return nil, fmt.Errorf("job was canceled")
+		}
+
+		time.Sleep(pollInterval)
+	}
+}
+
+// enqueueReview enqueues a review job and returns the job ID
+func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
+	addr := getDaemonAddr()
+
+	reqBody, _ := json.Marshal(map[string]string{
+		"repo_path": repoPath,
+		"git_ref":   gitRef,
+		"agent":     agentName,
+	})
+
+	resp, err := http.Post(addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("enqueue failed: %s", body)
+	}
+
+	var job storage.ReviewJob
+	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+		return 0, err
+	}
+
+	return job.ID, nil
+}
+
+// getResponsesForJob fetches responses for a job
+func getResponsesForJob(jobID int64) ([]storage.Response, error) {
+	addr := getDaemonAddr()
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	resp, err := client.Get(fmt.Sprintf("%s/api/responses?job_id=%d", addr, jobID))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch responses: %s", resp.Status)
+	}
+
+	var result struct {
+		Responses []storage.Response `json:"responses"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result.Responses, nil
 }
 
 func streamCmd() *cobra.Command {

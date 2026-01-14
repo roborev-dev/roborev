@@ -321,6 +321,138 @@ func TestResolveJobTimeout(t *testing.T) {
 	})
 }
 
+func TestResolveReviewReasoning(t *testing.T) {
+	t.Run("default when no config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		reasoning, err := ResolveReviewReasoning("", tmpDir)
+		if err != nil {
+			t.Fatalf("ResolveReviewReasoning failed: %v", err)
+		}
+		if reasoning != "thorough" {
+			t.Errorf("Expected default 'thorough', got '%s'", reasoning)
+		}
+	})
+
+	t.Run("repo config when explicit empty", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`review_reasoning = "standard"`), 0644); err != nil {
+			t.Fatalf("Failed to write test config: %v", err)
+		}
+
+		reasoning, err := ResolveReviewReasoning("", tmpDir)
+		if err != nil {
+			t.Fatalf("ResolveReviewReasoning failed: %v", err)
+		}
+		if reasoning != "standard" {
+			t.Errorf("Expected 'standard' from repo config, got '%s'", reasoning)
+		}
+	})
+
+	t.Run("explicit overrides repo config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`review_reasoning = "standard"`), 0644); err != nil {
+			t.Fatalf("Failed to write test config: %v", err)
+		}
+
+		reasoning, err := ResolveReviewReasoning("FAST", tmpDir)
+		if err != nil {
+			t.Fatalf("ResolveReviewReasoning failed: %v", err)
+		}
+		if reasoning != "fast" {
+			t.Errorf("Expected 'fast' from explicit override, got '%s'", reasoning)
+		}
+	})
+
+	t.Run("invalid explicit", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		_, err := ResolveReviewReasoning("unknown", tmpDir)
+		if err == nil {
+			t.Fatal("Expected error for invalid reasoning")
+		}
+	})
+
+	t.Run("invalid repo config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`review_reasoning = "invalid"`), 0644); err != nil {
+			t.Fatalf("Failed to write test config: %v", err)
+		}
+
+		_, err := ResolveReviewReasoning("", tmpDir)
+		if err == nil {
+			t.Fatal("Expected error for invalid repo reasoning")
+		}
+	})
+}
+
+func TestResolveRefineReasoning(t *testing.T) {
+	t.Run("default when no config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		reasoning, err := ResolveRefineReasoning("", tmpDir)
+		if err != nil {
+			t.Fatalf("ResolveRefineReasoning failed: %v", err)
+		}
+		if reasoning != "standard" {
+			t.Errorf("Expected default 'standard', got '%s'", reasoning)
+		}
+	})
+
+	t.Run("repo config when explicit empty", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`refine_reasoning = "thorough"`), 0644); err != nil {
+			t.Fatalf("Failed to write test config: %v", err)
+		}
+
+		reasoning, err := ResolveRefineReasoning("", tmpDir)
+		if err != nil {
+			t.Fatalf("ResolveRefineReasoning failed: %v", err)
+		}
+		if reasoning != "thorough" {
+			t.Errorf("Expected 'thorough' from repo config, got '%s'", reasoning)
+		}
+	})
+
+	t.Run("explicit overrides repo config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`refine_reasoning = "thorough"`), 0644); err != nil {
+			t.Fatalf("Failed to write test config: %v", err)
+		}
+
+		reasoning, err := ResolveRefineReasoning("standard", tmpDir)
+		if err != nil {
+			t.Fatalf("ResolveRefineReasoning failed: %v", err)
+		}
+		if reasoning != "standard" {
+			t.Errorf("Expected 'standard' from explicit override, got '%s'", reasoning)
+		}
+	})
+
+	t.Run("invalid explicit", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		_, err := ResolveRefineReasoning("nope", tmpDir)
+		if err == nil {
+			t.Fatal("Expected error for invalid reasoning")
+		}
+	})
+
+	t.Run("invalid repo config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`refine_reasoning = "invalid"`), 0644); err != nil {
+			t.Fatalf("Failed to write test config: %v", err)
+		}
+
+		_, err := ResolveRefineReasoning("", tmpDir)
+		if err == nil {
+			t.Fatal("Expected error for invalid repo reasoning")
+		}
+	})
+}
+
 func TestIsBranchExcluded(t *testing.T) {
 	t.Run("no config file", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -456,4 +588,3 @@ excluded_branches = ["wip"]
 		}
 	})
 }
-

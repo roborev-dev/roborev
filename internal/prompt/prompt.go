@@ -383,3 +383,86 @@ func BuildSimple(repoPath, sha string) (string, error) {
 	b := &Builder{}
 	return b.Build(repoPath, sha, 0, 0)
 }
+
+// SystemPromptAddress is the instruction for addressing review findings
+const SystemPromptAddress = `You are a code assistant. Your task is to address the findings from a code review.
+
+Make the minimal changes necessary to address these findings:
+- Be pragmatic and simple - don't over-engineer
+- Focus on the specific issues mentioned
+- Don't refactor unrelated code
+- Don't add unnecessary abstractions or comments
+- Don't make cosmetic changes
+
+After making changes:
+1. Run the build command to verify the code compiles (e.g., go build ./..., npm run build, cargo build)
+2. Run tests to verify nothing is broken (e.g., go test ./..., npm test, cargo test)
+3. Fix any build errors or test failures before finishing
+
+IMPORTANT: Do NOT commit changes yourself. Just modify the files. The caller will handle committing.
+
+When finished, provide a brief summary in this format (this will be used in the commit message):
+
+Changes:
+- <first change>
+- <second change>
+...
+
+Keep the summary concise (under 10 bullet points). Put the most important changes first.`
+
+// PreviousAttemptsHeader introduces previous addressing attempts section
+const PreviousAttemptsHeader = `
+## Previous Addressing Attempts
+
+The following are previous attempts to address this or related reviews.
+Learn from these to avoid repeating approaches that didn't fully resolve the issues.
+Be pragmatic - if previous attempts were rejected for being too minor, make more substantive fixes.
+If they were rejected for being over-engineered, keep it simpler.
+`
+
+// BuildAddressPrompt constructs a prompt for addressing review findings
+func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, previousAttempts []storage.Response) (string, error) {
+	var sb strings.Builder
+
+	// System prompt
+	sb.WriteString(SystemPromptAddress)
+	sb.WriteString("\n")
+
+	// Add project-specific guidelines if configured
+	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
+	}
+
+	// Include previous attempts to avoid repeating failed approaches
+	if len(previousAttempts) > 0 {
+		sb.WriteString(PreviousAttemptsHeader)
+		sb.WriteString("\n")
+		for _, attempt := range previousAttempts {
+			sb.WriteString(fmt.Sprintf("--- Attempt by %s at %s ---\n",
+				attempt.Responder, attempt.CreatedAt.Format("2006-01-02 15:04")))
+			sb.WriteString(attempt.Response)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	// Review findings section
+	sb.WriteString("## Review Findings to Address\n\n")
+	sb.WriteString(review.Output)
+	sb.WriteString("\n\n")
+
+	// Include the original diff for context if we have job info
+	if review.Job != nil && review.Job.GitRef != "" && review.Job.GitRef != "dirty" {
+		diff, err := git.GetDiff(repoPath, review.Job.GitRef)
+		if err == nil && len(diff) > 0 && len(diff) < MaxPromptSize/2 {
+			sb.WriteString("## Original Commit Diff (for context)\n\n")
+			sb.WriteString("```diff\n")
+			sb.WriteString(diff)
+			if !strings.HasSuffix(diff, "\n") {
+				sb.WriteString("\n")
+			}
+			sb.WriteString("```\n")
+		}
+	}
+
+	return sb.String(), nil
+}

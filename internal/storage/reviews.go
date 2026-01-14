@@ -18,7 +18,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed,
-		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.status, j.enqueued_at,
+		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error,
 		       rp.root_path, rp.name, c.subject
 		FROM reviews rv
@@ -27,7 +27,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed,
-		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Status, &enqueuedAt,
+		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
@@ -83,7 +83,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	// Search by git_ref which contains the SHA for single commits
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed,
-		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.status, j.enqueued_at,
+		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error,
 		       rp.root_path, rp.name, c.subject
 		FROM reviews rv
@@ -94,7 +94,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		ORDER BY rv.created_at DESC
 		LIMIT 1
 	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed,
-		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Status, &enqueuedAt,
+		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
@@ -207,7 +207,7 @@ func (db *DB) GetReviewByID(reviewID int64) (*Review, error) {
 	return &r, nil
 }
 
-// AddResponse adds a response to a commit
+// AddResponse adds a response to a commit (legacy - use AddResponseToJob for new code)
 func (db *DB) AddResponse(commitID int64, responder, response string) (*Response, error) {
 	result, err := db.Exec(`INSERT INTO responses (commit_id, responder, response) VALUES (?, ?, ?)`,
 		commitID, responder, response)
@@ -218,7 +218,35 @@ func (db *DB) AddResponse(commitID int64, responder, response string) (*Response
 	id, _ := result.LastInsertId()
 	return &Response{
 		ID:        id,
-		CommitID:  commitID,
+		CommitID:  &commitID,
+		Responder: responder,
+		Response:  response,
+		CreatedAt: time.Now(),
+	}, nil
+}
+
+// AddResponseToJob adds a response linked to a job/review
+func (db *DB) AddResponseToJob(jobID int64, responder, response string) (*Response, error) {
+	// Verify job exists first to return proper 404 instead of FK violation or orphaned row
+	var exists int
+	err := db.QueryRow(`SELECT 1 FROM review_jobs WHERE id = ?`, jobID).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows // Job not found
+		}
+		return nil, err
+	}
+
+	result, err := db.Exec(`INSERT INTO responses (job_id, responder, response) VALUES (?, ?, ?)`,
+		jobID, responder, response)
+	if err != nil {
+		return nil, err
+	}
+
+	id, _ := result.LastInsertId()
+	return &Response{
+		ID:        id,
+		JobID:     &jobID,
 		Responder: responder,
 		Response:  response,
 		CreatedAt: time.Now(),
@@ -228,7 +256,7 @@ func (db *DB) AddResponse(commitID int64, responder, response string) (*Response
 // GetResponsesForCommit returns all responses for a commit
 func (db *DB) GetResponsesForCommit(commitID int64) ([]Response, error) {
 	rows, err := db.Query(`
-		SELECT id, commit_id, responder, response, created_at
+		SELECT id, commit_id, job_id, responder, response, created_at
 		FROM responses
 		WHERE commit_id = ?
 		ORDER BY created_at ASC
@@ -242,8 +270,49 @@ func (db *DB) GetResponsesForCommit(commitID int64) ([]Response, error) {
 	for rows.Next() {
 		var r Response
 		var createdAt string
-		if err := rows.Scan(&r.ID, &r.CommitID, &r.Responder, &r.Response, &createdAt); err != nil {
+		var commitIDNull, jobIDNull sql.NullInt64
+		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &createdAt); err != nil {
 			return nil, err
+		}
+		if commitIDNull.Valid {
+			r.CommitID = &commitIDNull.Int64
+		}
+		if jobIDNull.Valid {
+			r.JobID = &jobIDNull.Int64
+		}
+		r.CreatedAt = parseSQLiteTime(createdAt)
+		responses = append(responses, r)
+	}
+
+	return responses, rows.Err()
+}
+
+// GetResponsesForJob returns all responses linked to a job
+func (db *DB) GetResponsesForJob(jobID int64) ([]Response, error) {
+	rows, err := db.Query(`
+		SELECT id, commit_id, job_id, responder, response, created_at
+		FROM responses
+		WHERE job_id = ?
+		ORDER BY created_at ASC
+	`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var responses []Response
+	for rows.Next() {
+		var r Response
+		var createdAt string
+		var commitIDNull, jobIDNull sql.NullInt64
+		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &createdAt); err != nil {
+			return nil, err
+		}
+		if commitIDNull.Valid {
+			r.CommitID = &commitIDNull.Int64
+		}
+		if jobIDNull.Valid {
+			r.JobID = &jobIDNull.Int64
 		}
 		r.CreatedAt = parseSQLiteTime(createdAt)
 		responses = append(responses, r)

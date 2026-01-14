@@ -100,6 +100,91 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "avoid panics is pass",
+			output: "No issues found. This commit hardens the code to avoid slicing panics.",
+			want:   "P",
+		},
+		{
+			name:   "fix errors is pass",
+			output: "No issues found. The changes fix potential errors in the parser.",
+			want:   "P",
+		},
+		{
+			name:   "prevents crashes is pass",
+			output: "No issues found. This update prevents crashes when input is nil.",
+			want:   "P",
+		},
+		{
+			name:   "imperative fix is fail",
+			output: "No issues found. Fix failing tests.",
+			want:   "F",
+		},
+		{
+			name:   "imperative avoid is fail",
+			output: "No issues found. Avoid panics in slice operations.",
+			want:   "F",
+		},
+		{
+			name:   "imperative prevent is fail",
+			output: "No issues found. Prevent errors by adding validation.",
+			want:   "F",
+		},
+		{
+			name:   "imperative after colon is fail",
+			output: "No issues found: Fix failing tests.",
+			want:   "F",
+		},
+		{
+			name:   "imperative after comma is fail",
+			output: "No issues found, Fix failing tests.",
+			want:   "F",
+		},
+		{
+			name:   "imperative in bullet list is fail",
+			output: "No issues found. - Fix failing tests.",
+			want:   "F",
+		},
+		{
+			name:   "imperative in asterisk list is fail",
+			output: "No issues found. * Avoid panics.",
+			want:   "F",
+		},
+		{
+			name:   "imperative in numbered list is fail",
+			output: "No issues found. 1. Fix the failing tests.",
+			want:   "F",
+		},
+		{
+			name:   "will avoid is pass",
+			output: "No issues found. This will avoid panics.",
+			want:   "P",
+		},
+		{
+			name:   "errors after comma boundary is fail",
+			output: "No issues found, errors remain.",
+			want:   "F",
+		},
+		{
+			name:   "errors after colon boundary is fail",
+			output: "No issues found: errors remain.",
+			want:   "F",
+		},
+		{
+			name:   "bug after comma is fail",
+			output: "No issues found, but there is a bug.",
+			want:   "F",
+		},
+		{
+			name:   "errors after period-quote boundary is fail",
+			output: `No issues found." errors remain.`,
+			want:   "F",
+		},
+		{
+			name:   "errors after period-paren boundary is fail",
+			output: "No issues found.) errors remain.",
+			want:   "F",
+		},
+		{
 			name:   "no tests have failed",
 			output: "No issues found; no tests have failed.",
 			want:   "P",

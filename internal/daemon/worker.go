@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -259,12 +260,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Get the agent (falls back to available agent if preferred not installed)
-	a, err := agent.GetAvailable(job.Agent)
+	baseAgent, err := agent.GetAvailable(job.Agent)
 	if err != nil {
 		log.Printf("[%s] Error getting agent: %v", workerID, err)
 		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
 		return
 	}
+
+	// Use reasoning level from job (defaults to thorough for legacy rows)
+	// Normalize legacy mixed-case/whitespace values (e.g., "FAST", "High") before parsing
+	reasoning := strings.ToLower(strings.TrimSpace(job.Reasoning))
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	reasoningLevel := agent.ParseReasoningLevel(reasoning)
+	a := baseAgent.WithReasoning(reasoningLevel)
 
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()
@@ -285,7 +295,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Run the review
 	log.Printf("[%s] Running %s review...", workerID, agentName)
-	output, err := a.Review(ctx, job.RepoPath, job.GitRef, reviewPrompt)
+	output, err := a.Review(ctx, job.RepoPath, job.GitRef, reviewPrompt, nil)
 	if err != nil {
 		// Check if this was a cancellation
 		if ctx.Err() == context.Canceled {

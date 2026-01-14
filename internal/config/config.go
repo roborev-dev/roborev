@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -14,6 +16,7 @@ type Config struct {
 	ReviewContextCount int    `toml:"review_context_count"`
 	DefaultAgent       string `toml:"default_agent"`
 	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
+	AllowUnsafeAgents  bool   `toml:"allow_unsafe_agents"`
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
@@ -28,6 +31,8 @@ type RepoConfig struct {
 	JobTimeoutMinutes  int      `toml:"job_timeout_minutes"`
 	ExcludedBranches   []string `toml:"excluded_branches"`
 	DisplayName        string   `toml:"display_name"`
+	ReviewReasoning    string   `toml:"review_reasoning"` // Reasoning level for reviews: thorough, standard, fast
+	RefineReasoning    string   `toml:"refine_reasoning"` // Reasoning level for refine: thorough, standard, fast
 }
 
 // DefaultConfig returns the default configuration
@@ -152,6 +157,52 @@ func GetDisplayName(repoPath string) string {
 		return ""
 	}
 	return repoCfg.DisplayName
+}
+
+func normalizeReasoning(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "", nil
+	}
+
+	switch normalized {
+	case "thorough", "high":
+		return "thorough", nil
+	case "standard", "medium":
+		return "standard", nil
+	case "fast", "low":
+		return "fast", nil
+	default:
+		return "", fmt.Errorf("invalid reasoning level: %q", value)
+	}
+}
+
+// ResolveReviewReasoning determines reasoning level for reviews.
+// Priority: explicit > per-repo config > default (thorough)
+func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return normalizeReasoning(explicit)
+	}
+
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
+		return normalizeReasoning(repoCfg.ReviewReasoning)
+	}
+
+	return "thorough", nil // Default for reviews: deep analysis
+}
+
+// ResolveRefineReasoning determines reasoning level for refine.
+// Priority: explicit > per-repo config > default (standard)
+func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return normalizeReasoning(explicit)
+	}
+
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.RefineReasoning) != "" {
+		return normalizeReasoning(repoCfg.RefineReasoning)
+	}
+
+	return "standard", nil // Default for refine: balanced analysis
 }
 
 // SaveGlobal saves the global configuration

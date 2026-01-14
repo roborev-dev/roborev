@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesm/roborev/internal/agent"
 	"github.com/wesm/roborev/internal/config"
 	"github.com/wesm/roborev/internal/git"
 	"github.com/wesm/roborev/internal/storage"
@@ -28,6 +29,7 @@ type Server struct {
 
 // NewServer creates a new daemon server
 func NewServer(db *storage.DB, cfg *config.Config) *Server {
+	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents)
 	broadcaster := NewBroadcaster()
 	s := &Server{
 		db:          db,
@@ -110,10 +112,11 @@ func (s *Server) Stop() error {
 
 type EnqueueRequest struct {
 	RepoPath    string `json:"repo_path"`
-	CommitSHA   string `json:"commit_sha,omitempty"`   // Single commit (for backwards compat)
-	GitRef      string `json:"git_ref,omitempty"`      // Single commit, range like "abc..def", or "dirty"
+	CommitSHA   string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
+	GitRef      string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
 	Agent       string `json:"agent,omitempty"`
 	DiffContent string `json:"diff_content,omitempty"` // Pre-captured diff for dirty reviews
+	Reasoning   string `json:"reasoning,omitempty"`    // Reasoning level: thorough, standard, fast
 }
 
 type ErrorResponse struct {
@@ -201,6 +204,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent (uses main repo root for config lookup)
 	agentName := config.ResolveAgent(req.Agent, repoRoot, s.cfg)
 
+	// Resolve reasoning level (uses main repo root for config lookup)
+	reasoning, err := config.ResolveReviewReasoning(req.Reasoning, repoRoot)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Check if this is a dirty review, range, or single commit
 	isDirty := gitRef == "dirty"
 	isRange := !isDirty && strings.Contains(gitRef, "..")
@@ -221,7 +231,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var job *storage.ReviewJob
 	if isDirty {
 		// Dirty review - use pre-captured diff
-		job, err = s.db.EnqueueDirtyJob(repo.ID, gitRef, agentName, req.DiffContent)
+		job, err = s.db.EnqueueDirtyJob(repo.ID, gitRef, agentName, reasoning, req.DiffContent)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue dirty job: %v", err))
 			return
@@ -243,7 +253,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 		// Store as full SHA range
 		fullRef := startSHA + ".." + endSHA
-		job, err = s.db.EnqueueRangeJob(repo.ID, fullRef, agentName)
+		job, err = s.db.EnqueueRangeJob(repo.ID, fullRef, agentName, reasoning)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
 			return
@@ -270,7 +280,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		job, err = s.db.EnqueueJob(repo.ID, commit.ID, sha, agentName)
+		job, err = s.db.EnqueueJob(repo.ID, commit.ID, sha, agentName, reasoning)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
 			return
@@ -320,6 +330,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 	status := r.URL.Query().Get("status")
 	repo := r.URL.Query().Get("repo")
+	gitRef := r.URL.Query().Get("git_ref")
 
 	// Parse limit from query, default to 50, 0 means no limit
 	// Clamp to valid range: 0 (unlimited) or 1-10000
@@ -355,7 +366,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		fetchLimit = limit + 1
 	}
 
-	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset)
+	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset, gitRef)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list jobs: %v", err))
 		return
@@ -495,7 +506,8 @@ func (s *Server) handleGetReview(w http.ResponseWriter, r *http.Request) {
 }
 
 type AddResponseRequest struct {
-	SHA       string `json:"sha"`
+	SHA       string `json:"sha,omitempty"`    // Legacy: link to commit by SHA
+	JobID     int64  `json:"job_id,omitempty"` // Preferred: link to job
 	Responder string `json:"responder"`
 	Response  string `json:"response"`
 }
@@ -512,21 +524,44 @@ func (s *Server) handleAddResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.SHA == "" || req.Responder == "" || req.Response == "" {
-		writeError(w, http.StatusBadRequest, "sha, responder, and response are required")
+	if req.Responder == "" || req.Response == "" {
+		writeError(w, http.StatusBadRequest, "responder and response are required")
 		return
 	}
 
-	commit, err := s.db.GetCommitBySHA(req.SHA)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "commit not found")
+	// Must provide either job_id or sha
+	if req.JobID == 0 && req.SHA == "" {
+		writeError(w, http.StatusBadRequest, "job_id or sha is required")
 		return
 	}
 
-	resp, err := s.db.AddResponse(commit.ID, req.Responder, req.Response)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("add response: %v", err))
-		return
+	var resp *storage.Response
+	var err error
+
+	if req.JobID != 0 {
+		// Link to job (preferred method)
+		resp, err = s.db.AddResponseToJob(req.JobID, req.Responder, req.Response)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "job not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("add response: %v", err))
+			return
+		}
+	} else {
+		// Legacy: link to commit by SHA
+		commit, err := s.db.GetCommitBySHA(req.SHA)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "commit not found")
+			return
+		}
+
+		resp, err = s.db.AddResponse(commit.ID, req.Responder, req.Response)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("add response: %v", err))
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, resp)
@@ -538,15 +573,29 @@ func (s *Server) handleListResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sha := r.URL.Query().Get("sha")
-	if sha == "" {
-		writeError(w, http.StatusBadRequest, "sha parameter required")
-		return
-	}
+	var responses []storage.Response
+	var err error
 
-	responses, err := s.db.GetResponsesForCommitSHA(sha)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "commit not found")
+	// Support lookup by job_id (preferred) or sha (legacy)
+	if jobIDStr := r.URL.Query().Get("job_id"); jobIDStr != "" {
+		var jobID int64
+		if _, scanErr := fmt.Sscanf(jobIDStr, "%d", &jobID); scanErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid job_id")
+			return
+		}
+		responses, err = s.db.GetResponsesForJob(jobID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("get responses: %v", err))
+			return
+		}
+	} else if sha := r.URL.Query().Get("sha"); sha != "" {
+		responses, err = s.db.GetResponsesForCommitSHA(sha)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "commit not found")
+			return
+		}
+	} else {
+		writeError(w, http.StatusBadRequest, "job_id or sha parameter required")
 		return
 	}
 
@@ -657,4 +706,3 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-

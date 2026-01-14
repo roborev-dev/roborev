@@ -25,3 +25,8 @@ Thumbs.db
 
 # Local config (users create their own)
 .roborev.toml
+
+.gocache
+.cache
+.gomodcache/
+.gopath/

@@ -35,6 +35,7 @@ type ReviewJob struct {
 	CommitID   *int64     `json:"commit_id,omitempty"` // nil for ranges
 	GitRef     string     `json:"git_ref"`             // SHA or "start..end" for ranges
 	Agent      string     `json:"agent"`
+	Reasoning  string     `json:"reasoning,omitempty"` // thorough, standard, fast (default: thorough)
 	Status     JobStatus  `json:"status"`
 	EnqueuedAt time.Time  `json:"enqueued_at"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
@@ -68,7 +69,8 @@ type Review struct {
 
 type Response struct {
 	ID        int64     `json:"id"`
-	CommitID  int64     `json:"commit_id"`
+	CommitID  *int64    `json:"commit_id,omitempty"` // For commit-based responses (legacy)
+	JobID     *int64    `json:"job_id,omitempty"`    // For job/review-based responses
 	Responder string    `json:"responder"`
 	Response  string    `json:"response"`
 	CreatedAt time.Time `json:"created_at"`

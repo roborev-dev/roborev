@@ -42,43 +42,103 @@ roborev tui           # View reviews in interactive UI
 | `roborev status` | Show daemon and queue status |
 | `roborev tui` | Interactive terminal UI |
 | `roborev show [sha]` | Display review for commit |
-| `roborev address <id>` | Mark review as addressed |
 | `roborev review <sha>` | Queue a commit for review |
 | `roborev review <start> <end>` | Queue a commit range (inclusive) |
+| `roborev review --branch` | Review all commits on current branch |
 | `roborev review --dirty` | Review uncommitted changes |
-| `roborev review --wait` | Wait for review and show result |
-| `roborev stream` | Stream review events in real-time (JSONL) |
+| `roborev review --reasoning <level>` | Set reasoning depth (thorough/standard/fast) |
+| `roborev respond <id> [msg]` | Add a response/note to a review |
+| `roborev address <id>` | Mark review as addressed |
+| `roborev refine` | Auto-fix failed reviews using AI |
+| `roborev stream` | Stream review events (JSONL) |
 | `roborev daemon start\|stop\|restart` | Manage the daemon |
 | `roborev install-hook` | Install git post-commit hook |
 | `roborev uninstall-hook` | Remove git post-commit hook |
+| `roborev update` | Update roborev to latest version |
+| `roborev version` | Show version information |
 
-**Note:** `roborev enqueue` is an alias for `roborev review` for backwards compatibility.
+## Reviewing Branches
+
+Use `--branch` to review all commits since your branch diverged from main:
+
+```bash
+roborev review --branch              # Review branch vs auto-detected main/master
+roborev review --branch --base dev   # Review branch vs specific base
+roborev review --branch --wait       # Wait for review and show result
+```
+
+This is useful for pre-merge reviews of entire feature branches.
 
 ## Reviewing Uncommitted Changes
 
-Use `--dirty` to review your working tree changes before committing:
+Use `--dirty` to review working tree changes before committing:
 
 ```bash
 roborev review --dirty           # Queue review of uncommitted changes
 roborev review --dirty --wait    # Wait for review and show result
 ```
 
-The dirty review includes:
-- Staged changes (files added with `git add`)
-- Unstaged changes to tracked files
-- Untracked files (new files not yet added to git)
+Includes staged changes, unstaged changes to tracked files, and untracked files.
 
-Combine with `--wait` to block until the review completes, useful for pre-commit validation:
+The `--wait` flag exits with code 0 for passing reviews and code 1 for failing reviews, useful for CI:
 
 ```bash
-# In a pre-commit hook or CI script
 if ! roborev review --dirty --wait --quiet; then
-    echo "Review failed - please address findings before committing"
+    echo "Review failed - please address findings"
     exit 1
 fi
 ```
 
-The `--wait` flag exits with code 0 for passing reviews and code 1 for failing reviews.
+## Auto-Fixing Failed Reviews
+
+Use `refine` to automatically address failed reviews on your branch:
+
+```bash
+roborev refine                       # Fix failed reviews using default agent
+roborev refine --agent claude-code   # Use specific agent
+roborev refine --max-iterations 5    # Limit fix attempts
+roborev refine --quiet               # Show elapsed time instead of agent output
+roborev refine --reasoning thorough  # Use thorough reasoning (slower, more accurate)
+```
+
+```mermaid
+flowchart TD
+    Start([refine]) --> Find[Find oldest<br/>failed review]
+    Find --> A{Found?}
+    A -->|No| Branch[Run whole-branch review]
+    Branch --> C{Pass?}
+    C -->|Yes| Done([Done - all reviews pass])
+    C -->|No| Fix
+    A -->|Yes| Fix[AI agent addresses findings]
+    Fix --> Commit[Commit fix]
+    Commit --> Wait[Wait for re-review]
+    Wait --> Pass{Pass?}
+    Pass -->|Yes| Find
+    Pass -->|No| MaxCheck{Max iterations?}
+    MaxCheck -->|No| Fix
+    MaxCheck -->|Yes| Fail([Exit - max reached])
+```
+
+The loop processes commits oldest-first. When a fix fails review, it keeps addressing that fix until it passes before moving to the next oldest failed commit. Passing reviews are automatically marked as addressed. When no individual failed reviews remain, a whole-branch review runs; if that passes, the refiner exits successfully.
+
+Requires a clean working tree and must not be on the main branch.
+
+### Security Considerations
+
+The refine command runs AI agents **without sandboxing** so they can install dependencies, run builds, and execute tests. This is safe for your own code, but use caution with untrusted sources:
+
+| Scenario | Risk Level | Recommendation |
+|----------|------------|----------------|
+| Your own branches | Low | Safe to run directly |
+| PRs from trusted contributors | Low-Medium | Review changes before refining |
+| PRs from strangers / untrusted code | High | Use isolation (see below) |
+
+**Isolation options for untrusted code:**
+- Run in a container or VM
+- Use a low-privilege user account
+- Use a disposable cloud instance
+
+The risk is equivalent to running `claude --dangerously-skip-permissions` or `codex --dangerously-bypass-approvals-and-sandbox` manually - malicious code could potentially access credentials, exfiltrate data, or modify your system.
 
 ## Configuration
 
@@ -91,6 +151,10 @@ agent = "claude-code"      # AI agent to use
 review_context_count = 5   # Recent reviews to include as context
 display_name = "backend"   # Custom name shown in TUI (optional)
 excluded_branches = ["wip", "scratch"]  # Branches to skip reviews on
+
+# Reasoning levels: thorough, standard, fast
+review_reasoning = "thorough"  # For code reviews (default: thorough)
+refine_reasoning = "standard"  # For refine command (default: standard)
 
 # Project-specific review guidelines
 review_guidelines = """
@@ -119,10 +183,32 @@ export ROBOREV_DATA_DIR=/custom/path  # Default: ~/.roborev
 
 ### Priority Order
 
-1. `--agent` flag on command
+1. CLI flags (`--agent`, `--reasoning`)
 2. Per-repo `.roborev.toml`
 3. Global `~/.roborev/config.toml`
-4. Auto-detect first available agent
+4. Auto-detect first available agent; defaults to thorough for reviews, standard for refine
+
+### Reasoning Levels
+
+Control how deeply the AI analyzes code:
+
+| Level | Description | Best For |
+|-------|-------------|----------|
+| `thorough` | Deep analysis with extended thinking | Code reviews (default) |
+| `standard` | Balanced analysis | Refine command (default) |
+| `fast` | Quick responses | Rapid feedback |
+
+Override per-command:
+
+```bash
+roborev review --reasoning fast      # Quick review
+roborev refine --reasoning thorough  # Careful fixes
+```
+
+The reasoning level maps to agent-specific features (Codex only today):
+- **Codex**: `model_reasoning_effort` (high/medium/low)
+- **Claude Code**: Not yet applied (value stored only)
+- **Other agents**: Not yet applied (value stored only)
 
 ### Review Guidelines
 
@@ -219,6 +305,28 @@ Use with tools like `jq` for filtering:
 ```bash
 roborev stream | jq -c 'select(.type == "review.completed")'
 ```
+
+## Git Worktrees
+
+roborev fully supports git worktrees. Reviews are stored against the main repository, so commits made in any worktree are associated with the same review history.
+
+```bash
+# In main repo
+git worktree add ../feature-branch feature-branch
+cd ../feature-branch
+
+# Reviews work normally - they're stored under the main repo
+roborev review --branch
+roborev refine
+roborev tui
+```
+
+When running commands from a worktree:
+- Reviews are stored using the main repository path (not the worktree path)
+- The TUI shows all reviews for the repository regardless of which worktree you're in
+- `refine` correctly finds and addresses reviews for commits in any worktree
+
+This is handled automatically - no configuration needed.
 
 ## Architecture
 

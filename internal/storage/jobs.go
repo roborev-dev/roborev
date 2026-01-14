@@ -68,6 +68,7 @@ func hasCaveat(s string) bool {
 	normalized = strings.ReplaceAll(normalized, "—", "|")
 	normalized = strings.ReplaceAll(normalized, "–", "|")
 	normalized = strings.ReplaceAll(normalized, ";", "|")
+	normalized = strings.ReplaceAll(normalized, ": ", "|")
 	normalized = strings.ReplaceAll(normalized, ", ", "|")
 	normalized = strings.ReplaceAll(normalized, ". ", "|")
 	normalized = strings.ReplaceAll(normalized, "? ", "|")
@@ -352,6 +353,15 @@ func isNegated(words []string, i int) bool {
 		"hasn't": true, "hasnt": true, "haven't": true, "havent": true,
 		"won't": true, "wont": true, "wouldn't": true, "wouldnt": true,
 		"can't": true, "cant": true, "cannot": true,
+		// Words indicating the issue is being fixed/prevented, not reported
+		// Conjugated/gerund/past forms are unconditional negators
+		"avoids": true, "avoiding": true, "avoided": true,
+		"prevents": true, "preventing": true, "prevented": true,
+		"fixes": true, "fixing": true, "fixed": true,
+	}
+	// Base verb forms that could be imperatives at clause start
+	baseVerbForms := map[string]bool{
+		"avoid": true, "fix": true, "prevent": true,
 	}
 
 	// Look back up to 5 non-stopwords, stopping at clause boundaries
@@ -361,7 +371,8 @@ func isNegated(words []string, i int) bool {
 		w := strings.Trim(raw, ".,;:!?()[]\"'")
 
 		// Stop at clause boundaries (words ending with sentence/clause punctuation)
-		if strings.ContainsAny(raw, ".;?!") {
+		// Include comma and colon to prevent negation bleeding across clauses
+		if endsWithClauseBoundary(raw) {
 			break
 		}
 
@@ -379,8 +390,62 @@ func isNegated(words []string, i int) bool {
 			}
 			return true
 		}
+		// Base verb forms are only negators when NOT at clause start (imperatives)
+		// "Avoid errors." = imperative (command), not a negator
+		// "This will avoid errors." = descriptive, is a negator
+		if baseVerbForms[w] {
+			isAtClauseStart := j == 0 // Start of input
+			if j > 0 {
+				prevRaw := words[j-1]
+				// Check for sentence/clause ending punctuation (trailing only, not mid-token)
+				if endsWithClauseBoundary(prevRaw) {
+					isAtClauseStart = true
+				}
+				// Check for list markers: -, *, or numbered lists (1., 2., etc.)
+				trimmed := strings.Trim(prevRaw, ".,;:!?()[]\"'")
+				if trimmed == "-" || trimmed == "*" || isNumberedListMarker(prevRaw) {
+					isAtClauseStart = true
+				}
+			}
+			if !isAtClauseStart {
+				return true // Mid-clause base form = negator
+			}
+			// At clause start = imperative, continue searching
+		}
 	}
 	return false
+}
+
+// endsWithClauseBoundary checks if a word ends with clause-boundary punctuation.
+// This checks trailing characters only to avoid false positives on tokens like
+// "10:30", "1,000", or URLs that contain punctuation mid-token.
+// It also handles punctuation followed by closing quotes/parens (e.g., `found."`, `found.)`).
+func endsWithClauseBoundary(word string) bool {
+	if len(word) == 0 {
+		return false
+	}
+	// Strip trailing wrappers (quotes, parens, brackets) to find the actual punctuation
+	stripped := strings.TrimRight(word, "\"'`)]}»")
+	if len(stripped) == 0 {
+		return false
+	}
+	lastChar := stripped[len(stripped)-1]
+	return lastChar == '.' || lastChar == ';' || lastChar == '?' ||
+		lastChar == '!' || lastChar == ',' || lastChar == ':'
+}
+
+// isNumberedListMarker checks if a word is a numbered list marker like "1.", "2.", "10."
+func isNumberedListMarker(word string) bool {
+	if len(word) < 2 || word[len(word)-1] != '.' {
+		return false
+	}
+	// Check if everything before the dot is digits
+	for i := 0; i < len(word)-1; i++ {
+		if word[i] < '0' || word[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // hasNegatorInLastWords checks if any negator appears in the last n words of the prefix.
@@ -473,9 +538,12 @@ func parseSQLiteTime(s string) time.Time {
 }
 
 // EnqueueJob creates a new review job for a single commit
-func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, agent string) (*ReviewJob, error) {
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status) VALUES (?, ?, ?, ?, 'queued')`,
-		repoID, commitID, gitRef, agent)
+func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, agent, reasoning string) (*ReviewJob, error) {
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, ?, ?, ?, ?, 'queued')`,
+		repoID, commitID, gitRef, agent, reasoning)
 	if err != nil {
 		return nil, err
 	}
@@ -487,15 +555,19 @@ func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, agent string) (*ReviewJ
 		CommitID:   &commitID,
 		GitRef:     gitRef,
 		Agent:      agent,
+		Reasoning:  reasoning,
 		Status:     JobStatusQueued,
 		EnqueuedAt: time.Now(),
 	}, nil
 }
 
 // EnqueueRangeJob creates a new review job for a commit range
-func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent string) (*ReviewJob, error) {
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status) VALUES (?, NULL, ?, ?, 'queued')`,
-		repoID, gitRef, agent)
+func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent, reasoning string) (*ReviewJob, error) {
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, NULL, ?, ?, ?, 'queued')`,
+		repoID, gitRef, agent, reasoning)
 	if err != nil {
 		return nil, err
 	}
@@ -507,6 +579,7 @@ func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent string) (*ReviewJob, e
 		CommitID:   nil,
 		GitRef:     gitRef,
 		Agent:      agent,
+		Reasoning:  reasoning,
 		Status:     JobStatusQueued,
 		EnqueuedAt: time.Now(),
 	}, nil
@@ -514,9 +587,12 @@ func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent string) (*ReviewJob, e
 
 // EnqueueDirtyJob creates a new review job for uncommitted (dirty) changes.
 // The diff is captured at enqueue time since the working tree may change.
-func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, diffContent string) (*ReviewJob, error) {
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, diff_content) VALUES (?, NULL, ?, ?, 'queued', ?)`,
-		repoID, gitRef, agent, diffContent)
+func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, reasoning, diffContent string) (*ReviewJob, error) {
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, diff_content) VALUES (?, NULL, ?, ?, ?, 'queued', ?)`,
+		repoID, gitRef, agent, reasoning, diffContent)
 	if err != nil {
 		return nil, err
 	}
@@ -528,6 +604,7 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, diffContent string) (
 		CommitID:    nil,
 		GitRef:      gitRef,
 		Agent:       agent,
+		Reasoning:   reasoning,
 		Status:      JobStatusQueued,
 		EnqueuedAt:  time.Now(),
 		DiffContent: &diffContent,
@@ -571,7 +648,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var diffContent sql.NullString
 	err = db.QueryRow(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
@@ -579,7 +656,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		WHERE j.worker_id = ? AND j.status = 'running'
 		ORDER BY j.started_at DESC
 		LIMIT 1
-	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Status, &enqueuedAt,
+	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent)
 	if err != nil {
 		return nil, err
@@ -741,9 +818,9 @@ func (db *DB) GetJobRetryCount(jobID int64) (int, error) {
 }
 
 // ListJobs returns jobs with optional status and repo filters
-func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int) ([]ReviewJob, error) {
+func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, gitRefFilter ...string) ([]ReviewJob, error) {
 	query := `
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       r.root_path, r.name, c.subject, rv.addressed, rv.output
 		FROM review_jobs j
@@ -761,6 +838,10 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	if repoFilter != "" {
 		conditions = append(conditions, "r.root_path = ?")
 		args = append(args, repoFilter)
+	}
+	if len(gitRefFilter) > 0 && gitRefFilter[0] != "" {
+		conditions = append(conditions, "j.git_ref = ?")
+		args = append(args, gitRefFilter[0])
 	}
 
 	if len(conditions) > 0 {
@@ -794,7 +875,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		var commitSubject sql.NullString
 		var addressed sql.NullInt64
 
-		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Status, &enqueuedAt,
+		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
 			&j.RepoPath, &j.RepoName, &commitSubject, &addressed, &output)
 		if err != nil {
@@ -849,14 +930,14 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 
 	err := db.QueryRow(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt,
 		       r.root_path, r.name, c.subject
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE j.id = ?
-	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Status, &enqueuedAt,
+	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &prompt,
 		&j.RepoPath, &j.RepoName, &commitSubject)
 	if err != nil {

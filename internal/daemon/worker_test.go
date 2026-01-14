@@ -1,25 +1,17 @@
 package daemon
 
 import (
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/wesm/roborev/internal/config"
 	"github.com/wesm/roborev/internal/storage"
+	"github.com/wesm/roborev/internal/testutil"
 )
 
 func TestWorkerPoolE2E(t *testing.T) {
-	// Setup temp DB
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	// Setup config with test agent
 	cfg := config.DefaultConfig()
@@ -37,7 +29,7 @@ func TestWorkerPoolE2E(t *testing.T) {
 	}
 
 	// Enqueue a job with test agent
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha123", "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha123", "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -85,14 +77,7 @@ func TestWorkerPoolE2E(t *testing.T) {
 }
 
 func TestWorkerPoolConcurrency(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	cfg.MaxWorkers = 4
@@ -103,7 +88,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		sha := "concurrentsha" + string(rune('0'+i))
 		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, sha, "test")
+		db.EnqueueJob(repo.ID, commit.ID, sha, "test", "")
 	}
 
 	broadcaster := NewBroadcaster()
@@ -121,14 +106,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 }
 
 func TestWorkerPoolCancelRunningJob(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	cfg.MaxWorkers = 1
@@ -141,7 +119,7 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "cancelsha", "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "cancelsha", "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -197,14 +175,7 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 
 func TestWorkerPoolPendingCancellation(t *testing.T) {
 	// Test the race condition fix: cancel arrives before job is registered
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
@@ -219,7 +190,7 @@ func TestWorkerPoolPendingCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "pending-cancel", "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "pending-cancel", "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -264,14 +235,7 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	// Test the real API path: db.CancelJob is called first (sets status to 'canceled'),
 	// then workerPool.CancelJob is called while worker hasn't registered yet.
 	// This simulates the race condition in handleCancelJob.
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
@@ -286,7 +250,7 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "api-cancel-race", "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "api-cancel-race", "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -340,14 +304,7 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 
 func TestWorkerPoolCancelInvalidJob(t *testing.T) {
 	// Test that CancelJob returns false for non-existent jobs
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db := testutil.OpenTestDB(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
@@ -369,14 +326,7 @@ func TestWorkerPoolCancelInvalidJob(t *testing.T) {
 func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 	// Test that CancelJob doesn't add stale pendingCancels when job finishes
 	// during the DB lookup window (simulated by completing job before CancelJob)
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
@@ -391,7 +341,7 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "finish-window", "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "finish-window", "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -430,14 +380,7 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 	// Test that a job registered during DB checks gets canceled
 	// This simulates the race where job registers after initial runningJobs check
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
@@ -452,7 +395,7 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "register-during", "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "register-during", "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -487,14 +430,7 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	// Test concurrent registration during CancelJob
 	// Uses a test hook to deterministically register the job during CancelJob's
 	// DB lookup window, exercising the "registration during cancel" code path
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
@@ -510,7 +446,7 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -547,14 +483,7 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	// Test that cancel() is called without holding the lock (no deadlock)
 	// This verifies the fix for the "final check" path by using a test hook
 	// to deterministically register the job between the second check and final check
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
@@ -568,7 +497,7 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "deadlock-test", "test")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "deadlock-test", "test", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
