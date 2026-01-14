@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -636,5 +637,186 @@ func TestFindPendingJobForBranch_OldestFirst(t *testing.T) {
 	// Should return oldest pending job (commit1 is first in list)
 	if pending.ID != 100 {
 		t.Errorf("expected oldest pending job 100, got %d", pending.ID)
+	}
+}
+
+// setupTestGitRepo creates a git repo for testing branch/--since behavior.
+// Returns the repo directory, base commit SHA, and a helper to run git commands.
+func setupTestGitRepo(t *testing.T) (repoDir string, baseSHA string, runGit func(args ...string) string) {
+	t.Helper()
+
+	repoDir = t.TempDir()
+	runGit = func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	runGit("init", "-b", "main")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "base.txt"), []byte("base"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "base.txt")
+	runGit("commit", "-m", "base commit")
+	baseSHA = runGit("rev-parse", "HEAD")
+
+	return repoDir, baseSHA, runGit
+}
+
+func TestRunRefine_RefusesMainBranchWithoutSince(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, _ := setupTestGitRepo(t)
+
+	// Stay on main branch (don't create feature branch)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Running refine without --since on main should fail
+	err = runRefine("test", "", 1, true, false, "")
+	if err == nil {
+		t.Fatal("expected error when running refine on main without --since")
+	}
+	if !strings.Contains(err.Error(), "refusing to refine on main") {
+		t.Errorf("expected 'refusing to refine on main' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--since") {
+		t.Errorf("expected error to mention --since flag, got: %v", err)
+	}
+}
+
+func TestRunRefine_AllowsMainBranchWithSince(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, baseSHA, runGit := setupTestGitRepo(t)
+
+	// Add another commit on main
+	if err := os.WriteFile(filepath.Join(repoDir, "second.txt"), []byte("second"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "second.txt")
+	runGit("commit", "-m", "second commit")
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Running refine with --since on main should NOT fail with "refusing" error
+	// (it will fail for other reasons like no daemon, but not the main branch check)
+	err = runRefine("test", "", 1, true, false, baseSHA)
+	if err != nil && strings.Contains(err.Error(), "refusing to refine on main") {
+		t.Errorf("should allow refine on main with --since, got: %v", err)
+	}
+}
+
+func TestRunRefine_SinceWorksOnFeatureBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, baseSHA, runGit := setupTestGitRepo(t)
+
+	// Create feature branch with commits
+	runGit("checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "feature.txt")
+	runGit("commit", "-m", "feature commit")
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// --since should work on feature branch too (limits scope)
+	err = runRefine("test", "", 1, true, false, baseSHA)
+	// Should not fail with "refusing" error (will fail for daemon reasons)
+	if err != nil && strings.Contains(err.Error(), "refusing") {
+		t.Errorf("--since should work on feature branch, got: %v", err)
+	}
+}
+
+func TestRunRefine_InvalidSinceRef(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, _ := setupTestGitRepo(t)
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Invalid --since ref should fail with clear error
+	err = runRefine("test", "", 1, true, false, "nonexistent-ref-abc123")
+	if err == nil {
+		t.Fatal("expected error for invalid --since ref")
+	}
+	if !strings.Contains(err.Error(), "cannot resolve --since") {
+		t.Errorf("expected 'cannot resolve --since' error, got: %v", err)
+	}
+}
+
+func TestRunRefine_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, runGit := setupTestGitRepo(t)
+
+	// Create feature branch
+	runGit("checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "feature.txt")
+	runGit("commit", "-m", "feature commit")
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Feature branch without --since should still work (uses merge-base)
+	err = runRefine("test", "", 1, true, false, "")
+	// Should not fail with "refusing" error (will fail for daemon reasons)
+	if err != nil && strings.Contains(err.Error(), "refusing") {
+		t.Errorf("feature branch without --since should work, got: %v", err)
 	}
 }
