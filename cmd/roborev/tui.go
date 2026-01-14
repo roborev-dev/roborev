@@ -1181,6 +1181,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					jobID = m.currentReview.Job.ID
 					m.setJobAddressed(jobID, newState)
 				}
+				// If hiding addressed and we just marked as addressed, prepare next selection
+				// so cursor isn't "swallowed" when returning to queue view
+				if m.hideAddressed && newState {
+					nextIdx := m.findNextVisibleJob(m.selectedIdx)
+					if nextIdx < 0 {
+						nextIdx = m.findPrevVisibleJob(m.selectedIdx)
+					}
+					if nextIdx < 0 {
+						nextIdx = m.findFirstVisibleJob()
+					}
+					if nextIdx >= 0 {
+						m.selectedIdx = nextIdx
+						m.updateSelectedJobID()
+					}
+				}
 				return m, m.addressReview(m.currentReview.ID, jobID, newState, oldState)
 			} else if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 				job := &m.jobs[m.selectedIdx]

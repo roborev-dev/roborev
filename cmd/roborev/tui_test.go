@@ -189,6 +189,41 @@ func TestTUIToggleAddressedNoReview(t *testing.T) {
 	}
 }
 
+func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
+	// When hideAddressed is on and user marks a review as addressed from review view,
+	// selection should move to next visible job so cursor isn't "swallowed"
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.hideAddressed = true
+	addr1, addr2, addr3 := false, false, false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addr1},
+		{ID: 2, Status: storage.JobStatusDone, Addressed: &addr2},
+		{ID: 3, Status: storage.JobStatusDone, Addressed: &addr3},
+	}
+	m.selectedIdx = 1 // Currently viewing job 2
+	m.selectedJobID = 2
+	m.currentReview = &storage.Review{
+		ID:       10,
+		JobID:    2,
+		Addressed: false,
+		Job:      &m.jobs[1],
+	}
+
+	// Press 'a' to mark as addressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m2 := updated.(tuiModel)
+
+	// Selection should have moved to next visible job (job 3, index 2)
+	// since job 2 is now addressed and hidden
+	if m2.selectedIdx != 2 {
+		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m2.selectedIdx)
+	}
+	if m2.selectedJobID != 3 {
+		t.Errorf("Expected selectedJobID=3, got %d", m2.selectedJobID)
+	}
+}
+
 // addressRequest is used to decode and validate POST body in tests
 type addressRequest struct {
 	ReviewID  int64 `json:"review_id"`
