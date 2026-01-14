@@ -722,7 +722,14 @@ func (m *tuiModel) getVisibleFilterRepos() []repoFilterItem {
 	var visible []repoFilterItem
 	for _, r := range m.filterRepos {
 		// Always include "All repos" option, filter others by search
-		if r.name == "" || strings.Contains(strings.ToLower(r.name), search) {
+		if r.name == "" {
+			visible = append(visible, r)
+			continue
+		}
+		// Search both original name and display name
+		displayName := m.getDisplayName(r.rootPath, r.name)
+		if strings.Contains(strings.ToLower(r.name), search) ||
+			strings.Contains(strings.ToLower(displayName), search) {
 			visible = append(visible, r)
 		}
 	}
@@ -2058,7 +2065,8 @@ func (m tuiModel) renderFilterView() string {
 		if repo.name == "" {
 			line = fmt.Sprintf("All repos (%d)", repo.count)
 		} else {
-			line = fmt.Sprintf("%s (%d)", repo.name, repo.count)
+			displayName := m.getDisplayName(repo.rootPath, repo.name)
+			line = fmt.Sprintf("%s (%d)", displayName, repo.count)
 		}
 
 		if i == m.filterSelectedIdx {
