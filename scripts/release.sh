@@ -114,16 +114,22 @@ update_nix_flake() {
         # Create/reset branch for the PR (-B forces creation even if exists)
         git -C "$REPO_ROOT" checkout -B "$BRANCH_NAME"
         git -C "$REPO_ROOT" add flake.nix
-        git -C "$REPO_ROOT" commit -m "Update flake.nix for $TAG"
+        # Only commit if there are staged changes (handles retry case)
+        if ! git -C "$REPO_ROOT" diff --cached --quiet; then
+            git -C "$REPO_ROOT" commit -m "Update flake.nix for $TAG"
+        fi
         git -C "$REPO_ROOT" push -u origin "$BRANCH_NAME" --force-with-lease
 
-        # Create the PR
-        gh pr create \
-            --title "Update flake.nix for $TAG" \
-            --body "Updates flake.nix version to $VERSION for the $TAG release." \
-            --base main
-
-        echo "PR created for flake.nix updates"
+        # Create the PR (skip if already exists)
+        if gh pr view "$BRANCH_NAME" &>/dev/null; then
+            echo "PR for $BRANCH_NAME already exists, skipping creation"
+        else
+            gh pr create \
+                --title "Update flake.nix for $TAG" \
+                --body "Updates flake.nix version to $VERSION for the $TAG release." \
+                --base main
+            echo "PR created for flake.nix updates"
+        fi
 
         # Return to original ref and clear trap
         trap - EXIT
