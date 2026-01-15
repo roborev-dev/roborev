@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -456,6 +457,7 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 
 // mockRefineState tracks state for simulating the full refine loop
 type mockRefineState struct {
+	mu            sync.Mutex
 	reviews       map[string]*storage.Review   // SHA -> review
 	jobs          map[int64]*storage.ReviewJob // jobID -> job
 	responses     map[int64][]storage.Response // jobID -> responses
@@ -491,6 +493,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			sha := r.URL.Query().Get("sha")
 			jobIDStr := r.URL.Query().Get("job_id")
 
+			state.mu.Lock()
 			var review *storage.Review
 			if sha != "" {
 				review = state.reviews[sha]
@@ -505,6 +508,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 					}
 				}
 			}
+			state.mu.Unlock()
 
 			if review == nil {
 				w.WriteHeader(http.StatusNotFound)
@@ -516,10 +520,12 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			jobIDStr := r.URL.Query().Get("job_id")
 			var jobID int64
 			fmt.Sscanf(jobIDStr, "%d", &jobID)
+			state.mu.Lock()
 			responses := state.responses[jobID]
 			if responses == nil {
 				responses = []storage.Response{}
 			}
+			state.mu.Unlock()
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"responses": responses,
 			})
@@ -531,6 +537,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				Response  string `json:"response"`
 			}
 			json.NewDecoder(r.Body).Decode(&req)
+			state.mu.Lock()
 			state.respondCalled = append(state.respondCalled, struct {
 				jobID     int64
 				responder string
@@ -544,6 +551,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				Response:  req.Response,
 			}
 			state.responses[req.JobID] = append(state.responses[req.JobID], resp)
+			state.mu.Unlock()
 
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(resp)
@@ -554,6 +562,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				Addressed bool  `json:"addressed"`
 			}
 			json.NewDecoder(r.Body).Decode(&req)
+			state.mu.Lock()
 			if req.Addressed {
 				state.addressedIDs = append(state.addressedIDs, req.ReviewID)
 				// Update the review in state
@@ -564,6 +573,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 					}
 				}
 			}
+			state.mu.Unlock()
 			w.WriteHeader(http.StatusOK)
 
 		case r.URL.Path == "/api/enqueue" && r.Method == "POST":
@@ -573,6 +583,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				Agent    string `json:"agent"`
 			}
 			json.NewDecoder(r.Body).Decode(&req)
+			state.mu.Lock()
 			state.enqueuedRefs = append(state.enqueuedRefs, req.GitRef)
 
 			job := &storage.ReviewJob{
@@ -583,15 +594,18 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			}
 			state.jobs[job.ID] = job
 			state.nextJobID++
+			state.mu.Unlock()
 
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(job)
 
 		case r.URL.Path == "/api/jobs" && r.Method == "GET":
+			state.mu.Lock()
 			var jobs []storage.ReviewJob
 			for _, job := range state.jobs {
 				jobs = append(jobs, *job)
 			}
+			state.mu.Unlock()
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs":     jobs,
 				"has_more": false,
@@ -1132,6 +1146,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 			sha := r.URL.Query().Get("sha")
 			jobIDStr := r.URL.Query().Get("job_id")
 
+			state.mu.Lock()
 			var review *storage.Review
 			if sha != "" {
 				review = state.reviews[sha]
@@ -1145,6 +1160,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 					}
 				}
 			}
+			state.mu.Unlock()
 
 			if review == nil {
 				w.WriteHeader(http.StatusNotFound)
@@ -1161,6 +1177,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				GitRef string `json:"git_ref"`
 			}
 			json.NewDecoder(r.Body).Decode(&req)
+			state.mu.Lock()
 			branchJobID := state.nextJobID
 			state.nextJobID++
 			state.jobs[branchJobID] = &storage.ReviewJob{
@@ -1173,16 +1190,20 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 			state.reviews[req.GitRef] = &storage.Review{
 				ID: branchJobID + 1000, JobID: branchJobID, Output: "No issues found. Branch looks good!",
 			}
+			jobCopy := *state.jobs[branchJobID]
+			state.mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(state.jobs[branchJobID])
+			json.NewEncoder(w).Encode(jobCopy)
 
 		case r.URL.Path == "/api/jobs" && r.Method == http.MethodGet:
 			q := r.URL.Query()
 			if idStr := q.Get("id"); idStr != "" {
 				var jobID int64
 				fmt.Sscanf(idStr, "%d", &jobID)
+				state.mu.Lock()
 				job, ok := state.jobs[jobID]
 				if !ok {
+					state.mu.Unlock()
 					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 					return
 				}
@@ -1191,10 +1212,13 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				if count > 1 {
 					job.Status = storage.JobStatusDone
 				}
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{*job}})
+				jobCopy := *job
+				state.mu.Unlock()
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
 				return
 			}
 			if gitRef := q.Get("git_ref"); gitRef != "" {
+				state.mu.Lock()
 				var job *storage.ReviewJob
 				for _, j := range state.jobs {
 					if j.GitRef == gitRef {
@@ -1203,15 +1227,20 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 					}
 				}
 				if job != nil {
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{*job}})
+					jobCopy := *job
+					state.mu.Unlock()
+					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
 					return
 				}
+				state.mu.Unlock()
 			}
 
+			state.mu.Lock()
 			var jobs []storage.ReviewJob
 			for _, job := range state.jobs {
 				jobs = append(jobs, *job)
 			}
+			state.mu.Unlock()
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs":     jobs,
 				"has_more": false,
@@ -1246,7 +1275,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	}
 
 	// Verify the job was actually polled multiple times (proving we waited)
-	if pollCount < 2 {
-		t.Errorf("expected job to be polled at least twice (wait behavior), got %d polls", pollCount)
+	if atomic.LoadInt32(&pollCount) < 2 {
+		t.Errorf("expected job to be polled at least twice (wait behavior), got %d polls", atomic.LoadInt32(&pollCount))
 	}
 }
