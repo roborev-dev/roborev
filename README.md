@@ -99,6 +99,8 @@ roborev refine --agent claude-code   # Use specific agent for addressing finding
 roborev refine --max-iterations 5    # Limit fix attempts
 roborev refine --quiet               # Show elapsed time instead of agent output
 roborev refine --reasoning thorough  # Use thorough reasoning (slower, more accurate)
+roborev refine --since abc123        # Refine commits since a specific commit
+roborev refine --since HEAD~3        # Refine the last 3 commits (works on main branch)
 ```
 
 ```mermaid
@@ -121,7 +123,7 @@ flowchart TD
 
 The loop processes commits oldest-first. When a fix fails review, it keeps addressing that fix until it passes before moving to the next oldest failed commit. Passing reviews are automatically marked as addressed. When no individual failed reviews remain, a whole-branch review runs; if that passes, the refiner exits successfully.
 
-Requires a clean working tree and must not be on the main branch.
+Requires a clean working tree. By default, refine works on feature branches (comparing against main). Use `--since` to refine specific commits on any branch, including main.
 
 ### Security Considerations
 
