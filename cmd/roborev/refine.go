@@ -291,19 +291,11 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 				// Check if a branch review job already exists (queued or running).
 				// Note: We don't filter by agent here because the --agent flag controls
 				// the ADDRESSING agent (which fixes code), not the REVIEW agent.
+				// We use the SHA-based rangeRef to ensure we only reuse jobs for the
+				// exact same HEAD - if HEAD has moved, we want a fresh review.
 				existingJob, err := client.FindPendingJobForRef(repoPath, rangeRef)
 				if err != nil {
 					return fmt.Errorf("error checking for existing branch review: %w", err)
-				}
-
-				// Backwards compatibility: also check for jobs created with literal "HEAD"
-				// (older CLI versions stored jobs with mergeBase..HEAD instead of mergeBase..{sha})
-				if existingJob == nil {
-					legacyRef := mergeBase + "..HEAD"
-					existingJob, err = client.FindPendingJobForRef(repoPath, legacyRef)
-					if err != nil {
-						return fmt.Errorf("error checking for existing branch review: %w", err)
-					}
 				}
 
 				var jobID int64
