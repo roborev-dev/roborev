@@ -104,6 +104,15 @@ func (m *mockDaemonClient) FindJobForCommit(repoPath, sha string) (*storage.Revi
 	return nil, nil
 }
 
+func (m *mockDaemonClient) FindJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error) {
+	for _, job := range m.jobs {
+		if job.GitRef == gitRef {
+			return job, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *mockDaemonClient) GetResponsesForJob(jobID int64) ([]storage.Response, error) {
 	return m.responses[jobID], nil
 }

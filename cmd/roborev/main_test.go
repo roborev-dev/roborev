@@ -403,6 +403,69 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	}
 }
 
+// TestRunRefineAgentErrorRetriesWithoutApplyingChanges verifies that when the agent
+// returns an error, the error is properly captured and printed (not shadowed), and
+// the refine loop retries in the next iteration without applying any changes.
+func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
+	repoDir, headSHA := setupRefineRepo(t)
+	state := newMockRefineState()
+	state.reviews[headSHA] = &storage.Review{
+		ID: 1, JobID: 7, Output: "**Bug found**: fail", Addressed: false,
+	}
+
+	_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
+	defer cleanup()
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Use 2 iterations so we can verify retry behavior
+	agent.Register(failingAgent{})
+	defer agent.Register(agent.NewTestAgent())
+
+	// Capture HEAD before running refine
+	headBefore, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+
+	output := captureStdout(t, func() {
+		// With 2 iterations and a failing agent, should exhaust iterations
+		err := runRefine("test", "", 2, true, false, false, "")
+		if err == nil {
+			t.Fatal("expected error after exhausting iterations, got nil")
+		}
+	})
+
+	// Verify agent error message is printed (not shadowed by ResolveSHA)
+	if !strings.Contains(output, "Agent error: test agent failure") {
+		t.Errorf("expected 'Agent error: test agent failure' in output, got: %q", output)
+	}
+
+	// Verify "Will retry in next iteration" message
+	if !strings.Contains(output, "Will retry in next iteration") {
+		t.Errorf("expected 'Will retry in next iteration' in output, got: %q", output)
+	}
+
+	// Verify no commit was created (HEAD unchanged)
+	headAfter, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if string(headBefore) != string(headAfter) {
+		t.Errorf("expected HEAD to be unchanged after agent error, was %s now %s",
+			strings.TrimSpace(string(headBefore)), strings.TrimSpace(string(headAfter)))
+	}
+
+	// Verify we attempted 2 iterations (both printed)
+	if !strings.Contains(output, "=== Refinement iteration 1/2 ===") {
+		t.Errorf("expected iteration 1/2 in output, got: %q", output)
+	}
+	if !strings.Contains(output, "=== Refinement iteration 2/2 ===") {
+		t.Errorf("expected iteration 2/2 in output, got: %q", output)
+	}
+}
+
 func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 	submoduleRepo := t.TempDir()
 	runSubGit := func(args ...string) {

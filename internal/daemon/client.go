@@ -38,6 +38,9 @@ type Client interface {
 	// FindJobForCommit finds a job for a specific commit in a repo
 	FindJobForCommit(repoPath, sha string) (*storage.ReviewJob, error)
 
+	// FindJobForRef finds a job for any git ref (commit SHA or range like "abc..HEAD")
+	FindJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error)
+
 	// GetResponsesForJob fetches responses for a job
 	GetResponsesForJob(jobID int64) ([]storage.Response, error)
 }
@@ -315,6 +318,47 @@ func (c *HTTPClient) FindJobForCommit(repoPath, sha string) (*storage.ReviewJob,
 		if jobRepo == normalizedRepo {
 			return job, nil
 		}
+	}
+
+	return nil, nil
+}
+
+func (c *HTTPClient) FindJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error) {
+	// Normalize repo path to main repo root
+	normalizedRepo := repoPath
+	if mainRoot, err := git.GetMainRepoRoot(repoPath); err == nil {
+		normalizedRepo = mainRoot
+	}
+	if resolved, err := filepath.EvalSymlinks(normalizedRepo); err == nil {
+		normalizedRepo = resolved
+	}
+	if abs, err := filepath.Abs(normalizedRepo); err == nil {
+		normalizedRepo = abs
+	}
+
+	// Query by git_ref and repo
+	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=1",
+		c.addr, url.QueryEscape(gitRef), url.QueryEscape(normalizedRepo))
+
+	resp, err := c.httpClient.Get(queryURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("query for %s: server returned %s", gitRef, resp.Status)
+	}
+
+	var result struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("query for %s: decode error: %w", gitRef, err)
+	}
+
+	if len(result.Jobs) > 0 {
+		return &result.Jobs[0], nil
 	}
 
 	return nil, nil

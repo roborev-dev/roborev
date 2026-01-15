@@ -280,16 +280,30 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 					continue
 				}
 			} else {
-				// No pending jobs and no failed reviews - run whole-branch review
-				fmt.Println("No individual failed reviews - running branch review...")
-
+				// No pending commit jobs and no failed reviews - check for branch review
 				rangeRef := mergeBase + ".." + "HEAD"
-				jobID, err := client.EnqueueReview(repoPath, rangeRef, resolvedAgent)
+
+				// Check if a branch review job already exists (queued or running)
+				existingJob, err := client.FindJobForRef(repoPath, rangeRef)
 				if err != nil {
-					return fmt.Errorf("failed to enqueue branch review: %w", err)
+					return fmt.Errorf("error checking for existing branch review: %w", err)
 				}
 
-				fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
+				var jobID int64
+				if existingJob != nil && (existingJob.Status == storage.JobStatusQueued || existingJob.Status == storage.JobStatusRunning) {
+					// Wait for existing pending branch review
+					fmt.Printf("Waiting for in-progress branch review (job %d)...\n", existingJob.ID)
+					jobID = existingJob.ID
+				} else {
+					// No pending branch review - enqueue a new one
+					fmt.Println("No individual failed reviews - running branch review...")
+					jobID, err = client.EnqueueReview(repoPath, rangeRef, resolvedAgent)
+					if err != nil {
+						return fmt.Errorf("failed to enqueue branch review: %w", err)
+					}
+					fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
+				}
+
 				review, err := client.WaitForReview(jobID)
 				if err != nil {
 					return fmt.Errorf("branch review failed: %w", err)
@@ -358,7 +372,7 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 			timer.startLive(fmt.Sprintf("Addressing review (job %d)...", currentFailedReview.JobID))
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Hour)
-		output, err := addressAgent.Review(ctx, worktreePath, "HEAD", addressPrompt, agentOutput)
+		output, agentErr := addressAgent.Review(ctx, worktreePath, "HEAD", addressPrompt, agentOutput)
 		cancel()
 
 		// Show elapsed time
@@ -377,10 +391,10 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 		}
 
 		// Check if HEAD or branch changed during agent run (branch switch, pull, etc.)
-		headAfterAgent, err := git.ResolveSHA(repoPath, "HEAD")
-		if err != nil {
+		headAfterAgent, resolveErr := git.ResolveSHA(repoPath, "HEAD")
+		if resolveErr != nil {
 			cleanupWorktree()
-			return fmt.Errorf("cannot determine HEAD after agent run: %w", err)
+			return fmt.Errorf("cannot determine HEAD after agent run: %w", resolveErr)
 		}
 		branchAfterAgent := git.GetCurrentBranch(repoPath)
 		if headAfterAgent != headBeforeAgent || branchAfterAgent != branchBeforeAgent {
@@ -389,9 +403,9 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 				headBeforeAgent[:7], branchBeforeAgent, headAfterAgent[:7], branchAfterAgent)
 		}
 
-		if err != nil {
+		if agentErr != nil {
 			cleanupWorktree()
-			fmt.Printf("Agent error: %v\n", err)
+			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
 			continue
 		}
