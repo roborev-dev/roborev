@@ -829,38 +829,78 @@ func statusCmd() *cobra.Command {
 }
 
 func showCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "show [sha]",
-		Short: "Show review for a commit",
-		Args:  cobra.MaximumNArgs(1),
+	var forceJobID bool
+
+	cmd := &cobra.Command{
+		Use:   "show [job_id|sha]",
+		Short: "Show review for a commit or job",
+		Long: `Show review output for a commit or job.
+
+The argument can be either a job ID (numeric) or a commit SHA.
+Job IDs are displayed in review notifications and the TUI.
+
+Examples:
+  roborev show              # Show review for HEAD
+  roborev show abc123       # Show review for commit
+  roborev show 42           # Show review for job ID 42
+  roborev show --job 123    # Force numeric arg as job ID`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			sha := "HEAD"
-			if len(args) > 0 {
-				sha = args[0]
-			}
+			addr := getDaemonAddr()
+			client := &http.Client{Timeout: 5 * time.Second}
 
-			// Resolve SHA if in a git repo
-			if root, err := git.GetRepoRoot("."); err == nil {
-				if resolved, err := git.ResolveSHA(root, sha); err == nil {
-					sha = resolved
+			var queryURL string
+			var displayRef string
+
+			if len(args) == 0 {
+				// Default to HEAD
+				sha := "HEAD"
+				if root, err := git.GetRepoRoot("."); err == nil {
+					if resolved, err := git.ResolveSHA(root, sha); err == nil {
+						sha = resolved
+					}
+				}
+				queryURL = addr + "/api/review?sha=" + sha
+				displayRef = shortSHA(sha)
+			} else {
+				arg := args[0]
+				// Check if it's a job ID (numeric) or SHA
+				isJobID := forceJobID
+				if !isJobID {
+					if _, err := strconv.ParseInt(arg, 10, 64); err == nil {
+						isJobID = true
+					}
+				}
+
+				if isJobID {
+					queryURL = addr + "/api/review?job_id=" + arg
+					displayRef = "job " + arg
+				} else {
+					// Resolve SHA if in a git repo
+					sha := arg
+					if root, err := git.GetRepoRoot("."); err == nil {
+						if resolved, err := git.ResolveSHA(root, sha); err == nil {
+							sha = resolved
+						}
+					}
+					queryURL = addr + "/api/review?sha=" + sha
+					displayRef = shortSHA(sha)
 				}
 			}
 
-			addr := getDaemonAddr()
-			client := &http.Client{Timeout: 5 * time.Second}
-			resp, err := client.Get(addr + "/api/review?sha=" + sha)
+			resp, err := client.Get(queryURL)
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode == http.StatusNotFound {
-				return fmt.Errorf("no review found for commit %s", shortSHA(sha))
+				return fmt.Errorf("no review found for %s", displayRef)
 			}
 
 			var review storage.Review
@@ -868,13 +908,16 @@ func showCmd() *cobra.Command {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
-			fmt.Printf("Review for %s (by %s)\n", shortSHA(sha), review.Agent)
+			fmt.Printf("Review for %s (job %d, by %s)\n", displayRef, review.JobID, review.Agent)
 			fmt.Println(strings.Repeat("-", 60))
 			fmt.Println(review.Output)
 
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
+	return cmd
 }
 
 func respondCmd() *cobra.Command {
