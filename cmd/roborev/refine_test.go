@@ -731,7 +731,9 @@ func setupTestGitRepo(t *testing.T) (repoDir string, baseSHA string, runGit func
 		return strings.TrimSpace(string(out))
 	}
 
-	runGit("init", "-b", "main")
+	// Use git init + symbolic-ref for compatibility with Git < 2.28 (which lacks -b flag)
+	runGit("init")
+	runGit("symbolic-ref", "HEAD", "refs/heads/main")
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
 

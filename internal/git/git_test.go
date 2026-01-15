@@ -1425,7 +1425,8 @@ func TestLocalBranchName(t *testing.T) {
 func TestIsAncestor(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	runGit(t, tmpDir, "init", "-b", "main")
+	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "symbolic-ref", "HEAD", "refs/heads/main")
 	runGit(t, tmpDir, "config", "user.email", "test@test.com")
 	runGit(t, tmpDir, "config", "user.name", "Test")
 

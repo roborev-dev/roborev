@@ -115,7 +115,8 @@ func setupRefineRepo(t *testing.T) (string, string) {
 		return ""
 	}
 
-	runGit("init", "-b", "main")
+	runGit("init")
+	runGit("symbolic-ref", "HEAD", "refs/heads/main")
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("base"), 0644); err != nil {
@@ -277,7 +278,8 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 		}
 	}
 
-	runGit("init", "-b", "main")
+	runGit("init")
+	runGit("symbolic-ref", "HEAD", "refs/heads/main")
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("base"), 0644); err != nil {
@@ -410,7 +412,8 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 		}
 	}
 
-	runSubGit("init", "-b", "main")
+	runSubGit("init")
+	runSubGit("symbolic-ref", "HEAD", "refs/heads/main")
 	runSubGit("config", "user.email", "test@test.com")
 	runSubGit("config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(submoduleRepo, "sub.txt"), []byte("sub"), 0644); err != nil {
@@ -428,7 +431,8 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 		}
 	}
 
-	runMainGit("init", "-b", "main")
+	runMainGit("init")
+	runMainGit("symbolic-ref", "HEAD", "refs/heads/main")
 	runMainGit("config", "user.email", "test@test.com")
 	runMainGit("config", "user.name", "Test")
 	runMainGit("config", "protocol.file.allow", "always")
@@ -1080,7 +1084,8 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 		return ""
 	}
 
-	runGit("init", "-b", "main")
+	runGit("init")
+	runGit("symbolic-ref", "HEAD", "refs/heads/main")
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
 

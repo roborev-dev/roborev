@@ -746,7 +746,8 @@ func TestReviewBranchFlag(t *testing.T) {
 				t.Fatalf("git %v failed: %v\n%s", args, err, out)
 			}
 		}
-		runGit("init", "-b", "main")
+		runGit("init")
+		runGit("symbolic-ref", "HEAD", "refs/heads/main")
 		runGit("config", "user.email", "test@test.com")
 		runGit("config", "user.name", "Test")
 		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
@@ -783,7 +784,8 @@ func TestReviewBranchFlag(t *testing.T) {
 				t.Fatalf("git %v failed: %v\n%s", args, err, out)
 			}
 		}
-		runGit("init", "-b", "main")
+		runGit("init")
+		runGit("symbolic-ref", "HEAD", "refs/heads/main")
 		runGit("config", "user.email", "test@test.com")
 		runGit("config", "user.name", "Test")
 		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
@@ -836,7 +838,8 @@ func TestReviewBranchFlag(t *testing.T) {
 				t.Fatalf("git %v failed: %v\n%s", args, err, out)
 			}
 		}
-		runGit("init", "-b", "main")
+		runGit("init")
+		runGit("symbolic-ref", "HEAD", "refs/heads/main")
 		runGit("config", "user.email", "test@test.com")
 		runGit("config", "user.name", "Test")
 		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
