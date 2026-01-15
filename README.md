@@ -95,7 +95,7 @@ Use `refine` to automatically address failed reviews on your branch:
 
 ```bash
 roborev refine                       # Fix failed reviews using default agent
-roborev refine --agent claude-code   # Use specific agent
+roborev refine --agent claude-code   # Use specific agent for addressing findings
 roborev refine --max-iterations 5    # Limit fix attempts
 roborev refine --quiet               # Show elapsed time instead of agent output
 roborev refine --reasoning thorough  # Use thorough reasoning (slower, more accurate)

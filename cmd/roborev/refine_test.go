@@ -104,10 +104,12 @@ func (m *mockDaemonClient) FindJobForCommit(repoPath, sha string) (*storage.Revi
 	return nil, nil
 }
 
-func (m *mockDaemonClient) FindJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error) {
+func (m *mockDaemonClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error) {
 	for _, job := range m.jobs {
 		if job.GitRef == gitRef {
-			return job, nil
+			if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
+				return job, nil
+			}
 		}
 	}
 	return nil, nil

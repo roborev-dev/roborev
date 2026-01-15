@@ -281,16 +281,23 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 				}
 			} else {
 				// No pending commit jobs and no failed reviews - check for branch review
-				rangeRef := mergeBase + ".." + "HEAD"
+				// Resolve HEAD to SHA to ensure stable rangeRef (avoids stale results if HEAD moves)
+				headSHA, err := git.ResolveSHA(repoPath, "HEAD")
+				if err != nil {
+					return fmt.Errorf("cannot resolve HEAD: %w", err)
+				}
+				rangeRef := mergeBase + ".." + headSHA
 
-				// Check if a branch review job already exists (queued or running)
-				existingJob, err := client.FindJobForRef(repoPath, rangeRef)
+				// Check if a branch review job already exists (queued or running).
+				// Note: We don't filter by agent here because the --agent flag controls
+				// the ADDRESSING agent (which fixes code), not the REVIEW agent.
+				existingJob, err := client.FindPendingJobForRef(repoPath, rangeRef)
 				if err != nil {
 					return fmt.Errorf("error checking for existing branch review: %w", err)
 				}
 
 				var jobID int64
-				if existingJob != nil && (existingJob.Status == storage.JobStatusQueued || existingJob.Status == storage.JobStatusRunning) {
+				if existingJob != nil {
 					// Wait for existing pending branch review
 					fmt.Printf("Waiting for in-progress branch review (job %d)...\n", existingJob.ID)
 					jobID = existingJob.ID

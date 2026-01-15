@@ -292,3 +292,90 @@ func TestFindJobForCommitFallback(t *testing.T) {
 		t.Errorf("expected job ID 1, got %d", job.ID)
 	}
 }
+
+func TestFindPendingJobForRef(t *testing.T) {
+	t.Run("returns pending job when found", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/jobs" || r.Method != http.MethodGet {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+
+			gitRef := r.URL.Query().Get("git_ref")
+			if gitRef != "abc123..def456" {
+				t.Errorf("expected git_ref abc123..def456, got %s", gitRef)
+			}
+
+			// Return a mix of jobs - one done, one running
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs": []storage.ReviewJob{
+					{ID: 2, GitRef: gitRef, Status: storage.JobStatusDone},
+					{ID: 1, GitRef: gitRef, Status: storage.JobStatusRunning},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client := NewHTTPClient(server.URL)
+		job, err := client.FindPendingJobForRef("/test/repo", "abc123..def456")
+		if err != nil {
+			t.Fatalf("FindPendingJobForRef failed: %v", err)
+		}
+
+		// Should return the running job, not the done one
+		if job == nil {
+			t.Fatal("expected to find pending job")
+		}
+		if job.ID != 1 {
+			t.Errorf("expected job ID 1 (running), got %d", job.ID)
+		}
+	})
+
+	t.Run("returns nil when no pending jobs", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Return only completed jobs
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs": []storage.ReviewJob{
+					{ID: 1, GitRef: "abc..def", Status: storage.JobStatusDone},
+					{ID: 2, GitRef: "abc..def", Status: storage.JobStatusFailed},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client := NewHTTPClient(server.URL)
+		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
+		if err != nil {
+			t.Fatalf("FindPendingJobForRef failed: %v", err)
+		}
+
+		if job != nil {
+			t.Errorf("expected nil when no pending jobs, got job ID %d", job.ID)
+		}
+	})
+
+	t.Run("returns queued job", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs": []storage.ReviewJob{
+					{ID: 1, GitRef: "abc..def", Status: storage.JobStatusQueued},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client := NewHTTPClient(server.URL)
+		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
+		if err != nil {
+			t.Fatalf("FindPendingJobForRef failed: %v", err)
+		}
+
+		if job == nil {
+			t.Fatal("expected to find queued job")
+		}
+		if job.Status != storage.JobStatusQueued {
+			t.Errorf("expected queued status, got %s", job.Status)
+		}
+	})
+}

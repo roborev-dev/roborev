@@ -38,8 +38,8 @@ type Client interface {
 	// FindJobForCommit finds a job for a specific commit in a repo
 	FindJobForCommit(repoPath, sha string) (*storage.ReviewJob, error)
 
-	// FindJobForRef finds a job for any git ref (commit SHA or range like "abc..HEAD")
-	FindJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error)
+	// FindPendingJobForRef finds a queued or running job for any git ref
+	FindPendingJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error)
 
 	// GetResponsesForJob fetches responses for a job
 	GetResponsesForJob(jobID int64) ([]storage.Response, error)
@@ -323,7 +323,7 @@ func (c *HTTPClient) FindJobForCommit(repoPath, sha string) (*storage.ReviewJob,
 	return nil, nil
 }
 
-func (c *HTTPClient) FindJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error) {
+func (c *HTTPClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error) {
 	// Normalize repo path to main repo root
 	normalizedRepo := repoPath
 	if mainRoot, err := git.GetMainRepoRoot(repoPath); err == nil {
@@ -336,8 +336,9 @@ func (c *HTTPClient) FindJobForRef(repoPath, gitRef string) (*storage.ReviewJob,
 		normalizedRepo = abs
 	}
 
-	// Query by git_ref and repo
-	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=1",
+	// Query by git_ref and repo - get multiple to scan for pending status
+	// (server may return newest first, but we need any pending job)
+	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=10",
 		c.addr, url.QueryEscape(gitRef), url.QueryEscape(normalizedRepo))
 
 	resp, err := c.httpClient.Get(queryURL)
@@ -357,8 +358,12 @@ func (c *HTTPClient) FindJobForRef(repoPath, gitRef string) (*storage.ReviewJob,
 		return nil, fmt.Errorf("query for %s: decode error: %w", gitRef, err)
 	}
 
-	if len(result.Jobs) > 0 {
-		return &result.Jobs[0], nil
+	// Find the first pending (queued or running) job
+	for i := range result.Jobs {
+		job := &result.Jobs[i]
+		if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
+			return job, nil
+		}
 	}
 
 	return nil, nil
