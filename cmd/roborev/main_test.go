@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/wesm/roborev/internal/agent"
@@ -1057,5 +1058,190 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 		if call.jobID == 2 {
 			t.Fatalf("expected to stay on failed fix chain; saw response for newer commit job 2")
 		}
+	}
+}
+
+// TestRefinePendingJobWaitDoesNotConsumeIteration verifies that waiting for a pending
+// (in-progress) job does not consume a refinement iteration. The test runs with
+// maxIterations=1 and a job that starts as Running then transitions to Done with a
+// passing review - if iterations were consumed during the wait, the test would fail.
+func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
+	repoDir := t.TempDir()
+
+	// Create a git repo with a commit on a feature branch
+	runGit := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		} else if len(out) > 0 {
+			return strings.TrimSpace(string(out))
+		}
+		return ""
+	}
+
+	runGit("init", "-b", "main")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "base.txt"), []byte("base"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "base.txt")
+	runGit("commit", "-m", "base commit")
+
+	runGit("checkout", "-b", "feature")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "feature.txt")
+	runGit("commit", "-m", "feature commit")
+
+	commitSHA := runGit("rev-parse", "HEAD")
+
+	// Track how many times the job has been polled
+	var pollCount int32
+
+	state := newMockRefineState()
+	// Create a job that starts as Running
+	state.jobs[1] = &storage.ReviewJob{
+		ID:       1,
+		GitRef:   commitSHA,
+		Agent:    "test",
+		Status:   storage.JobStatusRunning, // Starts as pending
+		RepoPath: repoDir,
+	}
+	// Passing review (will be returned once job is Done)
+	state.reviews[commitSHA] = &storage.Review{
+		ID: 1, JobID: 1, Output: "No issues found. LGTM!", Addressed: false,
+	}
+	state.nextJobID = 2
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/status":
+			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+
+		case r.URL.Path == "/api/review" && r.Method == http.MethodGet:
+			sha := r.URL.Query().Get("sha")
+			jobIDStr := r.URL.Query().Get("job_id")
+
+			var review *storage.Review
+			if sha != "" {
+				review = state.reviews[sha]
+			} else if jobIDStr != "" {
+				var jobID int64
+				fmt.Sscanf(jobIDStr, "%d", &jobID)
+				for _, rev := range state.reviews {
+					if rev.JobID == jobID {
+						review = rev
+						break
+					}
+				}
+			}
+
+			if review == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			json.NewEncoder(w).Encode(review)
+
+		case r.URL.Path == "/api/review/address" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+
+		case r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost:
+			// Handle branch review enqueue - create a passing branch review
+			var req struct {
+				GitRef string `json:"git_ref"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+			branchJobID := state.nextJobID
+			state.nextJobID++
+			state.jobs[branchJobID] = &storage.ReviewJob{
+				ID:       branchJobID,
+				GitRef:   req.GitRef,
+				Agent:    "test",
+				Status:   storage.JobStatusDone,
+				RepoPath: repoDir,
+			}
+			state.reviews[req.GitRef] = &storage.Review{
+				ID: branchJobID + 1000, JobID: branchJobID, Output: "No issues found. Branch looks good!",
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(state.jobs[branchJobID])
+
+		case r.URL.Path == "/api/jobs" && r.Method == http.MethodGet:
+			q := r.URL.Query()
+			if idStr := q.Get("id"); idStr != "" {
+				var jobID int64
+				fmt.Sscanf(idStr, "%d", &jobID)
+				job, ok := state.jobs[jobID]
+				if !ok {
+					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+					return
+				}
+				// On first poll, job is still Running; on subsequent polls, transition to Done
+				count := atomic.AddInt32(&pollCount, 1)
+				if count > 1 {
+					job.Status = storage.JobStatusDone
+				}
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{*job}})
+				return
+			}
+			if gitRef := q.Get("git_ref"); gitRef != "" {
+				var job *storage.ReviewJob
+				for _, j := range state.jobs {
+					if j.GitRef == gitRef {
+						job = j
+						break
+					}
+				}
+				if job != nil {
+					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{*job}})
+					return
+				}
+			}
+
+			var jobs []storage.ReviewJob
+			for _, job := range state.jobs {
+				jobs = append(jobs, *job)
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs":     jobs,
+				"has_more": false,
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	_, cleanup := setupMockDaemon(t, handler)
+	defer cleanup()
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Run refine with maxIterations=1. If waiting on the pending job consumed
+	// an iteration, this would fail with "max iterations reached". Since the
+	// pending job transitions to Done with a passing review (and no failed
+	// reviews exist), refine should succeed.
+	err = runRefine("test", "", 1, true, false, false, "")
+
+	// Should succeed - all reviews pass after waiting for the pending one
+	if err != nil {
+		t.Fatalf("expected refine to succeed (pending wait should not consume iteration), got: %v", err)
+	}
+
+	// Verify the job was actually polled multiple times (proving we waited)
+	if pollCount < 2 {
+		t.Errorf("expected job to be polled at least twice (wait behavior), got %d polls", pollCount)
 	}
 }
