@@ -296,6 +296,16 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 					return fmt.Errorf("error checking for existing branch review: %w", err)
 				}
 
+				// Backwards compatibility: also check for jobs created with literal "HEAD"
+				// (older CLI versions stored jobs with mergeBase..HEAD instead of mergeBase..{sha})
+				if existingJob == nil {
+					legacyRef := mergeBase + "..HEAD"
+					existingJob, err = client.FindPendingJobForRef(repoPath, legacyRef)
+					if err != nil {
+						return fmt.Errorf("error checking for existing branch review: %w", err)
+					}
+				}
+
 				var jobID int64
 				if existingJob != nil {
 					// Wait for existing pending branch review

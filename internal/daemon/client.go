@@ -336,33 +336,33 @@ func (c *HTTPClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.Rev
 		normalizedRepo = abs
 	}
 
-	// Query by git_ref and repo - get multiple to scan for pending status
-	// (server may return newest first, but we need any pending job)
-	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&limit=10",
-		c.addr, url.QueryEscape(gitRef), url.QueryEscape(normalizedRepo))
+	// Use server-side status filtering to find pending jobs.
+	// Query for queued first, then running - this avoids pagination issues.
+	for _, status := range []string{"queued", "running"} {
+		queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&repo=%s&status=%s&limit=1",
+			c.addr, url.QueryEscape(gitRef), url.QueryEscape(normalizedRepo), status)
 
-	resp, err := c.httpClient.Get(queryURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		resp, err := c.httpClient.Get(queryURL)
+		if err != nil {
+			return nil, err
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("query for %s: server returned %s", gitRef, resp.Status)
-	}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("query for %s: server returned %s", gitRef, resp.Status)
+		}
 
-	var result struct {
-		Jobs []storage.ReviewJob `json:"jobs"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("query for %s: decode error: %w", gitRef, err)
-	}
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("query for %s: decode error: %w", gitRef, err)
+		}
+		resp.Body.Close()
 
-	// Find the first pending (queued or running) job
-	for i := range result.Jobs {
-		job := &result.Jobs[i]
-		if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
-			return job, nil
+		if len(result.Jobs) > 0 {
+			return &result.Jobs[0], nil
 		}
 	}
 

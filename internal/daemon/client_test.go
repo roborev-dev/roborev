@@ -294,7 +294,7 @@ func TestFindJobForCommitFallback(t *testing.T) {
 }
 
 func TestFindPendingJobForRef(t *testing.T) {
-	t.Run("returns pending job when found", func(t *testing.T) {
+	t.Run("returns running job via server-side status filter", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/jobs" || r.Method != http.MethodGet {
 				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -303,17 +303,23 @@ func TestFindPendingJobForRef(t *testing.T) {
 			}
 
 			gitRef := r.URL.Query().Get("git_ref")
+			status := r.URL.Query().Get("status")
+
 			if gitRef != "abc123..def456" {
 				t.Errorf("expected git_ref abc123..def456, got %s", gitRef)
 			}
 
-			// Return a mix of jobs - one done, one running
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs": []storage.ReviewJob{
-					{ID: 2, GitRef: gitRef, Status: storage.JobStatusDone},
-					{ID: 1, GitRef: gitRef, Status: storage.JobStatusRunning},
-				},
-			})
+			// Server-side filtering: only return jobs matching the requested status
+			if status == "running" {
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jobs": []storage.ReviewJob{
+						{ID: 1, GitRef: gitRef, Status: storage.JobStatusRunning},
+					},
+				})
+			} else {
+				// No queued jobs
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+			}
 		}))
 		defer server.Close()
 
@@ -323,7 +329,6 @@ func TestFindPendingJobForRef(t *testing.T) {
 			t.Fatalf("FindPendingJobForRef failed: %v", err)
 		}
 
-		// Should return the running job, not the done one
 		if job == nil {
 			t.Fatal("expected to find pending job")
 		}
@@ -334,13 +339,8 @@ func TestFindPendingJobForRef(t *testing.T) {
 
 	t.Run("returns nil when no pending jobs", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Return only completed jobs
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs": []storage.ReviewJob{
-					{ID: 1, GitRef: "abc..def", Status: storage.JobStatusDone},
-					{ID: 2, GitRef: "abc..def", Status: storage.JobStatusFailed},
-				},
-			})
+			// No jobs for any status
+			json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 		}))
 		defer server.Close()
 
@@ -355,13 +355,21 @@ func TestFindPendingJobForRef(t *testing.T) {
 		}
 	})
 
-	t.Run("returns queued job", func(t *testing.T) {
+	t.Run("returns queued job before checking running", func(t *testing.T) {
+		var queriedStatuses []string
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs": []storage.ReviewJob{
-					{ID: 1, GitRef: "abc..def", Status: storage.JobStatusQueued},
-				},
-			})
+			status := r.URL.Query().Get("status")
+			queriedStatuses = append(queriedStatuses, status)
+
+			if status == "queued" {
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jobs": []storage.ReviewJob{
+						{ID: 1, GitRef: "abc..def", Status: storage.JobStatusQueued},
+					},
+				})
+			} else {
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+			}
 		}))
 		defer server.Close()
 
@@ -376,6 +384,48 @@ func TestFindPendingJobForRef(t *testing.T) {
 		}
 		if job.Status != storage.JobStatusQueued {
 			t.Errorf("expected queued status, got %s", job.Status)
+		}
+
+		// Should only query for "queued" since it found a job
+		if len(queriedStatuses) != 1 || queriedStatuses[0] != "queued" {
+			t.Errorf("expected to only query 'queued', got %v", queriedStatuses)
+		}
+	})
+
+	t.Run("queries both queued and running when needed", func(t *testing.T) {
+		var queriedStatuses []string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			status := r.URL.Query().Get("status")
+			queriedStatuses = append(queriedStatuses, status)
+
+			if status == "running" {
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jobs": []storage.ReviewJob{
+						{ID: 2, GitRef: "abc..def", Status: storage.JobStatusRunning},
+					},
+				})
+			} else {
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+			}
+		}))
+		defer server.Close()
+
+		client := NewHTTPClient(server.URL)
+		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
+		if err != nil {
+			t.Fatalf("FindPendingJobForRef failed: %v", err)
+		}
+
+		if job == nil {
+			t.Fatal("expected to find running job")
+		}
+		if job.ID != 2 {
+			t.Errorf("expected job ID 2, got %d", job.ID)
+		}
+
+		// Should query both statuses: queued first (no results), then running
+		if len(queriedStatuses) != 2 {
+			t.Errorf("expected 2 queries, got %d: %v", len(queriedStatuses), queriedStatuses)
 		}
 	})
 }
