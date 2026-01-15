@@ -65,7 +65,7 @@ limit how far back to look for reviews to address.`,
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 10, "maximum refinement iterations")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "suppress agent output, show elapsed time instead")
 	cmd.Flags().BoolVar(&allowUnsafeAgents, "allow-unsafe-agents", false, "allow agents to run without sandboxing")
-	cmd.Flags().StringVar(&since, "since", "", "starting commit (allows running on main branch)")
+	cmd.Flags().StringVar(&since, "since", "", "base commit to refine from (exclusive, like git's .. range)")
 
 	return cmd
 }
