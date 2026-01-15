@@ -508,23 +508,28 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 					}
 				}
 			}
+			// Copy under lock before encoding
+			var reviewCopy storage.Review
+			if review != nil {
+				reviewCopy = *review
+			}
 			state.mu.Unlock()
 
 			if review == nil {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			json.NewEncoder(w).Encode(review)
+			json.NewEncoder(w).Encode(reviewCopy)
 
 		case r.URL.Path == "/api/responses" && r.Method == "GET":
 			jobIDStr := r.URL.Query().Get("job_id")
 			var jobID int64
 			fmt.Sscanf(jobIDStr, "%d", &jobID)
 			state.mu.Lock()
-			responses := state.responses[jobID]
-			if responses == nil {
-				responses = []storage.Response{}
-			}
+			// Copy slice under lock before encoding
+			origResponses := state.responses[jobID]
+			responses := make([]storage.Response, len(origResponses))
+			copy(responses, origResponses)
 			state.mu.Unlock()
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"responses": responses,

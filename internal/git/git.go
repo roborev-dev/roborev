@@ -146,11 +146,22 @@ func ResolveSHA(repoPath, ref string) (string, error) {
 }
 
 // IsAncestor checks if ancestor is an ancestor of descendant.
-// Returns true if ancestor is reachable from descendant via the commit graph.
-func IsAncestor(repoPath, ancestor, descendant string) bool {
+// Returns (true, nil) if ancestor is reachable from descendant via the commit graph.
+// Returns (false, nil) if ancestor is not an ancestor (git exits with status 1).
+// Returns (false, error) for git errors (e.g., bad object, repo issues).
+func IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
 	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, descendant)
 	cmd.Dir = repoPath
-	return cmd.Run() == nil
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	// Exit code 1 means "not ancestor", which is not an error
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	// Any other error (exit code 128, etc.) is a real git error
+	return false, fmt.Errorf("git merge-base --is-ancestor: %w", err)
 }
 
 // GetRepoRoot returns the root directory of the git repository

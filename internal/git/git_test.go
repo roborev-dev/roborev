@@ -1457,32 +1457,59 @@ func TestIsAncestor(t *testing.T) {
 	divergentSHA := runGit(t, tmpDir, "rev-parse", "HEAD")
 
 	t.Run("base is ancestor of second", func(t *testing.T) {
-		if !IsAncestor(tmpDir, baseSHA, secondSHA) {
+		isAnc, err := IsAncestor(tmpDir, baseSHA, secondSHA)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !isAnc {
 			t.Error("expected base to be ancestor of second")
 		}
 	})
 
 	t.Run("second is not ancestor of base", func(t *testing.T) {
-		if IsAncestor(tmpDir, secondSHA, baseSHA) {
+		isAnc, err := IsAncestor(tmpDir, secondSHA, baseSHA)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if isAnc {
 			t.Error("expected second to NOT be ancestor of base")
 		}
 	})
 
 	t.Run("divergent is not ancestor of second", func(t *testing.T) {
-		if IsAncestor(tmpDir, divergentSHA, secondSHA) {
+		isAnc, err := IsAncestor(tmpDir, divergentSHA, secondSHA)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if isAnc {
 			t.Error("expected divergent to NOT be ancestor of second (different branches)")
 		}
 	})
 
 	t.Run("base is ancestor of divergent", func(t *testing.T) {
-		if !IsAncestor(tmpDir, baseSHA, divergentSHA) {
+		isAnc, err := IsAncestor(tmpDir, baseSHA, divergentSHA)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !isAnc {
 			t.Error("expected base to be ancestor of divergent")
 		}
 	})
 
 	t.Run("commit is ancestor of itself", func(t *testing.T) {
-		if !IsAncestor(tmpDir, baseSHA, baseSHA) {
+		isAnc, err := IsAncestor(tmpDir, baseSHA, baseSHA)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !isAnc {
 			t.Error("expected commit to be ancestor of itself")
+		}
+	})
+
+	t.Run("bad object returns error", func(t *testing.T) {
+		_, err := IsAncestor(tmpDir, "badbadbadbadbadbadbadbadbadbadbadbadbad", "HEAD")
+		if err == nil {
+			t.Error("expected error for bad object")
 		}
 	})
 }

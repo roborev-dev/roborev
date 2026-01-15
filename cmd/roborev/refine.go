@@ -158,7 +158,11 @@ func validateRefineContext(since string) (repoPath, currentBranch, defaultBranch
 			return "", "", "", "", fmt.Errorf("cannot resolve --since %q: %w", since, err)
 		}
 		// Verify --since is an ancestor of HEAD (reachable in commit history)
-		if !git.IsAncestor(repoPath, mergeBase, "HEAD") {
+		isAncestor, err := git.IsAncestor(repoPath, mergeBase, "HEAD")
+		if err != nil {
+			return "", "", "", "", fmt.Errorf("checking --since ancestry: %w", err)
+		}
+		if !isAncestor {
 			return "", "", "", "", fmt.Errorf("--since %q is not an ancestor of HEAD", since)
 		}
 	} else {
