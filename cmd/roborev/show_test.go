@@ -16,8 +16,8 @@ import (
 )
 
 func TestShowCommandSHADisambiguation(t *testing.T) {
-	t.Run("numeric SHA resolvable in repo treated as SHA", func(t *testing.T) {
-		// Create a git repo where we can test SHA resolution
+	t.Run("numeric ref resolvable in repo treated as SHA not job ID", func(t *testing.T) {
+		// Create a git repo with a numeric tag to test the disambiguation path
 		repoDir := t.TempDir()
 		runGit := func(args ...string) string {
 			cmd := exec.Command("git", args...)
@@ -40,9 +40,9 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 		runGit("add", "file.txt")
 		runGit("commit", "-m", "initial commit")
 
-		commitSHA := runGit("rev-parse", "HEAD")
-		// Get first 7 chars which could look numeric if they happen to be all digits
-		shortSHA := commitSHA[:7]
+		// Create a numeric tag - "12345" is numeric and could be mistaken for a job ID
+		runGit("tag", "12345")
+		tagSHA := runGit("rev-parse", "12345")
 
 		var receivedQuery string
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,26 +64,27 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 		os.Chdir(repoDir)
 		defer os.Chdir(origDir)
 
-		// Use the full SHA - git should resolve it
+		// Pass "12345" which is numeric but resolvable as a git tag
+		// Should be treated as SHA, not job ID
 		cmd := showCmd()
-		cmd.SetArgs([]string{commitSHA})
+		cmd.SetArgs([]string{"12345"})
 		_ = captureStdout(t, func() {
 			if err := cmd.Execute(); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 
-		// Should query by SHA, not job_id
+		// Should query by SHA (resolved from tag), not job_id
 		if !strings.Contains(receivedQuery, "sha=") {
 			t.Errorf("expected sha= in query, got: %s", receivedQuery)
 		}
 		if strings.Contains(receivedQuery, "job_id=") {
-			t.Errorf("did not expect job_id= in query, got: %s", receivedQuery)
+			t.Errorf("numeric ref '12345' should resolve as SHA, not job_id; got: %s", receivedQuery)
 		}
 
-		// Verify the resolved SHA was sent
-		if !strings.Contains(receivedQuery, shortSHA) {
-			t.Errorf("expected query to contain SHA %s, got: %s", shortSHA, receivedQuery)
+		// Verify the resolved SHA was sent (not the literal "12345")
+		if !strings.Contains(receivedQuery, tagSHA[:7]) {
+			t.Errorf("expected query to contain resolved SHA %s, got: %s", tagSHA[:7], receivedQuery)
 		}
 	})
 
@@ -207,8 +208,8 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 }
 
 func TestShowJobFlag(t *testing.T) {
-	t.Run("--job forces job ID interpretation", func(t *testing.T) {
-		// Create a git repo where the input could be resolved as SHA
+	t.Run("--job forces job ID interpretation even when ref is resolvable", func(t *testing.T) {
+		// Create a git repo with a numeric tag to prove --job bypasses resolution
 		repoDir := t.TempDir()
 		runGit := func(args ...string) {
 			cmd := exec.Command("git", args...)
@@ -227,6 +228,9 @@ func TestShowJobFlag(t *testing.T) {
 		}
 		runGit("add", "file.txt")
 		runGit("commit", "-m", "initial commit")
+
+		// Create a numeric tag - without --job, "12345" would resolve to this commit
+		runGit("tag", "12345")
 
 		var receivedQuery string
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +253,7 @@ func TestShowJobFlag(t *testing.T) {
 		defer os.Chdir(origDir)
 
 		// With --job, "12345" should be treated as job ID even though
-		// git might be able to resolve it
+		// it's resolvable as a git tag
 		cmd := showCmd()
 		cmd.SetArgs([]string{"--job", "12345"})
 		_ = captureStdout(t, func() {
