@@ -120,9 +120,9 @@ update_nix_flake() {
         fi
         git -C "$REPO_ROOT" push -u origin "$BRANCH_NAME" --force-with-lease
 
-        # Create the PR (skip if already exists)
-        if gh pr view "$BRANCH_NAME" &>/dev/null; then
-            echo "PR for $BRANCH_NAME already exists, skipping creation"
+        # Create the PR (skip if an open PR already exists)
+        if [ -n "$(gh pr list --state open --head "$BRANCH_NAME" --json number --jq '.[0].number' 2>/dev/null)" ]; then
+            echo "Open PR for $BRANCH_NAME already exists, skipping creation"
         else
             gh pr create \
                 --title "Update flake.nix for $TAG" \

@@ -26,7 +26,8 @@ type mockDaemonClient struct {
 	enqueuedReviews  []enqueuedReview
 
 	// Configurable errors for testing error paths
-	markAddressedErr error
+	markAddressedErr   error
+	getReviewBySHAErr  error
 }
 
 type addedResponse struct {
@@ -50,6 +51,9 @@ func newMockDaemonClient() *mockDaemonClient {
 }
 
 func (m *mockDaemonClient) GetReviewBySHA(sha string) (*storage.Review, error) {
+	if m.getReviewBySHAErr != nil {
+		return nil, m.getReviewBySHAErr
+	}
 	review, ok := m.reviews[sha]
 	if !ok {
 		return nil, nil
@@ -127,20 +131,64 @@ func TestSelectRefineAgentCodexFallback(t *testing.T) {
 }
 
 func TestResolveAllowUnsafeAgents(t *testing.T) {
-	cfg := &config.Config{AllowUnsafeAgents: true}
-	if !resolveAllowUnsafeAgents(false, cfg) {
-		t.Fatal("expected config to enable unsafe agents")
+	tests := []struct {
+		name        string
+		flag        bool
+		flagChanged bool
+		cfg         *config.Config
+		expected    bool
+	}{
+		{
+			name:        "config enables, flag not changed - uses config",
+			flag:        false,
+			flagChanged: false,
+			cfg:         &config.Config{AllowUnsafeAgents: true},
+			expected:    true,
+		},
+		{
+			name:        "config disabled, flag not changed - stays disabled",
+			flag:        false,
+			flagChanged: false,
+			cfg:         &config.Config{AllowUnsafeAgents: false},
+			expected:    false,
+		},
+		{
+			name:        "config disabled, flag explicitly enabled - uses flag",
+			flag:        true,
+			flagChanged: true,
+			cfg:         &config.Config{AllowUnsafeAgents: false},
+			expected:    true,
+		},
+		{
+			name:        "config enabled, flag explicitly disabled - uses flag (user override)",
+			flag:        false,
+			flagChanged: true,
+			cfg:         &config.Config{AllowUnsafeAgents: true},
+			expected:    false,
+		},
+		{
+			name:        "nil config, flag not changed - defaults to false",
+			flag:        false,
+			flagChanged: false,
+			cfg:         nil,
+			expected:    false,
+		},
+		{
+			name:        "nil config, flag explicitly enabled - uses flag",
+			flag:        true,
+			flagChanged: true,
+			cfg:         nil,
+			expected:    true,
+		},
 	}
 
-	cfg.AllowUnsafeAgents = false
-	if resolveAllowUnsafeAgents(false, cfg) {
-		t.Fatal("expected unsafe agents to remain disabled")
-	}
-	if !resolveAllowUnsafeAgents(true, cfg) {
-		t.Fatal("expected CLI flag to enable unsafe agents")
-	}
-	if resolveAllowUnsafeAgents(false, nil) {
-		t.Fatal("expected unsafe agents to remain disabled without config")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := resolveAllowUnsafeAgents(tc.flag, tc.flagChanged, tc.cfg)
+			if result != tc.expected {
+				t.Errorf("expected %v, got %v", tc.expected, result)
+			}
+		})
 	}
 }
 
@@ -528,6 +576,33 @@ func TestFindFailedReviewForBranch_MarkAddressedError(t *testing.T) {
 	expectedMsg := "marking review 1 as addressed"
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("error should mention review ID, got: %v", err)
+	}
+}
+
+func TestFindFailedReviewForBranch_GetReviewBySHAError(t *testing.T) {
+	client := newMockDaemonClient()
+
+	// Configure the mock to return an error when fetching reviews
+	client.getReviewBySHAErr = fmt.Errorf("daemon connection failed")
+
+	commits := []string{"commit1", "commit2"}
+
+	found, err := findFailedReviewForBranch(client, commits)
+
+	// Should return an error and not continue processing
+	if err == nil {
+		t.Fatal("expected error when GetReviewBySHA fails, got nil")
+	}
+	if found != nil {
+		t.Errorf("expected nil review when error occurs, got job %d", found.JobID)
+	}
+
+	// Error message should indicate which commit failed
+	if !strings.Contains(err.Error(), "commit1") {
+		t.Errorf("error should mention commit SHA, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fetching review") {
+		t.Errorf("error should mention 'fetching review', got: %v", err)
 	}
 }
 

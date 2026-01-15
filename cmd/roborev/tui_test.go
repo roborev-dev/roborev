@@ -1704,6 +1704,59 @@ func TestTUIFilterSearchByRepoPath(t *testing.T) {
 	}
 }
 
+func TestTUIFilterSearchByDisplayName(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.filterRepos = []repoFilterItem{
+		{name: "", rootPaths: nil, count: 5},
+		// Display name "My Project" differs from path basename "my-project-repo"
+		{name: "My Project", rootPaths: []string{"/home/user/my-project-repo"}, count: 2},
+		// Display name matches path basename
+		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
+		// Display name "Backend Services" differs from path basenames
+		{name: "Backend Services", rootPaths: []string{"/srv/api-server", "/srv/worker-daemon"}, count: 2},
+	}
+
+	// Search by display name (should match "My Project")
+	m.filterSearch = "my project"
+	visible := m.getVisibleFilterRepos()
+	if len(visible) != 2 { // "All repos" + "My Project"
+		t.Errorf("Search 'my project': expected 2 visible, got %d", len(visible))
+	}
+	if len(visible) > 1 && visible[1].name != "My Project" {
+		t.Errorf("Expected to find 'My Project', got '%s'", visible[1].name)
+	}
+
+	// Search by raw repo path basename (should still match "My Project")
+	m.filterSearch = "my-project-repo"
+	visible = m.getVisibleFilterRepos()
+	if len(visible) != 2 { // "All repos" + "My Project"
+		t.Errorf("Search 'my-project-repo': expected 2 visible, got %d", len(visible))
+	}
+	if len(visible) > 1 && visible[1].name != "My Project" {
+		t.Errorf("Expected to find 'My Project' via path, got '%s'", visible[1].name)
+	}
+
+	// Search by partial display name (should match "Backend Services")
+	m.filterSearch = "backend"
+	visible = m.getVisibleFilterRepos()
+	if len(visible) != 2 { // "All repos" + "Backend Services"
+		t.Errorf("Search 'backend': expected 2 visible, got %d", len(visible))
+	}
+	if len(visible) > 1 && visible[1].name != "Backend Services" {
+		t.Errorf("Expected to find 'Backend Services', got '%s'", visible[1].name)
+	}
+
+	// Search by path basename of grouped repo (should match "Backend Services")
+	m.filterSearch = "api-server"
+	visible = m.getVisibleFilterRepos()
+	if len(visible) != 2 { // "All repos" + "Backend Services"
+		t.Errorf("Search 'api-server': expected 2 visible, got %d", len(visible))
+	}
+	if len(visible) > 1 && visible[1].name != "Backend Services" {
+		t.Errorf("Expected to find 'Backend Services' via path, got '%s'", visible[1].name)
+	}
+}
+
 func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.height = 20

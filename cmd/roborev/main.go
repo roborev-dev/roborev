@@ -900,6 +900,11 @@ Examples:
   roborev respond --job 1234567 "msg"  # Force numeric arg as job ID`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Ensure daemon is running
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("daemon not running: %w", err)
+			}
+
 			ref := args[0]
 
 			// Check if ref is a job ID (numeric) or SHA

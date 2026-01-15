@@ -55,12 +55,13 @@ The agent will run tests and verify the build before committing.
 Use --since to specify a starting commit when on the main branch or to
 limit how far back to look for reviews to address.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRefine(agentName, reasoning, maxIterations, quiet, allowUnsafeAgents, since)
+			unsafeFlagChanged := cmd.Flags().Changed("allow-unsafe-agents")
+			return runRefine(agentName, reasoning, maxIterations, quiet, allowUnsafeAgents, unsafeFlagChanged, since)
 		},
 	}
 
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for addressing findings (default: from config)")
-	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast (default), standard, or thorough")
+	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard (default), or thorough")
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 10, "maximum refinement iterations")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "suppress agent output, show elapsed time instead")
 	cmd.Flags().BoolVar(&allowUnsafeAgents, "allow-unsafe-agents", false, "allow agents to run without sandboxing")
@@ -171,7 +172,7 @@ func validateRefineContext(since string) (repoPath, currentBranch, defaultBranch
 	return repoPath, currentBranch, defaultBranch, mergeBase, nil
 }
 
-func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool, since string) error {
+func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool, unsafeFlagChanged bool, since string) error {
 	// 1. Validate git and branch context (before touching daemon)
 	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(since)
 	if err != nil {
@@ -198,7 +199,7 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 	// Resolve agent
 	cfg, _ := config.LoadGlobal()
 	resolvedAgent := config.ResolveAgent(agentName, repoPath, cfg)
-	allowUnsafeAgents = resolveAllowUnsafeAgents(allowUnsafeAgents, cfg)
+	allowUnsafeAgents = resolveAllowUnsafeAgents(allowUnsafeAgents, unsafeFlagChanged, cfg)
 	agent.SetAllowUnsafeAgents(allowUnsafeAgents)
 
 	// Resolve reasoning level from CLI or config (default: fast)
@@ -324,6 +325,13 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 		// Record clean state before agent runs to detect user edits during run
 		wasCleanBeforeAgent := git.IsWorkingTreeClean(repoPath)
 
+		// Capture HEAD SHA and branch to detect concurrent changes (branch switch, pull, etc.)
+		headBeforeAgent, err := git.ResolveSHA(repoPath, "HEAD")
+		if err != nil {
+			return fmt.Errorf("cannot determine HEAD: %w", err)
+		}
+		branchBeforeAgent := git.GetCurrentBranch(repoPath)
+
 		// Create temp worktree to isolate agent work from user's working tree
 		worktreePath, cleanupWorktree, err := createTempWorktree(repoPath)
 		if err != nil {
@@ -358,6 +366,19 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 		if wasCleanBeforeAgent && !git.IsWorkingTreeClean(repoPath) {
 			cleanupWorktree()
 			return fmt.Errorf("working tree changed during refine - aborting to prevent data loss")
+		}
+
+		// Check if HEAD or branch changed during agent run (branch switch, pull, etc.)
+		headAfterAgent, err := git.ResolveSHA(repoPath, "HEAD")
+		if err != nil {
+			cleanupWorktree()
+			return fmt.Errorf("cannot determine HEAD after agent run: %w", err)
+		}
+		branchAfterAgent := git.GetCurrentBranch(repoPath)
+		if headAfterAgent != headBeforeAgent || branchAfterAgent != branchBeforeAgent {
+			cleanupWorktree()
+			return fmt.Errorf("HEAD changed during refine (was %s on %s, now %s on %s) - aborting to prevent applying patch to wrong commit",
+				headBeforeAgent[:7], branchBeforeAgent, headAfterAgent[:7], branchAfterAgent)
 		}
 
 		if err != nil {
@@ -458,11 +479,18 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 	return fmt.Errorf("max iterations (%d) reached without all reviews passing", maxIterations)
 }
 
-func resolveAllowUnsafeAgents(flag bool, cfg *config.Config) bool {
+// resolveAllowUnsafeAgents determines whether to allow unsafe agents.
+// Priority: explicit CLI flag > global config > default (false)
+func resolveAllowUnsafeAgents(flag bool, flagChanged bool, cfg *config.Config) bool {
+	// If user explicitly set the flag, honor their choice
+	if flagChanged {
+		return flag
+	}
+	// Otherwise use config (defaults to false)
 	if cfg != nil && cfg.AllowUnsafeAgents {
 		return true
 	}
-	return flag
+	return false
 }
 
 // findFailedReviewForBranch finds an unaddressed failed review for any of the given commits.
@@ -472,7 +500,10 @@ func findFailedReviewForBranch(client daemon.Client, commits []string) (*storage
 	// Iterate oldest to newest (commits are in chronological order)
 	for _, sha := range commits {
 		review, err := client.GetReviewBySHA(sha)
-		if err != nil || review == nil {
+		if err != nil {
+			return nil, fmt.Errorf("fetching review for %s: %w", sha[:7], err)
+		}
+		if review == nil {
 			continue
 		}
 

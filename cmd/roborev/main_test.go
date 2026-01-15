@@ -316,7 +316,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	}
 	defer os.Chdir(origDir)
 
-	if err := runRefine("test", "", 1, true, false, ""); err == nil {
+	if err := runRefine("test", "", 1, true, false, false, ""); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
@@ -345,7 +345,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	defer func() { isTerminal = origIsTerminal }()
 
 	output := captureStdout(t, func() {
-		if err := runRefine("test", "", 1, true, false, ""); err == nil {
+		if err := runRefine("test", "", 1, true, false, false, ""); err == nil {
 			t.Fatal("expected error, got nil")
 		}
 	})
@@ -385,7 +385,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	defer agent.Register(agent.NewTestAgent())
 
 	output := captureStdout(t, func() {
-		if err := runRefine("test", "", 1, true, false, ""); err == nil {
+		if err := runRefine("test", "", 1, true, false, false, ""); err == nil {
 			t.Fatal("expected error, got nil")
 		}
 	})
@@ -1049,7 +1049,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	agent.Register(changer)
 	defer agent.Register(agent.NewTestAgent())
 
-	if err := runRefine("test", "", 2, true, false, ""); err == nil {
+	if err := runRefine("test", "", 2, true, false, false, ""); err == nil {
 		t.Fatal("expected error from reaching max iterations")
 	}
 
