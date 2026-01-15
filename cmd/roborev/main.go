@@ -839,11 +839,14 @@ func showCmd() *cobra.Command {
 The argument can be either a job ID (numeric) or a commit SHA.
 Job IDs are displayed in review notifications and the TUI.
 
+In a git repo, the argument is first tried as a git ref. If that fails
+and it's numeric, it's treated as a job ID. Use --job to force job ID.
+
 Examples:
   roborev show              # Show review for HEAD
   roborev show abc123       # Show review for commit
-  roborev show 42           # Show review for job ID 42
-  roborev show --job 123    # Force numeric arg as job ID`,
+  roborev show 42           # Job ID (if "42" is not a valid git ref)
+  roborev show --job 42     # Force as job ID even if "42" is a valid ref`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running (and restart if version mismatch)
@@ -869,11 +872,23 @@ Examples:
 				displayRef = shortSHA(sha)
 			} else {
 				arg := args[0]
-				// Check if it's a job ID (numeric) or SHA
-				isJobID := forceJobID
-				if !isJobID {
-					if _, err := strconv.ParseInt(arg, 10, 64); err == nil {
-						isJobID = true
+				var isJobID bool
+				var resolvedSHA string
+
+				if forceJobID {
+					isJobID = true
+				} else {
+					// Try to resolve as SHA first (handles numeric SHAs like "123456")
+					if root, err := git.GetRepoRoot("."); err == nil {
+						if resolved, err := git.ResolveSHA(root, arg); err == nil {
+							resolvedSHA = resolved
+						}
+					}
+					// If not resolvable as SHA and is numeric, treat as job ID
+					if resolvedSHA == "" {
+						if _, err := strconv.ParseInt(arg, 10, 64); err == nil {
+							isJobID = true
+						}
 					}
 				}
 
@@ -881,12 +896,9 @@ Examples:
 					queryURL = addr + "/api/review?job_id=" + arg
 					displayRef = "job " + arg
 				} else {
-					// Resolve SHA if in a git repo
 					sha := arg
-					if root, err := git.GetRepoRoot("."); err == nil {
-						if resolved, err := git.ResolveSHA(root, sha); err == nil {
-							sha = resolved
-						}
+					if resolvedSHA != "" {
+						sha = resolvedSHA
 					}
 					queryURL = addr + "/api/review?sha=" + sha
 					displayRef = shortSHA(sha)
@@ -908,7 +920,12 @@ Examples:
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
-			fmt.Printf("Review for %s (job %d, by %s)\n", displayRef, review.JobID, review.Agent)
+			// Avoid redundant "job X (job X, ...)" output
+			if strings.HasPrefix(displayRef, "job ") {
+				fmt.Printf("Review for %s (by %s)\n", displayRef, review.Agent)
+			} else {
+				fmt.Printf("Review for %s (job %d, by %s)\n", displayRef, review.JobID, review.Agent)
+			}
 			fmt.Println(strings.Repeat("-", 60))
 			fmt.Println(review.Output)
 
