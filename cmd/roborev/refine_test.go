@@ -880,6 +880,49 @@ func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 	}
 }
 
+func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, runGit := setupTestGitRepo(t)
+
+	// Create a commit on a separate branch that diverges from main
+	runGit("checkout", "-b", "other-branch")
+	if err := os.WriteFile(filepath.Join(repoDir, "other.txt"), []byte("other"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "other.txt")
+	runGit("commit", "-m", "commit on other branch")
+	otherBranchSHA := runGit("rev-parse", "HEAD")
+
+	// Go back to main and create a different commit
+	runGit("checkout", "main")
+	if err := os.WriteFile(filepath.Join(repoDir, "main2.txt"), []byte("main2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "main2.txt")
+	runGit("commit", "-m", "second commit on main")
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	// Using --since with a commit from a different branch (not ancestor of HEAD) should fail
+	_, _, _, _, err = validateRefineContext(otherBranchSHA)
+	if err == nil {
+		t.Fatal("expected error when --since is not an ancestor of HEAD")
+	}
+	if !strings.Contains(err.Error(), "not an ancestor of HEAD") {
+		t.Errorf("expected 'not an ancestor of HEAD' error, got: %v", err)
+	}
+}
+
 func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

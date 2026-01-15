@@ -145,6 +145,14 @@ func ResolveSHA(repoPath, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// IsAncestor checks if ancestor is an ancestor of descendant.
+// Returns true if ancestor is reachable from descendant via the commit graph.
+func IsAncestor(repoPath, ancestor, descendant string) bool {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, descendant)
+	cmd.Dir = repoPath
+	return cmd.Run() == nil
+}
+
 // GetRepoRoot returns the root directory of the git repository
 func GetRepoRoot(path string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")

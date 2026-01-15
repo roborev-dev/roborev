@@ -157,6 +157,10 @@ func validateRefineContext(since string) (repoPath, currentBranch, defaultBranch
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("cannot resolve --since %q: %w", since, err)
 		}
+		// Verify --since is an ancestor of HEAD (reachable in commit history)
+		if !git.IsAncestor(repoPath, mergeBase, "HEAD") {
+			return "", "", "", "", fmt.Errorf("--since %q is not an ancestor of HEAD", since)
+		}
 	} else {
 		// Default behavior: use merge-base with default branch
 		if currentBranch == git.LocalBranchName(defaultBranch) {

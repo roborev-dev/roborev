@@ -1421,3 +1421,67 @@ func TestLocalBranchName(t *testing.T) {
 		})
 	}
 }
+
+func TestIsAncestor(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	runGit(t, tmpDir, "init", "-b", "main")
+	runGit(t, tmpDir, "config", "user.email", "test@test.com")
+	runGit(t, tmpDir, "config", "user.name", "Test")
+
+	// Create base commit
+	if err := os.WriteFile(filepath.Join(tmpDir, "base.txt"), []byte("base"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, tmpDir, "add", "base.txt")
+	runGit(t, tmpDir, "commit", "-m", "base commit")
+	baseSHA := runGit(t, tmpDir, "rev-parse", "HEAD")
+
+	// Create second commit on main
+	if err := os.WriteFile(filepath.Join(tmpDir, "second.txt"), []byte("second"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, tmpDir, "add", "second.txt")
+	runGit(t, tmpDir, "commit", "-m", "second commit")
+	secondSHA := runGit(t, tmpDir, "rev-parse", "HEAD")
+
+	// Create a divergent branch from base
+	runGit(t, tmpDir, "checkout", baseSHA)
+	runGit(t, tmpDir, "checkout", "-b", "divergent")
+	if err := os.WriteFile(filepath.Join(tmpDir, "divergent.txt"), []byte("divergent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, tmpDir, "add", "divergent.txt")
+	runGit(t, tmpDir, "commit", "-m", "divergent commit")
+	divergentSHA := runGit(t, tmpDir, "rev-parse", "HEAD")
+
+	t.Run("base is ancestor of second", func(t *testing.T) {
+		if !IsAncestor(tmpDir, baseSHA, secondSHA) {
+			t.Error("expected base to be ancestor of second")
+		}
+	})
+
+	t.Run("second is not ancestor of base", func(t *testing.T) {
+		if IsAncestor(tmpDir, secondSHA, baseSHA) {
+			t.Error("expected second to NOT be ancestor of base")
+		}
+	})
+
+	t.Run("divergent is not ancestor of second", func(t *testing.T) {
+		if IsAncestor(tmpDir, divergentSHA, secondSHA) {
+			t.Error("expected divergent to NOT be ancestor of second (different branches)")
+		}
+	})
+
+	t.Run("base is ancestor of divergent", func(t *testing.T) {
+		if !IsAncestor(tmpDir, baseSHA, divergentSHA) {
+			t.Error("expected base to be ancestor of divergent")
+		}
+	})
+
+	t.Run("commit is ancestor of itself", func(t *testing.T) {
+		if !IsAncestor(tmpDir, baseSHA, baseSHA) {
+			t.Error("expected commit to be ancestor of itself")
+		}
+	})
+}
