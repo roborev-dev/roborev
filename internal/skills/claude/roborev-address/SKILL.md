@@ -5,7 +5,7 @@ description: Address findings from a roborev code review by fetching the review 
 
 # roborev:address
 
-Address findings from a roborev code review.
+Fetch a code review and fix its findings.
 
 ## Usage
 
@@ -13,54 +13,48 @@ Address findings from a roborev code review.
 /roborev:address <job_id>
 ```
 
-## Description
-
-Fetches a code review by job ID and addresses the findings. The job ID is shown in review notifications (e.g., "Review #1019").
-
 ## Instructions
 
 When the user invokes `/roborev:address <job_id>`:
 
-1. **Fetch the review** using the roborev CLI:
-   ```bash
-   roborev show --job <job_id>
-   ```
+### 1. Fetch the review
 
-2. **Check the verdict** at the top of the review output:
-   - If **Pass**: Inform the user no action is needed
-   - If **Fail**: Continue to address the findings
+Execute:
+```bash
+roborev show --job <job_id>
+```
 
-3. **Parse the findings** from the review output. Look for:
-   - Severity levels (high, medium, low)
-   - File paths and line numbers
-   - Specific issues to address
+### 2. Check the verdict
 
-4. **Read the relevant files** mentioned in the findings.
+- If **Pass**: Inform the user no action is needed
+- If **Fail**: Continue to address the findings
 
-5. **Address findings by priority** (high severity first):
-   - Fix bugs and issues
-   - Add missing error handling
-   - Improve code quality
-   - Add tests if requested
+### 3. Fix the findings
 
-6. **Handle false positives**: If a finding is invalid or already handled:
-   - Explain why to the user
-   - Suggest documenting this with `/roborev:respond`
+Parse the findings from the output (severity, file paths, line numbers), then:
 
-7. **Run tests** if the project has them to verify the fixes work.
+1. Read the relevant files
+2. Fix issues by priority (high severity first)
+3. Run tests if the project has them
 
-8. **Summarize what was done** and ask the user if they want to:
-   - Commit the changes
-   - Respond to the review with a summary using `/roborev:respond <job_id> <message>`
+### 4. Complete the workflow
+
+After fixing, **record what was done** by executing:
+```bash
+roborev respond --job <job_id> "<summary of changes>"
+```
+
+This records your response in roborev so the review shows it was addressed.
+
+Then ask the user if they want to commit the changes.
 
 ## Example
 
 User: `/roborev:address 1019`
 
 Agent:
-1. Runs `roborev show --job 1019` to fetch the review
-2. Sees verdict is Fail with 3 findings (1 high, 2 low)
-3. Reads the files mentioned in the findings
-4. Addresses the high severity finding first, then the low ones
-5. Runs tests to verify the fixes
-6. Reports: "I've addressed the 3 findings: fixed the null check in foo.go:42 (high), added error handling in bar.go:15 (low), and updated the test (low). All tests pass. Would you like me to commit these changes?"
+1. Executes `roborev show --job 1019`
+2. Sees verdict is Fail with 2 findings
+3. Reads files, fixes the issues, runs tests
+4. Executes `roborev respond --job 1019 "Fixed null check in foo.go and added error handling in bar.go"`
+5. Asks: "I've addressed both findings and recorded the response. Tests pass. Would you like me to commit these changes?"
