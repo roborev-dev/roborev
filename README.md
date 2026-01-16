@@ -42,6 +42,7 @@ roborev tui           # View reviews in interactive UI
 | `roborev status` | Show daemon and queue status |
 | `roborev tui` | Interactive terminal UI |
 | `roborev show [sha]` | Display review for commit |
+| `roborev show --job <id>` | Display review by job ID |
 | `roborev review <sha>` | Queue a commit for review |
 | `roborev review <start> <end>` | Queue a commit range (inclusive) |
 | `roborev review --branch` | Review all commits on current branch |
@@ -55,6 +56,7 @@ roborev tui           # View reviews in interactive UI
 | `roborev install-hook` | Install git post-commit hook |
 | `roborev uninstall-hook` | Remove git post-commit hook |
 | `roborev update` | Update roborev to latest version |
+| `roborev skills install` | Install agent skills (Claude Code, Codex) |
 | `roborev version` | Show version information |
 
 ## Reviewing Branches
@@ -237,6 +239,29 @@ For `--dirty` reviews, diffs are limited to 200KB since uncommitted changes cann
 | `opencode` | `opencode` | `npm install -g opencode-ai` |
 
 roborev auto-detects installed agents and falls back in order: codex → claude-code → gemini → copilot → opencode.
+
+## Agent Skills
+
+Install slash commands that let AI agents fix review findings directly:
+
+```bash
+roborev skills install
+```
+
+| Skill | Description |
+|-------|-------------|
+| `/roborev:address <job_id>` | Fetch a review and fix its findings |
+| `/roborev:respond <job_id> [message]` | Add a response to document changes |
+
+When you receive a review notification like "Review #1019: Fail", ask your agent:
+
+```
+/roborev:address 1019
+```
+
+The agent fetches the review, reads relevant files, fixes issues by priority (high severity first), runs tests, and offers to commit. Skills are updated automatically with `roborev update`.
+
+For Codex, use `$roborev:address` and `$roborev:respond` instead.
 
 ## TUI
 
