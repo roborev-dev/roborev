@@ -23,6 +23,7 @@ import (
 	"github.com/wesm/roborev/internal/config"
 	"github.com/wesm/roborev/internal/daemon"
 	"github.com/wesm/roborev/internal/git"
+	"github.com/wesm/roborev/internal/skills"
 	"github.com/wesm/roborev/internal/storage"
 	"github.com/wesm/roborev/internal/update"
 	"github.com/wesm/roborev/internal/version"
@@ -59,6 +60,7 @@ func main() {
 	rootCmd.AddCommand(streamCmd())
 	rootCmd.AddCommand(tuiCmd())
 	rootCmd.AddCommand(refineCmd())
+	rootCmd.AddCommand(skillsCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())
 
@@ -1529,6 +1531,60 @@ func uninstallHookCmd() *cobra.Command {
 	}
 }
 
+func skillsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "skills",
+		Short: "Manage AI agent skills",
+		Long:  "Install and manage roborev skills for AI agents (Claude Code, Codex)",
+	}
+
+	installCmd := &cobra.Command{
+		Use:   "install",
+		Short: "Install roborev skills for AI agents",
+		Long: `Install roborev skills to your AI agent configuration directories.
+
+Skills are installed for agents whose config directories exist:
+  - Claude Code: ~/.claude/skills/
+  - Codex: ~/.codex/skills/
+
+This command is idempotent - running it multiple times is safe.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			results, err := skills.Install()
+			if err != nil {
+				return err
+			}
+
+			anyInstalled := false
+			for _, result := range results {
+				if result.Skipped {
+					fmt.Printf("%s: skipped (no ~/.%s directory)\n", result.Agent, result.Agent)
+					continue
+				}
+
+				if len(result.Installed) > 0 {
+					anyInstalled = true
+					fmt.Printf("%s: installed %s\n", result.Agent, strings.Join(result.Installed, ", "))
+				}
+				if len(result.Updated) > 0 {
+					anyInstalled = true
+					fmt.Printf("%s: updated %s\n", result.Agent, strings.Join(result.Updated, ", "))
+				}
+			}
+
+			if !anyInstalled {
+				fmt.Println("\nNo agents found. Install Claude Code or Codex first, then run this command.")
+			} else {
+				fmt.Println("\nSkills installed! Try /roborev:address or /roborev:respond in your agent.")
+			}
+
+			return nil
+		},
+	}
+
+	cmd.AddCommand(installCmd)
+	return cmd
+}
+
 func updateCmd() *cobra.Command {
 	var checkOnly bool
 	var yes bool
@@ -1638,6 +1694,30 @@ Requires confirmation before making changes (use --yes to skip).`,
 					fmt.Printf("warning: failed to start daemon: %v\n", err)
 				} else {
 					fmt.Println("OK")
+				}
+			}
+
+			// Update skills using the NEW binary (current process has old embedded skills)
+			if skills.IsInstalled(skills.AgentClaude) || skills.IsInstalled(skills.AgentCodex) {
+				fmt.Print("Updating skills... ")
+				newBinary := filepath.Join(binDir, "roborev")
+				if runtime.GOOS == "windows" {
+					newBinary += ".exe"
+				}
+				skillsCmd := exec.Command(newBinary, "skills", "install")
+				if output, err := skillsCmd.CombinedOutput(); err != nil {
+					fmt.Printf("warning: %v\n", err)
+				} else {
+					// Parse output to show what was updated
+					lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+					for _, line := range lines {
+						if strings.Contains(line, "updated") {
+							fmt.Println(line)
+						}
+					}
+					if !strings.Contains(string(output), "updated") {
+						fmt.Println("OK")
+					}
 				}
 			}
 

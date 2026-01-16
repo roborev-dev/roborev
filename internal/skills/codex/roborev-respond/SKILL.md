@@ -1,0 +1,49 @@
+---
+name: roborev-respond
+description: Add a response or note to a roborev code review to document how findings were addressed
+metadata:
+  short-description: Respond to roborev review
+---
+
+# roborev-respond
+
+Add a response to a roborev code review.
+
+## Usage
+
+```
+/roborev-respond <job_id> [message]
+```
+
+## Description
+
+Adds a response or note to a code review. Useful for documenting how findings were addressed or explaining why certain suggestions weren't implemented.
+
+## Instructions
+
+When the user invokes this skill:
+
+1. **If a message is provided**, run:
+   ```bash
+   roborev respond <job_id> "<message>"
+   ```
+
+2. **If no message is provided**, ask the user what they'd like to say, then run the command.
+
+3. **Confirm the response was added** by checking the command output.
+
+## Examples
+
+User: `/roborev-respond 1019 Fixed all findings in commit abc123`
+
+Agent: Runs `roborev respond 1019 "Fixed all findings in commit abc123"` and confirms the response was added.
+
+---
+
+User: `/roborev-respond 1019`
+
+Agent: "What would you like to say in response to review #1019?"
+
+User: "The null check issue was a false positive - the value is guaranteed non-nil by the caller"
+
+Agent: Runs `roborev respond 1019 "The null check issue was a false positive - the value is guaranteed non-nil by the caller"` and confirms.

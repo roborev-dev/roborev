@@ -11,18 +11,21 @@ Agent skills for addressing and responding to roborev code reviews.
 
 ## Installation
 
+### Via roborev CLI (Recommended)
+
+Skills are bundled with roborev. Install them with:
+
+```bash
+roborev skills install
+```
+
+This installs skills for all supported agents (Claude Code, Codex) whose config directories exist.
+
+Skills are automatically updated when you run `roborev update`.
+
 ### Claude Code Marketplace
 
 Install the `roborev` skill pack from the Claude Code marketplace.
-
-### Manual Installation
-
-Copy the skill files to your project's `.claude/skills/` directory:
-
-```bash
-mkdir -p .claude/skills
-cp roborev-address.md roborev-respond.md .claude/skills/
-```
 
 ## Usage
 

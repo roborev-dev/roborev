@@ -179,6 +179,9 @@ main() {
     echo "Get started:"
     echo "  cd your-repo"
     echo "  roborev init"
+    echo
+    echo "For AI agent skills (Claude Code, Codex):"
+    echo "  roborev skills install"
 }
 
 main "$@"
