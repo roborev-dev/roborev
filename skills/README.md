@@ -1,58 +1,54 @@
 # roborev Skills
 
-Agent skills for addressing and responding to roborev code reviews.
-
-## Available Skills
-
-| Skill | Description |
-|-------|-------------|
-| `/roborev:address <job_id>` | Fetch a review and address its findings |
-| `/roborev:respond <job_id> [message]` | Add a response to a review |
+Let AI agents automatically fix issues found in code reviews.
 
 ## Installation
-
-### Via roborev CLI (Recommended)
-
-Skills are bundled with roborev. Install them with:
 
 ```bash
 roborev skills install
 ```
 
-This installs skills for all supported agents (Claude Code, Codex) whose config directories exist.
+Skills are updated automatically when you run `roborev update`.
 
-Skills are automatically updated when you run `roborev update`.
+## Skills
 
-### Claude Code Marketplace
+| Skill | Description |
+|-------|-------------|
+| `/roborev:address <job_id>` | Fetch a review and fix its findings |
+| `/roborev:respond <job_id> [message]` | Add a response to a review |
 
-Install the `roborev` skill pack from the Claude Code marketplace.
+## Example Workflow
 
-## Usage
-
-When you receive a review notification like:
+When you receive a review notification:
 
 ```
-Review #1019 roborev abc123 (codex)
-Verdict: Fail
-**Findings**
+Review #1019: Fail
 - high: Missing null check in foo.go:42
+- low: Consider adding error context in bar.go:15
 ```
 
-Instead of copy-pasting, simply run:
+Ask your agent to fix it:
 
 ```
 /roborev:address 1019
 ```
 
-The agent will fetch the review, read the relevant files, and address the findings.
+The agent will:
+1. Fetch the review
+2. Read the relevant files
+3. Fix issues by priority (high severity first)
+4. Run tests to verify
+5. Offer to commit the changes
 
-After addressing, respond to the review:
+After fixing, document what was done:
 
 ```
-/roborev:respond 1019 Fixed null check and added test
+/roborev:respond 1019 Fixed null check and improved error handling
 ```
 
-## Prerequisites
+## Supported Agents
 
-- `roborev` CLI installed and in PATH
-- roborev daemon running (`roborev daemon start`)
+| Agent | Invocation |
+|-------|------------|
+| Claude Code | `/roborev:address`, `/roborev:respond` |
+| Codex | `$roborev:address`, `$roborev:respond` |
