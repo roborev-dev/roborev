@@ -54,29 +54,39 @@ func Install() ([]InstallResult, error) {
 	return results, nil
 }
 
-// IsInstalled checks if skills are installed for the given agent
+// IsInstalled checks if any roborev skills are installed for the given agent
 func IsInstalled(agent Agent) bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return false
 	}
 
-	var skillsDir string
-	var checkFile string
+	var checkFiles []string
 
 	switch agent {
 	case AgentClaude:
-		skillsDir = filepath.Join(home, ".claude", "skills")
-		checkFile = filepath.Join(skillsDir, "roborev-address.md")
+		skillsDir := filepath.Join(home, ".claude", "skills")
+		checkFiles = []string{
+			filepath.Join(skillsDir, "roborev-address.md"),
+			filepath.Join(skillsDir, "roborev-respond.md"),
+		}
 	case AgentCodex:
-		skillsDir = filepath.Join(home, ".codex", "skills")
-		checkFile = filepath.Join(skillsDir, "roborev-address", "SKILL.md")
+		skillsDir := filepath.Join(home, ".codex", "skills")
+		checkFiles = []string{
+			filepath.Join(skillsDir, "roborev-address", "SKILL.md"),
+			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
+		}
 	default:
 		return false
 	}
 
-	_, err = os.Stat(checkFile)
-	return err == nil
+	// Return true if any skill file exists
+	for _, f := range checkFiles {
+		if _, err := os.Stat(f); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Update updates skills for agents that already have them installed
