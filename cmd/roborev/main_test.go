@@ -1347,3 +1347,37 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 		t.Errorf("expected job to be polled at least twice (wait behavior), got %d polls", atomic.LoadInt32(&pollCount))
 	}
 }
+
+// ============================================================================
+// Show Command Tests
+// ============================================================================
+
+func TestShowJobFlagRequiresArgument(t *testing.T) {
+	// Setup mock daemon that responds to /api/status with version info
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/status" {
+			json.NewEncoder(w).Encode(map[string]string{"version": version.Version})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	_, cleanup := setupMockDaemon(t, handler)
+	defer cleanup()
+
+	// Create the show command and execute with --job but no argument
+	cmd := showCmd()
+	cmd.SetArgs([]string{"--job"})
+
+	// Capture stderr where cobra writes errors
+	var errBuf bytes.Buffer
+	cmd.SetErr(&errBuf)
+	cmd.SetOut(&errBuf)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --job used without argument")
+	}
+	if !strings.Contains(err.Error(), "--job requires a job ID argument") {
+		t.Errorf("expected '--job requires a job ID argument' error, got: %v", err)
+	}
+}
