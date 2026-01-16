@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 )
 
@@ -152,8 +153,8 @@ func installClaude() (InstallResult, error) {
 			return result, fmt.Errorf("create %s dir: %w", skillName, err)
 		}
 
-		// Read SKILL.md
-		content, err := claudeSkills.ReadFile(filepath.Join("claude", skillName, "SKILL.md"))
+		// Read SKILL.md (use path.Join for embed FS - requires forward slashes)
+		content, err := claudeSkills.ReadFile(path.Join("claude", skillName, "SKILL.md"))
 		if err != nil {
 			return result, fmt.Errorf("read %s/SKILL.md: %w", skillName, err)
 		}
@@ -215,8 +216,8 @@ func installCodex() (InstallResult, error) {
 			return result, fmt.Errorf("create %s dir: %w", skillName, err)
 		}
 
-		// Read SKILL.md
-		content, err := codexSkills.ReadFile(filepath.Join("codex", skillName, "SKILL.md"))
+		// Read SKILL.md (use path.Join for embed FS - requires forward slashes)
+		content, err := codexSkills.ReadFile(path.Join("codex", skillName, "SKILL.md"))
 		if err != nil {
 			return result, fmt.Errorf("read %s/SKILL.md: %w", skillName, err)
 		}

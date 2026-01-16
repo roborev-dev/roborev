@@ -863,6 +863,9 @@ Examples:
 			var displayRef string
 
 			if len(args) == 0 {
+				if forceJobID {
+					return fmt.Errorf("--job requires a job ID argument")
+				}
 				// Default to HEAD
 				sha := "HEAD"
 				if root, err := git.GetRepoRoot("."); err == nil {
@@ -1609,7 +1612,40 @@ This command is idempotent - running it multiple times is safe.`,
 		},
 	}
 
+	updateCmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update roborev skills for agents that have them installed",
+		Long: `Update roborev skills only for agents that already have them installed.
+
+Unlike 'install', this command does NOT install skills for new agents -
+it only updates existing installations. Used by 'roborev update'.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			results, err := skills.Update()
+			if err != nil {
+				return err
+			}
+
+			if len(results) == 0 {
+				fmt.Println("No skills to update (none installed)")
+				return nil
+			}
+
+			for _, result := range results {
+				if len(result.Updated) > 0 {
+					fmt.Printf("%s: updated %d skill(s)\n", result.Agent, len(result.Updated))
+				}
+				if len(result.Installed) > 0 {
+					// This can happen if user had one skill but not the other
+					fmt.Printf("%s: installed %d skill(s)\n", result.Agent, len(result.Installed))
+				}
+			}
+
+			return nil
+		},
+	}
+
 	cmd.AddCommand(installCmd)
+	cmd.AddCommand(updateCmd)
 	return cmd
 }
 
@@ -1726,13 +1762,14 @@ Requires confirmation before making changes (use --yes to skip).`,
 			}
 
 			// Update skills using the NEW binary (current process has old embedded skills)
+			// Use "skills update" to only update agents that already have skills installed
 			if skills.IsInstalled(skills.AgentClaude) || skills.IsInstalled(skills.AgentCodex) {
 				fmt.Print("Updating skills... ")
 				newBinary := filepath.Join(binDir, "roborev")
 				if runtime.GOOS == "windows" {
 					newBinary += ".exe"
 				}
-				skillsCmd := exec.Command(newBinary, "skills", "install")
+				skillsCmd := exec.Command(newBinary, "skills", "update")
 				if output, err := skillsCmd.CombinedOutput(); err != nil {
 					fmt.Printf("warning: %v\n", err)
 				} else {
