@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 )
 
-//go:embed claude/*.md
+//go:embed claude/*/SKILL.md
 var claudeSkills embed.FS
 
-//go:embed codex/**/SKILL.md
+//go:embed codex/*/SKILL.md
 var codexSkills embed.FS
 
 // Agent represents a supported AI agent
@@ -67,8 +67,8 @@ func IsInstalled(agent Agent) bool {
 	case AgentClaude:
 		skillsDir := filepath.Join(home, ".claude", "skills")
 		checkFiles = []string{
-			filepath.Join(skillsDir, "roborev-address.md"),
-			filepath.Join(skillsDir, "roborev-respond.md"),
+			filepath.Join(skillsDir, "roborev-address", "SKILL.md"),
+			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
 		}
 	case AgentCodex:
 		skillsDir := filepath.Join(home, ".codex", "skills")
@@ -133,33 +133,42 @@ func installClaude() (InstallResult, error) {
 		return result, fmt.Errorf("create skills dir: %w", err)
 	}
 
-	// Install each skill file
+	// Install each skill directory
 	entries, err := fs.ReadDir(claudeSkills, "claude")
 	if err != nil {
 		return result, fmt.Errorf("read embedded skills: %w", err)
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if !entry.IsDir() {
 			continue
 		}
 
-		content, err := claudeSkills.ReadFile(filepath.Join("claude", entry.Name()))
-		if err != nil {
-			return result, fmt.Errorf("read %s: %w", entry.Name(), err)
+		skillName := entry.Name()
+		skillDir := filepath.Join(skillsDir, skillName)
+
+		// Create skill directory
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			return result, fmt.Errorf("create %s dir: %w", skillName, err)
 		}
 
-		destPath := filepath.Join(skillsDir, entry.Name())
+		// Read SKILL.md
+		content, err := claudeSkills.ReadFile(filepath.Join("claude", skillName, "SKILL.md"))
+		if err != nil {
+			return result, fmt.Errorf("read %s/SKILL.md: %w", skillName, err)
+		}
+
+		destPath := filepath.Join(skillDir, "SKILL.md")
 		existed := fileExists(destPath)
 
 		if err := os.WriteFile(destPath, content, 0644); err != nil {
-			return result, fmt.Errorf("write %s: %w", entry.Name(), err)
+			return result, fmt.Errorf("write %s/SKILL.md: %w", skillName, err)
 		}
 
 		if existed {
-			result.Updated = append(result.Updated, entry.Name())
+			result.Updated = append(result.Updated, skillName)
 		} else {
-			result.Installed = append(result.Installed, entry.Name())
+			result.Installed = append(result.Installed, skillName)
 		}
 	}
 

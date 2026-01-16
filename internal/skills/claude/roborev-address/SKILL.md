@@ -1,4 +1,9 @@
-# /roborev:address
+---
+name: roborev:address
+description: Address findings from a roborev code review by fetching the review and making necessary code changes
+---
+
+# roborev:address
 
 Address findings from a roborev code review.
 

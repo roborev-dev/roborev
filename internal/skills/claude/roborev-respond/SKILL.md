@@ -1,4 +1,9 @@
-# /roborev:respond
+---
+name: roborev:respond
+description: Add a response or note to a roborev code review to document how findings were addressed
+---
+
+# roborev:respond
 
 Add a response to a roborev code review.
 
@@ -23,7 +28,6 @@ When the user invokes `/roborev:respond <job_id> [message]`:
    ```bash
    roborev respond --job <job_id> "<message>"
    ```
-   Note: Escape any double quotes in the message with backslash.
 
 2. **If no message is provided**, ask the user what they'd like to say, then run the command.
 
@@ -31,9 +35,9 @@ When the user invokes `/roborev:respond <job_id> [message]`:
 
 ## Examples
 
-User: `/roborev:respond 1019 Fixed all findings in commit abc123`
+User: `/roborev:respond 1019 Fixed all issues`
 
-Agent: Runs `roborev respond --job 1019 "Fixed all findings in commit abc123"` and confirms the response was added.
+Agent: Runs `roborev respond --job 1019 "Fixed all issues"` and confirms the response was added.
 
 ---
 
@@ -43,4 +47,4 @@ Agent: "What would you like to say in response to review #1019?"
 
 User: "The null check issue was a false positive - the value is guaranteed non-nil by the caller"
 
-Agent: Runs `roborev respond --job 1019 "The null check issue was a false positive - the value is guaranteed non-nil by the caller"` and confirms.
+Agent: Runs `roborev respond --job 1019 "The null check issue was a false positive - the value is guaranteed non-nil by the caller"` and confirms the response was added.

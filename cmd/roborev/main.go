@@ -1554,7 +1554,24 @@ This command is idempotent - running it multiple times is safe.`,
 				return err
 			}
 
+			// formatSkills formats skill names with the correct invocation prefix per agent
+			// Claude uses /skill:name, Codex uses $skill:name
+			// Directory names use hyphens (roborev-address) but invocation uses colons (roborev:address)
+			formatSkills := func(agent skills.Agent, skillNames []string) string {
+				prefix := "/"
+				if agent == skills.AgentCodex {
+					prefix = "$"
+				}
+				formatted := make([]string, len(skillNames))
+				for i, name := range skillNames {
+					// Convert roborev-address to roborev:address
+					formatted[i] = prefix + strings.Replace(name, "roborev-", "roborev:", 1)
+				}
+				return strings.Join(formatted, ", ")
+			}
+
 			anyInstalled := false
+			var installedAgents []skills.Agent
 			for _, result := range results {
 				if result.Skipped {
 					fmt.Printf("%s: skipped (no ~/.%s directory)\n", result.Agent, result.Agent)
@@ -1563,18 +1580,29 @@ This command is idempotent - running it multiple times is safe.`,
 
 				if len(result.Installed) > 0 {
 					anyInstalled = true
-					fmt.Printf("%s: installed %s\n", result.Agent, strings.Join(result.Installed, ", "))
+					installedAgents = append(installedAgents, result.Agent)
+					fmt.Printf("%s: installed %s\n", result.Agent, formatSkills(result.Agent, result.Installed))
 				}
 				if len(result.Updated) > 0 {
 					anyInstalled = true
-					fmt.Printf("%s: updated %s\n", result.Agent, strings.Join(result.Updated, ", "))
+					if len(result.Installed) == 0 {
+						installedAgents = append(installedAgents, result.Agent)
+					}
+					fmt.Printf("%s: updated %s\n", result.Agent, formatSkills(result.Agent, result.Updated))
 				}
 			}
 
 			if !anyInstalled {
 				fmt.Println("\nNo agents found. Install Claude Code or Codex first, then run this command.")
 			} else {
-				fmt.Println("\nSkills installed! Try /roborev:address or /roborev:respond in your agent.")
+				fmt.Println("\nSkills installed! Try:")
+				for _, agent := range installedAgents {
+					if agent == skills.AgentClaude {
+						fmt.Println("  Claude Code: /roborev:address or /roborev:respond")
+					} else if agent == skills.AgentCodex {
+						fmt.Println("  Codex: $roborev:address or $roborev:respond")
+					}
+				}
 			}
 
 			return nil

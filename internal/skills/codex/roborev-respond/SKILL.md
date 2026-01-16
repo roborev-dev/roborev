@@ -1,18 +1,16 @@
 ---
-name: roborev-respond
+name: roborev:respond
 description: Add a response or note to a roborev code review to document how findings were addressed
-metadata:
-  short-description: Respond to roborev review
 ---
 
-# roborev-respond
+# roborev:respond
 
 Add a response to a roborev code review.
 
 ## Usage
 
 ```
-/roborev-respond <job_id> [message]
+$roborev:respond <job_id> [message]
 ```
 
 ## Description
@@ -24,13 +22,12 @@ Adds a response or note to a code review. Common use cases:
 
 ## Instructions
 
-When the user invokes this skill:
+When the user invokes `$roborev:respond <job_id> [message]`:
 
 1. **If a message is provided**, run:
    ```bash
    roborev respond --job <job_id> "<message>"
    ```
-   Note: Escape any double quotes in the message with backslash.
 
 2. **If no message is provided**, ask the user what they'd like to say, then run the command.
 
@@ -38,16 +35,16 @@ When the user invokes this skill:
 
 ## Examples
 
-User: `/roborev-respond 1019 Fixed all findings in commit abc123`
+User: `$roborev:respond 1019 Fixed all issues`
 
-Agent: Runs `roborev respond --job 1019 "Fixed all findings in commit abc123"` and confirms the response was added.
+Agent: Runs `roborev respond --job 1019 "Fixed all issues"` and confirms the response was added.
 
 ---
 
-User: `/roborev-respond 1019`
+User: `$roborev:respond 1019`
 
 Agent: "What would you like to say in response to review #1019?"
 
-User: "The null check issue was a false positive - the value is guaranteed non-nil by the caller"
+User: "The null check issue was a false positive"
 
-Agent: Runs `roborev respond --job 1019 "The null check issue was a false positive - the value is guaranteed non-nil by the caller"` and confirms.
+Agent: Runs `roborev respond --job 1019 "The null check issue was a false positive"` and confirms the response was added.

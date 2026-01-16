@@ -1,18 +1,16 @@
 ---
-name: roborev-address
+name: roborev:address
 description: Address findings from a roborev code review by fetching the review and making necessary code changes
-metadata:
-  short-description: Address roborev review findings
 ---
 
-# roborev-address
+# roborev:address
 
 Address findings from a roborev code review.
 
 ## Usage
 
 ```
-/roborev-address <job_id>
+$roborev:address <job_id>
 ```
 
 ## Description
@@ -21,7 +19,7 @@ Fetches a code review by job ID and addresses the findings. The job ID is shown 
 
 ## Instructions
 
-When the user invokes this skill with a job ID:
+When the user invokes `$roborev:address <job_id>`:
 
 1. **Fetch the review** using the roborev CLI:
    ```bash
@@ -53,11 +51,11 @@ When the user invokes this skill with a job ID:
 
 8. **Summarize what was done** and ask the user if they want to:
    - Commit the changes
-   - Respond to the review with a summary using `roborev respond --job <job_id> "message"`
+   - Respond to the review with a summary
 
 ## Example
 
-User: `/roborev-address 1019`
+User: `$roborev:address 1019`
 
 Agent:
 1. Runs `roborev show --job 1019` to fetch the review
