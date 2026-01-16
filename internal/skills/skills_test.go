@@ -332,10 +332,14 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		if len(results) > 0 && results[0].Agent != AgentClaude {
 			t.Errorf("expected Claude result, got %s", results[0].Agent)
 		}
-		// Should update both skills even if only one was installed
-		if len(results) > 0 && len(results[0].Updated) != 1 && len(results[0].Installed) != 1 {
-			t.Errorf("expected 1 updated + 1 installed, got updated=%d installed=%d",
-				len(results[0].Updated), len(results[0].Installed))
+		// Should update respond (existed) and install address (didn't exist)
+		if len(results) > 0 {
+			if len(results[0].Updated) != 1 {
+				t.Errorf("expected 1 updated (respond), got %d", len(results[0].Updated))
+			}
+			if len(results[0].Installed) != 1 {
+				t.Errorf("expected 1 installed (address), got %d", len(results[0].Installed))
+			}
 		}
 	})
 
@@ -423,6 +427,23 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 
 		if len(results) != 2 {
 			t.Errorf("expected 2 results (both agents), got %d", len(results))
+		}
+
+		// Verify both agents are present (not duplicates)
+		var hasClaude, hasCodex bool
+		for _, r := range results {
+			if r.Agent == AgentClaude {
+				hasClaude = true
+			}
+			if r.Agent == AgentCodex {
+				hasCodex = true
+			}
+		}
+		if !hasClaude {
+			t.Error("expected Claude in results")
+		}
+		if !hasCodex {
+			t.Error("expected Codex in results")
 		}
 	})
 

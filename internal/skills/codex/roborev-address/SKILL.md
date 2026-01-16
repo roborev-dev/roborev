@@ -47,13 +47,13 @@ When the user invokes this skill with a job ID:
 
 6. **Handle false positives**: If a finding is invalid or already handled:
    - Explain why to the user
-   - Suggest documenting this with `/roborev-respond`
+   - Suggest documenting this with a review response
 
 7. **Run tests** if the project has them to verify the fixes work.
 
 8. **Summarize what was done** and ask the user if they want to:
    - Commit the changes
-   - Respond to the review with a summary using `/roborev-respond <job_id> <message>`
+   - Respond to the review with a summary using `roborev respond --job <job_id> "message"`
 
 ## Example
 
