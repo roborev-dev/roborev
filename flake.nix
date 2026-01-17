@@ -34,6 +34,20 @@
           };
         };
 
+        apps = {
+          default = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.default;
+            exePath = "/bin/roborev";
+          };
+          roborev = self.apps.${system}.default;
+          roborevd = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.default;
+            exePath = "/bin/roborevd";
+          };
+        };
+
+        formatter = pkgs.nixfmt;
+
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             go
