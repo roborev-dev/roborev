@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -10,9 +11,16 @@ import (
 	"github.com/wesm/roborev/internal/config"
 	"github.com/wesm/roborev/internal/daemon"
 	"github.com/wesm/roborev/internal/storage"
+	"github.com/wesm/roborev/internal/version"
 )
 
 func main() {
+	// Handle version command before anything else (for CI testing)
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Printf("roborevd %s\n", version.Version)
+		return
+	}
+
 	var (
 		dbPath     = flag.String("db", storage.DefaultDBPath(), "path to sqlite database")
 		configPath = flag.String("config", config.GlobalConfigPath(), "path to config file")
