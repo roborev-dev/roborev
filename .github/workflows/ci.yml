@@ -58,5 +58,12 @@ jobs:
       - name: Build package
         run: nix build
 
-      - name: Verify binary
-        run: ./result/bin/roborev version
+      - name: Verify binaries
+        run: |
+          ./result/bin/roborev version
+          ./result/bin/roborevd version
+
+      - name: Verify nix apps
+        run: |
+          nix run .#roborev -- version
+          nix run .#roborevd -- version
