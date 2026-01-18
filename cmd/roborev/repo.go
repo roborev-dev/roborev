@@ -33,12 +33,18 @@ func resolveRepoIdentifier(identifier string) string {
 	// For identifiers containing path separators (/ or \), check if they exist on disk.
 	// This allows names like "org/project" to be treated as names, not paths.
 	if strings.ContainsAny(identifier, "/\\") {
-		if _, err := os.Stat(identifier); err == nil {
+		_, err := os.Stat(identifier)
+		if err == nil {
 			// Path exists on disk, treat as path
 			return resolvePathToGitRoot(identifier)
 		}
-		// Doesn't exist on disk, treat as a name
-		return identifier
+		if errors.Is(err, os.ErrNotExist) {
+			// Path doesn't exist, treat as a name
+			return identifier
+		}
+		// Other errors (permission denied, IO error) - try as path anyway
+		// since user likely intended it as a path
+		return resolvePathToGitRoot(identifier)
 	}
 
 	// No path separators, treat as a name
