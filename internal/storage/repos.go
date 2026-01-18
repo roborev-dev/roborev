@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"path/filepath"
@@ -238,6 +239,7 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 	}
 
 	// Get review verdict counts (P/F from output)
+	// Exclude prompt jobs (commit_id IS NULL AND git_ref = 'prompt') from verdict stats
 	err = db.QueryRow(`
 		SELECT
 			COALESCE(SUM(CASE WHEN r.output LIKE '%**Verdict: PASS%' OR r.output LIKE '%Verdict: PASS%' THEN 1 ELSE 0 END), 0),
@@ -245,6 +247,7 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 		FROM reviews r
 		JOIN review_jobs rj ON r.job_id = rj.id
 		WHERE rj.repo_id = ?
+		  AND NOT (rj.commit_id IS NULL AND rj.git_ref = 'prompt')
 	`, repoID).Scan(&stats.PassedReviews, &stats.FailedReviews)
 	if err != nil {
 		return nil, err
@@ -260,16 +263,31 @@ var ErrRepoHasJobs = errors.New("repository has existing jobs; use cascade to de
 // If cascade is true, also deletes all jobs, reviews, and responses for the repo
 // If cascade is false and jobs exist, returns ErrRepoHasJobs
 func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
-	// Use a transaction for atomicity
-	tx, err := db.Begin()
+	// Use a dedicated connection with BEGIN IMMEDIATE for proper locking
+	// This ensures no job can be enqueued between the count check and delete
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+
+	// BEGIN IMMEDIATE acquires a write lock immediately, preventing races
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+
+	// Ensure rollback on error
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
 
 	// Check for existing jobs (within transaction for consistency)
 	var jobCount int
-	err = tx.QueryRow(`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repoID).Scan(&jobCount)
+	err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repoID).Scan(&jobCount)
 	if err != nil {
 		return err
 	}
@@ -281,7 +299,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	if cascade {
 		// Delete in correct order due to foreign keys
 		// 1a. Delete responses for jobs in this repo (job_id based)
-		_, err := tx.Exec(`
+		_, err := conn.ExecContext(ctx, `
 			DELETE FROM responses WHERE job_id IN (
 				SELECT id FROM review_jobs WHERE repo_id = ?
 			)
@@ -291,7 +309,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		}
 
 		// 1b. Delete responses for commits in this repo (legacy commit_id based)
-		_, err = tx.Exec(`
+		_, err = conn.ExecContext(ctx, `
 			DELETE FROM responses WHERE commit_id IN (
 				SELECT id FROM commits WHERE repo_id = ?
 			)
@@ -301,7 +319,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		}
 
 		// 2. Delete reviews for jobs in this repo
-		_, err = tx.Exec(`
+		_, err = conn.ExecContext(ctx, `
 			DELETE FROM reviews WHERE job_id IN (
 				SELECT id FROM review_jobs WHERE repo_id = ?
 			)
@@ -311,20 +329,20 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		}
 
 		// 3. Delete jobs for this repo
-		_, err = tx.Exec(`DELETE FROM review_jobs WHERE repo_id = ?`, repoID)
+		_, err = conn.ExecContext(ctx, `DELETE FROM review_jobs WHERE repo_id = ?`, repoID)
 		if err != nil {
 			return err
 		}
 
 		// 4. Delete commits for this repo
-		_, err = tx.Exec(`DELETE FROM commits WHERE repo_id = ?`, repoID)
+		_, err = conn.ExecContext(ctx, `DELETE FROM commits WHERE repo_id = ?`, repoID)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Delete the repo itself
-	result, err := tx.Exec(`DELETE FROM repos WHERE id = ?`, repoID)
+	result, err := conn.ExecContext(ctx, `DELETE FROM repos WHERE id = ?`, repoID)
 	if err != nil {
 		return err
 	}
@@ -333,7 +351,11 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		return sql.ErrNoRows
 	}
 
-	return tx.Commit()
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // MergeRepos moves all jobs and commits from sourceRepoID to targetRepoID, then deletes the source repo
@@ -342,38 +364,51 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 		return 0, nil
 	}
 
-	// Use a transaction for atomicity
-	tx, err := db.Begin()
+	// Use a dedicated connection with BEGIN IMMEDIATE for proper locking
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return 0, err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
 
 	// Move all commits from source to target
 	// Note: commits.sha is UNIQUE, so this will fail if both repos have
 	// commits with the same SHA (which shouldn't happen for the same git repo)
 	// Commit-based responses (legacy) are tied to commit_id which remains valid
-	_, err = tx.Exec(`UPDATE commits SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
+	_, err = conn.ExecContext(ctx, `UPDATE commits SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
 	if err != nil {
 		return 0, err
 	}
 
 	// Move all jobs from source to target
-	result, err := tx.Exec(`UPDATE review_jobs SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
+	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
 	if err != nil {
 		return 0, err
 	}
 	affected, _ := result.RowsAffected()
 
 	// Delete the source repo (now empty)
-	_, err = tx.Exec(`DELETE FROM repos WHERE id = ?`, sourceRepoID)
+	_, err = conn.ExecContext(ctx, `DELETE FROM repos WHERE id = ?`, sourceRepoID)
 	if err != nil {
 		return 0, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return 0, err
 	}
+	committed = true
 
 	return affected, nil
 }

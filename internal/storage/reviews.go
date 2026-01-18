@@ -59,8 +59,10 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	}
 
 	// Compute verdict from review output (only if output exists, no error, and not a prompt job)
-	// Prompt jobs don't have PASS/FAIL verdicts
-	if r.Output != "" && job.Error == "" && job.GitRef != "prompt" {
+	// Prompt jobs are identified by having no commit_id (NULL) - this distinguishes them from
+	// regular reviews of branches/commits that might be named "prompt"
+	isPromptJob := job.CommitID == nil && job.GitRef == "prompt"
+	if r.Output != "" && job.Error == "" && !isPromptJob {
 		verdict := ParseVerdict(r.Output)
 		job.Verdict = &verdict
 	}
@@ -128,8 +130,10 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	}
 
 	// Compute verdict from review output (only if output exists, no error, and not a prompt job)
-	// Prompt jobs don't have PASS/FAIL verdicts
-	if r.Output != "" && job.Error == "" && job.GitRef != "prompt" {
+	// Prompt jobs are identified by having no commit_id (NULL) - this distinguishes them from
+	// regular reviews of branches/commits that might be named "prompt"
+	isPromptJob := job.CommitID == nil && job.GitRef == "prompt"
+	if r.Output != "" && job.Error == "" && !isPromptJob {
 		verdict := ParseVerdict(r.Output)
 		job.Verdict = &verdict
 	}

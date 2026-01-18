@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -76,16 +75,12 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 		// Read from stdin
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			// Stdin has data (piped)
-			scanner := bufio.NewScanner(os.Stdin)
-			var lines []string
-			for scanner.Scan() {
-				lines = append(lines, scanner.Text())
-			}
-			if err := scanner.Err(); err != nil {
+			// Stdin has data (piped) - use io.ReadAll to handle large prompts
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
 				return fmt.Errorf("reading stdin: %w", err)
 			}
-			promptText = strings.Join(lines, "\n")
+			promptText = string(data)
 		} else {
 			return fmt.Errorf("no prompt provided - pass as argument or pipe via stdin")
 		}
@@ -133,14 +128,19 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("enqueue failed: %s", body)
 	}
 
 	var job storage.ReviewJob
-	json.Unmarshal(body, &job)
+	if err := json.Unmarshal(body, &job); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
 
 	if !quiet {
 		cmd.Printf("Enqueued prompt job %d (agent: %s)\n", job.ID, job.Agent)

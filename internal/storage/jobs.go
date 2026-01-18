@@ -941,7 +941,10 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			j.Addressed = &val
 		}
 		// Compute verdict only for non-prompt jobs (prompt jobs don't have PASS/FAIL verdicts)
-		if output.Valid && j.GitRef != "prompt" {
+		// Prompt jobs are identified by having no commit_id (NULL) - this distinguishes them from
+		// regular reviews of branches/commits that might be named "prompt"
+		isPromptJob := j.CommitID == nil && j.GitRef == "prompt"
+		if output.Valid && !isPromptJob {
 			verdict := ParseVerdict(output.String)
 			j.Verdict = &verdict
 		}
