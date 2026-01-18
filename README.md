@@ -238,7 +238,7 @@ export ROBOREV_DATA_DIR=/custom/path  # Default: ~/.roborev
 
 ### Authentication
 
-**Claude Code** uses your Claude subscription (Max plan) by default. roborev deliberately ignores `ANTHROPIC_API_KEY` from the environment to avoid unexpected API charges.
+**Claude Code** uses your Claude subscription by default. roborev deliberately ignores `ANTHROPIC_API_KEY` from the environment to avoid unexpected API charges.
 
 To use Anthropic API credits instead:
 
