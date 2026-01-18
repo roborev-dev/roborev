@@ -228,6 +228,8 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 	// Track current failed review - when a fix fails, we continue fixing it
 	// before moving on to the next oldest failed commit
 	var currentFailedReview *storage.Review
+	// Track reviews we've given up on this run to avoid re-selecting them
+	skippedReviews := make(map[int64]bool)
 
 	for iteration := 1; iteration <= maxIterations; {
 		// Get commits on current branch
@@ -244,7 +246,7 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 		// Only search for a new failed review if we don't have one to work on
 		// (either first iteration, or previous fix passed)
 		if currentFailedReview == nil {
-			currentFailedReview, err = findFailedReviewForBranch(client, commits)
+			currentFailedReview, err = findFailedReviewForBranch(client, commits, skippedReviews)
 			if err != nil {
 				return fmt.Errorf("error finding reviews: %w", err)
 			}
@@ -439,7 +441,8 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 				// Do NOT mark as addressed - the review still needs attention
 				fmt.Println("Giving up after multiple failed attempts (review remains unaddressed)")
 				client.AddResponse(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings (attempt 3, giving up)")
-				currentFailedReview = nil // Move on to next oldest failed commit
+				skippedReviews[currentFailedReview.ID] = true // Don't re-select this run
+				currentFailedReview = nil                     // Move on to next oldest failed commit
 			} else {
 				// Record attempt but don't mark addressed - might work on retry with different context
 				client.AddResponse(currentFailedReview.JobID, "roborev-refine", fmt.Sprintf("Agent could not determine how to address findings (attempt %d)", noChangeAttempts+1))
@@ -525,7 +528,8 @@ func resolveAllowUnsafeAgents(flag bool, flagChanged bool, cfg *config.Config) b
 // findFailedReviewForBranch finds an unaddressed failed review for any of the given commits.
 // Iterates oldest to newest so earlier commits are fixed before later ones.
 // Passing reviews are marked as addressed automatically.
-func findFailedReviewForBranch(client daemon.Client, commits []string) (*storage.Review, error) {
+// Reviews in the skip set are ignored (used for reviews we've given up on this run).
+func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[int64]bool) (*storage.Review, error) {
 	// Iterate oldest to newest (commits are in chronological order)
 	for _, sha := range commits {
 		review, err := client.GetReviewBySHA(sha)
@@ -538,6 +542,11 @@ func findFailedReviewForBranch(client daemon.Client, commits []string) (*storage
 
 		// Skip already addressed reviews
 		if review.Addressed {
+			continue
+		}
+
+		// Skip reviews we've given up on this run
+		if skip[review.ID] {
 			continue
 		}
 

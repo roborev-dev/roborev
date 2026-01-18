@@ -263,7 +263,7 @@ func TestFindFailedReviewForBranch_OldestFirst(t *testing.T) {
 	// Commits in chronological order (oldest first, as returned by git log --reverse)
 	commits := []string{"oldest123", "middle456", "newest789"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestFindFailedReviewForBranch_SkipsAddressed(t *testing.T) {
 
 	commits := []string{"commit1", "commit2", "commit3"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestFindFailedReviewForBranch_AllPass(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestFindFailedReviewForBranch_NoReviews(t *testing.T) {
 
 	commits := []string{"unreviewed1", "unreviewed2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestFindFailedReviewForBranch_MarksPassingAsAddressed(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestFindFailedReviewForBranch_MarksPassingBeforeFailure(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -473,7 +473,7 @@ func TestFindFailedReviewForBranch_DoesNotMarkAlreadyAddressed(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -507,7 +507,7 @@ func TestFindFailedReviewForBranch_MixedScenario(t *testing.T) {
 
 	commits := []string{"commit1", "commit2", "commit3", "commit4", "commit5"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestFindFailedReviewForBranch_StopsAtFirstFailure(t *testing.T) {
 
 	commits := []string{"commit1", "commit2", "commit3"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestFindFailedReviewForBranch_MarkAddressedError(t *testing.T) {
 
 	commits := []string{"commit1"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 
 	// Should return an error and not continue processing
 	if err == nil {
@@ -598,7 +598,7 @@ func TestFindFailedReviewForBranch_GetReviewBySHAError(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 
 	// Should return an error and not continue processing
 	if err == nil {

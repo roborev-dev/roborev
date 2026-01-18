@@ -169,48 +169,54 @@ type claudeStreamMessage struct {
 	Result string `json:"result,omitempty"`
 }
 
-// parseStreamJSON parses Claude's stream-json output and extracts the final result
+// parseStreamJSON parses Claude's stream-json output and extracts the final result.
+// Uses bufio.Reader.ReadString to read lines without buffer size limits.
 func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
-	scanner := bufio.NewScanner(r)
-	// Increase buffer size for large JSON lines
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
+	br := bufio.NewReader(r)
 
 	var lastResult string
 	var assistantMessages []string
+	var validEventsParsed bool
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return "", fmt.Errorf("read stream: %w", err)
 		}
 
-		// Stream raw output to the writer for progress visibility
-		if sw := newSyncWriter(output); sw != nil {
-			sw.Write([]byte(line + "\n"))
-		}
-
-		var msg claudeStreamMessage
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			// Skip malformed lines
-			continue
-		}
-
-		// Collect assistant messages for the result
-		if msg.Type == "assistant" && msg.Message.Content != "" {
-			assistantMessages = append(assistantMessages, msg.Message.Content)
-		}
-
-		// The final result message contains the summary
-		if msg.Type == "result" {
-			if msg.Result != "" {
-				lastResult = msg.Result
+		// Process line even if EOF (might have trailing content without newline)
+		line = strings.TrimSpace(line)
+		if line != "" {
+			// Stream raw line to the writer for progress visibility
+			if sw := newSyncWriter(output); sw != nil {
+				sw.Write([]byte(line + "\n"))
 			}
+
+			var msg claudeStreamMessage
+			if jsonErr := json.Unmarshal([]byte(line), &msg); jsonErr == nil {
+				validEventsParsed = true
+
+				// Collect assistant messages for the result
+				if msg.Type == "assistant" && msg.Message.Content != "" {
+					assistantMessages = append(assistantMessages, msg.Message.Content)
+				}
+
+				// The final result message contains the summary
+				if msg.Type == "result" && msg.Result != "" {
+					lastResult = msg.Result
+				}
+			}
+			// Skip malformed JSON lines silently
+		}
+
+		if err == io.EOF {
+			break
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("scan output: %w", err)
+	// Error if we didn't parse any valid events
+	if !validEventsParsed {
+		return "", fmt.Errorf("no valid stream-json events parsed from output")
 	}
 
 	// Prefer the result field if present, otherwise join assistant messages
@@ -221,6 +227,8 @@ func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, er
 		return strings.Join(assistantMessages, "\n"), nil
 	}
 
+	// Valid events were parsed but no result or assistant content found
+	// This is not an error - Claude might have used tools without text output
 	return "", nil
 }
 
