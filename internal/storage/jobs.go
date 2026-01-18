@@ -940,7 +940,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			val := addressed.Int64 != 0
 			j.Addressed = &val
 		}
-		if output.Valid {
+		// Compute verdict only for non-prompt jobs (prompt jobs don't have PASS/FAIL verdicts)
+		if output.Valid && j.GitRef != "prompt" {
 			verdict := ParseVerdict(output.String)
 			j.Verdict = &verdict
 		}

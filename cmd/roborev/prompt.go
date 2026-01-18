@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wesm/roborev/internal/config"
@@ -147,15 +148,118 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 
 	// If --wait, poll until job completes and show result
 	if wait {
-		err := waitForJob(cmd, serverAddr, job.ID, quiet)
-		// Only silence Cobra's error output for exitError (verdict-based exit codes)
-		if _, isExitErr := err.(*exitError); isExitErr {
-			cmd.SilenceErrors = true
-			cmd.SilenceUsage = true
-		}
-		return err
+		return waitForPromptJob(cmd, serverAddr, job.ID, quiet)
 	}
 
+	return nil
+}
+
+// waitForPromptJob waits for a prompt job to complete and displays the result.
+// Unlike waitForJob, this doesn't apply verdict-based exit codes since prompt
+// jobs don't have PASS/FAIL verdicts.
+func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	if !quiet {
+		cmd.Printf("Waiting for review to complete...")
+	}
+
+	// Poll with exponential backoff
+	pollInterval := 500 * time.Millisecond
+	maxInterval := 5 * time.Second
+
+	for {
+		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
+		if err != nil {
+			return fmt.Errorf("failed to check job status: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return fmt.Errorf("server error checking job status (%d): %s", resp.StatusCode, body)
+		}
+
+		var jobsResp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+			resp.Body.Close()
+			return fmt.Errorf("failed to parse job status: %w", err)
+		}
+		resp.Body.Close()
+
+		if len(jobsResp.Jobs) == 0 {
+			return fmt.Errorf("job %d not found", jobID)
+		}
+
+		job := jobsResp.Jobs[0]
+
+		switch job.Status {
+		case storage.JobStatusDone:
+			if !quiet {
+				cmd.Printf(" done!\n\n")
+			}
+			return showPromptResult(cmd, serverAddr, jobID, quiet)
+
+		case storage.JobStatusFailed:
+			if !quiet {
+				cmd.Printf(" failed!\n")
+			}
+			return fmt.Errorf("prompt failed: %s", job.Error)
+
+		case storage.JobStatusCanceled:
+			if !quiet {
+				cmd.Printf(" canceled!\n")
+			}
+			return fmt.Errorf("prompt was canceled")
+
+		case storage.JobStatusQueued, storage.JobStatusRunning:
+			// Still in progress, wait and retry
+			time.Sleep(pollInterval)
+			if pollInterval < maxInterval {
+				pollInterval = time.Duration(float64(pollInterval) * 1.5)
+				if pollInterval > maxInterval {
+					pollInterval = maxInterval
+				}
+			}
+
+		default:
+			return fmt.Errorf("unexpected job status: %s", job.Status)
+		}
+	}
+}
+
+// showPromptResult fetches and displays the result of a prompt job.
+// Unlike showReview, this doesn't apply verdict-based exit codes.
+func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
+	if err != nil {
+		return fmt.Errorf("failed to fetch result: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("no result found for job %d", jobID)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server error fetching result (%d): %s", resp.StatusCode, body)
+	}
+
+	var review storage.Review
+	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+		return fmt.Errorf("failed to parse result: %w", err)
+	}
+
+	if !quiet {
+		cmd.Printf("Result (by %s)\n", review.Agent)
+		cmd.Println(strings.Repeat("-", 60))
+		cmd.Println(review.Output)
+	}
+
+	// Prompt jobs always exit 0 on success (no verdict-based exit codes)
 	return nil
 }
 

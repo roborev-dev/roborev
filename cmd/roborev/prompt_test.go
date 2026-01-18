@@ -1,10 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/wesm/roborev/internal/storage"
 )
 
 func TestBuildPromptWithContext(t *testing.T) {
@@ -109,6 +116,322 @@ func TestBuildPromptWithContext(t *testing.T) {
 		}
 		if guidelinesPos > requestPos {
 			t.Error("Guidelines should come before Request")
+		}
+	})
+}
+
+// mockCmd creates a cobra command with captured output for testing
+func mockCmd() (*cobra.Command, *bytes.Buffer) {
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	return cmd, out
+}
+
+func TestShowPromptResult(t *testing.T) {
+	t.Run("displays result without verdict exit code", func(t *testing.T) {
+		// Mock server that returns a review
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/review" {
+				review := storage.Review{
+					ID:     1,
+					JobID:  123,
+					Agent:  "test-agent",
+					Output: "Paris", // Simple answer with no verdict
+				}
+				json.NewEncoder(w).Encode(review)
+			}
+		}))
+		defer server.Close()
+
+		cmd, out := mockCmd()
+		err := showPromptResult(cmd, server.URL, 123, false)
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+
+		output := out.String()
+		if !strings.Contains(output, "Result (by test-agent)") {
+			t.Error("Expected result header with agent name")
+		}
+		if !strings.Contains(output, "Paris") {
+			t.Error("Expected output to contain 'Paris'")
+		}
+	})
+
+	t.Run("returns nil for output that would be FAIL verdict in review", func(t *testing.T) {
+		// Even output that ParseVerdict would interpret as FAIL should return nil
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/review" {
+				review := storage.Review{
+					ID:     1,
+					JobID:  123,
+					Agent:  "test-agent",
+					Output: "Found several issues:\n1. Bug in line 5\n2. Missing error handling",
+				}
+				json.NewEncoder(w).Encode(review)
+			}
+		}))
+		defer server.Close()
+
+		cmd, _ := mockCmd()
+		err := showPromptResult(cmd, server.URL, 123, false)
+
+		// Prompt jobs don't use verdict-based exit codes
+		if err != nil {
+			t.Errorf("Prompt jobs should not return error based on verdict, got: %v", err)
+		}
+	})
+
+	t.Run("quiet mode suppresses output", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/review" {
+				review := storage.Review{
+					ID:     1,
+					JobID:  123,
+					Agent:  "test-agent",
+					Output: "Some output",
+				}
+				json.NewEncoder(w).Encode(review)
+			}
+		}))
+		defer server.Close()
+
+		cmd, out := mockCmd()
+		err := showPromptResult(cmd, server.URL, 123, true) // quiet=true
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+
+		if out.Len() > 0 {
+			t.Errorf("Expected no output in quiet mode, got: %s", out.String())
+		}
+	})
+
+	t.Run("handles not found error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		cmd, _ := mockCmd()
+		err := showPromptResult(cmd, server.URL, 999, false)
+
+		if err == nil {
+			t.Error("Expected error for not found")
+		}
+		if !strings.Contains(err.Error(), "no result found") {
+			t.Errorf("Expected 'no result found' error, got: %v", err)
+		}
+	})
+
+	t.Run("handles server error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("internal error"))
+		}))
+		defer server.Close()
+
+		cmd, _ := mockCmd()
+		err := showPromptResult(cmd, server.URL, 123, false)
+
+		if err == nil {
+			t.Error("Expected error for server error")
+		}
+		if !strings.Contains(err.Error(), "server error") {
+			t.Errorf("Expected 'server error' in message, got: %v", err)
+		}
+	})
+}
+
+func TestWaitForPromptJob(t *testing.T) {
+	t.Run("returns success when job completes", func(t *testing.T) {
+		callCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				callCount++
+				job := storage.ReviewJob{
+					ID:     123,
+					Status: storage.JobStatusDone,
+				}
+				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
+			} else if r.URL.Path == "/api/review" {
+				review := storage.Review{
+					ID:     1,
+					JobID:  123,
+					Agent:  "test-agent",
+					Output: "Test result",
+				}
+				json.NewEncoder(w).Encode(review)
+			}
+		}))
+		defer server.Close()
+
+		cmd, out := mockCmd()
+		err := waitForPromptJob(cmd, server.URL, 123, false)
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+
+		output := out.String()
+		if !strings.Contains(output, "done!") {
+			t.Error("Expected 'done!' in output")
+		}
+		if !strings.Contains(output, "Test result") {
+			t.Error("Expected result in output")
+		}
+	})
+
+	t.Run("returns error when job fails", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				job := storage.ReviewJob{
+					ID:     123,
+					Status: storage.JobStatusFailed,
+					Error:  "agent crashed",
+				}
+				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
+			}
+		}))
+		defer server.Close()
+
+		cmd, out := mockCmd()
+		err := waitForPromptJob(cmd, server.URL, 123, false)
+
+		if err == nil {
+			t.Error("Expected error for failed job")
+		}
+		if !strings.Contains(err.Error(), "agent crashed") {
+			t.Errorf("Expected error message to contain reason, got: %v", err)
+		}
+
+		output := out.String()
+		if !strings.Contains(output, "failed!") {
+			t.Error("Expected 'failed!' in output")
+		}
+	})
+
+	t.Run("returns error when job canceled", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				job := storage.ReviewJob{
+					ID:     123,
+					Status: storage.JobStatusCanceled,
+				}
+				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
+			}
+		}))
+		defer server.Close()
+
+		cmd, out := mockCmd()
+		err := waitForPromptJob(cmd, server.URL, 123, false)
+
+		if err == nil {
+			t.Error("Expected error for canceled job")
+		}
+		if !strings.Contains(err.Error(), "canceled") {
+			t.Errorf("Expected 'canceled' in error, got: %v", err)
+		}
+
+		output := out.String()
+		if !strings.Contains(output, "canceled!") {
+			t.Error("Expected 'canceled!' in output")
+		}
+	})
+
+	t.Run("returns error when job not found", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {}})
+			}
+		}))
+		defer server.Close()
+
+		cmd, _ := mockCmd()
+		err := waitForPromptJob(cmd, server.URL, 999, false)
+
+		if err == nil {
+			t.Error("Expected error for missing job")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Errorf("Expected 'not found' in error, got: %v", err)
+		}
+	})
+
+	t.Run("quiet mode suppresses waiting message", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				job := storage.ReviewJob{
+					ID:     123,
+					Status: storage.JobStatusDone,
+				}
+				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
+			} else if r.URL.Path == "/api/review" {
+				review := storage.Review{
+					ID:     1,
+					JobID:  123,
+					Agent:  "test-agent",
+					Output: "Test result",
+				}
+				json.NewEncoder(w).Encode(review)
+			}
+		}))
+		defer server.Close()
+
+		cmd, out := mockCmd()
+		err := waitForPromptJob(cmd, server.URL, 123, true) // quiet=true
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+
+		// In quiet mode, no output at all
+		if out.Len() > 0 {
+			t.Errorf("Expected no output in quiet mode, got: %s", out.String())
+		}
+	})
+
+	t.Run("polls while job is running", func(t *testing.T) {
+		pollCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				pollCount++
+				var status storage.JobStatus
+				if pollCount < 3 {
+					status = storage.JobStatusRunning
+				} else {
+					status = storage.JobStatusDone
+				}
+				job := storage.ReviewJob{
+					ID:     123,
+					Status: status,
+				}
+				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
+			} else if r.URL.Path == "/api/review" {
+				review := storage.Review{
+					ID:     1,
+					JobID:  123,
+					Agent:  "test-agent",
+					Output: "Final result",
+				}
+				json.NewEncoder(w).Encode(review)
+			}
+		}))
+		defer server.Close()
+
+		cmd, _ := mockCmd()
+		err := waitForPromptJob(cmd, server.URL, 123, true)
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+
+		if pollCount < 3 {
+			t.Errorf("Expected at least 3 polls, got: %d", pollCount)
 		}
 	})
 }
