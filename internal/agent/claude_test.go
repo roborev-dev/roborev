@@ -39,6 +39,9 @@ func TestClaudeBuildArgsUnsafeOptIn(t *testing.T) {
 	if !containsString(args, "-p") {
 		t.Fatalf("expected -p flag in agentic mode (for stdin piping), got %v", args)
 	}
+	if !containsString(args, "--permission-mode") || !containsString(args, "bypassPermissions") {
+		t.Fatalf("expected --permission-mode bypassPermissions in agentic mode, got %v", args)
+	}
 }
 
 func TestClaudeSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
