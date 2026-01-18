@@ -13,15 +13,24 @@ func TestClaudeBuildArgsUnsafeOptIn(t *testing.T) {
 	a := NewClaudeAgent("claude")
 
 	SetAllowUnsafeAgents(false)
-	args := a.buildArgs("prompt")
+	args := a.buildArgs("prompt", false)
 	if containsString(args, claudeDangerousFlag) {
 		t.Fatalf("expected no unsafe flag when disabled, got %v", args)
 	}
+	if !containsString(args, "--print") {
+		t.Fatalf("expected --print in non-agentic mode, got %v", args)
+	}
 
 	SetAllowUnsafeAgents(true)
-	args = a.buildArgs("prompt")
+	args = a.buildArgs("prompt", true)
 	if !containsString(args, claudeDangerousFlag) {
 		t.Fatalf("expected unsafe flag when enabled, got %v", args)
+	}
+	if containsString(args, "--print") {
+		t.Fatalf("expected no --print in agentic mode, got %v", args)
+	}
+	if !containsString(args, "--output-format") || !containsString(args, "stream-json") {
+		t.Fatalf("expected --output-format stream-json in agentic mode, got %v", args)
 	}
 }
 

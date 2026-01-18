@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -44,15 +46,20 @@ func (a *ClaudeAgent) CommandName() string {
 	return a.Command
 }
 
-func (a *ClaudeAgent) buildArgs(prompt string) []string {
+func (a *ClaudeAgent) buildArgs(prompt string, agenticMode bool) []string {
 	args := []string{}
 	if AllowUnsafeAgents() {
 		args = append(args, claudeDangerousFlag)
 	}
-	args = append(args,
-		"--print",
-		"-p", prompt,
-	)
+	if agenticMode {
+		// Agentic mode: Claude can use tools and make file changes
+		// Use stream-json output format for non-interactive execution
+		// (following claude-code-action pattern from Anthropic)
+		args = append(args, "--output-format", "stream-json", "-p", prompt)
+	} else {
+		// Print mode: one-shot text response, no tool use
+		args = append(args, "--print", "-p", prompt)
+	}
 	return args
 }
 
@@ -71,10 +78,12 @@ func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, err
 }
 
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	if !AllowUnsafeAgents() && !isatty.IsTerminal(os.Stdin.Fd()) {
+	agenticMode := AllowUnsafeAgents()
+
+	if !agenticMode && !isatty.IsTerminal(os.Stdin.Fd()) {
 		return "", fmt.Errorf("claude requires a TTY when allow_unsafe_agents is disabled")
 	}
-	if AllowUnsafeAgents() {
+	if agenticMode {
 		supported, err := claudeSupportsDangerousFlag(ctx, a.Command)
 		if err != nil {
 			return "", err
@@ -84,27 +93,115 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		}
 	}
 
-	// Use claude CLI in print mode (non-interactive)
-	// --print outputs the response without the interactive TUI
-	args := a.buildArgs(prompt)
+	// When AllowUnsafeAgents is true, run in agentic mode (can make file changes)
+	// Otherwise, use --print mode for review-only operations
+	args := a.buildArgs(prompt, agenticMode)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 
-	var stdout, stderr bytes.Buffer
-	if sw := newSyncWriter(output); sw != nil {
-		cmd.Stdout = io.MultiWriter(&stdout, sw)
-		cmd.Stderr = io.MultiWriter(&stderr, sw)
+	var stderr bytes.Buffer
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("create stdout pipe: %w", err)
+	}
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start claude: %w", err)
+	}
+
+	// Parse output based on mode
+	var result string
+	if agenticMode {
+		result, err = a.parseStreamJSON(stdoutPipe, output)
 	} else {
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
+		var buf bytes.Buffer
+		if sw := newSyncWriter(output); sw != nil {
+			io.Copy(io.MultiWriter(&buf, sw), stdoutPipe)
+		} else {
+			io.Copy(&buf, stdoutPipe)
+		}
+		result = buf.String()
 	}
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude failed: %w\nstderr: %s", err, stderr.String())
+	if waitErr := cmd.Wait(); waitErr != nil {
+		if err != nil {
+			return "", fmt.Errorf("claude failed: %w (parse error: %v)\nstderr: %s", waitErr, err, stderr.String())
+		}
+		return "", fmt.Errorf("claude failed: %w\nstderr: %s", waitErr, stderr.String())
 	}
 
-	return stdout.String(), nil
+	if err != nil {
+		return "", err
+	}
+
+	return result, nil
+}
+
+// claudeStreamMessage represents a message in Claude's stream-json output format
+type claudeStreamMessage struct {
+	Type    string `json:"type"`
+	Subtype string `json:"subtype,omitempty"`
+	Message struct {
+		Content string `json:"content,omitempty"`
+	} `json:"message,omitempty"`
+	Result string `json:"result,omitempty"`
+}
+
+// parseStreamJSON parses Claude's stream-json output and extracts the final result
+func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
+	scanner := bufio.NewScanner(r)
+	// Increase buffer size for large JSON lines
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	var lastResult string
+	var assistantMessages []string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		// Stream raw output to the writer for progress visibility
+		if sw := newSyncWriter(output); sw != nil {
+			sw.Write([]byte(line + "\n"))
+		}
+
+		var msg claudeStreamMessage
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			// Skip malformed lines
+			continue
+		}
+
+		// Collect assistant messages for the result
+		if msg.Type == "assistant" && msg.Message.Content != "" {
+			assistantMessages = append(assistantMessages, msg.Message.Content)
+		}
+
+		// The final result message contains the summary
+		if msg.Type == "result" {
+			if msg.Result != "" {
+				lastResult = msg.Result
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("scan output: %w", err)
+	}
+
+	// Prefer the result field if present, otherwise join assistant messages
+	if lastResult != "" {
+		return lastResult, nil
+	}
+	if len(assistantMessages) > 0 {
+		return strings.Join(assistantMessages, "\n"), nil
+	}
+
+	return "", nil
 }
 
 func init() {
