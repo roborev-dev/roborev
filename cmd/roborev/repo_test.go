@@ -53,6 +53,40 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		}
 	})
 
+	t.Run("returns name with slash when path is inaccessible", func(t *testing.T) {
+		// Skip on Windows (chmod doesn't work the same) or if running as root
+		if os.Getuid() == 0 {
+			t.Skip("skipping permission test when running as root")
+		}
+
+		tmpDir := t.TempDir()
+		// Create org/project structure
+		orgDir := filepath.Join(tmpDir, "org")
+		if err := os.Mkdir(orgDir, 0755); err != nil {
+			t.Fatalf("Failed to create org dir: %v", err)
+		}
+
+		// Make org unreadable
+		if err := os.Chmod(orgDir, 0000); err != nil {
+			t.Fatalf("Failed to chmod: %v", err)
+		}
+		defer os.Chmod(orgDir, 0755) // Restore for cleanup
+
+		// Change to tmpDir so "org/project" is a relative path that exists but is unreadable
+		origDir, _ := os.Getwd()
+		defer os.Chdir(origDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("Failed to chdir: %v", err)
+		}
+
+		// "org/project" should be treated as a name (not a path) since it's inaccessible
+		// and user didn't use explicit path syntax like "./org/project"
+		result := resolveRepoIdentifier("org/project")
+		if result != "org/project" {
+			t.Errorf("Expected 'org/project' (name), got %q", result)
+		}
+	})
+
 	t.Run("resolves dot to git root", func(t *testing.T) {
 		// Create a temp git repo with a subdirectory
 		tmpDir := evalSymlinks(t, t.TempDir())
