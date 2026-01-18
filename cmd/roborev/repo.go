@@ -142,17 +142,31 @@ func repoRenameCmd() *cobra.Command {
 		Short: "Rename a repository's display name",
 		Long: `Rename a repository's display name in the roborev database.
 
-This is useful for grouping reviews together after a project rename,
-or to use a more descriptive name than the directory name.
+This changes the name stored in the database, which is shown in the TUI
+and CLI output. It does NOT affect the filesystem or git repository.
+
+NOTE: This is different from the display_name setting in .roborev.toml.
+The database name is set once when a repo is first tracked (from the
+directory name). Use this command to change it after the fact.
+
+When to use rename vs merge:
+  - Use RENAME when you have ONE repo entry and want a different name
+  - Use MERGE when you have TWO repo entries that should be combined
+    (e.g., after renaming a directory, you'll have both old and new entries)
 
 The first argument can be either:
   - The repository path (absolute or relative)
-  - The current display name
+  - The current database name
 
 Examples:
-  roborev repo rename /path/to/old-project new-project-name
-  roborev repo rename old-name new-name
+  # Give a friendlier name to the current directory's repo
   roborev repo rename . my-project
+
+  # Rename by current database name
+  roborev repo rename old-name new-name
+
+  # Rename by path
+  roborev repo rename /path/to/project better-name
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -283,17 +297,36 @@ func repoMergeCmd() *cobra.Command {
 		Short: "Merge reviews from one repository into another",
 		Long: `Merge all reviews from one repository into another.
 
-This is useful when you have duplicate repository entries (e.g., from
-symlinks or path changes) and want to consolidate them.
+This MOVES all jobs/reviews from the source repo into the target repo,
+then DELETES the source repo entry. The target repo's name is preserved.
 
-All jobs from the source repository will be moved to the target, and
-the source repository will be deleted.
+Common use case - directory was renamed:
+  When you rename a directory (e.g., "old-project" -> "new-project"),
+  roborev creates a new repo entry for the new path. You end up with:
+    - "old-project" (orphaned, path no longer exists, has old reviews)
+    - "new-project" (active, has new reviews)
 
-Arguments can be either repository paths or display names.
+  Use merge to combine them:
+    roborev repo merge old-project new-project
+
+  Result: "new-project" now has all reviews from both entries.
+
+When to use merge vs rename:
+  - Use MERGE when you have TWO repo entries that should be combined
+  - Use RENAME when you have ONE repo entry and just want a different name
+
+Arguments can be either repository paths or database names.
+Use 'roborev repo list' to see all tracked repositories.
 
 Examples:
+  # After renaming directory from old-project to new-project
   roborev repo merge old-project new-project
-  roborev repo merge /old/path /new/path
+
+  # Consolidate repos tracked under different paths (symlinks, etc.)
+  roborev repo merge /old/path /current/path
+
+  # Skip confirmation prompt
+  roborev repo merge --yes old-name new-name
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
