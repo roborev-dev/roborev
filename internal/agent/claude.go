@@ -56,8 +56,9 @@ func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
 		// Use stream-json output format for non-interactive execution
 		// (following claude-code-action pattern from Anthropic)
 		// Prompt is piped via stdin, not passed as argument
-		// Explicit --permission-mode ensures bypass even in untrusted directories
-		args = append(args, "-p", "--verbose", "--output-format", "stream-json", "--permission-mode", "bypassPermissions")
+		// --allowedTools explicitly permits file editing tools (key insight from claude-code-action)
+		args = append(args, "-p", "--verbose", "--output-format", "stream-json",
+			"--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
 	} else {
 		// Print mode: one-shot text response, no tool use
 		// Prompt is passed as positional argument
