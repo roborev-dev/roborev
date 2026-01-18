@@ -128,15 +128,10 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	cmd.Stderr = &stderr
 
 	// In agentic mode, pipe prompt via stdin
+	// Use strings.NewReader instead of goroutine+pipe to avoid blocking issues
+	// if cmd.Start() fails (goroutine would block on pipe write indefinitely)
 	if agenticMode {
-		stdinPipe, err := cmd.StdinPipe()
-		if err != nil {
-			return "", fmt.Errorf("create stdin pipe: %w", err)
-		}
-		go func() {
-			defer stdinPipe.Close()
-			io.WriteString(stdinPipe, prompt)
-		}()
+		cmd.Stdin = strings.NewReader(prompt)
 	}
 
 	if err := cmd.Start(); err != nil {

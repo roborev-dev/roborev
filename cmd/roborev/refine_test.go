@@ -300,6 +300,55 @@ func TestFindFailedReviewForBranch_SkipsAddressed(t *testing.T) {
 	}
 }
 
+func TestFindFailedReviewForBranch_SkipsGivenUpReviews(t *testing.T) {
+	client := newMockDaemonClient()
+
+	client.reviews = map[string]*storage.Review{
+		"commit1": {ID: 1, JobID: 100, Output: "Bug found."},       // Fail (oldest, but in skip set)
+		"commit2": {ID: 2, JobID: 200, Output: "Another bug."},     // Fail (should be returned)
+		"commit3": {ID: 3, JobID: 300, Output: "No issues found."}, // Pass
+	}
+
+	commits := []string{"commit1", "commit2", "commit3"}
+
+	// Skip review ID 1 (simulates "giving up" after 3 failed attempts)
+	skip := map[int64]bool{1: true}
+
+	found, err := findFailedReviewForBranch(client, commits, skip)
+	if err != nil {
+		t.Fatalf("findFailedReviewForBranch failed: %v", err)
+	}
+
+	// Should return commit2 (job 200), skipping commit1 which is in the skip set
+	if found == nil || found.JobID != 200 {
+		t.Errorf("expected job 200 (skipping given-up review), got %v", found)
+	}
+}
+
+func TestFindFailedReviewForBranch_AllSkippedReturnsNil(t *testing.T) {
+	client := newMockDaemonClient()
+
+	client.reviews = map[string]*storage.Review{
+		"commit1": {ID: 1, JobID: 100, Output: "Bug found."}, // Fail (in skip set)
+		"commit2": {ID: 2, JobID: 200, Output: "Another."},   // Fail (in skip set)
+	}
+
+	commits := []string{"commit1", "commit2"}
+
+	// Skip both reviews (simulates giving up on all failed reviews)
+	skip := map[int64]bool{1: true, 2: true}
+
+	found, err := findFailedReviewForBranch(client, commits, skip)
+	if err != nil {
+		t.Fatalf("findFailedReviewForBranch failed: %v", err)
+	}
+
+	// Should return nil since all failures are in skip set
+	if found != nil {
+		t.Errorf("expected nil (all skipped), got job %d", found.JobID)
+	}
+}
+
 func TestFindFailedReviewForBranch_AllPass(t *testing.T) {
 	client := newMockDaemonClient()
 
