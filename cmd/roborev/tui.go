@@ -128,6 +128,7 @@ type tuiAddressedResultMsg struct {
 	reviewID   int64 // review ID for review view rollback
 	reviewView bool  // true if from review view (rollback currentReview)
 	oldState   bool
+	newState   bool  // the requested state (for pendingAddressed validation)
 	err        error
 }
 type tuiCancelResultMsg struct {
@@ -488,21 +489,21 @@ func (m tuiModel) addressReview(reviewID, jobID int64, newState, oldState bool) 
 			"addressed": newState,
 		})
 		if err != nil {
-			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, err: err}
+			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, err: err}
 		}
 		resp, err := m.client.Post(m.serverAddr+"/api/review/address", "application/json", bytes.NewReader(reqBody))
 		if err != nil {
-			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, err: err}
+			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, err: err}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, err: fmt.Errorf("review not found")}
+			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, err: fmt.Errorf("review not found")}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, err: fmt.Errorf("mark review: %s", resp.Status)}
+			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, err: fmt.Errorf("mark review: %s", resp.Status)}
 		}
-		return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, err: nil}
+		return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, err: nil}
 	}
 }
 
@@ -514,20 +515,20 @@ func (m tuiModel) addressReviewInBackground(jobID int64, newState, oldState bool
 		// Fetch the review to get its ID
 		resp, err := m.client.Get(fmt.Sprintf("%s/api/review?job_id=%d", m.serverAddr, jobID))
 		if err != nil {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, err: err}
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, err: err}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, err: fmt.Errorf("no review for this job")}
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, err: fmt.Errorf("no review for this job")}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, err: fmt.Errorf("fetch review: %s", resp.Status)}
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, err: fmt.Errorf("fetch review: %s", resp.Status)}
 		}
 
 		var review storage.Review
 		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, err: err}
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, err: err}
 		}
 
 		// Now mark it
@@ -536,19 +537,19 @@ func (m tuiModel) addressReviewInBackground(jobID int64, newState, oldState bool
 			"addressed": newState,
 		})
 		if err != nil {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, err: err}
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, err: err}
 		}
 		resp2, err := m.client.Post(m.serverAddr+"/api/review/address", "application/json", bytes.NewReader(reqBody))
 		if err != nil {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, err: err}
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, err: err}
 		}
 		defer resp2.Body.Close()
 
 		if resp2.StatusCode != http.StatusOK {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, err: fmt.Errorf("mark review: %s", resp2.Status)}
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, err: fmt.Errorf("mark review: %s", resp2.Status)}
 		}
 		// Success
-		return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, err: nil}
+		return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, err: nil}
 	}
 }
 
@@ -1501,9 +1502,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiAddressedResultMsg:
-		// Clear pending state now that server operation completed
+		// Only clear pending state if it still matches what this response was for.
+		// This prevents a stale response from clearing pending state set by a newer toggle.
 		if msg.jobID > 0 {
-			delete(m.pendingAddressed, msg.jobID)
+			if pendingState, ok := m.pendingAddressed[msg.jobID]; ok && pendingState == msg.newState {
+				delete(m.pendingAddressed, msg.jobID)
+			}
 		}
 		if msg.err != nil {
 			// Rollback optimistic update on error
@@ -1516,6 +1520,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Always rollback the job in queue
 			if msg.jobID > 0 {
 				m.setJobAddressed(msg.jobID, msg.oldState)
+				// Also clear pending state on error since we're rolling back
+				delete(m.pendingAddressed, msg.jobID)
 			}
 			m.err = msg.err
 		}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -54,7 +55,10 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	})
 
 	t.Run("returns name with slash when path is inaccessible", func(t *testing.T) {
-		// Skip on Windows (chmod doesn't work the same) or if running as root
+		// Skip on Windows (chmod doesn't make directories unreadable) or if running as root
+		if runtime.GOOS == "windows" {
+			t.Skip("skipping permission test on Windows")
+		}
 		if os.Getuid() == 0 {
 			t.Skip("skipping permission test when running as root")
 		}

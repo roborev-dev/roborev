@@ -4090,3 +4090,188 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 		}
 	}
 }
+
+func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.hideAddressed = true
+
+	addressedFalse := false
+	addressedTrue := true
+
+	// Job with Addressed=false but pendingAddressed=true should be hidden
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+	}
+	m.pendingAddressed[1] = true
+
+	if m.isJobVisible(m.jobs[0]) {
+		t.Error("Job with pendingAddressed=true should be hidden when hideAddressed is active")
+	}
+
+	// Job with Addressed=true but pendingAddressed=false should be visible
+	m.jobs = []storage.ReviewJob{
+		{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+	}
+	m.pendingAddressed[2] = false
+
+	if !m.isJobVisible(m.jobs[0]) {
+		t.Error("Job with pendingAddressed=false should be visible even if job.Addressed is true")
+	}
+
+	// Job with no pendingAddressed entry falls back to job.Addressed
+	m.jobs = []storage.ReviewJob{
+		{ID: 3, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+	}
+	delete(m.pendingAddressed, 3)
+
+	if m.isJobVisible(m.jobs[0]) {
+		t.Error("Job with Addressed=true and no pending entry should be hidden")
+	}
+}
+
+func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.hideAddressed = true
+	m.loadingJobs = false
+
+	addressedFalse := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+	}
+	m.currentReview = &storage.Review{ID: 1, JobID: 1}
+
+	// Press escape to return to queue view
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if m2.currentView != tuiViewQueue {
+		t.Error("Expected to return to queue view")
+	}
+	if !m2.loadingJobs {
+		t.Error("Expected loadingJobs to be true when escaping with hideAddressed active")
+	}
+	if cmd == nil {
+		t.Error("Expected a command to be returned for refresh")
+	}
+}
+
+func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.hideAddressed = false
+	m.loadingJobs = false
+
+	addressedFalse := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+	}
+	m.currentReview = &storage.Review{ID: 1, JobID: 1}
+
+	// Press escape to return to queue view
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if m2.currentView != tuiViewQueue {
+		t.Error("Expected to return to queue view")
+	}
+	if m2.loadingJobs {
+		t.Error("Should not trigger refresh when hideAddressed is not active")
+	}
+	if cmd != nil {
+		t.Error("Should not return a command when hideAddressed is not active")
+	}
+}
+
+func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	addressedFalse := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+	}
+
+	// User toggles addressed to true
+	m.pendingAddressed[1] = true
+
+	// A stale response comes back for a previous toggle to false
+	// (this could happen if user rapidly toggles)
+	staleMsg := tuiAddressedResultMsg{
+		jobID:    1,
+		oldState: true,
+		newState: false, // This response was for a toggle to false
+		err:      nil,
+	}
+
+	updated, _ := m.Update(staleMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingAddressed should NOT be cleared because newState (false) != current pending (true)
+	if _, ok := m2.pendingAddressed[1]; !ok {
+		t.Error("pendingAddressed should not be cleared by stale response with mismatched newState")
+	}
+	if m2.pendingAddressed[1] != true {
+		t.Error("pendingAddressed value should remain true")
+	}
+}
+
+func TestTUIPendingAddressedClearedByMatchingResponse(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	addressedFalse := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+	}
+
+	// User toggles addressed to true
+	m.pendingAddressed[1] = true
+
+	// Response comes back for the correct toggle to true
+	matchingMsg := tuiAddressedResultMsg{
+		jobID:    1,
+		oldState: false,
+		newState: true, // This response matches what we requested
+		err:      nil,
+	}
+
+	updated, _ := m.Update(matchingMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingAddressed should be cleared because newState matches
+	if _, ok := m2.pendingAddressed[1]; ok {
+		t.Error("pendingAddressed should be cleared when response newState matches pending state")
+	}
+}
+
+func TestTUIPendingAddressedClearedOnError(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	addressedTrue := true
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+	}
+
+	// User toggles addressed to false
+	m.pendingAddressed[1] = false
+
+	// Error response comes back
+	errorMsg := tuiAddressedResultMsg{
+		jobID:    1,
+		oldState: true,
+		newState: false,
+		err:      fmt.Errorf("server error"),
+	}
+
+	updated, _ := m.Update(errorMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingAddressed should be cleared on error (we're rolling back)
+	if _, ok := m2.pendingAddressed[1]; ok {
+		t.Error("pendingAddressed should be cleared on error")
+	}
+
+	// Job state should be rolled back
+	if m2.jobs[0].Addressed == nil || *m2.jobs[0].Addressed != true {
+		t.Error("Job addressed state should be rolled back to oldState on error")
+	}
+}
