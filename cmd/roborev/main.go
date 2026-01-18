@@ -60,6 +60,8 @@ func main() {
 	rootCmd.AddCommand(streamCmd())
 	rootCmd.AddCommand(tuiCmd())
 	rootCmd.AddCommand(refineCmd())
+	rootCmd.AddCommand(promptCmd())
+	rootCmd.AddCommand(repoCmd())
 	rootCmd.AddCommand(skillsCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())

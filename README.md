@@ -48,9 +48,12 @@ roborev tui           # View reviews in interactive UI
 | `roborev review --branch` | Review all commits on current branch |
 | `roborev review --dirty` | Review uncommitted changes |
 | `roborev review --reasoning <level>` | Set reasoning depth (thorough/standard/fast) |
+| `roborev prompt "<text>"` | Run ad-hoc prompt with AI agent |
 | `roborev respond <id> [msg]` | Add a response/note to a review |
 | `roborev address <id>` | Mark review as addressed |
 | `roborev refine` | Auto-fix failed reviews using AI |
+| `roborev repo list` | List tracked repositories |
+| `roborev repo rename <old> <new>` | Rename a repository's display name |
 | `roborev stream` | Stream review events (JSONL) |
 | `roborev daemon start\|stop\|restart` | Manage the daemon |
 | `roborev install-hook` | Install git post-commit hook |
@@ -90,6 +93,54 @@ if ! roborev review --dirty --wait --quiet; then
     exit 1
 fi
 ```
+
+## Ad-Hoc Prompts
+
+Use `prompt` to run arbitrary prompts with AI agents for tasks beyond code review:
+
+```bash
+roborev prompt "Explain the architecture of this codebase"
+roborev prompt --wait "What does the main function do?"
+roborev prompt --agent claude-code "Refactor error handling in main.go"
+roborev prompt --reasoning thorough "Find potential security issues"
+cat instructions.txt | roborev prompt --wait
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--wait` | Wait for job to complete and show result |
+| `--agent` | Agent to use (default: from config) |
+| `--reasoning` | Reasoning level: fast, standard, or thorough |
+| `--no-context` | Don't include repository context in prompt |
+| `--quiet` | Suppress output (just enqueue) |
+
+By default, prompts include context about the repository (name, path, and any project guidelines from `.roborev.toml`). Use `--no-context` for raw prompts.
+
+## Repository Management
+
+Manage repositories tracked by roborev:
+
+```bash
+roborev repo list                    # List all repos with review counts
+roborev repo show my-project         # Show repo details and stats
+roborev repo rename old-name new-name # Rename display name
+roborev repo delete old-project      # Remove from tracking
+roborev repo merge source target     # Merge reviews into another repo
+```
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `repo list` | List all repositories with review counts |
+| `repo show <name>` | Show detailed stats for a repository |
+| `repo rename <old> <new>` | Rename a repository's display name |
+| `repo delete <name>` | Remove repository from tracking |
+| `repo merge <src> <dst>` | Move all reviews to another repo |
+
+The rename command is useful for grouping reviews after project renames or when you want a friendlier display name than the directory name. The merge command consolidates duplicate entries (e.g., from symlinks or path changes).
 
 ## Auto-Fixing Failed Reviews
 

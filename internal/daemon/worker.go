@@ -238,10 +238,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	wp.registerRunningJob(job.ID, cancel)
 	defer wp.unregisterRunningJob(job.ID)
 
-	// Build the prompt
+	// Build the prompt (or use pre-stored prompt for prompt jobs)
 	var reviewPrompt string
 	var err error
-	if job.DiffContent != nil {
+	if job.GitRef == "prompt" && job.Prompt != "" {
+		// Custom prompt job - use pre-stored prompt directly
+		reviewPrompt = job.Prompt
+	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
 		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, wp.cfg.ReviewContextCount)
 	} else {

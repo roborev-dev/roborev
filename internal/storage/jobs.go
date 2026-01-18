@@ -611,6 +611,32 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, reasoning, diffConten
 	}, nil
 }
 
+// EnqueuePromptJob creates a new job with a custom prompt (not a git review).
+// The prompt is stored at enqueue time and used directly by the worker.
+func (db *DB) EnqueuePromptJob(repoID int64, agent, reasoning, customPrompt string) (*ReviewJob, error) {
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, prompt) VALUES (?, NULL, 'prompt', ?, ?, 'queued', ?)`,
+		repoID, agent, reasoning, customPrompt)
+	if err != nil {
+		return nil, err
+	}
+
+	id, _ := result.LastInsertId()
+	return &ReviewJob{
+		ID:         id,
+		RepoID:     repoID,
+		CommitID:   nil,
+		GitRef:     "prompt",
+		Agent:      agent,
+		Reasoning:  reasoning,
+		Status:     JobStatusQueued,
+		EnqueuedAt: time.Now(),
+		Prompt:     customPrompt,
+	}, nil
+}
+
 // ClaimJob atomically claims the next queued job for a worker
 func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	now := time.Now()
@@ -647,9 +673,10 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 	var diffContent sql.NullString
+	var prompt sql.NullString
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       r.root_path, r.name, c.subject, j.diff_content
+		       r.root_path, r.name, c.subject, j.diff_content, j.prompt
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -657,7 +684,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		ORDER BY j.started_at DESC
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
-		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent)
+		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent, &prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -670,6 +697,9 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	}
 	if diffContent.Valid {
 		job.DiffContent = &diffContent.String
+	}
+	if prompt.Valid {
+		job.Prompt = prompt.String
 	}
 	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	job.Status = JobStatusRunning

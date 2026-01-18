@@ -1822,3 +1822,112 @@ func TestHandleListJobsByID(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleEnqueuePromptJob(t *testing.T) {
+	// Create a test git repo
+	repoDir := t.TempDir()
+	initCmd := exec.Command("git", "init", repoDir)
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+	configCmd := exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com")
+	configCmd.Run()
+	configCmd = exec.Command("git", "-C", repoDir, "config", "user.name", "Test")
+	configCmd.Run()
+
+	// Create initial commit
+	testFile := filepath.Join(repoDir, "test.txt")
+	os.WriteFile(testFile, []byte("test"), 0644)
+	addCmd := exec.Command("git", "-C", repoDir, "add", ".")
+	addCmd.Run()
+	commitCmd := exec.Command("git", "-C", repoDir, "commit", "-m", "init")
+	commitCmd.Run()
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg)
+
+	t.Run("enqueues prompt job successfully", func(t *testing.T) {
+		reqData := map[string]string{
+			"repo_path":     repoDir,
+			"git_ref":       "prompt",
+			"agent":         "test",
+			"custom_prompt": "Explain this codebase",
+		}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var job storage.ReviewJob
+		if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if job.GitRef != "prompt" {
+			t.Errorf("Expected git_ref 'prompt', got '%s'", job.GitRef)
+		}
+		if job.Agent != "test" {
+			t.Errorf("Expected agent 'test', got '%s'", job.Agent)
+		}
+		if job.Status != storage.JobStatusQueued {
+			t.Errorf("Expected status 'queued', got '%s'", job.Status)
+		}
+	})
+
+	t.Run("rejects prompt job without custom_prompt", func(t *testing.T) {
+		reqData := map[string]string{
+			"repo_path": repoDir,
+			"git_ref":   "prompt",
+			"agent":     "test",
+			// missing custom_prompt
+		}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if !strings.Contains(w.Body.String(), "custom_prompt required") {
+			t.Errorf("Expected error about custom_prompt, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("prompt job with reasoning level", func(t *testing.T) {
+		reqData := map[string]string{
+			"repo_path":     repoDir,
+			"git_ref":       "prompt",
+			"agent":         "test",
+			"reasoning":     "fast",
+			"custom_prompt": "Quick analysis",
+		}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var job storage.ReviewJob
+		json.NewDecoder(w.Body).Decode(&job)
+
+		if job.Reasoning != "fast" {
+			t.Errorf("Expected reasoning 'fast', got '%s'", job.Reasoning)
+		}
+	})
+}
