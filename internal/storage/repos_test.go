@@ -372,7 +372,7 @@ func TestDeleteRepo(t *testing.T) {
 		}
 	})
 
-	t.Run("delete repo with jobs without cascade fails with FK constraint", func(t *testing.T) {
+	t.Run("delete repo with jobs without cascade returns error", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
@@ -380,13 +380,20 @@ func TestDeleteRepo(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "delete-sha", "A", "S", time.Now())
 		db.EnqueueJob(repo.ID, commit.ID, "delete-sha", "codex", "")
 
-		// Without cascade, delete should fail due to foreign key constraint
-		// Note: SQLite FK enforcement depends on PRAGMA foreign_keys
-		// The delete will succeed but leave orphaned jobs unless FKs are enabled
+		// Without cascade, delete should return ErrRepoHasJobs
 		err := db.DeleteRepo(repo.ID, false)
-		// This may or may not error depending on FK enforcement
-		// The important test is cascade mode below
-		_ = err
+		if err == nil {
+			t.Error("Expected error when deleting repo with jobs without cascade")
+		}
+		if !errors.Is(err, ErrRepoHasJobs) {
+			t.Errorf("Expected ErrRepoHasJobs, got: %v", err)
+		}
+
+		// Verify repo still exists
+		_, err = db.GetRepoByID(repo.ID)
+		if err != nil {
+			t.Error("Repo should still exist after failed delete")
+		}
 	})
 
 	t.Run("delete repo with cascade", func(t *testing.T) {

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"time"
 )
@@ -252,9 +253,24 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 	return stats, nil
 }
 
+// ErrRepoHasJobs is returned when trying to delete a repo with jobs without cascade
+var ErrRepoHasJobs = errors.New("repository has existing jobs; use cascade to delete them")
+
 // DeleteRepo deletes a repo and optionally its associated data
 // If cascade is true, also deletes all jobs, reviews, and responses for the repo
+// If cascade is false and jobs exist, returns ErrRepoHasJobs
 func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
+	// Check for existing jobs
+	var jobCount int
+	err := db.QueryRow(`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repoID).Scan(&jobCount)
+	if err != nil {
+		return err
+	}
+
+	if !cascade && jobCount > 0 {
+		return ErrRepoHasJobs
+	}
+
 	if cascade {
 		// Delete in correct order due to foreign keys
 		// 1. Delete responses for jobs in this repo
@@ -282,6 +298,12 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		if err != nil {
 			return err
 		}
+
+		// 4. Delete commits for this repo
+		_, err = db.Exec(`DELETE FROM commits WHERE repo_id = ?`, repoID)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Delete the repo itself
@@ -296,10 +318,18 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	return nil
 }
 
-// MergeRepos moves all jobs from sourceRepoID to targetRepoID, then deletes the source repo
+// MergeRepos moves all jobs and commits from sourceRepoID to targetRepoID, then deletes the source repo
 func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 	if sourceRepoID == targetRepoID {
 		return 0, nil
+	}
+
+	// Move all commits from source to target
+	// Note: commits.sha is UNIQUE, so this will fail if both repos have
+	// commits with the same SHA (which shouldn't happen for the same git repo)
+	_, err := db.Exec(`UPDATE commits SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
+	if err != nil {
+		return 0, err
 	}
 
 	// Move all jobs from source to target

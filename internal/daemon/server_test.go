@@ -1881,12 +1881,15 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects prompt job without custom_prompt", func(t *testing.T) {
+	t.Run("git_ref prompt without custom_prompt is treated as branch review", func(t *testing.T) {
+		// With no custom_prompt, git_ref="prompt" is treated as trying to review
+		// a branch/commit named "prompt" (not a prompt job). This allows reviewing
+		// branches literally named "prompt" without collision.
 		reqData := map[string]string{
 			"repo_path": repoDir,
 			"git_ref":   "prompt",
 			"agent":     "test",
-			// missing custom_prompt
+			// no custom_prompt - should try to resolve "prompt" as a git ref
 		}
 		reqBody, _ := json.Marshal(reqData)
 		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
@@ -1895,12 +1898,17 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 
 		server.handleEnqueue(w, req)
 
+		// Should fail because there's no branch named "prompt", not because
+		// custom_prompt is missing
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+			t.Errorf("Expected 400 (invalid commit), got %d: %s", w.Code, w.Body.String())
 		}
 
-		if !strings.Contains(w.Body.String(), "custom_prompt required") {
-			t.Errorf("Expected error about custom_prompt, got: %s", w.Body.String())
+		if strings.Contains(w.Body.String(), "custom_prompt required") {
+			t.Errorf("Should NOT require custom_prompt for git_ref=prompt, got: %s", w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "invalid commit") {
+			t.Errorf("Expected 'invalid commit' error, got: %s", w.Body.String())
 		}
 	})
 

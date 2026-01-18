@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -268,7 +269,7 @@ Examples:
 			}
 
 			if err := db.DeleteRepo(repo.ID, cascade); err != nil {
-				if !cascade && stats.TotalJobs > 0 {
+				if errors.Is(err, storage.ErrRepoHasJobs) {
 					return fmt.Errorf("cannot delete repository with existing jobs (use --cascade)")
 				}
 				return fmt.Errorf("delete repo: %w", err)

@@ -213,15 +213,11 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if this is a custom prompt, dirty review, range, or single commit
-	isPrompt := gitRef == "prompt"
-	isDirty := gitRef == "dirty"
+	// Note: isPrompt is determined by whether custom_prompt is provided, not git_ref value
+	// This allows reviewing a branch literally named "prompt" without collision
+	isPrompt := req.CustomPrompt != ""
+	isDirty := !isPrompt && gitRef == "dirty"
 	isRange := !isPrompt && !isDirty && strings.Contains(gitRef, "..")
-
-	// Validate custom prompt has prompt content
-	if isPrompt && req.CustomPrompt == "" {
-		writeError(w, http.StatusBadRequest, "custom_prompt required for prompt jobs")
-		return
-	}
 
 	// Validate dirty review has diff content
 	if isDirty && req.DiffContent == "" {
