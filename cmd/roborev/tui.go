@@ -105,7 +105,8 @@ type tuiModel struct {
 	displayNames map[string]string
 
 	// Pending addressed state changes (prevents flash during refresh race)
-	pendingAddressed map[int64]bool // job ID -> new addressed state
+	pendingAddressed       map[int64]bool // job ID -> new addressed state
+	pendingReviewAddressed map[int64]bool // review ID -> new addressed state (for reviews without jobs)
 }
 
 type tuiTickMsg time.Time
@@ -159,16 +160,17 @@ type tuiReposMsg struct {
 
 func newTuiModel(serverAddr string) tuiModel {
 	return tuiModel{
-		serverAddr:       serverAddr,
-		daemonVersion:    "?", // Updated from /api/status response
-		client:           &http.Client{Timeout: 10 * time.Second},
-		jobs:             []storage.ReviewJob{},
-		currentView:      tuiViewQueue,
-		width:            80, // sensible defaults until we get WindowSizeMsg
-		height:           24,
-		loadingJobs:      true,                    // Init() calls fetchJobs, so mark as loading
-		displayNames:     make(map[string]string), // Cache display names to avoid disk reads on render
-		pendingAddressed: make(map[int64]bool),    // Track pending addressed changes
+		serverAddr:             serverAddr,
+		daemonVersion:          "?", // Updated from /api/status response
+		client:                 &http.Client{Timeout: 10 * time.Second},
+		jobs:                   []storage.ReviewJob{},
+		currentView:            tuiViewQueue,
+		width:                  80, // sensible defaults until we get WindowSizeMsg
+		height:                 24,
+		loadingJobs:            true,                    // Init() calls fetchJobs, so mark as loading
+		displayNames:           make(map[string]string), // Cache display names to avoid disk reads on render
+		pendingAddressed:       make(map[int64]bool),    // Track pending addressed changes (by job ID)
+		pendingReviewAddressed: make(map[int64]bool),    // Track pending addressed changes (by review ID, for reviews without jobs)
 	}
 }
 
@@ -1211,6 +1213,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					jobID = m.currentReview.Job.ID
 					m.setJobAddressed(jobID, newState)
 					m.pendingAddressed[jobID] = newState // Track pending change
+				} else {
+					// No job associated - track by review ID instead
+					m.pendingReviewAddressed[m.currentReview.ID] = newState
 				}
 				return m, m.addressReview(m.currentReview.ID, jobID, newState, oldState)
 			} else if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
@@ -1506,15 +1511,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Stale responses (from rapid toggles) should be ignored entirely.
 		// A response is current if:
 		// 1. jobID > 0 and pendingAddressed[jobID] matches newState, OR
-		// 2. reviewView and still viewing that review with matching addressed state
+		// 2. reviewView without jobID and pendingReviewAddressed[reviewID] matches newState
 		isCurrentRequest := false
 		if msg.jobID > 0 {
 			if pendingState, ok := m.pendingAddressed[msg.jobID]; ok && pendingState == msg.newState {
 				isCurrentRequest = true
 			}
-		} else if msg.reviewView && m.currentReview != nil && m.currentReview.ID == msg.reviewID {
-			// Review-view response without jobID: check if still viewing and state matches
-			if m.currentReview.Addressed == msg.newState {
+		} else if msg.reviewView && msg.reviewID > 0 {
+			// Review-view response without jobID: check pendingReviewAddressed
+			if pendingState, ok := m.pendingReviewAddressed[msg.reviewID]; ok && pendingState == msg.newState {
 				isCurrentRequest = true
 			}
 		}
@@ -1532,14 +1537,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if msg.jobID > 0 {
 					m.setJobAddressed(msg.jobID, msg.oldState)
 					delete(m.pendingAddressed, msg.jobID)
+				} else if msg.reviewID > 0 {
+					delete(m.pendingReviewAddressed, msg.reviewID)
 				}
 				m.err = msg.err
 			}
 			// Stale error responses are silently ignored
 		} else {
 			// Success: clear pending state if current
-			if isCurrentRequest && msg.jobID > 0 {
-				delete(m.pendingAddressed, msg.jobID)
+			if isCurrentRequest {
+				if msg.jobID > 0 {
+					delete(m.pendingAddressed, msg.jobID)
+				} else if msg.reviewID > 0 {
+					delete(m.pendingReviewAddressed, msg.reviewID)
+				}
 			}
 		}
 
