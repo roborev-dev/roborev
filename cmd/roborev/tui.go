@@ -103,6 +103,9 @@ type tuiModel struct {
 
 	// Display name cache (keyed by repo path)
 	displayNames map[string]string
+
+	// Pending addressed state changes (prevents flash during refresh race)
+	pendingAddressed map[int64]bool // job ID -> new addressed state
 }
 
 type tuiTickMsg time.Time
@@ -155,15 +158,16 @@ type tuiReposMsg struct {
 
 func newTuiModel(serverAddr string) tuiModel {
 	return tuiModel{
-		serverAddr:    serverAddr,
-		daemonVersion: "?", // Updated from /api/status response
-		client:        &http.Client{Timeout: 10 * time.Second},
-		jobs:          []storage.ReviewJob{},
-		currentView:   tuiViewQueue,
-		width:         80, // sensible defaults until we get WindowSizeMsg
-		height:        24,
-		loadingJobs:   true,                    // Init() calls fetchJobs, so mark as loading
-		displayNames:  make(map[string]string), // Cache display names to avoid disk reads on render
+		serverAddr:       serverAddr,
+		daemonVersion:    "?", // Updated from /api/status response
+		client:           &http.Client{Timeout: 10 * time.Second},
+		jobs:             []storage.ReviewJob{},
+		currentView:      tuiViewQueue,
+		width:            80, // sensible defaults until we get WindowSizeMsg
+		height:           24,
+		loadingJobs:      true,                    // Init() calls fetchJobs, so mark as loading
+		displayNames:     make(map[string]string), // Cache display names to avoid disk reads on render
+		pendingAddressed: make(map[int64]bool),    // Track pending addressed changes
 	}
 }
 
@@ -1200,6 +1204,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.currentReview.Job != nil {
 					jobID = m.currentReview.Job.ID
 					m.setJobAddressed(jobID, newState)
+					m.pendingAddressed[jobID] = newState // Track pending change
 				}
 				return m, m.addressReview(m.currentReview.ID, jobID, newState, oldState)
 			} else if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
@@ -1207,7 +1212,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if job.Status == storage.JobStatusDone && job.Addressed != nil {
 					oldState := *job.Addressed
 					newState := !oldState
-					*job.Addressed = newState // Optimistic update
+					*job.Addressed = newState              // Optimistic update
+					m.pendingAddressed[job.ID] = newState // Track pending change
 					// If hiding addressed and we just marked as addressed, move to next visible job
 					if m.hideAddressed && newState {
 						nextIdx := m.findNextVisibleJob(m.selectedIdx)
@@ -1362,6 +1368,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.jobs = msg.jobs
 		}
 
+		// Apply any pending addressed changes to prevent flash during race condition
+		// (user pressed 'a' but server response arrived before addressed update completed)
+		for i := range m.jobs {
+			if pendingState, ok := m.pendingAddressed[m.jobs[i].ID]; ok {
+				m.jobs[i].Addressed = &pendingState
+			}
+		}
+
 		if len(m.jobs) == 0 {
 			m.selectedIdx = -1
 			// Only clear selectedJobID if not viewing a review - preserves
@@ -1476,6 +1490,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiAddressedResultMsg:
+		// Clear pending state now that server operation completed
+		if msg.jobID > 0 {
+			delete(m.pendingAddressed, msg.jobID)
+		}
 		if msg.err != nil {
 			// Rollback optimistic update on error
 			if msg.reviewView {
