@@ -829,7 +829,12 @@ func (m tuiModel) isJobVisible(job storage.ReviewJob) bool {
 	}
 	if m.hideAddressed {
 		// Hide addressed reviews, failed jobs, and canceled jobs
-		if job.Addressed != nil && *job.Addressed {
+		// Check pendingAddressed first for optimistic updates (avoids flash on filter)
+		if pendingState, ok := m.pendingAddressed[job.ID]; ok {
+			if pendingState {
+				return false
+			}
+		} else if job.Addressed != nil && *job.Addressed {
 			return false
 		}
 		if job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {
@@ -1314,6 +1319,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentReview = nil
 				m.reviewScroll = 0
 				m.normalizeSelectionIfHidden()
+				// If hiding addressed, trigger refresh to ensure clean state
+				// (avoids timing issues where addressed job briefly appears)
+				if m.hideAddressed && !m.loadingJobs {
+					m.loadingJobs = true
+					return m, m.fetchJobs()
+				}
 			} else if m.currentView == tuiViewPrompt {
 				// Go back to where we came from
 				if m.promptFromQueue {
