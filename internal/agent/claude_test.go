@@ -32,6 +32,9 @@ func TestClaudeBuildArgsUnsafeOptIn(t *testing.T) {
 	if !containsString(args, "--output-format") || !containsString(args, "stream-json") {
 		t.Fatalf("expected --output-format stream-json in agentic mode, got %v", args)
 	}
+	if !containsString(args, "--verbose") {
+		t.Fatalf("expected --verbose in agentic mode (required for stream-json), got %v", args)
+	}
 }
 
 func TestClaudeSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {

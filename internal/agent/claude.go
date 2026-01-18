@@ -55,7 +55,8 @@ func (a *ClaudeAgent) buildArgs(prompt string, agenticMode bool) []string {
 		// Agentic mode: Claude can use tools and make file changes
 		// Use stream-json output format for non-interactive execution
 		// (following claude-code-action pattern from Anthropic)
-		args = append(args, "--output-format", "stream-json", "-p", prompt)
+		// --verbose is required when using --output-format stream-json with -p
+		args = append(args, "--verbose", "--output-format", "stream-json", "-p", prompt)
 	} else {
 		// Print mode: one-shot text response, no tool use
 		args = append(args, "--print", "-p", prompt)
