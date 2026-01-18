@@ -154,6 +154,10 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 	return nil
 }
 
+// promptPollInterval is the initial poll interval for waiting on prompt jobs.
+// Can be overridden in tests to speed them up.
+var promptPollInterval = 500 * time.Millisecond
+
 // waitForPromptJob waits for a prompt job to complete and displays the result.
 // Unlike waitForJob, this doesn't apply verdict-based exit codes since prompt
 // jobs don't have PASS/FAIL verdicts.
@@ -165,7 +169,7 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 	}
 
 	// Poll with exponential backoff
-	pollInterval := 500 * time.Millisecond
+	pollInterval := promptPollInterval
 	maxInterval := 5 * time.Second
 
 	for {
@@ -197,10 +201,8 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 
 		switch job.Status {
 		case storage.JobStatusDone:
-			if !quiet {
-				cmd.Printf(" done!\n\n")
-			}
-			return showPromptResult(cmd, serverAddr, jobID, quiet)
+			// Pass done message to showPromptResult - it prints after successful fetch
+			return showPromptResult(cmd, serverAddr, jobID, quiet, " done!\n\n")
 
 		case storage.JobStatusFailed:
 			if !quiet {
@@ -232,7 +234,8 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 
 // showPromptResult fetches and displays the result of a prompt job.
 // Unlike showReview, this doesn't apply verdict-based exit codes.
-func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool) error {
+// The doneMsg parameter is printed before the result on success (used for "done!" message).
+func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool, doneMsg string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", addr, jobID))
 	if err != nil {
@@ -253,7 +256,11 @@ func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool) 
 		return fmt.Errorf("failed to parse result: %w", err)
 	}
 
+	// Only print after successful fetch to avoid "done!" followed by error
 	if !quiet {
+		if doneMsg != "" {
+			cmd.Print(doneMsg)
+		}
 		cmd.Printf("Result (by %s)\n", review.Agent)
 		cmd.Println(strings.Repeat("-", 60))
 		cmd.Println(review.Output)

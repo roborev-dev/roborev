@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wesm/roborev/internal/storage"
@@ -146,7 +147,7 @@ func TestShowPromptResult(t *testing.T) {
 		defer server.Close()
 
 		cmd, out := mockCmd()
-		err := showPromptResult(cmd, server.URL, 123, false)
+		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
@@ -177,7 +178,7 @@ func TestShowPromptResult(t *testing.T) {
 		defer server.Close()
 
 		cmd, _ := mockCmd()
-		err := showPromptResult(cmd, server.URL, 123, false)
+		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		// Prompt jobs don't use verdict-based exit codes
 		if err != nil {
@@ -200,7 +201,7 @@ func TestShowPromptResult(t *testing.T) {
 		defer server.Close()
 
 		cmd, out := mockCmd()
-		err := showPromptResult(cmd, server.URL, 123, true) // quiet=true
+		err := showPromptResult(cmd, server.URL, 123, true, "") // quiet=true
 
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
@@ -218,7 +219,7 @@ func TestShowPromptResult(t *testing.T) {
 		defer server.Close()
 
 		cmd, _ := mockCmd()
-		err := showPromptResult(cmd, server.URL, 999, false)
+		err := showPromptResult(cmd, server.URL, 999, false, "")
 
 		if err == nil {
 			t.Error("Expected error for not found")
@@ -236,7 +237,7 @@ func TestShowPromptResult(t *testing.T) {
 		defer server.Close()
 
 		cmd, _ := mockCmd()
-		err := showPromptResult(cmd, server.URL, 123, false)
+		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		if err == nil {
 			t.Error("Expected error for server error")
@@ -396,6 +397,11 @@ func TestWaitForPromptJob(t *testing.T) {
 	})
 
 	t.Run("polls while job is running", func(t *testing.T) {
+		// Use fast poll interval for test
+		oldInterval := promptPollInterval
+		promptPollInterval = 1 * time.Millisecond
+		defer func() { promptPollInterval = oldInterval }()
+
 		pollCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {

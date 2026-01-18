@@ -351,6 +351,47 @@ func TestGetRepoStats(t *testing.T) {
 			t.Error("Expected error for nonexistent repo ID")
 		}
 	})
+
+	t.Run("prompt jobs excluded from verdict counts", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, _ := db.GetOrCreateRepo("/tmp/stats-prompt-test")
+
+		// Create a regular job with PASS verdict
+		commit, _ := db.GetOrCreateCommit(repo.ID, "stats-prompt-sha1", "A", "S", time.Now())
+		job1, _ := db.EnqueueJob(repo.ID, commit.ID, "stats-prompt-sha1", "codex", "")
+		db.ClaimJob("worker-1")
+		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
+
+		// Create a prompt job with output that contains verdict-like text
+		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "thorough", "Test prompt")
+		db.ClaimJob("worker-1")
+		// This has FAIL verdict text but should NOT count toward failed reviews
+		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
+
+		// Get stats - prompt job should be excluded from verdict counts
+		stats, err := db.GetRepoStats(repo.ID)
+		if err != nil {
+			t.Fatalf("GetRepoStats failed: %v", err)
+		}
+
+		// Total jobs should include both
+		if stats.TotalJobs != 2 {
+			t.Errorf("Expected 2 total jobs, got %d", stats.TotalJobs)
+		}
+		if stats.CompletedJobs != 2 {
+			t.Errorf("Expected 2 completed jobs, got %d", stats.CompletedJobs)
+		}
+
+		// Verdict counts should only reflect the regular job
+		if stats.PassedReviews != 1 {
+			t.Errorf("Expected 1 passed review (prompt job excluded), got %d", stats.PassedReviews)
+		}
+		if stats.FailedReviews != 0 {
+			t.Errorf("Expected 0 failed reviews (prompt job excluded), got %d", stats.FailedReviews)
+		}
+	})
 }
 
 func TestDeleteRepo(t *testing.T) {
@@ -627,4 +668,110 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 	if afterCount != 0 {
 		t.Errorf("Expected 0 legacy responses after cascade delete, got %d", afterCount)
 	}
+}
+
+func TestVerdictSuppressionForPromptJobs(t *testing.T) {
+	t.Run("prompt jobs do not get verdict computed", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, _ := db.GetOrCreateRepo("/tmp/verdict-prompt-test")
+
+		// Create a prompt job and complete it with output containing verdict-like text
+		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "thorough", "Test prompt")
+		db.ClaimJob("worker-1")
+		// Output that would normally be parsed as FAIL
+		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")
+
+		// Fetch via ListJobs and check verdict is nil
+		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
+		var found *ReviewJob
+		for i := range jobs {
+			if jobs[i].ID == promptJob.ID {
+				found = &jobs[i]
+				break
+			}
+		}
+
+		if found == nil {
+			t.Fatal("Prompt job not found in ListJobs")
+		}
+
+		if found.Verdict != nil {
+			t.Errorf("Prompt job should have nil verdict, got %v", *found.Verdict)
+		}
+	})
+
+	t.Run("regular jobs still get verdict computed", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, _ := db.GetOrCreateRepo("/tmp/verdict-regular-test")
+		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-sha", "Author", "Subject", time.Now())
+
+		// Create a regular job and complete it
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-sha", "codex", "")
+		db.ClaimJob("worker-1")
+		// Output that should be parsed as PASS
+		db.CompleteJob(job.ID, "codex", "prompt", "No issues found in this commit.")
+
+		// Fetch via ListJobs and check verdict is set
+		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
+		var found *ReviewJob
+		for i := range jobs {
+			if jobs[i].ID == job.ID {
+				found = &jobs[i]
+				break
+			}
+		}
+
+		if found == nil {
+			t.Fatal("Regular job not found in ListJobs")
+		}
+
+		if found.Verdict == nil {
+			t.Error("Regular job should have verdict computed")
+		} else if *found.Verdict != "P" {
+			t.Errorf("Expected verdict 'P', got '%s'", *found.Verdict)
+		}
+	})
+
+	t.Run("branch named prompt with commit_id gets verdict", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, _ := db.GetOrCreateRepo("/tmp/verdict-branch-prompt")
+		// Create a commit for a branch literally named "prompt"
+		commit, _ := db.GetOrCreateCommit(repo.ID, "branch-prompt-sha", "Author", "Subject", time.Now())
+
+		// Enqueue with git_ref = "prompt" but WITH a commit_id (simulating review of branch "prompt")
+		result, _ := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, ?, 'prompt', 'codex', 'thorough', 'queued')`,
+			repo.ID, commit.ID)
+		jobID, _ := result.LastInsertId()
+
+		db.ClaimJob("worker-1")
+		// Output that should be parsed as FAIL
+		db.CompleteJob(jobID, "codex", "prompt", "Found issues:\n1. Bug found")
+
+		// Fetch via ListJobs and check verdict IS computed (because commit_id is not NULL)
+		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
+		var found *ReviewJob
+		for i := range jobs {
+			if jobs[i].ID == jobID {
+				found = &jobs[i]
+				break
+			}
+		}
+
+		if found == nil {
+			t.Fatal("Branch 'prompt' job not found in ListJobs")
+		}
+
+		// This job has commit_id set, so it's NOT a prompt job - verdict should be computed
+		if found.Verdict == nil {
+			t.Error("Job for branch named 'prompt' should have verdict computed")
+		} else if *found.Verdict != "F" {
+			t.Errorf("Expected verdict 'F', got '%s'", *found.Verdict)
+		}
+	})
 }
