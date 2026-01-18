@@ -524,4 +524,107 @@ func TestMergeRepos(t *testing.T) {
 			t.Error("Source repo should be deleted even when empty")
 		}
 	})
+
+	t.Run("merge moves commits to target", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		source, _ := db.GetOrCreateRepo("/tmp/merge-commits-source")
+		target, _ := db.GetOrCreateRepo("/tmp/merge-commits-target")
+
+		// Create commits in source
+		commit1, _ := db.GetOrCreateCommit(source.ID, "commit-sha-1", "Author", "Subject 1", time.Now())
+		commit2, _ := db.GetOrCreateCommit(source.ID, "commit-sha-2", "Author", "Subject 2", time.Now())
+		db.EnqueueJob(source.ID, commit1.ID, "commit-sha-1", "codex", "")
+		db.EnqueueJob(source.ID, commit2.ID, "commit-sha-2", "codex", "")
+
+		// Verify commits belong to source before merge
+		var sourceCommitCount int
+		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&sourceCommitCount)
+		if sourceCommitCount != 2 {
+			t.Fatalf("Expected 2 commits in source, got %d", sourceCommitCount)
+		}
+
+		_, err := db.MergeRepos(source.ID, target.ID)
+		if err != nil {
+			t.Fatalf("MergeRepos failed: %v", err)
+		}
+
+		// Verify commits now belong to target
+		var targetCommitCount int
+		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, target.ID).Scan(&targetCommitCount)
+		if targetCommitCount != 2 {
+			t.Errorf("Expected 2 commits in target after merge, got %d", targetCommitCount)
+		}
+
+		// Verify no commits remain with source ID (source is deleted)
+		var orphanedCount int
+		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&orphanedCount)
+		if orphanedCount != 0 {
+			t.Errorf("Expected 0 orphaned commits, got %d", orphanedCount)
+		}
+	})
+}
+
+func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/delete-commits-test")
+	commit1, _ := db.GetOrCreateCommit(repo.ID, "del-commit-1", "A", "S1", time.Now())
+	commit2, _ := db.GetOrCreateCommit(repo.ID, "del-commit-2", "A", "S2", time.Now())
+	db.EnqueueJob(repo.ID, commit1.ID, "del-commit-1", "codex", "")
+	db.EnqueueJob(repo.ID, commit2.ID, "del-commit-2", "codex", "")
+
+	// Verify commits exist before delete
+	var beforeCount int
+	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
+	if beforeCount != 2 {
+		t.Fatalf("Expected 2 commits before delete, got %d", beforeCount)
+	}
+
+	err := db.DeleteRepo(repo.ID, true)
+	if err != nil {
+		t.Fatalf("DeleteRepo with cascade failed: %v", err)
+	}
+
+	// Verify commits are deleted
+	var afterCount int
+	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
+	if afterCount != 0 {
+		t.Errorf("Expected 0 commits after cascade delete, got %d", afterCount)
+	}
+}
+
+func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/delete-legacy-resp-test")
+	commit, _ := db.GetOrCreateCommit(repo.ID, "legacy-resp-commit", "A", "S", time.Now())
+
+	// Add legacy commit-based response (not job-based)
+	_, err := db.AddResponse(commit.ID, "reviewer", "Legacy comment on commit")
+	if err != nil {
+		t.Fatalf("AddResponse failed: %v", err)
+	}
+
+	// Verify response exists
+	var beforeCount int
+	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&beforeCount)
+	if beforeCount != 1 {
+		t.Fatalf("Expected 1 legacy response before delete, got %d", beforeCount)
+	}
+
+	err = db.DeleteRepo(repo.ID, true)
+	if err != nil {
+		t.Fatalf("DeleteRepo with cascade failed: %v", err)
+	}
+
+	// Verify legacy responses are deleted (by checking all responses - commit is gone)
+	var afterCount int
+	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&afterCount)
+	if afterCount != 0 {
+		t.Errorf("Expected 0 legacy responses after cascade delete, got %d", afterCount)
+	}
 }

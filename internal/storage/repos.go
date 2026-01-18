@@ -260,9 +260,16 @@ var ErrRepoHasJobs = errors.New("repository has existing jobs; use cascade to de
 // If cascade is true, also deletes all jobs, reviews, and responses for the repo
 // If cascade is false and jobs exist, returns ErrRepoHasJobs
 func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
-	// Check for existing jobs
+	// Use a transaction for atomicity
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Check for existing jobs (within transaction for consistency)
 	var jobCount int
-	err := db.QueryRow(`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repoID).Scan(&jobCount)
+	err = tx.QueryRow(`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repoID).Scan(&jobCount)
 	if err != nil {
 		return err
 	}
@@ -273,8 +280,8 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 
 	if cascade {
 		// Delete in correct order due to foreign keys
-		// 1. Delete responses for jobs in this repo
-		_, err := db.Exec(`
+		// 1a. Delete responses for jobs in this repo (job_id based)
+		_, err := tx.Exec(`
 			DELETE FROM responses WHERE job_id IN (
 				SELECT id FROM review_jobs WHERE repo_id = ?
 			)
@@ -283,8 +290,18 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 			return err
 		}
 
+		// 1b. Delete responses for commits in this repo (legacy commit_id based)
+		_, err = tx.Exec(`
+			DELETE FROM responses WHERE commit_id IN (
+				SELECT id FROM commits WHERE repo_id = ?
+			)
+		`, repoID)
+		if err != nil {
+			return err
+		}
+
 		// 2. Delete reviews for jobs in this repo
-		_, err = db.Exec(`
+		_, err = tx.Exec(`
 			DELETE FROM reviews WHERE job_id IN (
 				SELECT id FROM review_jobs WHERE repo_id = ?
 			)
@@ -294,20 +311,20 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		}
 
 		// 3. Delete jobs for this repo
-		_, err = db.Exec(`DELETE FROM review_jobs WHERE repo_id = ?`, repoID)
+		_, err = tx.Exec(`DELETE FROM review_jobs WHERE repo_id = ?`, repoID)
 		if err != nil {
 			return err
 		}
 
 		// 4. Delete commits for this repo
-		_, err = db.Exec(`DELETE FROM commits WHERE repo_id = ?`, repoID)
+		_, err = tx.Exec(`DELETE FROM commits WHERE repo_id = ?`, repoID)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Delete the repo itself
-	result, err := db.Exec(`DELETE FROM repos WHERE id = ?`, repoID)
+	result, err := tx.Exec(`DELETE FROM repos WHERE id = ?`, repoID)
 	if err != nil {
 		return err
 	}
@@ -315,7 +332,8 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	if affected == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+
+	return tx.Commit()
 }
 
 // MergeRepos moves all jobs and commits from sourceRepoID to targetRepoID, then deletes the source repo
@@ -324,25 +342,37 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 		return 0, nil
 	}
 
+	// Use a transaction for atomicity
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
 	// Move all commits from source to target
 	// Note: commits.sha is UNIQUE, so this will fail if both repos have
 	// commits with the same SHA (which shouldn't happen for the same git repo)
-	_, err := db.Exec(`UPDATE commits SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
+	// Commit-based responses (legacy) are tied to commit_id which remains valid
+	_, err = tx.Exec(`UPDATE commits SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
 	if err != nil {
 		return 0, err
 	}
 
 	// Move all jobs from source to target
-	result, err := db.Exec(`UPDATE review_jobs SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
+	result, err := tx.Exec(`UPDATE review_jobs SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
 	if err != nil {
 		return 0, err
 	}
 	affected, _ := result.RowsAffected()
 
 	// Delete the source repo (now empty)
-	_, err = db.Exec(`DELETE FROM repos WHERE id = ?`, sourceRepoID)
+	_, err = tx.Exec(`DELETE FROM repos WHERE id = ?`, sourceRepoID)
 	if err != nil {
-		return affected, err
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
 
 	return affected, nil
