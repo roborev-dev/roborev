@@ -667,16 +667,18 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 42
 
+	// First, simulate the optimistic update (what happens when 'a' is pressed)
+	*m.jobs[0].Addressed = true
+	m.pendingAddressed[42] = true // Track pending state
+
 	// Simulate error result from background update
 	// This would happen if server returned error after optimistic update
 	errMsg := tuiAddressedResultMsg{
 		jobID:    42,
 		oldState: false, // Was false before optimistic update
+		newState: true,  // The requested state (matches pendingAddressed)
 		err:      fmt.Errorf("server error"),
 	}
-
-	// First, simulate the optimistic update (what happens when 'a' is pressed)
-	*m.jobs[0].Addressed = true
 
 	// Now handle the error result - should rollback
 	updated, _ := m.Update(errMsg)
@@ -754,16 +756,23 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 
 	// Initial state with review view showing an unaddressed review
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 42, Addressed: false}
+	m.currentReview = &storage.Review{
+		ID:       42,
+		Addressed: false,
+		Job:      &storage.ReviewJob{ID: 100},
+	}
 
 	// Simulate optimistic update (what happens when 'a' is pressed in review view)
 	m.currentReview.Addressed = true
+	m.pendingAddressed[100] = true // Track pending state
 
 	// Error result from server (reviewID must match currentReview.ID for rollback)
 	errMsg := tuiAddressedResultMsg{
-		reviewID:   42, // Must match currentReview.ID
+		reviewID:   42,   // Must match currentReview.ID
+		jobID:      100,  // Must match for isCurrentRequest check
 		reviewView: true,
 		oldState:   false, // Was false before optimistic update
+		newState:   true,  // The requested state (matches pendingAddressed)
 		err:        fmt.Errorf("server error"),
 	}
 
@@ -824,16 +833,18 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 42, Addressed: false, Job: &storage.ReviewJob{ID: 100}}
 	m.currentReview.Addressed = true  // Optimistic update to review
 	*m.jobs[0].Addressed = true       // Optimistic update to job in queue
+	m.pendingAddressed[100] = true    // Track pending state for job A
 
 	// User navigates to review B before error response arrives
 	m.currentReview = &storage.Review{ID: 99, Addressed: false, Job: &storage.ReviewJob{ID: 200}}
 
 	// Error arrives for review A's toggle
 	errMsg := tuiAddressedResultMsg{
-		reviewID:   42,  // Review A
-		jobID:      100, // Job A
+		reviewID:   42,    // Review A
+		jobID:      100,   // Job A
 		reviewView: true,
 		oldState:   false,
+		newState:   true,  // The requested state (matches pendingAddressed)
 		err:        fmt.Errorf("server error"),
 	}
 
@@ -4243,7 +4254,7 @@ func TestTUIPendingAddressedClearedByMatchingResponse(t *testing.T) {
 	}
 }
 
-func TestTUIPendingAddressedClearedOnError(t *testing.T) {
+func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	addressedTrue := true
@@ -4254,11 +4265,11 @@ func TestTUIPendingAddressedClearedOnError(t *testing.T) {
 	// User toggles addressed to false
 	m.pendingAddressed[1] = false
 
-	// Error response comes back
+	// Error response comes back for the current request (newState matches pending)
 	errorMsg := tuiAddressedResultMsg{
 		jobID:    1,
 		oldState: true,
-		newState: false,
+		newState: false, // Matches pendingAddressed[1]
 		err:      fmt.Errorf("server error"),
 	}
 
@@ -4267,11 +4278,59 @@ func TestTUIPendingAddressedClearedOnError(t *testing.T) {
 
 	// pendingAddressed should be cleared on error (we're rolling back)
 	if _, ok := m2.pendingAddressed[1]; ok {
-		t.Error("pendingAddressed should be cleared on error")
+		t.Error("pendingAddressed should be cleared on current error")
 	}
 
 	// Job state should be rolled back
 	if m2.jobs[0].Addressed == nil || *m2.jobs[0].Addressed != true {
 		t.Error("Job addressed state should be rolled back to oldState on error")
+	}
+
+	// Error should be set
+	if m2.err == nil {
+		t.Error("Error should be set on current error")
+	}
+}
+
+func TestTUIStaleErrorResponseIgnored(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	addressedTrue := true
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+	}
+
+	// User toggles to false, then back to true (pendingAddressed=true)
+	// The job.Addressed was updated optimistically to true
+	m.pendingAddressed[1] = true
+	*m.jobs[0].Addressed = true // Optimistic update already applied
+
+	// A stale error response arrives from the earlier toggle to false
+	staleErrorMsg := tuiAddressedResultMsg{
+		jobID:    1,
+		oldState: true,          // What it was before the (stale) toggle
+		newState: false,         // Stale request was for false, but pending is now true
+		err:      fmt.Errorf("network error"),
+	}
+
+	updated, _ := m.Update(staleErrorMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingAddressed should NOT be cleared (stale error)
+	if _, ok := m2.pendingAddressed[1]; !ok {
+		t.Error("pendingAddressed should not be cleared by stale error response")
+	}
+	if m2.pendingAddressed[1] != true {
+		t.Error("pendingAddressed value should remain true")
+	}
+
+	// Job state should NOT be rolled back (stale error)
+	if m2.jobs[0].Addressed == nil || *m2.jobs[0].Addressed != true {
+		t.Error("Job addressed state should not be rolled back by stale error")
+	}
+
+	// Error should NOT be set (stale error is silently ignored)
+	if m2.err != nil {
+		t.Error("Error should not be set for stale error response")
 	}
 }

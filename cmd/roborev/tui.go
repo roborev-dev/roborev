@@ -1502,28 +1502,37 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiAddressedResultMsg:
-		// Only clear pending state if it still matches what this response was for.
-		// This prevents a stale response from clearing pending state set by a newer toggle.
+		// Check if this response is still current (pending state matches what we requested).
+		// Stale responses (from rapid toggles) should be ignored entirely.
+		isCurrentRequest := false
 		if msg.jobID > 0 {
 			if pendingState, ok := m.pendingAddressed[msg.jobID]; ok && pendingState == msg.newState {
-				delete(m.pendingAddressed, msg.jobID)
+				isCurrentRequest = true
 			}
 		}
+
 		if msg.err != nil {
-			// Rollback optimistic update on error
-			if msg.reviewView {
-				// Rollback review view only if still viewing the same review
-				if m.currentReview != nil && m.currentReview.ID == msg.reviewID {
-					m.currentReview.Addressed = msg.oldState
+			// Only rollback on error if this is the current request
+			if isCurrentRequest {
+				if msg.reviewView {
+					// Rollback review view only if still viewing the same review
+					if m.currentReview != nil && m.currentReview.ID == msg.reviewID {
+						m.currentReview.Addressed = msg.oldState
+					}
 				}
+				// Rollback the job in queue and clear pending state
+				if msg.jobID > 0 {
+					m.setJobAddressed(msg.jobID, msg.oldState)
+					delete(m.pendingAddressed, msg.jobID)
+				}
+				m.err = msg.err
 			}
-			// Always rollback the job in queue
-			if msg.jobID > 0 {
-				m.setJobAddressed(msg.jobID, msg.oldState)
-				// Also clear pending state on error since we're rolling back
+			// Stale error responses are silently ignored
+		} else {
+			// Success: clear pending state if current
+			if isCurrentRequest && msg.jobID > 0 {
 				delete(m.pendingAddressed, msg.jobID)
 			}
-			m.err = msg.err
 		}
 
 	case tuiCancelResultMsg:
