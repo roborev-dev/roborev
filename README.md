@@ -236,6 +236,19 @@ Override the data directory with `ROBOREV_DATA_DIR`:
 export ROBOREV_DATA_DIR=/custom/path  # Default: ~/.roborev
 ```
 
+### Authentication
+
+**Claude Code** uses your Claude subscription (Max plan) by default. roborev deliberately ignores `ANTHROPIC_API_KEY` from the environment to avoid unexpected API charges.
+
+To use Anthropic API credits instead:
+
+```toml
+# ~/.roborev/config.toml
+anthropic_api_key = "sk-ant-..."
+```
+
+**Codex** uses the authentication configured in your Codex installation.
+
 ### Priority Order
 
 1. CLI flags (`--agent`, `--reasoning`)

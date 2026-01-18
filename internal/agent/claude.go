@@ -110,6 +110,16 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 
+	// Handle API key: use configured key if set, otherwise filter out env var
+	// to ensure Claude uses subscription auth instead of unexpected API charges
+	if apiKey := AnthropicAPIKey(); apiKey != "" {
+		// Use explicitly configured API key from roborev config
+		cmd.Env = append(filterEnv(os.Environ(), "ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY="+apiKey)
+	} else {
+		// Clear env var so Claude uses subscription auth
+		cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
+	}
+
 	var stderr bytes.Buffer
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -232,6 +242,18 @@ func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, er
 	// Valid events were parsed but no result or assistant content found
 	// This is not an error - Claude might have used tools without text output
 	return "", nil
+}
+
+// filterEnv returns a copy of env with the specified key removed
+func filterEnv(env []string, key string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			result = append(result, e)
+		}
+	}
+	return result
 }
 
 func init() {

@@ -209,6 +209,9 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 	resolvedAgent := config.ResolveAgent(agentName, repoPath, cfg)
 	allowUnsafeAgents = resolveAllowUnsafeAgents(allowUnsafeAgents, unsafeFlagChanged, cfg)
 	agent.SetAllowUnsafeAgents(allowUnsafeAgents)
+	if cfg != nil {
+		agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
+	}
 
 	// Resolve reasoning level from CLI or config (default: fast)
 	resolvedReasoning, err := config.ResolveRefineReasoning(reasoningStr, repoPath)

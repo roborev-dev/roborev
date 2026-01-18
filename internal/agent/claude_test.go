@@ -190,3 +190,66 @@ func TestParseStreamJSON_StreamsToOutput(t *testing.T) {
 		t.Fatal("expected output to be written")
 	}
 }
+
+func TestAnthropicAPIKey(t *testing.T) {
+	// Clear any existing key
+	SetAnthropicAPIKey("")
+	t.Cleanup(func() { SetAnthropicAPIKey("") })
+
+	// Initially should be empty
+	if key := AnthropicAPIKey(); key != "" {
+		t.Fatalf("expected empty API key, got %q", key)
+	}
+
+	// Set a key
+	SetAnthropicAPIKey("test-api-key")
+	if key := AnthropicAPIKey(); key != "test-api-key" {
+		t.Fatalf("expected 'test-api-key', got %q", key)
+	}
+
+	// Clear the key
+	SetAnthropicAPIKey("")
+	if key := AnthropicAPIKey(); key != "" {
+		t.Fatalf("expected empty API key after clear, got %q", key)
+	}
+}
+
+func TestFilterEnv(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin",
+		"HOME=/home/test",
+		"ANTHROPIC_API_KEY=secret-key",
+		"OTHER_VAR=value",
+	}
+
+	filtered := filterEnv(env, "ANTHROPIC_API_KEY")
+
+	// Should have 3 items (ANTHROPIC_API_KEY removed)
+	if len(filtered) != 3 {
+		t.Fatalf("expected 3 env vars, got %d: %v", len(filtered), filtered)
+	}
+
+	// Verify ANTHROPIC_API_KEY is not present
+	for _, e := range filtered {
+		if strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			t.Fatalf("ANTHROPIC_API_KEY should be filtered out, got %v", filtered)
+		}
+	}
+
+	// Verify other vars are present
+	found := make(map[string]bool)
+	for _, e := range filtered {
+		if strings.HasPrefix(e, "PATH=") {
+			found["PATH"] = true
+		}
+		if strings.HasPrefix(e, "HOME=") {
+			found["HOME"] = true
+		}
+		if strings.HasPrefix(e, "OTHER_VAR=") {
+			found["OTHER_VAR"] = true
+		}
+	}
+	if !found["PATH"] || !found["HOME"] || !found["OTHER_VAR"] {
+		t.Fatalf("missing expected env vars in filtered result: %v", filtered)
+	}
+}
