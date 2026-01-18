@@ -46,7 +46,7 @@ func (a *ClaudeAgent) CommandName() string {
 	return a.Command
 }
 
-func (a *ClaudeAgent) buildArgs(prompt string, agenticMode bool) []string {
+func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
 	args := []string{}
 	if AllowUnsafeAgents() {
 		args = append(args, claudeDangerousFlag)
@@ -55,11 +55,12 @@ func (a *ClaudeAgent) buildArgs(prompt string, agenticMode bool) []string {
 		// Agentic mode: Claude can use tools and make file changes
 		// Use stream-json output format for non-interactive execution
 		// (following claude-code-action pattern from Anthropic)
-		// --verbose is required when using --output-format stream-json with -p
-		args = append(args, "--verbose", "--output-format", "stream-json", "-p", prompt)
+		// Prompt is piped via stdin, not passed as argument
+		args = append(args, "-p", "--verbose", "--output-format", "stream-json")
 	} else {
 		// Print mode: one-shot text response, no tool use
-		args = append(args, "--print", "-p", prompt)
+		// Prompt is passed as positional argument
+		args = append(args, "--print")
 	}
 	return args
 }
@@ -96,7 +97,13 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	// When AllowUnsafeAgents is true, run in agentic mode (can make file changes)
 	// Otherwise, use --print mode for review-only operations
-	args := a.buildArgs(prompt, agenticMode)
+	args := a.buildArgs(agenticMode)
+
+	// In non-agentic mode, pass prompt as positional argument
+	// In agentic mode, prompt is piped via stdin (like claude-code-action)
+	if !agenticMode {
+		args = append(args, "-p", prompt)
+	}
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -107,6 +114,18 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
 	cmd.Stderr = &stderr
+
+	// In agentic mode, pipe prompt via stdin
+	if agenticMode {
+		stdinPipe, err := cmd.StdinPipe()
+		if err != nil {
+			return "", fmt.Errorf("create stdin pipe: %w", err)
+		}
+		go func() {
+			defer stdinPipe.Close()
+			io.WriteString(stdinPipe, prompt)
+		}()
+	}
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start claude: %w", err)
