@@ -14,28 +14,45 @@ import (
 )
 
 // resolveRepoIdentifier resolves a path-like identifier to its git repo root.
-// If the identifier looks like a path (., .., contains path separators, or starts
-// with / or ./), it will try to resolve it to the git repository root.
-// Otherwise, it returns the identifier unchanged (treated as a repo name).
+// If the identifier is ".", "..", or an existing path on disk, it will try to
+// resolve it to the git repository root. This allows display names like "org/project"
+// to be treated as names rather than paths.
 func resolveRepoIdentifier(identifier string) string {
-	// Check if it looks like a path
-	isPath := identifier == "." || identifier == ".." ||
-		strings.HasPrefix(identifier, "/") ||
+	// Special cases that are always paths
+	if identifier == "." || identifier == ".." ||
 		strings.HasPrefix(identifier, "./") ||
-		strings.HasPrefix(identifier, "../") ||
-		strings.Contains(identifier, string(filepath.Separator))
+		strings.HasPrefix(identifier, "../") {
+		return resolvePathToGitRoot(identifier)
+	}
 
-	if !isPath {
+	// Check if it's an absolute path (works on both Unix and Windows)
+	if filepath.IsAbs(identifier) {
+		return resolvePathToGitRoot(identifier)
+	}
+
+	// For identifiers containing path separators (/ or \), check if they exist on disk.
+	// This allows names like "org/project" to be treated as names, not paths.
+	if strings.ContainsAny(identifier, "/\\") {
+		if _, err := os.Stat(identifier); err == nil {
+			// Path exists on disk, treat as path
+			return resolvePathToGitRoot(identifier)
+		}
+		// Doesn't exist on disk, treat as a name
 		return identifier
 	}
 
-	// Try to resolve to absolute path first
-	absPath, err := filepath.Abs(identifier)
+	// No path separators, treat as a name
+	return identifier
+}
+
+// resolvePathToGitRoot resolves a filesystem path to its git repository root.
+// If not in a git repo, returns the absolute path.
+func resolvePathToGitRoot(path string) string {
+	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return identifier
+		return path
 	}
 
-	// Try to get git repo root
 	repoRoot, err := git.GetRepoRoot(absPath)
 	if err != nil {
 		// Not a git repo or git error, fall back to absolute path

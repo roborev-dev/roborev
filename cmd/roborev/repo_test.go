@@ -7,9 +7,18 @@ import (
 	"testing"
 )
 
+// requireGit skips the test if git is not available
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available, skipping test")
+	}
+}
+
 // initGitRepo initializes a real git repo in the given directory
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
+	requireGit(t)
 	cmd := exec.Command("git", "init")
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
@@ -33,6 +42,14 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		result := resolveRepoIdentifier("my-project")
 		if result != "my-project" {
 			t.Errorf("Expected 'my-project', got %q", result)
+		}
+	})
+
+	t.Run("returns name with slash unchanged when not a path", func(t *testing.T) {
+		// Names like "org/project" should be returned as-is if they don't exist on disk
+		result := resolveRepoIdentifier("org/project")
+		if result != "org/project" {
+			t.Errorf("Expected 'org/project', got %q", result)
 		}
 	})
 
