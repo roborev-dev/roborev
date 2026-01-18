@@ -4,11 +4,46 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"github.com/wesm/roborev/internal/git"
 	"github.com/wesm/roborev/internal/storage"
 )
+
+// resolveRepoIdentifier resolves a path-like identifier to its git repo root.
+// If the identifier looks like a path (., .., contains path separators, or starts
+// with / or ./), it will try to resolve it to the git repository root.
+// Otherwise, it returns the identifier unchanged (treated as a repo name).
+func resolveRepoIdentifier(identifier string) string {
+	// Check if it looks like a path
+	isPath := identifier == "." || identifier == ".." ||
+		strings.HasPrefix(identifier, "/") ||
+		strings.HasPrefix(identifier, "./") ||
+		strings.HasPrefix(identifier, "../") ||
+		strings.Contains(identifier, string(filepath.Separator))
+
+	if !isPath {
+		return identifier
+	}
+
+	// Try to resolve to absolute path first
+	absPath, err := filepath.Abs(identifier)
+	if err != nil {
+		return identifier
+	}
+
+	// Try to get git repo root
+	repoRoot, err := git.GetRepoRoot(absPath)
+	if err != nil {
+		// Not a git repo or git error, fall back to absolute path
+		return absPath
+	}
+
+	return repoRoot
+}
 
 func repoCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -83,6 +118,7 @@ func repoShowCmd() *cobra.Command {
 		Long: `Show detailed information about a repository including stats.
 
 The argument can be either the repository path or its display name.
+When given a path inside a repository, it resolves to the repo root.
 
 Examples:
   roborev repo show my-project
@@ -91,7 +127,7 @@ Examples:
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := args[0]
+			identifier := resolveRepoIdentifier(args[0])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {
@@ -156,7 +192,7 @@ When to use rename vs merge:
     (e.g., after renaming a directory, you'll have both old and new entries)
 
 The first argument can be either:
-  - The repository path (absolute or relative)
+  - The repository path (absolute or relative, resolves to repo root)
   - The current database name
 
 Examples:
@@ -171,7 +207,7 @@ Examples:
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := args[0]
+			identifier := resolveRepoIdentifier(args[0])
 			newName := args[1]
 
 			if newName == "" {
@@ -217,6 +253,7 @@ By default, this only removes the repository entry. Use --cascade to also
 delete all associated jobs, reviews, and responses.
 
 The argument can be either the repository path or its display name.
+When given a path inside a repository, it resolves to the repo root.
 
 Examples:
   roborev repo delete old-project
@@ -225,7 +262,7 @@ Examples:
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := args[0]
+			identifier := resolveRepoIdentifier(args[0])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {
@@ -317,6 +354,7 @@ When to use merge vs rename:
   - Use RENAME when you have ONE repo entry and just want a different name
 
 Arguments can be either repository paths or database names.
+When given a path inside a repository, it resolves to the repo root.
 Use 'roborev repo list' to see all tracked repositories.
 
 Examples:
@@ -331,8 +369,8 @@ Examples:
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sourceIdent := args[0]
-			targetIdent := args[1]
+			sourceIdent := resolveRepoIdentifier(args[0])
+			targetIdent := resolveRepoIdentifier(args[1])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {

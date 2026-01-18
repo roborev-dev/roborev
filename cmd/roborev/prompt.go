@@ -73,7 +73,10 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 		promptText = strings.Join(args, " ")
 	} else {
 		// Read from stdin
-		stat, _ := os.Stdin.Stat()
+		stat, err := os.Stdin.Stat()
+		if err != nil {
+			return fmt.Errorf("unable to read stdin: %w", err)
+		}
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
 			// Stdin has data (piped) - use io.ReadAll to handle large prompts
 			data, err := io.ReadAll(os.Stdin)
@@ -171,6 +174,8 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 	// Poll with exponential backoff
 	pollInterval := promptPollInterval
 	maxInterval := 5 * time.Second
+	unknownStatusCount := 0
+	const maxUnknownRetries = 10 // Give up after 10 consecutive unknown statuses
 
 	for {
 		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
@@ -217,7 +222,8 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 			return fmt.Errorf("prompt was canceled")
 
 		case storage.JobStatusQueued, storage.JobStatusRunning:
-			// Still in progress, wait and retry
+			// Still in progress, continue polling
+			unknownStatusCount = 0 // Reset counter on known status
 			time.Sleep(pollInterval)
 			if pollInterval < maxInterval {
 				pollInterval = time.Duration(float64(pollInterval) * 1.5)
@@ -227,7 +233,22 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 			}
 
 		default:
-			return fmt.Errorf("unexpected job status: %s", job.Status)
+			// Unknown status - treat as transient for forward-compatibility
+			// (daemon may add new statuses in the future)
+			unknownStatusCount++
+			if unknownStatusCount >= maxUnknownRetries {
+				return fmt.Errorf("received unknown status %q %d times, giving up (daemon may be newer than CLI)", job.Status, unknownStatusCount)
+			}
+			if !quiet {
+				cmd.Printf("\n(unknown status %q, continuing to poll...)", job.Status)
+			}
+			time.Sleep(pollInterval)
+			if pollInterval < maxInterval {
+				pollInterval = time.Duration(float64(pollInterval) * 1.5)
+				if pollInterval > maxInterval {
+					pollInterval = maxInterval
+				}
+			}
 		}
 	}
 }
