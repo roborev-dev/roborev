@@ -4344,6 +4344,52 @@ func TestTUIStaleErrorResponseIgnored(t *testing.T) {
 	}
 }
 
+func TestTUIQueueViewSameStateLateError(t *testing.T) {
+	// Test: true (seq 1) → false (seq 2) → true (seq 3), with late error from first true
+	// Same as TestTUIReviewViewSameStateLateError but for queue view using pendingAddressed
+	m := newTuiModel("http://localhost")
+
+	addressedFalse := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+	}
+
+	// Sequence: toggle true (seq 1) → toggle false (seq 2) → toggle true (seq 3)
+	// After third toggle, state is true and pendingAddressed has seq 3
+	*m.jobs[0].Addressed = true // Optimistic update from third toggle
+	m.pendingAddressed[1] = pendingState{newState: true, seq: 3} // Third toggle
+
+	// A late error arrives from the FIRST toggle (seq 1)
+	// This error has newState=true which matches current pending newState,
+	// but seq doesn't match, so it should be treated as stale and ignored.
+	lateErrorMsg := tuiAddressedResultMsg{
+		jobID:    1,
+		oldState: false, // First toggle was from false to true
+		newState: true,  // Same newState as current pending...
+		seq:      1,     // ...but different seq, so this is stale
+		err:      fmt.Errorf("network error from first toggle"),
+	}
+
+	updated, _ := m.Update(lateErrorMsg)
+	m2 := updated.(tuiModel)
+
+	// With sequence numbers, the late error should be IGNORED (not rolled back)
+	// because seq: 1 != pending seq: 3
+	if m2.jobs[0].Addressed == nil || *m2.jobs[0].Addressed != true {
+		t.Errorf("Expected addressed to stay true (late error should be ignored), got %v", m2.jobs[0].Addressed)
+	}
+
+	// Error should NOT be set (stale error)
+	if m2.err != nil {
+		t.Errorf("Error should not be set for stale error response, got %v", m2.err)
+	}
+
+	// pendingAddressed should still be set (not cleared by stale response)
+	if _, ok := m2.pendingAddressed[1]; !ok {
+		t.Error("pendingAddressed should not be cleared by stale response")
+	}
+}
+
 func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	// Test that review-view errors without jobID are still handled if
 	// pendingReviewAddressed matches
