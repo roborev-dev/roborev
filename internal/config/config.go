@@ -21,6 +21,9 @@ type Config struct {
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
 	ClaudeCodeCmd string `toml:"claude_code_cmd"`
+
+	// API keys (optional - agents use subscription auth by default)
+	AnthropicAPIKey string `toml:"anthropic_api_key"`
 }
 
 // RepoConfig holds per-repo overrides

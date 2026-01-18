@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -44,15 +46,24 @@ func (a *ClaudeAgent) CommandName() string {
 	return a.Command
 }
 
-func (a *ClaudeAgent) buildArgs(prompt string) []string {
+func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
 	args := []string{}
 	if AllowUnsafeAgents() {
 		args = append(args, claudeDangerousFlag)
 	}
-	args = append(args,
-		"--print",
-		"-p", prompt,
-	)
+	if agenticMode {
+		// Agentic mode: Claude can use tools and make file changes
+		// Use stream-json output format for non-interactive execution
+		// (following claude-code-action pattern from Anthropic)
+		// Prompt is piped via stdin, not passed as argument
+		// --allowedTools explicitly permits file editing tools (key insight from claude-code-action)
+		args = append(args, "-p", "--verbose", "--output-format", "stream-json",
+			"--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
+	} else {
+		// Print mode: one-shot text response, no tool use
+		// Prompt is passed as positional argument
+		args = append(args, "--print")
+	}
 	return args
 }
 
@@ -71,10 +82,12 @@ func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, err
 }
 
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	if !AllowUnsafeAgents() && !isatty.IsTerminal(os.Stdin.Fd()) {
+	agenticMode := AllowUnsafeAgents()
+
+	if !agenticMode && !isatty.IsTerminal(os.Stdin.Fd()) {
 		return "", fmt.Errorf("claude requires a TTY when allow_unsafe_agents is disabled")
 	}
-	if AllowUnsafeAgents() {
+	if agenticMode {
 		supported, err := claudeSupportsDangerousFlag(ctx, a.Command)
 		if err != nil {
 			return "", err
@@ -84,27 +97,158 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		}
 	}
 
-	// Use claude CLI in print mode (non-interactive)
-	// --print outputs the response without the interactive TUI
-	args := a.buildArgs(prompt)
+	// When AllowUnsafeAgents is true, run in agentic mode (can make file changes)
+	// Otherwise, use --print mode for review-only operations
+	args := a.buildArgs(agenticMode)
+
+	// In non-agentic mode, pass prompt as positional argument
+	// In agentic mode, prompt is piped via stdin (like claude-code-action)
+	if !agenticMode {
+		args = append(args, "-p", prompt)
+	}
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 
-	var stdout, stderr bytes.Buffer
-	if sw := newSyncWriter(output); sw != nil {
-		cmd.Stdout = io.MultiWriter(&stdout, sw)
-		cmd.Stderr = io.MultiWriter(&stderr, sw)
+	// Handle API key: use configured key if set, otherwise filter out env var
+	// to ensure Claude uses subscription auth instead of unexpected API charges
+	if apiKey := AnthropicAPIKey(); apiKey != "" {
+		// Use explicitly configured API key from roborev config
+		cmd.Env = append(filterEnv(os.Environ(), "ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY="+apiKey)
 	} else {
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
+		// Clear env var so Claude uses subscription auth
+		cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
 	}
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude failed: %w\nstderr: %s", err, stderr.String())
+	var stderr bytes.Buffer
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("create stdout pipe: %w", err)
+	}
+	cmd.Stderr = &stderr
+
+	// In agentic mode, pipe prompt via stdin
+	// Use strings.NewReader instead of goroutine+pipe to avoid blocking issues
+	// if cmd.Start() fails (goroutine would block on pipe write indefinitely)
+	if agenticMode {
+		cmd.Stdin = strings.NewReader(prompt)
 	}
 
-	return stdout.String(), nil
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start claude: %w", err)
+	}
+
+	// Parse output based on mode
+	var result string
+	if agenticMode {
+		result, err = a.parseStreamJSON(stdoutPipe, output)
+	} else {
+		var buf bytes.Buffer
+		if sw := newSyncWriter(output); sw != nil {
+			io.Copy(io.MultiWriter(&buf, sw), stdoutPipe)
+		} else {
+			io.Copy(&buf, stdoutPipe)
+		}
+		result = buf.String()
+	}
+
+	if waitErr := cmd.Wait(); waitErr != nil {
+		if err != nil {
+			return "", fmt.Errorf("claude failed: %w (parse error: %v)\nstderr: %s", waitErr, err, stderr.String())
+		}
+		return "", fmt.Errorf("claude failed: %w\nstderr: %s", waitErr, stderr.String())
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	return result, nil
+}
+
+// claudeStreamMessage represents a message in Claude's stream-json output format
+type claudeStreamMessage struct {
+	Type    string `json:"type"`
+	Subtype string `json:"subtype,omitempty"`
+	Message struct {
+		Content string `json:"content,omitempty"`
+	} `json:"message,omitempty"`
+	Result string `json:"result,omitempty"`
+}
+
+// parseStreamJSON parses Claude's stream-json output and extracts the final result.
+// Uses bufio.Reader.ReadString to read lines without buffer size limits.
+func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
+	br := bufio.NewReader(r)
+
+	var lastResult string
+	var assistantMessages []string
+	var validEventsParsed bool
+
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return "", fmt.Errorf("read stream: %w", err)
+		}
+
+		// Process line even if EOF (might have trailing content without newline)
+		line = strings.TrimSpace(line)
+		if line != "" {
+			// Stream raw line to the writer for progress visibility
+			if sw := newSyncWriter(output); sw != nil {
+				sw.Write([]byte(line + "\n"))
+			}
+
+			var msg claudeStreamMessage
+			if jsonErr := json.Unmarshal([]byte(line), &msg); jsonErr == nil {
+				validEventsParsed = true
+
+				// Collect assistant messages for the result
+				if msg.Type == "assistant" && msg.Message.Content != "" {
+					assistantMessages = append(assistantMessages, msg.Message.Content)
+				}
+
+				// The final result message contains the summary
+				if msg.Type == "result" && msg.Result != "" {
+					lastResult = msg.Result
+				}
+			}
+			// Skip malformed JSON lines silently
+		}
+
+		if err == io.EOF {
+			break
+		}
+	}
+
+	// Error if we didn't parse any valid events
+	if !validEventsParsed {
+		return "", fmt.Errorf("no valid stream-json events parsed from output")
+	}
+
+	// Prefer the result field if present, otherwise join assistant messages
+	if lastResult != "" {
+		return lastResult, nil
+	}
+	if len(assistantMessages) > 0 {
+		return strings.Join(assistantMessages, "\n"), nil
+	}
+
+	// Valid events were parsed but no result or assistant content found
+	// This is not an error - Claude might have used tools without text output
+	return "", nil
+}
+
+// filterEnv returns a copy of env with the specified key removed
+func filterEnv(env []string, key string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			result = append(result, e)
+		}
+	}
+	return result
 }
 
 func init() {

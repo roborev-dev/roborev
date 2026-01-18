@@ -395,9 +395,12 @@ Make the minimal changes necessary to address these findings:
 - Don't make cosmetic changes
 
 After making changes:
-1. Run the build command to verify the code compiles (e.g., go build ./..., npm run build, cargo build)
-2. Run tests to verify nothing is broken (e.g., go test ./..., npm test, cargo test)
+1. Run the build command to verify the code compiles
+2. Run tests to verify nothing is broken
 3. Fix any build errors or test failures before finishing
+
+For Go projects, use: GOCACHE=/tmp/go-build go build ./... and GOCACHE=/tmp/go-build go test ./...
+(The GOCACHE override is needed for sandbox compatibility)
 
 IMPORTANT: Do NOT commit changes yourself. Just modify the files. The caller will handle committing.
 
@@ -446,7 +449,7 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 	}
 
 	// Review findings section
-	sb.WriteString("## Review Findings to Address\n\n")
+	sb.WriteString(fmt.Sprintf("## Review Findings to Address (Job %d)\n\n", review.JobID))
 	sb.WriteString(review.Output)
 	sb.WriteString("\n\n")
 

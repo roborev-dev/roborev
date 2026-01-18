@@ -699,7 +699,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1sha", "commit2sha", "commit3sha"}
-		review, err := findFailedReviewForBranch(client, commits)
+		review, err := findFailedReviewForBranch(client, commits, nil)
 
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -721,7 +721,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1sha"}
-		review, err := findFailedReviewForBranch(client, commits)
+		review, err := findFailedReviewForBranch(client, commits, nil)
 
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -836,7 +836,7 @@ func TestRefineLoopBranchReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1", "commit2"}
-		review, err := findFailedReviewForBranch(client, commits)
+		review, err := findFailedReviewForBranch(client, commits, nil)
 
 		// Should return nil since all pass
 		if err != nil {

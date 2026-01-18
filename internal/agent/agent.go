@@ -59,6 +59,7 @@ type CommandAgent interface {
 // Registry holds available agents
 var registry = make(map[string]Agent)
 var allowUnsafeAgents atomic.Bool
+var anthropicAPIKey atomic.Value
 
 func AllowUnsafeAgents() bool {
 	return allowUnsafeAgents.Load()
@@ -66,6 +67,19 @@ func AllowUnsafeAgents() bool {
 
 func SetAllowUnsafeAgents(allow bool) {
 	allowUnsafeAgents.Store(allow)
+}
+
+// AnthropicAPIKey returns the configured Anthropic API key, or empty string if not set
+func AnthropicAPIKey() string {
+	if v := anthropicAPIKey.Load(); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// SetAnthropicAPIKey sets the Anthropic API key for Claude Code
+func SetAnthropicAPIKey(key string) {
+	anthropicAPIKey.Store(key)
 }
 
 // aliases maps short names to full agent names

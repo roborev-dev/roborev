@@ -263,7 +263,7 @@ func TestFindFailedReviewForBranch_OldestFirst(t *testing.T) {
 	// Commits in chronological order (oldest first, as returned by git log --reverse)
 	commits := []string{"oldest123", "middle456", "newest789"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestFindFailedReviewForBranch_SkipsAddressed(t *testing.T) {
 
 	commits := []string{"commit1", "commit2", "commit3"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -297,6 +297,55 @@ func TestFindFailedReviewForBranch_SkipsAddressed(t *testing.T) {
 	// Should return commit1 (oldest unaddressed failure), skipping addressed commit2
 	if found == nil || found.JobID != 100 {
 		t.Errorf("expected oldest unaddressed failure (job 100), got %v", found)
+	}
+}
+
+func TestFindFailedReviewForBranch_SkipsGivenUpReviews(t *testing.T) {
+	client := newMockDaemonClient()
+
+	client.reviews = map[string]*storage.Review{
+		"commit1": {ID: 1, JobID: 100, Output: "Bug found."},       // Fail (oldest, but in skip set)
+		"commit2": {ID: 2, JobID: 200, Output: "Another bug."},     // Fail (should be returned)
+		"commit3": {ID: 3, JobID: 300, Output: "No issues found."}, // Pass
+	}
+
+	commits := []string{"commit1", "commit2", "commit3"}
+
+	// Skip review ID 1 (simulates "giving up" after 3 failed attempts)
+	skip := map[int64]bool{1: true}
+
+	found, err := findFailedReviewForBranch(client, commits, skip)
+	if err != nil {
+		t.Fatalf("findFailedReviewForBranch failed: %v", err)
+	}
+
+	// Should return commit2 (job 200), skipping commit1 which is in the skip set
+	if found == nil || found.JobID != 200 {
+		t.Errorf("expected job 200 (skipping given-up review), got %v", found)
+	}
+}
+
+func TestFindFailedReviewForBranch_AllSkippedReturnsNil(t *testing.T) {
+	client := newMockDaemonClient()
+
+	client.reviews = map[string]*storage.Review{
+		"commit1": {ID: 1, JobID: 100, Output: "Bug found."}, // Fail (in skip set)
+		"commit2": {ID: 2, JobID: 200, Output: "Another."},   // Fail (in skip set)
+	}
+
+	commits := []string{"commit1", "commit2"}
+
+	// Skip both reviews (simulates giving up on all failed reviews)
+	skip := map[int64]bool{1: true, 2: true}
+
+	found, err := findFailedReviewForBranch(client, commits, skip)
+	if err != nil {
+		t.Fatalf("findFailedReviewForBranch failed: %v", err)
+	}
+
+	// Should return nil since all failures are in skip set
+	if found != nil {
+		t.Errorf("expected nil (all skipped), got job %d", found.JobID)
 	}
 }
 
@@ -310,7 +359,7 @@ func TestFindFailedReviewForBranch_AllPass(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -386,7 +435,7 @@ func TestFindFailedReviewForBranch_NoReviews(t *testing.T) {
 
 	commits := []string{"unreviewed1", "unreviewed2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -407,7 +456,7 @@ func TestFindFailedReviewForBranch_MarksPassingAsAddressed(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -443,7 +492,7 @@ func TestFindFailedReviewForBranch_MarksPassingBeforeFailure(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -473,7 +522,7 @@ func TestFindFailedReviewForBranch_DoesNotMarkAlreadyAddressed(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -507,7 +556,7 @@ func TestFindFailedReviewForBranch_MixedScenario(t *testing.T) {
 
 	commits := []string{"commit1", "commit2", "commit3", "commit4", "commit5"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -544,7 +593,7 @@ func TestFindFailedReviewForBranch_StopsAtFirstFailure(t *testing.T) {
 
 	commits := []string{"commit1", "commit2", "commit3"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 	if err != nil {
 		t.Fatalf("findFailedReviewForBranch failed: %v", err)
 	}
@@ -573,7 +622,7 @@ func TestFindFailedReviewForBranch_MarkAddressedError(t *testing.T) {
 
 	commits := []string{"commit1"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 
 	// Should return an error and not continue processing
 	if err == nil {
@@ -598,7 +647,7 @@ func TestFindFailedReviewForBranch_GetReviewBySHAError(t *testing.T) {
 
 	commits := []string{"commit1", "commit2"}
 
-	found, err := findFailedReviewForBranch(client, commits)
+	found, err := findFailedReviewForBranch(client, commits, nil)
 
 	// Should return an error and not continue processing
 	if err == nil {
