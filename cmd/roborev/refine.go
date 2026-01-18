@@ -436,11 +436,9 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 			}
 			if noChangeAttempts >= 2 {
 				// Tried 3 times (including this one), give up on this review
-				fmt.Println("Marking as addressed after multiple failed attempts")
+				// Do NOT mark as addressed - the review still needs attention
+				fmt.Println("Giving up after multiple failed attempts (review remains unaddressed)")
 				client.AddResponse(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings (attempt 3, giving up)")
-				if err := client.MarkReviewAddressed(currentFailedReview.ID); err != nil {
-					fmt.Printf("Warning: failed to mark review %d as addressed: %v\n", currentFailedReview.ID, err)
-				}
 				currentFailedReview = nil // Move on to next oldest failed commit
 			} else {
 				// Record attempt but don't mark addressed - might work on retry with different context
