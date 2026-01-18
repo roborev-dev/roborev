@@ -108,7 +108,7 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReview(42, 100, true, false) // reviewID=42, jobID=100, newState=true, oldState=false
+	cmd := m.addressReview(42, 100, true, false, 1) // reviewID=42, jobID=100, newState=true, oldState=false
 	msg := cmd()
 
 	result, ok := msg.(tuiAddressedResultMsg)
@@ -133,7 +133,7 @@ func TestTUIAddressReviewNotFound(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReview(999, 100, true, false) // reviewID=999, jobID=100, newState=true, oldState=false
+	cmd := m.addressReview(999, 100, true, false, 1) // reviewID=999, jobID=100, newState=true, oldState=false
 	msg := cmd()
 
 	result, ok := msg.(tuiAddressedResultMsg)
@@ -387,7 +387,7 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReviewInBackground(42, true, false) // jobID=42, newState=true, oldState=false
+	cmd := m.addressReviewInBackground(42, true, false, 1) // jobID=42, newState=true, oldState=false
 	msg := cmd()
 
 	result, ok := msg.(tuiAddressedResultMsg)
@@ -422,7 +422,7 @@ func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReviewInBackground(42, true, false)
+	cmd := m.addressReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
 	result, ok := msg.(tuiAddressedResultMsg)
@@ -450,7 +450,7 @@ func TestTUIAddressReviewInBackgroundFetchError(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReviewInBackground(42, true, false)
+	cmd := m.addressReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
 	result, ok := msg.(tuiAddressedResultMsg)
@@ -475,7 +475,7 @@ func TestTUIAddressReviewInBackgroundBadJSON(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReviewInBackground(42, true, false)
+	cmd := m.addressReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
 	result, ok := msg.(tuiAddressedResultMsg)
@@ -516,7 +516,7 @@ func TestTUIAddressReviewInBackgroundAddressError(t *testing.T) {
 	defer ts.Close()
 
 	m := newTuiModel(ts.URL)
-	cmd := m.addressReviewInBackground(42, true, false)
+	cmd := m.addressReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
 	result, ok := msg.(tuiAddressedResultMsg)
@@ -669,7 +669,7 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 
 	// First, simulate the optimistic update (what happens when 'a' is pressed)
 	*m.jobs[0].Addressed = true
-	m.pendingAddressed[42] = true // Track pending state
+	m.pendingAddressed[42] = pendingState{newState: true, seq: 1} // Track pending state
 
 	// Simulate error result from background update
 	// This would happen if server returned error after optimistic update
@@ -677,6 +677,7 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 		jobID:    42,
 		oldState: false, // Was false before optimistic update
 		newState: true,  // The requested state (matches pendingAddressed)
+		seq:      1,     // Must match pending seq to be treated as current
 		err:      fmt.Errorf("server error"),
 	}
 
@@ -709,6 +710,7 @@ func TestTUIAddressedSuccessNoRollback(t *testing.T) {
 	successMsg := tuiAddressedResultMsg{
 		jobID:    42,
 		oldState: false,
+		seq:      1, // Not strictly needed for success (no rollback) but included for consistency
 		err:      nil,
 	}
 
@@ -764,7 +766,7 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 
 	// Simulate optimistic update (what happens when 'a' is pressed in review view)
 	m.currentReview.Addressed = true
-	m.pendingAddressed[100] = true // Track pending state
+	m.pendingAddressed[100] = pendingState{newState: true, seq: 1} // Track pending state
 
 	// Error result from server (reviewID must match currentReview.ID for rollback)
 	errMsg := tuiAddressedResultMsg{
@@ -773,6 +775,7 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 		reviewView: true,
 		oldState:   false, // Was false before optimistic update
 		newState:   true,  // The requested state (matches pendingAddressed)
+		seq:        1,     // Must match pending seq to be treated as current
 		err:        fmt.Errorf("server error"),
 	}
 
@@ -802,6 +805,7 @@ func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
 	successMsg := tuiAddressedResultMsg{
 		reviewView: true,
 		oldState:   false,
+		seq:        1, // Not strictly needed for success but included for consistency
 		err:        nil,
 	}
 
@@ -833,7 +837,7 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 42, Addressed: false, Job: &storage.ReviewJob{ID: 100}}
 	m.currentReview.Addressed = true  // Optimistic update to review
 	*m.jobs[0].Addressed = true       // Optimistic update to job in queue
-	m.pendingAddressed[100] = true    // Track pending state for job A
+	m.pendingAddressed[100] = pendingState{newState: true, seq: 1}    // Track pending state for job A
 
 	// User navigates to review B before error response arrives
 	m.currentReview = &storage.Review{ID: 99, Addressed: false, Job: &storage.ReviewJob{ID: 200}}
@@ -845,6 +849,7 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 		reviewView: true,
 		oldState:   false,
 		newState:   true,  // The requested state (matches pendingAddressed)
+		seq:        1,     // Must match pending seq to be treated as current
 		err:        fmt.Errorf("server error"),
 	}
 
@@ -4113,7 +4118,7 @@ func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
 	m.jobs = []storage.ReviewJob{
 		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
 	}
-	m.pendingAddressed[1] = true
+	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
 
 	if m.isJobVisible(m.jobs[0]) {
 		t.Error("Job with pendingAddressed=true should be hidden when hideAddressed is active")
@@ -4123,7 +4128,7 @@ func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
 	m.jobs = []storage.ReviewJob{
 		{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedTrue},
 	}
-	m.pendingAddressed[2] = false
+	m.pendingAddressed[2] = pendingState{newState: false, seq: 1}
 
 	if !m.isJobVisible(m.jobs[0]) {
 		t.Error("Job with pendingAddressed=false should be visible even if job.Addressed is true")
@@ -4203,7 +4208,7 @@ func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 	}
 
 	// User toggles addressed to true
-	m.pendingAddressed[1] = true
+	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
 
 	// A stale response comes back for a previous toggle to false
 	// (this could happen if user rapidly toggles)
@@ -4211,6 +4216,7 @@ func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 		jobID:    1,
 		oldState: true,
 		newState: false, // This response was for a toggle to false
+		seq:      0,     // Stale: doesn't match pending seq (1)
 		err:      nil,
 	}
 
@@ -4221,7 +4227,7 @@ func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 	if _, ok := m2.pendingAddressed[1]; !ok {
 		t.Error("pendingAddressed should not be cleared by stale response with mismatched newState")
 	}
-	if m2.pendingAddressed[1] != true {
+	if m2.pendingAddressed[1].newState != true {
 		t.Error("pendingAddressed value should remain true")
 	}
 }
@@ -4235,13 +4241,14 @@ func TestTUIPendingAddressedClearedByMatchingResponse(t *testing.T) {
 	}
 
 	// User toggles addressed to true
-	m.pendingAddressed[1] = true
+	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
 
 	// Response comes back for the correct toggle to true
 	matchingMsg := tuiAddressedResultMsg{
 		jobID:    1,
 		oldState: false,
 		newState: true, // This response matches what we requested
+		seq:      1,    // Matches pending seq
 		err:      nil,
 	}
 
@@ -4263,13 +4270,14 @@ func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 	}
 
 	// User toggles addressed to false
-	m.pendingAddressed[1] = false
+	m.pendingAddressed[1] = pendingState{newState: false, seq: 1}
 
-	// Error response comes back for the current request (newState matches pending)
+	// Error response comes back for the current request (seq matches pending)
 	errorMsg := tuiAddressedResultMsg{
 		jobID:    1,
 		oldState: true,
 		newState: false, // Matches pendingAddressed[1]
+		seq:      1,     // Matches pending seq
 		err:      fmt.Errorf("server error"),
 	}
 
@@ -4302,14 +4310,15 @@ func TestTUIStaleErrorResponseIgnored(t *testing.T) {
 
 	// User toggles to false, then back to true (pendingAddressed=true)
 	// The job.Addressed was updated optimistically to true
-	m.pendingAddressed[1] = true
+	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
 	*m.jobs[0].Addressed = true // Optimistic update already applied
 
 	// A stale error response arrives from the earlier toggle to false
 	staleErrorMsg := tuiAddressedResultMsg{
 		jobID:    1,
-		oldState: true,          // What it was before the (stale) toggle
-		newState: false,         // Stale request was for false, but pending is now true
+		oldState: true,  // What it was before the (stale) toggle
+		newState: false, // Stale request was for false, but pending is now true
+		seq:      0,     // Stale: doesn't match pending seq (1)
 		err:      fmt.Errorf("network error"),
 	}
 
@@ -4320,7 +4329,7 @@ func TestTUIStaleErrorResponseIgnored(t *testing.T) {
 	if _, ok := m2.pendingAddressed[1]; !ok {
 		t.Error("pendingAddressed should not be cleared by stale error response")
 	}
-	if m2.pendingAddressed[1] != true {
+	if m2.pendingAddressed[1].newState != true {
 		t.Error("pendingAddressed value should remain true")
 	}
 
@@ -4350,7 +4359,7 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 
 	// Simulate optimistic update (what happens when 'a' is pressed)
 	m.currentReview.Addressed = true
-	m.pendingReviewAddressed[42] = true // Track pending state by review ID
+	m.pendingReviewAddressed[42] = pendingState{newState: true, seq: 1} // Track pending state by review ID
 
 	// Error arrives for this toggle (no jobID since Job was nil)
 	errMsg := tuiAddressedResultMsg{
@@ -4359,6 +4368,7 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 		reviewView: true,
 		oldState:   false,
 		newState:   true, // Matches pendingReviewAddressed
+		seq:        1,    // Matches pending seq
 		err:        fmt.Errorf("server error"),
 	}
 
@@ -4396,7 +4406,7 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 	// User toggled to true, then back to false
 	// pendingReviewAddressed is now false (from the second toggle)
 	m.currentReview.Addressed = false
-	m.pendingReviewAddressed[42] = false
+	m.pendingReviewAddressed[42] = pendingState{newState: false, seq: 1}
 
 	// A stale error arrives from the earlier toggle to true
 	staleErrorMsg := tuiAddressedResultMsg{
@@ -4405,6 +4415,7 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 		reviewView: true,
 		oldState:   false, // What it was before the stale toggle
 		newState:   true,  // Stale: pendingReviewAddressed is false, not true
+		seq:        0,     // Stale: doesn't match pending seq (1)
 		err:        fmt.Errorf("network error"),
 	}
 
@@ -4428,9 +4439,9 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 }
 
 func TestTUIReviewViewSameStateLateError(t *testing.T) {
-	// Test: true → false → true, with late error from first true
-	// The late error has newState=true which matches current pending,
-	// but it's stale - using pendingReviewAddressed prevents this confusion
+	// Test: true (seq 1) → false (seq 2) → true (seq 3), with late error from first true
+	// The late error has newState=true which matches current pending newState,
+	// but sequence numbers now distinguish same-state toggles.
 	m := newTuiModel("http://localhost")
 
 	// Review without an associated job
@@ -4441,41 +4452,40 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 		Job:       nil,
 	}
 
-	// Sequence: toggle true → toggle false → toggle true
-	// After third toggle, state is true and pendingReviewAddressed[42] = true
+	// Sequence: toggle true (seq 1) → toggle false (seq 2) → toggle true (seq 3)
+	// After third toggle, state is true and pendingReviewAddressed has seq 3
 	m.currentReview.Addressed = true
-	m.pendingReviewAddressed[42] = true
+	m.pendingReviewAddressed[42] = pendingState{newState: true, seq: 3} // Third toggle
 
-	// A late error arrives from the FIRST toggle to true (not the third)
-	// This error has newState=true which matches current pending...
-	// But because we're using pendingReviewAddressed tracking, it will match
-	// and incorrectly trigger a rollback.
-	//
-	// To properly handle this, we'd need sequence numbers per request.
-	// For now, this test documents the limitation: if the same newState
-	// is requested multiple times and an early error arrives, it may
-	// incorrectly rollback. This is acceptable given the rarity of the scenario.
-	//
-	// The key fix from #1162 is tracking pendingReviewAddressed at all,
-	// which handles the common case of different newStates being stale.
+	// A late error arrives from the FIRST toggle (seq 1)
+	// This error has newState=true which matches current pending newState,
+	// but seq doesn't match, so it should be treated as stale and ignored.
 	lateErrorMsg := tuiAddressedResultMsg{
 		reviewID:   42,
 		jobID:      0,
 		reviewView: true,
 		oldState:   false, // First toggle was from false to true
-		newState:   true,  // Matches current pending (but it's actually stale)
+		newState:   true,  // Same newState as current pending...
+		seq:        1,     // ...but different seq, so this is stale
 		err:        fmt.Errorf("network error from first toggle"),
 	}
 
 	updated, _ := m.Update(lateErrorMsg)
 	m2 := updated.(tuiModel)
 
-	// Note: This WILL rollback because newState matches pendingReviewAddressed.
-	// This is a known limitation - tracking would need sequence numbers to
-	// distinguish between multiple requests for the same state.
-	// The test documents this behavior.
-	if m2.currentReview.Addressed != false {
-		// If this passes, it means the error was processed (expected with current impl)
-		t.Logf("Note: late error with same newState caused rollback (expected limitation)")
+	// With sequence numbers, the late error should be IGNORED (not rolled back)
+	// because seq: 1 != pending seq: 3
+	if m2.currentReview.Addressed != true {
+		t.Errorf("Expected addressed to stay true (late error should be ignored), got %v", m2.currentReview.Addressed)
+	}
+
+	// Error should NOT be set (stale error)
+	if m2.err != nil {
+		t.Errorf("Error should not be set for stale error response, got %v", m2.err)
+	}
+
+	// pendingReviewAddressed should still be set (not cleared by stale response)
+	if _, ok := m2.pendingReviewAddressed[42]; !ok {
+		t.Error("pendingReviewAddressed should not be cleared by stale response")
 	}
 }
