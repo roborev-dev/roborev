@@ -4334,3 +4334,83 @@ func TestTUIStaleErrorResponseIgnored(t *testing.T) {
 		t.Error("Error should not be set for stale error response")
 	}
 }
+
+func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
+	// Test that review-view errors without jobID are still handled if we're
+	// still viewing the same review with matching state
+	m := newTuiModel("http://localhost")
+
+	// Review without an associated job (Job is nil)
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:        42,
+		Addressed: false,
+		Job:       nil, // No job associated
+	}
+
+	// Simulate optimistic update
+	m.currentReview.Addressed = true
+
+	// Error arrives for this toggle (no jobID since Job was nil)
+	errMsg := tuiAddressedResultMsg{
+		reviewID:   42,
+		jobID:      0,    // No job
+		reviewView: true,
+		oldState:   false,
+		newState:   true, // Matches current addressed state
+		err:        fmt.Errorf("server error"),
+	}
+
+	updated, _ := m.Update(errMsg)
+	m2 := updated.(tuiModel)
+
+	// Should have rolled back to false
+	if m2.currentReview.Addressed != false {
+		t.Errorf("Expected currentReview.Addressed=false after rollback, got %v", m2.currentReview.Addressed)
+	}
+
+	// Error should be set
+	if m2.err == nil {
+		t.Error("Expected error to be set")
+	}
+}
+
+func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
+	// Test that stale review-view errors without jobID are ignored
+	m := newTuiModel("http://localhost")
+
+	// Review without an associated job
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:        42,
+		Addressed: false,
+		Job:       nil,
+	}
+
+	// User toggled to true, then back to false (current state is false)
+	// So addressed is now false after the second toggle
+	m.currentReview.Addressed = false
+
+	// A stale error arrives from the earlier toggle to true
+	staleErrorMsg := tuiAddressedResultMsg{
+		reviewID:   42,
+		jobID:      0,     // No job
+		reviewView: true,
+		oldState:   false, // What it was before the stale toggle
+		newState:   true,  // Stale request was for true, but current state is false
+		err:        fmt.Errorf("network error"),
+	}
+
+	updated, _ := m.Update(staleErrorMsg)
+	m2 := updated.(tuiModel)
+
+	// State should NOT be rolled back (stale error, newState doesn't match current)
+	if m2.currentReview.Addressed != false {
+		t.Errorf("Expected addressed to remain false, got %v", m2.currentReview.Addressed)
+	}
+
+	// Error should NOT be set (stale error)
+	if m2.err != nil {
+		t.Error("Error should not be set for stale error response")
+	}
+}

@@ -1504,9 +1504,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiAddressedResultMsg:
 		// Check if this response is still current (pending state matches what we requested).
 		// Stale responses (from rapid toggles) should be ignored entirely.
+		// A response is current if:
+		// 1. jobID > 0 and pendingAddressed[jobID] matches newState, OR
+		// 2. reviewView and still viewing that review with matching addressed state
 		isCurrentRequest := false
 		if msg.jobID > 0 {
 			if pendingState, ok := m.pendingAddressed[msg.jobID]; ok && pendingState == msg.newState {
+				isCurrentRequest = true
+			}
+		} else if msg.reviewView && m.currentReview != nil && m.currentReview.ID == msg.reviewID {
+			// Review-view response without jobID: check if still viewing and state matches
+			if m.currentReview.Addressed == msg.newState {
 				isCurrentRequest = true
 			}
 		}
