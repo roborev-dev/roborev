@@ -110,3 +110,58 @@ jobs:
             artifacts/SHA256SUMS
           body: ${{ steps.tag_message.outputs.has_body == 'true' && steps.tag_message.outputs.body || '' }}
           generate_release_notes: ${{ steps.tag_message.outputs.has_body != 'true' }}
+
+  update-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute SHA256 for macOS binaries
+        id: sha256
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          INTEL_SHA=$(sha256sum artifacts/roborev_${VERSION}_darwin_amd64.tar.gz | cut -d' ' -f1)
+          ARM64_SHA=$(sha256sum artifacts/roborev_${VERSION}_darwin_arm64.tar.gz | cut -d' ' -f1)
+
+          echo "intel_sha256=$INTEL_SHA" >> $GITHUB_OUTPUT
+          echo "arm64_sha256=$ARM64_SHA" >> $GITHUB_OUTPUT
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: wesm/homebrew-taps
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-taps
+
+      - name: Update formula
+        run: |
+          cd homebrew-taps
+          VERSION=${{ steps.sha256.outputs.version }}
+          INTEL_SHA=${{ steps.sha256.outputs.intel_sha256 }}
+          ARM64_SHA=${{ steps.sha256.outputs.arm64_sha256 }}
+
+          # Update version
+          sed -i "s/version \".*\"/version \"$VERSION\"/" Formula/roborev.rb
+
+          # Update Intel SHA256
+          sed -i "/Hardware::CPU.intel?/,/sha256/{s/sha256 \".*\"/sha256 \"$INTEL_SHA\"/}" Formula/roborev.rb
+
+          # Update ARM64 SHA256
+          sed -i "/Hardware::CPU.arm?/,/sha256/{s/sha256 \".*\"/sha256 \"$ARM64_SHA\"/}" Formula/roborev.rb
+
+          cat Formula/roborev.rb
+
+      - name: Commit and push
+        run: |
+          cd homebrew-taps
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/roborev.rb
+          git commit -m "Update roborev to v${{ steps.sha256.outputs.version }}"
+          git push
