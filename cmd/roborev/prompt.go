@@ -19,11 +19,12 @@ import (
 
 func promptCmd() *cobra.Command {
 	var (
-		agentName  string
-		reasoning  string
-		wait       bool
-		quiet      bool
-		noContext  bool
+		agentName string
+		reasoning string
+		wait      bool
+		quiet     bool
+		noContext bool
+		agentic   bool
 	)
 
 	cmd := &cobra.Command{
@@ -44,16 +45,20 @@ Use --wait to wait for completion and display the result.
 By default, context about the repository (name, path, and any project
 guidelines from .roborev.toml) is included. Use --no-context to disable.
 
+By default, agents run in review mode (read-only tools). Use --agentic
+to enable write tools (Edit, Write, Bash) for tasks that modify files.
+
 Examples:
   roborev prompt "Explain the architecture of this codebase"
   roborev prompt --agent claude-code "Refactor the error handling in main.go"
   roborev prompt --reasoning thorough "Find potential security issues"
   roborev prompt --wait "What does the main function do?"
   roborev prompt --no-context "What is 2+2?"
+  roborev prompt --agentic "Create a new test file for main.go"
   cat instructions.txt | roborev prompt --wait
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPrompt(cmd, args, agentName, reasoning, wait, quiet, !noContext)
+			return runPrompt(cmd, args, agentName, reasoning, wait, quiet, !noContext, agentic)
 		},
 	}
 
@@ -62,11 +67,13 @@ Examples:
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for job to complete and show result")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (just enqueue)")
 	cmd.Flags().BoolVar(&noContext, "no-context", false, "don't include repository context in prompt")
+	cmd.Flags().BoolVar(&agentic, "agentic", false, "enable agentic mode (allow file edits and commands)")
+	cmd.Flags().BoolVar(&agentic, "yolo", false, "alias for --agentic")
 
 	return cmd
 }
 
-func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string, wait, quiet, includeContext bool) error {
+func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string, wait, quiet, includeContext, agentic bool) error {
 	// Get prompt from args or stdin
 	var promptText string
 	if len(args) > 0 {
@@ -123,6 +130,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 		"agent":         agentName,
 		"reasoning":     reasoningStr,
 		"custom_prompt": fullPrompt,
+		"agentic":       agentic,
 	})
 
 	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))

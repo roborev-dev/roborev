@@ -34,6 +34,11 @@ func (a *TestAgent) WithReasoning(level ReasoningLevel) Agent {
 	}
 }
 
+// WithAgentic returns the agent unchanged (agentic mode not applicable for test agent)
+func (a *TestAgent) WithAgentic(agentic bool) Agent {
+	return a
+}
+
 func (a *TestAgent) Name() string {
 	return "test"
 }

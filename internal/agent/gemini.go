@@ -15,6 +15,7 @@ import (
 type GeminiAgent struct {
 	Command   string         // The gemini command to run (default: "gemini")
 	Reasoning ReasoningLevel // Reasoning level (for future support)
+	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 }
 
 // NewGeminiAgent creates a new Gemini agent
@@ -28,6 +29,15 @@ func NewGeminiAgent(command string) *GeminiAgent {
 // WithReasoning returns the agent unchanged (reasoning not supported).
 func (a *GeminiAgent) WithReasoning(level ReasoningLevel) Agent {
 	return a
+}
+
+// WithAgentic returns a copy of the agent configured for agentic mode.
+func (a *GeminiAgent) WithAgentic(agentic bool) Agent {
+	return &GeminiAgent{
+		Command:   a.Command,
+		Reasoning: a.Reasoning,
+		Agentic:   agentic,
+	}
 }
 
 func (a *GeminiAgent) Name() string {
@@ -54,7 +64,8 @@ func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
 }
 
 func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	agenticMode := AllowUnsafeAgents()
+	// Use agentic mode if either per-job setting or global setting enables it
+	agenticMode := a.Agentic || AllowUnsafeAgents()
 	args := a.buildArgs(agenticMode)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)

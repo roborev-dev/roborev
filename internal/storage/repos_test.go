@@ -18,7 +18,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("creates job with custom prompt", func(t *testing.T) {
 		customPrompt := "Explain the architecture of this codebase"
-		job, err := db.EnqueuePromptJob(repo.ID, "claude-code", "thorough", customPrompt)
+		job, err := db.EnqueuePromptJob(repo.ID, "claude-code", "thorough", customPrompt, false)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -41,7 +41,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("defaults reasoning to thorough", func(t *testing.T) {
-		job, err := db.EnqueuePromptJob(repo.ID, "codex", "", "test prompt")
+		job, err := db.EnqueuePromptJob(repo.ID, "codex", "", "test prompt", false)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		customPrompt := "Find security issues in the codebase"
-		_, err := db.EnqueuePromptJob(repo.ID, "claude-code", "standard", customPrompt)
+		_, err := db.EnqueuePromptJob(repo.ID, "claude-code", "standard", customPrompt, false)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -365,7 +365,7 @@ func TestGetRepoStats(t *testing.T) {
 		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
 
 		// Create a prompt job with output that contains verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "thorough", "Test prompt")
+		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "thorough", "Test prompt", false)
 		db.ClaimJob("worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
@@ -678,7 +678,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		repo, _ := db.GetOrCreateRepo("/tmp/verdict-prompt-test")
 
 		// Create a prompt job and complete it with output containing verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "thorough", "Test prompt")
+		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "thorough", "Test prompt", false)
 		db.ClaimJob("worker-1")
 		// Output that would normally be parsed as FAIL
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")

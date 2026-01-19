@@ -47,6 +47,11 @@ type Agent interface {
 	// WithReasoning returns a copy of the agent configured with the specified reasoning level.
 	// Agents that don't support reasoning levels may return themselves unchanged.
 	WithReasoning(level ReasoningLevel) Agent
+
+	// WithAgentic returns a copy of the agent configured for agentic mode.
+	// In agentic mode, agents can edit files and run commands.
+	// If false, agents operate in read-only review mode.
+	WithAgentic(agentic bool) Agent
 }
 
 // CommandAgent is an agent that uses an external command

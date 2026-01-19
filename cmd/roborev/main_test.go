@@ -145,6 +145,8 @@ func (f failingAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 }
 
 func (f failingAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return f }
+func (f failingAgent) WithAgentic(agentic bool) agent.Agent                 { return f }
+
 func TestEnqueueReviewRefine(t *testing.T) {
 	t.Run("returns job ID on success", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -946,6 +948,10 @@ func (a *changingAgent) Review(ctx context.Context, repoPath, commitSHA, prompt 
 }
 
 func (a *changingAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent {
+	return a
+}
+
+func (a *changingAgent) WithAgentic(agentic bool) agent.Agent {
 	return a
 }
 

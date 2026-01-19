@@ -613,12 +613,17 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, reasoning, diffConten
 
 // EnqueuePromptJob creates a new job with a custom prompt (not a git review).
 // The prompt is stored at enqueue time and used directly by the worker.
-func (db *DB) EnqueuePromptJob(repoID int64, agent, reasoning, customPrompt string) (*ReviewJob, error) {
+// If agentic is true, the agent will be allowed to edit files and run commands.
+func (db *DB) EnqueuePromptJob(repoID int64, agent, reasoning, customPrompt string, agentic bool) (*ReviewJob, error) {
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, prompt) VALUES (?, NULL, 'prompt', ?, ?, 'queued', ?)`,
-		repoID, agent, reasoning, customPrompt)
+	agenticInt := 0
+	if agentic {
+		agenticInt = 1
+	}
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, prompt, agentic) VALUES (?, NULL, 'prompt', ?, ?, 'queued', ?, ?)`,
+		repoID, agent, reasoning, customPrompt, agenticInt)
 	if err != nil {
 		return nil, err
 	}
@@ -634,6 +639,7 @@ func (db *DB) EnqueuePromptJob(repoID int64, agent, reasoning, customPrompt stri
 		Status:     JobStatusQueued,
 		EnqueuedAt: time.Now(),
 		Prompt:     customPrompt,
+		Agentic:    agentic,
 	}, nil
 }
 
@@ -674,9 +680,10 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var diffContent sql.NullString
 	var prompt sql.NullString
+	var agenticInt int
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       r.root_path, r.name, c.subject, j.diff_content, j.prompt
+		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -684,7 +691,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		ORDER BY j.started_at DESC
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
-		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent, &prompt)
+		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent, &prompt, &agenticInt)
 	if err != nil {
 		return nil, err
 	}
@@ -701,6 +708,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	if prompt.Valid {
 		job.Prompt = prompt.String
 	}
+	job.Agentic = agenticInt != 0
 	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	job.Status = JobStatusRunning
 	job.WorkerID = workerID
