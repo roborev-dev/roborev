@@ -3,44 +3,48 @@ package agent
 import (
 	"bytes"
 	"context"
-	"os"
 	"strings"
 	"testing"
 )
 
-func TestClaudeBuildArgsUnsafeOptIn(t *testing.T) {
-	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
-
+func TestClaudeBuildArgs(t *testing.T) {
 	a := NewClaudeAgent("claude")
 
-	SetAllowUnsafeAgents(false)
+	// Non-agentic mode (review only): read-only tools, no dangerous flag
 	args := a.buildArgs(false)
+	argsStr := strings.Join(args, " ")
 	if containsString(args, claudeDangerousFlag) {
-		t.Fatalf("expected no unsafe flag when disabled, got %v", args)
-	}
-	if !containsString(args, "--print") {
-		t.Fatalf("expected --print in non-agentic mode, got %v", args)
-	}
-
-	SetAllowUnsafeAgents(true)
-	args = a.buildArgs(true)
-	if !containsString(args, claudeDangerousFlag) {
-		t.Fatalf("expected unsafe flag when enabled, got %v", args)
-	}
-	if containsString(args, "--print") {
-		t.Fatalf("expected no --print in agentic mode, got %v", args)
+		t.Fatalf("expected no unsafe flag in review mode, got %v", args)
 	}
 	if !containsString(args, "--output-format") || !containsString(args, "stream-json") {
-		t.Fatalf("expected --output-format stream-json in agentic mode, got %v", args)
+		t.Fatalf("expected --output-format stream-json, got %v", args)
 	}
 	if !containsString(args, "--verbose") {
-		t.Fatalf("expected --verbose in agentic mode (required for stream-json), got %v", args)
+		t.Fatalf("expected --verbose (required for stream-json), got %v", args)
 	}
 	if !containsString(args, "-p") {
-		t.Fatalf("expected -p flag in agentic mode (for stdin piping), got %v", args)
+		t.Fatalf("expected -p flag (for stdin piping), got %v", args)
+	}
+	if !containsString(args, "--allowedTools") {
+		t.Fatalf("expected --allowedTools, got %v", args)
+	}
+	// Review mode should have read-only tools (no Edit or Write)
+	if strings.Contains(argsStr, "Edit") || strings.Contains(argsStr, "Write") {
+		t.Fatalf("expected read-only tools in review mode, got %v", args)
+	}
+
+	// Agentic mode: write tools + dangerous flag
+	args = a.buildArgs(true)
+	argsStr = strings.Join(args, " ")
+	if !containsString(args, claudeDangerousFlag) {
+		t.Fatalf("expected unsafe flag in agentic mode, got %v", args)
 	}
 	if !containsString(args, "--allowedTools") {
 		t.Fatalf("expected --allowedTools in agentic mode, got %v", args)
+	}
+	// Agentic mode should have write tools
+	if !strings.Contains(argsStr, "Edit") || !strings.Contains(argsStr, "Write") {
+		t.Fatalf("expected write tools in agentic mode, got %v", args)
 	}
 }
 
@@ -72,32 +76,6 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	}
 }
 
-func TestClaudeReviewNonTTYErrorsWhenUnsafeDisabled(t *testing.T) {
-	prevAllowUnsafe := AllowUnsafeAgents()
-	SetAllowUnsafeAgents(false)
-	t.Cleanup(func() { SetAllowUnsafeAgents(prevAllowUnsafe) })
-
-	stdin := os.Stdin
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	os.Stdin = r
-	t.Cleanup(func() {
-		os.Stdin = stdin
-		r.Close()
-		w.Close()
-	})
-
-	a := NewClaudeAgent("claude")
-	_, err = a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "requires a TTY") {
-		t.Fatalf("expected TTY error, got %v", err)
-	}
-}
 
 func TestParseStreamJSON_ResultEvent(t *testing.T) {
 	a := NewClaudeAgent("claude")

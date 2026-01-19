@@ -11,8 +11,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-
-	"github.com/mattn/go-isatty"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
@@ -47,22 +45,17 @@ func (a *ClaudeAgent) CommandName() string {
 }
 
 func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
-	args := []string{}
-	if AllowUnsafeAgents() {
-		args = append(args, claudeDangerousFlag)
-	}
+	// Always use stdin piping + stream-json for non-interactive execution
+	// (following claude-code-action pattern from Anthropic)
+	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
+
 	if agenticMode {
 		// Agentic mode: Claude can use tools and make file changes
-		// Use stream-json output format for non-interactive execution
-		// (following claude-code-action pattern from Anthropic)
-		// Prompt is piped via stdin, not passed as argument
-		// --allowedTools explicitly permits file editing tools (key insight from claude-code-action)
-		args = append(args, "-p", "--verbose", "--output-format", "stream-json",
-			"--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
+		args = append(args, claudeDangerousFlag)
+		args = append(args, "--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
 	} else {
-		// Print mode: one-shot text response, no tool use
-		// Prompt is passed as positional argument
-		args = append(args, "--print")
+		// Review mode: read-only tools for context gathering
+		args = append(args, "--allowedTools", "Read,Glob,Grep,Bash")
 	}
 	return args
 }
@@ -84,9 +77,6 @@ func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, err
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	agenticMode := AllowUnsafeAgents()
 
-	if !agenticMode && !isatty.IsTerminal(os.Stdin.Fd()) {
-		return "", fmt.Errorf("claude requires a TTY when allow_unsafe_agents is disabled")
-	}
 	if agenticMode {
 		supported, err := claudeSupportsDangerousFlag(ctx, a.Command)
 		if err != nil {
@@ -97,15 +87,8 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		}
 	}
 
-	// When AllowUnsafeAgents is true, run in agentic mode (can make file changes)
-	// Otherwise, use --print mode for review-only operations
+	// Build args - always uses stdin piping + stream-json for non-interactive execution
 	args := a.buildArgs(agenticMode)
-
-	// In non-agentic mode, pass prompt as positional argument
-	// In agentic mode, prompt is piped via stdin (like claude-code-action)
-	if !agenticMode {
-		args = append(args, "-p", prompt)
-	}
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -127,30 +110,15 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 	cmd.Stderr = &stderr
 
-	// In agentic mode, pipe prompt via stdin
-	// Use strings.NewReader instead of goroutine+pipe to avoid blocking issues
-	// if cmd.Start() fails (goroutine would block on pipe write indefinitely)
-	if agenticMode {
-		cmd.Stdin = strings.NewReader(prompt)
-	}
+	// Always pipe prompt via stdin (stream-json mode)
+	cmd.Stdin = strings.NewReader(prompt)
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start claude: %w", err)
 	}
 
-	// Parse output based on mode
-	var result string
-	if agenticMode {
-		result, err = a.parseStreamJSON(stdoutPipe, output)
-	} else {
-		var buf bytes.Buffer
-		if sw := newSyncWriter(output); sw != nil {
-			io.Copy(io.MultiWriter(&buf, sw), stdoutPipe)
-		} else {
-			io.Copy(&buf, stdoutPipe)
-		}
-		result = buf.String()
-	}
+	// Parse stream-json output
+	result, err := a.parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if err != nil {
