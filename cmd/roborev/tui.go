@@ -1743,6 +1743,7 @@ func (m tuiModel) renderQueueView() string {
 		}
 
 		// Jobs
+		jobLinesWritten := 0
 		for i := start; i < end; i++ {
 			job := visibleJobList[i]
 			selected := i == visibleSelectedIdx
@@ -1754,6 +1755,13 @@ func (m tuiModel) renderQueueView() string {
 			}
 			b.WriteString(line)
 			b.WriteString("\n")
+			jobLinesWritten++
+		}
+
+		// Pad with empty lines to fill the screen and prevent ghost text
+		for jobLinesWritten < visibleRows {
+			b.WriteString("\n")
+			jobLinesWritten++
 		}
 
 		// Show scroll indicator if not all jobs visible
@@ -2092,17 +2100,25 @@ func (m tuiModel) renderReviewView() string {
 	}
 	end := min(start+visibleLines, len(lines))
 
+	linesWritten := 0
 	for i := start; i < end; i++ {
 		b.WriteString(lines[i])
 		b.WriteString("\n")
+		linesWritten++
+	}
+
+	// Pad with empty lines to fill the screen and prevent ghost text
+	for linesWritten < visibleLines {
+		b.WriteString("\n")
+		linesWritten++
 	}
 
 	// Scroll indicator
 	if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
-		b.WriteString("\n")
 	}
+	b.WriteString("\n")
 
 	b.WriteString(tuiHelpStyle.Render(helpText))
 
@@ -2134,17 +2150,25 @@ func (m tuiModel) renderPromptView() string {
 	}
 	end := min(start+visibleLines, len(lines))
 
+	linesWritten := 0
 	for i := start; i < end; i++ {
 		b.WriteString(lines[i])
 		b.WriteString("\n")
+		linesWritten++
+	}
+
+	// Pad with empty lines to fill the screen and prevent ghost text
+	for linesWritten < visibleLines {
+		b.WriteString("\n")
+		linesWritten++
 	}
 
 	// Scroll indicator
 	if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
-		b.WriteString("\n")
 	}
+	b.WriteString("\n")
 
 	b.WriteString(tuiHelpStyle.Render("up/down: scroll | p: back to review | esc/q: back"))
 
@@ -2210,6 +2234,7 @@ func (m tuiModel) renderFilterView() string {
 		end = 0
 	}
 
+	repoLinesWritten := 0
 	for i := start; i < end; i++ {
 		repo := visible[i]
 		var line string
@@ -2226,21 +2251,31 @@ func (m tuiModel) renderFilterView() string {
 			b.WriteString("  " + line)
 		}
 		b.WriteString("\n")
+		repoLinesWritten++
 	}
 
 	if len(visible) == 0 {
 		b.WriteString(tuiStatusStyle.Render("  No matching repos"))
 		b.WriteString("\n")
+		repoLinesWritten++
 	} else if visibleRows == 0 {
 		b.WriteString(tuiStatusStyle.Render("  (terminal too small)"))
 		b.WriteString("\n")
-	} else if needsScroll {
-		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visible))
-		b.WriteString(tuiStatusStyle.Render(scrollInfo))
-		b.WriteString("\n")
+		repoLinesWritten++
 	}
 
+	// Pad with empty lines to fill the screen and prevent ghost text
+	for repoLinesWritten < visibleRows {
+		b.WriteString("\n")
+		repoLinesWritten++
+	}
+
+	if needsScroll {
+		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visible))
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
 	b.WriteString("\n")
+
 	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | esc: cancel | type to search"))
 
 	return b.String()
