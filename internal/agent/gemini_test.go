@@ -52,12 +52,12 @@ func TestGeminiParseStreamJSON_ResultEvent(t *testing.T) {
 {"type":"assistant","message":{"content":"Working on it..."}}
 {"type":"result","result":"Done! Review complete."}
 `
-	result, _, err := a.parseStreamJSON(strings.NewReader(input), nil)
+	parsed, err := a.parseStreamJSON(strings.NewReader(input), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Done! Review complete." {
-		t.Fatalf("expected result from result event, got %q", result)
+	if parsed.result != "Done! Review complete." {
+		t.Fatalf("expected result from result event, got %q", parsed.result)
 	}
 }
 
@@ -68,16 +68,16 @@ func TestGeminiParseStreamJSON_GeminiMessageFormat(t *testing.T) {
 {"type":"message","timestamp":"2026-01-19T17:49:13.447Z","role":"assistant","content":" with filtering logic.","delta":true}
 {"type":"result","timestamp":"2026-01-19T17:49:13.519Z","status":"success","stats":{"total_tokens":1000}}
 `
-	result, _, err := a.parseStreamJSON(strings.NewReader(input), nil)
+	parsed, err := a.parseStreamJSON(strings.NewReader(input), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Should concatenate the assistant message contents
-	if !strings.Contains(result, "Changes:") {
-		t.Errorf("expected result to contain 'Changes:', got %q", result)
+	if !strings.Contains(parsed.result, "Changes:") {
+		t.Errorf("expected result to contain 'Changes:', got %q", parsed.result)
 	}
-	if !strings.Contains(result, "filtering logic") {
-		t.Errorf("expected result to contain 'filtering logic', got %q", result)
+	if !strings.Contains(parsed.result, "filtering logic") {
+		t.Errorf("expected result to contain 'filtering logic', got %q", parsed.result)
 	}
 }
 
@@ -88,12 +88,12 @@ func TestGeminiParseStreamJSON_AssistantFallback(t *testing.T) {
 {"type":"assistant","message":{"content":"First message"}}
 {"type":"assistant","message":{"content":"Second message"}}
 `
-	result, _, err := a.parseStreamJSON(strings.NewReader(input), nil)
+	parsed, err := a.parseStreamJSON(strings.NewReader(input), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "First message\nSecond message" {
-		t.Fatalf("expected joined assistant messages, got %q", result)
+	if parsed.result != "First message\nSecond message" {
+		t.Fatalf("expected joined assistant messages, got %q", parsed.result)
 	}
 }
 
@@ -102,17 +102,13 @@ func TestGeminiParseStreamJSON_NoValidEvents(t *testing.T) {
 	input := `not json at all
 still not json
 `
-	_, rawOutput, err := a.parseStreamJSON(strings.NewReader(input), nil)
+	_, err := a.parseStreamJSON(strings.NewReader(input), nil)
 	if err == nil {
 		t.Fatal("expected error for no valid events, got nil")
 	}
 	// Should return the sentinel error
 	if !errors.Is(err, errNoStreamJSON) {
 		t.Fatalf("expected errNoStreamJSON, got %v", err)
-	}
-	// Should return raw output for fallback
-	if !strings.Contains(rawOutput, "not json at all") {
-		t.Fatalf("expected raw output to contain input text, got %q", rawOutput)
 	}
 }
 
@@ -123,12 +119,12 @@ func TestGeminiParseStreamJSON_StreamsToOutput(t *testing.T) {
 `
 	var output bytes.Buffer
 	sw := newSyncWriter(&output)
-	result, _, err := a.parseStreamJSON(strings.NewReader(input), sw)
+	parsed, err := a.parseStreamJSON(strings.NewReader(input), sw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Done" {
-		t.Fatalf("expected 'Done', got %q", result)
+	if parsed.result != "Done" {
+		t.Fatalf("expected 'Done', got %q", parsed.result)
 	}
 	// Output should contain streamed JSON
 	if output.Len() == 0 {
@@ -142,39 +138,35 @@ func TestGeminiParseStreamJSON_EmptyResult(t *testing.T) {
 	input := `{"type":"system","subtype":"init"}
 {"type":"tool","name":"Read"}
 `
-	result, _, err := a.parseStreamJSON(strings.NewReader(input), nil)
+	parsed, err := a.parseStreamJSON(strings.NewReader(input), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should return empty string (caller handles sentinel)
-	if result != "" {
-		t.Fatalf("expected empty result, got %q", result)
+	// Should return empty string (caller returns "No review output generated")
+	if parsed.result != "" {
+		t.Fatalf("expected empty result, got %q", parsed.result)
 	}
 }
 
-func TestGeminiParseStreamJSON_PlainTextFallback(t *testing.T) {
+func TestGeminiParseStreamJSON_PlainTextError(t *testing.T) {
 	a := NewGeminiAgent("gemini")
-	// Simulate older Gemini CLI that outputs plain text
+	// Simulate older Gemini CLI that outputs plain text - should error
 	input := `This is a plain text review.
 No issues found in the code.
 `
-	_, rawOutput, err := a.parseStreamJSON(strings.NewReader(input), nil)
+	_, err := a.parseStreamJSON(strings.NewReader(input), nil)
 	if err == nil {
 		t.Fatal("expected error for plain text input")
 	}
-	// Should be the sentinel error (allows fallback)
+	// Should be the sentinel error
 	if !errors.Is(err, errNoStreamJSON) {
 		t.Fatalf("expected errNoStreamJSON, got %v", err)
 	}
-	// Raw output should be available for fallback
-	if !strings.Contains(rawOutput, "This is a plain text review") {
-		t.Fatalf("expected raw output to contain plain text, got %q", rawOutput)
-	}
 }
 
-func TestGeminiReview_PlainTextFallback(t *testing.T) {
+func TestGeminiReview_PlainTextError(t *testing.T) {
 	// End-to-end test: create a temp script that emits plain text (no stream-json)
-	// and verify Review() falls back to raw output
+	// should return an error since we require stream-json
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "fake-gemini")
 
@@ -189,17 +181,13 @@ echo "No issues found."
 
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
-	result, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
+	_, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	if err == nil {
+		t.Fatal("expected error for plain text output, got nil")
 	}
-
-	// Should return the raw plain text output
-	if !strings.Contains(result, "Plain text review output") {
-		t.Errorf("expected result to contain plain text, got %q", result)
-	}
-	if !strings.Contains(result, "No issues found") {
-		t.Errorf("expected result to contain 'No issues found', got %q", result)
+	// Should return the sentinel error
+	if !errors.Is(err, errNoStreamJSON) {
+		t.Errorf("expected errNoStreamJSON, got %v", err)
 	}
 }
 
@@ -231,9 +219,9 @@ echo '{"type":"result","result":"Review complete. All good!"}'
 	}
 }
 
-func TestGeminiReview_StreamJSONNoResultFallsBackToRaw(t *testing.T) {
+func TestGeminiReview_StreamJSONNoResult(t *testing.T) {
 	// End-to-end test: stream-json with only tool events (no result/assistant)
-	// should fall back to raw output instead of "No review output generated"
+	// should return "No review output generated" (no raw output fallback)
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "fake-gemini")
 
@@ -254,12 +242,9 @@ echo '{"type":"tool_result","content":"file contents here"}'
 		t.Fatalf("Review failed: %v", err)
 	}
 
-	// Should return raw output (the JSON lines) instead of empty message
-	if result == "No review output generated" {
-		t.Error("expected raw output fallback, got 'No review output generated'")
-	}
-	if !strings.Contains(result, `"type":"tool"`) {
-		t.Errorf("expected raw JSON output, got %q", result)
+	// Should return "No review output generated" since no result/assistant content
+	if result != "No review output generated" {
+		t.Errorf("expected 'No review output generated', got %q", result)
 	}
 }
 
@@ -286,32 +271,6 @@ exit 1
 	// Should contain information about the failure
 	if !strings.Contains(err.Error(), "gemini failed") {
 		t.Errorf("expected error to mention 'gemini failed', got %v", err)
-	}
-}
-
-func TestGeminiParseStreamJSON_PreservesIndentation(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	// Plain text with indentation (like code blocks)
-	input := `Review output:
-    def hello():
-        print("world")
-
-No issues found.
-`
-	_, rawOutput, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if !errors.Is(err, errNoStreamJSON) {
-		t.Fatalf("expected errNoStreamJSON, got %v", err)
-	}
-	// Indentation should be preserved
-	if !strings.Contains(rawOutput, "    def hello():") {
-		t.Errorf("expected indentation to be preserved, got %q", rawOutput)
-	}
-	if !strings.Contains(rawOutput, "        print") {
-		t.Errorf("expected nested indentation to be preserved, got %q", rawOutput)
-	}
-	// Empty line should be preserved
-	if !strings.Contains(rawOutput, ")\n\nNo issues") {
-		t.Errorf("expected blank line to be preserved, got %q", rawOutput)
 	}
 }
 
