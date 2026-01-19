@@ -17,6 +17,7 @@ import (
 type ClaudeAgent struct {
 	Command   string         // The claude command to run (default: "claude")
 	Reasoning ReasoningLevel // Reasoning level (for future extended thinking support)
+	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 }
 
 const claudeDangerousFlag = "--dangerously-skip-permissions"
@@ -34,6 +35,15 @@ func NewClaudeAgent(command string) *ClaudeAgent {
 // WithReasoning returns the agent unchanged (reasoning not supported).
 func (a *ClaudeAgent) WithReasoning(level ReasoningLevel) Agent {
 	return a
+}
+
+// WithAgentic returns a copy of the agent configured for agentic mode.
+func (a *ClaudeAgent) WithAgentic(agentic bool) Agent {
+	return &ClaudeAgent{
+		Command:   a.Command,
+		Reasoning: a.Reasoning,
+		Agentic:   agentic,
+	}
 }
 
 func (a *ClaudeAgent) Name() string {
@@ -75,7 +85,8 @@ func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, err
 }
 
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	agenticMode := AllowUnsafeAgents()
+	// Use agentic mode if either per-job setting or global setting enables it
+	agenticMode := a.Agentic || AllowUnsafeAgents()
 
 	if agenticMode {
 		supported, err := claudeSupportsDangerousFlag(ctx, a.Command)

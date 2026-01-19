@@ -12,6 +12,7 @@ import (
 type OpenCodeAgent struct {
 	Command   string         // The opencode command to run (default: "opencode")
 	Reasoning ReasoningLevel // Reasoning level (for future support)
+	Agentic   bool           // Whether agentic mode is enabled (OpenCode auto-approves in non-interactive mode)
 }
 
 // NewOpenCodeAgent creates a new OpenCode agent
@@ -25,6 +26,17 @@ func NewOpenCodeAgent(command string) *OpenCodeAgent {
 // WithReasoning returns the agent unchanged (reasoning not supported).
 func (a *OpenCodeAgent) WithReasoning(level ReasoningLevel) Agent {
 	return a
+}
+
+// WithAgentic returns a copy of the agent configured for agentic mode.
+// Note: OpenCode's `run` command auto-approves all permissions in non-interactive mode,
+// so agentic mode is effectively always enabled when running through roborev.
+func (a *OpenCodeAgent) WithAgentic(agentic bool) Agent {
+	return &OpenCodeAgent{
+		Command:   a.Command,
+		Reasoning: a.Reasoning,
+		Agentic:   agentic,
+	}
 }
 
 func (a *OpenCodeAgent) Name() string {

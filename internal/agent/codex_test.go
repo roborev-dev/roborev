@@ -9,18 +9,16 @@ import (
 )
 
 func TestCodexBuildArgsUnsafeOptIn(t *testing.T) {
-	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
-
 	a := NewCodexAgent("codex")
 
-	SetAllowUnsafeAgents(false)
-	args := a.buildArgs("/repo", "/tmp/out", "prompt")
+	// Test non-agentic mode (no dangerous flag)
+	args := a.buildArgs("/repo", "/tmp/out", "prompt", false)
 	if containsString(args, codexDangerousFlag) {
 		t.Fatalf("expected no unsafe flag when disabled, got %v", args)
 	}
 
-	SetAllowUnsafeAgents(true)
-	args = a.buildArgs("/repo", "/tmp/out", "prompt")
+	// Test agentic mode (with dangerous flag)
+	args = a.buildArgs("/repo", "/tmp/out", "prompt", true)
 	if !containsString(args, codexDangerousFlag) {
 		t.Fatalf("expected unsafe flag when enabled, got %v", args)
 	}

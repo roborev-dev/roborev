@@ -1651,7 +1651,7 @@ func (m tuiModel) renderQueueView() string {
 		title += " [hiding addressed]"
 	}
 	b.WriteString(tuiTitleStyle.Render(title))
-	b.WriteString("\n")
+	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Status line - show filtered counts when filter is active
 	var statusLine string
@@ -1681,16 +1681,38 @@ func (m tuiModel) renderQueueView() string {
 			m.status.CanceledJobs)
 	}
 	b.WriteString(tuiStatusStyle.Render(statusLine))
-	b.WriteString("\n\n")
+	b.WriteString("\x1b[K\n\x1b[K\n") // Clear status line and blank line
 
 	visibleJobList := m.getVisibleJobs()
 	visibleSelectedIdx := m.getVisibleSelectedIdx()
 
+	// Calculate visible job range based on terminal height
+	// Reserve lines for: title(1) + status(2) + header(2) + help(3) + scroll indicator(1)
+	reservedLines := 9
+	visibleRows := m.height - reservedLines
+	if visibleRows < 3 {
+		visibleRows = 3 // Show at least 3 jobs
+	}
+
+	// Track scroll indicator state for later
+	var scrollInfo string
+	start := 0
+	end := 0
+
 	if len(visibleJobList) == 0 {
 		if len(m.activeRepoFilter) > 0 || m.hideAddressed {
-			b.WriteString("No jobs matching filters\n")
+			b.WriteString("No jobs matching filters")
+			b.WriteString("\x1b[K\n")
 		} else {
-			b.WriteString("No jobs in queue\n")
+			b.WriteString("No jobs in queue")
+			b.WriteString("\x1b[K\n")
+		}
+		// Pad empty queue to fill visibleRows (minus 1 for the message we just wrote)
+		// Also need header lines (2) to match non-empty case
+		linesWritten := 1
+		for linesWritten < visibleRows+2 { // +2 for header lines we skipped
+			b.WriteString("\x1b[K\n")
+			linesWritten++
 		}
 	} else {
 		// Calculate ID column width based on max ID
@@ -1713,21 +1735,13 @@ func (m tuiModel) renderQueueView() string {
 			colWidths.agent, "Agent",
 			"Status", "P/F", "Queued", "Elapsed", "Addr'd")
 		b.WriteString(tuiStatusStyle.Render(header))
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n") // Clear to end of line
 		b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
-		b.WriteString("\n")
-
-		// Calculate visible job range based on terminal height
-		// Reserve lines for: title(1) + status(2) + header(2) + help(3) + scroll indicator(1)
-		reservedLines := 9
-		visibleRows := m.height - reservedLines
-		if visibleRows < 3 {
-			visibleRows = 3 // Show at least 3 jobs
-		}
+		b.WriteString("\x1b[K\n") // Clear to end of line
 
 		// Determine which jobs to show, keeping selected item visible
-		start := 0
-		end := len(visibleJobList)
+		start = 0
+		end = len(visibleJobList)
 
 		if len(visibleJobList) > visibleRows {
 			// Center the selected item when possible
@@ -1743,6 +1757,7 @@ func (m tuiModel) renderQueueView() string {
 		}
 
 		// Jobs
+		jobLinesWritten := 0
 		for i := start; i < end; i++ {
 			job := visibleJobList[i]
 			selected := i == visibleSelectedIdx
@@ -1753,12 +1768,18 @@ func (m tuiModel) renderQueueView() string {
 				line = "  " + line
 			}
 			b.WriteString(line)
-			b.WriteString("\n")
+			b.WriteString("\x1b[K\n") // Clear to end of line before newline
+			jobLinesWritten++
 		}
 
-		// Show scroll indicator if not all jobs visible
+		// Pad with clear-to-end-of-line sequences to prevent ghost text
+		for jobLinesWritten < visibleRows {
+			b.WriteString("\x1b[K\n")
+			jobLinesWritten++
+		}
+
+		// Build scroll indicator if needed
 		if len(visibleJobList) > visibleRows || m.hasMore || m.loadingMore {
-			var scrollInfo string
 			if m.loadingMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(visibleJobList))
 			} else if m.hasMore && len(m.activeRepoFilter) == 0 {
@@ -1766,12 +1787,14 @@ func (m tuiModel) renderQueueView() string {
 			} else if len(visibleJobList) > visibleRows {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visibleJobList))
 			}
-			if scrollInfo != "" {
-				b.WriteString(tuiStatusStyle.Render(scrollInfo))
-				b.WriteString("\n")
-			}
 		}
 	}
+
+	// Always emit scroll indicator line (blank if no scroll info) to maintain consistent height
+	if scrollInfo != "" {
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
+	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
 	// Update notification (or blank line if no update)
 	if m.updateAvailable != "" {
@@ -1783,18 +1806,21 @@ func (m tuiModel) renderQueueView() string {
 			updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
 		}
 		b.WriteString(updateStyle.Render(updateMsg))
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n") // Clear to end of line
 	} else {
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n") // Clear blank line
 	}
 
 	// Help (two lines)
-	helpText := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | f: filter | h: hide addressed | q: quit\n" +
-		"a: toggle addressed | x: cancel | r: rerun"
+	helpLine1 := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | f: filter | h: hide addressed | q: quit"
+	helpLine2 := "a: toggle addressed | x: cancel | r: rerun"
 	if len(m.activeRepoFilter) > 0 || m.hideAddressed {
-		helpText += " | esc: clear filters"
+		helpLine2 += " | esc: clear filters"
 	}
-	b.WriteString(tuiHelpStyle.Render(helpText))
+	b.WriteString(tuiHelpStyle.Render(helpLine1))
+	b.WriteString("\x1b[K\n") // Clear to end of line
+	b.WriteString(tuiHelpStyle.Render(helpLine2))
+	b.WriteString("\x1b[K") // Clear to end of line (no newline at end)
 
 	return b.String()
 }
@@ -2018,11 +2044,13 @@ func (m tuiModel) renderReviewView() string {
 			b.WriteString(" ")
 			b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
 		}
+		b.WriteString("\x1b[K") // Clear to end of line
 
 		// Show full repo path on next line
 		if review.Job.RepoPath != "" {
 			b.WriteString("\n")
 			b.WriteString(tuiStatusStyle.Render(review.Job.RepoPath))
+			b.WriteString("\x1b[K") // Clear to end of line
 		}
 
 		// Show verdict on line 2 (only if present)
@@ -2035,13 +2063,14 @@ func (m tuiModel) renderReviewView() string {
 			} else {
 				b.WriteString(tuiFailStyle.Render("Verdict: Fail"))
 			}
+			b.WriteString("\x1b[K") // Clear to end of line
 		}
 		b.WriteString("\n")
 	} else {
 		title = "Review"
 		titleLen = len(title)
 		b.WriteString(tuiTitleStyle.Render(title))
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n") // Clear to end of line
 	}
 
 	// Build content: review output + responses
@@ -2092,19 +2121,28 @@ func (m tuiModel) renderReviewView() string {
 	}
 	end := min(start+visibleLines, len(lines))
 
+	linesWritten := 0
 	for i := start; i < end; i++ {
 		b.WriteString(lines[i])
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n") // Clear to end of line before newline
+		linesWritten++
+	}
+
+	// Pad with clear-to-end-of-line sequences to prevent ghost text
+	for linesWritten < visibleLines {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
 	}
 
 	// Scroll indicator
 	if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
-		b.WriteString("\n")
 	}
+	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
 	b.WriteString(tuiHelpStyle.Render(helpText))
+	b.WriteString("\x1b[K") // Clear help line
 
 	return b.String()
 }
@@ -2120,7 +2158,7 @@ func (m tuiModel) renderPromptView() string {
 	} else {
 		b.WriteString(tuiTitleStyle.Render("Prompt"))
 	}
-	b.WriteString("\n")
+	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Wrap text to terminal width minus padding
 	wrapWidth := max(20, min(m.width-4, 200))
@@ -2134,19 +2172,28 @@ func (m tuiModel) renderPromptView() string {
 	}
 	end := min(start+visibleLines, len(lines))
 
+	linesWritten := 0
 	for i := start; i < end; i++ {
 		b.WriteString(lines[i])
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n") // Clear to end of line before newline
+		linesWritten++
+	}
+
+	// Pad with clear-to-end-of-line sequences to prevent ghost text
+	for linesWritten < visibleLines {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
 	}
 
 	// Scroll indicator
 	if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
-		b.WriteString("\n")
 	}
+	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
 	b.WriteString(tuiHelpStyle.Render("up/down: scroll | p: back to review | esc/q: back"))
+	b.WriteString("\x1b[K") // Clear help line
 
 	return b.String()
 }
@@ -2155,13 +2202,21 @@ func (m tuiModel) renderFilterView() string {
 	var b strings.Builder
 
 	b.WriteString(tuiTitleStyle.Render("Filter by Repository"))
-	b.WriteString("\n\n")
+	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
 
 	// Show loading state if repos haven't been fetched yet
 	if m.filterRepos == nil {
 		b.WriteString(tuiStatusStyle.Render("Loading repos..."))
-		b.WriteString("\n\n")
+		b.WriteString("\x1b[K\n")
+		// Pad to fill terminal height: title(1) + blank(1) + loading(1) + padding + help(1)
+		// We've written 3 lines so far (title, blank, loading)
+		linesWritten := 3
+		for linesWritten < m.height-1 { // -1 for help line at bottom
+			b.WriteString("\x1b[K\n")
+			linesWritten++
+		}
 		b.WriteString(tuiHelpStyle.Render("esc: cancel"))
+		b.WriteString("\x1b[K")
 		return b.String()
 	}
 
@@ -2171,7 +2226,7 @@ func (m tuiModel) renderFilterView() string {
 		searchDisplay = tuiStatusStyle.Render("Type to search...")
 	}
 	b.WriteString(fmt.Sprintf("Search: %s", searchDisplay))
-	b.WriteString("\n\n")
+	b.WriteString("\x1b[K\n\x1b[K\n") // Clear search and blank line
 
 	visible := m.getVisibleFilterRepos()
 
@@ -2210,6 +2265,7 @@ func (m tuiModel) renderFilterView() string {
 		end = 0
 	}
 
+	repoLinesWritten := 0
 	for i := start; i < end; i++ {
 		repo := visible[i]
 		var line string
@@ -2225,23 +2281,34 @@ func (m tuiModel) renderFilterView() string {
 		} else {
 			b.WriteString("  " + line)
 		}
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n") // Clear to end of line before newline
+		repoLinesWritten++
 	}
 
 	if len(visible) == 0 {
 		b.WriteString(tuiStatusStyle.Render("  No matching repos"))
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n")
+		repoLinesWritten++
 	} else if visibleRows == 0 {
 		b.WriteString(tuiStatusStyle.Render("  (terminal too small)"))
-		b.WriteString("\n")
-	} else if needsScroll {
-		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visible))
-		b.WriteString(tuiStatusStyle.Render(scrollInfo))
-		b.WriteString("\n")
+		b.WriteString("\x1b[K\n")
+		repoLinesWritten++
 	}
 
-	b.WriteString("\n")
+	// Pad with clear-to-end-of-line sequences to prevent ghost text
+	for repoLinesWritten < visibleRows {
+		b.WriteString("\x1b[K\n")
+		repoLinesWritten++
+	}
+
+	if needsScroll {
+		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visible))
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
+	b.WriteString("\x1b[K\n") // Clear scroll indicator line
+
 	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | esc: cancel | type to search"))
+	b.WriteString("\x1b[K") // Clear help line
 
 	return b.String()
 }

@@ -12,6 +12,7 @@ import (
 type CopilotAgent struct {
 	Command   string         // The copilot command to run (default: "copilot")
 	Reasoning ReasoningLevel // Reasoning level (for future support)
+	Agentic   bool           // Whether agentic mode is enabled (note: Copilot requires manual approval for actions)
 }
 
 // NewCopilotAgent creates a new Copilot agent
@@ -25,6 +26,17 @@ func NewCopilotAgent(command string) *CopilotAgent {
 // WithReasoning returns the agent unchanged (reasoning not supported).
 func (a *CopilotAgent) WithReasoning(level ReasoningLevel) Agent {
 	return a
+}
+
+// WithAgentic returns a copy of the agent configured for agentic mode.
+// Note: Copilot CLI requires manual approval for all actions and does not support
+// automated unsafe execution. The agentic flag is tracked but has no effect on Copilot's behavior.
+func (a *CopilotAgent) WithAgentic(agentic bool) Agent {
+	return &CopilotAgent{
+		Command:   a.Command,
+		Reasoning: a.Reasoning,
+		Agentic:   agentic,
+	}
 }
 
 func (a *CopilotAgent) Name() string {

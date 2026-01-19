@@ -45,6 +45,7 @@ type ReviewJob struct {
 	Prompt      string     `json:"prompt,omitempty"`
 	RetryCount  int        `json:"retry_count"`
 	DiffContent *string    `json:"diff_content,omitempty"` // For dirty reviews (uncommitted changes)
+	Agentic     bool       `json:"agentic"`                // Enable agentic mode (allow file edits)
 
 	// Joined fields for convenience
 	RepoPath      string  `json:"repo_path,omitempty"`

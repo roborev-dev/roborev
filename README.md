@@ -116,6 +116,7 @@ roborev prompt "Explain the architecture of this codebase"
 roborev prompt --wait "What does the main function do?"
 roborev prompt --agent claude-code "Refactor error handling in main.go"
 roborev prompt --reasoning thorough "Find potential security issues"
+roborev prompt --agentic "Add error handling to main.go"
 cat instructions.txt | roborev prompt --wait
 ```
 
@@ -127,7 +128,11 @@ cat instructions.txt | roborev prompt --wait
 | `--agent` | Agent to use (default: from config) |
 | `--reasoning` | Reasoning level: fast, standard, or thorough |
 | `--no-context` | Don't include repository context in prompt |
+| `--agentic` | Enable agentic mode (allow file edits and commands) |
+| `--yolo` | Alias for `--agentic` |
 | `--quiet` | Suppress output (just enqueue) |
+
+By default, prompts run in **review mode** (read-only). Use `--agentic` (or `--yolo`) to enable write operations (file edits, bash commands) for tasks that need to modify your codebase.
 
 By default, prompts include context about the repository (name, path, and any project guidelines from `.roborev.toml`). Use `--no-context` for raw prompts.
 
@@ -316,6 +321,33 @@ For `--dirty` reviews, diffs are limited to 200KB since uncommitted changes cann
 | `opencode` | `opencode` | `npm install -g opencode-ai` |
 
 roborev auto-detects installed agents and falls back in order: codex → claude-code → gemini → copilot → opencode.
+
+### Agent Modes
+
+Agents run in one of two modes:
+
+| Mode | Tools Available | Used By |
+|------|-----------------|---------|
+| **Review** (default) | Read, Glob, Grep | `roborev review`, `roborev prompt` |
+| **Agentic** | Read, Glob, Grep, Edit, Write, Bash | `roborev refine`, `roborev prompt --agentic` |
+
+**Review mode** is read-only - agents can inspect code but cannot make changes. This is the safe default for automated reviews triggered by post-commit hooks.
+
+**Agentic mode** allows agents to edit files and run commands. Enable it in three ways:
+
+1. **Per-job**: Use `roborev prompt --agentic` (or `--yolo`)
+2. **Per-command**: The `refine` command automatically enables agentic mode
+3. **Globally**: Set `allow_unsafe_agents = true` in `~/.roborev/config.toml` and restart daemon
+
+**Agent Support:**
+
+| Agent | Agentic Support |
+|-------|-----------------|
+| `codex` | Full (uses `--dangerously-bypass-approvals-and-sandbox`) |
+| `claude-code` | Full (uses `--dangerously-skip-permissions`) |
+| `gemini` | Full (uses `--yolo` and `--allowed-tools`) |
+| `copilot` | Limited (requires manual approval for actions) |
+| `opencode` | Full (auto-approves in non-interactive mode) |
 
 ## Agent Skills
 

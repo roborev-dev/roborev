@@ -29,7 +29,8 @@ type Server struct {
 
 // NewServer creates a new daemon server
 func NewServer(db *storage.DB, cfg *config.Config) *Server {
-	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents)
+	// Always set for deterministic state - default to false (conservative)
+	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents != nil && *cfg.AllowUnsafeAgents)
 	agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
 	broadcaster := NewBroadcaster()
 	s := &Server{
@@ -119,6 +120,7 @@ type EnqueueRequest struct {
 	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
 	Reasoning    string `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
 	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
+	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
 }
 
 type ErrorResponse struct {
@@ -236,7 +238,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var job *storage.ReviewJob
 	if isPrompt {
 		// Custom prompt job - use provided prompt directly
-		job, err = s.db.EnqueuePromptJob(repo.ID, agentName, reasoning, req.CustomPrompt)
+		job, err = s.db.EnqueuePromptJob(repo.ID, agentName, reasoning, req.CustomPrompt, req.Agentic)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
 			return

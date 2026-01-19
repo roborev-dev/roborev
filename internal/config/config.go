@@ -16,7 +16,7 @@ type Config struct {
 	ReviewContextCount int    `toml:"review_context_count"`
 	DefaultAgent       string `toml:"default_agent"`
 	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
-	AllowUnsafeAgents  bool   `toml:"allow_unsafe_agents"`
+	AllowUnsafeAgents  *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`

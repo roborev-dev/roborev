@@ -277,7 +277,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reasoning = "thorough"
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
-	a := baseAgent.WithReasoning(reasoningLevel)
+	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic)
 
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()

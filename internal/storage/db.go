@@ -175,6 +175,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add agentic column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'agentic'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check agentic column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN agentic INTEGER NOT NULL DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("add agentic column: %w", err)
+		}
+	}
+
 	// Migration: update CHECK constraint to include 'canceled' status
 	// SQLite requires table recreation to modify CHECK constraints
 	var tableSql string
@@ -224,7 +236,8 @@ func (db *DB) migrate() error {
 				error TEXT,
 				prompt TEXT,
 				retry_count INTEGER NOT NULL DEFAULT 0,
-				diff_content TEXT
+				diff_content TEXT,
+				agentic INTEGER NOT NULL DEFAULT 0
 			)
 		`)
 		if err != nil {
@@ -232,45 +245,38 @@ func (db *DB) migrate() error {
 		}
 
 		// Check which optional columns exist in source table
-		var hasDiffContent, hasReasoning bool
-		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning')`)
+		var hasDiffContent, hasReasoning, hasAgentic bool
+		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic')`)
 		if checkErr == nil {
 			for checkRows.Next() {
 				var colName string
 				checkRows.Scan(&colName)
-				if colName == "diff_content" {
+				switch colName {
+				case "diff_content":
 					hasDiffContent = true
-				} else if colName == "reasoning" {
+				case "reasoning":
 					hasReasoning = true
+				case "agentic":
+					hasAgentic = true
 				}
 			}
 			checkRows.Close()
 		}
 
 		// Build INSERT statement based on which columns exist
+		// We need to handle all combinations of optional columns
 		var insertSQL string
-		switch {
-		case hasDiffContent && hasReasoning:
-			insertSQL = `
-				INSERT INTO review_jobs_new (id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count, diff_content)
-				SELECT id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count, diff_content
-				FROM review_jobs`
-		case hasDiffContent:
-			insertSQL = `
-				INSERT INTO review_jobs_new (id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count, diff_content)
-				SELECT id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count, diff_content
-				FROM review_jobs`
-		case hasReasoning:
-			insertSQL = `
-				INSERT INTO review_jobs_new (id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count)
-				SELECT id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count
-				FROM review_jobs`
-		default:
-			insertSQL = `
-				INSERT INTO review_jobs_new (id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count)
-				SELECT id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count
-				FROM review_jobs`
+		cols := "id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
+		if hasReasoning {
+			cols = "id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
 		}
+		if hasDiffContent {
+			cols += ", diff_content"
+		}
+		if hasAgentic {
+			cols += ", agentic"
+		}
+		insertSQL = fmt.Sprintf(`INSERT INTO review_jobs_new (%s) SELECT %s FROM review_jobs`, cols, cols)
 		_, err = tx.Exec(insertSQL)
 		if err != nil {
 			return fmt.Errorf("copy review_jobs data: %w", err)

@@ -515,12 +515,17 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 }
 
 // resolveAllowUnsafeAgents determines whether to allow unsafe agents.
+// Priority: CLI flag > config file > default (true for refine).
 // Refine defaults to true because it fundamentally requires file modifications.
-// Users can disable with --allow-unsafe-agents=false if they want (though refine won't work).
+// Users can disable with --allow-unsafe-agents=false or config if they want (though refine won't work).
 func resolveAllowUnsafeAgents(flag bool, flagChanged bool, cfg *config.Config) bool {
 	// If user explicitly set the CLI flag, honor their choice
 	if flagChanged {
 		return flag
+	}
+	// If config file explicitly sets allow_unsafe_agents, honor it
+	if cfg != nil && cfg.AllowUnsafeAgents != nil {
+		return *cfg.AllowUnsafeAgents
 	}
 	// Default to true for refine - it can't work without file modifications
 	return true

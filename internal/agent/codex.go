@@ -17,6 +17,7 @@ import (
 type CodexAgent struct {
 	Command   string         // The codex command to run (default: "codex")
 	Reasoning ReasoningLevel // Reasoning level for the agent
+	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 }
 
 const codexDangerousFlag = "--dangerously-bypass-approvals-and-sandbox"
@@ -35,7 +36,16 @@ func NewCodexAgent(command string) *CodexAgent {
 
 // WithReasoning returns a copy of the agent with the specified reasoning level
 func (a *CodexAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &CodexAgent{Command: a.Command, Reasoning: level}
+	return &CodexAgent{Command: a.Command, Reasoning: level, Agentic: a.Agentic}
+}
+
+// WithAgentic returns a copy of the agent configured for agentic mode.
+func (a *CodexAgent) WithAgentic(agentic bool) Agent {
+	return &CodexAgent{
+		Command:   a.Command,
+		Reasoning: a.Reasoning,
+		Agentic:   agentic,
+	}
 }
 
 // codexReasoningEffort maps ReasoningLevel to codex-specific effort values
@@ -58,11 +68,11 @@ func (a *CodexAgent) CommandName() string {
 	return a.Command
 }
 
-func (a *CodexAgent) buildArgs(repoPath, outputFile, prompt string) []string {
+func (a *CodexAgent) buildArgs(repoPath, outputFile, prompt string, agenticMode bool) []string {
 	args := []string{
 		"exec",
 	}
-	if AllowUnsafeAgents() {
+	if agenticMode {
 		args = append(args, codexDangerousFlag)
 	}
 	args = append(args,
@@ -105,6 +115,9 @@ func codexSupportsAutoApproveFlag(ctx context.Context, command string) (bool, er
 }
 
 func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	// Use agentic mode if either per-job setting or global setting enables it
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+
 	// Create unique temp file for output
 	tmpFile, err := os.CreateTemp("", "roborev-*.txt")
 	if err != nil {
@@ -114,7 +127,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	tmpFile.Close()
 	defer os.Remove(outputFile)
 
-	if AllowUnsafeAgents() {
+	if agenticMode {
 		supported, err := codexSupportsDangerousFlag(ctx, a.Command)
 		if err != nil {
 			return "", err
@@ -126,8 +139,8 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 
 	// Use codex exec with output capture
 	// The prompt is constructed by the prompt builder with full context
-	args := a.buildArgs(repoPath, outputFile, prompt)
-	if !AllowUnsafeAgents() && !isatty.IsTerminal(os.Stdin.Fd()) {
+	args := a.buildArgs(repoPath, outputFile, prompt, agenticMode)
+	if !agenticMode && !isatty.IsTerminal(os.Stdin.Fd()) {
 		supported, err := codexSupportsAutoApproveFlag(ctx, a.Command)
 		if err != nil {
 			return "", err
