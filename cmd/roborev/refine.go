@@ -515,17 +515,15 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 }
 
 // resolveAllowUnsafeAgents determines whether to allow unsafe agents.
-// Priority: explicit CLI flag > global config > default (false)
+// Refine defaults to true because it fundamentally requires file modifications.
+// Users can disable with --allow-unsafe-agents=false if they want (though refine won't work).
 func resolveAllowUnsafeAgents(flag bool, flagChanged bool, cfg *config.Config) bool {
-	// If user explicitly set the flag, honor their choice
+	// If user explicitly set the CLI flag, honor their choice
 	if flagChanged {
 		return flag
 	}
-	// Otherwise use config (defaults to false)
-	if cfg != nil && cfg.AllowUnsafeAgents {
-		return true
-	}
-	return false
+	// Default to true for refine - it can't work without file modifications
+	return true
 }
 
 // findFailedReviewForBranch finds an unaddressed failed review for any of the given commits.

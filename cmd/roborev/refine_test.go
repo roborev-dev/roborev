@@ -142,6 +142,8 @@ func TestSelectRefineAgentCodexFallback(t *testing.T) {
 }
 
 func TestResolveAllowUnsafeAgents(t *testing.T) {
+	// Note: refine defaults to true because it requires file modifications to work.
+	// Config is ignored; only explicit CLI flag can override.
 	tests := []struct {
 		name        string
 		flag        bool
@@ -150,39 +152,39 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 		expected    bool
 	}{
 		{
-			name:        "config enables, flag not changed - uses config",
+			name:        "flag not changed - defaults to true (refine requires unsafe)",
 			flag:        false,
 			flagChanged: false,
 			cfg:         &config.Config{AllowUnsafeAgents: true},
 			expected:    true,
 		},
 		{
-			name:        "config disabled, flag not changed - stays disabled",
+			name:        "config disabled, flag not changed - still true (refine requires unsafe)",
 			flag:        false,
 			flagChanged: false,
 			cfg:         &config.Config{AllowUnsafeAgents: false},
-			expected:    false,
+			expected:    true,
 		},
 		{
-			name:        "config disabled, flag explicitly enabled - uses flag",
+			name:        "flag explicitly enabled - uses flag",
 			flag:        true,
 			flagChanged: true,
 			cfg:         &config.Config{AllowUnsafeAgents: false},
 			expected:    true,
 		},
 		{
-			name:        "config enabled, flag explicitly disabled - uses flag (user override)",
+			name:        "flag explicitly disabled - uses flag (user override)",
 			flag:        false,
 			flagChanged: true,
 			cfg:         &config.Config{AllowUnsafeAgents: true},
 			expected:    false,
 		},
 		{
-			name:        "nil config, flag not changed - defaults to false",
+			name:        "nil config, flag not changed - defaults to true",
 			flag:        false,
 			flagChanged: false,
 			cfg:         nil,
-			expected:    false,
+			expected:    true,
 		},
 		{
 			name:        "nil config, flag explicitly enabled - uses flag",
