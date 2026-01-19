@@ -1676,6 +1676,94 @@ func TestReenqueueJob(t *testing.T) {
 	})
 }
 
+func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
+	// Test that agentic field is properly returned by ListJobs and GetJobByID
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/agentic-test-repo")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	// Enqueue a prompt job with agentic=true
+	job, err := db.EnqueuePromptJob(repo.ID, "test-agent", "thorough", "Review this code", true)
+	if err != nil {
+		t.Fatalf("EnqueuePromptJob failed: %v", err)
+	}
+
+	// Verify the returned job has Agentic set
+	if !job.Agentic {
+		t.Error("EnqueuePromptJob should return job with Agentic=true")
+	}
+
+	t.Run("ListJobs returns agentic field", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0)
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) == 0 {
+			t.Fatal("Expected at least one job")
+		}
+
+		// Find our job
+		var found bool
+		for _, j := range jobs {
+			if j.ID == job.ID {
+				found = true
+				if !j.Agentic {
+					t.Errorf("ListJobs should return Agentic=true for job %d", j.ID)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Job %d not found in ListJobs result", job.ID)
+		}
+	})
+
+	t.Run("GetJobByID returns agentic field", func(t *testing.T) {
+		fetchedJob, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		if !fetchedJob.Agentic {
+			t.Errorf("GetJobByID should return Agentic=true for job %d", job.ID)
+		}
+	})
+
+	// Also test with agentic=false to ensure we're not just always returning true
+	t.Run("non-agentic job returns Agentic=false", func(t *testing.T) {
+		nonAgenticJob, err := db.EnqueuePromptJob(repo.ID, "test-agent", "thorough", "Another review", false)
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		// Check via GetJobByID
+		fetchedJob, err := db.GetJobByID(nonAgenticJob.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		if fetchedJob.Agentic {
+			t.Errorf("GetJobByID should return Agentic=false for non-agentic job %d", nonAgenticJob.ID)
+		}
+
+		// Check via ListJobs
+		jobs, err := db.ListJobs("", "", 50, 0)
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		for _, j := range jobs {
+			if j.ID == nonAgenticJob.ID {
+				if j.Agentic {
+					t.Errorf("ListJobs should return Agentic=false for non-agentic job %d", j.ID)
+				}
+				break
+			}
+		}
+	})
+}
+
 func openTestDB(t *testing.T) *DB {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
