@@ -61,6 +61,26 @@ func TestGeminiParseStreamJSON_ResultEvent(t *testing.T) {
 	}
 }
 
+func TestGeminiParseStreamJSON_GeminiMessageFormat(t *testing.T) {
+	// Test actual Gemini CLI format: type="message", role="assistant", content at top level
+	a := NewGeminiAgent("gemini")
+	input := `{"type":"message","timestamp":"2026-01-19T17:49:13.445Z","role":"assistant","content":"Changes:\n- Created file.ts","delta":true}
+{"type":"message","timestamp":"2026-01-19T17:49:13.447Z","role":"assistant","content":" with filtering logic.","delta":true}
+{"type":"result","timestamp":"2026-01-19T17:49:13.519Z","status":"success","stats":{"total_tokens":1000}}
+`
+	result, _, err := a.parseStreamJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should concatenate the assistant message contents
+	if !strings.Contains(result, "Changes:") {
+		t.Errorf("expected result to contain 'Changes:', got %q", result)
+	}
+	if !strings.Contains(result, "filtering logic") {
+		t.Errorf("expected result to contain 'filtering logic', got %q", result)
+	}
+}
+
 func TestGeminiParseStreamJSON_AssistantFallback(t *testing.T) {
 	a := NewGeminiAgent("gemini")
 	// No result event, should fall back to assistant messages

@@ -132,9 +132,15 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 type geminiStreamMessage struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype,omitempty"`
+	// Top-level fields for "message" type events
+	Role    string `json:"role,omitempty"`
+	Content string `json:"content,omitempty"`
+	Delta   bool   `json:"delta,omitempty"`
+	// Nested message field (older format / Claude Code compatibility)
 	Message struct {
 		Content string `json:"content,omitempty"`
 	} `json:"message,omitempty"`
+	// Result field for "result" type events
 	Result string `json:"result,omitempty"`
 }
 
@@ -172,6 +178,11 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, stri
 				validEventsParsed = true
 
 				// Collect assistant messages for the result
+				// Gemini format: type="message", role="assistant", content at top level
+				if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
+					assistantMessages = append(assistantMessages, msg.Content)
+				}
+				// Claude Code format: type="assistant", message.content nested
 				if msg.Type == "assistant" && msg.Message.Content != "" {
 					assistantMessages = append(assistantMessages, msg.Message.Content)
 				}
