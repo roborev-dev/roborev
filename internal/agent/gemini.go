@@ -16,6 +16,17 @@ import (
 // Stream-json output is required; this error means the Gemini CLI may need to be upgraded.
 var errNoStreamJSON = errors.New("no valid stream-json events parsed from output")
 
+// maxStderrLen is the maximum number of bytes of stderr to include in error messages.
+const maxStderrLen = 1024
+
+// truncateStderr truncates stderr output to a reasonable size for error messages.
+func truncateStderr(stderr string) string {
+	if len(stderr) <= maxStderrLen {
+		return stderr
+	}
+	return stderr[:maxStderrLen] + "... (truncated)"
+}
+
 // GeminiAgent runs code reviews using the Gemini CLI
 type GeminiAgent struct {
 	Command   string         // The gemini command to run (default: "gemini")
@@ -103,14 +114,14 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if parseErr != nil {
-			return "", fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", waitErr, parseErr, stderr.String())
+			return "", fmt.Errorf("gemini failed: %w (parse error: %v)\nstderr: %s", waitErr, parseErr, truncateStderr(stderr.String()))
 		}
-		return "", fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, stderr.String())
+		return "", fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, truncateStderr(stderr.String()))
 	}
 
 	if parseErr != nil {
 		if errors.Is(parseErr, errNoStreamJSON) {
-			return "", fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s", stderr.String())
+			return "", fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s: %w", truncateStderr(stderr.String()), errNoStreamJSON)
 		}
 		return "", parseErr
 	}

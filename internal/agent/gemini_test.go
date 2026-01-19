@@ -10,6 +10,30 @@ import (
 	"testing"
 )
 
+func TestTruncateStderr(t *testing.T) {
+	// Short string - no truncation
+	short := "short stderr"
+	if got := truncateStderr(short); got != short {
+		t.Errorf("expected no truncation for short string, got %q", got)
+	}
+
+	// Exactly at limit - no truncation
+	exact := strings.Repeat("x", maxStderrLen)
+	if got := truncateStderr(exact); got != exact {
+		t.Errorf("expected no truncation at exact limit, got len=%d", len(got))
+	}
+
+	// Over limit - should truncate
+	over := strings.Repeat("x", maxStderrLen+100)
+	got := truncateStderr(over)
+	if !strings.HasSuffix(got, "... (truncated)") {
+		t.Errorf("expected truncation suffix, got %q", got)
+	}
+	if len(got) != maxStderrLen+len("... (truncated)") {
+		t.Errorf("expected truncated length %d, got %d", maxStderrLen+len("... (truncated)"), len(got))
+	}
+}
+
 func TestGeminiBuildArgs(t *testing.T) {
 	a := NewGeminiAgent("gemini")
 
@@ -188,6 +212,64 @@ echo "No issues found."
 	// Should return actionable error message
 	if !strings.Contains(err.Error(), "stream-json") {
 		t.Errorf("expected error to mention stream-json, got %v", err)
+	}
+	// Should preserve sentinel for errors.Is
+	if !errors.Is(err, errNoStreamJSON) {
+		t.Errorf("expected errors.Is(err, errNoStreamJSON) to be true, got false")
+	}
+}
+
+func TestGeminiReview_PlainTextErrorWithStderr(t *testing.T) {
+	// End-to-end test: verify stderr is included in the error and truncated when large
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "fake-gemini")
+
+	// Create a script that outputs plain text and stderr
+	script := `#!/bin/sh
+echo "Plain text review output"
+echo "Some stderr message" >&2
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	a := NewGeminiAgent(scriptPath)
+	var output bytes.Buffer
+	_, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	if err == nil {
+		t.Fatal("expected error for plain text output, got nil")
+	}
+	// Should include stderr in error message
+	if !strings.Contains(err.Error(), "Some stderr message") {
+		t.Errorf("expected error to include stderr, got %v", err)
+	}
+}
+
+func TestGeminiReview_LargeStderrTruncation(t *testing.T) {
+	// End-to-end test: verify large stderr is truncated
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "fake-gemini")
+
+	// Create a script that outputs a lot of stderr
+	script := `#!/bin/sh
+echo "Plain text"
+for i in $(seq 1 200); do
+	echo "This is a long stderr line number $i that will contribute to the total size" >&2
+done
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	a := NewGeminiAgent(scriptPath)
+	var output bytes.Buffer
+	_, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Should be truncated
+	if !strings.Contains(err.Error(), "... (truncated)") {
+		t.Errorf("expected error to indicate truncation, got %v", err)
 	}
 }
 
