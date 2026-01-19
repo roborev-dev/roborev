@@ -1681,7 +1681,8 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/agentic-test-repo")
+	repoPath := filepath.Join(t.TempDir(), "agentic-test-repo")
+	repo, err := db.GetOrCreateRepo(repoPath)
 	if err != nil {
 		t.Fatalf("GetOrCreateRepo failed: %v", err)
 	}
@@ -1753,13 +1754,18 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
+		var found bool
 		for _, j := range jobs {
 			if j.ID == nonAgenticJob.ID {
+				found = true
 				if j.Agentic {
 					t.Errorf("ListJobs should return Agentic=false for non-agentic job %d", j.ID)
 				}
 				break
 			}
+		}
+		if !found {
+			t.Errorf("Non-agentic job %d not found in ListJobs result", nonAgenticJob.ID)
 		}
 	})
 }
