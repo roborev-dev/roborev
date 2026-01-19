@@ -666,7 +666,8 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with valid ref succeeds", func(t *testing.T) {
-		var receivedGitRef string
+		// Use channel to safely pass git_ref from handler goroutine to test
+		gitRefChan := make(chan string, 1)
 		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/status" {
@@ -678,8 +679,12 @@ func TestReviewSinceFlag(t *testing.T) {
 				var req struct {
 					GitRef string `json:"git_ref"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
-				receivedGitRef = req.GitRef
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("failed to decode request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				gitRefChan <- req.GitRef
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
 				return
@@ -708,7 +713,10 @@ func TestReviewSinceFlag(t *testing.T) {
 		// Get first commit SHA
 		cmd := exec.Command("git", "rev-parse", "HEAD")
 		cmd.Dir = tmpDir
-		firstSHABytes, _ := cmd.Output()
+		firstSHABytes, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("failed to get first commit SHA: %v", err)
+		}
 		firstSHA := strings.TrimSpace(string(firstSHABytes))
 
 		// Add second commit
@@ -721,12 +729,13 @@ func TestReviewSinceFlag(t *testing.T) {
 		// Review since first commit
 		reviewCmd := reviewCmd()
 		reviewCmd.SetArgs([]string{"--repo", tmpDir, "--since", firstSHA[:7]}) // Use short SHA
-		err := reviewCmd.Execute()
+		err = reviewCmd.Execute()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
 		// Verify the git_ref is a range from first commit to HEAD
+		receivedGitRef := <-gitRefChan
 		if !strings.Contains(receivedGitRef, firstSHA) {
 			t.Errorf("expected git_ref to contain first SHA %s, got %s", firstSHA, receivedGitRef)
 		}

@@ -143,7 +143,10 @@ func TestSelectRefineAgentCodexFallback(t *testing.T) {
 
 func TestResolveAllowUnsafeAgents(t *testing.T) {
 	// Note: refine defaults to true because it requires file modifications to work.
-	// Config is ignored; only explicit CLI flag can override.
+	// Priority: CLI flag > config > default (true for refine).
+	boolTrue := true
+	boolFalse := false
+
 	tests := []struct {
 		name        string
 		flag        bool
@@ -152,31 +155,31 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 		expected    bool
 	}{
 		{
-			name:        "flag not changed - defaults to true (refine requires unsafe)",
+			name:        "config enabled, flag not changed - uses config",
 			flag:        false,
 			flagChanged: false,
-			cfg:         &config.Config{AllowUnsafeAgents: true},
+			cfg:         &config.Config{AllowUnsafeAgents: &boolTrue},
 			expected:    true,
 		},
 		{
-			name:        "config disabled, flag not changed - still true (refine requires unsafe)",
+			name:        "config disabled, flag not changed - honors config",
 			flag:        false,
 			flagChanged: false,
-			cfg:         &config.Config{AllowUnsafeAgents: false},
-			expected:    true,
+			cfg:         &config.Config{AllowUnsafeAgents: &boolFalse},
+			expected:    false, // Now honors config
 		},
 		{
-			name:        "flag explicitly enabled - uses flag",
+			name:        "flag explicitly enabled - uses flag over config",
 			flag:        true,
 			flagChanged: true,
-			cfg:         &config.Config{AllowUnsafeAgents: false},
+			cfg:         &config.Config{AllowUnsafeAgents: &boolFalse},
 			expected:    true,
 		},
 		{
-			name:        "flag explicitly disabled - uses flag (user override)",
+			name:        "flag explicitly disabled - uses flag over config",
 			flag:        false,
 			flagChanged: true,
-			cfg:         &config.Config{AllowUnsafeAgents: true},
+			cfg:         &config.Config{AllowUnsafeAgents: &boolTrue},
 			expected:    false,
 		},
 		{
@@ -191,6 +194,13 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 			flag:        true,
 			flagChanged: true,
 			cfg:         nil,
+			expected:    true,
+		},
+		{
+			name:        "config not set (nil pointer), flag not changed - defaults to true",
+			flag:        false,
+			flagChanged: false,
+			cfg:         &config.Config{AllowUnsafeAgents: nil},
 			expected:    true,
 		},
 	}

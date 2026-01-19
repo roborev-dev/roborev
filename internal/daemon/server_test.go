@@ -1938,4 +1938,57 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 			t.Errorf("Expected reasoning 'fast', got '%s'", job.Reasoning)
 		}
 	})
+
+	t.Run("prompt job with agentic flag", func(t *testing.T) {
+		reqData := map[string]interface{}{
+			"repo_path":     repoDir,
+			"git_ref":       "prompt",
+			"agent":         "test",
+			"custom_prompt": "Fix all bugs",
+			"agentic":       true,
+		}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var job storage.ReviewJob
+		json.NewDecoder(w.Body).Decode(&job)
+
+		if !job.Agentic {
+			t.Error("Expected Agentic to be true")
+		}
+	})
+
+	t.Run("prompt job without agentic defaults to false", func(t *testing.T) {
+		reqData := map[string]string{
+			"repo_path":     repoDir,
+			"git_ref":       "prompt",
+			"agent":         "test",
+			"custom_prompt": "Read-only review",
+		}
+		reqBody, _ := json.Marshal(reqData)
+		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.handleEnqueue(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var job storage.ReviewJob
+		json.NewDecoder(w.Body).Decode(&job)
+
+		if job.Agentic {
+			t.Error("Expected Agentic to be false by default")
+		}
+	})
 }

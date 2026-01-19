@@ -84,6 +84,82 @@ func TestEnqueuePromptJob(t *testing.T) {
 			t.Errorf("Expected prompt '%s', got '%s'", customPrompt, claimed.Prompt)
 		}
 	})
+
+	t.Run("agentic flag persists and is claimed correctly", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/agentic-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		// Enqueue with agentic=true
+		job, err := db.EnqueuePromptJob(repo.ID, "claude-code", "thorough", "Test agentic prompt", true)
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		if !job.Agentic {
+			t.Error("Expected Agentic to be true on returned job")
+		}
+
+		// Verify it's stored in the database
+		var agenticInt int
+		err = db.QueryRow(`SELECT agentic FROM review_jobs WHERE id = ?`, job.ID).Scan(&agenticInt)
+		if err != nil {
+			t.Fatalf("Failed to query agentic: %v", err)
+		}
+		if agenticInt != 1 {
+			t.Errorf("Expected agentic=1 in database, got %d", agenticInt)
+		}
+
+		// Claim the job and verify agentic flag is loaded
+		claimed, err := db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+		if claimed == nil {
+			t.Fatal("Expected to claim a job")
+		}
+
+		if !claimed.Agentic {
+			t.Error("Expected Agentic to be true on claimed job")
+		}
+	})
+
+	t.Run("agentic flag defaults to false", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/agentic-default-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		// Enqueue with agentic=false
+		job, err := db.EnqueuePromptJob(repo.ID, "codex", "standard", "Non-agentic prompt", false)
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		if job.Agentic {
+			t.Error("Expected Agentic to be false")
+		}
+
+		// Claim and verify
+		claimed, err := db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+		if claimed == nil {
+			t.Fatal("Expected to claim a job")
+		}
+
+		if claimed.Agentic {
+			t.Error("Expected Agentic to be false on claimed job")
+		}
+	})
 }
 
 func TestRenameRepo(t *testing.T) {

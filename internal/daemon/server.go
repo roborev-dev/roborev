@@ -29,7 +29,10 @@ type Server struct {
 
 // NewServer creates a new daemon server
 func NewServer(db *storage.DB, cfg *config.Config) *Server {
-	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents)
+	// Default to false (conservative) for daemon, unless config explicitly enables
+	if cfg.AllowUnsafeAgents != nil && *cfg.AllowUnsafeAgents {
+		agent.SetAllowUnsafeAgents(true)
+	}
 	agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
 	broadcaster := NewBroadcaster()
 	s := &Server{
