@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/wesm/roborev/internal/storage"
 )
+
+// stripANSI removes ANSI escape sequences from a string
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func stripANSI(s string) string {
+	return ansiRegex.ReplaceAllString(s, "")
+}
 
 func TestTUIFetchJobsSuccess(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3762,7 +3770,7 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 	// Count content lines (L1 through L7)
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
 			contentCount++
 		}
 	}
@@ -3804,7 +3812,7 @@ func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
 	// Non-content: title (1) + verdict (1) + scroll indicator (1) + help (1) = 4
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
 			contentCount++
 		}
 	}
@@ -3845,7 +3853,7 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 	// Non-content: title (1) + scroll indicator (1) + help (2) = 4
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
 			contentCount++
 		}
 	}
@@ -3887,7 +3895,7 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 	// Non-content: title (1) + verdict (1) + scroll indicator (1) + help (2) = 5
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
 			contentCount++
 		}
 	}
@@ -3942,7 +3950,7 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 	// visibleLines = 12 - 6 = 6
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "L") && len(line) <= 3 {
+		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
 			contentCount++
 		}
 	}
