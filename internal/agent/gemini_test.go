@@ -211,6 +211,38 @@ echo '{"type":"result","result":"Review complete. All good!"}'
 	}
 }
 
+func TestGeminiReview_StreamJSONNoResultFallsBackToRaw(t *testing.T) {
+	// End-to-end test: stream-json with only tool events (no result/assistant)
+	// should fall back to raw output instead of "No review output generated"
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "fake-gemini")
+
+	// Create a script that outputs stream-json with only tool events
+	script := `#!/bin/sh
+echo '{"type":"system","subtype":"init"}'
+echo '{"type":"tool","name":"Read","input":{"path":"foo.go"}}'
+echo '{"type":"tool_result","content":"file contents here"}'
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	a := NewGeminiAgent(scriptPath)
+	var output bytes.Buffer
+	result, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	if err != nil {
+		t.Fatalf("Review failed: %v", err)
+	}
+
+	// Should return raw output (the JSON lines) instead of empty message
+	if result == "No review output generated" {
+		t.Error("expected raw output fallback, got 'No review output generated'")
+	}
+	if !strings.Contains(result, `"type":"tool"`) {
+		t.Errorf("expected raw JSON output, got %q", result)
+	}
+}
+
 func TestGeminiReview_IOError(t *testing.T) {
 	// End-to-end test: verify that non-sentinel errors (like command failure) are propagated
 	tmpDir := t.TempDir()

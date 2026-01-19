@@ -117,6 +117,10 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", parseErr
 	}
 
+	// If we got valid stream-json but no result/assistant content, use raw output
+	if result == "" && rawOutput != "" {
+		return rawOutput, nil
+	}
 	if result == "" {
 		return "No review output generated", nil
 	}
