@@ -28,9 +28,9 @@ func TestClaudeBuildArgs(t *testing.T) {
 	if !containsString(args, "--allowedTools") {
 		t.Fatalf("expected --allowedTools, got %v", args)
 	}
-	// Review mode should have read-only tools (no Edit or Write)
-	if strings.Contains(argsStr, "Edit") || strings.Contains(argsStr, "Write") {
-		t.Fatalf("expected read-only tools in review mode, got %v", args)
+	// Review mode should have read-only tools (no Edit, Write, or Bash)
+	if strings.Contains(argsStr, "Edit") || strings.Contains(argsStr, "Write") || strings.Contains(argsStr, "Bash") {
+		t.Fatalf("expected read-only tools in review mode (no Edit/Write/Bash), got %v", args)
 	}
 
 	// Agentic mode: write tools + dangerous flag

@@ -54,8 +54,8 @@ func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
 		args = append(args, claudeDangerousFlag)
 		args = append(args, "--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
 	} else {
-		// Review mode: read-only tools for context gathering
-		args = append(args, "--allowedTools", "Read,Glob,Grep,Bash")
+		// Review mode: read-only tools only (no Bash to prevent arbitrary command execution)
+		args = append(args, "--allowedTools", "Read,Glob,Grep")
 	}
 	return args
 }
