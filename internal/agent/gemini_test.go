@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -82,8 +83,9 @@ still not json
 	if err == nil {
 		t.Fatal("expected error for no valid events, got nil")
 	}
-	if !strings.Contains(err.Error(), "no valid stream-json events") {
-		t.Fatalf("expected 'no valid events' error, got %v", err)
+	// Should return the sentinel error
+	if !errors.Is(err, errNoStreamJSON) {
+		t.Fatalf("expected errNoStreamJSON, got %v", err)
 	}
 	// Should return raw output for fallback
 	if !strings.Contains(rawOutput, "not json at all") {
@@ -97,7 +99,8 @@ func TestGeminiParseStreamJSON_StreamsToOutput(t *testing.T) {
 {"type":"result","result":"Done"}
 `
 	var output bytes.Buffer
-	result, _, err := a.parseStreamJSON(strings.NewReader(input), &output)
+	sw := newSyncWriter(&output)
+	result, _, err := a.parseStreamJSON(strings.NewReader(input), sw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,6 +138,10 @@ No issues found in the code.
 	_, rawOutput, err := a.parseStreamJSON(strings.NewReader(input), nil)
 	if err == nil {
 		t.Fatal("expected error for plain text input")
+	}
+	// Should be the sentinel error (allows fallback)
+	if !errors.Is(err, errNoStreamJSON) {
+		t.Fatalf("expected errNoStreamJSON, got %v", err)
 	}
 	// Raw output should be available for fallback
 	if !strings.Contains(rawOutput, "This is a plain text review") {

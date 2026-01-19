@@ -5,11 +5,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
 	"strings"
 )
+
+// errNoStreamJSON indicates no valid stream-json events were parsed.
+// This is a recoverable error that allows fallback to raw output.
+var errNoStreamJSON = errors.New("no valid stream-json events parsed from output")
 
 // GeminiAgent runs code reviews using the Gemini CLI
 type GeminiAgent struct {
@@ -74,13 +79,16 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	// Pipe prompt via stdin
 	cmd.Stdin = strings.NewReader(prompt)
 
+	// Create one shared sync writer for thread-safe output
+	sw := newSyncWriter(output)
+
 	var stderr bytes.Buffer
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
 	// Tee stderr to output writer for live error visibility
-	if sw := newSyncWriter(output); sw != nil {
+	if sw != nil {
 		cmd.Stderr = io.MultiWriter(&stderr, sw)
 	} else {
 		cmd.Stderr = &stderr
@@ -91,7 +99,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	// Parse stream-json output, capturing raw stdout as fallback
-	result, rawOutput, parseErr := a.parseStreamJSON(stdoutPipe, output)
+	result, rawOutput, parseErr := a.parseStreamJSON(stdoutPipe, sw)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if parseErr != nil {
@@ -100,8 +108,9 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		return "", fmt.Errorf("gemini failed: %w\nstderr: %s", waitErr, stderr.String())
 	}
 
-	// If stream-json parsing failed but we have raw output, use it as fallback
-	if parseErr != nil && rawOutput != "" {
+	// Only fallback to raw output for "no valid stream-json events" error.
+	// Other errors (I/O failures) should be propagated.
+	if errors.Is(parseErr, errNoStreamJSON) && rawOutput != "" {
 		return rawOutput, nil
 	}
 	if parseErr != nil {
@@ -127,7 +136,8 @@ type geminiStreamMessage struct {
 
 // parseStreamJSON parses Gemini's stream-json output and extracts the final result.
 // Returns (result, rawOutput, error) where rawOutput is the raw stdout for fallback use.
-func (a *GeminiAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, string, error) {
+// The sw parameter is the shared sync writer for thread-safe output (may be nil).
+func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, string, error) {
 	br := bufio.NewReader(r)
 
 	var lastResult string
@@ -147,7 +157,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, st
 			rawLines = append(rawLines, line)
 
 			// Stream raw line to the writer for progress visibility
-			if sw := newSyncWriter(output); sw != nil {
+			if sw != nil {
 				sw.Write([]byte(line + "\n"))
 			}
 
@@ -174,9 +184,9 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, st
 
 	rawOutput := strings.Join(rawLines, "\n")
 
-	// If no valid events were parsed, return error with raw output for fallback
+	// If no valid events were parsed, return sentinel error with raw output for fallback
 	if !validEventsParsed {
-		return "", rawOutput, fmt.Errorf("no valid stream-json events parsed from output")
+		return "", rawOutput, errNoStreamJSON
 	}
 
 	// Prefer the result field if present, otherwise join assistant messages
