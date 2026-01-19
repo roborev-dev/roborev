@@ -317,6 +317,26 @@ For `--dirty` reviews, diffs are limited to 200KB since uncommitted changes cann
 
 roborev auto-detects installed agents and falls back in order: codex → claude-code → gemini → copilot → opencode.
 
+### Agent Modes
+
+Agents run in one of two modes:
+
+| Mode | Tools Available | Used By |
+|------|-----------------|---------|
+| **Review** (default) | Read, Glob, Grep | `roborev review`, `roborev prompt` |
+| **Agentic** | Read, Glob, Grep, Edit, Write, Bash | `roborev refine` |
+
+**Review mode** is read-only - agents can inspect code but cannot make changes. This is the safe default for automated reviews triggered by post-commit hooks.
+
+**Agentic mode** allows agents to edit files and run commands. The `refine` command automatically enables this since it needs to make changes. For other commands, enable it globally:
+
+```toml
+# ~/.roborev/config.toml
+allow_unsafe_agents = true
+```
+
+Then restart the daemon: `roborev daemon restart`
+
 ## Agent Skills
 
 Install slash commands that let AI agents fix review findings directly:
