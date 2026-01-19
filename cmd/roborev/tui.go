@@ -1686,6 +1686,19 @@ func (m tuiModel) renderQueueView() string {
 	visibleJobList := m.getVisibleJobs()
 	visibleSelectedIdx := m.getVisibleSelectedIdx()
 
+	// Calculate visible job range based on terminal height
+	// Reserve lines for: title(1) + status(2) + header(2) + help(3) + scroll indicator(1)
+	reservedLines := 9
+	visibleRows := m.height - reservedLines
+	if visibleRows < 3 {
+		visibleRows = 3 // Show at least 3 jobs
+	}
+
+	// Track scroll indicator state for later
+	var scrollInfo string
+	start := 0
+	end := 0
+
 	if len(visibleJobList) == 0 {
 		if len(m.activeRepoFilter) > 0 || m.hideAddressed {
 			b.WriteString("No jobs matching filters")
@@ -1693,6 +1706,13 @@ func (m tuiModel) renderQueueView() string {
 		} else {
 			b.WriteString("No jobs in queue")
 			b.WriteString("\x1b[K\n")
+		}
+		// Pad empty queue to fill visibleRows (minus 1 for the message we just wrote)
+		// Also need header lines (2) to match non-empty case
+		linesWritten := 1
+		for linesWritten < visibleRows+2 { // +2 for header lines we skipped
+			b.WriteString("\x1b[K\n")
+			linesWritten++
 		}
 	} else {
 		// Calculate ID column width based on max ID
@@ -1719,17 +1739,9 @@ func (m tuiModel) renderQueueView() string {
 		b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
 		b.WriteString("\x1b[K\n") // Clear to end of line
 
-		// Calculate visible job range based on terminal height
-		// Reserve lines for: title(1) + status(2) + header(2) + help(3) + scroll indicator(1)
-		reservedLines := 9
-		visibleRows := m.height - reservedLines
-		if visibleRows < 3 {
-			visibleRows = 3 // Show at least 3 jobs
-		}
-
 		// Determine which jobs to show, keeping selected item visible
-		start := 0
-		end := len(visibleJobList)
+		start = 0
+		end = len(visibleJobList)
 
 		if len(visibleJobList) > visibleRows {
 			// Center the selected item when possible
@@ -1761,15 +1773,13 @@ func (m tuiModel) renderQueueView() string {
 		}
 
 		// Pad with clear-to-end-of-line sequences to prevent ghost text
-		// \x1b[K clears from cursor to end of line
 		for jobLinesWritten < visibleRows {
 			b.WriteString("\x1b[K\n")
 			jobLinesWritten++
 		}
 
-		// Show scroll indicator if not all jobs visible
+		// Build scroll indicator if needed
 		if len(visibleJobList) > visibleRows || m.hasMore || m.loadingMore {
-			var scrollInfo string
 			if m.loadingMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(visibleJobList))
 			} else if m.hasMore && len(m.activeRepoFilter) == 0 {
@@ -1777,12 +1787,14 @@ func (m tuiModel) renderQueueView() string {
 			} else if len(visibleJobList) > visibleRows {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visibleJobList))
 			}
-			if scrollInfo != "" {
-				b.WriteString(tuiStatusStyle.Render(scrollInfo))
-				b.WriteString("\x1b[K\n") // Clear to end of line
-			}
 		}
 	}
+
+	// Always emit scroll indicator line (blank if no scroll info) to maintain consistent height
+	if scrollInfo != "" {
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
+	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
 	// Update notification (or blank line if no update)
 	if m.updateAvailable != "" {
@@ -2195,7 +2207,14 @@ func (m tuiModel) renderFilterView() string {
 	// Show loading state if repos haven't been fetched yet
 	if m.filterRepos == nil {
 		b.WriteString(tuiStatusStyle.Render("Loading repos..."))
-		b.WriteString("\x1b[K\n\x1b[K\n")
+		b.WriteString("\x1b[K\n")
+		// Pad to fill terminal height: title(1) + blank(1) + loading(1) + padding + help(1)
+		// We've written 3 lines so far (title, blank, loading)
+		linesWritten := 3
+		for linesWritten < m.height-1 { // -1 for help line at bottom
+			b.WriteString("\x1b[K\n")
+			linesWritten++
+		}
 		b.WriteString(tuiHelpStyle.Render("esc: cancel"))
 		b.WriteString("\x1b[K")
 		return b.String()

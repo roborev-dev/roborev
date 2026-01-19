@@ -2,7 +2,10 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -146,5 +149,90 @@ No issues found in the code.
 	// Raw output should be available for fallback
 	if !strings.Contains(rawOutput, "This is a plain text review") {
 		t.Fatalf("expected raw output to contain plain text, got %q", rawOutput)
+	}
+}
+
+func TestGeminiReview_PlainTextFallback(t *testing.T) {
+	// End-to-end test: create a temp script that emits plain text (no stream-json)
+	// and verify Review() falls back to raw output
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "fake-gemini")
+
+	// Create a script that outputs plain text
+	script := `#!/bin/sh
+echo "Plain text review output"
+echo "No issues found."
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	a := NewGeminiAgent(scriptPath)
+	var output bytes.Buffer
+	result, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	if err != nil {
+		t.Fatalf("Review failed: %v", err)
+	}
+
+	// Should return the raw plain text output
+	if !strings.Contains(result, "Plain text review output") {
+		t.Errorf("expected result to contain plain text, got %q", result)
+	}
+	if !strings.Contains(result, "No issues found") {
+		t.Errorf("expected result to contain 'No issues found', got %q", result)
+	}
+}
+
+func TestGeminiReview_StreamJSON(t *testing.T) {
+	// End-to-end test: create a temp script that emits valid stream-json
+	// and verify Review() parses it correctly
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "fake-gemini")
+
+	// Create a script that outputs stream-json
+	script := `#!/bin/sh
+echo '{"type":"system","subtype":"init"}'
+echo '{"type":"result","result":"Review complete. All good!"}'
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	a := NewGeminiAgent(scriptPath)
+	var output bytes.Buffer
+	result, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	if err != nil {
+		t.Fatalf("Review failed: %v", err)
+	}
+
+	// Should return the parsed result
+	if result != "Review complete. All good!" {
+		t.Errorf("expected parsed result, got %q", result)
+	}
+}
+
+func TestGeminiReview_IOError(t *testing.T) {
+	// End-to-end test: verify that non-sentinel errors (like command failure) are propagated
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "fake-gemini")
+
+	// Create a script that fails
+	script := `#!/bin/sh
+echo "Error message" >&2
+exit 1
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	a := NewGeminiAgent(scriptPath)
+	var output bytes.Buffer
+	_, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	if err == nil {
+		t.Fatal("expected error for failed command, got nil")
+	}
+	// Should contain information about the failure
+	if !strings.Contains(err.Error(), "gemini failed") {
+		t.Errorf("expected error to mention 'gemini failed', got %v", err)
 	}
 }

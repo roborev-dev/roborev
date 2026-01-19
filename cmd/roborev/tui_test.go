@@ -4543,3 +4543,92 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 		t.Error("pendingReviewAddressed should not be cleared by stale response")
 	}
 }
+
+func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
+	// Test that empty queue view pads output to fill terminal height
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{} // Empty queue
+
+	output := m.View()
+
+	// Count total lines (including empty ones from padding)
+	lines := strings.Split(output, "\n")
+
+	// Strip ANSI codes and count non-empty content
+	// The output should fill most of the terminal height
+	// Accounting for: title(1) + status(2) + content/padding + scroll(1) + update(1) + help(2)
+	// Minimum expected lines is close to m.height
+	if len(lines) < m.height-3 {
+		t.Errorf("Empty queue should pad to near terminal height, got %d lines for height %d", len(lines), m.height)
+	}
+
+	// Should contain the "No jobs in queue" message
+	if !strings.Contains(output, "No jobs in queue") {
+		t.Error("Expected 'No jobs in queue' message in output")
+	}
+}
+
+func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
+	// Test that empty queue with filter pads output correctly
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{}
+	m.activeRepoFilter = []string{"/some/repo"} // Filter active but no matching jobs
+
+	output := m.View()
+
+	lines := strings.Split(output, "\n")
+	if len(lines) < m.height-3 {
+		t.Errorf("Empty filtered queue should pad to near terminal height, got %d lines for height %d", len(lines), m.height)
+	}
+
+	// Should contain the filter message
+	if !strings.Contains(output, "No jobs matching filters") {
+		t.Error("Expected 'No jobs matching filters' message in output")
+	}
+}
+
+func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
+	// Test that filter loading state pads output to fill terminal height
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 20
+	m.currentView = tuiViewFilter
+	m.filterRepos = nil // Loading state (repos not fetched yet)
+
+	output := m.View()
+
+	lines := strings.Split(output, "\n")
+	// Filter loading should fill most of the terminal height
+	if len(lines) < m.height-3 {
+		t.Errorf("Filter loading should pad to near terminal height, got %d lines for height %d", len(lines), m.height)
+	}
+
+	// Should contain loading message
+	if !strings.Contains(output, "Loading repos...") {
+		t.Error("Expected 'Loading repos...' message in output")
+	}
+}
+
+func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
+	// Test that queue view with few jobs (no scroll indicator) still maintains height
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	// Add just 2 jobs - should not need scroll indicator
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"},
+		{ID: 2, GitRef: "def456", Agent: "test", Status: "done"},
+	}
+
+	output := m.View()
+
+	lines := strings.Split(output, "\n")
+	// Even with few jobs, output should be close to terminal height
+	if len(lines) < m.height-5 {
+		t.Errorf("Queue with few jobs should maintain height, got %d lines for height %d", len(lines), m.height)
+	}
+}
