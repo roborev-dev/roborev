@@ -403,6 +403,7 @@ func reviewCmd() *cobra.Command {
 		wait       bool
 		branch     bool
 		baseBranch string
+		since      string
 	)
 
 	cmd := &cobra.Command{
@@ -419,6 +420,8 @@ Examples:
   roborev review --dirty --wait  # Review uncommitted changes and wait for result
   roborev review --branch     # Review all commits on current branch since main
   roborev review --branch --base develop  # Review branch against develop
+  roborev review --since HEAD~5  # Review last 5 commits
+  roborev review --since abc123  # Review commits since abc123 (exclusive)
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// In quiet mode, suppress cobra's error output (hook uses &, so exit code doesn't matter)
@@ -458,8 +461,17 @@ Examples:
 			if branch && dirty {
 				return fmt.Errorf("cannot use --branch with --dirty")
 			}
+			if branch && since != "" {
+				return fmt.Errorf("cannot use --branch with --since")
+			}
+			if since != "" && dirty {
+				return fmt.Errorf("cannot use --since with --dirty")
+			}
 			if branch && len(args) > 0 {
 				return fmt.Errorf("cannot specify commits with --branch")
+			}
+			if since != "" && len(args) > 0 {
+				return fmt.Errorf("cannot specify commits with --since")
 			}
 
 			var gitRef string
@@ -502,6 +514,27 @@ Examples:
 				if !quiet {
 					cmd.Printf("Reviewing branch %q: %d commits since %s\n",
 						currentBranch, len(commits), base)
+				}
+			} else if since != "" {
+				// Review commits since a specific commit (exclusive)
+				sinceCommit, err := git.ResolveSHA(root, since)
+				if err != nil {
+					return fmt.Errorf("invalid --since commit %q: %w", since, err)
+				}
+
+				// Validate has commits
+				commits, err := git.GetCommitsSince(root, sinceCommit)
+				if err != nil {
+					return fmt.Errorf("cannot get commits: %w", err)
+				}
+				if len(commits) == 0 {
+					return fmt.Errorf("no commits since %s", since)
+				}
+
+				gitRef = sinceCommit + ".." + "HEAD"
+
+				if !quiet {
+					cmd.Printf("Reviewing %d commits since %s\n", len(commits), since)
 				}
 			} else if dirty {
 				// Dirty review - capture uncommitted changes
@@ -612,6 +645,7 @@ Examples:
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")
 	cmd.Flags().BoolVar(&branch, "branch", false, "review all changes since branch diverged from base")
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
+	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
 
 	return cmd
 }

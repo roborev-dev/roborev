@@ -46,6 +46,7 @@ roborev tui           # View reviews in interactive UI
 | `roborev review <sha>` | Queue a commit for review |
 | `roborev review <start> <end>` | Queue a commit range (inclusive) |
 | `roborev review --branch` | Review all commits on current branch |
+| `roborev review --since <commit>` | Review commits since a specific commit |
 | `roborev review --dirty` | Review uncommitted changes |
 | `roborev review --reasoning <level>` | Set reasoning depth (thorough/standard/fast) |
 | `roborev prompt "<text>"` | Run ad-hoc prompt with AI agent |
@@ -73,6 +74,18 @@ roborev review --branch --wait       # Wait for review and show result
 ```
 
 This is useful for pre-merge reviews of entire feature branches.
+
+## Reviewing Specific Commits
+
+Use `--since` to review commits since a specific point:
+
+```bash
+roborev review --since HEAD~5       # Review last 5 commits
+roborev review --since abc123       # Review commits since abc123 (exclusive)
+roborev review --since v1.0.0       # Review commits since a tag
+```
+
+The range is exclusive of the starting commit (like git's `..` range syntax). Unlike `--branch`, this works on any branch including main.
 
 ## Reviewing Uncommitted Changes
 
