@@ -236,3 +236,62 @@ exit 1
 		t.Errorf("expected error to mention 'gemini failed', got %v", err)
 	}
 }
+
+func TestGeminiParseStreamJSON_PreservesIndentation(t *testing.T) {
+	a := NewGeminiAgent("gemini")
+	// Plain text with indentation (like code blocks)
+	input := `Review output:
+    def hello():
+        print("world")
+
+No issues found.
+`
+	_, rawOutput, err := a.parseStreamJSON(strings.NewReader(input), nil)
+	if !errors.Is(err, errNoStreamJSON) {
+		t.Fatalf("expected errNoStreamJSON, got %v", err)
+	}
+	// Indentation should be preserved
+	if !strings.Contains(rawOutput, "    def hello():") {
+		t.Errorf("expected indentation to be preserved, got %q", rawOutput)
+	}
+	if !strings.Contains(rawOutput, "        print") {
+		t.Errorf("expected nested indentation to be preserved, got %q", rawOutput)
+	}
+	// Empty line should be preserved
+	if !strings.Contains(rawOutput, ")\n\nNo issues") {
+		t.Errorf("expected blank line to be preserved, got %q", rawOutput)
+	}
+}
+
+func TestGeminiReview_PromptDeliveredViaStdin(t *testing.T) {
+	// End-to-end test: verify the prompt is actually delivered via stdin
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "fake-gemini")
+	promptFile := filepath.Join(tmpDir, "received-prompt.txt")
+
+	// Create a script that reads stdin and writes it to a file
+	script := `#!/bin/sh
+cat > "` + promptFile + `"
+echo '{"type":"result","result":"Done"}'
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("failed to write script: %v", err)
+	}
+
+	a := NewGeminiAgent(scriptPath)
+	var output bytes.Buffer
+	expectedPrompt := "Please review this code for security issues"
+	_, err := a.Review(context.Background(), tmpDir, "abc123", expectedPrompt, &output)
+	if err != nil {
+		t.Fatalf("Review failed: %v", err)
+	}
+
+	// Verify the prompt was received
+	receivedPrompt, err := os.ReadFile(promptFile)
+	if err != nil {
+		t.Fatalf("failed to read prompt file: %v", err)
+	}
+	if string(receivedPrompt) != expectedPrompt {
+		t.Errorf("prompt not delivered correctly: expected %q, got %q", expectedPrompt, string(receivedPrompt))
+	}
+}

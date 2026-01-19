@@ -151,18 +151,20 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, stri
 			return "", "", fmt.Errorf("read stream: %w", err)
 		}
 
-		line = strings.TrimSpace(line)
-		if line != "" {
-			// Collect raw output for potential fallback
-			rawLines = append(rawLines, line)
+		// Preserve raw line with indentation for fallback (only trim trailing newline)
+		rawLine := strings.TrimRight(line, "\r\n")
+		rawLines = append(rawLines, rawLine)
 
-			// Stream raw line to the writer for progress visibility
-			if sw != nil {
-				sw.Write([]byte(line + "\n"))
-			}
+		// Stream raw line to the writer for progress visibility
+		if sw != nil && rawLine != "" {
+			sw.Write([]byte(rawLine + "\n"))
+		}
 
+		// Try to parse as JSON (trimmed for parsing only)
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
 			var msg geminiStreamMessage
-			if jsonErr := json.Unmarshal([]byte(line), &msg); jsonErr == nil {
+			if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
 				validEventsParsed = true
 
 				// Collect assistant messages for the result
