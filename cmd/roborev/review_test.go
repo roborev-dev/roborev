@@ -664,6 +664,249 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 	})
 }
 
+func TestReviewSinceFlag(t *testing.T) {
+	t.Run("since with valid ref succeeds", func(t *testing.T) {
+		var receivedGitRef string
+		// Set up mock server
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/status" {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+				return
+			}
+			if r.URL.Path == "/api/enqueue" {
+				var req struct {
+					GitRef string `json:"git_ref"`
+				}
+				json.NewDecoder(r.Body).Decode(&req)
+				receivedGitRef = req.GitRef
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
+				return
+			}
+		}))
+		defer cleanup()
+
+		// Create a git repo with two commits
+		tmpDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@test.com")
+		runGit("config", "user.name", "Test")
+		if err := os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("first"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit("add", "file1.txt")
+		runGit("commit", "-m", "first commit")
+
+		// Get first commit SHA
+		cmd := exec.Command("git", "rev-parse", "HEAD")
+		cmd.Dir = tmpDir
+		firstSHABytes, _ := cmd.Output()
+		firstSHA := strings.TrimSpace(string(firstSHABytes))
+
+		// Add second commit
+		if err := os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("second"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit("add", "file2.txt")
+		runGit("commit", "-m", "second commit")
+
+		// Review since first commit
+		reviewCmd := reviewCmd()
+		reviewCmd.SetArgs([]string{"--repo", tmpDir, "--since", firstSHA[:7]}) // Use short SHA
+		err := reviewCmd.Execute()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Verify the git_ref is a range from first commit to HEAD
+		if !strings.Contains(receivedGitRef, firstSHA) {
+			t.Errorf("expected git_ref to contain first SHA %s, got %s", firstSHA, receivedGitRef)
+		}
+		if !strings.HasSuffix(receivedGitRef, "..HEAD") {
+			t.Errorf("expected git_ref to end with ..HEAD, got %s", receivedGitRef)
+		}
+	})
+
+	t.Run("since with invalid ref fails", func(t *testing.T) {
+		// Set up mock server
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+		}))
+		defer cleanup()
+
+		// Create a minimal git repo
+		tmpDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@test.com")
+		runGit("config", "user.name", "Test")
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit("add", "file.txt")
+		runGit("commit", "-m", "initial")
+
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "nonexistent123"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error for invalid --since ref")
+		}
+		if !strings.Contains(err.Error(), "invalid --since commit") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("since with no commits ahead fails", func(t *testing.T) {
+		// Set up mock server
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+		}))
+		defer cleanup()
+
+		// Create a git repo with one commit
+		tmpDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@test.com")
+		runGit("config", "user.name", "Test")
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit("add", "file.txt")
+		runGit("commit", "-m", "initial")
+
+		// Try to review since HEAD (no commits after HEAD)
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "HEAD"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error when no commits since ref")
+		}
+		if !strings.Contains(err.Error(), "no commits since") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("since and branch are mutually exclusive", func(t *testing.T) {
+		// Set up mock server
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+		}))
+		defer cleanup()
+
+		// Create a minimal git repo
+		tmpDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@test.com")
+		runGit("config", "user.name", "Test")
+
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "abc123", "--branch"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error for --since with --branch")
+		}
+		if !strings.Contains(err.Error(), "cannot use --branch with --since") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("since and dirty are mutually exclusive", func(t *testing.T) {
+		// Set up mock server
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+		}))
+		defer cleanup()
+
+		// Create a minimal git repo
+		tmpDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@test.com")
+		runGit("config", "user.name", "Test")
+
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "abc123", "--dirty"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error for --since with --dirty")
+		}
+		if !strings.Contains(err.Error(), "cannot use --since with --dirty") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("since with positional args fails", func(t *testing.T) {
+		// Set up mock server
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+		}))
+		defer cleanup()
+
+		// Create a minimal git repo
+		tmpDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@test.com")
+		runGit("config", "user.name", "Test")
+
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "abc123", "def456"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error for --since with positional arg")
+		}
+		if !strings.Contains(err.Error(), "cannot specify commits with --since") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
 func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch and dirty are mutually exclusive", func(t *testing.T) {
 		// Set up mock server that accepts any request
