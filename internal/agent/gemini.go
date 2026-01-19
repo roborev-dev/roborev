@@ -13,7 +13,7 @@ import (
 )
 
 // errNoStreamJSON indicates no valid stream-json events were parsed.
-// This is a recoverable error that allows fallback to raw output.
+// Stream-json output is required; this error means the Gemini CLI may need to be upgraded.
 var errNoStreamJSON = errors.New("no valid stream-json events parsed from output")
 
 // GeminiAgent runs code reviews using the Gemini CLI
@@ -109,6 +109,9 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	if parseErr != nil {
+		if errors.Is(parseErr, errNoStreamJSON) {
+			return "", fmt.Errorf("gemini CLI must support --output-format stream-json; upgrade to latest version\nstderr: %s", stderr.String())
+		}
 		return "", parseErr
 	}
 

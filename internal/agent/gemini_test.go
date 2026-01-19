@@ -185,9 +185,9 @@ echo "No issues found."
 	if err == nil {
 		t.Fatal("expected error for plain text output, got nil")
 	}
-	// Should return the sentinel error
-	if !errors.Is(err, errNoStreamJSON) {
-		t.Errorf("expected errNoStreamJSON, got %v", err)
+	// Should return actionable error message
+	if !strings.Contains(err.Error(), "stream-json") {
+		t.Errorf("expected error to mention stream-json, got %v", err)
 	}
 }
 
