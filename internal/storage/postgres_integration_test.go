@@ -816,6 +816,260 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	t.Log("Same-commit multiplayer verified: both reviews preserved with unique UUIDs")
 }
 
+// TestIntegration_MultiplayerRealistic simulates a realistic multiplayer scenario
+// with multiple machines creating many reviews over several sync cycles.
+func TestIntegration_MultiplayerRealistic(t *testing.T) {
+	url := getIntegrationPostgresURL()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect to postgres: %v", err)
+	}
+	defer pool.Close()
+
+	// Clear and setup schema
+	_, _ = pool.pool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+
+	// Create three machines (simulating a small team)
+	dbA, _ := Open(filepath.Join(tmpDir, "machine_a.db"))
+	defer dbA.Close()
+	dbB, _ := Open(filepath.Join(tmpDir, "machine_b.db"))
+	defer dbB.Close()
+	dbC, _ := Open(filepath.Join(tmpDir, "machine_c.db"))
+	defer dbC.Close()
+
+	sharedRepoIdentity := "git@github.com:team/shared-project.git"
+
+	// Helper to create a completed review
+	createReview := func(db *DB, repoID int64, sha, author, subject, output string) (*ReviewJob, error) {
+		commit, err := db.GetOrCreateCommit(repoID, sha, author, subject, time.Now())
+		if err != nil {
+			return nil, fmt.Errorf("GetOrCreateCommit: %w", err)
+		}
+		job, err := db.EnqueueJob(repoID, commit.ID, sha, "test", "")
+		if err != nil {
+			return nil, fmt.Errorf("EnqueueJob: %w", err)
+		}
+		db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID)
+		if err := db.CompleteJob(job.ID, "test", "prompt", output); err != nil {
+			return nil, fmt.Errorf("CompleteJob: %w", err)
+		}
+		// Re-fetch to get UUID
+		jobs, _ := db.ListJobs("", "", 1000, 0)
+		for _, j := range jobs {
+			if j.ID == job.ID {
+				return &j, nil
+			}
+		}
+		return job, nil
+	}
+
+	// Setup repos for each machine
+	repoA, _ := dbA.GetOrCreateRepo(filepath.Join(tmpDir, "repo_a"), sharedRepoIdentity)
+	repoB, _ := dbB.GetOrCreateRepo(filepath.Join(tmpDir, "repo_b"), sharedRepoIdentity)
+	repoC, _ := dbC.GetOrCreateRepo(filepath.Join(tmpDir, "repo_c"), sharedRepoIdentity)
+
+	// Track all created job UUIDs per machine
+	var jobsCreatedByA, jobsCreatedByB, jobsCreatedByC []string
+
+	// Round 1: Each machine creates 10 reviews before any syncing
+	t.Log("Round 1: Each machine creates 10 reviews (no sync yet)")
+	for i := 0; i < 10; i++ {
+		job, _ := createReview(dbA, repoA.ID, fmt.Sprintf("a1_%02d", i), "Alice", fmt.Sprintf("Alice commit %d", i), fmt.Sprintf("Review A1-%d", i))
+		jobsCreatedByA = append(jobsCreatedByA, job.UUID)
+
+		job, _ = createReview(dbB, repoB.ID, fmt.Sprintf("b1_%02d", i), "Bob", fmt.Sprintf("Bob commit %d", i), fmt.Sprintf("Review B1-%d", i))
+		jobsCreatedByB = append(jobsCreatedByB, job.UUID)
+
+		job, _ = createReview(dbC, repoC.ID, fmt.Sprintf("c1_%02d", i), "Carol", fmt.Sprintf("Carol commit %d", i), fmt.Sprintf("Review C1-%d", i))
+		jobsCreatedByC = append(jobsCreatedByC, job.UUID)
+	}
+
+	// Start sync workers
+	makeCfg := func(name string) config.SyncConfig {
+		return config.SyncConfig{
+			Enabled:        true,
+			PostgresURL:    url,
+			Interval:       "50ms", // Fast for testing
+			MachineName:    name,
+			ConnectTimeout: "5s",
+		}
+	}
+
+	workerA := NewSyncWorker(dbA, makeCfg("alice-laptop"))
+	workerB := NewSyncWorker(dbB, makeCfg("bob-desktop"))
+	workerC := NewSyncWorker(dbC, makeCfg("carol-workstation"))
+
+	workerA.Start()
+	defer workerA.Stop()
+	workerB.Start()
+	defer workerB.Stop()
+	workerC.Start()
+	defer workerC.Stop()
+
+	waitForSyncWorkerConnection(workerA, 10*time.Second)
+	waitForSyncWorkerConnection(workerB, 10*time.Second)
+	waitForSyncWorkerConnection(workerC, 10*time.Second)
+
+	// First sync - each pushes their 10, then pulls others
+	t.Log("First sync cycle")
+	workerA.SyncNow()
+	workerB.SyncNow()
+	workerC.SyncNow()
+	time.Sleep(100 * time.Millisecond)
+	workerA.SyncNow()
+	workerB.SyncNow()
+	workerC.SyncNow()
+
+	// Verify postgres has 30 jobs
+	var pgCount int
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgCount)
+	if pgCount != 30 {
+		t.Errorf("After round 1: expected 30 jobs in postgres, got %d", pgCount)
+	}
+
+	// Round 2: Interleaved - A creates 5, syncs, B creates 5, syncs, C creates 5, syncs
+	t.Log("Round 2: Interleaved creation and syncing")
+	for i := 0; i < 5; i++ {
+		job, _ := createReview(dbA, repoA.ID, fmt.Sprintf("a2_%02d", i), "Alice", fmt.Sprintf("Alice round2 %d", i), fmt.Sprintf("Review A2-%d", i))
+		jobsCreatedByA = append(jobsCreatedByA, job.UUID)
+	}
+	workerA.SyncNow()
+
+	for i := 0; i < 5; i++ {
+		job, _ := createReview(dbB, repoB.ID, fmt.Sprintf("b2_%02d", i), "Bob", fmt.Sprintf("Bob round2 %d", i), fmt.Sprintf("Review B2-%d", i))
+		jobsCreatedByB = append(jobsCreatedByB, job.UUID)
+	}
+	workerB.SyncNow()
+
+	for i := 0; i < 5; i++ {
+		job, _ := createReview(dbC, repoC.ID, fmt.Sprintf("c2_%02d", i), "Carol", fmt.Sprintf("Carol round2 %d", i), fmt.Sprintf("Review C2-%d", i))
+		jobsCreatedByC = append(jobsCreatedByC, job.UUID)
+	}
+	workerC.SyncNow()
+
+	// All machines sync again to get latest
+	time.Sleep(100 * time.Millisecond)
+	workerA.SyncNow()
+	workerB.SyncNow()
+	workerC.SyncNow()
+
+	// Verify postgres has 45 jobs
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgCount)
+	if pgCount != 45 {
+		t.Errorf("After round 2: expected 45 jobs in postgres, got %d", pgCount)
+	}
+
+	// Round 3: Concurrent creation - all machines create simultaneously while syncing
+	t.Log("Round 3: Concurrent creation during sync")
+	done := make(chan bool, 3)
+
+	go func() {
+		for i := 0; i < 10; i++ {
+			job, _ := createReview(dbA, repoA.ID, fmt.Sprintf("a3_%02d", i), "Alice", fmt.Sprintf("Alice concurrent %d", i), fmt.Sprintf("Review A3-%d", i))
+			jobsCreatedByA = append(jobsCreatedByA, job.UUID)
+			if i%3 == 0 {
+				workerA.SyncNow()
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		done <- true
+	}()
+
+	go func() {
+		for i := 0; i < 10; i++ {
+			job, _ := createReview(dbB, repoB.ID, fmt.Sprintf("b3_%02d", i), "Bob", fmt.Sprintf("Bob concurrent %d", i), fmt.Sprintf("Review B3-%d", i))
+			jobsCreatedByB = append(jobsCreatedByB, job.UUID)
+			if i%3 == 0 {
+				workerB.SyncNow()
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		done <- true
+	}()
+
+	go func() {
+		for i := 0; i < 10; i++ {
+			job, _ := createReview(dbC, repoC.ID, fmt.Sprintf("c3_%02d", i), "Carol", fmt.Sprintf("Carol concurrent %d", i), fmt.Sprintf("Review C3-%d", i))
+			jobsCreatedByC = append(jobsCreatedByC, job.UUID)
+			if i%3 == 0 {
+				workerC.SyncNow()
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		done <- true
+	}()
+
+	// Wait for all goroutines
+	<-done
+	<-done
+	<-done
+
+	// Final sync to ensure everything is propagated
+	t.Log("Final sync cycle")
+	workerA.SyncNow()
+	workerB.SyncNow()
+	workerC.SyncNow()
+	time.Sleep(200 * time.Millisecond)
+	workerA.SyncNow()
+	workerB.SyncNow()
+	workerC.SyncNow()
+
+	// Total: 30 (round 1) + 15 (round 2) + 30 (round 3) = 75 jobs
+	expectedTotal := 75
+
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgCount)
+	if pgCount != expectedTotal {
+		t.Errorf("Final: expected %d jobs in postgres, got %d", expectedTotal, pgCount)
+	}
+
+	// Verify each machine can see all jobs
+	jobsA, _ := dbA.ListJobs("", "", 1000, 0)
+	jobsB, _ := dbB.ListJobs("", "", 1000, 0)
+	jobsC, _ := dbC.ListJobs("", "", 1000, 0)
+
+	if len(jobsA) != expectedTotal {
+		t.Errorf("Machine A should see %d jobs, got %d", expectedTotal, len(jobsA))
+	}
+	if len(jobsB) != expectedTotal {
+		t.Errorf("Machine B should see %d jobs, got %d", expectedTotal, len(jobsB))
+	}
+	if len(jobsC) != expectedTotal {
+		t.Errorf("Machine C should see %d jobs, got %d", expectedTotal, len(jobsC))
+	}
+
+	// Verify each machine has the others' specific jobs
+	jobsAMap := make(map[string]bool)
+	for _, j := range jobsA {
+		jobsAMap[j.UUID] = true
+	}
+
+	// Check A has all of B's jobs
+	for _, uuid := range jobsCreatedByB {
+		if !jobsAMap[uuid] {
+			t.Errorf("Machine A missing job %s created by B", uuid)
+		}
+	}
+	// Check A has all of C's jobs
+	for _, uuid := range jobsCreatedByC {
+		if !jobsAMap[uuid] {
+			t.Errorf("Machine A missing job %s created by C", uuid)
+		}
+	}
+
+	t.Logf("Realistic multiplayer test passed: %d total jobs synced across 3 machines", expectedTotal)
+	t.Logf("  Machine A created: %d, Machine B created: %d, Machine C created: %d",
+		len(jobsCreatedByA), len(jobsCreatedByB), len(jobsCreatedByC))
+}
+
 // TestIntegration_MultiplayerOfflineReconnect tests that a machine can go offline,
 // create reviews, and sync them when it reconnects.
 func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
