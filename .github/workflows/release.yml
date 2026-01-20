@@ -45,12 +45,11 @@ jobs:
           mkdir -p dist
           LDFLAGS="-s -w -X github.com/wesm/roborev/internal/version.Version=v${VERSION}"
           go build -ldflags="$LDFLAGS" -o dist/roborev${EXT} ./cmd/roborev
-          go build -ldflags="$LDFLAGS" -o dist/roborevd${EXT} ./cmd/roborevd
 
           cd dist
           ARCHIVE="roborev_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
-          tar czf "$ARCHIVE" roborev${EXT} roborevd${EXT}
-          rm roborev${EXT} roborevd${EXT}
+          tar czf "$ARCHIVE" roborev${EXT}
+          rm roborev${EXT}
 
       - uses: actions/upload-artifact@v4
         with:

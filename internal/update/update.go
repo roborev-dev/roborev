@@ -198,10 +198,10 @@ func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) e
 	}
 	binDir := filepath.Dir(currentExe)
 
-	// 5. Install new binaries
-	binaries := []string{"roborev", "roborevd"}
+	// 5. Install new binary
+	binaries := []string{"roborev"}
 	if runtime.GOOS == "windows" {
-		binaries = []string{"roborev.exe", "roborevd.exe"}
+		binaries = []string{"roborev.exe"}
 	}
 
 	for _, binary := range binaries {
@@ -256,10 +256,8 @@ func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) e
 
 // RestartDaemon stops and starts the daemon
 func RestartDaemon() error {
-	// Find roborevd and restart it
-	// We do this by calling the daemon restart command
-	// Since we're in a library, we'll just return instructions
-	// The CLI will handle the actual restart
+	// The CLI will handle the actual restart via `roborev daemon restart`
+	// Since we're in a library, we just return nil
 	return nil
 }
 

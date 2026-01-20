@@ -7,8 +7,7 @@ stay aligned with project conventions when reviewing code or addressing feedback
 
 ## Project Orientation
 
-- CLI entry point: `cmd/roborev/main.go`
-- Daemon entry point: `cmd/roborevd/main.go`
+- CLI entry point: `cmd/roborev/main.go` (includes daemon via `roborev daemon run`)
 - HTTP API: `internal/daemon/server.go`
 - Worker pool + job processing: `internal/daemon/worker.go`
 - SQLite storage: `internal/storage/`

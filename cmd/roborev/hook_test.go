@@ -191,13 +191,13 @@ func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 		t.Fatal("hooks directory should not exist before test")
 	}
 
-	// Create a roborevd binary in PATH for the test (init tries to start daemon)
+	// Create a roborev binary in PATH for the test (init tries to start daemon)
 	// We'll use a fake one that does nothing
 	binDir := filepath.Join(tmpHome, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	fakeDaemon := filepath.Join(binDir, "roborevd")
+	fakeDaemon := filepath.Join(binDir, "roborev")
 	fakeScript := "#!/bin/sh\nexit 0\n"
 	if err := os.WriteFile(fakeDaemon, []byte(fakeScript), 0755); err != nil {
 		t.Fatal(err)

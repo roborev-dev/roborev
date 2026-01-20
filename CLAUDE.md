@@ -7,7 +7,7 @@ roborev is an automatic code review daemon for git commits. It runs locally, tri
 ## Architecture
 
 ```
-CLI (roborev) → HTTP API → Daemon (roborevd) → Worker Pool → Agents
+CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → Agents
                               ↓
                           SQLite DB
 ```
@@ -22,8 +22,7 @@ CLI (roborev) → HTTP API → Daemon (roborevd) → Worker Pool → Agents
 
 | Path | Purpose |
 |------|---------|
-| `cmd/roborev/main.go` | CLI entry point, all commands |
-| `cmd/roborevd/main.go` | Daemon entry point |
+| `cmd/roborev/main.go` | CLI entry point, all commands (including daemon) |
 | `internal/daemon/server.go` | HTTP API handlers |
 | `internal/daemon/worker.go` | Worker pool, job processing |
 | `internal/storage/` | SQLite operations |
