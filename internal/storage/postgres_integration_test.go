@@ -473,18 +473,26 @@ func TestIntegration_SchemaCreation(t *testing.T) {
 // pollForJobCount polls until the expected job count is reached or timeout
 func pollForJobCount(db *DB, expected int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
+	var lastCount int
 	for time.Now().Before(deadline) {
 		jobs, err := db.ListJobs("", "", 1000, 0)
 		if err != nil {
-			return err
+			lastErr = err
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
-		if len(jobs) >= expected {
+		lastErr = nil
+		lastCount = len(jobs)
+		if lastCount >= expected {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	jobs, _ := db.ListJobs("", "", 1000, 0)
-	return fmt.Errorf("timeout waiting for %d jobs, got %d", expected, len(jobs))
+	if lastErr != nil {
+		return fmt.Errorf("timeout waiting for %d jobs (last error: %w)", expected, lastErr)
+	}
+	return fmt.Errorf("timeout waiting for %d jobs, got %d", expected, lastCount)
 }
 
 // TestIntegration_Multiplayer simulates two machines with separate SQLite databases
@@ -921,9 +929,59 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		t.Errorf("Machine B missing expected job UUIDs: has A=%v, has B=%v", jobsBMap[jobA.UUID], jobsBMap[jobB.UUID])
 	}
 
-	// Also verify both reviews exist (not just jobs)
-	if reviewA.UUID == "" || reviewB.UUID == "" {
-		t.Error("Reviews should have UUIDs assigned")
+	// Verify both reviews are actually present on both machines (not just jobs)
+	// Machine A should have both reviews
+	reviewAonA, err := dbA.GetReviewByJobID(jobA.ID)
+	if err != nil {
+		// Job A was created locally, so we can query by local ID
+		t.Logf("Machine A: local review A query by job ID: %v (expected for pulled jobs)", err)
+	} else if reviewAonA.UUID != reviewA.UUID {
+		t.Errorf("Machine A: review A UUID mismatch")
+	}
+
+	// For pulled jobs, we need to find them by UUID in the jobs list
+	var jobBIDonA int64
+	for _, j := range jobsA {
+		if j.UUID == jobB.UUID {
+			jobBIDonA = j.ID
+			break
+		}
+	}
+	if jobBIDonA == 0 {
+		t.Error("Machine A: could not find job B by UUID")
+	} else {
+		reviewBonA, err := dbA.GetReviewByJobID(jobBIDonA)
+		if err != nil {
+			t.Errorf("Machine A: failed to get review B: %v", err)
+		} else if reviewBonA.UUID != reviewB.UUID {
+			t.Errorf("Machine A: review B UUID mismatch: got %s, want %s", reviewBonA.UUID, reviewB.UUID)
+		}
+	}
+
+	// Machine B should have both reviews
+	var jobAIDonB int64
+	for _, j := range jobsB {
+		if j.UUID == jobA.UUID {
+			jobAIDonB = j.ID
+			break
+		}
+	}
+	if jobAIDonB == 0 {
+		t.Error("Machine B: could not find job A by UUID")
+	} else {
+		reviewAonB, err := dbB.GetReviewByJobID(jobAIDonB)
+		if err != nil {
+			t.Errorf("Machine B: failed to get review A: %v", err)
+		} else if reviewAonB.UUID != reviewA.UUID {
+			t.Errorf("Machine B: review A UUID mismatch: got %s, want %s", reviewAonB.UUID, reviewA.UUID)
+		}
+	}
+
+	reviewBonB, err := dbB.GetReviewByJobID(jobB.ID)
+	if err != nil {
+		t.Logf("Machine B: local review B query by job ID: %v (expected for pulled jobs)", err)
+	} else if reviewBonB.UUID != reviewB.UUID {
+		t.Errorf("Machine B: review B UUID mismatch")
 	}
 
 	t.Log("Same-commit multiplayer verified: both reviews preserved with unique UUIDs")
@@ -1174,21 +1232,37 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 
 	// Round 3: Concurrent creation - all machines create simultaneously while syncing
 	t.Log("Round 3: Concurrent creation during sync")
+
+	// Use channels to collect job UUIDs and errors from goroutines to avoid data races
+	type jobResult struct {
+		uuid string
+		err  error
+	}
+	jobResultsA := make(chan jobResult, 10)
+	jobResultsB := make(chan jobResult, 10)
+	jobResultsC := make(chan jobResult, 10)
+	syncErrsA := make(chan error, 4) // At most 4 syncs (i=0,3,6,9)
+	syncErrsB := make(chan error, 4)
+	syncErrsC := make(chan error, 4)
 	done := make(chan bool, 3)
 
 	go func() {
 		for i := 0; i < 10; i++ {
 			job, err := createReview(dbA, repoA.ID, fmt.Sprintf("a3_%02d", i), "Alice", fmt.Sprintf("Alice concurrent %d", i), fmt.Sprintf("Review A3-%d", i))
 			if err != nil {
-				t.Errorf("Machine A round 3: createReview failed: %v", err)
+				jobResultsA <- jobResult{err: fmt.Errorf("Machine A round 3 job %d: %w", i, err)}
 				continue
 			}
-			jobsCreatedByA = append(jobsCreatedByA, job.UUID)
+			jobResultsA <- jobResult{uuid: job.UUID}
 			if i%3 == 0 {
-				workerA.SyncNow()
+				if _, err := workerA.SyncNow(); err != nil {
+					syncErrsA <- fmt.Errorf("Machine A round 3 sync at job %d: %w", i, err)
+				}
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+		close(jobResultsA)
+		close(syncErrsA)
 		done <- true
 	}()
 
@@ -1196,15 +1270,19 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			job, err := createReview(dbB, repoB.ID, fmt.Sprintf("b3_%02d", i), "Bob", fmt.Sprintf("Bob concurrent %d", i), fmt.Sprintf("Review B3-%d", i))
 			if err != nil {
-				t.Errorf("Machine B round 3: createReview failed: %v", err)
+				jobResultsB <- jobResult{err: fmt.Errorf("Machine B round 3 job %d: %w", i, err)}
 				continue
 			}
-			jobsCreatedByB = append(jobsCreatedByB, job.UUID)
+			jobResultsB <- jobResult{uuid: job.UUID}
 			if i%3 == 0 {
-				workerB.SyncNow()
+				if _, err := workerB.SyncNow(); err != nil {
+					syncErrsB <- fmt.Errorf("Machine B round 3 sync at job %d: %w", i, err)
+				}
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+		close(jobResultsB)
+		close(syncErrsB)
 		done <- true
 	}()
 
@@ -1212,15 +1290,19 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			job, err := createReview(dbC, repoC.ID, fmt.Sprintf("c3_%02d", i), "Carol", fmt.Sprintf("Carol concurrent %d", i), fmt.Sprintf("Review C3-%d", i))
 			if err != nil {
-				t.Errorf("Machine C round 3: createReview failed: %v", err)
+				jobResultsC <- jobResult{err: fmt.Errorf("Machine C round 3 job %d: %w", i, err)}
 				continue
 			}
-			jobsCreatedByC = append(jobsCreatedByC, job.UUID)
+			jobResultsC <- jobResult{uuid: job.UUID}
 			if i%3 == 0 {
-				workerC.SyncNow()
+				if _, err := workerC.SyncNow(); err != nil {
+					syncErrsC <- fmt.Errorf("Machine C round 3 sync at job %d: %w", i, err)
+				}
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+		close(jobResultsC)
+		close(syncErrsC)
 		done <- true
 	}()
 
@@ -1228,6 +1310,40 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 	<-done
 	<-done
 	<-done
+
+	// Collect job UUIDs from channels (now safe, goroutines are done)
+	for r := range jobResultsA {
+		if r.err != nil {
+			t.Errorf("%v", r.err)
+		} else {
+			jobsCreatedByA = append(jobsCreatedByA, r.uuid)
+		}
+	}
+	for r := range jobResultsB {
+		if r.err != nil {
+			t.Errorf("%v", r.err)
+		} else {
+			jobsCreatedByB = append(jobsCreatedByB, r.uuid)
+		}
+	}
+	for r := range jobResultsC {
+		if r.err != nil {
+			t.Errorf("%v", r.err)
+		} else {
+			jobsCreatedByC = append(jobsCreatedByC, r.uuid)
+		}
+	}
+
+	// Check for sync errors
+	for err := range syncErrsA {
+		t.Errorf("%v", err)
+	}
+	for err := range syncErrsB {
+		t.Errorf("%v", err)
+	}
+	for err := range syncErrsC {
+		t.Errorf("%v", err)
+	}
 
 	// Final sync to ensure everything is propagated
 	t.Log("Final sync cycle")
