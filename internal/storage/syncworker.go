@@ -74,13 +74,16 @@ func (w *SyncWorker) Stop() {
 		w.mu.Unlock()
 		return
 	}
-	// Set running = false while holding lock to prevent concurrent Stop() calls
-	// from both trying to close stopCh
+	// Capture channels and set running=false while holding lock.
+	// This prevents races with concurrent Start() which could reinitialize
+	// the channels after we unlock but before we close them.
+	stopCh := w.stopCh
+	doneCh := w.doneCh
 	w.running = false
 	w.mu.Unlock()
 
-	close(w.stopCh)
-	<-w.doneCh
+	close(stopCh)
+	<-doneCh
 
 	// Acquire syncMu to wait for any in-flight SyncNow or FinalPush to complete
 	// before closing the pool
