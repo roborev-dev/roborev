@@ -337,6 +337,7 @@ type SyncableReview struct {
 }
 
 // GetReviewsToSync returns reviews modified locally that need to be pushed.
+// Only returns reviews whose parent job has already been synced.
 func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, error) {
 	rows, err := db.Query(`
 		SELECT
@@ -348,6 +349,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		WHERE r.updated_by_machine_id = ?
 		AND r.uuid IS NOT NULL
 		AND j.uuid IS NOT NULL
+		AND j.synced_at IS NOT NULL
 		AND (r.synced_at IS NULL OR datetime(
 			CASE WHEN r.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR r.updated_at LIKE '%Z'
 				THEN r.updated_at ELSE r.updated_at || 'Z' END
@@ -404,6 +406,7 @@ type SyncableResponse struct {
 }
 
 // GetResponsesToSync returns responses created locally that need to be pushed.
+// Only returns responses whose parent job has already been synced.
 func (db *DB) GetResponsesToSync(machineID string, limit int) ([]SyncableResponse, error) {
 	rows, err := db.Query(`
 		SELECT
@@ -415,6 +418,7 @@ func (db *DB) GetResponsesToSync(machineID string, limit int) ([]SyncableRespons
 		AND r.uuid IS NOT NULL
 		AND j.uuid IS NOT NULL
 		AND r.synced_at IS NULL
+		AND j.synced_at IS NOT NULL
 		ORDER BY r.id
 		LIMIT ?
 	`, machineID, limit)
