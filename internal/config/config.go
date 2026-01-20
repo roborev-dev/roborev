@@ -40,7 +40,7 @@ type SyncConfig struct {
 	// Supports environment variable expansion via ${VAR} syntax.
 	PostgresURL string `toml:"postgres_url"`
 
-	// Interval is how often to sync (e.g., "5m", "1h"). Default: 5m
+	// Interval is how often to sync (e.g., "5m", "1h"). Default: 1h
 	Interval string `toml:"interval"`
 
 	// MachineName is a friendly name for this machine (optional)

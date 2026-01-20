@@ -49,7 +49,7 @@ func (w *SyncWorker) Start() error {
 	// Parse sync interval
 	interval, err := time.ParseDuration(w.cfg.Interval)
 	if err != nil || interval <= 0 {
-		interval = 5 * time.Minute // Default
+		interval = time.Hour // Default
 	}
 
 	// Parse connect timeout

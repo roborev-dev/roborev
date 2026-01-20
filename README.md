@@ -487,7 +487,7 @@ Sync reviews across multiple machines using PostgreSQL as a central store while 
 [sync]
 enabled = true
 postgres_url = "postgres://roborev:${ROBOREV_PG_PASS}@nas.tailnet:5432/roborev"
-interval = "5m"           # Sync interval (default: 5m)
+interval = "1h"           # Sync interval (default: 1h)
 machine_name = "laptop"   # Friendly name for this machine
 ```
 
