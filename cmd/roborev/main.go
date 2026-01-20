@@ -488,6 +488,13 @@ func daemonRunCmd() *cobra.Command {
 					log.Printf("Warning: failed to backfill source_machine_id: %v", err)
 				}
 
+				// Backfill repo identities from git remotes
+				if count, err := db.BackfillRepoIdentities(); err != nil {
+					log.Printf("Warning: failed to backfill repo identities: %v", err)
+				} else if count > 0 {
+					log.Printf("Backfilled %d repo identities from git remotes", count)
+				}
+
 				syncWorker = storage.NewSyncWorker(db, cfg.Sync)
 				if err := syncWorker.Start(); err != nil {
 					log.Printf("Warning: failed to start sync worker: %v", err)

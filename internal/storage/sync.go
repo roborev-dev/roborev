@@ -3,6 +3,8 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -98,6 +100,65 @@ func (db *DB) BackfillSourceMachineID() error {
 	}
 
 	return nil
+}
+
+// BackfillRepoIdentities computes and sets identity for repos that don't have one.
+// Identity is derived from the git remote origin URL if the repo path still exists.
+// Returns the number of repos backfilled.
+func (db *DB) BackfillRepoIdentities() (int, error) {
+	// Get repos without identity
+	rows, err := db.Query(`SELECT id, root_path FROM repos WHERE identity IS NULL OR identity = ''`)
+	if err != nil {
+		return 0, fmt.Errorf("query repos without identity: %w", err)
+	}
+	defer rows.Close()
+
+	type repoInfo struct {
+		id   int64
+		path string
+	}
+	var repos []repoInfo
+	for rows.Next() {
+		var r repoInfo
+		if err := rows.Scan(&r.id, &r.path); err != nil {
+			return 0, fmt.Errorf("scan repo: %w", err)
+		}
+		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	backfilled := 0
+	for _, r := range repos {
+		identity, err := getGitRemoteOrigin(r.path)
+		if err != nil {
+			// Path doesn't exist or isn't a git repo - skip
+			continue
+		}
+		if identity == "" {
+			continue
+		}
+
+		if err := db.SetRepoIdentity(r.id, identity); err != nil {
+			// May fail due to duplicate identity - skip
+			continue
+		}
+		backfilled++
+	}
+
+	return backfilled, nil
+}
+
+// getGitRemoteOrigin returns the git remote origin URL for a path.
+// Returns empty string if path doesn't exist or isn't a git repo.
+func getGitRemoteOrigin(path string) (string, error) {
+	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 // SetRepoIdentity sets the identity for a repo.
