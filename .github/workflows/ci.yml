@@ -87,11 +87,7 @@ jobs:
         run: nix build
 
       - name: Verify binaries
-        run: |
-          ./result/bin/roborev version
-          ./result/bin/roborevd version
+        run: ./result/bin/roborev version
 
       - name: Verify nix apps
-        run: |
-          nix run .#roborev -- version
-          nix run .#roborevd -- version
+        run: nix run .#roborev -- version
