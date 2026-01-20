@@ -2121,9 +2121,32 @@ func syncNowCmd() *cobra.Command {
 			}
 
 			addr := getDaemonAddr()
-			client := &http.Client{Timeout: 30 * time.Second}
+			// Use longer timeout since sync operations can take up to 2 minutes
+			client := &http.Client{Timeout: 3 * time.Minute}
+
+			// Show progress while syncing
+			fmt.Print("Syncing")
+			stopProgress := make(chan struct{})
+			progressDone := make(chan struct{})
+			go func() {
+				defer close(progressDone)
+				ticker := time.NewTicker(500 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-stopProgress:
+						return
+					case <-ticker.C:
+						fmt.Print(".")
+					}
+				}
+			}()
 
 			resp, err := client.Post(addr+"/api/sync/now", "application/json", nil)
+			close(stopProgress)
+			<-progressDone
+			fmt.Println() // New line after progress dots
+
 			if err != nil {
 				return fmt.Errorf("failed to trigger sync: %w", err)
 			}

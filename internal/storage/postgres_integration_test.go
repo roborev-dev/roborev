@@ -1633,3 +1633,149 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 
 	t.Log("Offline/reconnect verified: reviews created offline sync correctly after reconnect")
 }
+
+// TestIntegration_SyncNowPushesAllBatches verifies that SyncNow loops until all pending items
+// are pushed, not just one batch of syncBatchSize items.
+func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
+	url := getIntegrationPostgresURL()
+
+	// Connect to postgres to clean up and verify
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
+	if err != nil {
+		t.Skipf("Skipping: could not connect to postgres: %v", err)
+	}
+
+	// Clean up before test
+	_, _ = pool.pool.Exec(ctx, "DELETE FROM roborev.responses")
+	_, _ = pool.pool.Exec(ctx, "DELETE FROM roborev.reviews")
+	_, _ = pool.pool.Exec(ctx, "DELETE FROM roborev.review_jobs")
+	_, _ = pool.pool.Exec(ctx, "DELETE FROM roborev.commits")
+	_, _ = pool.pool.Exec(ctx, "DELETE FROM roborev.repos")
+
+	// Create local SQLite database
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a repo
+	repo, err := db.CreateRepo("/test/batch-sync-repo")
+	if err != nil {
+		t.Fatalf("Failed to create repo: %v", err)
+	}
+	if err := db.SetRepoIdentity(repo.ID, "batch-sync-test-identity"); err != nil {
+		t.Fatalf("Failed to set repo identity: %v", err)
+	}
+
+	// Create more jobs than syncBatchSize (25) to test looping
+	// Create 80 jobs (will need 4 batches of 25 to push them all)
+	numJobs := 80
+	t.Logf("Creating %d jobs to test batch syncing", numJobs)
+	for i := 0; i < numJobs; i++ {
+		commit, err := db.FindOrCreateCommit(repo.ID, fmt.Sprintf("commit%03d", i), fmt.Sprintf("Author %d", i), fmt.Sprintf("Message %d", i))
+		if err != nil {
+			t.Fatalf("Failed to create commit %d: %v", i, err)
+		}
+		job, err := db.EnqueueReview(commit.ID, "test", "test prompt", "", false)
+		if err != nil {
+			t.Fatalf("Failed to enqueue review %d: %v", i, err)
+		}
+		// Mark job done with a review
+		if err := db.UpdateJobStatus(job.ID, "done", ""); err != nil {
+			t.Fatalf("Failed to update job status: %v", err)
+		}
+		_, err = db.CreateReview(job.ID, "test", "test prompt", fmt.Sprintf("Review output %d", i))
+		if err != nil {
+			t.Fatalf("Failed to create review %d: %v", i, err)
+		}
+	}
+
+	// Verify pending items
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		t.Fatalf("Failed to get machine ID: %v", err)
+	}
+	pendingJobs, err := db.GetJobsToSync(machineID, 1000)
+	if err != nil {
+		t.Fatalf("Failed to get pending jobs: %v", err)
+	}
+	t.Logf("Pending jobs before sync: %d", len(pendingJobs))
+	if len(pendingJobs) < numJobs {
+		t.Fatalf("Expected %d pending jobs, got %d", numJobs, len(pendingJobs))
+	}
+
+	// Start sync worker
+	cfg := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    url,
+		Interval:       "1h",
+		ConnectTimeout: "5s",
+	}
+	worker := NewSyncWorker(db, cfg)
+	if err := worker.Start(); err != nil {
+		t.Fatalf("Failed to start sync worker: %v", err)
+	}
+	defer worker.Stop()
+
+	// Wait for connection
+	if err := waitForSyncWorkerConnection(worker, 30*time.Second); err != nil {
+		t.Fatalf("Sync worker failed to connect: %v", err)
+	}
+
+	// Call SyncNow and verify it pushes ALL items
+	t.Log("Calling SyncNow to push all batches")
+	stats, err := worker.SyncNow()
+	if err != nil {
+		t.Fatalf("SyncNow failed: %v", err)
+	}
+
+	t.Logf("SyncNow stats: pushed %d jobs, %d reviews, %d responses",
+		stats.PushedJobs, stats.PushedReviews, stats.PushedResponses)
+
+	// Verify all jobs were pushed
+	if stats.PushedJobs < numJobs {
+		t.Errorf("Expected SyncNow to push %d jobs, only pushed %d", numJobs, stats.PushedJobs)
+	}
+
+	// Verify all reviews were pushed
+	if stats.PushedReviews < numJobs {
+		t.Errorf("Expected SyncNow to push %d reviews, only pushed %d", numJobs, stats.PushedReviews)
+	}
+
+	// Verify in PostgreSQL
+	var pgJobCount int
+	if err := pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgJobCount); err != nil {
+		t.Fatalf("Failed to count jobs in postgres: %v", err)
+	}
+	if pgJobCount < numJobs {
+		t.Errorf("Expected %d jobs in postgres, got %d", numJobs, pgJobCount)
+	}
+
+	var pgReviewCount int
+	if err := pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.reviews").Scan(&pgReviewCount); err != nil {
+		t.Fatalf("Failed to count reviews in postgres: %v", err)
+	}
+	if pgReviewCount < numJobs {
+		t.Errorf("Expected %d reviews in postgres, got %d", numJobs, pgReviewCount)
+	}
+
+	// Verify no more pending items
+	pendingJobsAfter, err := db.GetJobsToSync(machineID, 1000)
+	if err != nil {
+		t.Fatalf("Failed to get pending jobs after sync: %v", err)
+	}
+	if len(pendingJobsAfter) > 0 {
+		t.Errorf("Expected 0 pending jobs after sync, got %d", len(pendingJobsAfter))
+	}
+
+	t.Logf("Batch sync test passed: %d jobs and %d reviews pushed in batches of %d",
+		stats.PushedJobs, stats.PushedReviews, syncBatchSize)
+
+	pool.Close()
+}

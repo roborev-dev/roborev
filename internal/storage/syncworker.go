@@ -156,6 +156,7 @@ func (w *SyncWorker) FinalPush() error {
 
 // SyncNow triggers an immediate sync cycle and returns statistics.
 // Returns an error if the worker is not running or not connected.
+// Loops until all pending items are pushed (not just one batch).
 func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 	w.mu.Lock()
 	if !w.running {
@@ -173,19 +174,33 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 	w.syncMu.Lock()
 	defer w.syncMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	stats := &SyncStats{}
 
-	// Push local changes
-	pushed, err := w.pushChangesWithStats(ctx, pool)
-	if err != nil {
-		return nil, fmt.Errorf("push: %w", err)
+	// Push all local changes (loop until no more pending)
+	batchNum := 0
+	for {
+		pushed, err := w.pushChangesWithStats(ctx, pool)
+		if err != nil {
+			return nil, fmt.Errorf("push: %w", err)
+		}
+		stats.PushedJobs += pushed.Jobs
+		stats.PushedReviews += pushed.Reviews
+		stats.PushedResponses += pushed.Responses
+
+		// If nothing was pushed, we're done
+		if pushed.Jobs == 0 && pushed.Reviews == 0 && pushed.Responses == 0 {
+			break
+		}
+
+		batchNum++
+		// Log progress every batch so user can see what's happening
+		log.Printf("Sync: batch %d - pushed %d jobs, %d reviews, %d responses (total: %d/%d/%d)",
+			batchNum, pushed.Jobs, pushed.Reviews, pushed.Responses,
+			stats.PushedJobs, stats.PushedReviews, stats.PushedResponses)
 	}
-	stats.PushedJobs = pushed.Jobs
-	stats.PushedReviews = pushed.Reviews
-	stats.PushedResponses = pushed.Responses
 
 	// Pull remote changes
 	pulled, err := w.pullChangesWithStats(ctx, pool)
@@ -195,6 +210,13 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 	stats.PulledJobs = pulled.Jobs
 	stats.PulledReviews = pulled.Reviews
 	stats.PulledResponses = pulled.Responses
+
+	if stats.PushedJobs > 0 || stats.PushedReviews > 0 || stats.PushedResponses > 0 ||
+		stats.PulledJobs > 0 || stats.PulledReviews > 0 || stats.PulledResponses > 0 {
+		log.Printf("Sync: complete - pushed %d/%d/%d, pulled %d/%d/%d",
+			stats.PushedJobs, stats.PushedReviews, stats.PushedResponses,
+			stats.PulledJobs, stats.PulledReviews, stats.PulledResponses)
+	}
 
 	return stats, nil
 }
@@ -328,6 +350,7 @@ func (w *SyncWorker) syncLoop(interval time.Duration) {
 }
 
 // doSync performs a single sync cycle (push then pull)
+// Loops until all pending items are pushed.
 func (w *SyncWorker) doSync() error {
 	w.syncMu.Lock()
 	defer w.syncMu.Unlock()
@@ -340,12 +363,24 @@ func (w *SyncWorker) doSync() error {
 		return fmt.Errorf("not connected")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Push local changes to PostgreSQL
-	if err := w.pushChanges(ctx, pool); err != nil {
-		return fmt.Errorf("push: %w", err)
+	// Push all local changes to PostgreSQL (loop until no more pending)
+	var totalJobs, totalReviews, totalResponses int
+	for {
+		stats, err := w.pushChangesWithStats(ctx, pool)
+		if err != nil {
+			return fmt.Errorf("push: %w", err)
+		}
+		if stats.Jobs == 0 && stats.Reviews == 0 && stats.Responses == 0 {
+			break
+		}
+		totalJobs += stats.Jobs
+		totalReviews += stats.Reviews
+		totalResponses += stats.Responses
+		log.Printf("Sync: pushed %d jobs, %d reviews, %d responses (total: %d/%d/%d)",
+			stats.Jobs, stats.Reviews, stats.Responses, totalJobs, totalReviews, totalResponses)
 	}
 
 	// Pull remote changes from PostgreSQL
@@ -362,6 +397,10 @@ func (w *SyncWorker) pushChanges(ctx context.Context, pool *PgPool) error {
 	return err
 }
 
+// syncBatchSize controls how many items are pushed per batch.
+// Smaller batches mean more frequent commits and better progress visibility.
+const syncBatchSize = 25
+
 // pushChangesWithStats pushes local changes and returns statistics
 func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pushPullStats, error) {
 	stats := pushPullStats{}
@@ -372,7 +411,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	// Push jobs
-	jobs, err := w.db.GetJobsToSync(machineID, 100)
+	jobs, err := w.db.GetJobsToSync(machineID, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get jobs to sync: %w", err)
 	}
@@ -389,7 +428,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	// Push reviews
-	reviews, err := w.db.GetReviewsToSync(machineID, 100)
+	reviews, err := w.db.GetReviewsToSync(machineID, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get reviews to sync: %w", err)
 	}
@@ -406,7 +445,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	// Push responses
-	responses, err := w.db.GetResponsesToSync(machineID, 100)
+	responses, err := w.db.GetResponsesToSync(machineID, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get responses to sync: %w", err)
 	}
@@ -420,10 +459,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			log.Printf("Sync: failed to mark response %d synced: %v", r.ID, err)
 		}
 		stats.Responses++
-	}
-
-	if stats.Jobs > 0 || stats.Reviews > 0 || stats.Responses > 0 {
-		log.Printf("Sync: pushed %d jobs, %d reviews, %d responses", stats.Jobs, stats.Reviews, stats.Responses)
 	}
 
 	return stats, nil
