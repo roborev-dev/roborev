@@ -1770,6 +1770,154 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 	})
 }
 
+func TestRepoIdentity(t *testing.T) {
+	t.Run("sets identity on create", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/identity-test", "git@github.com:foo/bar.git")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		if repo.Identity != "git@github.com:foo/bar.git" {
+			t.Errorf("Expected identity 'git@github.com:foo/bar.git', got %q", repo.Identity)
+		}
+
+		// Verify it persists
+		repo2, err := db.GetOrCreateRepo("/tmp/identity-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo (second call) failed: %v", err)
+		}
+		if repo2.Identity != "git@github.com:foo/bar.git" {
+			t.Errorf("Expected identity to persist, got %q", repo2.Identity)
+		}
+	})
+
+	t.Run("backfills identity when not set", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		// Create repo without identity
+		repo1, err := db.GetOrCreateRepo("/tmp/backfill-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+		if repo1.Identity != "" {
+			t.Errorf("Expected no identity initially, got %q", repo1.Identity)
+		}
+
+		// Call again with identity - should backfill
+		repo2, err := db.GetOrCreateRepo("/tmp/backfill-test", "git@github.com:test/backfill.git")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo with identity failed: %v", err)
+		}
+		if repo2.Identity != "git@github.com:test/backfill.git" {
+			t.Errorf("Expected identity to be backfilled, got %q", repo2.Identity)
+		}
+	})
+
+	t.Run("does not overwrite existing identity", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		// Create repo with identity
+		_, err := db.GetOrCreateRepo("/tmp/no-overwrite-test", "original-identity")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		// Call again with different identity - should NOT overwrite
+		repo2, err := db.GetOrCreateRepo("/tmp/no-overwrite-test", "new-identity")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo with new identity failed: %v", err)
+		}
+		if repo2.Identity != "original-identity" {
+			t.Errorf("Expected identity to remain 'original-identity', got %q", repo2.Identity)
+		}
+	})
+}
+
+func TestDuplicateSHAHandling(t *testing.T) {
+	t.Run("same SHA in different repos creates separate commits", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		// Create two repos
+		repo1, _ := db.GetOrCreateRepo("/tmp/sha-test-1")
+		repo2, _ := db.GetOrCreateRepo("/tmp/sha-test-2")
+
+		// Create commits with same SHA in different repos
+		commit1, err := db.GetOrCreateCommit(repo1.ID, "abc123", "Author1", "Subject1", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit for repo1 failed: %v", err)
+		}
+
+		commit2, err := db.GetOrCreateCommit(repo2.ID, "abc123", "Author2", "Subject2", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit for repo2 failed: %v", err)
+		}
+
+		// Should be different commits
+		if commit1.ID == commit2.ID {
+			t.Error("Same SHA in different repos should create different commits")
+		}
+		if commit1.RepoID != repo1.ID {
+			t.Error("commit1 should belong to repo1")
+		}
+		if commit2.RepoID != repo2.ID {
+			t.Error("commit2 should belong to repo2")
+		}
+	})
+
+	t.Run("GetCommitBySHA returns error when ambiguous", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		// Create two repos with same SHA
+		repo1, _ := db.GetOrCreateRepo("/tmp/ambiguous-1")
+		repo2, _ := db.GetOrCreateRepo("/tmp/ambiguous-2")
+
+		db.GetOrCreateCommit(repo1.ID, "ambiguous-sha", "Author", "Subject", time.Now())
+		db.GetOrCreateCommit(repo2.ID, "ambiguous-sha", "Author", "Subject", time.Now())
+
+		// GetCommitBySHA should fail when ambiguous
+		_, err := db.GetCommitBySHA("ambiguous-sha")
+		if err == nil {
+			t.Error("Expected error when SHA is ambiguous across repos")
+		}
+	})
+
+	t.Run("GetCommitByRepoAndSHA returns correct commit", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		// Create two repos with same SHA
+		repo1, _ := db.GetOrCreateRepo("/tmp/repo-and-sha-1")
+		repo2, _ := db.GetOrCreateRepo("/tmp/repo-and-sha-2")
+
+		commit1, _ := db.GetOrCreateCommit(repo1.ID, "same-sha", "Author1", "Subject1", time.Now())
+		commit2, _ := db.GetOrCreateCommit(repo2.ID, "same-sha", "Author2", "Subject2", time.Now())
+
+		// GetCommitByRepoAndSHA should return correct commit for each repo
+		found1, err := db.GetCommitByRepoAndSHA(repo1.ID, "same-sha")
+		if err != nil {
+			t.Fatalf("GetCommitByRepoAndSHA for repo1 failed: %v", err)
+		}
+		if found1.ID != commit1.ID {
+			t.Error("GetCommitByRepoAndSHA returned wrong commit for repo1")
+		}
+
+		found2, err := db.GetCommitByRepoAndSHA(repo2.ID, "same-sha")
+		if err != nil {
+			t.Fatalf("GetCommitByRepoAndSHA for repo2 failed: %v", err)
+		}
+		if found2.ID != commit2.ID {
+			t.Error("GetCommitByRepoAndSHA returned wrong commit for repo2")
+		}
+	})
+}
+
 func openTestDB(t *testing.T) *DB {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

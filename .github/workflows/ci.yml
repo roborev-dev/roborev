@@ -28,6 +28,34 @@ jobs:
           file: coverage.out
         continue-on-error: true
 
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: roborev_test
+          POSTGRES_PASSWORD: roborev_test_password
+          POSTGRES_DB: roborev_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U roborev_test -d roborev_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Run integration tests
+        run: go test -tags=integration -v ./internal/storage/... -run Integration
+        env:
+          TEST_POSTGRES_URL: postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test
+
   lint:
     runs-on: ubuntu-latest
     steps:

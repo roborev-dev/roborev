@@ -1878,6 +1878,10 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 
 	// Use cached display name, falling back to RepoName
 	repo := m.getDisplayName(job.RepoPath, job.RepoName)
+	// Append [remote] indicator for jobs from other machines
+	if m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID {
+		repo += " [R]"
+	}
 	if len(repo) > colWidths.repo {
 		repo = repo[:max(1, colWidths.repo-3)] + "..."
 	}

@@ -2053,3 +2053,87 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 	})
 }
+
+func TestGetMachineID_CachingBehavior(t *testing.T) {
+	t.Run("caches valid machine ID", func(t *testing.T) {
+		db, _ := testutil.OpenTestDBWithDir(t)
+		cfg := config.DefaultConfig()
+		server := NewServer(db, cfg)
+
+		// First call should fetch from DB and cache
+		id1 := server.getMachineID()
+		if id1 == "" {
+			t.Fatal("Expected non-empty machine ID on first call")
+		}
+
+		// Second call should return cached value
+		id2 := server.getMachineID()
+		if id2 != id1 {
+			t.Errorf("Expected cached value %q, got %q", id1, id2)
+		}
+
+		// Verify internal state is cached
+		server.machineIDMu.Lock()
+		cachedID := server.machineID
+		server.machineIDMu.Unlock()
+		if cachedID != id1 {
+			t.Errorf("Expected internal machineID to be %q, got %q", id1, cachedID)
+		}
+	})
+
+	t.Run("error then success caches on success", func(t *testing.T) {
+		// This tests the error→success retry path:
+		// 1. First call fails (DB closed) → returns empty, not cached
+		// 2. DB replaced with working one
+		// 3. Second call succeeds → returns valid ID and caches it
+
+		db, tmpDir := testutil.OpenTestDBWithDir(t)
+		cfg := config.DefaultConfig()
+		server := NewServer(db, cfg)
+
+		// Close the DB to simulate error condition
+		db.Close()
+
+		// First call should return empty since DB is closed
+		id1 := server.getMachineID()
+		if id1 != "" {
+			t.Fatalf("Expected empty machine ID on error, got %q", id1)
+		}
+
+		// Verify nothing was cached
+		server.machineIDMu.Lock()
+		if server.machineID != "" {
+			server.machineIDMu.Unlock()
+			t.Fatal("Should not cache on error")
+		}
+		server.machineIDMu.Unlock()
+
+		// "Fix" the error by opening a new DB and replacing it
+		newDB, err := storage.Open(filepath.Join(tmpDir, "reviews.db"))
+		if err != nil {
+			t.Fatalf("Failed to reopen DB: %v", err)
+		}
+		t.Cleanup(func() { newDB.Close() })
+		server.db = newDB
+
+		// Second call should succeed and cache
+		id2 := server.getMachineID()
+		if id2 == "" {
+			t.Fatal("Expected non-empty machine ID after DB recovery")
+		}
+
+		// Verify it's now cached
+		server.machineIDMu.Lock()
+		cachedID := server.machineID
+		server.machineIDMu.Unlock()
+		if cachedID != id2 {
+			t.Errorf("Expected cached ID %q, got %q", id2, cachedID)
+		}
+
+		// Third call should return cached value
+		id3 := server.getMachineID()
+		if id3 != id2 {
+			t.Errorf("Expected cached ID %q on third call, got %q", id2, id3)
+		}
+	})
+}

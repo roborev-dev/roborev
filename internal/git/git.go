@@ -722,3 +722,51 @@ func ResetWorkingTree(repoPath string) error {
 	}
 	return nil
 }
+
+// GetRemoteURL returns the URL for a git remote.
+// If remoteName is empty, tries "origin" first, then any other remote.
+// Returns empty string if no remotes exist.
+func GetRemoteURL(repoPath, remoteName string) string {
+	if remoteName == "" {
+		// Try origin first
+		url := getRemoteURLByName(repoPath, "origin")
+		if url != "" {
+			return url
+		}
+		// Fall back to any remote
+		return getAnyRemoteURL(repoPath)
+	}
+	return getRemoteURLByName(repoPath, remoteName)
+}
+
+func getRemoteURLByName(repoPath, name string) string {
+	cmd := exec.Command("git", "remote", "get-url", name)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func getAnyRemoteURL(repoPath string) string {
+	// List all remotes
+	cmd := exec.Command("git", "remote")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	remotes := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, remote := range remotes {
+		if remote == "" {
+			continue
+		}
+		url := getRemoteURLByName(repoPath, remote)
+		if url != "" {
+			return url
+		}
+	}
+	return ""
+}

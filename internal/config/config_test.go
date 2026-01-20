@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -532,6 +533,143 @@ excluded_branches = ["wip"]
 	})
 }
 
+func TestSyncConfigPostgresURLExpanded(t *testing.T) {
+	t.Run("empty URL returns empty", func(t *testing.T) {
+		cfg := SyncConfig{}
+		if got := cfg.PostgresURLExpanded(); got != "" {
+			t.Errorf("Expected empty string, got %q", got)
+		}
+	})
+
+	t.Run("URL without env vars unchanged", func(t *testing.T) {
+		cfg := SyncConfig{PostgresURL: "postgres://user:pass@localhost:5432/db"}
+		if got := cfg.PostgresURLExpanded(); got != cfg.PostgresURL {
+			t.Errorf("Expected %q, got %q", cfg.PostgresURL, got)
+		}
+	})
+
+	t.Run("URL with env var is expanded", func(t *testing.T) {
+		os.Setenv("TEST_PG_PASS", "secret123")
+		defer os.Unsetenv("TEST_PG_PASS")
+
+		cfg := SyncConfig{PostgresURL: "postgres://user:${TEST_PG_PASS}@localhost:5432/db"}
+		expected := "postgres://user:secret123@localhost:5432/db"
+		if got := cfg.PostgresURLExpanded(); got != expected {
+			t.Errorf("Expected %q, got %q", expected, got)
+		}
+	})
+
+	t.Run("missing env var becomes empty", func(t *testing.T) {
+		os.Unsetenv("NONEXISTENT_VAR")
+		cfg := SyncConfig{PostgresURL: "postgres://user:${NONEXISTENT_VAR}@localhost:5432/db"}
+		expected := "postgres://user:@localhost:5432/db"
+		if got := cfg.PostgresURLExpanded(); got != expected {
+			t.Errorf("Expected %q, got %q", expected, got)
+		}
+	})
+}
+
+func TestSyncConfigValidate(t *testing.T) {
+	t.Run("disabled returns no warnings", func(t *testing.T) {
+		cfg := SyncConfig{Enabled: false}
+		warnings := cfg.Validate()
+		if len(warnings) != 0 {
+			t.Errorf("Expected no warnings when disabled, got %v", warnings)
+		}
+	})
+
+	t.Run("enabled without URL warns", func(t *testing.T) {
+		cfg := SyncConfig{Enabled: true, PostgresURL: ""}
+		warnings := cfg.Validate()
+		if len(warnings) != 1 {
+			t.Errorf("Expected 1 warning, got %d", len(warnings))
+		}
+		if !strings.Contains(warnings[0], "postgres_url is not set") {
+			t.Errorf("Expected warning about missing URL, got %q", warnings[0])
+		}
+	})
+
+	t.Run("valid config no warnings", func(t *testing.T) {
+		cfg := SyncConfig{
+			Enabled:     true,
+			PostgresURL: "postgres://user:pass@localhost:5432/db",
+		}
+		warnings := cfg.Validate()
+		if len(warnings) != 0 {
+			t.Errorf("Expected no warnings for valid config, got %v", warnings)
+		}
+	})
+
+	t.Run("unexpanded env var warns", func(t *testing.T) {
+		os.Unsetenv("MISSING_VAR")
+		cfg := SyncConfig{
+			Enabled:     true,
+			PostgresURL: "postgres://user:${MISSING_VAR}@localhost:5432/db",
+		}
+		warnings := cfg.Validate()
+		if len(warnings) != 1 {
+			t.Errorf("Expected 1 warning for unexpanded var, got %d: %v", len(warnings), warnings)
+		}
+		if !strings.Contains(warnings[0], "unexpanded") {
+			t.Errorf("Expected warning about unexpanded vars, got %q", warnings[0])
+		}
+	})
+
+	t.Run("expanded env var no warning", func(t *testing.T) {
+		os.Setenv("TEST_PG_PASS2", "secret")
+		defer os.Unsetenv("TEST_PG_PASS2")
+
+		cfg := SyncConfig{
+			Enabled:     true,
+			PostgresURL: "postgres://user:${TEST_PG_PASS2}@localhost:5432/db",
+		}
+		warnings := cfg.Validate()
+		if len(warnings) != 0 {
+			t.Errorf("Expected no warnings when env var is set, got %v", warnings)
+		}
+	})
+}
+
+func TestLoadGlobalWithSyncConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	configContent := `
+default_agent = "codex"
+
+[sync]
+enabled = true
+postgres_url = "postgres://roborev:pass@localhost:5432/roborev"
+interval = "10m"
+machine_name = "test-machine"
+connect_timeout = "10s"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := LoadGlobalFrom(configPath)
+	if err != nil {
+		t.Fatalf("LoadGlobalFrom failed: %v", err)
+	}
+
+	if !cfg.Sync.Enabled {
+		t.Error("Expected Sync.Enabled to be true")
+	}
+	if cfg.Sync.PostgresURL != "postgres://roborev:pass@localhost:5432/roborev" {
+		t.Errorf("Unexpected PostgresURL: %s", cfg.Sync.PostgresURL)
+	}
+	if cfg.Sync.Interval != "10m" {
+		t.Errorf("Expected Interval '10m', got '%s'", cfg.Sync.Interval)
+	}
+	if cfg.Sync.MachineName != "test-machine" {
+		t.Errorf("Expected MachineName 'test-machine', got '%s'", cfg.Sync.MachineName)
+	}
+	if cfg.Sync.ConnectTimeout != "10s" {
+		t.Errorf("Expected ConnectTimeout '10s', got '%s'", cfg.Sync.ConnectTimeout)
+	}
+}
+
 func TestGetDisplayName(t *testing.T) {
 	t.Run("no config file", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -585,6 +723,207 @@ excluded_branches = ["wip"]
 		name := GetDisplayName(tmpDir)
 		if name != "Backend Service" {
 			t.Errorf("Expected display name 'Backend Service', got '%s'", name)
+		}
+	})
+}
+
+func TestValidateRoborevID(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		{"valid simple", "my-project", false},
+		{"valid with dots", "my.project.name", false},
+		{"valid with underscores", "my_project_name", false},
+		{"valid with colons", "org:my-project", false},
+		{"valid with slashes", "org/repo/name", false},
+		{"valid with at", "user@host", false},
+		{"valid URL-like", "github.com/user/repo", false},
+		{"valid numeric start", "123project", false},
+		{"empty", "", true},
+		{"whitespace only", "   ", true},
+		{"starts with dot", ".hidden", true},
+		{"starts with dash", "-invalid", true},
+		{"starts with underscore", "_invalid", true},
+		{"contains spaces", "my project", true},
+		{"contains newline", "my\nproject", true},
+		{"too long", strings.Repeat("a", 257), true},
+		{"max length", strings.Repeat("a", 256), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errMsg := ValidateRoborevID(tt.id)
+			gotErr := errMsg != ""
+			if gotErr != tt.wantErr {
+				t.Errorf("ValidateRoborevID(%q) error = %q, wantErr = %v", tt.id, errMsg, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestReadRoborevID(t *testing.T) {
+	t.Run("file does not exist", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		id, err := ReadRoborevID(tmpDir)
+		if err != nil {
+			t.Errorf("Expected no error for missing file, got: %v", err)
+		}
+		if id != "" {
+			t.Errorf("Expected empty ID for missing file, got: %q", id)
+		}
+	})
+
+	t.Run("valid file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-project\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := ReadRoborevID(tmpDir)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if id != "my-project" {
+			t.Errorf("Expected 'my-project', got: %q", id)
+		}
+	})
+
+	t.Run("valid file with whitespace", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("  my-project  \n\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := ReadRoborevID(tmpDir)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if id != "my-project" {
+			t.Errorf("Expected 'my-project', got: %q", id)
+		}
+	})
+
+	t.Run("invalid file content", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid-start"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := ReadRoborevID(tmpDir)
+		if err == nil {
+			t.Error("Expected error for invalid content")
+		}
+		if id != "" {
+			t.Errorf("Expected empty ID on error, got: %q", id)
+		}
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(""), 0644); err != nil {
+			t.Fatal(err)
+		}
+		id, err := ReadRoborevID(tmpDir)
+		if err == nil {
+			t.Error("Expected error for empty file")
+		}
+		if id != "" {
+			t.Errorf("Expected empty ID on error, got: %q", id)
+		}
+	})
+}
+
+func TestResolveRepoIdentity(t *testing.T) {
+	t.Run("uses roborev-id when present", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-custom-id"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		mockRemote := func(repoPath, remoteName string) string {
+			return "https://github.com/user/repo.git"
+		}
+
+		id := ResolveRepoIdentity(tmpDir, mockRemote)
+		if id != "my-custom-id" {
+			t.Errorf("Expected 'my-custom-id', got: %q", id)
+		}
+	})
+
+	t.Run("falls back to git remote when no roborev-id", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		mockRemote := func(repoPath, remoteName string) string {
+			return "https://github.com/user/repo.git"
+		}
+
+		id := ResolveRepoIdentity(tmpDir, mockRemote)
+		if id != "https://github.com/user/repo.git" {
+			t.Errorf("Expected git remote URL, got: %q", id)
+		}
+	})
+
+	t.Run("falls back to local path when no remote", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		mockRemote := func(repoPath, remoteName string) string {
+			return ""
+		}
+
+		id := ResolveRepoIdentity(tmpDir, mockRemote)
+		expected := "local://" + tmpDir
+		if id != expected {
+			t.Errorf("Expected %q, got: %q", expected, id)
+		}
+	})
+
+	t.Run("uses default git.GetRemoteURL when getRemoteURL is nil", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Initialize a git repo with a remote
+		cmds := [][]string{
+			{"git", "init"},
+			{"git", "remote", "add", "origin", "https://github.com/test/repo.git"},
+		}
+		for _, args := range cmds {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = tmpDir
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("Failed to run %v: %v", args, err)
+			}
+		}
+
+		// With nil getRemoteURL, should use git.GetRemoteURL and find the remote
+		id := ResolveRepoIdentity(tmpDir, nil)
+		if id != "https://github.com/test/repo.git" {
+			t.Errorf("Expected 'https://github.com/test/repo.git', got: %q", id)
+		}
+	})
+
+	t.Run("falls back to local path when nil and no git remote", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// With nil getRemoteURL and no git repo, should fall back to local path
+		id := ResolveRepoIdentity(tmpDir, nil)
+		expected := "local://" + tmpDir
+		if id != expected {
+			t.Errorf("Expected %q, got: %q", expected, id)
+		}
+	})
+
+	t.Run("skips invalid roborev-id and uses remote", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		// Write invalid content (starts with dot)
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		mockRemote := func(repoPath, remoteName string) string {
+			return "https://github.com/user/repo.git"
+		}
+
+		id := ResolveRepoIdentity(tmpDir, mockRemote)
+		if id != "https://github.com/user/repo.git" {
+			t.Errorf("Expected git remote URL when roborev-id is invalid, got: %q", id)
 		}
 	})
 }

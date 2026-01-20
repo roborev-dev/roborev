@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wesm/roborev/internal/agent"
@@ -25,6 +26,11 @@ type Server struct {
 	broadcaster Broadcaster
 	workerPool  *WorkerPool
 	httpServer  *http.Server
+	syncWorker  *storage.SyncWorker
+
+	// Cached machine ID to avoid INSERT on every status request
+	machineIDMu sync.Mutex
+	machineID   string
 }
 
 // NewServer creates a new daemon server
@@ -52,6 +58,7 @@ func NewServer(db *storage.DB, cfg *config.Config) *Server {
 	mux.HandleFunc("/api/responses", s.handleListResponses)
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stream/events", s.handleStreamEvents)
+	mux.HandleFunc("/api/sync/now", s.handleSyncNow)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
@@ -108,6 +115,45 @@ func (s *Server) Stop() error {
 	s.workerPool.Stop()
 
 	return nil
+}
+
+// SetSyncWorker sets the sync worker for triggering manual syncs
+func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
+	s.syncWorker = sw
+}
+
+// handleSyncNow triggers an immediate sync cycle
+func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.syncWorker == nil {
+		http.Error(w, "Sync not enabled", http.StatusNotFound)
+		return
+	}
+
+	stats, err := s.syncWorker.SyncNow()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Sync completed",
+		"pushed": map[string]int{
+			"jobs":      stats.PushedJobs,
+			"reviews":   stats.PushedReviews,
+			"responses": stats.PushedResponses,
+		},
+		"pulled": map[string]int{
+			"jobs":      stats.PulledJobs,
+			"reviews":   stats.PulledReviews,
+			"responses": stats.PulledResponses,
+		},
+	})
 }
 
 // API request/response types
@@ -198,8 +244,11 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get or create repo (uses main repo root for identity)
-	repo, err := s.db.GetOrCreateRepo(repoRoot)
+	// Resolve repo identity for sync
+	repoIdentity := config.ResolveRepoIdentity(repoRoot, nil)
+
+	// Get or create repo with identity
+	repo, err := s.db.GetOrCreateRepo(repoRoot, repoIdentity)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get repo: %v", err))
 		return
@@ -616,6 +665,23 @@ func (s *Server) handleListResponses(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"responses": responses})
 }
 
+// getMachineID returns the cached machine ID, fetching it on first successful call.
+// Retries on each call until successful to handle transient DB errors.
+func (s *Server) getMachineID() string {
+	s.machineIDMu.Lock()
+	defer s.machineIDMu.Unlock()
+
+	if s.machineID != "" {
+		return s.machineID
+	}
+
+	// Try to fetch - only cache on success
+	if id, err := s.db.GetMachineID(); err == nil && id != "" {
+		s.machineID = id
+	}
+	return s.machineID
+}
+
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -637,6 +703,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		CanceledJobs:  canceled,
 		ActiveWorkers: s.workerPool.ActiveWorkers(),
 		MaxWorkers:    s.cfg.MaxWorkers,
+		MachineID:     s.getMachineID(),
 	}
 
 	writeJSON(w, http.StatusOK, status)

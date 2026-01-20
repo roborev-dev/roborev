@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -63,6 +66,7 @@ func main() {
 	rootCmd.AddCommand(promptCmd())
 	rootCmd.AddCommand(repoCmd())
 	rootCmd.AddCommand(skillsCmd())
+	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())
 
@@ -143,13 +147,13 @@ func startDaemon() error {
 		fmt.Println("Starting daemon...")
 	}
 
-	roborevdPath, err := exec.LookPath("roborevd")
+	// Use the current executable with "daemon run" subcommand
+	exe, err := os.Executable()
 	if err != nil {
-		exe, _ := os.Executable()
-		roborevdPath = filepath.Join(filepath.Dir(exe), "roborevd")
+		return fmt.Errorf("failed to find executable: %w", err)
 	}
 
-	cmd := exec.Command(roborevdPath)
+	cmd := exec.Command(exe, "daemon", "run")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
@@ -174,32 +178,48 @@ func startDaemon() error {
 	return fmt.Errorf("daemon failed to start")
 }
 
-// stopDaemon stops the running daemon using PID from daemon.json
+// ErrDaemonNotRunning indicates no daemon runtime file was found
+var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)")
+
+// stopDaemon stops the running daemon using PID from daemon.json.
+// Returns ErrDaemonNotRunning if the runtime file is missing.
+// For corrupted/malformed files (JSON parse errors), removes them and returns ErrDaemonNotRunning.
+// Propagates permission/IO errors to the caller.
 func stopDaemon() error {
 	info, err := daemon.ReadRuntime()
-	if err == nil && info.PID > 0 {
-		// Kill by specific PID
-		if runtime.GOOS == "windows" {
-			exec.Command("taskkill", "/PID", fmt.Sprintf("%d", info.PID), "/F").Run()
-		} else {
-			// Send SIGTERM first for graceful shutdown
-			exec.Command("kill", "-TERM", fmt.Sprintf("%d", info.PID)).Run()
-			time.Sleep(500 * time.Millisecond)
-			// Then SIGKILL to ensure it's dead
-			exec.Command("kill", "-KILL", fmt.Sprintf("%d", info.PID)).Run()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ErrDaemonNotRunning
 		}
-		// Clean up runtime file
-		daemon.RemoveRuntime()
-	} else {
-		// Fallback to pkill if no PID file (shouldn't happen normally)
-		if runtime.GOOS == "windows" {
-			exec.Command("taskkill", "/IM", "roborevd.exe", "/F").Run()
-		} else {
-			exec.Command("pkill", "-TERM", "-x", "roborevd").Run()
-			time.Sleep(500 * time.Millisecond)
-			exec.Command("pkill", "-KILL", "-x", "roborevd").Run()
+		// Check if it's a JSON parse error (corrupted file)
+		// This includes SyntaxError, UnmarshalTypeError, and UnexpectedEOF (truncated files)
+		var syntaxErr *json.SyntaxError
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+			// Corrupted file - remove it and treat as not running
+			daemon.RemoveRuntime()
+			return ErrDaemonNotRunning
 		}
+		// Permission/IO error - propagate to caller
+		return fmt.Errorf("failed to read daemon runtime file: %w", err)
 	}
+	if info.PID <= 0 {
+		daemon.RemoveRuntime() // Clean up invalid runtime file
+		return ErrDaemonNotRunning
+	}
+
+	// Kill by specific PID (works regardless of process name)
+	if runtime.GOOS == "windows" {
+		exec.Command("taskkill", "/PID", fmt.Sprintf("%d", info.PID), "/F").Run()
+	} else {
+		// Send SIGTERM first for graceful shutdown
+		exec.Command("kill", "-TERM", fmt.Sprintf("%d", info.PID)).Run()
+		time.Sleep(500 * time.Millisecond)
+		// Then SIGKILL to ensure it's dead
+		exec.Command("kill", "-KILL", fmt.Sprintf("%d", info.PID)).Run()
+	}
+	// Clean up runtime file
+	daemon.RemoveRuntime()
 	time.Sleep(500 * time.Millisecond)
 	return nil
 }
@@ -367,7 +387,12 @@ func daemonCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			stopDaemon()
+			if err := stopDaemon(); err == ErrDaemonNotRunning {
+				fmt.Println("Daemon was not running")
+				return nil
+			} else if err != nil {
+				return err
+			}
 			fmt.Println("Daemon stopped")
 			return nil
 		},
@@ -377,14 +402,139 @@ func daemonCmd() *cobra.Command {
 		Use:   "restart",
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			stopDaemon()
+			wasRunning := true
+			if err := stopDaemon(); err == ErrDaemonNotRunning {
+				wasRunning = false
+			} else if err != nil {
+				return err
+			}
 			if err := ensureDaemon(); err != nil {
 				return err
 			}
-			fmt.Println("Daemon restarted")
+			if wasRunning {
+				fmt.Println("Daemon restarted")
+			} else {
+				fmt.Println("Daemon started (was not running)")
+			}
 			return nil
 		},
 	})
+
+	cmd.AddCommand(daemonRunCmd())
+
+	return cmd
+}
+
+// daemonRunCmd runs the daemon in the foreground (used by "daemon start" internally)
+func daemonRunCmd() *cobra.Command {
+	var (
+		dbPath     string
+		configPath string
+		addr       string
+		workers    int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run the daemon in foreground",
+		Long:  "Run the daemon in the foreground. Usually invoked by 'daemon start' in the background.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+			log.Println("Starting roborev daemon...")
+
+			// Silently clean up old roborevd binary if it exists (consolidated into roborev)
+			if exePath, err := os.Executable(); err == nil {
+				oldDaemonPath := filepath.Join(filepath.Dir(exePath), "roborevd")
+				if runtime.GOOS == "windows" {
+					oldDaemonPath += ".exe"
+				}
+				os.Remove(oldDaemonPath) // Ignore errors silently
+			}
+
+			// Load configuration from specified path
+			cfg, err := config.LoadGlobalFrom(configPath)
+			if err != nil {
+				log.Printf("Warning: failed to load config from %s: %v", configPath, err)
+				cfg = config.DefaultConfig()
+			}
+
+			// Apply flag overrides
+			if addr != "" {
+				cfg.ServerAddr = addr
+			}
+			if workers > 0 {
+				cfg.MaxWorkers = workers
+			}
+
+			// Open database
+			db, err := storage.Open(dbPath)
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer db.Close()
+			log.Printf("Database: %s", dbPath)
+
+			// Start sync worker if enabled
+			var syncWorker *storage.SyncWorker
+			if cfg.Sync.Enabled {
+				// Validate sync config
+				warnings := cfg.Sync.Validate()
+				for _, w := range warnings {
+					log.Printf("Sync warning: %s", w)
+				}
+
+				// Backfill machine IDs on existing rows
+				if err := db.BackfillSourceMachineID(); err != nil {
+					log.Printf("Warning: failed to backfill source_machine_id: %v", err)
+				}
+
+				syncWorker = storage.NewSyncWorker(db, cfg.Sync)
+				if err := syncWorker.Start(); err != nil {
+					log.Printf("Warning: failed to start sync worker: %v", err)
+				} else {
+					log.Printf("Sync worker started (interval: %s)", cfg.Sync.Interval)
+				}
+			}
+
+			// Create and start server
+			server := daemon.NewServer(db, cfg)
+			if syncWorker != nil {
+				server.SetSyncWorker(syncWorker)
+			}
+
+			// Handle shutdown signals
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, os.Interrupt)
+			if runtime.GOOS != "windows" {
+				// SIGTERM is not available on Windows
+				signal.Notify(sigCh, os.Signal(syscall.Signal(15))) // SIGTERM
+			}
+
+			go func() {
+				sig := <-sigCh
+				log.Printf("Received signal %v, shutting down...", sig)
+				if syncWorker != nil {
+					// Final push before shutdown to ensure local changes are synced
+					if err := syncWorker.FinalPush(); err != nil {
+						log.Printf("Final sync push error: %v", err)
+					}
+					syncWorker.Stop()
+				}
+				if err := server.Stop(); err != nil {
+					log.Printf("Shutdown error: %v", err)
+				}
+				os.Exit(0)
+			}()
+
+			// Start server (blocks until shutdown)
+			return server.Start()
+		},
+	}
+
+	cmd.Flags().StringVar(&dbPath, "db", storage.DefaultDBPath(), "path to sqlite database")
+	cmd.Flags().StringVar(&configPath, "config", config.GlobalConfigPath(), "path to config file")
+	cmd.Flags().StringVar(&addr, "addr", "", "server address (overrides config)")
+	cmd.Flags().IntVar(&workers, "workers", 0, "number of workers (overrides config)")
 
 	return cmd
 }
@@ -855,8 +1005,13 @@ func statusCmd() *cobra.Command {
 							elapsed = time.Since(*j.StartedAt).Round(time.Second).String() + "..."
 						}
 					}
+					// Show [remote] indicator for jobs from other machines
+					repoDisplay := j.RepoName
+					if status.MachineID != "" && j.SourceMachineID != "" && j.SourceMachineID != status.MachineID {
+						repoDisplay += " [remote]"
+					}
 					fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\n",
-						j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status, elapsed)
+						j.ID, shortRef(j.GitRef), repoDisplay, j.Agent, j.Status, elapsed)
 				}
 				w.Flush()
 			}
@@ -1771,6 +1926,20 @@ Requires confirmation before making changes (use --yes to skip).`,
 
 			fmt.Printf("\nUpdated to %s\n", info.LatestVersion)
 
+			// Clean up old roborevd binary if it exists (consolidated into roborev)
+			oldDaemonPath := filepath.Join(binDir, "roborevd")
+			if runtime.GOOS == "windows" {
+				oldDaemonPath += ".exe"
+			}
+			if _, err := os.Stat(oldDaemonPath); err == nil {
+				fmt.Print("Removing old roborevd binary... ")
+				if err := os.Remove(oldDaemonPath); err != nil {
+					fmt.Printf("warning: %v\n", err)
+				} else {
+					fmt.Println("OK")
+				}
+			}
+
 			// Restart daemon if running
 			if daemonInfo, err := daemon.ReadRuntime(); err == nil && daemonInfo != nil {
 				fmt.Print("Restarting daemon... ")
@@ -1784,12 +1953,12 @@ Requires confirmation before making changes (use --yes to skip).`,
 				}
 				time.Sleep(500 * time.Millisecond)
 
-				// Start new daemon
-				daemonPath := filepath.Join(binDir, "roborevd")
+				// Start new daemon using "roborev daemon run"
+				newBinary := filepath.Join(binDir, "roborev")
 				if runtime.GOOS == "windows" {
-					daemonPath += ".exe"
+					newBinary += ".exe"
 				}
-				startCmd := exec.Command(daemonPath)
+				startCmd := exec.Command(newBinary, "daemon", "run")
 				if err := startCmd.Start(); err != nil {
 					fmt.Printf("warning: failed to start daemon: %v\n", err)
 				} else {
@@ -1830,6 +1999,173 @@ Requires confirmation before making changes (use --yes to skip).`,
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 
 	return cmd
+}
+
+func syncCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Manage PostgreSQL sync",
+		Long:  "Commands for managing synchronization with a PostgreSQL database.",
+	}
+
+	cmd.AddCommand(syncStatusCmd())
+	cmd.AddCommand(syncNowCmd())
+
+	return cmd
+}
+
+func syncStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show sync status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Load config
+			cfg, err := config.LoadGlobal()
+			if err != nil {
+				cfg = config.DefaultConfig()
+			}
+
+			if !cfg.Sync.Enabled {
+				fmt.Println("Sync: disabled")
+				fmt.Println()
+				fmt.Println("Enable in ~/.roborev/config.toml:")
+				fmt.Println("  [sync]")
+				fmt.Println("  enabled = true")
+				fmt.Println("  postgres_url = \"postgres://...\"")
+				return nil
+			}
+
+			fmt.Println("Sync: enabled")
+			fmt.Printf("Interval: %s\n", cfg.Sync.Interval)
+			if cfg.Sync.MachineName != "" {
+				fmt.Printf("Machine name: %s\n", cfg.Sync.MachineName)
+			}
+
+			// Validate config
+			warnings := cfg.Sync.Validate()
+			for _, w := range warnings {
+				fmt.Printf("Warning: %s\n", w)
+			}
+
+			// Open database to check pending items
+			db, err := storage.Open(storage.DefaultDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer db.Close()
+
+			machineID, err := db.GetMachineID()
+			if err != nil {
+				return fmt.Errorf("failed to get machine ID: %w", err)
+			}
+			fmt.Printf("Machine ID: %s\n", machineID)
+
+			// Count pending items
+			const maxPending = 1000
+			jobs, jobsErr := db.GetJobsToSync(machineID, maxPending)
+			reviews, reviewsErr := db.GetReviewsToSync(machineID, maxPending)
+			responses, responsesErr := db.GetResponsesToSync(machineID, maxPending)
+
+			fmt.Println()
+			if jobsErr != nil || reviewsErr != nil || responsesErr != nil {
+				fmt.Println("Warning: could not count all pending items")
+			}
+
+			// Format counts with >= indicator when hitting the cap
+			formatCount := func(count int) string {
+				if count >= maxPending {
+					return fmt.Sprintf(">=%d", count)
+				}
+				return fmt.Sprintf("%d", count)
+			}
+			fmt.Printf("Pending push: %s jobs, %s reviews, %s responses\n",
+				formatCount(len(jobs)), formatCount(len(reviews)), formatCount(len(responses)))
+
+			// Try to connect to PostgreSQL
+			fmt.Println()
+			fmt.Print("PostgreSQL: ")
+			url := cfg.Sync.PostgresURLExpanded()
+			if url == "" {
+				fmt.Println("not configured")
+				return nil
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			pgCfg := storage.DefaultPgPoolConfig()
+			pgCfg.ConnectTimeout = 5 * time.Second
+			pool, err := storage.NewPgPool(ctx, url, pgCfg)
+			if err != nil {
+				fmt.Printf("connection failed (%v)\n", err)
+				return nil
+			}
+			defer pool.Close()
+
+			fmt.Println("connected")
+
+			return nil
+		},
+	}
+}
+
+func syncNowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "now",
+		Short: "Trigger immediate sync",
+		Long:  "Triggers an immediate sync cycle. Requires the daemon to be running with sync enabled.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Check daemon is running
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("daemon not running: %w", err)
+			}
+
+			addr := getDaemonAddr()
+			client := &http.Client{Timeout: 30 * time.Second}
+
+			resp, err := client.Post(addr+"/api/sync/now", "application/json", nil)
+			if err != nil {
+				return fmt.Errorf("failed to trigger sync: %w", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusNotFound {
+				fmt.Println("Sync not enabled on daemon")
+				return nil
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("sync failed: %s", string(body))
+			}
+
+			var result struct {
+				Message string `json:"message"`
+				Pushed  struct {
+					Jobs      int `json:"jobs"`
+					Reviews   int `json:"reviews"`
+					Responses int `json:"responses"`
+				} `json:"pushed"`
+				Pulled struct {
+					Jobs      int `json:"jobs"`
+					Reviews   int `json:"reviews"`
+					Responses int `json:"responses"`
+				} `json:"pulled"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				fmt.Println("Sync triggered")
+				return nil
+			}
+
+			fmt.Println("Sync completed")
+			fmt.Printf("Pushed: %d jobs, %d reviews, %d responses\n",
+				result.Pushed.Jobs, result.Pushed.Reviews, result.Pushed.Responses)
+			fmt.Printf("Pulled: %d jobs, %d reviews, %d responses\n",
+				result.Pulled.Jobs, result.Pulled.Reviews, result.Pulled.Responses)
+
+			return nil
+		},
+	}
 }
 
 func versionCmd() *cobra.Command {

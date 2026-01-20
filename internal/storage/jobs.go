@@ -542,22 +542,30 @@ func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, agent, reasoning string
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, ?, ?, ?, ?, 'queued')`,
-		repoID, commitID, gitRef, agent, reasoning)
+	uuid := GenerateUUID()
+	machineID, _ := db.GetMachineID()
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, uuid, source_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+		repoID, commitID, gitRef, agent, reasoning, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
 
 	id, _ := result.LastInsertId()
 	return &ReviewJob{
-		ID:         id,
-		RepoID:     repoID,
-		CommitID:   &commitID,
-		GitRef:     gitRef,
-		Agent:      agent,
-		Reasoning:  reasoning,
-		Status:     JobStatusQueued,
-		EnqueuedAt: time.Now(),
+		ID:              id,
+		RepoID:          repoID,
+		CommitID:        &commitID,
+		GitRef:          gitRef,
+		Agent:           agent,
+		Reasoning:       reasoning,
+		Status:          JobStatusQueued,
+		EnqueuedAt:      now,
+		UUID:            uuid,
+		SourceMachineID: machineID,
+		UpdatedAt:       &now,
 	}, nil
 }
 
@@ -566,22 +574,30 @@ func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent, reasoning string) (*R
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, NULL, ?, ?, ?, 'queued')`,
-		repoID, gitRef, agent, reasoning)
+	uuid := GenerateUUID()
+	machineID, _ := db.GetMachineID()
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, 'queued', ?, ?, ?)`,
+		repoID, gitRef, agent, reasoning, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
 
 	id, _ := result.LastInsertId()
 	return &ReviewJob{
-		ID:         id,
-		RepoID:     repoID,
-		CommitID:   nil,
-		GitRef:     gitRef,
-		Agent:      agent,
-		Reasoning:  reasoning,
-		Status:     JobStatusQueued,
-		EnqueuedAt: time.Now(),
+		ID:              id,
+		RepoID:          repoID,
+		CommitID:        nil,
+		GitRef:          gitRef,
+		Agent:           agent,
+		Reasoning:       reasoning,
+		Status:          JobStatusQueued,
+		EnqueuedAt:      now,
+		UUID:            uuid,
+		SourceMachineID: machineID,
+		UpdatedAt:       &now,
 	}, nil
 }
 
@@ -591,23 +607,31 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, reasoning, diffConten
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, diff_content) VALUES (?, NULL, ?, ?, ?, 'queued', ?)`,
-		repoID, gitRef, agent, reasoning, diffContent)
+	uuid := GenerateUUID()
+	machineID, _ := db.GetMachineID()
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, diff_content, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+		repoID, gitRef, agent, reasoning, diffContent, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
 
 	id, _ := result.LastInsertId()
 	return &ReviewJob{
-		ID:          id,
-		RepoID:      repoID,
-		CommitID:    nil,
-		GitRef:      gitRef,
-		Agent:       agent,
-		Reasoning:   reasoning,
-		Status:      JobStatusQueued,
-		EnqueuedAt:  time.Now(),
-		DiffContent: &diffContent,
+		ID:              id,
+		RepoID:          repoID,
+		CommitID:        nil,
+		GitRef:          gitRef,
+		Agent:           agent,
+		Reasoning:       reasoning,
+		Status:          JobStatusQueued,
+		EnqueuedAt:      now,
+		DiffContent:     &diffContent,
+		UUID:            uuid,
+		SourceMachineID: machineID,
+		UpdatedAt:       &now,
 	}, nil
 }
 
@@ -622,24 +646,32 @@ func (db *DB) EnqueuePromptJob(repoID int64, agent, reasoning, customPrompt stri
 	if agentic {
 		agenticInt = 1
 	}
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, prompt, agentic) VALUES (?, NULL, 'prompt', ?, ?, 'queued', ?, ?)`,
-		repoID, agent, reasoning, customPrompt, agenticInt)
+	uuid := GenerateUUID()
+	machineID, _ := db.GetMachineID()
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status, prompt, agentic, uuid, source_machine_id, updated_at) VALUES (?, NULL, 'prompt', ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+		repoID, agent, reasoning, customPrompt, agenticInt, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
 
 	id, _ := result.LastInsertId()
 	return &ReviewJob{
-		ID:         id,
-		RepoID:     repoID,
-		CommitID:   nil,
-		GitRef:     "prompt",
-		Agent:      agent,
-		Reasoning:  reasoning,
-		Status:     JobStatusQueued,
-		EnqueuedAt: time.Now(),
-		Prompt:     customPrompt,
-		Agentic:    agentic,
+		ID:              id,
+		RepoID:          repoID,
+		CommitID:        nil,
+		GitRef:          "prompt",
+		Agent:           agent,
+		Reasoning:       reasoning,
+		Status:          JobStatusQueued,
+		EnqueuedAt:      now,
+		Prompt:          customPrompt,
+		Agentic:         agentic,
+		UUID:            uuid,
+		SourceMachineID: machineID,
+		UpdatedAt:       &now,
 	}, nil
 }
 
@@ -652,14 +684,14 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	// This prevents race conditions where two workers select the same job
 	result, err := db.Exec(`
 		UPDATE review_jobs
-		SET status = 'running', worker_id = ?, started_at = ?
+		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?
 		WHERE id = (
 			SELECT id FROM review_jobs
 			WHERE status = 'queued'
 			ORDER BY enqueued_at
 			LIMIT 1
 		)
-	`, workerID, nowStr)
+	`, workerID, nowStr, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -732,9 +764,11 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	defer tx.Rollback()
 
 	now := time.Now().Format(time.RFC3339)
+	machineID, _ := db.GetMachineID()
+	reviewUUID := GenerateUUID()
 
 	// Update job status only if still running (not canceled)
-	result, err := tx.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ? WHERE id = ? AND status = 'running'`, now, jobID)
+	result, err := tx.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
 	if err != nil {
 		return err
 	}
@@ -749,9 +783,9 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 		return nil
 	}
 
-	// Insert review
-	_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, prompt, output) VALUES (?, ?, ?, ?)`,
-		jobID, agent, prompt, output)
+	// Insert review with sync columns
+	_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, output, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}
@@ -763,8 +797,8 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 // Only updates if job is still in 'running' state (respects cancellation).
 func (db *DB) FailJob(jobID int64, errorMsg string) error {
 	now := time.Now().Format(time.RFC3339)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ? WHERE id = ? AND status = 'running'`,
-		now, errorMsg, jobID)
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
+		now, errorMsg, now, jobID)
 	return err
 }
 
@@ -773,9 +807,9 @@ func (db *DB) CancelJob(jobID int64) error {
 	now := time.Now().Format(time.RFC3339)
 	result, err := db.Exec(`
 		UPDATE review_jobs
-		SET status = 'canceled', finished_at = ?
+		SET status = 'canceled', finished_at = ?, updated_at = ?
 		WHERE id = ? AND status IN ('queued', 'running')
-	`, now, jobID)
+	`, now, now, jobID)
 	if err != nil {
 		return err
 	}
@@ -860,7 +894,8 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
-		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.addressed, rv.output
+		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.addressed, rv.output,
+		       j.source_machine_id, j.uuid
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -908,7 +943,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var addressed sql.NullInt64
@@ -916,11 +951,15 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 
 		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
-			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &addressed, &output)
+			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &addressed, &output,
+			&sourceMachineID, &jobUUID)
 		if err != nil {
 			return nil, err
 		}
 
+		if jobUUID.Valid {
+			j.UUID = jobUUID.String
+		}
 		if commitID.Valid {
 			j.CommitID = &commitID.Int64
 		}
@@ -945,6 +984,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		if prompt.Valid {
 			j.Prompt = prompt.String
+		}
+		if sourceMachineID.Valid {
+			j.SourceMachineID = sourceMachineID.String
 		}
 		if addressed.Valid {
 			val := addressed.Int64 != 0

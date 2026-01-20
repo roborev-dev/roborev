@@ -12,12 +12,12 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var addressed int
 	var job ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, reviewUUID sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 
 	err := db.QueryRow(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed,
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error,
 		       rp.root_path, rp.name, c.subject
@@ -26,7 +26,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		JOIN repos rp ON rp.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
-	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed,
+	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg,
 		&job.RepoPath, &job.RepoName, &commitSubject)
@@ -34,6 +34,9 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		return nil, err
 	}
 	r.Addressed = addressed != 0
+	if reviewUUID.Valid {
+		r.UUID = reviewUUID.String
+	}
 
 	r.CreatedAt = parseSQLiteTime(createdAt)
 	if commitID.Valid {
@@ -79,13 +82,13 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var addressed int
 	var job ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, reviewUUID sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 
 	// Search by git_ref which contains the SHA for single commits
 	err := db.QueryRow(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed,
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error,
 		       rp.root_path, rp.name, c.subject
@@ -96,7 +99,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		WHERE j.git_ref = ?
 		ORDER BY rv.created_at DESC
 		LIMIT 1
-	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed,
+	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg,
 		&job.RepoPath, &job.RepoName, &commitSubject)
@@ -104,6 +107,9 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		return nil, err
 	}
 	r.Addressed = addressed != 0
+	if reviewUUID.Valid {
+		r.UUID = reviewUUID.String
+	}
 
 	if commitID.Valid {
 		job.CommitID = &commitID.Int64
@@ -180,7 +186,10 @@ func (db *DB) MarkReviewAddressed(reviewID int64, addressed bool) error {
 	if addressed {
 		val = 1
 	}
-	result, err := db.Exec(`UPDATE reviews SET addressed = ? WHERE id = ?`, val, reviewID)
+	now := time.Now().Format(time.RFC3339)
+	machineID, _ := db.GetMachineID()
+
+	result, err := db.Exec(`UPDATE reviews SET addressed = ?, updated_by_machine_id = ?, updated_at = ? WHERE id = ?`, val, machineID, now, reviewID)
 	if err != nil {
 		return err
 	}
@@ -215,19 +224,26 @@ func (db *DB) GetReviewByID(reviewID int64) (*Review, error) {
 
 // AddResponse adds a response to a commit (legacy - use AddResponseToJob for new code)
 func (db *DB) AddResponse(commitID int64, responder, response string) (*Response, error) {
-	result, err := db.Exec(`INSERT INTO responses (commit_id, responder, response) VALUES (?, ?, ?)`,
-		commitID, responder, response)
+	uuid := GenerateUUID()
+	machineID, _ := db.GetMachineID()
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+
+	result, err := db.Exec(`INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		commitID, responder, response, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
 
 	id, _ := result.LastInsertId()
 	return &Response{
-		ID:        id,
-		CommitID:  &commitID,
-		Responder: responder,
-		Response:  response,
-		CreatedAt: time.Now(),
+		ID:              id,
+		CommitID:        &commitID,
+		Responder:       responder,
+		Response:        response,
+		CreatedAt:       now,
+		UUID:            uuid,
+		SourceMachineID: machineID,
 	}, nil
 }
 
@@ -243,19 +259,26 @@ func (db *DB) AddResponseToJob(jobID int64, responder, response string) (*Respon
 		return nil, err
 	}
 
-	result, err := db.Exec(`INSERT INTO responses (job_id, responder, response) VALUES (?, ?, ?)`,
-		jobID, responder, response)
+	uuid := GenerateUUID()
+	machineID, _ := db.GetMachineID()
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+
+	result, err := db.Exec(`INSERT INTO responses (job_id, responder, response, uuid, source_machine_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		jobID, responder, response, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
 
 	id, _ := result.LastInsertId()
 	return &Response{
-		ID:        id,
-		JobID:     &jobID,
-		Responder: responder,
-		Response:  response,
-		CreatedAt: time.Now(),
+		ID:              id,
+		JobID:           &jobID,
+		Responder:       responder,
+		Response:        response,
+		CreatedAt:       now,
+		UUID:            uuid,
+		SourceMachineID: machineID,
 	}, nil
 }
 

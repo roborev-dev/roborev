@@ -7,6 +7,7 @@ type Repo struct {
 	RootPath  string    `json:"root_path"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
+	Identity  string    `json:"identity,omitempty"` // Unique identity for sync (git remote URL, .roborev-id, or local path)
 }
 
 type Commit struct {
@@ -47,6 +48,12 @@ type ReviewJob struct {
 	DiffContent *string    `json:"diff_content,omitempty"` // For dirty reviews (uncommitted changes)
 	Agentic     bool       `json:"agentic"`                // Enable agentic mode (allow file edits)
 
+	// Sync fields
+	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
+	SourceMachineID string     `json:"source_machine_id,omitempty"` // Machine that created this job
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`        // Last modification time
+	SyncedAt        *time.Time `json:"synced_at,omitempty"`         // Last sync time
+
 	// Joined fields for convenience
 	RepoPath      string  `json:"repo_path,omitempty"`
 	RepoName      string  `json:"repo_name,omitempty"`
@@ -64,6 +71,12 @@ type Review struct {
 	CreatedAt time.Time `json:"created_at"`
 	Addressed bool      `json:"addressed"`
 
+	// Sync fields
+	UUID               string     `json:"uuid,omitempty"`                  // Globally unique identifier for sync
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`            // Last modification time
+	UpdatedByMachineID string     `json:"updated_by_machine_id,omitempty"` // Machine that last modified this review
+	SyncedAt           *time.Time `json:"synced_at,omitempty"`             // Last sync time
+
 	// Joined fields
 	Job *ReviewJob `json:"job,omitempty"`
 }
@@ -75,6 +88,11 @@ type Response struct {
 	Responder string    `json:"responder"`
 	Response  string    `json:"response"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Sync fields
+	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
+	SourceMachineID string     `json:"source_machine_id,omitempty"` // Machine that created this response
+	SyncedAt        *time.Time `json:"synced_at,omitempty"`         // Last sync time
 }
 
 type DaemonStatus struct {
@@ -86,4 +104,5 @@ type DaemonStatus struct {
 	CanceledJobs  int    `json:"canceled_jobs"`
 	ActiveWorkers int    `json:"active_workers"`
 	MaxWorkers    int    `json:"max_workers"`
+	MachineID     string `json:"machine_id,omitempty"` // Local machine ID for remote job detection
 }

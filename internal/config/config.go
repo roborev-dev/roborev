@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/wesm/roborev/internal/git"
 )
 
 // Config holds the daemon configuration
@@ -24,6 +26,70 @@ type Config struct {
 
 	// API keys (optional - agents use subscription auth by default)
 	AnthropicAPIKey string `toml:"anthropic_api_key"`
+
+	// Sync configuration for PostgreSQL
+	Sync SyncConfig `toml:"sync"`
+}
+
+// SyncConfig holds configuration for PostgreSQL sync
+type SyncConfig struct {
+	// Enabled enables sync to PostgreSQL
+	Enabled bool `toml:"enabled"`
+
+	// PostgresURL is the connection string for PostgreSQL.
+	// Supports environment variable expansion via ${VAR} syntax.
+	PostgresURL string `toml:"postgres_url"`
+
+	// Interval is how often to sync (e.g., "5m", "1h"). Default: 5m
+	Interval string `toml:"interval"`
+
+	// MachineName is a friendly name for this machine (optional)
+	MachineName string `toml:"machine_name"`
+
+	// ConnectTimeout is the connection timeout (e.g., "5s"). Default: 5s
+	ConnectTimeout string `toml:"connect_timeout"`
+}
+
+// PostgresURLExpanded returns the PostgreSQL URL with environment variables expanded.
+// Returns empty string if URL is not set.
+func (c *SyncConfig) PostgresURLExpanded() string {
+	if c.PostgresURL == "" {
+		return ""
+	}
+	return os.ExpandEnv(c.PostgresURL)
+}
+
+// Validate checks the sync configuration for common issues.
+// Returns a list of warnings (non-fatal issues).
+func (c *SyncConfig) Validate() []string {
+	var warnings []string
+
+	if !c.Enabled {
+		return warnings
+	}
+
+	if c.PostgresURL == "" {
+		warnings = append(warnings, "sync.enabled is true but sync.postgres_url is not set")
+		return warnings
+	}
+
+	// Check for environment variable references where the var is not set
+	// os.ExpandEnv replaces ${VAR} with empty string if VAR is not set
+	if strings.Contains(c.PostgresURL, "${") {
+		re := regexp.MustCompile(`\$\{([^}]+)\}`)
+		matches := re.FindAllStringSubmatch(c.PostgresURL, -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				varName := match[1]
+				if os.Getenv(varName) == "" {
+					warnings = append(warnings, "sync.postgres_url may contain unexpanded environment variables")
+					break // Only one warning needed
+				}
+			}
+		}
+	}
+
+	return warnings
 }
 
 // RepoConfig holds per-repo overrides
@@ -222,4 +288,80 @@ func SaveGlobal(cfg *Config) error {
 	defer f.Close()
 
 	return toml.NewEncoder(f).Encode(cfg)
+}
+
+// roborevIDPattern validates .roborev-id content.
+// Must start with alphanumeric, then allows alphanumeric, dots, underscores, hyphens, colons, slashes, at-signs.
+var roborevIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:@/-]*$`)
+
+const roborevIDMaxLength = 256
+
+// ValidateReporevID validates the content of a .roborev-id file.
+// Returns empty string if valid, or an error message if invalid.
+func ValidateRoborevID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "empty after trimming whitespace"
+	}
+	if len(id) > roborevIDMaxLength {
+		return fmt.Sprintf("exceeds max length of %d characters", roborevIDMaxLength)
+	}
+	if !roborevIDPattern.MatchString(id) {
+		return "invalid characters (must start with alphanumeric, then alphanumeric/._:@/-)"
+	}
+	return ""
+}
+
+// ReadRoborevID reads and validates the .roborev-id file from a repo.
+// Returns the ID if valid, empty string if file doesn't exist or is invalid.
+// If invalid, the error describes why.
+func ReadRoborevID(repoPath string) (string, error) {
+	path := filepath.Join(repoPath, ".roborev-id")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read .roborev-id: %w", err)
+	}
+
+	id := strings.TrimSpace(string(content))
+	if validationErr := ValidateRoborevID(id); validationErr != "" {
+		return "", fmt.Errorf("invalid .roborev-id: %s", validationErr)
+	}
+	return id, nil
+}
+
+// ResolveRepoIdentity determines the unique identity for a repository.
+// Resolution order:
+// 1. .roborev-id file in repo root (if exists and valid)
+// 2. Git remote "origin" URL
+// 3. Any git remote URL
+// 4. Fallback: local://{absolute_path}
+//
+// The getRemoteURL parameter allows injection of git remote lookup for testing.
+// Pass nil to use the default git.GetRemoteURL function.
+func ResolveRepoIdentity(repoPath string, getRemoteURL func(repoPath, remoteName string) string) string {
+	// 1. Try .roborev-id file
+	id, err := ReadRoborevID(repoPath)
+	if err == nil && id != "" {
+		return id
+	}
+	// If .roborev-id exists but is invalid, fall through (logged at call site if needed)
+
+	// 2 & 3. Try git remote URL (origin first, then any)
+	if getRemoteURL == nil {
+		getRemoteURL = git.GetRemoteURL
+	}
+	url := getRemoteURL(repoPath, "")
+	if url != "" {
+		return url
+	}
+
+	// 4. Fallback to local path
+	absPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		absPath = repoPath
+	}
+	return "local://" + absPath
 }

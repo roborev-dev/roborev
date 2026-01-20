@@ -1,0 +1,22 @@
+# Docker Compose file for integration testing with PostgreSQL
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#   make test-integration
+#   docker compose -f docker-compose.test.yml down
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: roborev_test
+      POSTGRES_PASSWORD: roborev_test_password
+      POSTGRES_DB: roborev_test
+    ports:
+      - "5433:5432"  # Use non-standard port to avoid conflict with local postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roborev_test -d roborev_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data  # Use tmpfs for faster tests, no persistence needed

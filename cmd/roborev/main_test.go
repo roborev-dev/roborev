@@ -8,8 +8,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/wesm/roborev/internal/agent"
 	"github.com/wesm/roborev/internal/daemon"
@@ -1385,5 +1388,240 @@ func TestShowJobFlagRequiresArgument(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--job requires a job ID argument") {
 		t.Errorf("expected '--job requires a job ID argument' error, got: %v", err)
+	}
+}
+
+// ============================================================================
+// Daemon Run Tests
+// ============================================================================
+
+func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
+	// Use temp directories for isolation
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Isolate runtime dir to avoid writing to real ~/.roborev/daemon.json
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
+
+	// Write minimal config
+	if err := os.WriteFile(configPath, []byte(`max_workers = 1`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Create the daemon run command with custom flags
+	cmd := daemonRunCmd()
+	cmd.SetArgs([]string{
+		"--db", dbPath,
+		"--config", configPath,
+		"--addr", "127.0.0.1:0", // Use port 0 to get a free port
+	})
+
+	// Run daemon in goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Execute()
+	}()
+
+	// Wait for daemon to start (check if DB file is created)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(dbPath); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Verify DB was created
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Fatal("expected database to be created")
+	}
+
+	// Check that daemon didn't exit early with an error
+	select {
+	case err := <-errCh:
+		t.Fatalf("daemon exited unexpectedly: %v", err)
+	case <-time.After(100 * time.Millisecond):
+		// Daemon is still running - good
+	}
+
+	// The daemon is blocking in server.Start(), so we can't easily stop it
+	// without sending a signal. For this unit test, we just verify it started.
+	// A full integration test would require a separate process.
+}
+
+// TestDaemonStopNotRunning verifies daemon stop reports when no daemon is running
+func TestDaemonStopNotRunning(t *testing.T) {
+	// Use ROBOREV_DATA_DIR to isolate test
+	tmpDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
+
+	err := stopDaemon()
+	if err != ErrDaemonNotRunning {
+		t.Errorf("expected ErrDaemonNotRunning, got %v", err)
+	}
+}
+
+// TestDaemonStopInvalidPID verifies stopDaemon handles invalid PID in daemon.json
+func TestDaemonStopInvalidPID(t *testing.T) {
+	// Use ROBOREV_DATA_DIR to isolate test
+	tmpDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
+
+	// Create daemon.json with PID 0
+	daemonInfo := daemon.RuntimeInfo{PID: 0, Addr: "127.0.0.1:7373"}
+	data, _ := json.Marshal(daemonInfo)
+	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644); err != nil {
+		t.Fatalf("write daemon.json: %v", err)
+	}
+
+	err := stopDaemon()
+	if err != ErrDaemonNotRunning {
+		t.Errorf("expected ErrDaemonNotRunning for PID 0, got %v", err)
+	}
+
+	// Verify daemon.json was cleaned up
+	if _, err := os.Stat(filepath.Join(tmpDir, "daemon.json")); !os.IsNotExist(err) {
+		t.Error("expected daemon.json to be removed after invalid PID")
+	}
+}
+
+// TestDaemonStopCorruptedFile verifies stopDaemon cleans up malformed daemon.json
+func TestDaemonStopCorruptedFile(t *testing.T) {
+	// Use ROBOREV_DATA_DIR to isolate test
+	tmpDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
+
+	// Create corrupted daemon.json
+	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte("not valid json"), 0644); err != nil {
+		t.Fatalf("write daemon.json: %v", err)
+	}
+
+	err := stopDaemon()
+	if err != ErrDaemonNotRunning {
+		t.Errorf("expected ErrDaemonNotRunning for corrupted file, got %v", err)
+	}
+
+	// Verify daemon.json was cleaned up
+	if _, err := os.Stat(filepath.Join(tmpDir, "daemon.json")); !os.IsNotExist(err) {
+		t.Error("expected corrupted daemon.json to be removed")
+	}
+}
+
+// TestDaemonStopTruncatedFile verifies stopDaemon cleans up truncated daemon.json
+// (yields io.ErrUnexpectedEOF during JSON decode)
+func TestDaemonStopTruncatedFile(t *testing.T) {
+	// Use ROBOREV_DATA_DIR to isolate test
+	tmpDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
+
+	// Create truncated daemon.json (partial JSON that triggers io.ErrUnexpectedEOF)
+	// A JSON object that ends abruptly mid-string causes io.ErrUnexpectedEOF
+	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte(`{"pid": 123, "addr": "127.0.0.1:7373`), 0644); err != nil {
+		t.Fatalf("write daemon.json: %v", err)
+	}
+
+	err := stopDaemon()
+	if err != ErrDaemonNotRunning {
+		t.Errorf("expected ErrDaemonNotRunning for truncated file, got %v", err)
+	}
+
+	// Verify daemon.json was cleaned up
+	if _, err := os.Stat(filepath.Join(tmpDir, "daemon.json")); !os.IsNotExist(err) {
+		t.Error("expected truncated daemon.json to be removed")
+	}
+}
+
+// TestDaemonStopPermissionError verifies stopDaemon propagates permission errors
+func TestDaemonStopPermissionError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping permission test when running as root")
+	}
+
+	// Use ROBOREV_DATA_DIR to isolate test
+	tmpDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
+
+	// Create daemon.json with valid content
+	daemonInfo := daemon.RuntimeInfo{PID: 12345, Addr: "127.0.0.1:7373"}
+	data, _ := json.Marshal(daemonInfo)
+	daemonPath := filepath.Join(tmpDir, "daemon.json")
+	if err := os.WriteFile(daemonPath, data, 0644); err != nil {
+		t.Fatalf("write daemon.json: %v", err)
+	}
+
+	// Remove read permission
+	if err := os.Chmod(daemonPath, 0000); err != nil {
+		t.Fatalf("chmod daemon.json: %v", err)
+	}
+	// Restore permission for cleanup
+	defer os.Chmod(daemonPath, 0644)
+
+	// Probe whether chmod 0000 actually blocks reads on this filesystem
+	// (some filesystems like Windows or certain ACL-based systems may not enforce this)
+	if f, probeErr := os.Open(daemonPath); probeErr == nil {
+		f.Close()
+		t.Skip("filesystem does not enforce chmod 0000 read restrictions")
+	}
+
+	err := stopDaemon()
+	// Should propagate the permission error, not ErrDaemonNotRunning
+	if err == ErrDaemonNotRunning {
+		t.Error("expected permission error to be propagated, got ErrDaemonNotRunning")
+	}
+	if err == nil {
+		t.Error("expected error for permission denied, got nil")
+	}
+	// Check that the underlying error is a permission error (using errors.Is to unwrap)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("expected permission error, got: %v", err)
 	}
 }

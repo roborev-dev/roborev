@@ -4,25 +4,44 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
 )
 
-// GetOrCreateRepo finds or creates a repo by its root path
-func (db *DB) GetOrCreateRepo(rootPath string) (*Repo, error) {
+// GetOrCreateRepo finds or creates a repo by its root path.
+// If identity is provided, it will be stored; otherwise the identity field remains NULL.
+func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error) {
 	// Normalize path
 	absPath, err := filepath.Abs(rootPath)
 	if err != nil {
 		return nil, err
 	}
 
-	// Try to find existing
+	// Extract optional identity
+	var repoIdentity string
+	if len(identity) > 0 {
+		repoIdentity = identity[0]
+	}
+
+	// Try to find existing by path
 	var repo Repo
 	var createdAt string
-	err = db.QueryRow(`SELECT id, root_path, name, created_at FROM repos WHERE root_path = ?`, absPath).
-		Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt)
+	var identityNullable sql.NullString
+	err = db.QueryRow(`SELECT id, root_path, name, identity, created_at FROM repos WHERE root_path = ?`, absPath).
+		Scan(&repo.ID, &repo.RootPath, &repo.Name, &identityNullable, &createdAt)
 	if err == nil {
+		repo.Identity = identityNullable.String
 		repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+
+		// Update identity if provided and not already set
+		if repoIdentity != "" && repo.Identity == "" {
+			_, err = db.Exec(`UPDATE repos SET identity = ? WHERE id = ?`, repoIdentity, repo.ID)
+			if err != nil {
+				return nil, fmt.Errorf("update identity: %w", err)
+			}
+			repo.Identity = repoIdentity
+		}
 		return &repo, nil
 	}
 	if err != sql.ErrNoRows {
@@ -31,7 +50,12 @@ func (db *DB) GetOrCreateRepo(rootPath string) (*Repo, error) {
 
 	// Create new
 	name := filepath.Base(absPath)
-	result, err := db.Exec(`INSERT INTO repos (root_path, name) VALUES (?, ?)`, absPath, name)
+	var result sql.Result
+	if repoIdentity != "" {
+		result, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`, absPath, name, repoIdentity)
+	} else {
+		result, err = db.Exec(`INSERT INTO repos (root_path, name) VALUES (?, ?)`, absPath, name)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -41,6 +65,7 @@ func (db *DB) GetOrCreateRepo(rootPath string) (*Repo, error) {
 		ID:        id,
 		RootPath:  absPath,
 		Name:      name,
+		Identity:  repoIdentity,
 		CreatedAt: time.Now(),
 	}, nil
 }

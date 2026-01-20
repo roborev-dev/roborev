@@ -434,6 +434,339 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Run sync-related migrations
+	if err := db.migrateSyncColumns(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// hasUniqueIndexOnShaOnly checks if commits table has a unique constraint on just sha
+// (not the composite repo_id, sha constraint). Uses PRAGMA index_list/index_info for robustness.
+func (db *DB) hasUniqueIndexOnShaOnly() (bool, error) {
+	// Get all indexes on commits table
+	rows, err := db.Query(`PRAGMA index_list('commits')`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var seq int
+		var name string
+		var unique int
+		var origin string
+		var partial int
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			return false, err
+		}
+		if unique == 0 {
+			continue // Not a unique index
+		}
+		// Check if this unique index is on sha only
+		// PRAGMA doesn't support parameterized queries, so we escape quotes in the name
+		safeName := strings.ReplaceAll(name, "'", "''")
+		infoRows, err := db.Query(fmt.Sprintf(`PRAGMA index_info('%s')`, safeName))
+		if err != nil {
+			return false, err
+		}
+		var cols []string
+		for infoRows.Next() {
+			var seqno, cid int
+			var colName string
+			if err := infoRows.Scan(&seqno, &cid, &colName); err != nil {
+				infoRows.Close()
+				return false, err
+			}
+			cols = append(cols, colName)
+		}
+		if err := infoRows.Err(); err != nil {
+			infoRows.Close()
+			return false, err
+		}
+		infoRows.Close()
+		// If this unique index only has sha, we need to migrate
+		if len(cols) == 1 && cols[0] == "sha" {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// migrateSyncColumns adds columns needed for PostgreSQL sync functionality.
+// These migrations are idempotent - they check if columns exist before adding.
+func (db *DB) migrateSyncColumns() error {
+	// Helper to check if a column exists
+	hasColumn := func(table, column string) (bool, error) {
+		var count int
+		err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&count)
+		return count > 0, err
+	}
+
+	// Migration: Add sync columns to review_jobs
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{"uuid", "TEXT"},
+		{"source_machine_id", "TEXT"},
+		{"updated_at", "TEXT"},
+		{"synced_at", "TEXT"},
+	} {
+		has, err := hasColumn("review_jobs", col.name)
+		if err != nil {
+			return fmt.Errorf("check %s column in review_jobs: %w", col.name, err)
+		}
+		if !has {
+			_, err = db.Exec(fmt.Sprintf(`ALTER TABLE review_jobs ADD COLUMN %s %s`, col.name, col.def))
+			if err != nil {
+				return fmt.Errorf("add %s column to review_jobs: %w", col.name, err)
+			}
+		}
+	}
+
+	// Backfill UUIDs for review_jobs
+	_, err := db.Exec(`UPDATE review_jobs SET uuid = ` + sqliteUUIDExpr + ` WHERE uuid IS NULL`)
+	if err != nil {
+		return fmt.Errorf("backfill review_jobs uuid: %w", err)
+	}
+
+	// Backfill updated_at for review_jobs (use finished_at or enqueued_at)
+	_, err = db.Exec(`UPDATE review_jobs SET updated_at = COALESCE(finished_at, enqueued_at) WHERE updated_at IS NULL`)
+	if err != nil {
+		return fmt.Errorf("backfill review_jobs updated_at: %w", err)
+	}
+
+	// Create unique index on review_jobs.uuid
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_uuid ON review_jobs(uuid)`)
+	if err != nil {
+		return fmt.Errorf("create idx_review_jobs_uuid: %w", err)
+	}
+
+	// Migration: Add sync columns to reviews
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{"uuid", "TEXT"},
+		{"updated_at", "TEXT"},
+		{"updated_by_machine_id", "TEXT"},
+		{"synced_at", "TEXT"},
+	} {
+		has, err := hasColumn("reviews", col.name)
+		if err != nil {
+			return fmt.Errorf("check %s column in reviews: %w", col.name, err)
+		}
+		if !has {
+			_, err = db.Exec(fmt.Sprintf(`ALTER TABLE reviews ADD COLUMN %s %s`, col.name, col.def))
+			if err != nil {
+				return fmt.Errorf("add %s column to reviews: %w", col.name, err)
+			}
+		}
+	}
+
+	// Backfill UUIDs for reviews
+	_, err = db.Exec(`UPDATE reviews SET uuid = ` + sqliteUUIDExpr + ` WHERE uuid IS NULL`)
+	if err != nil {
+		return fmt.Errorf("backfill reviews uuid: %w", err)
+	}
+
+	// Backfill updated_at for reviews (use created_at)
+	_, err = db.Exec(`UPDATE reviews SET updated_at = created_at WHERE updated_at IS NULL`)
+	if err != nil {
+		return fmt.Errorf("backfill reviews updated_at: %w", err)
+	}
+
+	// Create unique index on reviews.uuid
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_uuid ON reviews(uuid)`)
+	if err != nil {
+		return fmt.Errorf("create idx_reviews_uuid: %w", err)
+	}
+
+	// Migration: Add sync columns to responses
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{"uuid", "TEXT"},
+		{"source_machine_id", "TEXT"},
+		{"synced_at", "TEXT"},
+	} {
+		has, err := hasColumn("responses", col.name)
+		if err != nil {
+			return fmt.Errorf("check %s column in responses: %w", col.name, err)
+		}
+		if !has {
+			_, err = db.Exec(fmt.Sprintf(`ALTER TABLE responses ADD COLUMN %s %s`, col.name, col.def))
+			if err != nil {
+				return fmt.Errorf("add %s column to responses: %w", col.name, err)
+			}
+		}
+	}
+
+	// Backfill UUIDs for responses
+	_, err = db.Exec(`UPDATE responses SET uuid = ` + sqliteUUIDExpr + ` WHERE uuid IS NULL`)
+	if err != nil {
+		return fmt.Errorf("backfill responses uuid: %w", err)
+	}
+
+	// Create unique index on responses.uuid
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_uuid ON responses(uuid)`)
+	if err != nil {
+		return fmt.Errorf("create idx_responses_uuid: %w", err)
+	}
+
+	// Create index for GetResponsesToSync query pattern (source_machine_id + synced_at)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_responses_sync ON responses(source_machine_id, synced_at)`)
+	if err != nil {
+		return fmt.Errorf("create idx_responses_sync: %w", err)
+	}
+
+	// Migration: Add identity column to repos
+	has, err := hasColumn("repos", "identity")
+	if err != nil {
+		return fmt.Errorf("check identity column in repos: %w", err)
+	}
+	if !has {
+		_, err = db.Exec(`ALTER TABLE repos ADD COLUMN identity TEXT`)
+		if err != nil {
+			return fmt.Errorf("add identity column to repos: %w", err)
+		}
+	}
+
+	// Create unique index on repos.identity (allows NULL values, only enforces uniqueness on non-NULL)
+	// First normalize empty strings to NULL (treat empty as "unset")
+	_, err = db.Exec(`UPDATE repos SET identity = NULL WHERE identity = ''`)
+	if err != nil {
+		return fmt.Errorf("normalize empty identities to NULL: %w", err)
+	}
+
+	// Check for duplicates that would prevent index creation
+	var dupCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM (
+		SELECT identity FROM repos WHERE identity IS NOT NULL
+		GROUP BY identity HAVING COUNT(*) > 1
+	)`).Scan(&dupCount)
+	if err != nil {
+		return fmt.Errorf("check duplicate identities: %w", err)
+	}
+	if dupCount > 0 {
+		return fmt.Errorf("cannot create unique index on repos.identity: %d duplicate non-NULL identities exist; resolve duplicates before upgrading", dupCount)
+	}
+
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_repos_identity ON repos(identity) WHERE identity IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("create idx_repos_identity: %w", err)
+	}
+
+	// Migration: Create sync_state table for tracking sync status
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS sync_state (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("create sync_state table: %w", err)
+	}
+
+	// Migration: Align commits uniqueness to UNIQUE(repo_id, sha) instead of just UNIQUE(sha)
+	// Check if we need to migrate by checking for a unique index on just sha (not repo_id, sha)
+	needsCommitsMigration, err := db.hasUniqueIndexOnShaOnly()
+	if err != nil {
+		return fmt.Errorf("check commits unique constraint: %w", err)
+	}
+
+	if needsCommitsMigration {
+		// Need to rebuild table. Use a dedicated connection since PRAGMA is connection-scoped.
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return fmt.Errorf("get connection for commits migration: %w", err)
+		}
+		defer conn.Close()
+
+		// Disable foreign keys OUTSIDE transaction (SQLite ignores inside tx)
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+			return fmt.Errorf("disable foreign keys for commits: %w", err)
+		}
+		defer conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+
+		// Run rebuild in a transaction for atomicity
+		tx, err := conn.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin commits migration transaction: %w", err)
+		}
+		defer tx.Rollback()
+
+		// Step 1: Create backup
+		_, err = tx.Exec(`CREATE TABLE commits_backup AS SELECT * FROM commits`)
+		if err != nil {
+			return fmt.Errorf("create commits_backup: %w", err)
+		}
+
+		// Step 2: Drop original
+		_, err = tx.Exec(`DROP TABLE commits`)
+		if err != nil {
+			return fmt.Errorf("drop commits: %w", err)
+		}
+
+		// Step 3: Create new table with UNIQUE(repo_id, sha)
+		_, err = tx.Exec(`
+			CREATE TABLE commits (
+				id INTEGER PRIMARY KEY,
+				repo_id INTEGER NOT NULL REFERENCES repos(id),
+				sha TEXT NOT NULL,
+				author TEXT NOT NULL,
+				subject TEXT NOT NULL,
+				timestamp TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				UNIQUE(repo_id, sha)
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("create new commits table: %w", err)
+		}
+
+		// Step 4: Copy data from backup
+		_, err = tx.Exec(`INSERT INTO commits SELECT * FROM commits_backup`)
+		if err != nil {
+			return fmt.Errorf("copy commits data: %w", err)
+		}
+
+		// Step 5: Drop backup
+		_, err = tx.Exec(`DROP TABLE commits_backup`)
+		if err != nil {
+			return fmt.Errorf("drop commits_backup: %w", err)
+		}
+
+		// Step 6: Recreate index
+		_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha)`)
+		if err != nil {
+			return fmt.Errorf("recreate idx_commits_sha: %w", err)
+		}
+
+		if err = tx.Commit(); err != nil {
+			return fmt.Errorf("commit commits migration: %w", err)
+		}
+
+		// Re-enable foreign keys and verify
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+			return fmt.Errorf("re-enable foreign keys: %w", err)
+		}
+
+		// Verify foreign key integrity
+		rows, err := conn.QueryContext(ctx, `PRAGMA foreign_key_check`)
+		if err != nil {
+			return fmt.Errorf("foreign key check failed: %w", err)
+		}
+		defer rows.Close()
+		if rows.Next() {
+			return fmt.Errorf("foreign key violations detected after commits migration")
+		}
+	}
+
 	return nil
 }
 

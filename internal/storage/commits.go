@@ -5,12 +5,13 @@ import (
 	"time"
 )
 
-// GetOrCreateCommit finds or creates a commit record
+// GetOrCreateCommit finds or creates a commit record.
+// Lookups are by (repo_id, sha) to handle the same SHA in different repos.
 func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, timestamp time.Time) (*Commit, error) {
-	// Try to find existing
+	// Try to find existing by (repo_id, sha)
 	var commit Commit
 	var ts, createdAt string
-	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE sha = ?`, sha).
+	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha).
 		Scan(&commit.ID, &commit.RepoID, &commit.SHA, &commit.Author, &commit.Subject, &ts, &createdAt)
 	if err == nil {
 		commit.Timestamp, _ = time.Parse(time.RFC3339, ts)
@@ -40,11 +41,40 @@ func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, times
 	}, nil
 }
 
-// GetCommitBySHA returns a commit by its SHA
+// ErrAmbiguousCommit is returned when a SHA lookup matches multiple repos
+var ErrAmbiguousCommit = sql.ErrNoRows // Use sql.ErrNoRows for API compatibility; callers can check message
+
+// GetCommitBySHA returns a commit by its SHA.
+// DEPRECATED: This is a legacy API that doesn't handle the same SHA in different repos.
+// Returns sql.ErrNoRows if no commit found, or if multiple repos have this SHA (ambiguous).
+// Prefer using GetCommitByRepoAndSHA or job-based lookups instead.
 func (db *DB) GetCommitBySHA(sha string) (*Commit, error) {
+	// Check for ambiguity first
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(DISTINCT repo_id) FROM commits WHERE sha = ?`, sha).Scan(&count); err != nil {
+		return nil, err
+	}
+	if count > 1 {
+		return nil, sql.ErrNoRows // Ambiguous - multiple repos have this SHA
+	}
+
 	var commit Commit
 	var ts, createdAt string
 	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE sha = ?`, sha).
+		Scan(&commit.ID, &commit.RepoID, &commit.SHA, &commit.Author, &commit.Subject, &ts, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	commit.Timestamp, _ = time.Parse(time.RFC3339, ts)
+	commit.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	return &commit, nil
+}
+
+// GetCommitByRepoAndSHA returns a commit by repo ID and SHA
+func (db *DB) GetCommitByRepoAndSHA(repoID int64, sha string) (*Commit, error) {
+	var commit Commit
+	var ts, createdAt string
+	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha).
 		Scan(&commit.ID, &commit.RepoID, &commit.SHA, &commit.Author, &commit.Subject, &ts, &createdAt)
 	if err != nil {
 		return nil, err
