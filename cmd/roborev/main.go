@@ -2121,32 +2121,11 @@ func syncNowCmd() *cobra.Command {
 			}
 
 			addr := getDaemonAddr()
-			// Use longer timeout since sync operations can take up to 2 minutes
-			client := &http.Client{Timeout: 3 * time.Minute}
+			// Use longer timeout since sync operations can take up to 5 minutes
+			client := &http.Client{Timeout: 6 * time.Minute}
 
-			// Show progress while syncing
-			fmt.Print("Syncing")
-			stopProgress := make(chan struct{})
-			progressDone := make(chan struct{})
-			go func() {
-				defer close(progressDone)
-				ticker := time.NewTicker(500 * time.Millisecond)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-stopProgress:
-						return
-					case <-ticker.C:
-						fmt.Print(".")
-					}
-				}
-			}()
-
-			resp, err := client.Post(addr+"/api/sync/now", "application/json", nil)
-			close(stopProgress)
-			<-progressDone
-			fmt.Println() // New line after progress dots
-
+			// Use streaming endpoint to show progress
+			resp, err := client.Post(addr+"/api/sync/now?stream=1", "application/json", nil)
 			if err != nil {
 				return fmt.Errorf("failed to trigger sync: %w", err)
 			}
@@ -2162,29 +2141,69 @@ func syncNowCmd() *cobra.Command {
 				return fmt.Errorf("sync failed: %s", string(body))
 			}
 
-			var result struct {
-				Message string `json:"message"`
-				Pushed  struct {
-					Jobs      int `json:"jobs"`
-					Reviews   int `json:"reviews"`
-					Responses int `json:"responses"`
-				} `json:"pushed"`
-				Pulled struct {
-					Jobs      int `json:"jobs"`
-					Reviews   int `json:"reviews"`
-					Responses int `json:"responses"`
-				} `json:"pulled"`
+			// Read streaming progress
+			scanner := bufio.NewScanner(resp.Body)
+			var finalPushed, finalPulled struct {
+				Jobs      int `json:"jobs"`
+				Reviews   int `json:"reviews"`
+				Responses int `json:"responses"`
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-				fmt.Println("Sync triggered")
-				return nil
+
+			for scanner.Scan() {
+				line := scanner.Text()
+				if line == "" {
+					continue
+				}
+
+				var msg map[string]interface{}
+				if err := json.Unmarshal([]byte(line), &msg); err != nil {
+					continue
+				}
+
+				switch msg["type"] {
+				case "progress":
+					phase := msg["phase"].(string)
+					if phase == "push" {
+						batch := int(msg["batch"].(float64))
+						totalJobs := int(msg["total_jobs"].(float64))
+						totalRevs := int(msg["total_revs"].(float64))
+						totalResps := int(msg["total_resps"].(float64))
+						fmt.Printf("\rPushing: batch %d (total: %d jobs, %d reviews, %d responses)     ",
+							batch, totalJobs, totalRevs, totalResps)
+					} else if phase == "pull" {
+						totalJobs := int(msg["total_jobs"].(float64))
+						totalRevs := int(msg["total_revs"].(float64))
+						totalResps := int(msg["total_resps"].(float64))
+						fmt.Printf("\rPulled: %d jobs, %d reviews, %d responses     \n",
+							totalJobs, totalRevs, totalResps)
+					}
+				case "error":
+					fmt.Println()
+					return fmt.Errorf("sync failed: %s", msg["error"])
+				case "complete":
+					fmt.Println() // Clear the progress line
+					if pushed, ok := msg["pushed"].(map[string]interface{}); ok {
+						finalPushed.Jobs = int(pushed["jobs"].(float64))
+						finalPushed.Reviews = int(pushed["reviews"].(float64))
+						finalPushed.Responses = int(pushed["responses"].(float64))
+					}
+					if pulled, ok := msg["pulled"].(map[string]interface{}); ok {
+						finalPulled.Jobs = int(pulled["jobs"].(float64))
+						finalPulled.Reviews = int(pulled["reviews"].(float64))
+						finalPulled.Responses = int(pulled["responses"].(float64))
+					}
+				}
+			}
+
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("error reading sync progress: %w", err)
 			}
 
 			fmt.Println("Sync completed")
 			fmt.Printf("Pushed: %d jobs, %d reviews, %d responses\n",
-				result.Pushed.Jobs, result.Pushed.Reviews, result.Pushed.Responses)
+				finalPushed.Jobs, finalPushed.Reviews, finalPushed.Responses)
 			fmt.Printf("Pulled: %d jobs, %d reviews, %d responses\n",
-				result.Pulled.Jobs, result.Pulled.Reviews, result.Pulled.Responses)
+				finalPulled.Jobs, finalPulled.Reviews, finalPulled.Responses)
 
 			return nil
 		},

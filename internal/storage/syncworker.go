@@ -154,10 +154,27 @@ func (w *SyncWorker) FinalPush() error {
 	return nil
 }
 
+// SyncProgress reports progress during a sync operation
+type SyncProgress struct {
+	Phase      string // "push" or "pull"
+	BatchNum   int
+	BatchJobs  int
+	BatchRevs  int
+	BatchResps int
+	TotalJobs  int
+	TotalRevs  int
+	TotalResps int
+}
+
 // SyncNow triggers an immediate sync cycle and returns statistics.
 // Returns an error if the worker is not running or not connected.
 // Loops until all pending items are pushed (not just one batch).
 func (w *SyncWorker) SyncNow() (*SyncStats, error) {
+	return w.SyncNowWithProgress(nil)
+}
+
+// SyncNowWithProgress is like SyncNow but calls progressFn after each batch.
+func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncStats, error) {
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
@@ -196,10 +213,22 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 		}
 
 		batchNum++
-		// Log progress every batch so user can see what's happening
 		log.Printf("Sync: batch %d - pushed %d jobs, %d reviews, %d responses (total: %d/%d/%d)",
 			batchNum, pushed.Jobs, pushed.Reviews, pushed.Responses,
 			stats.PushedJobs, stats.PushedReviews, stats.PushedResponses)
+
+		if progressFn != nil {
+			progressFn(SyncProgress{
+				Phase:      "push",
+				BatchNum:   batchNum,
+				BatchJobs:  pushed.Jobs,
+				BatchRevs:  pushed.Reviews,
+				BatchResps: pushed.Responses,
+				TotalJobs:  stats.PushedJobs,
+				TotalRevs:  stats.PushedReviews,
+				TotalResps: stats.PushedResponses,
+			})
+		}
 	}
 
 	// Pull remote changes
@@ -210,6 +239,15 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 	stats.PulledJobs = pulled.Jobs
 	stats.PulledReviews = pulled.Reviews
 	stats.PulledResponses = pulled.Responses
+
+	if progressFn != nil && (pulled.Jobs > 0 || pulled.Reviews > 0 || pulled.Responses > 0) {
+		progressFn(SyncProgress{
+			Phase:      "pull",
+			TotalJobs:  pulled.Jobs,
+			TotalRevs:  pulled.Reviews,
+			TotalResps: pulled.Responses,
+		})
+	}
 
 	if stats.PushedJobs > 0 || stats.PushedReviews > 0 || stats.PushedResponses > 0 ||
 		stats.PulledJobs > 0 || stats.PulledReviews > 0 || stats.PulledResponses > 0 {

@@ -134,6 +134,67 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if client wants streaming progress
+	stream := r.URL.Query().Get("stream") == "1"
+
+	if stream {
+		// Stream progress as newline-delimited JSON
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		stats, err := s.syncWorker.SyncNowWithProgress(func(p storage.SyncProgress) {
+			line, _ := json.Marshal(map[string]interface{}{
+				"type":        "progress",
+				"phase":       p.Phase,
+				"batch":       p.BatchNum,
+				"batch_jobs":  p.BatchJobs,
+				"batch_revs":  p.BatchRevs,
+				"batch_resps": p.BatchResps,
+				"total_jobs":  p.TotalJobs,
+				"total_revs":  p.TotalRevs,
+				"total_resps": p.TotalResps,
+			})
+			w.Write(line)
+			w.Write([]byte("\n"))
+			flusher.Flush()
+		})
+
+		if err != nil {
+			line, _ := json.Marshal(map[string]interface{}{
+				"type":  "error",
+				"error": err.Error(),
+			})
+			w.Write(line)
+			w.Write([]byte("\n"))
+			return
+		}
+
+		// Final result
+		line, _ := json.Marshal(map[string]interface{}{
+			"type":    "complete",
+			"message": "Sync completed",
+			"pushed": map[string]int{
+				"jobs":      stats.PushedJobs,
+				"reviews":   stats.PushedReviews,
+				"responses": stats.PushedResponses,
+			},
+			"pulled": map[string]int{
+				"jobs":      stats.PulledJobs,
+				"reviews":   stats.PulledReviews,
+				"responses": stats.PulledResponses,
+			},
+		})
+		w.Write(line)
+		w.Write([]byte("\n"))
+		return
+	}
+
+	// Non-streaming: wait for completion
 	stats, err := s.syncWorker.SyncNow()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
