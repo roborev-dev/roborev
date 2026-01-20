@@ -74,6 +74,9 @@ func (w *SyncWorker) Stop() {
 		w.mu.Unlock()
 		return
 	}
+	// Set running = false while holding lock to prevent concurrent Stop() calls
+	// from both trying to close stopCh
+	w.running = false
 	w.mu.Unlock()
 
 	close(w.stopCh)
@@ -85,7 +88,6 @@ func (w *SyncWorker) Stop() {
 	defer w.syncMu.Unlock()
 
 	w.mu.Lock()
-	w.running = false
 	if w.pgPool != nil {
 		w.pgPool.Close()
 		w.pgPool = nil
@@ -486,15 +488,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 		for _, j := range jobs {
 			if err := w.pullJob(j); err != nil {
-				log.Printf("Sync: failed to pull job %s: %v", j.UUID, err)
-				continue
+				// Don't advance cursor if any upsert fails - we'll retry next sync
+				return stats, fmt.Errorf("pull job %s: %w", j.UUID, err)
 			}
 			stats.Jobs++
 		}
 
 		jobCursor = newCursor
 		if err := w.db.SetSyncState(SyncStateLastJobCursor, jobCursor); err != nil {
-			log.Printf("Sync: failed to save job cursor: %v", err)
+			return stats, fmt.Errorf("save job cursor: %w", err)
 		}
 
 		if len(jobs) < 100 {
@@ -537,15 +539,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				UpdatedAt:          r.UpdatedAt,
 			}
 			if err := w.db.UpsertPulledReview(pr); err != nil {
-				log.Printf("Sync: failed to pull review %s: %v", r.UUID, err)
-				continue
+				// Don't advance cursor if any upsert fails - we'll retry next sync
+				return stats, fmt.Errorf("pull review %s: %w", r.UUID, err)
 			}
 			stats.Reviews++
 		}
 
 		reviewCursor = newCursor
 		if err := w.db.SetSyncState(SyncStateLastReviewCursor, reviewCursor); err != nil {
-			log.Printf("Sync: failed to save review cursor: %v", err)
+			return stats, fmt.Errorf("save review cursor: %w", err)
 		}
 
 		if len(reviews) < 100 {
@@ -582,15 +584,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				CreatedAt:       r.CreatedAt,
 			}
 			if err := w.db.UpsertPulledResponse(pr); err != nil {
-				log.Printf("Sync: failed to pull response %s: %v", r.UUID, err)
-				continue
+				// Don't advance cursor if any upsert fails - we'll retry next sync
+				return stats, fmt.Errorf("pull response %s: %w", r.UUID, err)
 			}
 			stats.Responses++
 		}
 
 		responseID = newID
 		if err := w.db.SetSyncState(SyncStateLastResponseID, fmt.Sprintf("%d", responseID)); err != nil {
-			log.Printf("Sync: failed to save response cursor: %v", err)
+			return stats, fmt.Errorf("save response cursor: %w", err)
 		}
 
 		if len(responses) < 100 {
