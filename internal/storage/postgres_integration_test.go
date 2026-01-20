@@ -469,3 +469,456 @@ func TestIntegration_SchemaCreation(t *testing.T) {
 		}
 	}
 }
+
+// TestIntegration_Multiplayer simulates two machines with separate SQLite databases
+// syncing to the same PostgreSQL instance - the core multiplayer use case.
+func TestIntegration_Multiplayer(t *testing.T) {
+	url := getIntegrationPostgresURL()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect to postgres: %v", err)
+	}
+	defer pool.Close()
+
+	// Clear and setup schema
+	_, _ = pool.pool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	// Create two separate SQLite databases (simulating two machines)
+	tmpDir := t.TempDir()
+
+	dbA, err := Open(filepath.Join(tmpDir, "machine_a.db"))
+	if err != nil {
+		t.Fatalf("Failed to open SQLite for machine A: %v", err)
+	}
+	defer dbA.Close()
+
+	dbB, err := Open(filepath.Join(tmpDir, "machine_b.db"))
+	if err != nil {
+		t.Fatalf("Failed to open SQLite for machine B: %v", err)
+	}
+	defer dbB.Close()
+
+	// Both machines work on the same repo (identified by git remote URL)
+	sharedRepoIdentity := "git@github.com:test/multiplayer-repo.git"
+
+	// Machine A creates a repo and review
+	repoA, err := dbA.GetOrCreateRepo(filepath.Join(tmpDir, "repo_a"), sharedRepoIdentity)
+	if err != nil {
+		t.Fatalf("Machine A: GetOrCreateRepo failed: %v", err)
+	}
+
+	commitA, err := dbA.GetOrCreateCommit(repoA.ID, "aaaa1111", "Alice", "Feature A", time.Now())
+	if err != nil {
+		t.Fatalf("Machine A: GetOrCreateCommit failed: %v", err)
+	}
+
+	jobA, err := dbA.EnqueueJob(repoA.ID, commitA.ID, "aaaa1111", "test", "")
+	if err != nil {
+		t.Fatalf("Machine A: EnqueueJob failed: %v", err)
+	}
+	dbA.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, jobA.ID)
+	if err := dbA.CompleteJob(jobA.ID, "test", "prompt A", "Review from Machine A"); err != nil {
+		t.Fatalf("Machine A: CompleteJob failed: %v", err)
+	}
+
+	reviewA, err := dbA.GetReviewByJobID(jobA.ID)
+	if err != nil {
+		t.Fatalf("Machine A: GetReviewByJobID failed: %v", err)
+	}
+
+	// Machine B creates a repo and review (different commit)
+	repoB, err := dbB.GetOrCreateRepo(filepath.Join(tmpDir, "repo_b"), sharedRepoIdentity)
+	if err != nil {
+		t.Fatalf("Machine B: GetOrCreateRepo failed: %v", err)
+	}
+
+	commitB, err := dbB.GetOrCreateCommit(repoB.ID, "bbbb2222", "Bob", "Feature B", time.Now())
+	if err != nil {
+		t.Fatalf("Machine B: GetOrCreateCommit failed: %v", err)
+	}
+
+	jobB, err := dbB.EnqueueJob(repoB.ID, commitB.ID, "bbbb2222", "test", "")
+	if err != nil {
+		t.Fatalf("Machine B: EnqueueJob failed: %v", err)
+	}
+	dbB.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, jobB.ID)
+	if err := dbB.CompleteJob(jobB.ID, "test", "prompt B", "Review from Machine B"); err != nil {
+		t.Fatalf("Machine B: CompleteJob failed: %v", err)
+	}
+
+	reviewB, err := dbB.GetReviewByJobID(jobB.ID)
+	if err != nil {
+		t.Fatalf("Machine B: GetReviewByJobID failed: %v", err)
+	}
+
+	// Start sync workers for both machines
+	cfgA := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    url,
+		Interval:       "100ms", // Fast for testing
+		MachineName:    "machine-a",
+		ConnectTimeout: "5s",
+	}
+	cfgB := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    url,
+		Interval:       "100ms",
+		MachineName:    "machine-b",
+		ConnectTimeout: "5s",
+	}
+
+	workerA := NewSyncWorker(dbA, cfgA)
+	workerB := NewSyncWorker(dbB, cfgB)
+
+	if err := workerA.Start(); err != nil {
+		t.Fatalf("Machine A: SyncWorker.Start failed: %v", err)
+	}
+	defer workerA.Stop()
+
+	if err := workerB.Start(); err != nil {
+		t.Fatalf("Machine B: SyncWorker.Start failed: %v", err)
+	}
+	defer workerB.Stop()
+
+	// Wait for both workers to connect
+	if err := waitForSyncWorkerConnection(workerA, 10*time.Second); err != nil {
+		t.Fatalf("Machine A: Failed to connect: %v", err)
+	}
+	if err := waitForSyncWorkerConnection(workerB, 10*time.Second); err != nil {
+		t.Fatalf("Machine B: Failed to connect: %v", err)
+	}
+
+	// Trigger explicit syncs to ensure data is pushed
+	if _, err := workerA.SyncNow(); err != nil {
+		t.Fatalf("Machine A: SyncNow failed: %v", err)
+	}
+	if _, err := workerB.SyncNow(); err != nil {
+		t.Fatalf("Machine B: SyncNow failed: %v", err)
+	}
+
+	// Give a moment for data to settle, then sync again to pull each other's data
+	time.Sleep(200 * time.Millisecond)
+
+	if _, err := workerA.SyncNow(); err != nil {
+		t.Fatalf("Machine A: Second SyncNow failed: %v", err)
+	}
+	if _, err := workerB.SyncNow(); err != nil {
+		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
+	}
+
+	// Verify postgres has data from both machines
+	var pgJobCount int
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgJobCount)
+	if pgJobCount != 2 {
+		t.Errorf("Expected 2 jobs in postgres (one from each machine), got %d", pgJobCount)
+	}
+
+	var pgReviewCount int
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.reviews").Scan(&pgReviewCount)
+	if pgReviewCount != 2 {
+		t.Errorf("Expected 2 reviews in postgres, got %d", pgReviewCount)
+	}
+
+	// Verify Machine A can see Machine B's review
+	jobsA, err := dbA.ListJobs("", "", 100, 0)
+	if err != nil {
+		t.Fatalf("Machine A: ListJobs failed: %v", err)
+	}
+	if len(jobsA) != 2 {
+		t.Errorf("Machine A should see 2 jobs (own + pulled), got %d", len(jobsA))
+	}
+
+	// Find Machine B's job in Machine A's database
+	var foundBinA bool
+	for _, j := range jobsA {
+		if j.UUID == jobB.UUID {
+			foundBinA = true
+			break
+		}
+	}
+	if !foundBinA {
+		t.Error("Machine A should have pulled Machine B's job")
+	}
+
+	// Verify Machine B can see Machine A's review
+	jobsB, err := dbB.ListJobs("", "", 100, 0)
+	if err != nil {
+		t.Fatalf("Machine B: ListJobs failed: %v", err)
+	}
+	if len(jobsB) != 2 {
+		t.Errorf("Machine B should see 2 jobs (own + pulled), got %d", len(jobsB))
+	}
+
+	var foundAinB bool
+	for _, j := range jobsB {
+		if j.UUID == jobA.UUID {
+			foundAinB = true
+			break
+		}
+	}
+	if !foundAinB {
+		t.Error("Machine B should have pulled Machine A's job")
+	}
+
+	// Verify review content was pulled correctly
+	// Machine A should be able to read Machine B's review
+	reviewBinA, err := dbA.GetReviewByCommitSHA("bbbb2222")
+	if err != nil {
+		t.Fatalf("Machine A: GetReviewByCommitSHA for B's commit failed: %v", err)
+	}
+	if reviewBinA.UUID != reviewB.UUID {
+		t.Errorf("Machine A: pulled review UUID mismatch: got %s, want %s", reviewBinA.UUID, reviewB.UUID)
+	}
+
+	// Machine B should be able to read Machine A's review
+	reviewAinB, err := dbB.GetReviewByCommitSHA("aaaa1111")
+	if err != nil {
+		t.Fatalf("Machine B: GetReviewByCommitSHA for A's commit failed: %v", err)
+	}
+	if reviewAinB.UUID != reviewA.UUID {
+		t.Errorf("Machine B: pulled review UUID mismatch: got %s, want %s", reviewAinB.UUID, reviewA.UUID)
+	}
+
+	t.Log("Multiplayer sync verified: both machines can see each other's reviews")
+}
+
+// TestIntegration_MultiplayerSameCommit tests two machines reviewing the same commit.
+// Each should produce its own review with a unique UUID.
+func TestIntegration_MultiplayerSameCommit(t *testing.T) {
+	url := getIntegrationPostgresURL()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect to postgres: %v", err)
+	}
+	defer pool.Close()
+
+	// Clear and setup schema
+	_, _ = pool.pool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+
+	dbA, err := Open(filepath.Join(tmpDir, "machine_a.db"))
+	if err != nil {
+		t.Fatalf("Failed to open SQLite for machine A: %v", err)
+	}
+	defer dbA.Close()
+
+	dbB, err := Open(filepath.Join(tmpDir, "machine_b.db"))
+	if err != nil {
+		t.Fatalf("Failed to open SQLite for machine B: %v", err)
+	}
+	defer dbB.Close()
+
+	// Same repo identity
+	sharedRepoIdentity := "git@github.com:test/same-commit-repo.git"
+	sharedCommitSHA := "cccc3333"
+
+	// Both machines review the SAME commit
+	repoA, _ := dbA.GetOrCreateRepo(filepath.Join(tmpDir, "repo_a"), sharedRepoIdentity)
+	commitA, _ := dbA.GetOrCreateCommit(repoA.ID, sharedCommitSHA, "Charlie", "Shared commit", time.Now())
+	jobA, _ := dbA.EnqueueJob(repoA.ID, commitA.ID, sharedCommitSHA, "test", "")
+	dbA.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, jobA.ID)
+	dbA.CompleteJob(jobA.ID, "test", "prompt", "Machine A's review of shared commit")
+
+	repoB, _ := dbB.GetOrCreateRepo(filepath.Join(tmpDir, "repo_b"), sharedRepoIdentity)
+	commitB, _ := dbB.GetOrCreateCommit(repoB.ID, sharedCommitSHA, "Charlie", "Shared commit", time.Now())
+	jobB, _ := dbB.EnqueueJob(repoB.ID, commitB.ID, sharedCommitSHA, "test", "")
+	dbB.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, jobB.ID)
+	dbB.CompleteJob(jobB.ID, "test", "prompt", "Machine B's review of shared commit")
+
+	// Verify they have different UUIDs
+	if jobA.UUID == jobB.UUID {
+		t.Fatal("Jobs from different machines should have different UUIDs")
+	}
+
+	// Start sync workers
+	cfgA := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    url,
+		Interval:       "100ms",
+		MachineName:    "machine-a",
+		ConnectTimeout: "5s",
+	}
+	cfgB := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    url,
+		Interval:       "100ms",
+		MachineName:    "machine-b",
+		ConnectTimeout: "5s",
+	}
+
+	workerA := NewSyncWorker(dbA, cfgA)
+	workerB := NewSyncWorker(dbB, cfgB)
+
+	workerA.Start()
+	defer workerA.Stop()
+	workerB.Start()
+	defer workerB.Stop()
+
+	waitForSyncWorkerConnection(workerA, 10*time.Second)
+	waitForSyncWorkerConnection(workerB, 10*time.Second)
+
+	// Sync both machines
+	workerA.SyncNow()
+	workerB.SyncNow()
+	time.Sleep(200 * time.Millisecond)
+	workerA.SyncNow()
+	workerB.SyncNow()
+
+	// Postgres should have 2 jobs and 2 reviews for the same commit
+	var pgJobCount int
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgJobCount)
+	if pgJobCount != 2 {
+		t.Errorf("Expected 2 jobs in postgres for same commit, got %d", pgJobCount)
+	}
+
+	var pgReviewCount int
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.reviews").Scan(&pgReviewCount)
+	if pgReviewCount != 2 {
+		t.Errorf("Expected 2 reviews in postgres for same commit, got %d", pgReviewCount)
+	}
+
+	// Both machines should now have both reviews
+	jobsA, _ := dbA.ListJobs("", "", 100, 0)
+	jobsB, _ := dbB.ListJobs("", "", 100, 0)
+
+	if len(jobsA) != 2 {
+		t.Errorf("Machine A should have 2 jobs, got %d", len(jobsA))
+	}
+	if len(jobsB) != 2 {
+		t.Errorf("Machine B should have 2 jobs, got %d", len(jobsB))
+	}
+
+	// Verify both reviews exist with different UUIDs
+	var uuidsA []string
+	for _, j := range jobsA {
+		uuidsA = append(uuidsA, j.UUID)
+	}
+
+	if len(uuidsA) == 2 && uuidsA[0] == uuidsA[1] {
+		t.Error("Machine A has duplicate job UUIDs - deduplication failed")
+	}
+
+	t.Log("Same-commit multiplayer verified: both reviews preserved with unique UUIDs")
+}
+
+// TestIntegration_MultiplayerOfflineReconnect tests that a machine can go offline,
+// create reviews, and sync them when it reconnects.
+func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
+	url := getIntegrationPostgresURL()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect to postgres: %v", err)
+	}
+	defer pool.Close()
+
+	// Clear and setup schema
+	_, _ = pool.pool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+
+	// Machine A starts and syncs
+	dbA, _ := Open(filepath.Join(tmpDir, "machine_a.db"))
+	defer dbA.Close()
+
+	repoA, _ := dbA.GetOrCreateRepo(filepath.Join(tmpDir, "repo_a"), "git@github.com:test/offline-repo.git")
+	commitA1, _ := dbA.GetOrCreateCommit(repoA.ID, "dddd4444", "Dave", "Commit 1", time.Now())
+	jobA1, _ := dbA.EnqueueJob(repoA.ID, commitA1.ID, "dddd4444", "test", "")
+	dbA.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, jobA1.ID)
+	dbA.CompleteJob(jobA1.ID, "test", "prompt", "Online review")
+
+	cfgA := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    url,
+		Interval:       "100ms",
+		MachineName:    "machine-a",
+		ConnectTimeout: "5s",
+	}
+	workerA := NewSyncWorker(dbA, cfgA)
+	workerA.Start()
+
+	waitForSyncWorkerConnection(workerA, 10*time.Second)
+	workerA.SyncNow()
+
+	// Stop Machine A's sync (simulating going offline)
+	workerA.Stop()
+
+	// Machine A creates more reviews while "offline" (no sync worker running)
+	commitA2, _ := dbA.GetOrCreateCommit(repoA.ID, "eeee5555", "Dave", "Commit 2", time.Now())
+	jobA2, _ := dbA.EnqueueJob(repoA.ID, commitA2.ID, "eeee5555", "test", "")
+	dbA.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, jobA2.ID)
+	dbA.CompleteJob(jobA2.ID, "test", "prompt", "Offline review 1")
+
+	commitA3, _ := dbA.GetOrCreateCommit(repoA.ID, "ffff6666", "Dave", "Commit 3", time.Now())
+	jobA3, _ := dbA.EnqueueJob(repoA.ID, commitA3.ID, "ffff6666", "test", "")
+	dbA.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, jobA3.ID)
+	dbA.CompleteJob(jobA3.ID, "test", "prompt", "Offline review 2")
+
+	// Postgres should still only have 1 job (the one synced before going offline)
+	var pgJobCountBefore int
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgJobCountBefore)
+	if pgJobCountBefore != 1 {
+		t.Errorf("Expected 1 job in postgres before reconnect, got %d", pgJobCountBefore)
+	}
+
+	// Machine A reconnects
+	workerA2 := NewSyncWorker(dbA, cfgA)
+	workerA2.Start()
+	defer workerA2.Stop()
+
+	waitForSyncWorkerConnection(workerA2, 10*time.Second)
+	workerA2.SyncNow()
+
+	// Now postgres should have all 3 jobs
+	var pgJobCountAfter int
+	pool.pool.QueryRow(ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgJobCountAfter)
+	if pgJobCountAfter != 3 {
+		t.Errorf("Expected 3 jobs in postgres after reconnect, got %d", pgJobCountAfter)
+	}
+
+	// Machine B connects and should see all of Machine A's reviews (including offline ones)
+	dbB, _ := Open(filepath.Join(tmpDir, "machine_b.db"))
+	defer dbB.Close()
+
+	cfgB := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    url,
+		Interval:       "100ms",
+		MachineName:    "machine-b",
+		ConnectTimeout: "5s",
+	}
+	workerB := NewSyncWorker(dbB, cfgB)
+	workerB.Start()
+	defer workerB.Stop()
+
+	waitForSyncWorkerConnection(workerB, 10*time.Second)
+	workerB.SyncNow()
+
+	jobsB, _ := dbB.ListJobs("", "", 100, 0)
+	if len(jobsB) != 3 {
+		t.Errorf("Machine B should see all 3 jobs from Machine A, got %d", len(jobsB))
+	}
+
+	t.Log("Offline/reconnect verified: reviews created offline sync correctly after reconnect")
+}
