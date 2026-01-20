@@ -1423,6 +1423,78 @@ func TestSyncWorker_FinalPushReturnsNilWhenNotConnected(t *testing.T) {
 	}
 }
 
+// TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
+// on all tables (jobs, reviews, responses).
+func TestClearAllSyncedAt(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	// Create a completed job with a review
+	job := h.createCompletedJob("clear-test-sha")
+
+	// Add a response
+	_, err := h.db.AddResponseToJob(job.ID, "user", "test response")
+	if err != nil {
+		t.Fatalf("AddResponseToJob failed: %v", err)
+	}
+
+	// Mark everything as synced
+	if err := h.db.MarkJobSynced(job.ID); err != nil {
+		t.Fatalf("MarkJobSynced failed: %v", err)
+	}
+	review, err := h.db.GetReviewByJobID(job.ID)
+	if err != nil {
+		t.Fatalf("GetReviewByJobID failed: %v", err)
+	}
+	if err := h.db.MarkReviewSynced(review.ID); err != nil {
+		t.Fatalf("MarkReviewSynced failed: %v", err)
+	}
+
+	// Verify nothing needs to sync
+	jobs, _ := h.db.GetJobsToSync(h.machineID, 100)
+	if len(jobs) != 0 {
+		t.Errorf("Expected 0 jobs to sync before clear, got %d", len(jobs))
+	}
+	reviews, _ := h.db.GetReviewsToSync(h.machineID, 100)
+	if len(reviews) != 0 {
+		t.Errorf("Expected 0 reviews to sync before clear, got %d", len(reviews))
+	}
+
+	// Clear all synced_at
+	if err := h.db.ClearAllSyncedAt(); err != nil {
+		t.Fatalf("ClearAllSyncedAt failed: %v", err)
+	}
+
+	// Now everything should need to sync again
+	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetJobsToSync failed: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Errorf("Expected 1 job to sync after clear, got %d", len(jobs))
+	}
+
+	// Mark job synced so reviews become available
+	if err := h.db.MarkJobSynced(job.ID); err != nil {
+		t.Fatalf("MarkJobSynced failed: %v", err)
+	}
+
+	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetReviewsToSync failed: %v", err)
+	}
+	if len(reviews) != 1 {
+		t.Errorf("Expected 1 review to sync after clear, got %d", len(reviews))
+	}
+
+	responses, err := h.db.GetResponsesToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetResponsesToSync failed: %v", err)
+	}
+	if len(responses) != 1 {
+		t.Errorf("Expected 1 response to sync after clear, got %d", len(responses))
+	}
+}
+
 // syncTestHelper creates a test DB with common setup for sync ordering tests.
 type syncTestHelper struct {
 	t         *testing.T

@@ -10,10 +10,11 @@ import (
 
 // Sync state keys
 const (
-	SyncStateMachineID       = "machine_id"
-	SyncStateLastJobCursor   = "last_job_cursor"   // ID of last synced job
+	SyncStateMachineID        = "machine_id"
+	SyncStateLastJobCursor    = "last_job_cursor"    // ID of last synced job
 	SyncStateLastReviewCursor = "last_review_cursor" // Composite cursor for reviews (updated_at,id)
-	SyncStateLastResponseID  = "last_response_id"  // ID of last synced response
+	SyncStateLastResponseID   = "last_response_id"   // ID of last synced response
+	SyncStateSyncTargetID     = "sync_target_id"     // Database ID of last synced Postgres
 )
 
 // GetSyncState retrieves a value from the sync_state table.
@@ -99,6 +100,25 @@ func (db *DB) BackfillSourceMachineID() error {
 		return fmt.Errorf("backfill responses source_machine_id: %w", err)
 	}
 
+	return nil
+}
+
+// ClearAllSyncedAt clears all synced_at timestamps in the database.
+// This is used when syncing to a new Postgres database to ensure
+// all data gets re-synced.
+func (db *DB) ClearAllSyncedAt() error {
+	// Clear synced_at on review_jobs
+	if _, err := db.Exec(`UPDATE review_jobs SET synced_at = NULL`); err != nil {
+		return fmt.Errorf("clear review_jobs synced_at: %w", err)
+	}
+	// Clear synced_at on reviews
+	if _, err := db.Exec(`UPDATE reviews SET synced_at = NULL`); err != nil {
+		return fmt.Errorf("clear reviews synced_at: %w", err)
+	}
+	// Clear synced_at on responses
+	if _, err := db.Exec(`UPDATE responses SET synced_at = NULL`); err != nil {
+		return fmt.Errorf("clear responses synced_at: %w", err)
+	}
 	return nil
 }
 

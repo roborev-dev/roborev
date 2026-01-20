@@ -1014,3 +1014,158 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 		t.Errorf("Expected 2 migrated repos, got %d", count)
 	}
 }
+
+func TestIntegration_GetDatabaseID_GeneratesAndPersists(t *testing.T) {
+	connString := getTestPostgresURL(t)
+
+	ctx := t.Context()
+	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	// Get the database ID - should create one if it doesn't exist
+	dbID1, err := pool.GetDatabaseID(ctx)
+	if err != nil {
+		t.Fatalf("GetDatabaseID failed: %v", err)
+	}
+	if dbID1 == "" {
+		t.Fatal("Expected non-empty database ID")
+	}
+
+	// Get it again - should return the same ID
+	dbID2, err := pool.GetDatabaseID(ctx)
+	if err != nil {
+		t.Fatalf("GetDatabaseID (second call) failed: %v", err)
+	}
+	if dbID2 != dbID1 {
+		t.Errorf("Expected same database ID on second call, got %s vs %s", dbID1, dbID2)
+	}
+
+	// Verify it's stored in sync_metadata
+	var storedID string
+	err = pool.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&storedID)
+	if err != nil {
+		t.Fatalf("Failed to query sync_metadata: %v", err)
+	}
+	if storedID != dbID1 {
+		t.Errorf("Stored ID %s doesn't match returned ID %s", storedID, dbID1)
+	}
+
+	t.Logf("Database ID: %s", dbID1)
+}
+
+func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
+	// This test verifies that when connecting to a different Postgres database
+	// (different database_id), the SQLite synced_at timestamps get cleared.
+	connString := getTestPostgresURL(t)
+
+	ctx := t.Context()
+	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	// Create a test SQLite database
+	sqliteDB, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatalf("Failed to open SQLite: %v", err)
+	}
+	defer sqliteDB.Close()
+
+	// Create test data with synced_at already set
+	repo, err := sqliteDB.GetOrCreateRepo(t.TempDir())
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	commit, err := sqliteDB.GetOrCreateCommit(repo.ID, "test-sha", "Author", "Subject", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+	job, err := sqliteDB.EnqueueJob(repo.ID, commit.ID, "test-sha", "test", "thorough")
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+	_, err = sqliteDB.ClaimJob("worker")
+	if err != nil {
+		t.Fatalf("ClaimJob failed: %v", err)
+	}
+	err = sqliteDB.CompleteJob(job.ID, "test", "prompt", "output")
+	if err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
+
+	// Mark everything as synced to simulate previous sync
+	err = sqliteDB.MarkJobSynced(job.ID)
+	if err != nil {
+		t.Fatalf("MarkJobSynced failed: %v", err)
+	}
+	review, err := sqliteDB.GetReviewByJobID(job.ID)
+	if err != nil {
+		t.Fatalf("GetReviewByJobID failed: %v", err)
+	}
+	err = sqliteDB.MarkReviewSynced(review.ID)
+	if err != nil {
+		t.Fatalf("MarkReviewSynced failed: %v", err)
+	}
+
+	// Set a fake old sync target ID (simulating we synced to a different database before)
+	oldTargetID := "old-database-" + uuid.NewString()
+	err = sqliteDB.SetSyncState(SyncStateSyncTargetID, oldTargetID)
+	if err != nil {
+		t.Fatalf("SetSyncState failed: %v", err)
+	}
+
+	// Verify job is currently synced
+	machineID, _ := sqliteDB.GetMachineID()
+	jobsToSync, _ := sqliteDB.GetJobsToSync(machineID, 100)
+	if len(jobsToSync) != 0 {
+		t.Errorf("Expected 0 jobs to sync (all synced), got %d", len(jobsToSync))
+	}
+
+	// Now get the database ID from the actual Postgres (which is different from oldTargetID)
+	dbID, err := pool.GetDatabaseID(ctx)
+	if err != nil {
+		t.Fatalf("GetDatabaseID failed: %v", err)
+	}
+
+	// Simulate what connect() does: detect new database and clear synced_at
+	lastTargetID, _ := sqliteDB.GetSyncState(SyncStateSyncTargetID)
+	if lastTargetID != "" && lastTargetID != dbID {
+		// This is what the sync worker does
+		t.Logf("Detected new database (was %s..., now %s...), clearing synced_at", lastTargetID[:8], dbID[:8])
+		err = sqliteDB.ClearAllSyncedAt()
+		if err != nil {
+			t.Fatalf("ClearAllSyncedAt failed: %v", err)
+		}
+	}
+	err = sqliteDB.SetSyncState(SyncStateSyncTargetID, dbID)
+	if err != nil {
+		t.Fatalf("SetSyncState (new target) failed: %v", err)
+	}
+
+	// Now the job should be returned for sync again
+	jobsToSync, err = sqliteDB.GetJobsToSync(machineID, 100)
+	if err != nil {
+		t.Fatalf("GetJobsToSync failed: %v", err)
+	}
+	if len(jobsToSync) != 1 {
+		t.Errorf("Expected 1 job to sync after clear, got %d", len(jobsToSync))
+	}
+
+	// Verify sync target was updated
+	newTargetID, _ := sqliteDB.GetSyncState(SyncStateSyncTargetID)
+	if newTargetID != dbID {
+		t.Errorf("Expected sync target ID to be %s, got %s", dbID, newTargetID)
+	}
+}

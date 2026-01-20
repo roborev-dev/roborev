@@ -96,6 +96,13 @@ var pgSchemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_reviews_updated ON reviews(updated_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_responses_job_uuid ON responses(job_uuid)`,
 	`CREATE INDEX IF NOT EXISTS idx_responses_id ON responses(id)`,
+	// sync_metadata stores database-level sync configuration
+	// database_id is a unique ID for this Postgres instance, used to detect
+	// when a client is syncing to a different database than before
+	`CREATE TABLE IF NOT EXISTS sync_metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+)`,
 }
 
 // PgPool wraps a pgx connection pool with reconnection logic
@@ -229,6 +236,37 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 	// Note: migrations for version upgrades would go here
 
 	return nil
+}
+
+// GetDatabaseID returns the unique ID for this Postgres database.
+// Creates one if it doesn't exist. This ID is used to detect when
+// a client is syncing to a different database than before.
+func (p *PgPool) GetDatabaseID(ctx context.Context) (string, error) {
+	var id string
+	err := p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("query database_id: %w", err)
+	}
+
+	// Generate new ID - use ON CONFLICT to handle concurrent creation
+	newID := GenerateUUID()
+	_, err = p.pool.Exec(ctx, `
+		INSERT INTO sync_metadata (key, value) VALUES ('database_id', $1)
+		ON CONFLICT (key) DO NOTHING
+	`, newID)
+	if err != nil {
+		return "", fmt.Errorf("insert database_id: %w", err)
+	}
+
+	// Re-read in case another process inserted first
+	err = p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("re-read database_id: %w", err)
+	}
+	return id, nil
 }
 
 // pgLegacyTables lists tables that may exist in public schema from older installations

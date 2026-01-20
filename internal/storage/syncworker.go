@@ -334,6 +334,34 @@ func (w *SyncWorker) connect(timeout time.Duration) error {
 		return fmt.Errorf("ensure schema: %w", err)
 	}
 
+	// Check if this is a new/different Postgres database
+	dbID, err := pool.GetDatabaseID(ctx)
+	if err != nil {
+		pool.Close()
+		return fmt.Errorf("get database ID: %w", err)
+	}
+
+	lastTargetID, err := w.db.GetSyncState(SyncStateSyncTargetID)
+	if err != nil {
+		pool.Close()
+		return fmt.Errorf("get sync target ID: %w", err)
+	}
+
+	if lastTargetID != "" && lastTargetID != dbID {
+		// Different database - clear all synced_at to force full re-sync
+		log.Printf("Sync: detected new Postgres database (was %s, now %s), clearing sync state for full re-sync", lastTargetID[:8], dbID[:8])
+		if err := w.db.ClearAllSyncedAt(); err != nil {
+			pool.Close()
+			return fmt.Errorf("clear synced_at: %w", err)
+		}
+	}
+
+	// Update the sync target ID
+	if err := w.db.SetSyncState(SyncStateSyncTargetID, dbID); err != nil {
+		pool.Close()
+		return fmt.Errorf("set sync target ID: %w", err)
+	}
+
 	// Register this machine
 	machineID, err := w.db.GetMachineID()
 	if err != nil {
