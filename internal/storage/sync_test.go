@@ -998,6 +998,12 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
 
+	// Mark job as synced (required before reviews can sync due to FK ordering)
+	err = db.MarkJobSynced(job.ID)
+	if err != nil {
+		t.Fatalf("MarkJobSynced failed: %v", err)
+	}
+
 	// Get the review ID
 	review, err := db.GetReviewByJobID(job.ID)
 	if err != nil {
@@ -1147,6 +1153,12 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 			t.Fatalf("CompleteJob failed: %v", err)
 		}
 
+		// Mark job as synced (required before reviews can sync due to FK ordering)
+		err = tzDB.MarkJobSynced(tzJob.ID)
+		if err != nil {
+			t.Fatalf("MarkJobSynced failed: %v", err)
+		}
+
 		// Get the review ID
 		tzReview, err := tzDB.GetReviewByJobID(tzJob.ID)
 		if err != nil {
@@ -1232,6 +1244,13 @@ func TestGetResponsesToSync_LegacyResponsesExcluded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
+
+	// Mark job as synced (required before responses can sync due to FK ordering)
+	err = db.MarkJobSynced(job.ID)
+	if err != nil {
+		t.Fatalf("MarkJobSynced failed: %v", err)
+	}
+
 	jobResp, err := db.AddResponseToJob(job.ID, "human", "This is a job response")
 	if err != nil {
 		t.Fatalf("AddResponseToJob failed: %v", err)
@@ -1401,5 +1420,285 @@ func TestSyncWorker_FinalPushReturnsNilWhenNotConnected(t *testing.T) {
 	err = worker.FinalPush()
 	if err != nil {
 		t.Fatalf("FinalPush should return nil when not connected, got: %v", err)
+	}
+}
+
+// syncTestHelper creates a test DB with common setup for sync ordering tests.
+type syncTestHelper struct {
+	t         *testing.T
+	db        *DB
+	machineID string
+	repo      *Repo
+}
+
+func newSyncTestHelper(t *testing.T) *syncTestHelper {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		t.Fatalf("Failed to get machine ID: %v", err)
+	}
+
+	repo, err := db.GetOrCreateRepo(t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to create repo: %v", err)
+	}
+
+	return &syncTestHelper{t: t, db: db, machineID: machineID, repo: repo}
+}
+
+// createCompletedJob creates a job, marks it done, and creates a review.
+func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
+	commit, err := h.db.GetOrCreateCommit(h.repo.ID, sha, "Author", "Subject", time.Now())
+	if err != nil {
+		h.t.Fatalf("Failed to create commit: %v", err)
+	}
+	job, err := h.db.EnqueueJob(h.repo.ID, commit.ID, sha, "test", "thorough")
+	if err != nil {
+		h.t.Fatalf("Failed to enqueue job: %v", err)
+	}
+	_, err = h.db.ClaimJob("worker")
+	if err != nil {
+		h.t.Fatalf("Failed to claim job: %v", err)
+	}
+	err = h.db.CompleteJob(job.ID, "test", "prompt", "output")
+	if err != nil {
+		h.t.Fatalf("Failed to complete job: %v", err)
+	}
+	return job
+}
+
+// TestGetReviewsToSync_RequiresJobSynced verifies that reviews are only
+// returned when their parent job has been synced (j.synced_at IS NOT NULL).
+func TestGetReviewsToSync_RequiresJobSynced(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	// Create a completed job (not synced yet)
+	job := h.createCompletedJob("sync-order-sha")
+
+	// Before job is synced, GetReviewsToSync should return nothing
+	reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetReviewsToSync failed: %v", err)
+	}
+	if len(reviews) != 0 {
+		t.Errorf("Expected 0 reviews before job is synced, got %d", len(reviews))
+	}
+
+	// Mark job as synced
+	if err := h.db.MarkJobSynced(job.ID); err != nil {
+		t.Fatalf("Failed to mark job synced: %v", err)
+	}
+
+	// Now GetReviewsToSync should return the review
+	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetReviewsToSync failed: %v", err)
+	}
+	if len(reviews) != 1 {
+		t.Errorf("Expected 1 review after job is synced, got %d", len(reviews))
+	}
+}
+
+// TestGetResponsesToSync_RequiresJobSynced verifies that responses are only
+// returned when their parent job has been synced (j.synced_at IS NOT NULL).
+func TestGetResponsesToSync_RequiresJobSynced(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	// Create a completed job (not synced yet)
+	job := h.createCompletedJob("response-sync-sha")
+
+	// Add a response to the job
+	_, err := h.db.AddResponseToJob(job.ID, "test-user", "test response")
+	if err != nil {
+		t.Fatalf("Failed to add response: %v", err)
+	}
+
+	// Before job is synced, GetResponsesToSync should return nothing
+	responses, err := h.db.GetResponsesToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetResponsesToSync failed: %v", err)
+	}
+	if len(responses) != 0 {
+		t.Errorf("Expected 0 responses before job is synced, got %d", len(responses))
+	}
+
+	// Mark job as synced
+	if err := h.db.MarkJobSynced(job.ID); err != nil {
+		t.Fatalf("Failed to mark job synced: %v", err)
+	}
+
+	// Now GetResponsesToSync should return the response
+	responses, err = h.db.GetResponsesToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetResponsesToSync failed: %v", err)
+	}
+	if len(responses) != 1 {
+		t.Errorf("Expected 1 response after job is synced, got %d", len(responses))
+	}
+}
+
+// TestGetJobsToSync_RequiresRepoIdentity verifies that jobs without a
+// repo identity are still returned (the identity check happens at push time).
+func TestGetJobsToSync_RequiresRepoIdentity(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	// Create a completed job
+	_ = h.createCompletedJob("identity-test-sha")
+
+	// Verify repo has no identity initially (GetOrCreateRepo doesn't set one)
+	var identity sql.NullString
+	err := h.db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, h.repo.ID).Scan(&identity)
+	if err != nil {
+		t.Fatalf("Failed to query repo: %v", err)
+	}
+	if identity.Valid && identity.String != "" {
+		t.Errorf("Expected no identity, got %q", identity.String)
+	}
+
+	// GetJobsToSync should return the job (with empty identity)
+	jobs, err := h.db.GetJobsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetJobsToSync failed: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("Expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].RepoIdentity != "" {
+		t.Errorf("Expected empty repo identity, got %q", jobs[0].RepoIdentity)
+	}
+
+	// Now set the repo identity
+	if err := h.db.SetRepoIdentity(h.repo.ID, "git@github.com:test/repo.git"); err != nil {
+		t.Fatalf("Failed to set repo identity: %v", err)
+	}
+
+	// GetJobsToSync should now return the job with identity
+	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetJobsToSync failed: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("Expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].RepoIdentity != "git@github.com:test/repo.git" {
+		t.Errorf("Expected repo identity 'git@github.com:test/repo.git', got %q", jobs[0].RepoIdentity)
+	}
+}
+
+// TestSyncOrder_FullWorkflow tests the complete sync ordering:
+// 1. Jobs must be synced first
+// 2. Reviews can only sync after their job is synced
+// 3. Responses can only sync after their job is synced
+func TestSyncOrder_FullWorkflow(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	// Set repo identity
+	if err := h.db.SetRepoIdentity(h.repo.ID, "git@github.com:test/workflow.git"); err != nil {
+		t.Fatalf("Failed to set repo identity: %v", err)
+	}
+
+	// Create 3 jobs with reviews and responses
+	var createdJobs []*ReviewJob
+	for i := 0; i < 3; i++ {
+		job := h.createCompletedJob("workflow-sha-" + string(rune('a'+i)))
+		createdJobs = append(createdJobs, job)
+		// Add a response
+		_, err := h.db.AddResponseToJob(job.ID, "user", "response")
+		if err != nil {
+			t.Fatalf("Failed to add response %d: %v", i, err)
+		}
+	}
+
+	// Initial state: 3 jobs to sync, 0 reviews (jobs not synced), 0 responses (jobs not synced)
+	jobs, err := h.db.GetJobsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetJobsToSync failed: %v", err)
+	}
+	if len(jobs) != 3 {
+		t.Errorf("Expected 3 jobs to sync, got %d", len(jobs))
+	}
+
+	reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetReviewsToSync failed: %v", err)
+	}
+	if len(reviews) != 0 {
+		t.Errorf("Expected 0 reviews to sync (jobs not synced), got %d", len(reviews))
+	}
+
+	responses, err := h.db.GetResponsesToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetResponsesToSync failed: %v", err)
+	}
+	if len(responses) != 0 {
+		t.Errorf("Expected 0 responses to sync (jobs not synced), got %d", len(responses))
+	}
+
+	// Sync first job
+	if err := h.db.MarkJobSynced(createdJobs[0].ID); err != nil {
+		t.Fatalf("Failed to mark job synced: %v", err)
+	}
+
+	// Now: 2 jobs to sync, 1 review (first job synced), 1 response (first job synced)
+	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetJobsToSync failed: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Errorf("Expected 2 jobs to sync, got %d", len(jobs))
+	}
+
+	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetReviewsToSync failed: %v", err)
+	}
+	if len(reviews) != 1 {
+		t.Errorf("Expected 1 review to sync, got %d", len(reviews))
+	}
+
+	responses, err = h.db.GetResponsesToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetResponsesToSync failed: %v", err)
+	}
+	if len(responses) != 1 {
+		t.Errorf("Expected 1 response to sync, got %d", len(responses))
+	}
+
+	// Sync remaining jobs
+	for _, j := range createdJobs[1:] {
+		if err := h.db.MarkJobSynced(j.ID); err != nil {
+			t.Fatalf("Failed to mark job synced: %v", err)
+		}
+	}
+
+	// Now: 0 jobs to sync, 3 reviews, 3 responses
+	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetJobsToSync failed: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Errorf("Expected 0 jobs to sync, got %d", len(jobs))
+	}
+
+	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetReviewsToSync failed: %v", err)
+	}
+	if len(reviews) != 3 {
+		t.Errorf("Expected 3 reviews to sync, got %d", len(reviews))
+	}
+
+	responses, err = h.db.GetResponsesToSync(h.machineID, 100)
+	if err != nil {
+		t.Fatalf("GetResponsesToSync failed: %v", err)
+	}
+	if len(responses) != 3 {
+		t.Errorf("Expected 3 responses to sync, got %d", len(responses))
 	}
 }
