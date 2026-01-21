@@ -824,3 +824,29 @@ func min(a, b time.Duration) time.Duration {
 	}
 	return b
 }
+
+// HealthCheck returns the health status of the sync worker
+func (w *SyncWorker) HealthCheck() (healthy bool, message string) {
+	w.mu.Lock()
+	running := w.running
+	pool := w.pgPool
+	w.mu.Unlock()
+
+	if !running {
+		return false, "not running"
+	}
+
+	if pool == nil {
+		return false, "not connected"
+	}
+
+	// Check if we can ping PostgreSQL
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := pool.Ping(ctx); err != nil {
+		return false, "connection lost"
+	}
+
+	return true, "connected"
+}

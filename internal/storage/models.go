@@ -106,3 +106,29 @@ type DaemonStatus struct {
 	MaxWorkers    int    `json:"max_workers"`
 	MachineID     string `json:"machine_id,omitempty"` // Local machine ID for remote job detection
 }
+
+// HealthStatus represents the overall daemon health
+type HealthStatus struct {
+	Healthy      bool              `json:"healthy"`
+	Uptime       string            `json:"uptime"`
+	Version      string            `json:"version"`
+	Components   []ComponentHealth `json:"components"`
+	RecentErrors []ErrorEntry      `json:"recent_errors"`
+	ErrorCount   int               `json:"error_count_24h"`
+}
+
+// ComponentHealth represents the health of a single component
+type ComponentHealth struct {
+	Name    string `json:"name"`
+	Healthy bool   `json:"healthy"`
+	Message string `json:"message,omitempty"`
+}
+
+// ErrorEntry represents a single error log entry (mirrors daemon.ErrorEntry for API)
+type ErrorEntry struct {
+	Timestamp time.Time `json:"ts"`
+	Level     string    `json:"level"`
+	Component string    `json:"component"`
+	Message   string    `json:"message"`
+	JobID     int64     `json:"job_id,omitempty"`
+}

@@ -189,7 +189,7 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 	}
 
 	// Create worker pool with our broadcaster
-	pool := NewWorkerPool(db, cfg, 1, broadcaster)
+	pool := NewWorkerPool(db, cfg, 1, broadcaster, nil)
 	pool.Start()
 	defer pool.Stop()
 

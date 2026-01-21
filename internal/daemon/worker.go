@@ -21,6 +21,7 @@ type WorkerPool struct {
 	cfg           *config.Config
 	promptBuilder *prompt.Builder
 	broadcaster   Broadcaster
+	errorLog      *ErrorLog
 
 	numWorkers    int
 	activeWorkers atomic.Int32
@@ -37,12 +38,13 @@ type WorkerPool struct {
 }
 
 // NewWorkerPool creates a new worker pool
-func NewWorkerPool(db *storage.DB, cfg *config.Config, numWorkers int, broadcaster Broadcaster) *WorkerPool {
+func NewWorkerPool(db *storage.DB, cfg *config.Config, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog) *WorkerPool {
 	return &WorkerPool{
 		db:             db,
 		cfg:            cfg,
 		promptBuilder:  prompt.NewBuilder(db),
 		broadcaster:    broadcaster,
+		errorLog:       errorLog,
 		numWorkers:     numWorkers,
 		stopCh:         make(chan struct{}),
 		runningJobs:    make(map[int64]context.CancelFunc),
@@ -205,6 +207,9 @@ func (wp *WorkerPool) worker(id int) {
 		job, err := wp.db.ClaimJob(workerID)
 		if err != nil {
 			log.Printf("[%s] Error claiming job: %v", workerID, err)
+			if wp.errorLog != nil {
+				wp.errorLog.LogError("worker", fmt.Sprintf("claim job: %v", err), 0)
+			}
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -349,6 +354,9 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 		log.Printf("[%s] Error retrying job: %v", workerID, err)
 		wp.db.FailJob(job.ID, errorMsg)
 		wp.broadcastFailed(job, agentName, errorMsg)
+		if wp.errorLog != nil {
+			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
+		}
 		return
 	}
 
@@ -359,6 +367,9 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 		log.Printf("[%s] Job %d failed after %d retries", workerID, job.ID, maxRetries)
 		wp.db.FailJob(job.ID, errorMsg)
 		wp.broadcastFailed(job, agentName, errorMsg)
+		if wp.errorLog != nil {
+			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed after %d retries: %s", job.ID, maxRetries, errorMsg), job.ID)
+		}
 	}
 }
 

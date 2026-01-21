@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wesm/roborev/internal/config"
 	_ "modernc.org/sqlite"
@@ -778,4 +779,22 @@ func (db *DB) ResetStaleJobs() error {
 		WHERE status = 'running'
 	`)
 	return err
+}
+
+// CountStalledJobs returns the number of jobs that have been running longer than the threshold
+func (db *DB) CountStalledJobs(threshold time.Duration) (int, error) {
+	// Calculate the cutoff time in SQLite's datetime format
+	cutoff := time.Now().Add(-threshold).UTC().Format("2006-01-02 15:04:05")
+
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM review_jobs
+		WHERE status = 'running'
+		AND started_at IS NOT NULL
+		AND started_at < ?
+	`, cutoff).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }

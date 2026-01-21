@@ -27,6 +27,8 @@ type Server struct {
 	workerPool  *WorkerPool
 	httpServer  *http.Server
 	syncWorker  *storage.SyncWorker
+	errorLog    *ErrorLog
+	startTime   time.Time
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -39,15 +41,25 @@ func NewServer(db *storage.DB, cfg *config.Config) *Server {
 	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents != nil && *cfg.AllowUnsafeAgents)
 	agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
 	broadcaster := NewBroadcaster()
+
+	// Initialize error log
+	errorLog, err := NewErrorLog(DefaultErrorLogPath())
+	if err != nil {
+		log.Printf("Warning: failed to create error log: %v", err)
+	}
+
 	s := &Server{
 		db:          db,
 		cfg:         cfg,
 		broadcaster: broadcaster,
-		workerPool:  NewWorkerPool(db, cfg, cfg.MaxWorkers, broadcaster),
+		workerPool:  NewWorkerPool(db, cfg, cfg.MaxWorkers, broadcaster, errorLog),
+		errorLog:    errorLog,
+		startTime:   time.Now(),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/enqueue", s.handleEnqueue)
+	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/jobs", s.handleListJobs)
 	mux.HandleFunc("/api/job/cancel", s.handleCancelJob)
 	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
@@ -113,6 +125,11 @@ func (s *Server) Stop() error {
 
 	// Stop worker pool
 	s.workerPool.Stop()
+
+	// Close error log
+	if s.errorLog != nil {
+		s.errorLog.Close()
+	}
 
 	return nil
 }
@@ -244,6 +261,14 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, ErrorResponse{Error: msg})
 }
 
+// writeInternalError writes an internal error response and logs it
+func (s *Server) writeInternalError(w http.ResponseWriter, msg string) {
+	writeError(w, http.StatusInternalServerError, msg)
+	if s.errorLog != nil {
+		s.errorLog.LogError("server", msg, 0)
+	}
+}
+
 func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -311,7 +336,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// Get or create repo with identity
 	repo, err := s.db.GetOrCreateRepo(repoRoot, repoIdentity)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get repo: %v", err))
+		s.writeInternalError(w, fmt.Sprintf("get repo: %v", err))
 		return
 	}
 
@@ -492,7 +517,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset, gitRef)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list jobs: %v", err))
+		s.writeInternalError(w, fmt.Sprintf("list jobs: %v", err))
 		return
 	}
 
@@ -751,7 +776,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	queued, running, done, failed, canceled, err := s.db.GetJobCounts()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("get counts: %v", err))
+		s.writeInternalError(w, fmt.Sprintf("get counts: %v", err))
 		return
 	}
 
@@ -847,4 +872,110 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Calculate uptime
+	uptime := time.Since(s.startTime)
+	uptimeStr := formatDuration(uptime)
+
+	// Check component health
+	var components []storage.ComponentHealth
+	allHealthy := true
+
+	// Database health check
+	dbHealthy := true
+	dbMessage := ""
+	if err := s.db.Ping(); err != nil {
+		dbHealthy = false
+		dbMessage = err.Error()
+		allHealthy = false
+	}
+	components = append(components, storage.ComponentHealth{
+		Name:    "database",
+		Healthy: dbHealthy,
+		Message: dbMessage,
+	})
+
+	// Worker health check - look for stalled jobs (running > 30 min)
+	workersHealthy := true
+	workersMessage := ""
+	stalledCount, err := s.db.CountStalledJobs(30 * time.Minute)
+	if err != nil {
+		workersHealthy = false
+		workersMessage = fmt.Sprintf("error checking stalled jobs: %v", err)
+		allHealthy = false
+	} else if stalledCount > 0 {
+		workersHealthy = false
+		workersMessage = fmt.Sprintf("%d stalled job(s) running > 30 min", stalledCount)
+		allHealthy = false
+	}
+	components = append(components, storage.ComponentHealth{
+		Name:    "workers",
+		Healthy: workersHealthy,
+		Message: workersMessage,
+	})
+
+	// Sync health check (if configured)
+	if s.syncWorker != nil {
+		syncHealthy, syncMessage := s.syncWorker.HealthCheck()
+		if !syncHealthy {
+			allHealthy = false
+		}
+		components = append(components, storage.ComponentHealth{
+			Name:    "sync",
+			Healthy: syncHealthy,
+			Message: syncMessage,
+		})
+	}
+
+	// Get recent errors
+	var recentErrors []storage.ErrorEntry
+	var errorCount24h int
+	if s.errorLog != nil {
+		for _, e := range s.errorLog.RecentN(10) {
+			recentErrors = append(recentErrors, storage.ErrorEntry{
+				Timestamp: e.Timestamp,
+				Level:     e.Level,
+				Component: e.Component,
+				Message:   e.Message,
+				JobID:     e.JobID,
+			})
+		}
+		errorCount24h = s.errorLog.Count24h()
+	}
+
+	status := storage.HealthStatus{
+		Healthy:      allHealthy,
+		Uptime:       uptimeStr,
+		Version:      version.Version,
+		Components:   components,
+		RecentErrors: recentErrors,
+		ErrorCount:   errorCount24h,
+	}
+
+	writeJSON(w, http.StatusOK, status)
+}
+
+// formatDuration formats a duration in human-readable form (e.g., "2h 15m")
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
 }

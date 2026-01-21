@@ -979,11 +979,59 @@ func statusCmd() *cobra.Command {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
-			fmt.Println("Daemon: running")
+			// Get health status
+			healthResp, err := client.Get(addr + "/api/health")
+			var health storage.HealthStatus
+			if err == nil {
+				defer healthResp.Body.Close()
+				json.NewDecoder(healthResp.Body).Decode(&health)
+			}
+
+			// Display daemon info with uptime
+			if health.Uptime != "" {
+				fmt.Printf("Daemon: running (uptime: %s)\n", health.Uptime)
+			} else {
+				fmt.Println("Daemon: running")
+			}
 			fmt.Printf("Workers: %d/%d active\n", status.ActiveWorkers, status.MaxWorkers)
 			fmt.Printf("Jobs:    %d queued, %d running, %d completed, %d failed\n",
 				status.QueuedJobs, status.RunningJobs, status.CompletedJobs, status.FailedJobs)
 			fmt.Println()
+
+			// Display health status
+			if health.Version != "" {
+				if health.Healthy {
+					fmt.Println("Health: OK")
+				} else {
+					fmt.Println("Health: DEGRADED")
+				}
+				for _, comp := range health.Components {
+					checkmark := "+"
+					if !comp.Healthy {
+						checkmark = "!"
+					}
+					if comp.Message != "" {
+						fmt.Printf("  %s %s: %s\n", checkmark, comp.Name, comp.Message)
+					} else {
+						fmt.Printf("  %s %s: healthy\n", checkmark, comp.Name)
+					}
+				}
+				fmt.Println()
+
+				// Display recent errors if any
+				if health.ErrorCount > 0 {
+					fmt.Printf("Recent Errors (last 24h): %d\n", health.ErrorCount)
+					for _, e := range health.RecentErrors {
+						ago := time.Since(e.Timestamp).Round(time.Minute)
+						if e.JobID > 0 {
+							fmt.Printf("  [%v ago] %s: job %d - %s\n", ago, e.Component, e.JobID, e.Message)
+						} else {
+							fmt.Printf("  [%v ago] %s: %s\n", ago, e.Component, e.Message)
+						}
+					}
+					fmt.Println()
+				}
+			}
 
 			// Get recent jobs
 			resp, err = client.Get(addr + "/api/jobs?limit=10")
