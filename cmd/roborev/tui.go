@@ -100,9 +100,10 @@ type tuiModel struct {
 	filterSearch      string           // Search/filter text typed by user
 
 	// Respond modal state
-	respondText   string // The response text being typed
-	respondJobID  int64  // Job ID we're responding to
-	respondCommit string // Short commit SHA for display
+	respondText     string  // The response text being typed
+	respondJobID    int64   // Job ID we're responding to
+	respondCommit   string  // Short commit SHA for display
+	respondFromView tuiView // View to return to after respond modal closes
 
 	// Active filter (applied to queue view)
 	activeRepoFilter []string // Empty = show all, otherwise repo root_paths to filter by
@@ -954,7 +955,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				return m, tea.Quit
 			case "esc":
-				m.currentView = tuiViewQueue
+				m.currentView = m.respondFromView
 				m.respondText = ""
 				m.respondJobID = 0
 				return m, nil
@@ -962,9 +963,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if strings.TrimSpace(m.respondText) != "" {
 					text := m.respondText
 					jobID := m.respondJobID
-					m.currentView = tuiViewQueue
-					m.respondText = ""
-					m.respondJobID = 0
+					// Return to previous view but keep text until submit succeeds
+					m.currentView = m.respondFromView
 					return m, m.submitResponse(jobID, text)
 				}
 				return m, nil
@@ -1384,6 +1384,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.respondCommit = m.respondCommit[:7]
 					}
 					m.respondText = ""
+					m.respondFromView = tuiViewQueue
 					m.currentView = tuiViewRespond
 				}
 				return m, nil
@@ -1397,6 +1398,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				m.respondText = ""
+				m.respondFromView = tuiViewReview
 				m.currentView = tuiViewRespond
 				return m, nil
 			}
@@ -1710,10 +1712,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiRespondResultMsg:
 		if msg.err != nil {
 			m.err = msg.err
-		}
-		// Refresh the review to show the new response (if viewing a review)
-		if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.JobID == msg.jobID {
-			return m, m.fetchReview(msg.jobID)
+			// Keep respondText and respondJobID so user can retry
+		} else {
+			// Success - clear the response state
+			m.respondText = ""
+			m.respondJobID = 0
+			// Refresh the review to show the new response (if viewing a review)
+			if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.JobID == msg.jobID {
+				return m, m.fetchReview(msg.jobID)
+			}
 		}
 
 	case tuiJobsErrMsg:
