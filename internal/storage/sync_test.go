@@ -249,6 +249,97 @@ func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
 	}
 }
 
+func TestGetOrCreateRepoByIdentity(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	t.Run("creates placeholder repo for local identity", func(t *testing.T) {
+		localIdentity := "local:my-local-project"
+
+		// Create repo by identity
+		repoID, err := db.GetOrCreateRepoByIdentity(localIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepoByIdentity failed: %v", err)
+		}
+		if repoID == 0 {
+			t.Fatal("Expected non-zero repo ID")
+		}
+
+		// Verify repo has correct fields
+		var rootPath, name, identity string
+		err = db.QueryRow(`SELECT root_path, name, identity FROM repos WHERE id = ?`, repoID).Scan(&rootPath, &name, &identity)
+		if err != nil {
+			t.Fatalf("Query repo failed: %v", err)
+		}
+		if rootPath != localIdentity {
+			t.Errorf("Expected root_path %q, got %q", localIdentity, rootPath)
+		}
+		if name != localIdentity {
+			t.Errorf("Expected name %q, got %q", localIdentity, name)
+		}
+		if identity != localIdentity {
+			t.Errorf("Expected identity %q, got %q", localIdentity, identity)
+		}
+	})
+
+	t.Run("returns same ID on subsequent calls", func(t *testing.T) {
+		localIdentity := "local:another-project"
+
+		id1, err := db.GetOrCreateRepoByIdentity(localIdentity)
+		if err != nil {
+			t.Fatalf("First GetOrCreateRepoByIdentity failed: %v", err)
+		}
+
+		id2, err := db.GetOrCreateRepoByIdentity(localIdentity)
+		if err != nil {
+			t.Fatalf("Second GetOrCreateRepoByIdentity failed: %v", err)
+		}
+
+		if id1 != id2 {
+			t.Errorf("Expected same repo ID, got %d and %d", id1, id2)
+		}
+	})
+
+	t.Run("creates different repos for different identities", func(t *testing.T) {
+		id1, err := db.GetOrCreateRepoByIdentity("local:project-a")
+		if err != nil {
+			t.Fatalf("First GetOrCreateRepoByIdentity failed: %v", err)
+		}
+
+		id2, err := db.GetOrCreateRepoByIdentity("local:project-b")
+		if err != nil {
+			t.Fatalf("Second GetOrCreateRepoByIdentity failed: %v", err)
+		}
+
+		if id1 == id2 {
+			t.Errorf("Expected different repo IDs, both got %d", id1)
+		}
+	})
+
+	t.Run("works with git URL identities too", func(t *testing.T) {
+		gitIdentity := "https://github.com/user/repo.git"
+
+		repoID, err := db.GetOrCreateRepoByIdentity(gitIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepoByIdentity failed: %v", err)
+		}
+
+		// Verify identity is set correctly
+		var identity string
+		err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repoID).Scan(&identity)
+		if err != nil {
+			t.Fatalf("Query repo failed: %v", err)
+		}
+		if identity != gitIdentity {
+			t.Errorf("Expected identity %q, got %q", gitIdentity, identity)
+		}
+	})
+}
+
 func TestSetRepoIdentity(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := Open(dbPath)
