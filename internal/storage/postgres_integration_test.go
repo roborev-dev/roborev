@@ -1664,13 +1664,10 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Create a repo
-	repo, err := db.CreateRepo("/test/batch-sync-repo")
+	// Create a repo with identity
+	repo, err := db.GetOrCreateRepo("/test/batch-sync-repo", "batch-sync-test-identity")
 	if err != nil {
 		t.Fatalf("Failed to create repo: %v", err)
-	}
-	if err := db.SetRepoIdentity(repo.ID, "batch-sync-test-identity"); err != nil {
-		t.Fatalf("Failed to set repo identity: %v", err)
 	}
 
 	// Create more jobs than syncBatchSize (25) to test looping
@@ -1678,21 +1675,20 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 	numJobs := 80
 	t.Logf("Creating %d jobs to test batch syncing", numJobs)
 	for i := 0; i < numJobs; i++ {
-		commit, err := db.FindOrCreateCommit(repo.ID, fmt.Sprintf("commit%03d", i), fmt.Sprintf("Author %d", i), fmt.Sprintf("Message %d", i))
+		commit, err := db.GetOrCreateCommit(repo.ID, fmt.Sprintf("commit%03d", i), fmt.Sprintf("Author %d", i), fmt.Sprintf("Message %d", i), time.Now())
 		if err != nil {
 			t.Fatalf("Failed to create commit %d: %v", i, err)
 		}
-		job, err := db.EnqueueReview(commit.ID, "test", "test prompt", "", false)
+		job, err := db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("commit%03d", i), "test", "")
 		if err != nil {
-			t.Fatalf("Failed to enqueue review %d: %v", i, err)
+			t.Fatalf("Failed to enqueue job %d: %v", i, err)
 		}
-		// Mark job done with a review
-		if err := db.UpdateJobStatus(job.ID, "done", ""); err != nil {
-			t.Fatalf("Failed to update job status: %v", err)
+		// Mark job as running then complete (CompleteJob creates the review)
+		if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
+			t.Fatalf("Failed to update job status %d: %v", i, err)
 		}
-		_, err = db.CreateReview(job.ID, "test", "test prompt", fmt.Sprintf("Review output %d", i))
-		if err != nil {
-			t.Fatalf("Failed to create review %d: %v", i, err)
+		if err := db.CompleteJob(job.ID, "test", "test prompt", fmt.Sprintf("Review output %d", i)); err != nil {
+			t.Fatalf("Failed to complete job %d: %v", i, err)
 		}
 	}
 
