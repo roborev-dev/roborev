@@ -29,3 +29,4 @@ Thumbs.db
 .cache
 .gomodcache/
 .gopath/
+result
