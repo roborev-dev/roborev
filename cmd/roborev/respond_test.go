@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/roborev/internal/storage"
-	"github.com/wesm/roborev/internal/version"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/version"
 )
 
 func TestRespondJobFlag(t *testing.T) {

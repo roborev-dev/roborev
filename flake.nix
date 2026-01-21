@@ -27,7 +27,7 @@
 
             meta = with pkgs.lib; {
               description = "Automatic code review daemon for git commits";
-              homepage = "https://github.com/wesm/roborev";
+              homepage = "https://github.com/roborev-dev/roborev";
               license = licenses.mit;
               mainProgram = "roborev";
             };

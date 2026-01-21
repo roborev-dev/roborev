@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/roborev/internal/daemon"
-	"github.com/wesm/roborev/internal/storage"
-	"github.com/wesm/roborev/internal/version"
+	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/version"
 )
 
 func TestEnqueueCmdPositionalArg(t *testing.T) {

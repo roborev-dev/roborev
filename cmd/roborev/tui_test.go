@@ -11,7 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/wesm/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // stripANSI removes ANSI escape sequences from a string

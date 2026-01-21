@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/roborev/internal/config"
-	"github.com/wesm/roborev/internal/daemon"
-	"github.com/wesm/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // TestE2EEnqueueAndReview tests the full flow of enqueueing and reviewing a commit

@@ -16,12 +16,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/roborev/internal/config"
-	"github.com/wesm/roborev/internal/version"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/version"
 )
 
 const (
-	githubAPIURL      = "https://api.github.com/repos/wesm/roborev/releases/latest"
+	githubAPIURL      = "https://api.github.com/repos/roborev-dev/roborev/releases/latest"
 	cacheFileName     = "update_check.json"
 	cacheDuration     = 1 * time.Hour
 	devCacheDuration  = 15 * time.Minute // Shorter cache for dev builds

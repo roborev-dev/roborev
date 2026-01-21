@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesm/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 // ErrorEntry represents a single error log entry

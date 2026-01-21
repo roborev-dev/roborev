@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/roborev/internal/config"
-	"github.com/wesm/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 func TestStreamEventsEndToEnd(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // setupTestRepo creates a git repo with multiple commits and returns the repo path and commit SHAs

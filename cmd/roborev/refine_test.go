@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesm/roborev/internal/agent"
-	"github.com/wesm/roborev/internal/config"
-	"github.com/wesm/roborev/internal/daemon"
-	"github.com/wesm/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // mockDaemonClient is a test implementation of daemon.Client

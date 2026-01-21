@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wesm/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 // RuntimeInfo stores daemon runtime state

@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wesm/roborev/internal/agent"
-	"github.com/wesm/roborev/internal/config"
-	"github.com/wesm/roborev/internal/prompt"
-	"github.com/wesm/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/prompt"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 // WorkerPool manages a pool of review workers

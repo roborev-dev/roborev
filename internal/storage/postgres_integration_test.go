@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesm/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 // getIntegrationPostgresURL returns the postgres URL for integration tests.

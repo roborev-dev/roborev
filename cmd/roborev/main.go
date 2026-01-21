@@ -23,13 +23,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wesm/roborev/internal/config"
-	"github.com/wesm/roborev/internal/daemon"
-	"github.com/wesm/roborev/internal/git"
-	"github.com/wesm/roborev/internal/skills"
-	"github.com/wesm/roborev/internal/storage"
-	"github.com/wesm/roborev/internal/update"
-	"github.com/wesm/roborev/internal/version"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/skills"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/update"
+	"github.com/roborev-dev/roborev/internal/version"
 )
 
 var (

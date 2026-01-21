@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesm/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 // SyncWorker handles background synchronization between SQLite and PostgreSQL

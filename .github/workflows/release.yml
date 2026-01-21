@@ -43,7 +43,7 @@ jobs:
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
 
           mkdir -p dist
-          LDFLAGS="-s -w -X github.com/wesm/roborev/internal/version.Version=v${VERSION}"
+          LDFLAGS="-s -w -X github.com/roborev-dev/roborev/internal/version.Version=v${VERSION}"
           go build -ldflags="$LDFLAGS" -o dist/roborev${EXT} ./cmd/roborev
 
           cd dist

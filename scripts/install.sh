@@ -1,10 +1,10 @@
 #!/bin/bash
 # roborev installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/wesm/roborev/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/roborev-dev/roborev/main/scripts/install.sh | bash
 
 set -e
 
-REPO="wesm/roborev"
+REPO="roborev-dev/roborev"
 BINARY_NAME="roborev"
 
 # Colors

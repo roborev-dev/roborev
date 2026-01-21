@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 // Sync state keys

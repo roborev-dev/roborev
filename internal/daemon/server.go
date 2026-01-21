@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesm/roborev/internal/agent"
-	"github.com/wesm/roborev/internal/config"
-	"github.com/wesm/roborev/internal/git"
-	"github.com/wesm/roborev/internal/storage"
-	"github.com/wesm/roborev/internal/version"
+	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/version"
 )
 
 // Server is the HTTP API server for the daemon

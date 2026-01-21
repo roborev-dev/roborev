@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/wesm/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/git"
 )
 
 // Config holds the daemon configuration

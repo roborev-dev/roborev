@@ -2,18 +2,18 @@
 
 Automatic code review for git commits using AI agents (Claude Code, Codex, Gemini, Copilot, OpenCode).
 
-![TUI Queue View](docs/screenshots/tui-queue.png)
+![TUI Queue View](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/src/assets/screenshots/tui-queue.png)
 
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wesm/roborev/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/roborev-dev/roborev/main/scripts/install.sh | bash
 ```
 
 Or with Go:
 
 ```bash
-go install github.com/wesm/roborev/cmd/roborev@latest
+go install github.com/roborev-dev/roborev/cmd/roborev@latest
 ```
 
 Ensure `$GOPATH/bin` is in your PATH:
@@ -395,7 +395,7 @@ The interactive terminal UI (`roborev tui`) provides a real-time view of the rev
 
 Filter to a single repository with `f`, or hide completed reviews with `h` to focus on items needing attention
 
-<img src="docs/screenshots/tui-filter.png" width="75%" alt="Filter Modal">
+<img src="https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/src/assets/screenshots/tui-filter.png" width="75%" alt="Filter Modal">
 
 **Review/Prompt View:**
 
@@ -410,7 +410,7 @@ Filter to a single repository with `f`, or hide completed reviews with `h` to fo
 
 Reviews display a **Verdict** (Pass/Fail) parsed from the AI response, with color coding for quick triage.
 
-<img src="docs/screenshots/tui-review.png" width="75%" alt="Review View">
+<img src="https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/src/assets/screenshots/tui-review.png" width="75%" alt="Review View">
 
 ## Streaming Events
 
@@ -543,7 +543,7 @@ The sync will never be left in an inconsistent state where it thinks data was sy
 ## Development
 
 ```bash
-git clone https://github.com/wesm/roborev
+git clone https://github.com/roborev-dev/roborev
 cd roborev
 go test ./...
 make install    # Installs with version info (e.g., v0.7.0-5-gabcdef)
