@@ -161,6 +161,94 @@ func TestBackfillSourceMachineID(t *testing.T) {
 	}
 }
 
+func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a repo with a path that exists but has no git remote
+	// (using temp dir which won't have a .git directory)
+	tempDir := t.TempDir()
+	repo, err := db.GetOrCreateRepo(tempDir)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	// Clear identity to simulate legacy repo
+	_, err = db.Exec(`UPDATE repos SET identity = NULL WHERE id = ?`, repo.ID)
+	if err != nil {
+		t.Fatalf("Failed to clear identity: %v", err)
+	}
+
+	// Backfill should use local: prefix with repo name
+	count, err := db.BackfillRepoIdentities()
+	if err != nil {
+		t.Fatalf("BackfillRepoIdentities failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 repo backfilled, got %d", count)
+	}
+
+	// Verify identity was set with local: prefix
+	var identity string
+	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
+	if err != nil {
+		t.Fatalf("Query identity failed: %v", err)
+	}
+
+	expectedPrefix := "local:"
+	if !strings.HasPrefix(identity, expectedPrefix) {
+		t.Errorf("Expected identity to start with %q, got %q", expectedPrefix, identity)
+	}
+
+	// The identity should contain the repo name (last component of path)
+	if !strings.Contains(identity, repo.Name) {
+		t.Errorf("Expected identity to contain repo name %q, got %q", repo.Name, identity)
+	}
+}
+
+func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a repo and set its identity
+	tempDir := t.TempDir()
+	repo, err := db.GetOrCreateRepo(tempDir)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	err = db.SetRepoIdentity(repo.ID, "https://github.com/user/existing.git")
+	if err != nil {
+		t.Fatalf("SetRepoIdentity failed: %v", err)
+	}
+
+	// Backfill should not change existing identity
+	count, err := db.BackfillRepoIdentities()
+	if err != nil {
+		t.Fatalf("BackfillRepoIdentities failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 repos backfilled (already has identity), got %d", count)
+	}
+
+	// Verify identity unchanged
+	var identity string
+	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
+	if err != nil {
+		t.Fatalf("Query identity failed: %v", err)
+	}
+	if identity != "https://github.com/user/existing.git" {
+		t.Errorf("Expected identity unchanged, got %q", identity)
+	}
+}
+
 func TestSetRepoIdentity(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := Open(dbPath)

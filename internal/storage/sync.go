@@ -123,11 +123,13 @@ func (db *DB) ClearAllSyncedAt() error {
 }
 
 // BackfillRepoIdentities computes and sets identity for repos that don't have one.
-// Identity is derived from the git remote origin URL if the repo path still exists.
+// Identity is derived from:
+// 1. Git remote origin URL (if available)
+// 2. Repo name with "local:" prefix (for repos without remotes)
 // Returns the number of repos backfilled.
 func (db *DB) BackfillRepoIdentities() (int, error) {
 	// Get repos without identity
-	rows, err := db.Query(`SELECT id, root_path FROM repos WHERE identity IS NULL OR identity = ''`)
+	rows, err := db.Query(`SELECT id, root_path, name FROM repos WHERE identity IS NULL OR identity = ''`)
 	if err != nil {
 		return 0, fmt.Errorf("query repos without identity: %w", err)
 	}
@@ -136,11 +138,12 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 	type repoInfo struct {
 		id   int64
 		path string
+		name string
 	}
 	var repos []repoInfo
 	for rows.Next() {
 		var r repoInfo
-		if err := rows.Scan(&r.id, &r.path); err != nil {
+		if err := rows.Scan(&r.id, &r.path, &r.name); err != nil {
 			return 0, fmt.Errorf("scan repo: %w", err)
 		}
 		repos = append(repos, r)
@@ -151,13 +154,11 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 
 	backfilled := 0
 	for _, r := range repos {
+		// Try git remote origin first
 		identity, err := getGitRemoteOrigin(r.path)
-		if err != nil {
-			// Path doesn't exist or isn't a git repo - skip
-			continue
-		}
-		if identity == "" {
-			continue
+		if err != nil || identity == "" {
+			// No remote - use local: prefix with repo name
+			identity = "local:" + r.name
 		}
 
 		if err := db.SetRepoIdentity(r.id, identity); err != nil {
