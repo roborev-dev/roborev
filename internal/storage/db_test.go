@@ -442,6 +442,54 @@ func TestJobCounts(t *testing.T) {
 	_ = job
 }
 
+func TestCountStalledJobs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
+
+	// Create a job and claim it (makes it running with current timestamp)
+	commit1, _ := db.GetOrCreateCommit(repo.ID, "recent1", "A", "S", time.Now())
+	db.EnqueueJob(repo.ID, commit1.ID, "recent1", "codex", "")
+	_, _ = db.ClaimJob("worker-1")
+
+	// No stalled jobs yet (just started)
+	count, err := db.CountStalledJobs(30 * time.Minute)
+	if err != nil {
+		t.Fatalf("CountStalledJobs failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 stalled jobs for recently started job, got %d", count)
+	}
+
+	// Create a job and manually set started_at to 1 hour ago (simulating stalled job)
+	commit2, _ := db.GetOrCreateCommit(repo.ID, "stalled1", "A", "S", time.Now())
+	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "stalled1", "codex", "")
+	oldTime := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, oldTime, job2.ID)
+	if err != nil {
+		t.Fatalf("Failed to update job: %v", err)
+	}
+
+	// Now we should have 1 stalled job (running > 30 min)
+	count, err = db.CountStalledJobs(30 * time.Minute)
+	if err != nil {
+		t.Fatalf("CountStalledJobs failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 stalled job for job started 1 hour ago, got %d", count)
+	}
+
+	// With a longer threshold (2 hours), the job shouldn't be considered stalled
+	count, err = db.CountStalledJobs(2 * time.Hour)
+	if err != nil {
+		t.Fatalf("CountStalledJobs failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 stalled jobs with 2 hour threshold, got %d", count)
+	}
+}
+
 func TestRetryJob(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

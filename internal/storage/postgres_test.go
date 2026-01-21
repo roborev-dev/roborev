@@ -1371,10 +1371,14 @@ func TestIntegration_BatchOperations(t *testing.T) {
 		}
 
 		// Create a batch with one valid and one invalid review (bad FK)
-		// Note: valid items should come first, as pgx batch may abort after first failure
+		// Note: PostgreSQL transactions are atomic - if any statement fails due to FK violation,
+		// the entire batch transaction is rolled back. The success slice indicates which
+		// individual statements executed without error, but actual persistence depends on
+		// the entire batch succeeding.
+		validReviewUUID := uuid.NewString()
 		reviews := []SyncableReview{
 			{
-				UUID:               uuid.NewString(),
+				UUID:               validReviewUUID,
 				JobUUID:            validJobUUID, // Valid FK
 				Agent:              "test",
 				Prompt:             "valid review",
@@ -1400,17 +1404,30 @@ func TestIntegration_BatchOperations(t *testing.T) {
 			t.Error("Expected error from batch with invalid FK, got nil")
 		}
 
-		// Should have correct success flags
+		// Should have correct success flags - note these are informational only
+		// and don't guarantee persistence due to transaction rollback
 		if len(success) != 2 {
 			t.Fatalf("Expected success slice length 2, got %d", len(success))
 		}
 
-		// First should succeed, second should fail
+		// First statement executes without error, second fails
 		if !success[0] {
 			t.Error("Expected success[0]=true (valid FK)")
 		}
 		if success[1] {
 			t.Error("Expected success[1]=false (invalid FK)")
+		}
+
+		// Verify DB state: due to PostgreSQL transaction semantics, the FK violation
+		// causes the entire batch to be rolled back, so no reviews should be persisted
+		var count int
+		err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE uuid = $1`, validReviewUUID).Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to query review: %v", err)
+		}
+		// The valid review was rolled back along with the failed one
+		if count != 0 {
+			t.Errorf("Expected 0 reviews (batch rolled back due to FK failure), got %d", count)
 		}
 	})
 

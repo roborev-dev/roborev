@@ -783,16 +783,17 @@ func (db *DB) ResetStaleJobs() error {
 
 // CountStalledJobs returns the number of jobs that have been running longer than the threshold
 func (db *DB) CountStalledJobs(threshold time.Duration) (int, error) {
-	// Calculate the cutoff time in SQLite's datetime format
-	cutoff := time.Now().Add(-threshold).UTC().Format("2006-01-02 15:04:05")
+	// Use threshold in seconds for SQLite datetime arithmetic
+	// This avoids timezone issues with RFC3339 string comparison
+	thresholdSecs := int64(threshold.Seconds())
 
 	var count int
 	err := db.QueryRow(`
 		SELECT COUNT(*) FROM review_jobs
 		WHERE status = 'running'
 		AND started_at IS NOT NULL
-		AND started_at < ?
-	`, cutoff).Scan(&count)
+		AND datetime(started_at) < datetime('now', ? || ' seconds')
+	`, -thresholdSecs).Scan(&count)
 	if err != nil {
 		return 0, err
 	}

@@ -125,7 +125,9 @@ func (e *ErrorLog) RecentN(n int) []ErrorEntry {
 	return all[:n]
 }
 
-// Count24h returns the count of errors in the last 24 hours
+// Count24h returns the count of errors in the last 24 hours from the in-memory buffer.
+// Note: This only counts up to maxRecent (100) entries. If error volume is high,
+// the actual 24h count may be higher. For precise counts, parse the log file.
 func (e *ErrorLog) Count24h() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
