@@ -24,6 +24,10 @@ import (
 	"github.com/wesm/roborev/internal/storage"
 )
 
+// postCommitWaitDelay is the delay after creating a commit before checking
+// if a review was queued by the post-commit hook. Tests can override this.
+var postCommitWaitDelay = 1 * time.Second
+
 func refineCmd() *cobra.Command {
 	var (
 		agentName         string
@@ -480,7 +484,7 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 
 		// Wait for new commit to be reviewed (if post-commit hook triggers it)
 		// Give a short delay for the hook to fire
-		time.Sleep(1 * time.Second)
+		time.Sleep(postCommitWaitDelay)
 
 		// Check if a review was queued for the new commit
 		newJob, err := client.FindJobForCommit(repoPath, newCommit)

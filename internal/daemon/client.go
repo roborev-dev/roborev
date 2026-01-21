@@ -45,6 +45,10 @@ type Client interface {
 	GetResponsesForJob(jobID int64) ([]storage.Response, error)
 }
 
+// DefaultPollInterval is the default polling interval for WaitForReview.
+// Tests can override this to speed up polling-based tests.
+var DefaultPollInterval = 2 * time.Second
+
 // HTTPClient is the default HTTP-based implementation of Client
 type HTTPClient struct {
 	addr         string
@@ -57,7 +61,7 @@ func NewHTTPClient(addr string) *HTTPClient {
 	return &HTTPClient{
 		addr:         addr,
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
-		pollInterval: 2 * time.Second,
+		pollInterval: DefaultPollInterval,
 	}
 }
 

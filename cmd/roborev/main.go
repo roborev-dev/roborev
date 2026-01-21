@@ -1463,7 +1463,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 
 // waitForReview waits for a review to complete and returns it
 func waitForReview(jobID int64) (*storage.Review, error) {
-	return waitForReviewWithInterval(jobID, 2*time.Second)
+	return waitForReviewWithInterval(jobID, pollStartInterval)
 }
 
 func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storage.Review, error) {

@@ -104,6 +104,29 @@ func captureStdout(t *testing.T, fn func()) string {
 	return output
 }
 
+// setupFastPolling reduces all polling intervals to 1ms for fast tests.
+// Returns a cleanup function that restores the original values.
+func setupFastPolling(t *testing.T) {
+	t.Helper()
+
+	origPollStart := pollStartInterval
+	origPollMax := pollMaxInterval
+	origPostCommitWait := postCommitWaitDelay
+	origDaemonPoll := daemon.DefaultPollInterval
+
+	pollStartInterval = 1 * time.Millisecond
+	pollMaxInterval = 1 * time.Millisecond
+	postCommitWaitDelay = 1 * time.Millisecond
+	daemon.DefaultPollInterval = 1 * time.Millisecond
+
+	t.Cleanup(func() {
+		pollStartInterval = origPollStart
+		pollMaxInterval = origPollMax
+		postCommitWaitDelay = origPostCommitWait
+		daemon.DefaultPollInterval = origDaemonPoll
+	})
+}
+
 func setupRefineRepo(t *testing.T) (string, string) {
 	t.Helper()
 
@@ -275,6 +298,7 @@ func TestRefineNoChangeRetryLogic(t *testing.T) {
 }
 
 func TestRunRefineSurfacesResponseErrors(t *testing.T) {
+	setupFastPolling(t)
 	repoDir := t.TempDir()
 	runGit := func(args ...string) {
 		cmd := exec.Command("git", args...)
@@ -331,6 +355,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 }
 
 func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
+	setupFastPolling(t)
 	repoDir, headSHA := setupRefineRepo(t)
 	state := newMockRefineState()
 	state.reviews[headSHA] = &storage.Review{
@@ -368,6 +393,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 }
 
 func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
+	setupFastPolling(t)
 	repoDir, headSHA := setupRefineRepo(t)
 	state := newMockRefineState()
 	state.reviews[headSHA] = &storage.Review{
@@ -412,6 +438,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 // returns an error, the error is properly captured and printed (not shadowed), and
 // the refine loop retries in the next iteration without applying any changes.
 func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
+	setupFastPolling(t)
 	repoDir, headSHA := setupRefineRepo(t)
 	state := newMockRefineState()
 	state.reviews[headSHA] = &storage.Review{
@@ -884,6 +911,7 @@ func TestRefineLoopEnqueueBranchReview(t *testing.T) {
 }
 
 func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
+	setupFastPolling(t)
 	// Test waiting for a review to complete
 
 	t.Run("returns review when job completes successfully", func(t *testing.T) {
@@ -959,6 +987,7 @@ func (a *changingAgent) WithAgentic(agentic bool) agent.Agent {
 }
 
 func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
+	setupFastPolling(t)
 	repoDir, _ := setupRefineRepo(t)
 	runGit := func(args ...string) string {
 		cmd := exec.Command("git", args...)
@@ -1161,6 +1190,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 // maxIterations=1 and a job that starts as Running then transitions to Done with a
 // passing review - if iterations were consumed during the wait, the test would fail.
 func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
+	setupFastPolling(t)
 	repoDir := t.TempDir()
 
 	// Create a git repo with a commit on a feature branch
