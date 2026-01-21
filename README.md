@@ -24,12 +24,17 @@ faster with immediate critical feedback on your agents' work.
 
 ## Installation
 
+**macOS / Linux:**
 ```bash
 curl -fsSL https://roborev.io/install.sh | bash
 ```
 
-Or with Go:
+**Windows (PowerShell):**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"
+```
 
+**With Go:**
 ```bash
 go install github.com/roborev-dev/roborev/cmd/roborev@latest
 ```
