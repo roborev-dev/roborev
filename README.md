@@ -523,6 +523,22 @@ postgres_url = "postgres://roborev:${ROBOREV_PG_PASS}@host:5432/db"
 
 Set the password in your shell: `export ROBOREV_PG_PASS="secret"`
 
+**Changing sync servers:**
+
+When you change the `postgres_url` to a different server or reset the database, roborev automatically detects this and performs a full resync:
+
+- Each PostgreSQL database has a unique identifier stored in a `sync_metadata` table
+- On connection, roborev compares this ID with the last synced database
+- If different, all local `synced_at` timestamps and pull cursors are cleared
+- This triggers a complete bidirectional sync: all local data is pushed, and all remote data is pulled
+
+This means you can safely:
+- Switch between PostgreSQL servers (e.g., dev to prod)
+- Reset/recreate your PostgreSQL database
+- Sync the same local database to multiple PostgreSQL instances over time
+
+The sync will never be left in an inconsistent state where it thinks data was synced but the target database doesn't have it.
+
 ## Development
 
 ```bash
