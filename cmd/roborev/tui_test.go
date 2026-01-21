@@ -4784,3 +4784,104 @@ func TestTUIPendingAddressedNotClearsWhenServerNilMismatchesTrue(t *testing.T) {
 		t.Error("Job should show as addressed due to pending state")
 	}
 }
+
+func TestTUIRespondTextPreservation(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, GitRef: "abc1234"},
+		{ID: 2, Status: storage.JobStatusDone, GitRef: "def5678"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.width = 80
+	m.height = 24
+
+	// 1. Open respond for Job 1
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(tuiModel)
+
+	if m.currentView != tuiViewRespond {
+		t.Fatalf("Expected tuiViewRespond, got %v", m.currentView)
+	}
+	if m.respondJobID != 1 {
+		t.Fatalf("Expected respondJobID=1, got %d", m.respondJobID)
+	}
+
+	// 2. Type some text
+	m.respondText = "My draft response"
+
+	// 3. Simulate failed submission - press enter then receive error
+	m.currentView = m.respondFromView // Simulate what happens on enter
+	errMsg := tuiRespondResultMsg{jobID: 1, err: fmt.Errorf("network error")}
+	updated, _ = m.Update(errMsg)
+	m = updated.(tuiModel)
+
+	// Text should be preserved after error
+	if m.respondText != "My draft response" {
+		t.Errorf("Expected text preserved after error, got %q", m.respondText)
+	}
+	if m.respondJobID != 1 {
+		t.Errorf("Expected respondJobID preserved after error, got %d", m.respondJobID)
+	}
+
+	// 4. Re-open respond for Job 1 (Retry) - text should still be there
+	m.currentView = tuiViewQueue
+	m.selectedIdx = 0
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(tuiModel)
+
+	if m.respondText != "My draft response" {
+		t.Errorf("Expected text preserved on retry for same job, got %q", m.respondText)
+	}
+
+	// 5. Go back to queue and switch to Job 2 - text should be cleared
+	m.currentView = tuiViewQueue
+	m.selectedIdx = 1
+	m.selectedJobID = 2
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(tuiModel)
+
+	if m.respondText != "" {
+		t.Errorf("Expected text cleared for different job, got %q", m.respondText)
+	}
+	if m.respondJobID != 2 {
+		t.Errorf("Expected respondJobID=2, got %d", m.respondJobID)
+	}
+}
+
+func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, GitRef: "abc1234"},
+		{ID: 2, Status: storage.JobStatusDone, GitRef: "def5678"},
+	}
+
+	// User submitted response for job 1, then started drafting for job 2
+	m.respondJobID = 2
+	m.respondText = "New draft for job 2"
+
+	// Success message arrives for job 1 (the old submission)
+	successMsg := tuiRespondResultMsg{jobID: 1, err: nil}
+	updated, _ := m.Update(successMsg)
+	m = updated.(tuiModel)
+
+	// Draft for job 2 should NOT be cleared
+	if m.respondText != "New draft for job 2" {
+		t.Errorf("Expected draft preserved for different job, got %q", m.respondText)
+	}
+	if m.respondJobID != 2 {
+		t.Errorf("Expected respondJobID=2 preserved, got %d", m.respondJobID)
+	}
+
+	// Now success for job 2 should clear
+	successMsg = tuiRespondResultMsg{jobID: 2, err: nil}
+	updated, _ = m.Update(successMsg)
+	m = updated.(tuiModel)
+
+	if m.respondText != "" {
+		t.Errorf("Expected text cleared for matching job, got %q", m.respondText)
+	}
+	if m.respondJobID != 0 {
+		t.Errorf("Expected respondJobID=0 after success, got %d", m.respondJobID)
+	}
+}
