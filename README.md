@@ -1,12 +1,15 @@
-# roborev
+![roborev](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/logo-with-text-light.svg)
 
-Automatic code review for git commits using AI agents (Claude Code, Codex, Gemini, Copilot, OpenCode).
+Continuous, non-invasive background code review using AI agents
+(Claude Code, Codex, Gemini, Copilot, OpenCode). Work smarter and
+faster with immediate critical feedback on your agents' work.
 
 ![TUI Queue View](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/src/assets/screenshots/tui-queue.png)
 
 ## Features
 
-- **Automatic Reviews** - Reviews happen on every commit via git hooks
+- **Automatic Reviews** - Reviews happen on every commit via git
+  hooks, or request branch or commit range reviews using the CLI
 - **Multi-Agent Support** - Works with Codex, Claude Code, Gemini, Copilot, OpenCode
 - **Local & Private** - Runs entirely on your machine
 - **Auto-Fix with Refine** - AI automatically addresses failed reviews
