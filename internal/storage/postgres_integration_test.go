@@ -1664,6 +1664,25 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 	}
 	defer db.Close()
 
+	// Start sync worker FIRST, before creating jobs
+	cfg := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    url,
+		Interval:       "1h", // Long interval so only manual SyncNow triggers sync
+		ConnectTimeout: "5s",
+	}
+	worker := NewSyncWorker(db, cfg)
+	if err := worker.Start(); err != nil {
+		t.Fatalf("Failed to start sync worker: %v", err)
+	}
+	defer worker.Stop()
+
+	// Wait for connection (this will sync, but there's nothing to sync yet)
+	if err := waitForSyncWorkerConnection(worker, 30*time.Second); err != nil {
+		t.Fatalf("Sync worker failed to connect: %v", err)
+	}
+
+	// Now create jobs AFTER the sync worker is connected
 	// Create a repo with identity
 	repo, err := db.GetOrCreateRepo("/test/batch-sync-repo", "batch-sync-test-identity")
 	if err != nil {
@@ -1704,24 +1723,6 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 	t.Logf("Pending jobs before sync: %d", len(pendingJobs))
 	if len(pendingJobs) < numJobs {
 		t.Fatalf("Expected %d pending jobs, got %d", numJobs, len(pendingJobs))
-	}
-
-	// Start sync worker
-	cfg := config.SyncConfig{
-		Enabled:        true,
-		PostgresURL:    url,
-		Interval:       "1h",
-		ConnectTimeout: "5s",
-	}
-	worker := NewSyncWorker(db, cfg)
-	if err := worker.Start(); err != nil {
-		t.Fatalf("Failed to start sync worker: %v", err)
-	}
-	defer worker.Stop()
-
-	// Wait for connection
-	if err := waitForSyncWorkerConnection(worker, 30*time.Second); err != nil {
-		t.Fatalf("Sync worker failed to connect: %v", err)
 	}
 
 	// Call SyncNow and verify it pushes ALL items
