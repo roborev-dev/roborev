@@ -1361,4 +1361,124 @@ func TestIntegration_BatchOperations(t *testing.T) {
 			t.Errorf("Expected nil for empty batch, got %v", success)
 		}
 	})
+
+	t.Run("BatchUpsertReviews partial failure with invalid FK", func(t *testing.T) {
+		// Get a valid job UUID
+		var validJobUUID string
+		err := pool.pool.QueryRow(ctx, `SELECT uuid FROM review_jobs WHERE source_machine_id = 'test-machine' LIMIT 1`).Scan(&validJobUUID)
+		if err != nil {
+			t.Fatalf("Failed to get job UUID: %v", err)
+		}
+
+		// Create a batch with one valid and one invalid review (bad FK)
+		reviews := []SyncableReview{
+			{
+				UUID:               uuid.NewString(),
+				JobUUID:            validJobUUID, // Valid FK
+				Agent:              "test",
+				Prompt:             "valid review",
+				Output:             "output",
+				UpdatedByMachineID: "test-machine",
+				CreatedAt:          time.Now(),
+			},
+			{
+				UUID:               uuid.NewString(),
+				JobUUID:            "nonexistent-job-uuid", // Invalid FK - will fail
+				Agent:              "test",
+				Prompt:             "invalid review",
+				Output:             "output",
+				UpdatedByMachineID: "test-machine",
+				CreatedAt:          time.Now(),
+			},
+			{
+				UUID:               uuid.NewString(),
+				JobUUID:            validJobUUID, // Valid FK
+				Agent:              "test",
+				Prompt:             "another valid review",
+				Output:             "output",
+				UpdatedByMachineID: "test-machine",
+				CreatedAt:          time.Now(),
+			},
+		}
+
+		success, err := pool.BatchUpsertReviews(ctx, reviews)
+
+		// Should return an error (from the failed row)
+		if err == nil {
+			t.Error("Expected error from batch with invalid FK, got nil")
+		}
+
+		// Should have correct success flags
+		if len(success) != 3 {
+			t.Fatalf("Expected success slice length 3, got %d", len(success))
+		}
+
+		// First and third should succeed, second should fail
+		if !success[0] {
+			t.Error("Expected success[0]=true (valid FK)")
+		}
+		if success[1] {
+			t.Error("Expected success[1]=false (invalid FK)")
+		}
+		if !success[2] {
+			t.Error("Expected success[2]=true (valid FK)")
+		}
+
+		// Verify only valid reviews exist in database
+		var count int
+		err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE uuid IN ($1, $2, $3)`,
+			reviews[0].UUID, reviews[1].UUID, reviews[2].UUID).Scan(&count)
+		if err != nil {
+			t.Fatalf("Count query failed: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("Expected 2 reviews in database (valid ones), got %d", count)
+		}
+	})
+
+	t.Run("BatchInsertResponses partial failure with invalid FK", func(t *testing.T) {
+		// Get a valid job UUID
+		var validJobUUID string
+		err := pool.pool.QueryRow(ctx, `SELECT uuid FROM review_jobs WHERE source_machine_id = 'test-machine' LIMIT 1`).Scan(&validJobUUID)
+		if err != nil {
+			t.Fatalf("Failed to get job UUID: %v", err)
+		}
+
+		responses := []SyncableResponse{
+			{
+				UUID:            uuid.NewString(),
+				JobUUID:         validJobUUID, // Valid FK
+				Responder:       "user",
+				Response:        "valid response",
+				SourceMachineID: "test-machine",
+				CreatedAt:       time.Now(),
+			},
+			{
+				UUID:            uuid.NewString(),
+				JobUUID:         "nonexistent-job-uuid", // Invalid FK
+				Responder:       "user",
+				Response:        "invalid response",
+				SourceMachineID: "test-machine",
+				CreatedAt:       time.Now(),
+			},
+		}
+
+		success, err := pool.BatchInsertResponses(ctx, responses)
+
+		// Should return an error
+		if err == nil {
+			t.Error("Expected error from batch with invalid FK, got nil")
+		}
+
+		// Check success flags
+		if len(success) != 2 {
+			t.Fatalf("Expected success slice length 2, got %d", len(success))
+		}
+		if !success[0] {
+			t.Error("Expected success[0]=true (valid FK)")
+		}
+		if success[1] {
+			t.Error("Expected success[1]=false (invalid FK)")
+		}
+	})
 }

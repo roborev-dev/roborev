@@ -189,20 +189,41 @@ const (
 // getGitRemoteOrigin returns the git remote origin URL for a path.
 // Returns the identity and an error type indicating success, no remote, or other error.
 func getGitRemoteOrigin(path string) (string, gitErrorType) {
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
-	output, err := cmd.Output()
-	if err != nil {
-		// Check if it's specifically "no remote" vs other errors
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr := string(exitErr.Stderr)
-			// Git returns exit code 2 with "No such remote 'origin'" when no remote
-			if strings.Contains(stderr, "No such remote") ||
-				strings.Contains(stderr, "not a git repository") && strings.Contains(stderr, "origin") {
-				return "", gitErrNoRemote
-			}
-		}
+	// First check if this is a git repository by running git rev-parse
+	checkCmd := exec.Command("git", "-C", path, "rev-parse", "--git-dir")
+	if err := checkCmd.Run(); err != nil {
+		// Not a git repository or path doesn't exist
 		return "", gitErrOther
 	}
+
+	// Check if 'origin' remote exists using git remote (locale-agnostic)
+	remotesCmd := exec.Command("git", "-C", path, "remote")
+	remotesOutput, err := remotesCmd.Output()
+	if err != nil {
+		return "", gitErrOther
+	}
+
+	// Check if "origin" is in the list of remotes
+	remotes := strings.Split(strings.TrimSpace(string(remotesOutput)), "\n")
+	hasOrigin := false
+	for _, r := range remotes {
+		if strings.TrimSpace(r) == "origin" {
+			hasOrigin = true
+			break
+		}
+	}
+	if !hasOrigin {
+		return "", gitErrNoRemote
+	}
+
+	// Get the URL for origin
+	urlCmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	output, err := urlCmd.Output()
+	if err != nil {
+		// Origin exists but can't get URL - treat as no remote
+		return "", gitErrNoRemote
+	}
+
 	result := strings.TrimSpace(string(output))
 	if result == "" {
 		return "", gitErrNoRemote

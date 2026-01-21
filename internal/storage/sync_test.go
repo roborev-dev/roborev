@@ -296,6 +296,49 @@ func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
 	}
 }
 
+func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a repo pointing to a non-existent path
+	nonExistentPath := "/tmp/nonexistent-repo-path-12345"
+	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, NULL)`,
+		nonExistentPath, "missing-repo")
+	if err != nil {
+		t.Fatalf("Insert repo failed: %v", err)
+	}
+
+	// Get the repo ID
+	var repoID int64
+	err = db.QueryRow(`SELECT id FROM repos WHERE root_path = ?`, nonExistentPath).Scan(&repoID)
+	if err != nil {
+		t.Fatalf("Get repo ID failed: %v", err)
+	}
+
+	// Backfill should skip this repo (path doesn't exist)
+	count, err := db.BackfillRepoIdentities()
+	if err != nil {
+		t.Fatalf("BackfillRepoIdentities failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 repos backfilled (missing path), got %d", count)
+	}
+
+	// Verify identity is still NULL
+	var identity sql.NullString
+	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repoID).Scan(&identity)
+	if err != nil {
+		t.Fatalf("Query identity failed: %v", err)
+	}
+	if identity.Valid && identity.String != "" {
+		t.Errorf("Expected identity to remain NULL for missing path, got %q", identity.String)
+	}
+}
+
 func TestGetOrCreateRepoByIdentity(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := Open(dbPath)
