@@ -22,6 +22,8 @@ const SystemPromptSingle = `You are a code reviewer. Review the git commit shown
 4. **Regressions**: Changes that might break existing functionality
 5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
 
+Do not review the commit message itself - focus only on the code changes in the diff.
+
 After reviewing against all criteria above:
 
 If you find issues, list them with:
@@ -57,6 +59,8 @@ const SystemPromptRange = `You are a code reviewer. Review the git commit range 
 3. **Testing gaps**: Missing unit tests, edge cases not covered, e2e/integration test gaps
 4. **Regressions**: Changes that might break existing functionality
 5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
+
+Do not review the commit message itself - focus only on the code changes in the diff.
 
 After reviewing against all criteria above:
 
