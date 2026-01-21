@@ -1726,9 +1726,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			// Keep respondText and respondJobID so user can retry
 		} else {
-			// Success - clear the response state
-			m.respondText = ""
-			m.respondJobID = 0
+			// Success - clear the response state only if still for the same job
+			// (user may have started a new draft for a different job while this was in flight)
+			if m.respondJobID == msg.jobID {
+				m.respondText = ""
+				m.respondJobID = 0
+			}
 			// Refresh the review to show the new response (if viewing a review)
 			if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.JobID == msg.jobID {
 				return m, m.fetchReview(msg.jobID)
