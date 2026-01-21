@@ -228,8 +228,13 @@ func stopDaemon() error {
 // This handles orphaned processes from old binaries or crashed restarts
 func killAllDaemons() {
 	if runtime.GOOS == "windows" {
-		// On Windows, use taskkill with image name
-		exec.Command("taskkill", "/IM", "roborev.exe", "/F").Run()
+		// On Windows, use wmic to kill roborev.exe processes except our own PID
+		// taskkill /IM would kill the CLI itself, so we filter by PID
+		myPID := os.Getpid()
+		// Use wmic to find and kill daemon processes, excluding our PID
+		exec.Command("wmic", "process", "where",
+			fmt.Sprintf("name='roborev.exe' and processid!=%d", myPID),
+			"call", "terminate").Run()
 	} else {
 		// On Unix, use pkill to kill all roborev daemon processes
 		// Use -f to match against full command line
@@ -243,7 +248,7 @@ func killAllDaemons() {
 
 // restartDaemon stops the running daemon and starts a new one
 func restartDaemon() error {
-	stopDaemon()
+	_ = stopDaemon() // Ignore error - killAllDaemons is the fallback
 	// Also kill any orphaned daemon processes from old binaries
 	killAllDaemons()
 
