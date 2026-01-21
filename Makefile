@@ -10,7 +10,13 @@ build:
 	go build -ldflags="$(LDFLAGS)" -o bin/roborev ./cmd/roborev
 
 install:
-	go install -ldflags="$(LDFLAGS)" ./cmd/roborev
+	@# Install to existing location if found, otherwise use go install default
+	@if [ -f "$(HOME)/.local/bin/roborev" ]; then \
+		echo "Installing to ~/.local/bin/roborev"; \
+		go build -ldflags="$(LDFLAGS)" -o "$(HOME)/.local/bin/roborev" ./cmd/roborev; \
+	else \
+		go install -ldflags="$(LDFLAGS)" ./cmd/roborev; \
+	fi
 
 clean:
 	rm -rf bin/
