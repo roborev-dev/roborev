@@ -1384,17 +1384,24 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				job := m.jobs[m.selectedIdx]
 				// Only allow responding to completed or failed reviews
 				if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
+					// Only clear text if opening for a different job (preserve for retry)
+					if m.respondJobID != job.ID {
+						m.respondText = ""
+					}
 					m.respondJobID = job.ID
 					m.respondCommit = job.GitRef
 					if len(m.respondCommit) > 7 {
 						m.respondCommit = m.respondCommit[:7]
 					}
-					m.respondText = ""
 					m.respondFromView = tuiViewQueue
 					m.currentView = tuiViewRespond
 				}
 				return m, nil
 			} else if m.currentView == tuiViewReview && m.currentReview != nil {
+				// Only clear text if opening for a different job (preserve for retry)
+				if m.respondJobID != m.currentReview.JobID {
+					m.respondText = ""
+				}
 				m.respondJobID = m.currentReview.JobID
 				m.respondCommit = ""
 				if m.currentReview.Job != nil {
@@ -1403,7 +1410,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.respondCommit = m.respondCommit[:7]
 					}
 				}
-				m.respondText = ""
 				m.respondFromView = tuiViewReview
 				m.currentView = tuiViewRespond
 				return m, nil
