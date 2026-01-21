@@ -1404,7 +1404,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for jobID, pending := range m.pendingAddressed {
 			for i := range m.jobs {
 				if m.jobs[i].ID == jobID {
-					if m.jobs[i].Addressed != nil && *m.jobs[i].Addressed == pending.newState {
+					// Check if server state matches pending state
+					// Treat nil as false (unaddressed) for comparison
+					serverState := m.jobs[i].Addressed != nil && *m.jobs[i].Addressed
+					if serverState == pending.newState {
 						delete(m.pendingAddressed, jobID)
 					}
 					break
@@ -1570,11 +1573,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Stale error responses are silently ignored
 		} else {
-			// Success: don't clear pending state here. Let the jobs refresh handler
-			// clear it when server data confirms the update. This prevents a race
-			// condition where we clear pending, then a stale jobs response arrives
-			// (from a request that was in-flight before the update) and briefly
-			// shows the old state.
+			// Success handling differs by type:
+			// - For jobs (jobID > 0): don't clear here. Let the jobs refresh handler
+			//   clear it when server data confirms the update. This prevents a race
+			//   where we clear pending, then a stale jobs response arrives and briefly
+			//   shows the old state.
+			// - For review-only (no jobID): clear immediately. The race condition doesn't
+			//   apply because pendingReviewAddressed isn't affected by jobs refresh.
+			if isCurrentRequest && msg.jobID == 0 && msg.reviewID > 0 {
+				delete(m.pendingReviewAddressed, msg.reviewID)
+			}
 		}
 
 	case tuiCancelResultMsg:

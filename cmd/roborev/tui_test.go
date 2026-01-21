@@ -4694,3 +4694,93 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 		t.Errorf("Queue with few jobs should maintain height, got %d lines for height %d", len(lines), m.height)
 	}
 }
+
+func TestTUIPendingReviewAddressedClearedOnSuccess(t *testing.T) {
+	// pendingReviewAddressed (for reviews without jobs) should be cleared on success
+	// because the race condition only affects jobs list refresh, not review-only items
+	m := newTuiModel("http://localhost")
+
+	// Track a review-only pending state (no job ID)
+	m.pendingReviewAddressed[42] = pendingState{newState: true, seq: 1}
+
+	// Success response for review-only (jobID=0, reviewID=42)
+	successMsg := tuiAddressedResultMsg{
+		jobID:      0, // No job - this is review-only
+		reviewID:   42,
+		reviewView: true,
+		oldState:   false,
+		newState:   true,
+		seq:        1,
+		err:        nil,
+	}
+
+	updated, _ := m.Update(successMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingReviewAddressed SHOULD be cleared on success (no race condition for review-only)
+	if _, ok := m2.pendingReviewAddressed[42]; ok {
+		t.Error("pendingReviewAddressed should be cleared on success for review-only items")
+	}
+}
+
+func TestTUIPendingAddressedClearsWhenServerNilMatchesFalse(t *testing.T) {
+	// When pending newState is false and server Addressed is nil,
+	// treat nil as false and clear the pending state
+	m := newTuiModel("http://localhost")
+
+	// Job with nil Addressed (e.g., partial payload or non-done status that became done)
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: nil},
+	}
+
+	// User had toggled to false (unaddressed)
+	m.pendingAddressed[1] = pendingState{newState: false, seq: 1}
+
+	// Jobs refresh arrives with nil Addressed (should match false)
+	jobsMsg := tuiJobsMsg{
+		jobs: []storage.ReviewJob{
+			{ID: 1, Status: storage.JobStatusDone, Addressed: nil},
+		},
+	}
+
+	updated, _ := m.Update(jobsMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingAddressed should be cleared because nil == false matches newState=false
+	if _, ok := m2.pendingAddressed[1]; ok {
+		t.Error("pendingAddressed should be cleared when server nil matches pending false")
+	}
+}
+
+func TestTUIPendingAddressedNotClearsWhenServerNilMismatchesTrue(t *testing.T) {
+	// When pending newState is true and server Addressed is nil,
+	// do NOT clear (nil != true)
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: nil},
+	}
+
+	// User toggled to true (addressed)
+	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
+
+	// Jobs refresh arrives with nil Addressed (doesn't match true)
+	jobsMsg := tuiJobsMsg{
+		jobs: []storage.ReviewJob{
+			{ID: 1, Status: storage.JobStatusDone, Addressed: nil},
+		},
+	}
+
+	updated, _ := m.Update(jobsMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingAddressed should NOT be cleared because nil != true
+	if _, ok := m2.pendingAddressed[1]; !ok {
+		t.Error("pendingAddressed should NOT be cleared when server nil mismatches pending true")
+	}
+
+	// Job should show as addressed due to pending state re-applied
+	if m2.jobs[0].Addressed == nil || !*m2.jobs[0].Addressed {
+		t.Error("Job should show as addressed due to pending state")
+	}
+}
