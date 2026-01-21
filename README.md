@@ -480,7 +480,7 @@ The daemon starts automatically when needed and handles port conflicts gracefull
 
 ## PostgreSQL Sync
 
-Sync reviews across multiple machines using PostgreSQL as a central store while keeping SQLite as the local primary database:
+Sync reviews across multiple machines using PostgreSQL as a central store while keeping SQLite as the local primary database. The primary purpose is to consolidate reviews from multiple machines into a single database without duplicates - each review job, review, and response has a UUID that uniquely identifies it across all machines, so PostgreSQL ends up with exactly one copy of each item regardless of which machines have synced.
 
 ```toml
 # ~/.roborev/config.toml
@@ -493,6 +493,7 @@ machine_name = "laptop"   # Friendly name for this machine
 
 **Key features:**
 
+- **UUID-based deduplication**: Each job, review, and response has a globally unique UUID. Local review numeric IDs may differ between machines, but UUIDs ensure PostgreSQL stores only one copy of each item.
 - **Local-first**: SQLite remains the source of truth. CLI commands query SQLite only.
 - **Graceful degradation**: If PostgreSQL is unreachable, everything continues to work. Sync resumes when connectivity returns.
 - **Schema isolation**: Tables are created in a dedicated `roborev` schema, avoiding conflicts with other applications.
