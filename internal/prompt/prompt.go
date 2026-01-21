@@ -77,6 +77,10 @@ const PreviousReviewsHeader = `
 
 The following are reviews of recent commits in this repository. Use them as context
 to understand ongoing work and to check if the current commit addresses previous feedback.
+
+**Important:** Reviews may include responses from developers. Pay attention to these responses -
+they may indicate known issues that should be ignored, explain why certain patterns exist,
+or provide context that affects how you should evaluate similar code in the current commit.
 `
 
 // ProjectGuidelinesHeader introduces the project-specific guidelines section
@@ -87,10 +91,11 @@ The following are project-specific guidelines for this repository. Take these in
 when reviewing the code - they may override or supplement the default review criteria.
 `
 
-// ReviewContext holds a commit SHA and its associated review (if any)
+// ReviewContext holds a commit SHA and its associated review (if any) plus responses
 type ReviewContext struct {
-	SHA    string
-	Review *storage.Review
+	SHA       string
+	Review    *storage.Review
+	Responses []storage.Response
 }
 
 // Builder constructs review prompts
@@ -341,7 +346,16 @@ func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewCon
 		} else {
 			sb.WriteString("No review available.")
 		}
-		sb.WriteString("\n\n")
+		sb.WriteString("\n")
+
+		// Include responses to this review
+		if len(ctx.Responses) > 0 {
+			sb.WriteString("\nResponses to this review:\n")
+			for _, resp := range ctx.Responses {
+				sb.WriteString(fmt.Sprintf("- %s: %q\n", resp.Responder, resp.Response))
+			}
+		}
+		sb.WriteString("\n")
 	}
 }
 
@@ -357,7 +371,7 @@ func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string)
 	sb.WriteString("\n\n")
 }
 
-// getPreviousReviewContexts gets the N commits before the target and looks up their reviews
+// getPreviousReviewContexts gets the N commits before the target and looks up their reviews and responses
 func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]ReviewContext, error) {
 	// Get parent commits from git
 	parentSHAs, err := git.GetParentCommits(repoPath, sha, count)
@@ -373,6 +387,14 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 		review, err := b.db.GetReviewByCommitSHA(parentSHA)
 		if err == nil {
 			ctx.Review = review
+
+			// Also fetch responses for this review's job
+			if review.JobID > 0 {
+				responses, err := b.db.GetResponsesForJob(review.JobID)
+				if err == nil {
+					ctx.Responses = responses
+				}
+			}
 		}
 		// If no review found, ctx.Review stays nil
 

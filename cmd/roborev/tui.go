@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	neturl "net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -56,6 +57,7 @@ const (
 	tuiViewReview
 	tuiViewPrompt
 	tuiViewFilter
+	tuiViewRespond
 )
 
 // repoFilterItem represents a repo (or group of repos with same display name) in the filter modal
@@ -96,6 +98,11 @@ type tuiModel struct {
 	filterRepos       []repoFilterItem // Available repos with counts
 	filterSelectedIdx int              // Currently highlighted repo in filter list
 	filterSearch      string           // Search/filter text typed by user
+
+	// Respond modal state
+	respondText   string // The response text being typed
+	respondJobID  int64  // Job ID we're responding to
+	respondCommit string // Short commit SHA for display
 
 	// Active filter (applied to queue view)
 	activeRepoFilter []string // Empty = show all, otherwise repo root_paths to filter by
@@ -166,6 +173,10 @@ type tuiUpdateCheckMsg struct {
 type tuiReposMsg struct {
 	repos      []repoFilterItem
 	totalCount int
+}
+type tuiRespondResultMsg struct {
+	jobID int64
+	err   error
 }
 
 func newTuiModel(serverAddr string) tuiModel {
@@ -937,7 +948,47 @@ func (m tuiModel) findLastVisibleJob() int {
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Handle filter view first (it captures most keys for typing)
+		// Handle respond view first (it captures most keys for typing)
+		if m.currentView == tuiViewRespond {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc":
+				m.currentView = tuiViewQueue
+				m.respondText = ""
+				m.respondJobID = 0
+				return m, nil
+			case "enter":
+				if strings.TrimSpace(m.respondText) != "" {
+					text := m.respondText
+					jobID := m.respondJobID
+					m.currentView = tuiViewQueue
+					m.respondText = ""
+					m.respondJobID = 0
+					return m, m.submitResponse(jobID, text)
+				}
+				return m, nil
+			case "backspace":
+				if len(m.respondText) > 0 {
+					m.respondText = m.respondText[:len(m.respondText)-1]
+				}
+				return m, nil
+			default:
+				// Handle typing (supports non-ASCII runes and newlines)
+				if msg.String() == "shift+enter" || msg.String() == "ctrl+j" {
+					m.respondText += "\n"
+				} else if len(msg.Runes) > 0 {
+					for _, r := range msg.Runes {
+						if unicode.IsPrint(r) || r == '\n' || r == '\t' {
+							m.respondText += string(r)
+						}
+					}
+				}
+				return m, nil
+			}
+		}
+
+		// Handle filter view (it captures most keys for typing)
 		if m.currentView == tuiViewFilter {
 			switch msg.String() {
 			case "ctrl+c":
@@ -1321,6 +1372,35 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "c":
+			// Open respond modal (from queue or review view)
+			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
+				job := m.jobs[m.selectedIdx]
+				// Only allow responding to completed or failed reviews
+				if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
+					m.respondJobID = job.ID
+					m.respondCommit = job.GitRef
+					if len(m.respondCommit) > 7 {
+						m.respondCommit = m.respondCommit[:7]
+					}
+					m.respondText = ""
+					m.currentView = tuiViewRespond
+				}
+				return m, nil
+			} else if m.currentView == tuiViewReview && m.currentReview != nil {
+				m.respondJobID = m.currentReview.JobID
+				m.respondCommit = ""
+				if m.currentReview.Job != nil {
+					m.respondCommit = m.currentReview.Job.GitRef
+					if len(m.respondCommit) > 7 {
+						m.respondCommit = m.respondCommit[:7]
+					}
+				}
+				m.respondText = ""
+				m.currentView = tuiViewRespond
+				return m, nil
+			}
+
 		case "esc":
 			if m.currentView == tuiViewQueue && (len(m.activeRepoFilter) > 0 || m.hideAddressed) {
 				// Clear filters and refetch all jobs
@@ -1627,6 +1707,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case tuiRespondResultMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		}
+		// Refresh the review to show the new response (if viewing a review)
+		if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.JobID == msg.jobID {
+			return m, m.fetchReview(msg.jobID)
+		}
+
 	case tuiJobsErrMsg:
 		m.err = msg.err
 		m.loadingJobs = false // Clear loading state so refreshes can resume
@@ -1643,6 +1732,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) View() string {
+	if m.currentView == tuiViewRespond {
+		return m.renderRespondView()
+	}
 	if m.currentView == tuiViewFilter {
 		return m.renderFilterView()
 	}
@@ -1830,7 +1922,7 @@ func (m tuiModel) renderQueueView() string {
 	}
 
 	// Help (two lines)
-	helpLine1 := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | f: filter | h: hide addressed | q: quit"
+	helpLine1 := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | c: respond | f: filter | h: hide | q: quit"
 	helpLine2 := "a: toggle addressed | x: cancel | r: rerun"
 	if len(m.activeRepoFilter) > 0 || m.hideAddressed {
 		helpLine2 += " | esc: clear filters"
@@ -2120,8 +2212,8 @@ func (m tuiModel) renderReviewView() string {
 		titleLines = (titleLen + m.width - 1) / m.width
 	}
 
-	// Help text is 87 chars, wraps at narrow terminals
-	const helpText = "up/down: scroll | j/left: prev | k/right: next | a: addressed | p: prompt | esc/q: back"
+	// Help text wraps at narrow terminals
+	const helpText = "up/down: scroll | j/k: prev/next | a: addressed | c: respond | p: prompt | esc/q: back"
 	helpLines := 1
 	if m.width > 0 && m.width < len(helpText) {
 		helpLines = (len(helpText) + m.width - 1) / m.width
@@ -2333,6 +2425,112 @@ func (m tuiModel) renderFilterView() string {
 	b.WriteString("\x1b[K") // Clear help line
 
 	return b.String()
+}
+
+func (m tuiModel) renderRespondView() string {
+	var b strings.Builder
+
+	title := "Respond to Review"
+	if m.respondCommit != "" {
+		title = fmt.Sprintf("Respond to Review (%s)", m.respondCommit)
+	}
+	b.WriteString(tuiTitleStyle.Render(title))
+	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
+
+	b.WriteString(tuiStatusStyle.Render("Enter your response (e.g., \"This is a known issue, can be ignored\")"))
+	b.WriteString("\x1b[K\n\x1b[K\n")
+
+	// Simple text box with border
+	boxWidth := m.width - 4
+	if boxWidth < 20 {
+		boxWidth = 20
+	}
+
+	b.WriteString("+-" + strings.Repeat("-", boxWidth-2) + "-+\n")
+
+	// Wrap text display to box width
+	textLinesWritten := 0
+	maxTextLines := m.height - 10 // Reserve space for chrome
+	if maxTextLines < 3 {
+		maxTextLines = 3
+	}
+
+	if m.respondText == "" {
+		// Show placeholder (styled, but we pad manually to avoid ANSI issues)
+		placeholder := "Type your response..."
+		padded := placeholder + strings.Repeat(" ", boxWidth-2-len(placeholder))
+		b.WriteString("| " + tuiStatusStyle.Render(padded) + " |\x1b[K\n")
+		textLinesWritten++
+	} else {
+		lines := strings.Split(m.respondText, "\n")
+		for _, line := range lines {
+			if textLinesWritten >= maxTextLines {
+				break
+			}
+			// Truncate lines that are too long
+			if len(line) > boxWidth-2 {
+				line = line[:boxWidth-2]
+			}
+			b.WriteString(fmt.Sprintf("| %-*s |\x1b[K\n", boxWidth-2, line))
+			textLinesWritten++
+		}
+	}
+
+	// Pad with empty lines if needed
+	for textLinesWritten < 3 {
+		b.WriteString(fmt.Sprintf("| %-*s |\x1b[K\n", boxWidth-2, ""))
+		textLinesWritten++
+	}
+
+	b.WriteString("+-" + strings.Repeat("-", boxWidth-2) + "-+\x1b[K\n")
+
+	// Pad remaining space
+	linesWritten := 6 + textLinesWritten // title, blank, help, blank, top border, bottom border
+	for linesWritten < m.height-1 {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
+	}
+
+	b.WriteString(tuiHelpStyle.Render("enter: submit | esc: cancel"))
+	b.WriteString("\x1b[K")
+
+	return b.String()
+}
+
+func (m tuiModel) submitResponse(jobID int64, text string) tea.Cmd {
+	return func() tea.Msg {
+		responder := os.Getenv("USER")
+		if responder == "" {
+			responder = "anonymous"
+		}
+
+		payload := map[string]interface{}{
+			"job_id":    jobID,
+			"responder": responder,
+			"response":  strings.TrimSpace(text),
+		}
+
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return tuiRespondResultMsg{jobID: jobID, err: fmt.Errorf("marshal request: %w", err)}
+		}
+
+		resp, err := m.client.Post(
+			fmt.Sprintf("%s/api/respond", m.serverAddr),
+			"application/json",
+			bytes.NewReader(body),
+		)
+		if err != nil {
+			return tuiRespondResultMsg{jobID: jobID, err: fmt.Errorf("submit response: %w", err)}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated {
+			return tuiRespondResultMsg{jobID: jobID, err: fmt.Errorf("submit response: HTTP %d", resp.StatusCode)}
+		}
+
+		return tuiRespondResultMsg{jobID: jobID, err: nil}
+	}
 }
 
 func tuiCmd() *cobra.Command {
