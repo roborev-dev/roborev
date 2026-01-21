@@ -237,23 +237,23 @@ func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
 		t.Fatalf("Failed to clear identity: %v", err)
 	}
 
-	// Backfill should skip this repo (not a git repo = gitErrOther, not gitErrNoRemote)
+	// Backfill should set a local:// identity for non-git repos
 	count, err := db.BackfillRepoIdentities()
 	if err != nil {
 		t.Fatalf("BackfillRepoIdentities failed: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("Expected 0 repos backfilled (not a git repo), got %d", count)
+	if count != 1 {
+		t.Errorf("Expected 1 repo backfilled with local:// identity, got %d", count)
 	}
 
-	// Verify identity is still NULL
+	// Verify identity is set to local:// prefix
 	var identity sql.NullString
 	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
 	if err != nil {
 		t.Fatalf("Query identity failed: %v", err)
 	}
-	if identity.Valid && identity.String != "" {
-		t.Errorf("Expected identity to remain NULL, got %q", identity.String)
+	if !identity.Valid || !strings.HasPrefix(identity.String, "local://") {
+		t.Errorf("Expected identity with local:// prefix, got %q", identity.String)
 	}
 }
 
@@ -319,23 +319,24 @@ func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
 		t.Fatalf("Get repo ID failed: %v", err)
 	}
 
-	// Backfill should skip this repo (path doesn't exist)
+	// Backfill should still set a local:// identity for missing paths
+	// (better to have an identity than none, even for stale entries)
 	count, err := db.BackfillRepoIdentities()
 	if err != nil {
 		t.Fatalf("BackfillRepoIdentities failed: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("Expected 0 repos backfilled (missing path), got %d", count)
+	if count != 1 {
+		t.Errorf("Expected 1 repo backfilled with local:// identity, got %d", count)
 	}
 
-	// Verify identity is still NULL
+	// Verify identity is set to local:// prefix
 	var identity sql.NullString
 	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repoID).Scan(&identity)
 	if err != nil {
 		t.Fatalf("Query identity failed: %v", err)
 	}
-	if identity.Valid && identity.String != "" {
-		t.Errorf("Expected identity to remain NULL for missing path, got %q", identity.String)
+	if !identity.Valid || !strings.HasPrefix(identity.String, "local://") {
+		t.Errorf("Expected identity with local:// prefix, got %q", identity.String)
 	}
 }
 

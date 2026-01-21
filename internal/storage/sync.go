@@ -3,9 +3,10 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/wesm/roborev/internal/config"
 )
 
 // Sync state keys
@@ -123,13 +124,11 @@ func (db *DB) ClearAllSyncedAt() error {
 }
 
 // BackfillRepoIdentities computes and sets identity for repos that don't have one.
-// Identity is derived from:
-// 1. Git remote origin URL (if available)
-// 2. Repo name with "local:" prefix (for repos without remotes)
+// Uses config.ResolveRepoIdentity to ensure consistency with new repo creation.
 // Returns the number of repos backfilled.
 func (db *DB) BackfillRepoIdentities() (int, error) {
 	// Get repos without identity
-	rows, err := db.Query(`SELECT id, root_path, name FROM repos WHERE identity IS NULL OR identity = ''`)
+	rows, err := db.Query(`SELECT id, root_path FROM repos WHERE identity IS NULL OR identity = ''`)
 	if err != nil {
 		return 0, fmt.Errorf("query repos without identity: %w", err)
 	}
@@ -138,12 +137,11 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 	type repoInfo struct {
 		id   int64
 		path string
-		name string
 	}
 	var repos []repoInfo
 	for rows.Next() {
 		var r repoInfo
-		if err := rows.Scan(&r.id, &r.path, &r.name); err != nil {
+		if err := rows.Scan(&r.id, &r.path); err != nil {
 			return 0, fmt.Errorf("scan repo: %w", err)
 		}
 		repos = append(repos, r)
@@ -154,16 +152,11 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 
 	backfilled := 0
 	for _, r := range repos {
-		// Try git remote origin first
-		identity, errType := getGitRemoteOrigin(r.path)
-		if identity != "" {
-			// Have a remote identity
-		} else if errType == gitErrNoRemote {
-			// No remote configured - use local: prefix
-			identity = "local:" + r.name
-		} else {
-			// Path doesn't exist, not a git repo, or other error - skip for now
-			// Will retry on next backfill
+		// Use the same resolver as new repo creation to ensure consistency
+		identity := config.ResolveRepoIdentity(r.path, nil)
+		if identity == "" {
+			// Shouldn't happen since ResolveRepoIdentity always returns something,
+			// but skip if it does
 			continue
 		}
 
@@ -175,60 +168,6 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 	}
 
 	return backfilled, nil
-}
-
-// gitErrorType indicates the type of error from getGitRemoteOrigin
-type gitErrorType int
-
-const (
-	gitErrNone     gitErrorType = iota // No error, identity returned
-	gitErrNoRemote                     // No remote 'origin' configured
-	gitErrOther                        // Path doesn't exist, not a git repo, or other error
-)
-
-// getGitRemoteOrigin returns the git remote origin URL for a path.
-// Returns the identity and an error type indicating success, no remote, or other error.
-func getGitRemoteOrigin(path string) (string, gitErrorType) {
-	// First check if this is a git repository by running git rev-parse
-	checkCmd := exec.Command("git", "-C", path, "rev-parse", "--git-dir")
-	if err := checkCmd.Run(); err != nil {
-		// Not a git repository or path doesn't exist
-		return "", gitErrOther
-	}
-
-	// Check if 'origin' remote exists using git remote (locale-agnostic)
-	remotesCmd := exec.Command("git", "-C", path, "remote")
-	remotesOutput, err := remotesCmd.Output()
-	if err != nil {
-		return "", gitErrOther
-	}
-
-	// Check if "origin" is in the list of remotes
-	remotes := strings.Split(strings.TrimSpace(string(remotesOutput)), "\n")
-	hasOrigin := false
-	for _, r := range remotes {
-		if strings.TrimSpace(r) == "origin" {
-			hasOrigin = true
-			break
-		}
-	}
-	if !hasOrigin {
-		return "", gitErrNoRemote
-	}
-
-	// Get the URL for origin
-	urlCmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
-	output, err := urlCmd.Output()
-	if err != nil {
-		// Origin exists but can't get URL - treat as no remote
-		return "", gitErrNoRemote
-	}
-
-	result := strings.TrimSpace(string(output))
-	if result == "" {
-		return "", gitErrNoRemote
-	}
-	return result, gitErrNone
 }
 
 // SetRepoIdentity sets the identity for a repo.

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -339,6 +340,9 @@ func ReadRoborevID(repoPath string) (string, error) {
 // 3. Any git remote URL
 // 4. Fallback: local://{absolute_path}
 //
+// Note: Credentials are stripped from git remote URLs to prevent secrets from
+// being persisted in the database or synced to PostgreSQL.
+//
 // The getRemoteURL parameter allows injection of git remote lookup for testing.
 // Pass nil to use the default git.GetRemoteURL function.
 func ResolveRepoIdentity(repoPath string, getRemoteURL func(repoPath, remoteName string) string) string {
@@ -353,9 +357,10 @@ func ResolveRepoIdentity(repoPath string, getRemoteURL func(repoPath, remoteName
 	if getRemoteURL == nil {
 		getRemoteURL = git.GetRemoteURL
 	}
-	url := getRemoteURL(repoPath, "")
-	if url != "" {
-		return url
+	remoteURL := getRemoteURL(repoPath, "")
+	if remoteURL != "" {
+		// Strip credentials from URL to avoid persisting secrets
+		return stripURLCredentials(remoteURL)
 	}
 
 	// 4. Fallback to local path
@@ -364,4 +369,30 @@ func ResolveRepoIdentity(repoPath string, getRemoteURL func(repoPath, remoteName
 		absPath = repoPath
 	}
 	return "local://" + absPath
+}
+
+// stripURLCredentials removes userinfo (username:password) from a URL.
+// For non-URL strings (e.g., SSH URLs like git@github.com:user/repo.git),
+// returns the original string unchanged.
+func stripURLCredentials(rawURL string) string {
+	// Try to parse as a standard URL
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		// Not a valid URL, return as-is
+		return rawURL
+	}
+
+	// If there's no scheme, it's likely an SSH URL (git@...) - return as-is
+	if parsed.Scheme == "" {
+		return rawURL
+	}
+
+	// If there's no userinfo, return as-is
+	if parsed.User == nil {
+		return rawURL
+	}
+
+	// Clear the userinfo
+	parsed.User = nil
+	return parsed.String()
 }

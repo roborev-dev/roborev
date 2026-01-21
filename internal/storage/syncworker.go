@@ -59,11 +59,16 @@ func (w *SyncWorker) Start() error {
 	}
 
 	// Reinitialize channels for Start→Stop→Start cycles
-	w.stopCh = make(chan struct{})
-	w.doneCh = make(chan struct{})
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	w.stopCh = stopCh
+	w.doneCh = doneCh
 
 	w.running = true
-	go w.run(interval, connectTimeout)
+	// Pass channels as parameters to avoid data races if Start() is called
+	// again while the goroutine is still running (which shouldn't happen,
+	// but this makes it safe regardless)
+	go w.run(stopCh, doneCh, interval, connectTimeout)
 	return nil
 }
 
@@ -273,8 +278,8 @@ type pushPullStats struct {
 }
 
 // run is the main sync loop
-func (w *SyncWorker) run(interval, connectTimeout time.Duration) {
-	defer close(w.doneCh)
+func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout time.Duration) {
+	defer close(doneCh)
 
 	// Initial connection attempt with backoff
 	backoff := time.Second
@@ -282,7 +287,7 @@ func (w *SyncWorker) run(interval, connectTimeout time.Duration) {
 
 	for {
 		select {
-		case <-w.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
@@ -291,7 +296,7 @@ func (w *SyncWorker) run(interval, connectTimeout time.Duration) {
 		if err := w.connect(connectTimeout); err != nil {
 			log.Printf("Sync: connection failed: %v (retry in %v)", err, backoff)
 			select {
-			case <-w.stopCh:
+			case <-stopCh:
 				return
 			case <-time.After(backoff):
 			}
@@ -304,7 +309,7 @@ func (w *SyncWorker) run(interval, connectTimeout time.Duration) {
 		log.Printf("Sync: connected to PostgreSQL")
 
 		// Run sync loop until disconnection or stop
-		w.syncLoop(interval)
+		w.syncLoop(stopCh, interval)
 
 		// If we get here, we disconnected - try to reconnect
 		w.mu.Lock()
@@ -402,7 +407,7 @@ func (w *SyncWorker) connect(timeout time.Duration) error {
 }
 
 // syncLoop runs the periodic sync until stop or disconnection
-func (w *SyncWorker) syncLoop(interval time.Duration) {
+func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -413,7 +418,7 @@ func (w *SyncWorker) syncLoop(interval time.Duration) {
 
 	for {
 		select {
-		case <-w.stopCh:
+		case <-stopCh:
 			return
 		case <-ticker.C:
 			if err := w.doSync(); err != nil {

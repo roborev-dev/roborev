@@ -926,4 +926,75 @@ func TestResolveRepoIdentity(t *testing.T) {
 			t.Errorf("Expected git remote URL when roborev-id is invalid, got: %q", id)
 		}
 	})
+
+	t.Run("strips credentials from remote URL", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		mockRemote := func(repoPath, remoteName string) string {
+			return "https://user:token@github.com/org/repo.git"
+		}
+
+		id := ResolveRepoIdentity(tmpDir, mockRemote)
+		if id != "https://github.com/org/repo.git" {
+			t.Errorf("Expected credentials stripped from URL, got: %q", id)
+		}
+	})
+}
+
+func TestStripURLCredentials(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "HTTPS URL with user:password",
+			input:    "https://user:password@github.com/org/repo.git",
+			expected: "https://github.com/org/repo.git",
+		},
+		{
+			name:     "HTTPS URL with token only",
+			input:    "https://token@github.com/org/repo.git",
+			expected: "https://github.com/org/repo.git",
+		},
+		{
+			name:     "HTTPS URL without credentials",
+			input:    "https://github.com/org/repo.git",
+			expected: "https://github.com/org/repo.git",
+		},
+		{
+			name:     "SSH URL unchanged",
+			input:    "git@github.com:org/repo.git",
+			expected: "git@github.com:org/repo.git",
+		},
+		{
+			name:     "HTTP URL with credentials",
+			input:    "http://user:pass@gitlab.example.com/project.git",
+			expected: "http://gitlab.example.com/project.git",
+		},
+		{
+			name:     "URL with only username",
+			input:    "https://user@bitbucket.org/team/repo.git",
+			expected: "https://bitbucket.org/team/repo.git",
+		},
+		{
+			name:     "Local path unchanged",
+			input:    "/path/to/repo",
+			expected: "/path/to/repo",
+		},
+		{
+			name:     "File URL unchanged",
+			input:    "file:///path/to/repo",
+			expected: "file:///path/to/repo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := stripURLCredentials(tt.input)
+			if result != tt.expected {
+				t.Errorf("stripURLCredentials(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
 }
