@@ -7,7 +7,7 @@ Automatic code review for git commits using AI agents (Claude Code, Codex, Gemin
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/roborev-dev/roborev/main/scripts/install.sh | bash
+curl -fsSL https://roborev.io/install.sh | bash
 ```
 
 Or with Go:
