@@ -463,10 +463,11 @@ func TestCountStalledJobs(t *testing.T) {
 	}
 
 	// Create a job and manually set started_at to 1 hour ago (simulating stalled job)
+	// Use UTC format (ends with Z) to test basic case
 	commit2, _ := db.GetOrCreateCommit(repo.ID, "stalled1", "A", "S", time.Now())
 	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "stalled1", "codex", "")
-	oldTime := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, oldTime, job2.ID)
+	oldTimeUTC := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, oldTimeUTC, job2.ID)
 	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
@@ -477,10 +478,31 @@ func TestCountStalledJobs(t *testing.T) {
 		t.Fatalf("CountStalledJobs failed: %v", err)
 	}
 	if count != 1 {
-		t.Errorf("Expected 1 stalled job for job started 1 hour ago, got %d", count)
+		t.Errorf("Expected 1 stalled job for job started 1 hour ago (UTC), got %d", count)
 	}
 
-	// With a longer threshold (2 hours), the job shouldn't be considered stalled
+	// Create another stalled job with a non-UTC timezone offset to verify datetime() handles offsets
+	// This exercises the fix for RFC3339 timestamps with timezone offsets like "-07:00"
+	commit3, _ := db.GetOrCreateCommit(repo.ID, "stalled2", "A", "S", time.Now())
+	job3, _ := db.EnqueueJob(repo.ID, commit3.ID, "stalled2", "codex", "")
+	// Use a fixed timezone offset (e.g., UTC-7) instead of UTC
+	tzMinus7 := time.FixedZone("UTC-7", -7*60*60)
+	oldTimeWithOffset := time.Now().Add(-1 * time.Hour).In(tzMinus7).Format(time.RFC3339)
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, oldTimeWithOffset, job3.ID)
+	if err != nil {
+		t.Fatalf("Failed to update job with timezone offset: %v", err)
+	}
+
+	// Should now have 2 stalled jobs - verifies datetime() parses both Z and offset formats
+	count, err = db.CountStalledJobs(30 * time.Minute)
+	if err != nil {
+		t.Fatalf("CountStalledJobs failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 stalled jobs (UTC and offset timestamp), got %d", count)
+	}
+
+	// With a longer threshold (2 hours), neither job should be considered stalled
 	count, err = db.CountStalledJobs(2 * time.Hour)
 	if err != nil {
 		t.Fatalf("CountStalledJobs failed: %v", err)
