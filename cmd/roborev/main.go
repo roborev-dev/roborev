@@ -2156,6 +2156,20 @@ func syncNowCmd() *cobra.Command {
 				Responses int `json:"responses"`
 			}
 
+			// Helper to safely get int from map
+			getInt := func(m map[string]interface{}, key string) int {
+				if v, ok := m[key].(float64); ok {
+					return int(v)
+				}
+				return 0
+			}
+			getString := func(m map[string]interface{}, key string) string {
+				if v, ok := m[key].(string); ok {
+					return v
+				}
+				return ""
+			}
+
 			for scanner.Scan() {
 				line := scanner.Text()
 				if line == "" {
@@ -2167,37 +2181,37 @@ func syncNowCmd() *cobra.Command {
 					continue
 				}
 
-				switch msg["type"] {
+				switch getString(msg, "type") {
 				case "progress":
-					phase := msg["phase"].(string)
+					phase := getString(msg, "phase")
 					if phase == "push" {
-						batch := int(msg["batch"].(float64))
-						totalJobs := int(msg["total_jobs"].(float64))
-						totalRevs := int(msg["total_revs"].(float64))
-						totalResps := int(msg["total_resps"].(float64))
+						batch := getInt(msg, "batch")
+						totalJobs := getInt(msg, "total_jobs")
+						totalRevs := getInt(msg, "total_revs")
+						totalResps := getInt(msg, "total_resps")
 						fmt.Printf("\rPushing: batch %d (total: %d jobs, %d reviews, %d responses)     ",
 							batch, totalJobs, totalRevs, totalResps)
 					} else if phase == "pull" {
-						totalJobs := int(msg["total_jobs"].(float64))
-						totalRevs := int(msg["total_revs"].(float64))
-						totalResps := int(msg["total_resps"].(float64))
+						totalJobs := getInt(msg, "total_jobs")
+						totalRevs := getInt(msg, "total_revs")
+						totalResps := getInt(msg, "total_resps")
 						fmt.Printf("\rPulled: %d jobs, %d reviews, %d responses     \n",
 							totalJobs, totalRevs, totalResps)
 					}
 				case "error":
 					fmt.Println()
-					return fmt.Errorf("sync failed: %s", msg["error"])
+					return fmt.Errorf("sync failed: %s", getString(msg, "error"))
 				case "complete":
 					fmt.Println() // Clear the progress line
 					if pushed, ok := msg["pushed"].(map[string]interface{}); ok {
-						finalPushed.Jobs = int(pushed["jobs"].(float64))
-						finalPushed.Reviews = int(pushed["reviews"].(float64))
-						finalPushed.Responses = int(pushed["responses"].(float64))
+						finalPushed.Jobs = getInt(pushed, "jobs")
+						finalPushed.Reviews = getInt(pushed, "reviews")
+						finalPushed.Responses = getInt(pushed, "responses")
 					}
 					if pulled, ok := msg["pulled"].(map[string]interface{}); ok {
-						finalPulled.Jobs = int(pulled["jobs"].(float64))
-						finalPulled.Reviews = int(pulled["reviews"].(float64))
-						finalPulled.Responses = int(pulled["responses"].(float64))
+						finalPulled.Jobs = getInt(pulled, "jobs")
+						finalPulled.Reviews = getInt(pulled, "reviews")
+						finalPulled.Responses = getInt(pulled, "responses")
 					}
 				}
 			}

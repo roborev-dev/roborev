@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -170,9 +171,13 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Create a repo with a path that exists but has no git remote
-	// (using temp dir which won't have a .git directory)
+	// Create a git repo without a remote configured
 	tempDir := t.TempDir()
+	cmd := exec.Command("git", "init", tempDir)
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git init failed (git not available?): %v", err)
+	}
+
 	repo, err := db.GetOrCreateRepo(tempDir)
 	if err != nil {
 		t.Fatalf("GetOrCreateRepo failed: %v", err)
@@ -184,7 +189,7 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 		t.Fatalf("Failed to clear identity: %v", err)
 	}
 
-	// Backfill should use local: prefix with repo name
+	// Backfill should use local: prefix with repo name (git repo, no remote)
 	count, err := db.BackfillRepoIdentities()
 	if err != nil {
 		t.Fatalf("BackfillRepoIdentities failed: %v", err)
@@ -208,6 +213,47 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 	// The identity should contain the repo name (last component of path)
 	if !strings.Contains(identity, repo.Name) {
 		t.Errorf("Expected identity to contain repo name %q, got %q", repo.Name, identity)
+	}
+}
+
+func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a repo pointing to a directory that is NOT a git repository
+	tempDir := t.TempDir() // Just a plain directory, no git init
+	repo, err := db.GetOrCreateRepo(tempDir)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	// Clear identity to simulate legacy repo
+	_, err = db.Exec(`UPDATE repos SET identity = NULL WHERE id = ?`, repo.ID)
+	if err != nil {
+		t.Fatalf("Failed to clear identity: %v", err)
+	}
+
+	// Backfill should skip this repo (not a git repo = gitErrOther, not gitErrNoRemote)
+	count, err := db.BackfillRepoIdentities()
+	if err != nil {
+		t.Fatalf("BackfillRepoIdentities failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 repos backfilled (not a git repo), got %d", count)
+	}
+
+	// Verify identity is still NULL
+	var identity sql.NullString
+	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
+	if err != nil {
+		t.Fatalf("Query identity failed: %v", err)
+	}
+	if identity.Valid && identity.String != "" {
+		t.Errorf("Expected identity to remain NULL, got %q", identity.String)
 	}
 }
 

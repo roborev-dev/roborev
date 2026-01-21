@@ -196,9 +196,12 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncSt
 
 	stats := &SyncStats{}
 
-	// Push all local changes (loop until no more pending)
+	// Push local changes (limited batches to ensure pull still runs)
+	// Cap at 20 batches (500 items at 25/batch) to prevent infinite push loops
+	// if new jobs keep arriving during sync.
+	const maxPushBatches = 20
 	batchNum := 0
-	for {
+	for batchNum < maxPushBatches {
 		pushed, err := w.pushChangesWithStats(ctx, pool)
 		if err != nil {
 			return nil, fmt.Errorf("push: %w", err)
@@ -207,7 +210,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncSt
 		stats.PushedReviews += pushed.Reviews
 		stats.PushedResponses += pushed.Responses
 
-		// If nothing was pushed, we're done
+		// If nothing was pushed, we're done with push phase
 		if pushed.Jobs == 0 && pushed.Reviews == 0 && pushed.Responses == 0 {
 			break
 		}
@@ -229,6 +232,9 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncSt
 				TotalResps: stats.PushedResponses,
 			})
 		}
+	}
+	if batchNum == maxPushBatches {
+		log.Printf("Sync: reached max push batches (%d), proceeding to pull", maxPushBatches)
 	}
 
 	// Pull remote changes
@@ -348,11 +354,25 @@ func (w *SyncWorker) connect(timeout time.Duration) error {
 	}
 
 	if lastTargetID != "" && lastTargetID != dbID {
-		// Different database - clear all synced_at to force full re-sync
-		log.Printf("Sync: detected new Postgres database (was %s, now %s), clearing sync state for full re-sync", lastTargetID[:8], dbID[:8])
+		// Different database - clear all synced_at and pull cursors for full re-sync
+		oldID, newID := lastTargetID, dbID
+		if len(oldID) > 8 {
+			oldID = oldID[:8]
+		}
+		if len(newID) > 8 {
+			newID = newID[:8]
+		}
+		log.Printf("Sync: detected new Postgres database (was %s, now %s), clearing sync state for full re-sync", oldID, newID)
 		if err := w.db.ClearAllSyncedAt(); err != nil {
 			pool.Close()
 			return fmt.Errorf("clear synced_at: %w", err)
+		}
+		// Also clear pull cursors so we pull all data from the new database
+		for _, key := range []string{SyncStateLastJobCursor, SyncStateLastReviewCursor, SyncStateLastResponseID} {
+			if err := w.db.SetSyncState(key, ""); err != nil {
+				pool.Close()
+				return fmt.Errorf("clear %s: %w", key, err)
+			}
 		}
 	}
 
@@ -518,15 +538,23 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 		// Batch insert jobs
 		if len(preparedJobs) > 0 {
-			count, err := pool.BatchUpsertJobs(ctx, preparedJobs)
+			success, err := pool.BatchUpsertJobs(ctx, preparedJobs)
 			if err != nil {
 				log.Printf("Sync: batch upsert jobs error: %v", err)
 			}
-			stats.Jobs = count
 
-			// Mark all successfully prepared jobs as synced
-			if err := w.db.MarkJobsSynced(preparedJobIDs); err != nil {
-				log.Printf("Sync: failed to mark jobs synced: %v", err)
+			// Only mark successfully synced jobs
+			var syncedJobIDs []int64
+			for i, ok := range success {
+				if ok {
+					syncedJobIDs = append(syncedJobIDs, preparedJobIDs[i])
+					stats.Jobs++
+				}
+			}
+			if len(syncedJobIDs) > 0 {
+				if err := w.db.MarkJobsSynced(syncedJobIDs); err != nil {
+					log.Printf("Sync: failed to mark jobs synced: %v", err)
+				}
 			}
 		}
 	}
@@ -538,19 +566,23 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	if len(reviews) > 0 {
-		count, err := pool.BatchUpsertReviews(ctx, reviews)
+		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
 			log.Printf("Sync: batch upsert reviews error: %v", err)
 		}
-		stats.Reviews = count
 
-		// Mark all reviews as synced
-		reviewIDs := make([]int64, len(reviews))
-		for i, r := range reviews {
-			reviewIDs[i] = r.ID
+		// Only mark successfully synced reviews
+		var syncedReviewIDs []int64
+		for i, ok := range success {
+			if ok {
+				syncedReviewIDs = append(syncedReviewIDs, reviews[i].ID)
+				stats.Reviews++
+			}
 		}
-		if err := w.db.MarkReviewsSynced(reviewIDs); err != nil {
-			log.Printf("Sync: failed to mark reviews synced: %v", err)
+		if len(syncedReviewIDs) > 0 {
+			if err := w.db.MarkReviewsSynced(syncedReviewIDs); err != nil {
+				log.Printf("Sync: failed to mark reviews synced: %v", err)
+			}
 		}
 	}
 
@@ -561,19 +593,23 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	if len(responses) > 0 {
-		count, err := pool.BatchInsertResponses(ctx, responses)
+		success, err := pool.BatchInsertResponses(ctx, responses)
 		if err != nil {
 			log.Printf("Sync: batch insert responses error: %v", err)
 		}
-		stats.Responses = count
 
-		// Mark all responses as synced
-		responseIDs := make([]int64, len(responses))
-		for i, r := range responses {
-			responseIDs[i] = r.ID
+		// Only mark successfully synced responses
+		var syncedResponseIDs []int64
+		for i, ok := range success {
+			if ok {
+				syncedResponseIDs = append(syncedResponseIDs, responses[i].ID)
+				stats.Responses++
+			}
 		}
-		if err := w.db.MarkResponsesSynced(responseIDs); err != nil {
-			log.Printf("Sync: failed to mark responses synced: %v", err)
+		if len(syncedResponseIDs) > 0 {
+			if err := w.db.MarkResponsesSynced(syncedResponseIDs); err != nil {
+				log.Printf("Sync: failed to mark responses synced: %v", err)
+			}
 		}
 	}
 

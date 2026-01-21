@@ -155,10 +155,16 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 	backfilled := 0
 	for _, r := range repos {
 		// Try git remote origin first
-		identity, err := getGitRemoteOrigin(r.path)
-		if err != nil || identity == "" {
-			// No remote - use local: prefix with repo name
+		identity, errType := getGitRemoteOrigin(r.path)
+		if identity != "" {
+			// Have a remote identity
+		} else if errType == gitErrNoRemote {
+			// No remote configured - use local: prefix
 			identity = "local:" + r.name
+		} else {
+			// Path doesn't exist, not a git repo, or other error - skip for now
+			// Will retry on next backfill
+			continue
 		}
 
 		if err := db.SetRepoIdentity(r.id, identity); err != nil {
@@ -171,15 +177,37 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 	return backfilled, nil
 }
 
+// gitErrorType indicates the type of error from getGitRemoteOrigin
+type gitErrorType int
+
+const (
+	gitErrNone     gitErrorType = iota // No error, identity returned
+	gitErrNoRemote                     // No remote 'origin' configured
+	gitErrOther                        // Path doesn't exist, not a git repo, or other error
+)
+
 // getGitRemoteOrigin returns the git remote origin URL for a path.
-// Returns empty string if path doesn't exist or isn't a git repo.
-func getGitRemoteOrigin(path string) (string, error) {
+// Returns the identity and an error type indicating success, no remote, or other error.
+func getGitRemoteOrigin(path string) (string, gitErrorType) {
 	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
 	output, err := cmd.Output()
 	if err != nil {
-		return "", err
+		// Check if it's specifically "no remote" vs other errors
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			// Git returns exit code 2 with "No such remote 'origin'" when no remote
+			if strings.Contains(stderr, "No such remote") ||
+				strings.Contains(stderr, "not a git repository") && strings.Contains(stderr, "origin") {
+				return "", gitErrNoRemote
+			}
+		}
+		return "", gitErrOther
 	}
-	return strings.TrimSpace(string(output)), nil
+	result := strings.TrimSpace(string(output))
+	if result == "" {
+		return "", gitErrNoRemote
+	}
+	return result, gitErrNone
 }
 
 // SetRepoIdentity sets the identity for a repo.

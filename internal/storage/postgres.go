@@ -742,10 +742,10 @@ func nullString(s string) interface{} {
 }
 
 // BatchUpsertReviews inserts or updates multiple reviews in a single batch operation.
-// Returns the number of reviews successfully upserted and any error.
-func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableReview) (int, error) {
+// Returns a boolean slice indicating success/failure for each item at the corresponding index.
+func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableReview) ([]bool, error) {
 	if len(reviews) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	batch := &pgx.Batch{}
@@ -766,24 +766,27 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	br := p.pool.SendBatch(ctx, batch)
 	defer br.Close()
 
-	successCount := 0
-	for range reviews {
+	success := make([]bool, len(reviews))
+	var firstErr error
+	for i := range reviews {
 		_, err := br.Exec()
 		if err != nil {
-			// Log but continue - we'll return partial success count
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
-		successCount++
+		success[i] = true
 	}
 
-	return successCount, nil
+	return success, firstErr
 }
 
 // BatchInsertResponses inserts multiple responses in a single batch operation.
-// Returns the number of responses successfully inserted and any error.
-func (p *PgPool) BatchInsertResponses(ctx context.Context, responses []SyncableResponse) (int, error) {
+// Returns a boolean slice indicating success/failure for each item at the corresponding index.
+func (p *PgPool) BatchInsertResponses(ctx context.Context, responses []SyncableResponse) ([]bool, error) {
 	if len(responses) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	batch := &pgx.Batch{}
@@ -799,16 +802,20 @@ func (p *PgPool) BatchInsertResponses(ctx context.Context, responses []SyncableR
 	br := p.pool.SendBatch(ctx, batch)
 	defer br.Close()
 
-	successCount := 0
-	for range responses {
+	success := make([]bool, len(responses))
+	var firstErr error
+	for i := range responses {
 		_, err := br.Exec()
 		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
-		successCount++
+		success[i] = true
 	}
 
-	return successCount, nil
+	return success, firstErr
 }
 
 // JobWithPgIDs represents a job with its resolved PostgreSQL repo and commit IDs
@@ -820,10 +827,10 @@ type JobWithPgIDs struct {
 
 // BatchUpsertJobs inserts or updates multiple jobs in a single batch operation.
 // The jobs must have their PgRepoID and PgCommitID already resolved.
-// Returns the number of jobs successfully upserted.
-func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) (int, error) {
+// Returns a boolean slice indicating success/failure for each item at the corresponding index.
+func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bool, error) {
 	if len(jobs) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	batch := &pgx.Batch{}
@@ -848,14 +855,18 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) (int,
 	br := p.pool.SendBatch(ctx, batch)
 	defer br.Close()
 
-	successCount := 0
-	for range jobs {
+	success := make([]bool, len(jobs))
+	var firstErr error
+	for i := range jobs {
 		_, err := br.Exec()
 		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
-		successCount++
+		success[i] = true
 	}
 
-	return successCount, nil
+	return success, firstErr
 }

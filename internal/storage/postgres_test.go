@@ -1215,12 +1215,18 @@ func TestIntegration_BatchOperations(t *testing.T) {
 			})
 		}
 
-		count, err := pool.BatchUpsertJobs(ctx, jobs)
+		success, err := pool.BatchUpsertJobs(ctx, jobs)
 		if err != nil {
 			t.Fatalf("BatchUpsertJobs failed: %v", err)
 		}
-		if count != 5 {
-			t.Errorf("Expected 5 jobs upserted, got %d", count)
+		successCount := 0
+		for _, ok := range success {
+			if ok {
+				successCount++
+			}
+		}
+		if successCount != 5 {
+			t.Errorf("Expected 5 jobs upserted, got %d", successCount)
 		}
 
 		// Verify jobs exist
@@ -1265,12 +1271,18 @@ func TestIntegration_BatchOperations(t *testing.T) {
 			},
 		}
 
-		count, err := pool.BatchUpsertReviews(ctx, reviews)
+		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
 			t.Fatalf("BatchUpsertReviews failed: %v", err)
 		}
-		if count != 2 {
-			t.Errorf("Expected 2 reviews upserted, got %d", count)
+		successCount := 0
+		for _, ok := range success {
+			if ok {
+				successCount++
+			}
+		}
+		if successCount != 2 {
+			t.Errorf("Expected 2 reviews upserted, got %d", successCount)
 		}
 	})
 
@@ -1309,38 +1321,44 @@ func TestIntegration_BatchOperations(t *testing.T) {
 			},
 		}
 
-		count, err := pool.BatchInsertResponses(ctx, responses)
+		success, err := pool.BatchInsertResponses(ctx, responses)
 		if err != nil {
 			t.Fatalf("BatchInsertResponses failed: %v", err)
 		}
-		if count != 3 {
-			t.Errorf("Expected 3 responses inserted, got %d", count)
+		successCount := 0
+		for _, ok := range success {
+			if ok {
+				successCount++
+			}
+		}
+		if successCount != 3 {
+			t.Errorf("Expected 3 responses inserted, got %d", successCount)
 		}
 	})
 
 	t.Run("empty batches are no-op", func(t *testing.T) {
-		count, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{})
+		success, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{})
 		if err != nil {
 			t.Errorf("BatchUpsertJobs with empty slice failed: %v", err)
 		}
-		if count != 0 {
-			t.Errorf("Expected 0 count for empty batch, got %d", count)
+		if success != nil {
+			t.Errorf("Expected nil for empty batch, got %v", success)
 		}
 
-		count, err = pool.BatchUpsertReviews(ctx, []SyncableReview{})
+		success, err = pool.BatchUpsertReviews(ctx, []SyncableReview{})
 		if err != nil {
 			t.Errorf("BatchUpsertReviews with empty slice failed: %v", err)
 		}
-		if count != 0 {
-			t.Errorf("Expected 0 count for empty batch, got %d", count)
+		if success != nil {
+			t.Errorf("Expected nil for empty batch, got %v", success)
 		}
 
-		count, err = pool.BatchInsertResponses(ctx, []SyncableResponse{})
+		success, err = pool.BatchInsertResponses(ctx, []SyncableResponse{})
 		if err != nil {
 			t.Errorf("BatchInsertResponses with empty slice failed: %v", err)
 		}
-		if count != 0 {
-			t.Errorf("Expected 0 count for empty batch, got %d", count)
+		if success != nil {
+			t.Errorf("Expected nil for empty batch, got %v", success)
 		}
 	})
 }
