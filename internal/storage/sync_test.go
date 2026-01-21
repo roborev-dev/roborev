@@ -304,8 +304,8 @@ func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Create a repo pointing to a non-existent path
-	nonExistentPath := "/tmp/nonexistent-repo-path-12345"
+	// Create a repo pointing to a non-existent path (subpath of temp dir that doesn't exist)
+	nonExistentPath := filepath.Join(t.TempDir(), "this-subdir-does-not-exist", "nested")
 	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, NULL)`,
 		nonExistentPath, "missing-repo")
 	if err != nil {
