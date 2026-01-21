@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/update"
@@ -181,9 +182,14 @@ type tuiRespondResultMsg struct {
 }
 
 func newTuiModel(serverAddr string) tuiModel {
+	// Read daemon version from runtime file (authoritative source)
+	daemonVersion := "?"
+	if info, err := daemon.ReadRuntime(); err == nil && info.Version != "" {
+		daemonVersion = info.Version
+	}
 	return tuiModel{
 		serverAddr:             serverAddr,
-		daemonVersion:          "?", // Updated from /api/status response
+		daemonVersion:          daemonVersion,
 		client:                 &http.Client{Timeout: 10 * time.Second},
 		jobs:                   []storage.ReviewJob{},
 		currentView:            tuiViewQueue,
