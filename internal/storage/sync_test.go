@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -1672,6 +1673,119 @@ func TestClearAllSyncedAt(t *testing.T) {
 	if len(responses) != 1 {
 		t.Errorf("Expected 1 response to sync after clear, got %d", len(responses))
 	}
+}
+
+// TestBatchMarkSynced verifies the batch MarkXSynced functions work correctly.
+func TestBatchMarkSynced(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	// Create multiple jobs with reviews and responses
+	var jobs []*ReviewJob
+	for i := 0; i < 5; i++ {
+		job := h.createCompletedJob(fmt.Sprintf("batch-test-sha-%d", i))
+		jobs = append(jobs, job)
+		_, err := h.db.AddResponseToJob(job.ID, "user", fmt.Sprintf("response %d", i))
+		if err != nil {
+			t.Fatalf("AddResponseToJob failed: %v", err)
+		}
+	}
+
+	t.Run("MarkJobsSynced marks multiple jobs", func(t *testing.T) {
+		// Get jobs to sync before
+		toSync, err := h.db.GetJobsToSync(h.machineID, 100)
+		if err != nil {
+			t.Fatalf("GetJobsToSync failed: %v", err)
+		}
+		if len(toSync) != 5 {
+			t.Fatalf("Expected 5 jobs to sync, got %d", len(toSync))
+		}
+
+		// Mark first 3 as synced
+		jobIDs := []int64{jobs[0].ID, jobs[1].ID, jobs[2].ID}
+		if err := h.db.MarkJobsSynced(jobIDs); err != nil {
+			t.Fatalf("MarkJobsSynced failed: %v", err)
+		}
+
+		// Verify only 2 jobs left to sync
+		toSync, err = h.db.GetJobsToSync(h.machineID, 100)
+		if err != nil {
+			t.Fatalf("GetJobsToSync failed: %v", err)
+		}
+		if len(toSync) != 2 {
+			t.Errorf("Expected 2 jobs to sync after batch mark, got %d", len(toSync))
+		}
+	})
+
+	t.Run("MarkReviewsSynced marks multiple reviews", func(t *testing.T) {
+		// Get reviews for synced jobs
+		reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
+		if err != nil {
+			t.Fatalf("GetReviewsToSync failed: %v", err)
+		}
+		if len(reviews) != 3 {
+			t.Fatalf("Expected 3 reviews to sync (jobs 0-2 synced), got %d", len(reviews))
+		}
+
+		// Mark all 3 as synced
+		reviewIDs := make([]int64, len(reviews))
+		for i, r := range reviews {
+			reviewIDs[i] = r.ID
+		}
+		if err := h.db.MarkReviewsSynced(reviewIDs); err != nil {
+			t.Fatalf("MarkReviewsSynced failed: %v", err)
+		}
+
+		// Verify no reviews left to sync (for synced jobs)
+		reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
+		if err != nil {
+			t.Fatalf("GetReviewsToSync failed: %v", err)
+		}
+		if len(reviews) != 0 {
+			t.Errorf("Expected 0 reviews to sync after batch mark, got %d", len(reviews))
+		}
+	})
+
+	t.Run("MarkResponsesSynced marks multiple responses", func(t *testing.T) {
+		// Get responses for synced jobs
+		responses, err := h.db.GetResponsesToSync(h.machineID, 100)
+		if err != nil {
+			t.Fatalf("GetResponsesToSync failed: %v", err)
+		}
+		if len(responses) != 3 {
+			t.Fatalf("Expected 3 responses to sync (jobs 0-2 synced), got %d", len(responses))
+		}
+
+		// Mark all 3 as synced
+		responseIDs := make([]int64, len(responses))
+		for i, r := range responses {
+			responseIDs[i] = r.ID
+		}
+		if err := h.db.MarkResponsesSynced(responseIDs); err != nil {
+			t.Fatalf("MarkResponsesSynced failed: %v", err)
+		}
+
+		// Verify no responses left to sync (for synced jobs)
+		responses, err = h.db.GetResponsesToSync(h.machineID, 100)
+		if err != nil {
+			t.Fatalf("GetResponsesToSync failed: %v", err)
+		}
+		if len(responses) != 0 {
+			t.Errorf("Expected 0 responses to sync after batch mark, got %d", len(responses))
+		}
+	})
+
+	t.Run("empty slice is no-op", func(t *testing.T) {
+		// Empty slices should not error
+		if err := h.db.MarkJobsSynced([]int64{}); err != nil {
+			t.Errorf("MarkJobsSynced with empty slice failed: %v", err)
+		}
+		if err := h.db.MarkReviewsSynced([]int64{}); err != nil {
+			t.Errorf("MarkReviewsSynced with empty slice failed: %v", err)
+		}
+		if err := h.db.MarkResponsesSynced([]int64{}); err != nil {
+			t.Errorf("MarkResponsesSynced with empty slice failed: %v", err)
+		}
+	})
 }
 
 // syncTestHelper creates a test DB with common setup for sync ordering tests.

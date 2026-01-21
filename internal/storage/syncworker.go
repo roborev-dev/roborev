@@ -476,55 +476,105 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		return stats, fmt.Errorf("get machine ID: %w", err)
 	}
 
-	// Push jobs
+	// Push jobs - need to resolve repo/commit IDs first, then batch insert
 	jobs, err := w.db.GetJobsToSync(machineID, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get jobs to sync: %w", err)
 	}
 
-	for _, j := range jobs {
-		if err := w.pushJob(ctx, pool, j); err != nil {
-			log.Printf("Sync: failed to push job %s: %v", j.UUID, err)
-			continue
+	if len(jobs) > 0 {
+		// Resolve PostgreSQL repo and commit IDs for each job
+		var preparedJobs []JobWithPgIDs
+		var preparedJobIDs []int64
+		for _, j := range jobs {
+			if j.RepoIdentity == "" {
+				log.Printf("Sync: job %s has no repo identity, skipping", j.UUID)
+				continue
+			}
+
+			pgRepoID, err := pool.GetOrCreateRepo(ctx, j.RepoIdentity)
+			if err != nil {
+				log.Printf("Sync: failed to get/create repo for job %s: %v", j.UUID, err)
+				continue
+			}
+
+			var pgCommitID *int64
+			if j.CommitSHA != "" {
+				id, err := pool.GetOrCreateCommit(ctx, pgRepoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
+				if err != nil {
+					log.Printf("Sync: failed to get/create commit for job %s: %v", j.UUID, err)
+					continue
+				}
+				pgCommitID = &id
+			}
+
+			preparedJobs = append(preparedJobs, JobWithPgIDs{
+				Job:        j,
+				PgRepoID:   pgRepoID,
+				PgCommitID: pgCommitID,
+			})
+			preparedJobIDs = append(preparedJobIDs, j.ID)
 		}
-		if err := w.db.MarkJobSynced(j.ID); err != nil {
-			log.Printf("Sync: failed to mark job %d synced: %v", j.ID, err)
+
+		// Batch insert jobs
+		if len(preparedJobs) > 0 {
+			count, err := pool.BatchUpsertJobs(ctx, preparedJobs)
+			if err != nil {
+				log.Printf("Sync: batch upsert jobs error: %v", err)
+			}
+			stats.Jobs = count
+
+			// Mark all successfully prepared jobs as synced
+			if err := w.db.MarkJobsSynced(preparedJobIDs); err != nil {
+				log.Printf("Sync: failed to mark jobs synced: %v", err)
+			}
 		}
-		stats.Jobs++
 	}
 
-	// Push reviews
+	// Push reviews - batch operation
 	reviews, err := w.db.GetReviewsToSync(machineID, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get reviews to sync: %w", err)
 	}
 
-	for _, r := range reviews {
-		if err := pool.UpsertReview(ctx, r); err != nil {
-			log.Printf("Sync: failed to push review %s: %v", r.UUID, err)
-			continue
+	if len(reviews) > 0 {
+		count, err := pool.BatchUpsertReviews(ctx, reviews)
+		if err != nil {
+			log.Printf("Sync: batch upsert reviews error: %v", err)
 		}
-		if err := w.db.MarkReviewSynced(r.ID); err != nil {
-			log.Printf("Sync: failed to mark review %d synced: %v", r.ID, err)
+		stats.Reviews = count
+
+		// Mark all reviews as synced
+		reviewIDs := make([]int64, len(reviews))
+		for i, r := range reviews {
+			reviewIDs[i] = r.ID
 		}
-		stats.Reviews++
+		if err := w.db.MarkReviewsSynced(reviewIDs); err != nil {
+			log.Printf("Sync: failed to mark reviews synced: %v", err)
+		}
 	}
 
-	// Push responses
+	// Push responses - batch operation
 	responses, err := w.db.GetResponsesToSync(machineID, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get responses to sync: %w", err)
 	}
 
-	for _, r := range responses {
-		if err := pool.InsertResponse(ctx, r); err != nil {
-			log.Printf("Sync: failed to push response %s: %v", r.UUID, err)
-			continue
+	if len(responses) > 0 {
+		count, err := pool.BatchInsertResponses(ctx, responses)
+		if err != nil {
+			log.Printf("Sync: batch insert responses error: %v", err)
 		}
-		if err := w.db.MarkResponseSynced(r.ID); err != nil {
-			log.Printf("Sync: failed to mark response %d synced: %v", r.ID, err)
+		stats.Responses = count
+
+		// Mark all responses as synced
+		responseIDs := make([]int64, len(responses))
+		for i, r := range responses {
+			responseIDs[i] = r.ID
 		}
-		stats.Responses++
+		if err := w.db.MarkResponsesSynced(responseIDs); err != nil {
+			log.Printf("Sync: failed to mark responses synced: %v", err)
+		}
 	}
 
 	return stats, nil

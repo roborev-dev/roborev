@@ -342,6 +342,25 @@ func (db *DB) MarkJobSynced(jobID int64) error {
 	return err
 }
 
+// MarkJobsSynced updates the synced_at timestamp for multiple jobs
+func (db *DB) MarkJobsSynced(jobIDs []int64) error {
+	if len(jobIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	placeholders := make([]string, len(jobIDs))
+	args := make([]interface{}, len(jobIDs)+1)
+	args[0] = now
+	for i, id := range jobIDs {
+		placeholders[i] = "?"
+		args[i+1] = id
+	}
+	query := fmt.Sprintf(`UPDATE review_jobs SET synced_at = ? WHERE id IN (%s)`,
+		strings.Join(placeholders, ","))
+	_, err := db.Exec(query, args...)
+	return err
+}
+
 // SyncableReview contains review data needed for sync
 type SyncableReview struct {
 	ID                 int64
@@ -414,6 +433,25 @@ func (db *DB) MarkReviewSynced(reviewID int64) error {
 	return err
 }
 
+// MarkReviewsSynced updates the synced_at timestamp for multiple reviews
+func (db *DB) MarkReviewsSynced(reviewIDs []int64) error {
+	if len(reviewIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	placeholders := make([]string, len(reviewIDs))
+	args := make([]interface{}, len(reviewIDs)+1)
+	args[0] = now
+	for i, id := range reviewIDs {
+		placeholders[i] = "?"
+		args[i+1] = id
+	}
+	query := fmt.Sprintf(`UPDATE reviews SET synced_at = ? WHERE id IN (%s)`,
+		strings.Join(placeholders, ","))
+	_, err := db.Exec(query, args...)
+	return err
+}
+
 // SyncableResponse contains response data needed for sync
 type SyncableResponse struct {
 	ID              int64
@@ -475,6 +513,25 @@ func (db *DB) GetResponsesToSync(machineID string, limit int) ([]SyncableRespons
 func (db *DB) MarkResponseSynced(responseID int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := db.Exec(`UPDATE responses SET synced_at = ? WHERE id = ?`, now, responseID)
+	return err
+}
+
+// MarkResponsesSynced updates the synced_at timestamp for multiple responses
+func (db *DB) MarkResponsesSynced(responseIDs []int64) error {
+	if len(responseIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	placeholders := make([]string, len(responseIDs))
+	args := make([]interface{}, len(responseIDs)+1)
+	args[0] = now
+	for i, id := range responseIDs {
+		placeholders[i] = "?"
+		args[i+1] = id
+	}
+	query := fmt.Sprintf(`UPDATE responses SET synced_at = ? WHERE id IN (%s)`,
+		strings.Join(placeholders, ","))
+	_, err := db.Exec(query, args...)
 	return err
 }
 

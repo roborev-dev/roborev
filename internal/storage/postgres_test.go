@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -1168,4 +1169,178 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	if newTargetID != dbID {
 		t.Errorf("Expected sync target ID to be %s, got %s", dbID, newTargetID)
 	}
+}
+
+func TestIntegration_BatchOperations(t *testing.T) {
+	connString := getTestPostgresURL(t)
+
+	ctx := t.Context()
+	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	// Create a test repo
+	repoID, err := pool.GetOrCreateRepo(ctx, "https://github.com/test/batch-test.git")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	t.Run("BatchUpsertJobs", func(t *testing.T) {
+		// Create multiple jobs with prepared IDs
+		var jobs []JobWithPgIDs
+		for i := 0; i < 5; i++ {
+			commitID, err := pool.GetOrCreateCommit(ctx, repoID, fmt.Sprintf("batch-test-sha-%d", i), "Author", "Subject", time.Now())
+			if err != nil {
+				t.Fatalf("GetOrCreateCommit failed: %v", err)
+			}
+			jobs = append(jobs, JobWithPgIDs{
+				Job: SyncableJob{
+					UUID:            uuid.NewString(),
+					RepoIdentity:    "https://github.com/test/batch-test.git",
+					CommitSHA:       fmt.Sprintf("batch-test-sha-%d", i),
+					GitRef:          "test-ref",
+					Agent:           "test",
+					Status:          "done",
+					SourceMachineID: "test-machine",
+					EnqueuedAt:      time.Now(),
+				},
+				PgRepoID:   repoID,
+				PgCommitID: &commitID,
+			})
+		}
+
+		count, err := pool.BatchUpsertJobs(ctx, jobs)
+		if err != nil {
+			t.Fatalf("BatchUpsertJobs failed: %v", err)
+		}
+		if count != 5 {
+			t.Errorf("Expected 5 jobs upserted, got %d", count)
+		}
+
+		// Verify jobs exist
+		var jobCount int
+		err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM review_jobs WHERE source_machine_id = 'test-machine'`).Scan(&jobCount)
+		if err != nil {
+			t.Fatalf("Count query failed: %v", err)
+		}
+		if jobCount < 5 {
+			t.Errorf("Expected at least 5 jobs in database, got %d", jobCount)
+		}
+	})
+
+	t.Run("BatchUpsertReviews", func(t *testing.T) {
+		// Get a job UUID to reference
+		var jobUUID string
+		err := pool.pool.QueryRow(ctx, `SELECT uuid FROM review_jobs WHERE source_machine_id = 'test-machine' LIMIT 1`).Scan(&jobUUID)
+		if err != nil {
+			t.Fatalf("Failed to get job UUID: %v", err)
+		}
+
+		reviews := []SyncableReview{
+			{
+				UUID:               uuid.NewString(),
+				JobUUID:            jobUUID,
+				Agent:              "test",
+				Prompt:             "test prompt 1",
+				Output:             "test output 1",
+				Addressed:          false,
+				UpdatedByMachineID: "test-machine",
+				CreatedAt:          time.Now(),
+			},
+			{
+				UUID:               uuid.NewString(),
+				JobUUID:            jobUUID,
+				Agent:              "test",
+				Prompt:             "test prompt 2",
+				Output:             "test output 2",
+				Addressed:          true,
+				UpdatedByMachineID: "test-machine",
+				CreatedAt:          time.Now(),
+			},
+		}
+
+		count, err := pool.BatchUpsertReviews(ctx, reviews)
+		if err != nil {
+			t.Fatalf("BatchUpsertReviews failed: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("Expected 2 reviews upserted, got %d", count)
+		}
+	})
+
+	t.Run("BatchInsertResponses", func(t *testing.T) {
+		// Get a job UUID to reference
+		var jobUUID string
+		err := pool.pool.QueryRow(ctx, `SELECT uuid FROM review_jobs WHERE source_machine_id = 'test-machine' LIMIT 1`).Scan(&jobUUID)
+		if err != nil {
+			t.Fatalf("Failed to get job UUID: %v", err)
+		}
+
+		responses := []SyncableResponse{
+			{
+				UUID:            uuid.NewString(),
+				JobUUID:         jobUUID,
+				Responder:       "user1",
+				Response:        "response 1",
+				SourceMachineID: "test-machine",
+				CreatedAt:       time.Now(),
+			},
+			{
+				UUID:            uuid.NewString(),
+				JobUUID:         jobUUID,
+				Responder:       "user2",
+				Response:        "response 2",
+				SourceMachineID: "test-machine",
+				CreatedAt:       time.Now(),
+			},
+			{
+				UUID:            uuid.NewString(),
+				JobUUID:         jobUUID,
+				Responder:       "agent",
+				Response:        "response 3",
+				SourceMachineID: "test-machine",
+				CreatedAt:       time.Now(),
+			},
+		}
+
+		count, err := pool.BatchInsertResponses(ctx, responses)
+		if err != nil {
+			t.Fatalf("BatchInsertResponses failed: %v", err)
+		}
+		if count != 3 {
+			t.Errorf("Expected 3 responses inserted, got %d", count)
+		}
+	})
+
+	t.Run("empty batches are no-op", func(t *testing.T) {
+		count, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{})
+		if err != nil {
+			t.Errorf("BatchUpsertJobs with empty slice failed: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 count for empty batch, got %d", count)
+		}
+
+		count, err = pool.BatchUpsertReviews(ctx, []SyncableReview{})
+		if err != nil {
+			t.Errorf("BatchUpsertReviews with empty slice failed: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 count for empty batch, got %d", count)
+		}
+
+		count, err = pool.BatchInsertResponses(ctx, []SyncableResponse{})
+		if err != nil {
+			t.Errorf("BatchInsertResponses with empty slice failed: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 count for empty batch, got %d", count)
+		}
+	})
 }

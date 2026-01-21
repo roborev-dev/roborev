@@ -740,3 +740,122 @@ func nullString(s string) interface{} {
 	}
 	return s
 }
+
+// BatchUpsertReviews inserts or updates multiple reviews in a single batch operation.
+// Returns the number of reviews successfully upserted and any error.
+func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableReview) (int, error) {
+	if len(reviews) == 0 {
+		return 0, nil
+	}
+
+	batch := &pgx.Batch{}
+	for _, r := range reviews {
+		batch.Queue(`
+			INSERT INTO reviews (
+				uuid, job_uuid, agent, prompt, output, addressed,
+				updated_by_machine_id, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+			ON CONFLICT (uuid) DO UPDATE SET
+				addressed = EXCLUDED.addressed,
+				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
+				updated_at = NOW()
+		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Addressed,
+			r.UpdatedByMachineID, r.CreatedAt)
+	}
+
+	br := p.pool.SendBatch(ctx, batch)
+	defer br.Close()
+
+	successCount := 0
+	for range reviews {
+		_, err := br.Exec()
+		if err != nil {
+			// Log but continue - we'll return partial success count
+			continue
+		}
+		successCount++
+	}
+
+	return successCount, nil
+}
+
+// BatchInsertResponses inserts multiple responses in a single batch operation.
+// Returns the number of responses successfully inserted and any error.
+func (p *PgPool) BatchInsertResponses(ctx context.Context, responses []SyncableResponse) (int, error) {
+	if len(responses) == 0 {
+		return 0, nil
+	}
+
+	batch := &pgx.Batch{}
+	for _, r := range responses {
+		batch.Queue(`
+			INSERT INTO responses (
+				uuid, job_uuid, responder, response, source_machine_id, created_at
+			) VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (uuid) DO NOTHING
+		`, r.UUID, r.JobUUID, r.Responder, r.Response, r.SourceMachineID, r.CreatedAt)
+	}
+
+	br := p.pool.SendBatch(ctx, batch)
+	defer br.Close()
+
+	successCount := 0
+	for range responses {
+		_, err := br.Exec()
+		if err != nil {
+			continue
+		}
+		successCount++
+	}
+
+	return successCount, nil
+}
+
+// JobWithPgIDs represents a job with its resolved PostgreSQL repo and commit IDs
+type JobWithPgIDs struct {
+	Job        SyncableJob
+	PgRepoID   int64
+	PgCommitID *int64
+}
+
+// BatchUpsertJobs inserts or updates multiple jobs in a single batch operation.
+// The jobs must have their PgRepoID and PgCommitID already resolved.
+// Returns the number of jobs successfully upserted.
+func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) (int, error) {
+	if len(jobs) == 0 {
+		return 0, nil
+	}
+
+	batch := &pgx.Batch{}
+	for _, jw := range jobs {
+		j := jw.Job
+		batch.Queue(`
+			INSERT INTO review_jobs (
+				uuid, repo_id, commit_id, git_ref, agent, reasoning, status, agentic,
+				enqueued_at, started_at, finished_at, prompt, diff_content, error,
+				source_machine_id, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+			ON CONFLICT (uuid) DO UPDATE SET
+				status = EXCLUDED.status,
+				finished_at = EXCLUDED.finished_at,
+				error = EXCLUDED.error,
+				updated_at = NOW()
+		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, j.Agent, nullString(j.Reasoning),
+			j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
+			nullString(j.Prompt), j.DiffContent, nullString(j.Error), j.SourceMachineID)
+	}
+
+	br := p.pool.SendBatch(ctx, batch)
+	defer br.Close()
+
+	successCount := 0
+	for range jobs {
+		_, err := br.Exec()
+		if err != nil {
+			continue
+		}
+		successCount++
+	}
+
+	return successCount, nil
+}
