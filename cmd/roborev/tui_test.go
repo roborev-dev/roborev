@@ -4240,7 +4240,7 @@ func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 	}
 }
 
-func TestTUIPendingAddressedClearedByMatchingResponse(t *testing.T) {
+func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	addressedFalse := false
@@ -4251,21 +4251,83 @@ func TestTUIPendingAddressedClearedByMatchingResponse(t *testing.T) {
 	// User toggles addressed to true
 	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
 
-	// Response comes back for the correct toggle to true
-	matchingMsg := tuiAddressedResultMsg{
+	// Success response comes back
+	successMsg := tuiAddressedResultMsg{
 		jobID:    1,
 		oldState: false,
-		newState: true, // This response matches what we requested
-		seq:      1,    // Matches pending seq
+		newState: true,
+		seq:      1,
 		err:      nil,
 	}
 
-	updated, _ := m.Update(matchingMsg)
+	updated, _ := m.Update(successMsg)
 	m2 := updated.(tuiModel)
 
-	// pendingAddressed should be cleared because newState matches
+	// pendingAddressed should NOT be cleared on success - it waits for jobs refresh
+	// to confirm the update. This prevents race condition where stale jobs response
+	// arrives after success and briefly shows old state.
+	if _, ok := m2.pendingAddressed[1]; !ok {
+		t.Error("pendingAddressed should NOT be cleared on success response")
+	}
+}
+
+func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	addressedFalse := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+	}
+
+	// User toggles addressed to true
+	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
+
+	// Jobs refresh arrives with server data confirming the update
+	addressedTrue := true
+	jobsMsg := tuiJobsMsg{
+		jobs: []storage.ReviewJob{
+			{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+		},
+	}
+
+	updated, _ := m.Update(jobsMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingAddressed should be cleared because server data matches pending state
 	if _, ok := m2.pendingAddressed[1]; ok {
-		t.Error("pendingAddressed should be cleared when response newState matches pending state")
+		t.Error("pendingAddressed should be cleared when jobs refresh confirms update")
+	}
+}
+
+func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	addressedFalse := false
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+	}
+
+	// User toggles addressed to true
+	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
+
+	// Stale jobs refresh arrives with old data (from request sent before update)
+	staleJobsMsg := tuiJobsMsg{
+		jobs: []storage.ReviewJob{
+			{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // Still false!
+		},
+	}
+
+	updated, _ := m.Update(staleJobsMsg)
+	m2 := updated.(tuiModel)
+
+	// pendingAddressed should NOT be cleared because server data doesn't match
+	if _, ok := m2.pendingAddressed[1]; !ok {
+		t.Error("pendingAddressed should NOT be cleared when jobs refresh has stale data")
+	}
+
+	// Job should still show as addressed (pending state re-applied)
+	if m2.jobs[0].Addressed == nil || !*m2.jobs[0].Addressed {
+		t.Error("Job should still show as addressed due to pending state")
 	}
 }
 
