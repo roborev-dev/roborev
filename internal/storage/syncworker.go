@@ -12,14 +12,15 @@ import (
 
 // SyncWorker handles background synchronization between SQLite and PostgreSQL
 type SyncWorker struct {
-	db      *DB
-	cfg     config.SyncConfig
-	pgPool  *PgPool
-	stopCh  chan struct{}
-	doneCh  chan struct{}
-	mu      sync.Mutex // protects running and pgPool
-	syncMu  sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
-	running bool
+	db        *DB
+	cfg       config.SyncConfig
+	pgPool    *PgPool
+	stopCh    chan struct{}
+	doneCh    chan struct{}
+	mu        sync.Mutex // protects running and pgPool
+	syncMu    sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
+	connectMu sync.Mutex // serializes connect operations
+	running   bool
 }
 
 // NewSyncWorker creates a new sync worker
@@ -179,6 +180,7 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 }
 
 // SyncNowWithProgress is like SyncNow but calls progressFn after each batch.
+// If not connected, attempts to connect first.
 func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncStats, error) {
 	w.mu.Lock()
 	if !w.running {
@@ -188,8 +190,33 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncSt
 	pool := w.pgPool
 	w.mu.Unlock()
 
+	// If not connected, attempt to connect now
 	if pool == nil {
-		return nil, fmt.Errorf("not connected to PostgreSQL")
+		connectTimeout := 30 * time.Second
+		if err := w.connect(connectTimeout); err != nil {
+			// Log full error server-side, return generic error to caller
+			// (connection errors may contain credentials or host details)
+			log.Printf("Sync: connection failed: %v", err)
+			return nil, fmt.Errorf("failed to connect to PostgreSQL")
+		}
+		// Re-check running state and get pool under lock
+		// (Stop may have been called during connect)
+		w.mu.Lock()
+		if !w.running {
+			// Worker was stopped during connect - close pool and abort
+			if w.pgPool != nil {
+				w.pgPool.Close()
+				w.pgPool = nil
+			}
+			w.mu.Unlock()
+			return nil, fmt.Errorf("sync worker stopped during connect")
+		}
+		pool = w.pgPool
+		w.mu.Unlock()
+		if pool == nil {
+			return nil, fmt.Errorf("connection succeeded but pool is nil")
+		}
+		log.Printf("Sync: connected to PostgreSQL (triggered by sync now)")
 	}
 
 	// Serialize with other sync operations
@@ -321,8 +348,20 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 	}
 }
 
-// connect establishes the PostgreSQL connection
+// connect establishes the PostgreSQL connection.
+// Serialized by connectMu to prevent concurrent connection attempts.
 func (w *SyncWorker) connect(timeout time.Duration) error {
+	w.connectMu.Lock()
+	defer w.connectMu.Unlock()
+
+	// Check if already connected (another goroutine may have connected while we waited)
+	w.mu.Lock()
+	if w.pgPool != nil {
+		w.mu.Unlock()
+		return nil
+	}
+	w.mu.Unlock()
+
 	url := w.cfg.PostgresURLExpanded()
 	if url == "" {
 		return fmt.Errorf("postgres_url not configured")

@@ -71,6 +71,7 @@ func NewServer(db *storage.DB, cfg *config.Config) *Server {
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stream/events", s.handleStreamEvents)
 	mux.HandleFunc("/api/sync/now", s.handleSyncNow)
+	mux.HandleFunc("/api/sync/status", s.handleSyncStatus)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
@@ -231,6 +232,32 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 			"reviews":   stats.PulledReviews,
 			"responses": stats.PulledResponses,
 		},
+	})
+}
+
+// handleSyncStatus returns the current sync worker health status
+func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if s.syncWorker == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled":   false,
+			"connected": false,
+			"message":   "sync not enabled",
+		})
+		return
+	}
+
+	healthy, message := s.syncWorker.HealthCheck()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled":   true,
+		"connected": healthy,
+		"message":   message,
 	})
 }
 
