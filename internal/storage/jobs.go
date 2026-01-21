@@ -15,6 +15,8 @@ func ParseVerdict(output string) string {
 		// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
 		trimmed = strings.ReplaceAll(trimmed, "\u2018", "'") // left single quote
 		trimmed = strings.ReplaceAll(trimmed, "\u2019", "'") // right single quote
+		// Strip markdown formatting (bold, italic, headers)
+		trimmed = stripMarkdown(trimmed)
 		// Strip leading list markers (bullets, numbers, etc.)
 		trimmed = stripListMarker(trimmed)
 
@@ -34,6 +36,23 @@ func ParseVerdict(output string) string {
 		}
 	}
 	return "F"
+}
+
+// stripMarkdown removes common markdown formatting from a line
+func stripMarkdown(s string) string {
+	// Strip leading markdown headers (##, ###, etc.)
+	for strings.HasPrefix(s, "#") {
+		s = strings.TrimPrefix(s, "#")
+	}
+	s = strings.TrimSpace(s)
+
+	// Strip bold/italic markers (**, __, *, _)
+	// Handle ** and __ first (bold), then * and _ (italic)
+	s = strings.ReplaceAll(s, "**", "")
+	s = strings.ReplaceAll(s, "__", "")
+	// Don't strip single * or _ as they might be intentional (e.g., bullet points handled separately)
+
+	return strings.TrimSpace(s)
 }
 
 // stripListMarker removes leading bullet/number markers from a line

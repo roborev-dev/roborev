@@ -84,6 +84,32 @@ func TestParseVerdict(t *testing.T) {
 			output: "100. No issues found.",
 			want:   "P",
 		},
+		// Markdown formatting
+		{
+			name:   "bold no issues found",
+			output: "**No issues found.**",
+			want:   "P",
+		},
+		{
+			name:   "bold no issues in sentence",
+			output: "**No issues found.** The code looks good.",
+			want:   "P",
+		},
+		{
+			name:   "markdown header no issues",
+			output: "## No issues found",
+			want:   "P",
+		},
+		{
+			name:   "markdown h3 no issues",
+			output: "### No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "underscore bold no issues",
+			output: "__No issues found.__",
+			want:   "P",
+		},
 		{
 			name:   "no tests failed is pass",
 			output: "No issues found; no tests failed.",
