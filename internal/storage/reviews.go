@@ -149,6 +149,36 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	return &r, nil
 }
 
+// GetAllReviewsForGitRef returns all reviews for a git ref (commit SHA or range) for re-review context
+func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
+	rows, err := db.Query(`
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed
+		FROM reviews rv
+		JOIN review_jobs j ON j.id = rv.job_id
+		WHERE j.git_ref = ?
+		ORDER BY rv.created_at ASC
+	`, gitRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reviews []Review
+	for rows.Next() {
+		var r Review
+		var createdAt string
+		var addressed int
+		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = parseSQLiteTime(createdAt)
+		r.Addressed = addressed != 0
+		reviews = append(reviews, r)
+	}
+
+	return reviews, rows.Err()
+}
+
 // GetRecentReviewsForRepo returns the N most recent reviews for a repo
 func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error) {
 	rows, err := db.Query(`
