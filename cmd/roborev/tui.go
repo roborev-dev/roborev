@@ -1188,6 +1188,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentView == tuiViewPrompt {
 				m.promptScroll = max(0, m.promptScroll-pageSize)
 			}
+			// Force full screen clear on page navigation
+			return m, tea.ClearScreen
 
 		case "pgdown":
 			pageSize := max(1, m.height-10)
@@ -1213,6 +1215,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentView == tuiViewPrompt {
 				m.promptScroll += pageSize
 			}
+			// Force full screen clear on page navigation
+			return m, tea.ClearScreen
 
 		case "enter":
 			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
@@ -1953,6 +1957,7 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 	b.WriteString(tuiHelpStyle.Render(helpLine2))
 	b.WriteString("\x1b[K") // Clear to end of line (no newline at end)
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
 	return b.String()
 }
@@ -2250,10 +2255,21 @@ func (m tuiModel) renderReviewView() string {
 		headerHeight++ // Add 1 for verdict line
 	}
 	visibleLines := m.height - headerHeight
+	if visibleLines < 1 {
+		visibleLines = 1
+	}
 
+	// Clamp scroll position to valid range
+	maxScroll := len(lines) - visibleLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
 	start := m.reviewScroll
-	if start >= len(lines) {
-		start = max(0, len(lines)-1)
+	if start > maxScroll {
+		start = maxScroll
+	}
+	if start < 0 {
+		start = 0
 	}
 	end := min(start+visibleLines, len(lines))
 
@@ -2279,6 +2295,7 @@ func (m tuiModel) renderReviewView() string {
 
 	b.WriteString(tuiHelpStyle.Render(helpText))
 	b.WriteString("\x1b[K") // Clear help line
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
 	return b.String()
 }
@@ -2300,11 +2317,23 @@ func (m tuiModel) renderPromptView() string {
 	wrapWidth := max(20, min(m.width-4, 200))
 	lines := wrapText(review.Prompt, wrapWidth)
 
-	visibleLines := m.height - 5 // Leave room for title and help
+	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)
+	visibleLines := m.height - 4
+	if visibleLines < 1 {
+		visibleLines = 1
+	}
 
+	// Clamp scroll position to valid range
+	maxScroll := len(lines) - visibleLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
 	start := m.promptScroll
-	if start >= len(lines) {
-		start = max(0, len(lines)-1)
+	if start > maxScroll {
+		start = maxScroll
+	}
+	if start < 0 {
+		start = 0
 	}
 	end := min(start+visibleLines, len(lines))
 
@@ -2330,6 +2359,7 @@ func (m tuiModel) renderPromptView() string {
 
 	b.WriteString(tuiHelpStyle.Render("up/down: scroll | p: back to review | esc/q: back"))
 	b.WriteString("\x1b[K") // Clear help line
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
 	return b.String()
 }
@@ -2353,6 +2383,7 @@ func (m tuiModel) renderFilterView() string {
 		}
 		b.WriteString(tuiHelpStyle.Render("esc: cancel"))
 		b.WriteString("\x1b[K")
+		b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 		return b.String()
 	}
 
@@ -2445,6 +2476,7 @@ func (m tuiModel) renderFilterView() string {
 
 	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | esc: cancel | type to search"))
 	b.WriteString("\x1b[K") // Clear help line
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
 	return b.String()
 }
@@ -2515,6 +2547,7 @@ func (m tuiModel) renderRespondView() string {
 
 	b.WriteString(tuiHelpStyle.Render("enter: submit | esc: cancel"))
 	b.WriteString("\x1b[K")
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
 	return b.String()
 }
