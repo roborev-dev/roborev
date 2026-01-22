@@ -39,8 +39,9 @@ func refineCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "refine",
-		Short: "Automatically address failed code reviews",
+		Use:          "refine",
+		Short:        "Automatically address failed code reviews",
+		SilenceUsage: true,
 		Long: `Automatically address failed code reviews using an AI agent.
 
 This command runs an agentic loop that:

@@ -1185,11 +1185,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateSelectedJobID()
 			} else if m.currentView == tuiViewReview {
 				m.reviewScroll = max(0, m.reviewScroll-pageSize)
+				return m, tea.ClearScreen
 			} else if m.currentView == tuiViewPrompt {
 				m.promptScroll = max(0, m.promptScroll-pageSize)
+				return m, tea.ClearScreen
 			}
-			// Force full screen clear on page navigation
-			return m, tea.ClearScreen
 
 		case "pgdown":
 			pageSize := max(1, m.height-10)
@@ -1212,11 +1212,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.currentView == tuiViewReview {
 				m.reviewScroll += pageSize
+				return m, tea.ClearScreen
 			} else if m.currentView == tuiViewPrompt {
 				m.promptScroll += pageSize
+				return m, tea.ClearScreen
 			}
-			// Force full screen clear on page navigation
-			return m, tea.ClearScreen
 
 		case "enter":
 			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
