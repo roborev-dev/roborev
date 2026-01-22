@@ -1,5 +1,11 @@
 ![roborev](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/logo-with-text-light.svg)
 
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docs](https://img.shields.io/badge/Docs-roborev.io-blue)](https://roborev.io)
+
+**[Documentation](https://roborev.io)** | **[Quick Start](https://roborev.io/quickstart/)** | **[Installation](https://roborev.io/installation/)**
+
 Continuous, non-invasive background code review using AI agents
 (Claude Code, Codex, Gemini, Copilot, OpenCode). Work smarter and
 faster with immediate critical feedback on your agents' work.
