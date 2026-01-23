@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
+	"github.com/atotto/clipboard"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -118,6 +119,11 @@ type tuiModel struct {
 	// Each pending entry stores the requested state and a sequence number to
 	// distinguish between multiple requests for the same state (e.g., true→false→true)
 	pendingAddressed       map[int64]pendingState // job ID -> pending state
+
+	// Flash message (temporary status message shown briefly)
+	flashMessage   string
+	flashExpiresAt time.Time
+	flashView      tuiView // View where flash was triggered (only show in same view)
 	pendingReviewAddressed map[int64]pendingState // review ID -> pending state (for reviews without jobs)
 	addressedSeq           uint64                 // monotonic counter for request sequencing
 }
@@ -181,6 +187,24 @@ type tuiRespondResultMsg struct {
 	jobID int64
 	err   error
 }
+type tuiClipboardResultMsg struct {
+	err error
+}
+
+// ClipboardWriter is an interface for clipboard operations (allows mocking in tests)
+type ClipboardWriter interface {
+	WriteText(text string) error
+}
+
+// realClipboard implements ClipboardWriter using the system clipboard
+type realClipboard struct{}
+
+func (r *realClipboard) WriteText(text string) error {
+	return clipboard.WriteAll(text)
+}
+
+// clipboardWriter is the clipboard implementation used by the TUI (can be overridden for tests)
+var clipboardWriter ClipboardWriter = &realClipboard{}
 
 func newTuiModel(serverAddr string) tuiModel {
 	// Read daemon version from runtime file (authoritative source)
@@ -510,6 +534,42 @@ func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
 			return tuiErrMsg(err)
 		}
 		return tuiPromptMsg(&review)
+	}
+}
+
+func (m tuiModel) copyToClipboard(text string) tea.Cmd {
+	return func() tea.Msg {
+		err := clipboardWriter.WriteText(text)
+		return tuiClipboardResultMsg{err: err}
+	}
+}
+
+func (m tuiModel) fetchReviewAndCopy(jobID int64) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.Get(fmt.Sprintf("%s/api/review?job_id=%d", m.serverAddr, jobID))
+		if err != nil {
+			return tuiClipboardResultMsg{err: err}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusNotFound {
+			return tuiClipboardResultMsg{err: fmt.Errorf("no review found")}
+		}
+		if resp.StatusCode != http.StatusOK {
+			return tuiClipboardResultMsg{err: fmt.Errorf("fetch review: %s", resp.Status)}
+		}
+
+		var review storage.Review
+		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+			return tuiClipboardResultMsg{err: err}
+		}
+
+		if review.Output == "" {
+			return tuiClipboardResultMsg{err: fmt.Errorf("review has no content")}
+		}
+
+		err = clipboardWriter.WriteText(review.Output)
+		return tuiClipboardResultMsg{err: err}
 	}
 }
 
@@ -1422,6 +1482,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+		case "y":
+			// Yank (copy) review content to clipboard
+			if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.Output != "" {
+				// Copy from review view - we already have the content
+				return m, m.copyToClipboard(m.currentReview.Output)
+			} else if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
+				job := m.jobs[m.selectedIdx]
+				// Only allow copying from completed or failed jobs
+				if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
+					// Need to fetch review first, then copy
+					return m, m.fetchReviewAndCopy(job.ID)
+				}
+			}
+
 		case "esc":
 			if m.currentView == tuiViewQueue && (len(m.activeRepoFilter) > 0 || m.hideAddressed) {
 				// Clear filters and refetch all jobs
@@ -1745,6 +1819,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case tuiClipboardResultMsg:
+		if msg.err != nil {
+			m.err = fmt.Errorf("copy failed: %w", msg.err)
+		} else {
+			m.flashMessage = "Copied to clipboard"
+			m.flashExpiresAt = time.Now().Add(2 * time.Second)
+			m.flashView = m.currentView
+		}
+
 	case tuiJobsErrMsg:
 		m.err = msg.err
 		m.loadingJobs = false // Clear loading state so refreshes can resume
@@ -1826,7 +1909,7 @@ func (m tuiModel) renderQueueView() string {
 	visibleSelectedIdx := m.getVisibleSelectedIdx()
 
 	// Calculate visible job range based on terminal height
-	// Reserve lines for: title(1) + status(2) + header(2) + help(3) + scroll indicator(1)
+	// Reserve lines for: title(1) + status(2) + header(2) + scroll indicator(1) + status/update(1) + help(2)
 	reservedLines := 9
 	visibleRows := m.height - reservedLines
 	if visibleRows < 3 {
@@ -1935,8 +2018,11 @@ func (m tuiModel) renderQueueView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	// Update notification (or blank line if no update)
-	if m.updateAvailable != "" {
+	// Status line: flash message (temporary) takes priority, then update notification, then blank
+	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewQueue {
+		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46")) // Green
+		b.WriteString(flashStyle.Render(m.flashMessage))
+	} else if m.updateAvailable != "" {
 		updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
 		var updateMsg string
 		if m.updateIsDevBuild {
@@ -1945,14 +2031,12 @@ func (m tuiModel) renderQueueView() string {
 			updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
 		}
 		b.WriteString(updateStyle.Render(updateMsg))
-		b.WriteString("\x1b[K\n") // Clear to end of line
-	} else {
-		b.WriteString("\x1b[K\n") // Clear blank line
 	}
+	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Help (two lines)
-	helpLine1 := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | c: respond | f: filter | h: hide | q: quit"
-	helpLine2 := "a: toggle addressed | x: cancel | r: rerun"
+	helpLine1 := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | c: respond | y: copy | q: quit"
+	helpLine2 := "f: filter | h: hide | a: toggle addressed | x: cancel | r: rerun"
 	if len(m.activeRepoFilter) > 0 || m.hideAddressed {
 		helpLine2 += " | esc: clear filters"
 	}
@@ -2243,13 +2327,13 @@ func (m tuiModel) renderReviewView() string {
 	}
 
 	// Help text wraps at narrow terminals
-	const helpText = "up/down: scroll | j/k: prev/next | a: addressed | c: respond | p: prompt | esc/q: back"
+	const helpText = "up/down: scroll | j/k: prev/next | a: addressed | c: respond | y: copy | p: prompt | esc/q: back"
 	helpLines := 1
 	if m.width > 0 && m.width < len(helpText) {
 		helpLines = (len(helpText) + m.width - 1) / m.width
 	}
 
-	// headerHeight = title + repo path (0|1) + scroll indicator (1) + help + verdict (0|1)
+	// headerHeight = title + repo path (0|1) + status line (1) + help + verdict (0|1)
 	headerHeight := titleLines + 1 + helpLines
 	if review.Job != nil && review.Job.RepoPath != "" {
 		headerHeight++ // Add 1 for repo path line
@@ -2289,12 +2373,15 @@ func (m tuiModel) renderReviewView() string {
 		linesWritten++
 	}
 
-	// Scroll indicator
-	if len(lines) > visibleLines {
+	// Status line: flash message (temporary) takes priority over scroll indicator
+	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewReview {
+		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46")) // Green
+		b.WriteString(flashStyle.Render(m.flashMessage))
+	} else if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
 	}
-	b.WriteString("\x1b[K\n") // Clear scroll indicator line
+	b.WriteString("\x1b[K\n") // Clear status line
 
 	b.WriteString(tuiHelpStyle.Render(helpText))
 	b.WriteString("\x1b[K") // Clear help line

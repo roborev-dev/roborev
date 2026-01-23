@@ -3747,7 +3747,7 @@ func TestTUIRenderFailedJobNoBranchShown(t *testing.T) {
 }
 
 func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
-	// Test that visibleLines = height - 3 when no verdict (title + scroll + help)
+	// Test that visibleLines = height - 3 when no verdict (title + status + help)
 	// Help text is 87 chars, so use width >= 87 to avoid wrapping
 	m := newTuiModel("http://localhost")
 	m.width = 100
@@ -3768,7 +3768,7 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 	output := m.View()
 
 	// With height=10, no verdict, wide terminal: visibleLines = 10 - 3 = 7
-	// Non-content: title (1) + scroll indicator (1) + help (1) = 3
+	// Non-content: title (1) + status line (1) + help (1) = 3
 	// Count content lines (L1 through L7)
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
@@ -3789,7 +3789,7 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 }
 
 func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
-	// Test that visibleLines = height - 4 when verdict present (title + verdict + scroll + help)
+	// Test that visibleLines = height - 4 when verdict present (title + verdict + status + help)
 	// Help text is 87 chars, so use width >= 87 to avoid wrapping
 	verdictPass := "P"
 	m := newTuiModel("http://localhost")
@@ -3811,7 +3811,7 @@ func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
 	output := m.View()
 
 	// With height=10, verdict, wide terminal: visibleLines = 10 - 4 = 6
-	// Non-content: title (1) + verdict (1) + scroll indicator (1) + help (1) = 4
+	// Non-content: title (1) + verdict (1) + status line (1) + help (1) = 4
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
@@ -3852,7 +3852,7 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 
 	// With height=10, no verdict, narrow terminal (help wraps to 2 lines):
 	// visibleLines = 10 - 4 = 6
-	// Non-content: title (1) + scroll indicator (1) + help (2) = 4
+	// Non-content: title (1) + status line (1) + help (2) = 4
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
@@ -3894,7 +3894,7 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 
 	// With height=10, verdict present, narrow terminal (help wraps to 2 lines):
 	// visibleLines = 10 - 5 = 5
-	// Non-content: title (1) + verdict (1) + scroll indicator (1) + help (2) = 5
+	// Non-content: title (1) + verdict (1) + status line (1) + help (2) = 5
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
@@ -3948,7 +3948,7 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 	// = 7 + 3 + 31 + 17 + 14 + 34 + 12 = ~118 chars
 	// At width=50: ceil(118/50) = 3 title lines
 	// Help at width=50: ceil(87/50) = 2 help lines
-	// Non-content: title (3) + scroll (1) + help (2) = 6
+	// Non-content: title (3) + status line (1) + help (2) = 6
 	// visibleLines = 12 - 6 = 6
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
@@ -5037,4 +5037,345 @@ func containsRune(s string, r rune) bool {
 		}
 	}
 	return false
+}
+
+// mockClipboard implements ClipboardWriter for testing
+type mockClipboard struct {
+	lastText string
+	err      error
+}
+
+func (m *mockClipboard) WriteText(text string) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.lastText = text
+	return nil
+}
+
+func TestTUIYankCopyFromReviewView(t *testing.T) {
+	// Save original clipboard writer and restore after test
+	originalClipboard := clipboardWriter
+	mock := &mockClipboard{}
+	clipboardWriter = mock
+	defer func() { clipboardWriter = originalClipboard }()
+
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:     1,
+		JobID:  1,
+		Agent:  "test",
+		Output: "This is the review content to copy",
+	}
+
+	// Press 'y' to yank/copy
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = updated.(tuiModel)
+
+	// Should return a command to copy to clipboard
+	if cmd == nil {
+		t.Fatal("Expected a command to be returned")
+	}
+
+	// Execute the command to get the result
+	msg := cmd()
+	result, ok := msg.(tuiClipboardResultMsg)
+	if !ok {
+		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+	}
+
+	if result.err != nil {
+		t.Errorf("Expected no error, got %v", result.err)
+	}
+
+	if mock.lastText != "This is the review content to copy" {
+		t.Errorf("Expected clipboard to contain review content, got %q", mock.lastText)
+	}
+}
+
+func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:     1,
+		JobID:  1,
+		Agent:  "test",
+		Output: "Review content",
+	}
+	m.width = 80
+	m.height = 24
+
+	// Simulate receiving a successful clipboard result
+	updated, _ := m.Update(tuiClipboardResultMsg{err: nil})
+	m = updated.(tuiModel)
+
+	if m.flashMessage != "Copied to clipboard" {
+		t.Errorf("Expected flash message 'Copied to clipboard', got %q", m.flashMessage)
+	}
+
+	if m.flashExpiresAt.IsZero() {
+		t.Error("Expected flashExpiresAt to be set")
+	}
+
+	// Verify flash message appears in the rendered output
+	output := m.renderReviewView()
+	if !strings.Contains(output, "Copied to clipboard") {
+		t.Error("Expected flash message to appear in rendered output")
+	}
+}
+
+func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Simulate receiving a failed clipboard result
+	updated, _ := m.Update(tuiClipboardResultMsg{err: fmt.Errorf("clipboard not available")})
+	m = updated.(tuiModel)
+
+	if m.err == nil {
+		t.Error("Expected error to be set")
+	}
+
+	if !strings.Contains(m.err.Error(), "copy failed") {
+		t.Errorf("Expected error to contain 'copy failed', got %q", m.err.Error())
+	}
+}
+
+func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatusRunning},
+		{ID: 2, GitRef: "def456", Agent: "test", Status: storage.JobStatusDone},
+	}
+	m.selectedIdx = 0
+
+	// Press 'y' on running job - should not copy
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd != nil {
+		t.Error("Expected no command for running job")
+	}
+
+	// Select completed job
+	m.selectedIdx = 1
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Error("Expected command for completed job")
+	}
+}
+
+func TestTUIFlashMessageAppearsInQueueView(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.width = 80
+	m.height = 24
+	m.flashMessage = "Copied to clipboard"
+	m.flashExpiresAt = time.Now().Add(2 * time.Second)
+	m.flashView = tuiViewQueue // Flash was triggered in queue view
+
+	output := m.renderQueueView()
+	if !strings.Contains(output, "Copied to clipboard") {
+		t.Error("Expected flash message to appear in queue view")
+	}
+}
+
+func TestTUIFlashMessageNotShownInDifferentView(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.width = 80
+	m.height = 24
+	m.flashMessage = "Copied to clipboard"
+	m.flashExpiresAt = time.Now().Add(2 * time.Second)
+	m.flashView = tuiViewQueue // Flash was triggered in queue view, not review view
+	m.currentReview = &storage.Review{
+		ID:     1,
+		Output: "Test review content",
+	}
+
+	output := m.renderReviewView()
+	if strings.Contains(output, "Copied to clipboard") {
+		t.Error("Flash message should not appear when viewing different view than where it was triggered")
+	}
+}
+
+func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
+	// Save original clipboard writer and restore after test
+	originalClipboard := clipboardWriter
+	mock := &mockClipboard{}
+	clipboardWriter = mock
+	defer func() { clipboardWriter = originalClipboard }()
+
+	// Create test server that returns a review
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/review" {
+			t.Errorf("Expected /api/review, got %s", r.URL.Path)
+		}
+		jobID := r.URL.Query().Get("job_id")
+		if jobID != "123" {
+			t.Errorf("Expected job_id=123, got %s", jobID)
+		}
+		review := storage.Review{
+			ID:     1,
+			JobID:  123,
+			Agent:  "test",
+			Output: "Review content for clipboard",
+		}
+		json.NewEncoder(w).Encode(review)
+	}))
+	defer ts.Close()
+
+	m := newTuiModel(ts.URL)
+
+	// Execute fetchReviewAndCopy
+	cmd := m.fetchReviewAndCopy(123)
+	msg := cmd()
+
+	result, ok := msg.(tuiClipboardResultMsg)
+	if !ok {
+		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+	}
+
+	if result.err != nil {
+		t.Errorf("Expected no error, got %v", result.err)
+	}
+
+	if mock.lastText != "Review content for clipboard" {
+		t.Errorf("Expected clipboard to contain review content, got %q", mock.lastText)
+	}
+}
+
+func TestTUIFetchReviewAndCopy404(t *testing.T) {
+	// Create test server that returns 404
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	m := newTuiModel(ts.URL)
+
+	cmd := m.fetchReviewAndCopy(123)
+	msg := cmd()
+
+	result, ok := msg.(tuiClipboardResultMsg)
+	if !ok {
+		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+	}
+
+	if result.err == nil {
+		t.Error("Expected error for 404 response")
+	}
+
+	if !strings.Contains(result.err.Error(), "no review found") {
+		t.Errorf("Expected 'no review found' error, got %q", result.err.Error())
+	}
+}
+
+func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
+	// Create test server that returns a review with empty output
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		review := storage.Review{
+			ID:     1,
+			JobID:  123,
+			Agent:  "test",
+			Output: "", // Empty output
+		}
+		json.NewEncoder(w).Encode(review)
+	}))
+	defer ts.Close()
+
+	m := newTuiModel(ts.URL)
+
+	cmd := m.fetchReviewAndCopy(123)
+	msg := cmd()
+
+	result, ok := msg.(tuiClipboardResultMsg)
+	if !ok {
+		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+	}
+
+	if result.err == nil {
+		t.Error("Expected error for empty output")
+	}
+
+	if !strings.Contains(result.err.Error(), "review has no content") {
+		t.Errorf("Expected 'review has no content' error, got %q", result.err.Error())
+	}
+}
+
+func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
+	// Save original clipboard writer and restore after test
+	originalClipboard := clipboardWriter
+	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: xclip not found")}
+	clipboardWriter = mock
+	defer func() { clipboardWriter = originalClipboard }()
+
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:     1,
+		JobID:  1,
+		Agent:  "test",
+		Output: "Review content",
+	}
+
+	// Press 'y' to copy
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if cmd == nil {
+		t.Fatal("Expected command to be returned")
+	}
+
+	// Execute the command
+	msg := cmd()
+	result, ok := msg.(tuiClipboardResultMsg)
+	if !ok {
+		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+	}
+
+	// Error should propagate
+	if result.err == nil {
+		t.Error("Expected clipboard write error to propagate")
+	}
+
+	if !strings.Contains(result.err.Error(), "clipboard unavailable") {
+		t.Errorf("Expected clipboard error message, got %q", result.err.Error())
+	}
+}
+
+func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
+	// Save original clipboard writer and restore after test
+	originalClipboard := clipboardWriter
+	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: pbcopy not found")}
+	clipboardWriter = mock
+	defer func() { clipboardWriter = originalClipboard }()
+
+	// Create test server that returns a valid review
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		review := storage.Review{
+			ID:     1,
+			JobID:  123,
+			Agent:  "test",
+			Output: "Review content",
+		}
+		json.NewEncoder(w).Encode(review)
+	}))
+	defer ts.Close()
+
+	m := newTuiModel(ts.URL)
+
+	// Fetch succeeds but clipboard write fails
+	cmd := m.fetchReviewAndCopy(123)
+	msg := cmd()
+
+	result, ok := msg.(tuiClipboardResultMsg)
+	if !ok {
+		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+	}
+
+	if result.err == nil {
+		t.Error("Expected clipboard write error after successful fetch")
+	}
+
+	if !strings.Contains(result.err.Error(), "clipboard unavailable") {
+		t.Errorf("Expected clipboard error message, got %q", result.err.Error())
+	}
 }
