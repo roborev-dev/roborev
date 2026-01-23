@@ -7,9 +7,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
+
+// normalizeMSYSPath converts MSYS-style paths (e.g., /c/Users/...) to Windows paths (C:\Users\...).
+// On non-Windows systems, it just applies filepath.FromSlash.
+func normalizeMSYSPath(path string) string {
+	path = strings.TrimSpace(path)
+	// On Windows, MSYS paths like /c/Users/... need to be converted to C:\Users\...
+	// Regular paths like C:/Users/... just need slash conversion
+	if runtime.GOOS == "windows" && len(path) >= 3 && path[0] == '/' {
+		// Check for MSYS-style drive letter: /c/ or /C/
+		if (path[1] >= 'a' && path[1] <= 'z' || path[1] >= 'A' && path[1] <= 'Z') && path[2] == '/' {
+			// Convert /c/... to C:/...
+			path = strings.ToUpper(string(path[1])) + ":" + path[2:]
+		}
+	}
+	return filepath.FromSlash(path)
+}
 
 // CommitInfo holds metadata about a commit
 type CommitInfo struct {
@@ -174,9 +191,9 @@ func GetRepoRoot(path string) (string, error) {
 		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
 	}
 
-	// Git on Windows returns MSYS-style paths with forward slashes.
-	// Convert to native path separators for consistency with Go's filepath.
-	return filepath.FromSlash(strings.TrimSpace(string(out))), nil
+	// Git on Windows can return MSYS-style paths (/c/Users/...) or forward-slash paths (C:/...).
+	// Convert to native Windows paths for consistency with Go's filepath.
+	return normalizeMSYSPath(string(out)), nil
 }
 
 // GetMainRepoRoot returns the main repository root, resolving through worktrees.

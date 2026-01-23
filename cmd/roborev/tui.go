@@ -188,7 +188,8 @@ type tuiRespondResultMsg struct {
 	err   error
 }
 type tuiClipboardResultMsg struct {
-	err error
+	err  error
+	view tuiView // The view where copy was triggered (for flash attribution)
 }
 
 // ClipboardWriter is an interface for clipboard operations (allows mocking in tests)
@@ -538,38 +539,40 @@ func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
 }
 
 func (m tuiModel) copyToClipboard(text string) tea.Cmd {
+	view := m.currentView // Capture view at trigger time
 	return func() tea.Msg {
 		err := clipboardWriter.WriteText(text)
-		return tuiClipboardResultMsg{err: err}
+		return tuiClipboardResultMsg{err: err, view: view}
 	}
 }
 
 func (m tuiModel) fetchReviewAndCopy(jobID int64) tea.Cmd {
+	view := m.currentView // Capture view at trigger time
 	return func() tea.Msg {
 		resp, err := m.client.Get(fmt.Sprintf("%s/api/review?job_id=%d", m.serverAddr, jobID))
 		if err != nil {
-			return tuiClipboardResultMsg{err: err}
+			return tuiClipboardResultMsg{err: err, view: view}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return tuiClipboardResultMsg{err: fmt.Errorf("no review found")}
+			return tuiClipboardResultMsg{err: fmt.Errorf("no review found"), view: view}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiClipboardResultMsg{err: fmt.Errorf("fetch review: %s", resp.Status)}
+			return tuiClipboardResultMsg{err: fmt.Errorf("fetch review: %s", resp.Status), view: view}
 		}
 
 		var review storage.Review
 		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-			return tuiClipboardResultMsg{err: err}
+			return tuiClipboardResultMsg{err: err, view: view}
 		}
 
 		if review.Output == "" {
-			return tuiClipboardResultMsg{err: fmt.Errorf("review has no content")}
+			return tuiClipboardResultMsg{err: fmt.Errorf("review has no content"), view: view}
 		}
 
 		err = clipboardWriter.WriteText(review.Output)
-		return tuiClipboardResultMsg{err: err}
+		return tuiClipboardResultMsg{err: err, view: view}
 	}
 }
 
@@ -1825,7 +1828,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.flashMessage = "Copied to clipboard"
 			m.flashExpiresAt = time.Now().Add(2 * time.Second)
-			m.flashView = m.currentView
+			m.flashView = msg.view // Use view from trigger time, not current view
 		}
 
 	case tuiJobsErrMsg:

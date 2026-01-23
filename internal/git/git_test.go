@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -17,6 +18,66 @@ func runGit(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func TestNormalizeMSYSPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string // Expected on Windows; on other platforms we just check FromSlash behavior
+	}{
+		{"forward slash path", "C:/Users/test", "C:" + string(filepath.Separator) + "Users" + string(filepath.Separator) + "test"},
+		{"MSYS lowercase drive", "/c/Users/test", ""},    // Platform-specific expected
+		{"MSYS uppercase drive", "/C/Users/test", ""},    // Platform-specific expected
+		{"Unix absolute path", "/home/user/repo", ""},    // Platform-specific expected
+		{"relative path", "some/path", "some" + string(filepath.Separator) + "path"},
+		{"with trailing newline", "C:/Users/test\n", "C:" + string(filepath.Separator) + "Users" + string(filepath.Separator) + "test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeMSYSPath(tt.input)
+
+			switch tt.name {
+			case "MSYS lowercase drive":
+				if runtime.GOOS == "windows" {
+					if result != "C:\\Users\\test" {
+						t.Errorf("Expected C:\\Users\\test, got %s", result)
+					}
+				} else {
+					// On non-Windows, /c/Users/test stays as-is (just separator change)
+					if result != "/c/Users/test" {
+						t.Errorf("Expected /c/Users/test, got %s", result)
+					}
+				}
+			case "MSYS uppercase drive":
+				if runtime.GOOS == "windows" {
+					if result != "C:\\Users\\test" {
+						t.Errorf("Expected C:\\Users\\test, got %s", result)
+					}
+				} else {
+					if result != "/C/Users/test" {
+						t.Errorf("Expected /C/Users/test, got %s", result)
+					}
+				}
+			case "Unix absolute path":
+				if runtime.GOOS == "windows" {
+					// /home is not a drive letter pattern, so stays as \home
+					if result != "\\home\\user\\repo" {
+						t.Errorf("Expected \\home\\user\\repo, got %s", result)
+					}
+				} else {
+					if result != "/home/user/repo" {
+						t.Errorf("Expected /home/user/repo, got %s", result)
+					}
+				}
+			default:
+				if result != tt.expected {
+					t.Errorf("Expected %s, got %s", tt.expected, result)
+				}
+			}
+		})
+	}
 }
 
 func TestGetHooksPath(t *testing.T) {

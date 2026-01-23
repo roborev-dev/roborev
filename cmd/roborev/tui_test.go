@@ -5106,8 +5106,8 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 	m.width = 80
 	m.height = 24
 
-	// Simulate receiving a successful clipboard result
-	updated, _ := m.Update(tuiClipboardResultMsg{err: nil})
+	// Simulate receiving a successful clipboard result (view captured at trigger time)
+	updated, _ := m.Update(tuiClipboardResultMsg{err: nil, view: tuiViewReview})
 	m = updated.(tuiModel)
 
 	if m.flashMessage != "Copied to clipboard" {
@@ -5116,6 +5116,10 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 
 	if m.flashExpiresAt.IsZero() {
 		t.Error("Expected flashExpiresAt to be set")
+	}
+
+	if m.flashView != tuiViewReview {
+		t.Errorf("Expected flashView to be tuiViewReview, got %v", m.flashView)
 	}
 
 	// Verify flash message appears in the rendered output
@@ -5127,9 +5131,10 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 
 func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
 	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
 
 	// Simulate receiving a failed clipboard result
-	updated, _ := m.Update(tuiClipboardResultMsg{err: fmt.Errorf("clipboard not available")})
+	updated, _ := m.Update(tuiClipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: tuiViewQueue})
 	m = updated.(tuiModel)
 
 	if m.err == nil {
@@ -5138,6 +5143,39 @@ func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
 
 	if !strings.Contains(m.err.Error(), "copy failed") {
 		t.Errorf("Expected error to contain 'copy failed', got %q", m.err.Error())
+	}
+}
+
+func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
+	// Test that flash message is attributed to the view where copy was triggered,
+	// even if the user switches views before the clipboard result arrives.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.width = 80
+	m.height = 24
+	m.currentReview = &storage.Review{
+		ID:     1,
+		JobID:  1,
+		Agent:  "test",
+		Output: "Review content",
+	}
+
+	// User switches to review view before clipboard result arrives
+	m.currentView = tuiViewReview
+
+	// Clipboard result arrives with view captured at trigger time (queue)
+	updated, _ := m.Update(tuiClipboardResultMsg{err: nil, view: tuiViewQueue})
+	m = updated.(tuiModel)
+
+	// Flash should be attributed to queue view, not current (review) view
+	if m.flashView != tuiViewQueue {
+		t.Errorf("Expected flashView to be tuiViewQueue (trigger view), got %v", m.flashView)
+	}
+
+	// Flash should NOT appear in review view since it was triggered in queue
+	output := m.renderReviewView()
+	if strings.Contains(output, "Copied to clipboard") {
+		t.Error("Flash message should not appear in review view when triggered from queue")
 	}
 }
 
