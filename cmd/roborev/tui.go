@@ -2524,6 +2524,8 @@ func (m tuiModel) renderRespondView() string {
 			if textLinesWritten >= maxTextLines {
 				break
 			}
+			// Expand tabs to spaces (4-space tabs) for consistent width calculation
+			line = strings.ReplaceAll(line, "\t", "    ")
 			// Truncate lines that are too long (use visual width for wide characters)
 			line = runewidth.Truncate(line, boxWidth-2, "")
 			// Pad based on visual width, not rune count

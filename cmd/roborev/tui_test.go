@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -4956,7 +4957,7 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 
 	// Set text with multi-byte characters that would be truncated
 	// The box has boxWidth-2 available space for text
-	m.respondText = "あいうえおかきくけこさしすせそ" // 15 Japanese characters
+	m.respondText = "あいうえおかきくけこさしすせそ" // 15 Japanese characters (30 cells wide)
 
 	// Render should not panic or corrupt characters
 	output := m.renderRespondView()
@@ -4969,6 +4970,52 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 	// Should contain at least the start of the text (may be truncated)
 	if !containsRune(output, 'あ') {
 		t.Error("Expected output to contain the first character")
+	}
+
+	// Verify visual width alignment: all content lines should end with "|"
+	// and have consistent visual width
+	lines := strings.Split(stripANSI(output), "\n")
+	var expectedWidth int
+	for _, line := range lines {
+		if strings.HasPrefix(line, "|") && strings.HasSuffix(line, "|") {
+			// This is a content line - verify right border alignment
+			// All content lines should have the same visual width
+			width := runewidth.StringWidth(line)
+			if expectedWidth == 0 {
+				expectedWidth = width // Set from first line
+			}
+			if width != expectedWidth {
+				t.Errorf("Line visual width %d != expected %d: %q", width, expectedWidth, line)
+			}
+		}
+	}
+	if expectedWidth == 0 {
+		t.Error("No content lines found in output")
+	}
+}
+
+func TestTUIRespondViewTabExpansion(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewRespond
+	m.respondJobID = 1
+	m.width = 40
+	m.height = 20
+
+	// Set text with tabs
+	m.respondText = "a\tb\tc"
+
+	output := m.renderRespondView()
+	plainOutput := stripANSI(output)
+
+	// Tabs should be expanded to spaces
+	if strings.Contains(plainOutput, "\t") {
+		t.Error("Output should not contain literal tabs")
+	}
+
+	// Verify the text appears with expanded tabs (4 spaces each)
+	// "a    b    c" should be in the output
+	if !strings.Contains(plainOutput, "a    b    c") {
+		t.Errorf("Expected tabs expanded to 4 spaces, got: %q", plainOutput)
 	}
 }
 
