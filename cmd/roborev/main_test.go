@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,15 +41,15 @@ func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func
 
 	ts := httptest.NewServer(handler)
 
-	// Override HOME
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
+	// Use ROBOREV_DATA_DIR to override data directory (works cross-platform)
+	// On Windows, HOME doesn't work since os.UserHomeDir() uses USERPROFILE
+	tmpDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
 	// Write fake daemon.json
-	roborevDir := filepath.Join(tmpHome, ".roborev")
-	if err := os.MkdirAll(roborevDir, 0755); err != nil {
-		t.Fatalf("failed to create roborev dir: %v", err)
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		t.Fatalf("failed to create data dir: %v", err)
 	}
 	mockAddr := ts.URL[7:] // strip "http://"
 	daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
@@ -56,7 +57,7 @@ func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func
 	if err != nil {
 		t.Fatalf("failed to marshal daemon.json: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644); err != nil {
 		t.Fatalf("failed to write daemon.json: %v", err)
 	}
 
@@ -66,7 +67,11 @@ func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func
 
 	cleanup := func() {
 		ts.Close()
-		os.Setenv("HOME", origHome)
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
 		serverAddr = origServerAddr
 	}
 
@@ -1426,6 +1431,10 @@ func TestShowJobFlagRequiresArgument(t *testing.T) {
 // ============================================================================
 
 func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping daemon integration test on Windows due to file locking differences")
+	}
+
 	// Use temp directories for isolation
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

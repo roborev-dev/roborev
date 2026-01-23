@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -217,9 +218,18 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 
 func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 	tmpDir := t.TempDir()
-	codexPath := filepath.Join(tmpDir, "codex")
-	if err := os.WriteFile(codexPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatalf("write codex stub: %v", err)
+	var codexPath string
+	if runtime.GOOS == "windows" {
+		// On Windows, create a batch file that exits successfully
+		codexPath = filepath.Join(tmpDir, "codex.bat")
+		if err := os.WriteFile(codexPath, []byte("@exit /b 0\r\n"), 0755); err != nil {
+			t.Fatalf("write codex stub: %v", err)
+		}
+	} else {
+		codexPath = filepath.Join(tmpDir, "codex")
+		if err := os.WriteFile(codexPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatalf("write codex stub: %v", err)
+		}
 	}
 
 	t.Setenv("PATH", tmpDir)
@@ -240,9 +250,18 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	tmpDir := t.TempDir()
-	codexPath := filepath.Join(tmpDir, "codex")
-	if err := os.WriteFile(codexPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatalf("write codex stub: %v", err)
+	var codexPath string
+	if runtime.GOOS == "windows" {
+		// On Windows, create a batch file that exits successfully
+		codexPath = filepath.Join(tmpDir, "codex.bat")
+		if err := os.WriteFile(codexPath, []byte("@exit /b 0\r\n"), 0755); err != nil {
+			t.Fatalf("write codex stub: %v", err)
+		}
+	} else {
+		codexPath = filepath.Join(tmpDir, "codex")
+		if err := os.WriteFile(codexPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatalf("write codex stub: %v", err)
+		}
 	}
 
 	t.Setenv("PATH", tmpDir)
