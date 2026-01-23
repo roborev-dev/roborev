@@ -68,7 +68,7 @@ func (a *CodexAgent) CommandName() string {
 	return a.Command
 }
 
-func (a *CodexAgent) buildArgs(repoPath, outputFile, prompt string, agenticMode bool) []string {
+func (a *CodexAgent) buildArgs(repoPath, outputFile string, agenticMode bool) []string {
 	args := []string{
 		"exec",
 	}
@@ -78,11 +78,11 @@ func (a *CodexAgent) buildArgs(repoPath, outputFile, prompt string, agenticMode 
 	args = append(args,
 		"-C", repoPath,
 		"-o", outputFile,
+		"-", // Read prompt from stdin to avoid command line length limits on Windows
 	)
 	if effort := a.codexReasoningEffort(); effort != "" {
 		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, effort))
 	}
-	args = append(args, prompt)
 	return args
 }
 
@@ -138,8 +138,8 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	}
 
 	// Use codex exec with output capture
-	// The prompt is constructed by the prompt builder with full context
-	args := a.buildArgs(repoPath, outputFile, prompt, agenticMode)
+	// The prompt is piped via stdin using "-" to avoid command line length limits on Windows
+	args := a.buildArgs(repoPath, outputFile, agenticMode)
 	if !agenticMode && !isatty.IsTerminal(os.Stdin.Fd()) {
 		supported, err := codexSupportsAutoApproveFlag(ctx, a.Command)
 		if err != nil {
@@ -157,6 +157,10 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
+
+	// Pipe prompt via stdin to avoid command line length limits on Windows.
+	// Windows has a ~32KB limit on command line arguments, which large diffs easily exceed.
+	cmd.Stdin = strings.NewReader(prompt)
 
 	var stderr bytes.Buffer
 	if sw := newSyncWriter(output); sw != nil {

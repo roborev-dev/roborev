@@ -12,13 +12,17 @@ func TestCodexBuildArgsUnsafeOptIn(t *testing.T) {
 	a := NewCodexAgent("codex")
 
 	// Test non-agentic mode (no dangerous flag)
-	args := a.buildArgs("/repo", "/tmp/out", "prompt", false)
+	args := a.buildArgs("/repo", "/tmp/out", false)
 	if containsString(args, codexDangerousFlag) {
 		t.Fatalf("expected no unsafe flag when disabled, got %v", args)
 	}
+	// Verify stdin marker "-" is included for piping prompt
+	if !containsString(args, "-") {
+		t.Fatalf("expected stdin marker '-' in args, got %v", args)
+	}
 
 	// Test agentic mode (with dangerous flag)
-	args = a.buildArgs("/repo", "/tmp/out", "prompt", true)
+	args = a.buildArgs("/repo", "/tmp/out", true)
 	if !containsString(args, codexDangerousFlag) {
 		t.Fatalf("expected unsafe flag when enabled, got %v", args)
 	}
