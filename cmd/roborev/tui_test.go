@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -4884,4 +4885,109 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 	if m.respondJobID != 0 {
 		t.Errorf("Expected respondJobID=0 after success, got %d", m.respondJobID)
 	}
+}
+
+func TestTUIFilterBackspaceMultiByte(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterRepos = []repoFilterItem{{name: "", count: 10}}
+
+	// Type an emoji (multi-byte character)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(tuiModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("😊")})
+	m = updated.(tuiModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m = updated.(tuiModel)
+
+	if m.filterSearch != "a😊b" {
+		t.Errorf("Expected filterSearch='a😊b', got %q", m.filterSearch)
+	}
+
+	// Backspace should remove 'b'
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(tuiModel)
+	if m.filterSearch != "a😊" {
+		t.Errorf("Expected filterSearch='a😊' after first backspace, got %q", m.filterSearch)
+	}
+
+	// Backspace should remove the entire emoji, not corrupt it
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(tuiModel)
+	if m.filterSearch != "a" {
+		t.Errorf("Expected filterSearch='a' after second backspace, got %q", m.filterSearch)
+	}
+}
+
+func TestTUIRespondBackspaceMultiByte(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewRespond
+	m.respondJobID = 1
+
+	// Type text with multi-byte characters
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Hello 世界")})
+	m = updated.(tuiModel)
+
+	if m.respondText != "Hello 世界" {
+		t.Errorf("Expected respondText='Hello 世界', got %q", m.respondText)
+	}
+
+	// Backspace should remove '界' (one character), not corrupt it
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(tuiModel)
+	if m.respondText != "Hello 世" {
+		t.Errorf("Expected respondText='Hello 世' after backspace, got %q", m.respondText)
+	}
+
+	// Backspace should remove '世'
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(tuiModel)
+	if m.respondText != "Hello " {
+		t.Errorf("Expected respondText='Hello ' after second backspace, got %q", m.respondText)
+	}
+}
+
+func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewRespond
+	m.respondJobID = 1
+	m.width = 30
+	m.height = 20
+
+	// Set text with multi-byte characters that would be truncated
+	// The box has boxWidth-2 available space for text
+	m.respondText = "あいうえおかきくけこさしすせそ" // 15 Japanese characters
+
+	// Render should not panic or corrupt characters
+	output := m.renderRespondView()
+
+	// The output should contain valid UTF-8 and not have corrupted characters
+	if !isValidUTF8(output) {
+		t.Error("Rendered output contains invalid UTF-8")
+	}
+
+	// Should contain at least the start of the text (may be truncated)
+	if !containsRune(output, 'あ') {
+		t.Error("Expected output to contain the first character")
+	}
+}
+
+func isValidUTF8(s string) bool {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			return false
+		}
+		i += size
+	}
+	return true
+}
+
+func containsRune(s string, r rune) bool {
+	for _, c := range s {
+		if c == r {
+			return true
+		}
+	}
+	return false
 }
