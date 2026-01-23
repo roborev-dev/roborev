@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-
-	"github.com/mattn/go-isatty"
 )
 
 // CodexAgent runs code reviews using the Codex CLI
@@ -68,21 +66,26 @@ func (a *CodexAgent) CommandName() string {
 	return a.Command
 }
 
-func (a *CodexAgent) buildArgs(repoPath, outputFile string, agenticMode bool) []string {
+func (a *CodexAgent) buildArgs(repoPath, outputFile string, agenticMode, autoApprove bool) []string {
 	args := []string{
 		"exec",
 	}
 	if agenticMode {
 		args = append(args, codexDangerousFlag)
 	}
+	if autoApprove {
+		args = append(args, codexAutoApproveFlag)
+	}
 	args = append(args,
 		"-C", repoPath,
 		"-o", outputFile,
-		"-", // Read prompt from stdin to avoid command line length limits on Windows
 	)
 	if effort := a.codexReasoningEffort(); effort != "" {
 		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, effort))
 	}
+	// "-" must come after all flags to read prompt from stdin
+	// This avoids Windows command line length limits (~32KB)
+	args = append(args, "-")
 	return args
 }
 
@@ -137,23 +140,23 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		}
 	}
 
-	// Use codex exec with output capture
-	// The prompt is piped via stdin using "-" to avoid command line length limits on Windows
-	args := a.buildArgs(repoPath, outputFile, agenticMode)
-	if !agenticMode && !isatty.IsTerminal(os.Stdin.Fd()) {
+	// When piping stdin, codex needs --full-auto to run non-interactively.
+	// Agentic mode uses --dangerously-bypass-approvals-and-sandbox which implies auto-approve.
+	autoApprove := false
+	if !agenticMode {
 		supported, err := codexSupportsAutoApproveFlag(ctx, a.Command)
 		if err != nil {
 			return "", err
 		}
 		if !supported {
-			return "", fmt.Errorf("codex requires a TTY or %s; rerun with --allow-unsafe-agents or upgrade codex", codexAutoApproveFlag)
+			return "", fmt.Errorf("codex requires %s for stdin input; upgrade codex or use --agentic", codexAutoApproveFlag)
 		}
-		if len(args) > 0 && args[0] == "exec" {
-			args = append(args[:1], append([]string{codexAutoApproveFlag}, args[1:]...)...)
-		} else {
-			args = append([]string{codexAutoApproveFlag}, args...)
-		}
+		autoApprove = true
 	}
+
+	// Use codex exec with output capture
+	// The prompt is piped via stdin using "-" to avoid command line length limits on Windows
+	args := a.buildArgs(repoPath, outputFile, agenticMode, autoApprove)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath

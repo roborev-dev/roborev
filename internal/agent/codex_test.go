@@ -11,20 +11,27 @@ import (
 func TestCodexBuildArgsUnsafeOptIn(t *testing.T) {
 	a := NewCodexAgent("codex")
 
-	// Test non-agentic mode (no dangerous flag)
-	args := a.buildArgs("/repo", "/tmp/out", false)
+	// Test non-agentic mode with auto-approve
+	args := a.buildArgs("/repo", "/tmp/out", false, true)
 	if containsString(args, codexDangerousFlag) {
-		t.Fatalf("expected no unsafe flag when disabled, got %v", args)
+		t.Fatalf("expected no unsafe flag when agentic=false, got %v", args)
 	}
-	// Verify stdin marker "-" is included for piping prompt
-	if !containsString(args, "-") {
-		t.Fatalf("expected stdin marker '-' in args, got %v", args)
+	if !containsString(args, codexAutoApproveFlag) {
+		t.Fatalf("expected auto-approve flag when autoApprove=true, got %v", args)
 	}
 
-	// Test agentic mode (with dangerous flag)
-	args = a.buildArgs("/repo", "/tmp/out", true)
+	// Verify stdin marker "-" is at the end (after all flags)
+	if args[len(args)-1] != "-" {
+		t.Fatalf("expected stdin marker '-' at end of args, got %v", args)
+	}
+
+	// Test agentic mode (with dangerous flag, no auto-approve)
+	args = a.buildArgs("/repo", "/tmp/out", true, false)
 	if !containsString(args, codexDangerousFlag) {
-		t.Fatalf("expected unsafe flag when enabled, got %v", args)
+		t.Fatalf("expected unsafe flag when agentic=true, got %v", args)
+	}
+	if containsString(args, codexAutoApproveFlag) {
+		t.Fatalf("expected no auto-approve flag when autoApprove=false, got %v", args)
 	}
 }
 
@@ -56,22 +63,11 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 	}
 }
 
-func TestCodexReviewNonTTYAddsAutoApprove(t *testing.T) {
+func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
+	// Since we always pipe stdin, --full-auto is always required in non-agentic mode
 	prevAllowUnsafe := AllowUnsafeAgents()
 	SetAllowUnsafeAgents(false)
 	t.Cleanup(func() { SetAllowUnsafeAgents(prevAllowUnsafe) })
-
-	stdin := os.Stdin
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	os.Stdin = r
-	t.Cleanup(func() {
-		os.Stdin = stdin
-		r.Close()
-		w.Close()
-	})
 
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "args.txt")
@@ -90,5 +86,37 @@ func TestCodexReviewNonTTYAddsAutoApprove(t *testing.T) {
 	}
 	if !strings.Contains(string(args), codexAutoApproveFlag) {
 		t.Fatalf("expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
+	}
+}
+
+func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
+	// Verify prompt is actually delivered via stdin
+	prevAllowUnsafe := AllowUnsafeAgents()
+	SetAllowUnsafeAgents(false)
+	t.Cleanup(func() { SetAllowUnsafeAgents(prevAllowUnsafe) })
+
+	tmpDir := t.TempDir()
+	stdinFile := filepath.Join(tmpDir, "stdin.txt")
+	t.Setenv("STDIN_FILE", stdinFile)
+
+	// Script that reads stdin and writes to file
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--help" ]; then echo "usage `+codexAutoApproveFlag+`"; exit 0; fi
+cat > "$STDIN_FILE"
+exit 0
+`)
+	a := NewCodexAgent(cmdPath)
+
+	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
+	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	received, err := os.ReadFile(stdinFile)
+	if err != nil {
+		t.Fatalf("read stdin file: %v", err)
+	}
+	if string(received) != testPrompt {
+		t.Fatalf("prompt not piped correctly via stdin\nexpected: %q\ngot: %q", testPrompt, string(received))
 	}
 }
