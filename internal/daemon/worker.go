@@ -18,7 +18,7 @@ import (
 // WorkerPool manages a pool of review workers
 type WorkerPool struct {
 	db            *storage.DB
-	cfg           *config.Config
+	cfgGetter     ConfigGetter
 	promptBuilder *prompt.Builder
 	broadcaster   Broadcaster
 	errorLog      *ErrorLog
@@ -38,10 +38,10 @@ type WorkerPool struct {
 }
 
 // NewWorkerPool creates a new worker pool
-func NewWorkerPool(db *storage.DB, cfg *config.Config, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog) *WorkerPool {
+func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog) *WorkerPool {
 	return &WorkerPool{
 		db:             db,
-		cfg:            cfg,
+		cfgGetter:      cfgGetter,
 		promptBuilder:  prompt.NewBuilder(db),
 		broadcaster:    broadcaster,
 		errorLog:       errorLog,
@@ -73,6 +73,11 @@ func (wp *WorkerPool) Stop() {
 // ActiveWorkers returns the number of currently active workers
 func (wp *WorkerPool) ActiveWorkers() int {
 	return int(wp.activeWorkers.Load())
+}
+
+// MaxWorkers returns the total number of workers in the pool
+func (wp *WorkerPool) MaxWorkers() int {
+	return wp.numWorkers
 }
 
 // CancelJob cancels a running job by its ID, killing the subprocess.
@@ -234,8 +239,12 @@ const maxRetries = 3
 func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	log.Printf("[%s] Processing job %d for ref %s in %s", workerID, job.ID, job.GitRef, job.RepoName)
 
+	// Snapshot config once to ensure consistent settings throughout the job.
+	// This prevents mixed settings if config reloads mid-job.
+	cfg := wp.cfgGetter.Config()
+
 	// Get timeout from config (per-repo or global, default 30 minutes)
-	timeoutMinutes := config.ResolveJobTimeout(job.RepoPath, wp.cfg)
+	timeoutMinutes := config.ResolveJobTimeout(job.RepoPath, cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
 	defer cancel()
 
@@ -251,10 +260,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reviewPrompt = job.Prompt
 	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
-		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, wp.cfg.ReviewContextCount)
+		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount)
 	} else {
 		// Normal job - build prompt from git ref
-		reviewPrompt, err = wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, wp.cfg.ReviewContextCount)
+		reviewPrompt, err = wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount)
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)

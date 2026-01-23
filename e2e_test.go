@@ -35,7 +35,7 @@ func TestE2EEnqueueAndReview(t *testing.T) {
 
 	// Create a mock server
 	cfg := config.DefaultConfig()
-	server := daemon.NewServer(db, cfg)
+	server := daemon.NewServer(db, cfg, "")
 
 	// Create test HTTP server
 	mux := http.NewServeMux()

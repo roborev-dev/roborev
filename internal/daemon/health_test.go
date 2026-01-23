@@ -21,7 +21,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 	// Create server
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 	defer func() {
 		if server.errorLog != nil {
 			server.errorLog.Close()
@@ -85,7 +85,7 @@ func TestHealthEndpointWithErrors(t *testing.T) {
 
 	// Create server
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 	defer func() {
 		if server.errorLog != nil {
 			server.errorLog.Close()
@@ -143,7 +143,7 @@ func TestHealthEndpointMethodNotAllowed(t *testing.T) {
 
 	// Create server
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 	defer func() {
 		if server.errorLog != nil {
 			server.errorLog.Close()

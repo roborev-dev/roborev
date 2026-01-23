@@ -527,8 +527,12 @@ func daemonRunCmd() *cobra.Command {
 				}
 			}
 
+			// Create context for config watcher
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
 			// Create and start server
-			server := daemon.NewServer(db, cfg)
+			server := daemon.NewServer(db, cfg, configPath)
 			if syncWorker != nil {
 				server.SetSyncWorker(syncWorker)
 			}
@@ -544,6 +548,7 @@ func daemonRunCmd() *cobra.Command {
 			go func() {
 				sig := <-sigCh
 				log.Printf("Received signal %v, shutting down...", sig)
+				cancel() // Cancel context to stop config watcher
 				if syncWorker != nil {
 					// Final push before shutdown to ensure local changes are synced
 					if err := syncWorker.FinalPush(); err != nil {
@@ -558,7 +563,7 @@ func daemonRunCmd() *cobra.Command {
 			}()
 
 			// Start server (blocks until shutdown)
-			return server.Start()
+			return server.Start(ctx)
 		},
 	}
 

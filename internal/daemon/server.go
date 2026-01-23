@@ -21,14 +21,14 @@ import (
 
 // Server is the HTTP API server for the daemon
 type Server struct {
-	db          *storage.DB
-	cfg         *config.Config
-	broadcaster Broadcaster
-	workerPool  *WorkerPool
-	httpServer  *http.Server
-	syncWorker  *storage.SyncWorker
-	errorLog    *ErrorLog
-	startTime   time.Time
+	db            *storage.DB
+	configWatcher *ConfigWatcher
+	broadcaster   Broadcaster
+	workerPool    *WorkerPool
+	httpServer    *http.Server
+	syncWorker    *storage.SyncWorker
+	errorLog      *ErrorLog
+	startTime     time.Time
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -36,7 +36,7 @@ type Server struct {
 }
 
 // NewServer creates a new daemon server
-func NewServer(db *storage.DB, cfg *config.Config) *Server {
+func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	// Always set for deterministic state - default to false (conservative)
 	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents != nil && *cfg.AllowUnsafeAgents)
 	agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
@@ -48,13 +48,16 @@ func NewServer(db *storage.DB, cfg *config.Config) *Server {
 		log.Printf("Warning: failed to create error log: %v", err)
 	}
 
+	// Create config watcher for hot-reloading
+	configWatcher := NewConfigWatcher(configPath, cfg, broadcaster)
+
 	s := &Server{
-		db:          db,
-		cfg:         cfg,
-		broadcaster: broadcaster,
-		workerPool:  NewWorkerPool(db, cfg, cfg.MaxWorkers, broadcaster, errorLog),
-		errorLog:    errorLog,
-		startTime:   time.Now(),
+		db:            db,
+		configWatcher: configWatcher,
+		broadcaster:   broadcaster,
+		workerPool:    NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog),
+		errorLog:      errorLog,
+		startTime:     time.Now(),
 	}
 
 	mux := http.NewServeMux()
@@ -82,15 +85,23 @@ func NewServer(db *storage.DB, cfg *config.Config) *Server {
 }
 
 // Start begins the server and worker pool
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
 	// Reset stale jobs from previous runs
 	if err := s.db.ResetStaleJobs(); err != nil {
 		log.Printf("Warning: failed to reset stale jobs: %v", err)
 	}
 
+	// Start config watcher for hot-reloading
+	if err := s.configWatcher.Start(ctx); err != nil {
+		log.Printf("Warning: failed to start config watcher: %v", err)
+		// Continue without hot-reloading - not a fatal error
+	}
+
 	// Find available port
-	addr, port, err := FindAvailablePort(s.cfg.ServerAddr)
+	cfg := s.configWatcher.Config()
+	addr, port, err := FindAvailablePort(cfg.ServerAddr)
 	if err != nil {
+		s.configWatcher.Stop()
 		return fmt.Errorf("find available port: %w", err)
 	}
 	s.httpServer.Addr = addr
@@ -106,6 +117,8 @@ func (s *Server) Start() error {
 	// Start HTTP server
 	log.Printf("Starting HTTP server on %s", addr)
 	if err := s.httpServer.ListenAndServe(); err != http.ErrServerClosed {
+		s.configWatcher.Stop()
+		s.workerPool.Stop()
 		return err
 	}
 	return nil
@@ -118,6 +131,9 @@ func (s *Server) Stop() error {
 
 	// Remove runtime info
 	RemoveRuntime()
+
+	// Stop config watcher
+	s.configWatcher.Stop()
 
 	// Stop HTTP server
 	if err := s.httpServer.Shutdown(ctx); err != nil {
@@ -368,7 +384,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve agent (uses main repo root for config lookup)
-	agentName := config.ResolveAgent(req.Agent, repoRoot, s.cfg)
+	agentName := config.ResolveAgent(req.Agent, repoRoot, s.configWatcher.Config())
 
 	// Resolve reasoning level (uses main repo root for config lookup)
 	reasoning, err := config.ResolveReviewReasoning(req.Reasoning, repoRoot)
@@ -807,16 +823,23 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get config reload time if any
+	configReloadedAt := ""
+	if t := s.configWatcher.LastReloadedAt(); !t.IsZero() {
+		configReloadedAt = t.Format(time.RFC3339)
+	}
+
 	status := storage.DaemonStatus{
-		Version:       version.Version,
-		QueuedJobs:    queued,
-		RunningJobs:   running,
-		CompletedJobs: done,
-		FailedJobs:    failed,
-		CanceledJobs:  canceled,
-		ActiveWorkers: s.workerPool.ActiveWorkers(),
-		MaxWorkers:    s.cfg.MaxWorkers,
-		MachineID:     s.getMachineID(),
+		Version:          version.Version,
+		QueuedJobs:       queued,
+		RunningJobs:      running,
+		CompletedJobs:    done,
+		FailedJobs:       failed,
+		CanceledJobs:     canceled,
+		ActiveWorkers:    s.workerPool.ActiveWorkers(),
+		MaxWorkers:       s.workerPool.MaxWorkers(),
+		MachineID:        s.getMachineID(),
+		ConfigReloadedAt: configReloadedAt,
 	}
 
 	writeJSON(w, http.StatusOK, status)

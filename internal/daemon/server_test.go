@@ -99,7 +99,7 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 		cfg := config.DefaultConfig()
 		cfg.AllowUnsafeAgents = nil // not set
 
-		_ = NewServer(db, cfg)
+		_ = NewServer(db, cfg, "")
 
 		if agent.AllowUnsafeAgents() {
 			t.Error("expected AllowUnsafeAgents to be false when config is nil")
@@ -117,7 +117,7 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 		cfg := config.DefaultConfig()
 		cfg.AllowUnsafeAgents = &boolFalse
 
-		_ = NewServer(db, cfg)
+		_ = NewServer(db, cfg, "")
 
 		if agent.AllowUnsafeAgents() {
 			t.Error("expected AllowUnsafeAgents to be false when config is false")
@@ -135,7 +135,7 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 		cfg := config.DefaultConfig()
 		cfg.AllowUnsafeAgents = &boolTrue
 
-		_ = NewServer(db, cfg)
+		_ = NewServer(db, cfg, "")
 
 		if !agent.AllowUnsafeAgents() {
 			t.Error("expected AllowUnsafeAgents to be true when config is true")
@@ -146,7 +146,7 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 func TestHandleListRepos(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	t.Run("empty database", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
@@ -265,7 +265,7 @@ func TestHandleListRepos(t *testing.T) {
 func TestHandleListJobsWithFilter(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	// Create repos and jobs
 	repo1, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
@@ -499,7 +499,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 func TestHandleStatus(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	t.Run("returns status with version", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
@@ -532,12 +532,46 @@ func TestHandleStatus(t *testing.T) {
 			t.Errorf("Expected status 405 for POST, got %d", w.Code)
 		}
 	})
+
+	t.Run("returns max_workers from pool not config", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		w := httptest.NewRecorder()
+
+		server.handleStatus(w, req)
+
+		var status storage.DaemonStatus
+		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		// MaxWorkers should match the pool size (config default), not a potentially reloaded config value
+		if status.MaxWorkers != cfg.MaxWorkers {
+			t.Errorf("Expected MaxWorkers %d from pool, got %d", cfg.MaxWorkers, status.MaxWorkers)
+		}
+	})
+
+	t.Run("config_reloaded_at empty initially", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		w := httptest.NewRecorder()
+
+		server.handleStatus(w, req)
+
+		var status storage.DaemonStatus
+		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		// ConfigReloadedAt should be empty when no reload has occurred
+		if status.ConfigReloadedAt != "" {
+			t.Errorf("Expected ConfigReloadedAt to be empty initially, got %q", status.ConfigReloadedAt)
+		}
+	})
 }
 
 func TestHandleCancelJob(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	// Create a repo and job
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -658,7 +692,7 @@ func TestHandleCancelJob(t *testing.T) {
 func TestListJobsPagination(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	// Create test repo and jobs
 	repo, err := db.GetOrCreateRepo("/test/repo")
@@ -789,7 +823,7 @@ func TestListJobsPagination(t *testing.T) {
 func TestListJobsWithGitRefFilter(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	// Create repo and jobs with different git refs
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
@@ -857,7 +891,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 func TestHandleStreamEvents(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	t.Run("returns correct headers", func(t *testing.T) {
 		// Create a request with a context that we can cancel
@@ -1316,7 +1350,7 @@ func TestHandleStreamEvents(t *testing.T) {
 func TestHandleRerunJob(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	// Create a repo
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -1463,7 +1497,7 @@ func TestHandleRerunJob(t *testing.T) {
 func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	// Create a git repo
 	repoDir := filepath.Join(tmpDir, "testrepo")
@@ -1573,7 +1607,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	// Create a git repo
 	repoDir := filepath.Join(tmpDir, "testrepo")
@@ -1692,7 +1726,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 func TestHandleListJobsByID(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	// Create a git repo
 	repoDir := filepath.Join(tmpDir, "testrepo")
@@ -1906,7 +1940,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 
 	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	t.Run("enqueues prompt job successfully", func(t *testing.T) {
 		reqData := map[string]string{
@@ -2058,7 +2092,7 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 	t.Run("caches valid machine ID", func(t *testing.T) {
 		db, _ := testutil.OpenTestDBWithDir(t)
 		cfg := config.DefaultConfig()
-		server := NewServer(db, cfg)
+		server := NewServer(db, cfg, "")
 
 		// First call should fetch from DB and cache
 		id1 := server.getMachineID()
@@ -2089,7 +2123,7 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 
 		db, tmpDir := testutil.OpenTestDBWithDir(t)
 		cfg := config.DefaultConfig()
-		server := NewServer(db, cfg)
+		server := NewServer(db, cfg, "")
 
 		// Close the DB to simulate error condition
 		db.Close()

@@ -143,7 +143,7 @@ func TestStreamEventsMethodNotAllowed(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg)
+	server := NewServer(db, cfg, "")
 
 	req := httptest.NewRequest("POST", "/api/stream/events", nil)
 	rec := httptest.NewRecorder()
@@ -189,7 +189,7 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 	}
 
 	// Create worker pool with our broadcaster
-	pool := NewWorkerPool(db, cfg, 1, broadcaster, nil)
+	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
 	pool.Start()
 	defer pool.Stop()
 

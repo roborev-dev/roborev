@@ -96,15 +96,16 @@ type Response struct {
 }
 
 type DaemonStatus struct {
-	Version       string `json:"version"`
-	QueuedJobs    int    `json:"queued_jobs"`
-	RunningJobs   int    `json:"running_jobs"`
-	CompletedJobs int    `json:"completed_jobs"`
-	FailedJobs    int    `json:"failed_jobs"`
-	CanceledJobs  int    `json:"canceled_jobs"`
-	ActiveWorkers int    `json:"active_workers"`
-	MaxWorkers    int    `json:"max_workers"`
-	MachineID     string `json:"machine_id,omitempty"` // Local machine ID for remote job detection
+	Version          string `json:"version"`
+	QueuedJobs       int    `json:"queued_jobs"`
+	RunningJobs      int    `json:"running_jobs"`
+	CompletedJobs    int    `json:"completed_jobs"`
+	FailedJobs       int    `json:"failed_jobs"`
+	CanceledJobs     int    `json:"canceled_jobs"`
+	ActiveWorkers    int    `json:"active_workers"`
+	MaxWorkers       int    `json:"max_workers"`
+	MachineID        string `json:"machine_id,omitempty"`         // Local machine ID for remote job detection
+	ConfigReloadedAt string `json:"config_reloaded_at,omitempty"` // Last config reload timestamp (RFC3339)
 }
 
 // HealthStatus represents the overall daemon health

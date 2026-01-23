@@ -5417,3 +5417,90 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 		t.Errorf("Expected clipboard error message, got %q", result.err.Error())
 	}
 }
+
+func TestTUIConfigReloadFlash(t *testing.T) {
+	m := newTuiModel("http://localhost:7373")
+
+	t.Run("no flash on first status fetch", func(t *testing.T) {
+		// First status fetch with a ConfigReloadedAt should NOT flash
+		status1 := tuiStatusMsg(storage.DaemonStatus{
+			Version:          "1.0.0",
+			ConfigReloadedAt: "2026-01-23T10:00:00Z",
+		})
+
+		updated, _ := m.Update(status1)
+		m2 := updated.(tuiModel)
+
+		if m2.flashMessage != "" {
+			t.Errorf("Expected no flash on first fetch, got %q", m2.flashMessage)
+		}
+		if !m2.statusFetchedOnce {
+			t.Error("Expected statusFetchedOnce to be true after first fetch")
+		}
+		if m2.lastConfigReloadedAt != "2026-01-23T10:00:00Z" {
+			t.Errorf("Expected lastConfigReloadedAt to be set, got %q", m2.lastConfigReloadedAt)
+		}
+	})
+
+	t.Run("flash on config reload after first fetch", func(t *testing.T) {
+		// Start with a model that has already fetched status once
+		m := newTuiModel("http://localhost:7373")
+		m.statusFetchedOnce = true
+		m.lastConfigReloadedAt = "2026-01-23T10:00:00Z"
+
+		// Second status with different ConfigReloadedAt should flash
+		status2 := tuiStatusMsg(storage.DaemonStatus{
+			Version:          "1.0.0",
+			ConfigReloadedAt: "2026-01-23T10:05:00Z",
+		})
+
+		updated, _ := m.Update(status2)
+		m2 := updated.(tuiModel)
+
+		if m2.flashMessage != "Config reloaded" {
+			t.Errorf("Expected flash 'Config reloaded', got %q", m2.flashMessage)
+		}
+		if m2.lastConfigReloadedAt != "2026-01-23T10:05:00Z" {
+			t.Errorf("Expected lastConfigReloadedAt updated, got %q", m2.lastConfigReloadedAt)
+		}
+	})
+
+	t.Run("flash when ConfigReloadedAt changes from empty to non-empty", func(t *testing.T) {
+		// Model has fetched status once but daemon hadn't reloaded yet
+		m := newTuiModel("http://localhost:7373")
+		m.statusFetchedOnce = true
+		m.lastConfigReloadedAt = "" // No reload had occurred
+
+		// Now config is reloaded
+		status := tuiStatusMsg(storage.DaemonStatus{
+			Version:          "1.0.0",
+			ConfigReloadedAt: "2026-01-23T10:00:00Z",
+		})
+
+		updated, _ := m.Update(status)
+		m2 := updated.(tuiModel)
+
+		if m2.flashMessage != "Config reloaded" {
+			t.Errorf("Expected flash when ConfigReloadedAt goes from empty to set, got %q", m2.flashMessage)
+		}
+	})
+
+	t.Run("no flash when ConfigReloadedAt unchanged", func(t *testing.T) {
+		m := newTuiModel("http://localhost:7373")
+		m.statusFetchedOnce = true
+		m.lastConfigReloadedAt = "2026-01-23T10:00:00Z"
+
+		// Same timestamp
+		status := tuiStatusMsg(storage.DaemonStatus{
+			Version:          "1.0.0",
+			ConfigReloadedAt: "2026-01-23T10:00:00Z",
+		})
+
+		updated, _ := m.Update(status)
+		m2 := updated.(tuiModel)
+
+		if m2.flashMessage != "" {
+			t.Errorf("Expected no flash when timestamp unchanged, got %q", m2.flashMessage)
+		}
+	})
+}

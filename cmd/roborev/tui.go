@@ -124,6 +124,10 @@ type tuiModel struct {
 	flashMessage   string
 	flashExpiresAt time.Time
 	flashView      tuiView // View where flash was triggered (only show in same view)
+
+	// Track config reload notifications
+	lastConfigReloadedAt  string // Last known ConfigReloadedAt from daemon status
+	statusFetchedOnce     bool   // True after first successful status fetch (for flash logic)
 	pendingReviewAddressed map[int64]pendingState // review ID -> pending state (for reviews without jobs)
 	addressedSeq           uint64                 // monotonic counter for request sequencing
 }
@@ -1689,6 +1693,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.status.Version != "" {
 			m.daemonVersion = m.status.Version
 		}
+		// Show flash notification when config is reloaded
+		// Only flash if: we've fetched status before AND the reload timestamp changed
+		if m.statusFetchedOnce && m.status.ConfigReloadedAt != m.lastConfigReloadedAt {
+			m.flashMessage = "Config reloaded"
+			m.flashExpiresAt = time.Now().Add(5 * time.Second)
+			m.flashView = m.currentView
+		}
+		m.lastConfigReloadedAt = m.status.ConfigReloadedAt
+		m.statusFetchedOnce = true
 
 	case tuiUpdateCheckMsg:
 		m.updateAvailable = msg.version
