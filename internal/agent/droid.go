@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 )
 
@@ -58,7 +57,7 @@ func (a *DroidAgent) CommandName() string {
 	return a.Command
 }
 
-func (a *DroidAgent) buildArgs(repoPath, outputFile, prompt string, agenticMode bool) []string {
+func (a *DroidAgent) buildArgs(prompt string, agenticMode bool) []string {
 	args := []string{"exec"}
 
 	// Set autonomy level based on agentic mode
@@ -67,12 +66,6 @@ func (a *DroidAgent) buildArgs(repoPath, outputFile, prompt string, agenticMode 
 	} else {
 		args = append(args, "--auto", "low")
 	}
-
-	// Note: working directory is set via cmd.Dir in Review(), not via CLI flag
-	// (droid doesn't support -C like some other tools)
-
-	// Set output file
-	args = append(args, "-o", outputFile)
 
 	// Set reasoning effort if specified
 	if effort := a.droidReasoningEffort(); effort != "" {
@@ -90,21 +83,13 @@ func (a *DroidAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	// Use agentic mode if either per-job setting or global setting enables it
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 
-	// Create unique temp file for output
-	tmpFile, err := os.CreateTemp("", "roborev-droid-*.txt")
-	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
-	}
-	outputFile := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(outputFile)
-
-	args := a.buildArgs(repoPath, outputFile, prompt, agenticMode)
+	args := a.buildArgs(prompt, agenticMode)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	if sw := newSyncWriter(output); sw != nil {
 		cmd.Stderr = io.MultiWriter(&stderr, sw)
 	} else {
@@ -115,17 +100,12 @@ func (a *DroidAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		return "", fmt.Errorf("droid failed: %w\nstderr: %s", err, stderr.String())
 	}
 
-	// Read the output file
-	result, err := os.ReadFile(outputFile)
-	if err != nil {
-		return "", fmt.Errorf("read output: %w", err)
-	}
-
+	result := stdout.String()
 	if len(result) == 0 {
 		return "No review output generated", nil
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
 func init() {

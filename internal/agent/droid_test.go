@@ -12,7 +12,7 @@ func TestDroidBuildArgsAgenticMode(t *testing.T) {
 	a := NewDroidAgent("droid")
 
 	// Test non-agentic mode (--auto low)
-	args := a.buildArgs("/repo", "/tmp/out", "prompt", false)
+	args := a.buildArgs("prompt", false)
 	if !containsString(args, "low") {
 		t.Fatalf("expected --auto low in non-agentic mode, got %v", args)
 	}
@@ -21,7 +21,7 @@ func TestDroidBuildArgsAgenticMode(t *testing.T) {
 	}
 
 	// Test agentic mode (--auto medium)
-	args = a.buildArgs("/repo", "/tmp/out", "prompt", true)
+	args = a.buildArgs("prompt", true)
 	if !containsString(args, "medium") {
 		t.Fatalf("expected --auto medium in agentic mode, got %v", args)
 	}
@@ -30,21 +30,21 @@ func TestDroidBuildArgsAgenticMode(t *testing.T) {
 func TestDroidBuildArgsReasoningEffort(t *testing.T) {
 	// Test thorough reasoning
 	a := NewDroidAgent("droid").WithReasoning(ReasoningThorough).(*DroidAgent)
-	args := a.buildArgs("/repo", "/tmp/out", "prompt", false)
+	args := a.buildArgs("prompt", false)
 	if !containsString(args, "--reasoning-effort") || !containsString(args, "high") {
 		t.Fatalf("expected --reasoning-effort high for thorough, got %v", args)
 	}
 
 	// Test fast reasoning
 	a = NewDroidAgent("droid").WithReasoning(ReasoningFast).(*DroidAgent)
-	args = a.buildArgs("/repo", "/tmp/out", "prompt", false)
+	args = a.buildArgs("prompt", false)
 	if !containsString(args, "--reasoning-effort") || !containsString(args, "low") {
 		t.Fatalf("expected --reasoning-effort low for fast, got %v", args)
 	}
 
 	// Test standard reasoning (no flag)
 	a = NewDroidAgent("droid").WithReasoning(ReasoningStandard).(*DroidAgent)
-	args = a.buildArgs("/repo", "/tmp/out", "prompt", false)
+	args = a.buildArgs("prompt", false)
 	if containsString(args, "--reasoning-effort") {
 		t.Fatalf("expected no --reasoning-effort for standard, got %v", args)
 	}
@@ -79,20 +79,9 @@ func TestDroidReviewSuccess(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputContent := "Review feedback from Droid"
 
-	// Create a mock droid command that writes to the output file
+	// Create a mock droid command that outputs to stdout
 	cmdPath := writeTempCommand(t, `#!/bin/sh
-# Find the -o flag and write to that file
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -o)
-            shift
-            echo "`+outputContent+`" > "$1"
-            exit 0
-            ;;
-    esac
-    shift
-done
-exit 1
+echo "`+outputContent+`"
 `)
 
 	a := NewDroidAgent(cmdPath)
@@ -126,19 +115,9 @@ exit 1
 func TestDroidReviewEmptyOutput(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create a mock that creates an empty output file
+	// Create a mock that outputs nothing to stdout
 	cmdPath := writeTempCommand(t, `#!/bin/sh
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -o)
-            shift
-            touch "$1"
-            exit 0
-            ;;
-    esac
-    shift
-done
-exit 1
+exit 0
 `)
 
 	a := NewDroidAgent(cmdPath)
@@ -157,20 +136,10 @@ func TestDroidReviewWithProgress(t *testing.T) {
 
 	cmdPath := writeTempCommand(t, `#!/bin/sh
 echo "Processing..." >&2
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -o)
-            shift
-            echo "Done" > "$1"
-            exit 0
-            ;;
-    esac
-    shift
-done
-exit 1
+echo "Done"
 `)
 
-	// Create a writer to capture progress
+	// Create a writer to capture progress (stderr)
 	f, err := os.Create(progressFile)
 	if err != nil {
 		t.Fatalf("create progress file: %v", err)
@@ -195,7 +164,7 @@ func TestDroidBuildArgsPromptWithDash(t *testing.T) {
 	// Test that prompts starting with "-" are passed as data, not flags
 	// The "--" terminator must appear before the prompt
 	prompt := "-o /tmp/malicious --auto high"
-	args := a.buildArgs("/repo", "/tmp/out", prompt, false)
+	args := a.buildArgs(prompt, false)
 
 	// Find the position of "--" and the prompt
 	dashDashIdx := -1
@@ -236,18 +205,7 @@ func TestDroidReviewAgenticModeFromGlobal(t *testing.T) {
 
 	cmdPath := writeTempCommand(t, `#!/bin/sh
 echo "$@" > "$ARGS_FILE"
-# Find the -o flag and write to that file
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -o)
-            shift
-            echo "result" > "$1"
-            exit 0
-            ;;
-    esac
-    shift
-done
-exit 1
+echo "result"
 `)
 
 	a := NewDroidAgent(cmdPath)
