@@ -174,7 +174,9 @@ func GetRepoRoot(path string) (string, error) {
 		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
 	}
 
-	return strings.TrimSpace(string(out)), nil
+	// Git on Windows returns MSYS-style paths with forward slashes.
+	// Convert to native path separators for consistency with Go's filepath.
+	return filepath.FromSlash(strings.TrimSpace(string(out))), nil
 }
 
 // GetMainRepoRoot returns the main repository root, resolving through worktrees.

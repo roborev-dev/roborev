@@ -176,9 +176,11 @@ func TestWaitForReview(t *testing.T) {
 
 func TestFindJobForCommit(t *testing.T) {
 	t.Run("finds matching job", func(t *testing.T) {
+		// Use a real temp dir so path normalization works cross-platform
+		repoDir := t.TempDir()
 		allJobs := []storage.ReviewJob{
-			{ID: 1, GitRef: "abc123", RepoPath: "/test/repo"},
-			{ID: 2, GitRef: "def456", RepoPath: "/test/repo"},
+			{ID: 1, GitRef: "abc123", RepoPath: repoDir},
+			{ID: 2, GitRef: "def456", RepoPath: repoDir},
 		}
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/jobs" || r.Method != "GET" {
@@ -201,7 +203,7 @@ func TestFindJobForCommit(t *testing.T) {
 		}))
 		defer cleanup()
 
-		job, err := findJobForCommit("/test/repo", "def456")
+		job, err := findJobForCommit(repoDir, "def456")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -214,8 +216,9 @@ func TestFindJobForCommit(t *testing.T) {
 	})
 
 	t.Run("returns nil when not found", func(t *testing.T) {
+		repoDir := t.TempDir()
 		allJobs := []storage.ReviewJob{
-			{ID: 1, GitRef: "abc123", RepoPath: "/test/repo"},
+			{ID: 1, GitRef: "abc123", RepoPath: repoDir},
 		}
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/jobs" || r.Method != "GET" {
@@ -238,7 +241,7 @@ func TestFindJobForCommit(t *testing.T) {
 		}))
 		defer cleanup()
 
-		job, err := findJobForCommit("/test/repo", "notfound")
+		job, err := findJobForCommit(repoDir, "notfound")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -249,9 +252,12 @@ func TestFindJobForCommit(t *testing.T) {
 
 	t.Run("fallback skips jobs from different repo", func(t *testing.T) {
 		// Primary query returns empty (repo mismatch), fallback returns job from different repo
+		otherRepo := t.TempDir()
+		anotherRepo := t.TempDir()
+		queryRepo := t.TempDir()
 		allJobs := []storage.ReviewJob{
-			{ID: 1, GitRef: "abc123", RepoPath: "/other/repo"},
-			{ID: 2, GitRef: "abc123", RepoPath: "/another/repo"},
+			{ID: 1, GitRef: "abc123", RepoPath: otherRepo},
+			{ID: 2, GitRef: "abc123", RepoPath: anotherRepo},
 		}
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/jobs" || r.Method != "GET" {
@@ -273,8 +279,8 @@ func TestFindJobForCommit(t *testing.T) {
 		}))
 		defer cleanup()
 
-		// Request job for /test/repo, but all jobs are for different repos
-		job, err := findJobForCommit("/test/repo", "abc123")
+		// Request job for queryRepo, but all jobs are for different repos
+		job, err := findJobForCommit(queryRepo, "abc123")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -347,13 +353,14 @@ func TestFindJobForCommit(t *testing.T) {
 	})
 
 	t.Run("returns error on invalid JSON", func(t *testing.T) {
+		repoDir := t.TempDir()
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("not json"))
 		}))
 		defer cleanup()
 
-		_, err := findJobForCommit("/test/repo", "abc123")
+		_, err := findJobForCommit(repoDir, "abc123")
 		if err == nil {
 			t.Fatal("expected error on invalid JSON")
 		}
@@ -366,10 +373,11 @@ func TestFindJobForCommit(t *testing.T) {
 		// Jobs with empty or relative paths should be skipped in fallback to avoid
 		// false matches from cwd resolution. Job 3 has correct SHA but path stored
 		// differently (simulating path normalization mismatch).
+		repoDir := t.TempDir()
 		allJobs := []storage.ReviewJob{
 			{ID: 1, GitRef: "abc123", RepoPath: ""},              // Empty path - skip
 			{ID: 2, GitRef: "abc123", RepoPath: "relative/path"}, // Relative path - skip
-			{ID: 3, GitRef: "abc123", RepoPath: "/test/repo"},    // Absolute path - match via fallback
+			{ID: 3, GitRef: "abc123", RepoPath: repoDir},         // Absolute path - match via fallback
 		}
 		requestCount := 0
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -405,9 +413,9 @@ func TestFindJobForCommit(t *testing.T) {
 		}))
 		defer cleanup()
 
-		// Request job for /test/repo - primary query returns empty, fallback should
+		// Request job for repoDir - primary query returns empty, fallback should
 		// skip empty/relative paths and find job ID 3 via path normalization
-		job, err := findJobForCommit("/test/repo", "abc123")
+		job, err := findJobForCommit(repoDir, "abc123")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

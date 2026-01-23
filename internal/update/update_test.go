@@ -5,11 +5,12 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestSanitizeTarPath(t *testing.T) {
-	destDir := "/tmp/extract"
+	destDir := t.TempDir()
 
 	tests := []struct {
 		name    string
@@ -18,7 +19,7 @@ func TestSanitizeTarPath(t *testing.T) {
 	}{
 		{"normal file", "roborev", false},
 		{"nested file", "bin/roborev", false},
-		{"absolute path", "/etc/passwd", true},
+		{"absolute path Unix", "/etc/passwd", true},
 		{"path traversal with ..", "../../../etc/passwd", true},
 		{"path traversal mid-path", "foo/../../../etc/passwd", true},
 		{"hidden traversal", "foo/bar/../../..", true},
@@ -32,6 +33,16 @@ func TestSanitizeTarPath(t *testing.T) {
 			_, err := sanitizeTarPath(destDir, tt.path)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("sanitizeTarPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			}
+		})
+	}
+
+	// Windows-specific absolute path test
+	if runtime.GOOS == "windows" {
+		t.Run("absolute path Windows", func(t *testing.T) {
+			_, err := sanitizeTarPath(destDir, "C:\\Windows\\System32")
+			if err == nil {
+				t.Error("sanitizeTarPath(\"C:\\\\Windows\\\\System32\") expected error, got nil")
 			}
 		})
 	}

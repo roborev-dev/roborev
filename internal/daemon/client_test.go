@@ -241,7 +241,7 @@ func TestFindJobForCommitWorktree(t *testing.T) {
 func TestFindJobForCommitFallback(t *testing.T) {
 	// Test fallback behavior when primary query returns no results
 	sha := "abc123"
-	mainRepo := "/some/repo"
+	mainRepo := t.TempDir() // Use real temp dir for cross-platform path normalization
 
 	var primaryCalled, fallbackCalled int32
 
@@ -272,7 +272,7 @@ func TestFindJobForCommitFallback(t *testing.T) {
 
 	client := NewHTTPClient(server.URL)
 
-	// Use a non-git path so GetMainRepoRoot fails and we test the fallback path matching
+	// Use the same temp dir so paths match after normalization
 	job, err := client.FindJobForCommit(mainRepo, sha)
 	if err != nil {
 		t.Fatalf("FindJobForCommit failed: %v", err)

@@ -436,7 +436,11 @@ func sanitizeTarPath(destDir, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(absTarget, destDir+string(filepath.Separator)) && absTarget != destDir {
+	absDestDir, err := filepath.Abs(destDir)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(absTarget, absDestDir+string(filepath.Separator)) && absTarget != absDestDir {
 		return "", fmt.Errorf("path escapes destination directory")
 	}
 

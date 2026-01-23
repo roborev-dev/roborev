@@ -189,6 +189,7 @@ No issues found in the code.
 }
 
 func TestGeminiReview_PlainTextError(t *testing.T) {
+	skipIfWindows(t)
 	// End-to-end test: create a temp script that emits plain text (no stream-json)
 	// should return an error since we require stream-json
 	tmpDir := t.TempDir()
@@ -220,6 +221,7 @@ echo "No issues found."
 }
 
 func TestGeminiReview_PlainTextErrorWithStderr(t *testing.T) {
+	skipIfWindows(t)
 	// End-to-end test: verify stderr is included in the error and truncated when large
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "fake-gemini")
@@ -246,6 +248,7 @@ echo "Some stderr message" >&2
 }
 
 func TestGeminiReview_LargeStderrTruncation(t *testing.T) {
+	skipIfWindows(t)
 	// End-to-end test: verify large stderr is truncated
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "fake-gemini")
@@ -274,6 +277,7 @@ done
 }
 
 func TestGeminiReview_StreamJSON(t *testing.T) {
+	skipIfWindows(t)
 	// End-to-end test: create a temp script that emits valid stream-json
 	// and verify Review() parses it correctly
 	tmpDir := t.TempDir()
@@ -302,6 +306,7 @@ echo '{"type":"result","result":"Review complete. All good!"}'
 }
 
 func TestGeminiReview_StreamJSONNoResult(t *testing.T) {
+	skipIfWindows(t)
 	// End-to-end test: stream-json with only tool events (no result/assistant)
 	// should return "No review output generated" (no raw output fallback)
 	tmpDir := t.TempDir()
@@ -331,6 +336,7 @@ echo '{"type":"tool_result","content":"file contents here"}'
 }
 
 func TestGeminiReview_IOError(t *testing.T) {
+	skipIfWindows(t)
 	// End-to-end test: verify that non-sentinel errors (like command failure) are propagated
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "fake-gemini")
@@ -357,6 +363,7 @@ exit 1
 }
 
 func TestGeminiReview_PromptDeliveredViaStdin(t *testing.T) {
+	skipIfWindows(t)
 	// End-to-end test: verify the prompt is actually delivered via stdin
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "fake-gemini")

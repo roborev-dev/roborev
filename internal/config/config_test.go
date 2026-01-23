@@ -60,7 +60,8 @@ func TestDataDir(t *testing.T) {
 
 	t.Run("GlobalConfigPath uses DataDir", func(t *testing.T) {
 		origEnv := os.Getenv("ROBOREV_DATA_DIR")
-		os.Setenv("ROBOREV_DATA_DIR", "/tmp/roborev-test")
+		testDir := filepath.Join(os.TempDir(), "roborev-test")
+		os.Setenv("ROBOREV_DATA_DIR", testDir)
 		defer func() {
 			if origEnv != "" {
 				os.Setenv("ROBOREV_DATA_DIR", origEnv)
@@ -70,7 +71,7 @@ func TestDataDir(t *testing.T) {
 		}()
 
 		path := GlobalConfigPath()
-		expected := "/tmp/roborev-test/config.toml"
+		expected := filepath.Join(testDir, "config.toml")
 		if path != expected {
 			t.Errorf("Expected %s, got %s", expected, path)
 		}
