@@ -976,7 +976,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "backspace":
 				if len(m.respondText) > 0 {
-					m.respondText = m.respondText[:len(m.respondText)-1]
+					runes := []rune(m.respondText)
+					m.respondText = string(runes[:len(runes)-1])
 				}
 				return m, nil
 			default:
@@ -1026,7 +1027,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "backspace":
 				if len(m.filterSearch) > 0 {
-					m.filterSearch = m.filterSearch[:len(m.filterSearch)-1]
+					runes := []rune(m.filterSearch)
+					m.filterSearch = string(runes[:len(runes)-1])
 					m.filterSelectedIdx = 0 // Reset selection when search changes
 				}
 				return m, nil
@@ -2521,9 +2523,10 @@ func (m tuiModel) renderRespondView() string {
 			if textLinesWritten >= maxTextLines {
 				break
 			}
-			// Truncate lines that are too long
-			if len(line) > boxWidth-2 {
-				line = line[:boxWidth-2]
+			// Truncate lines that are too long (use runes to avoid breaking multi-byte characters)
+			runes := []rune(line)
+			if len(runes) > boxWidth-2 {
+				line = string(runes[:boxWidth-2])
 			}
 			b.WriteString(fmt.Sprintf("| %-*s |\x1b[K\n", boxWidth-2, line))
 			textLinesWritten++
