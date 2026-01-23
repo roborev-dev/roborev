@@ -83,7 +83,7 @@ See [configuration guide](https://roborev.io/configuration/) for all options.
 | Gemini | `npm install -g @google/gemini-cli` |
 | Copilot | `npm install -g @github/copilot` |
 | OpenCode | `npm install -g opencode-ai` |
-| Droid | `curl -fsSL https://app.factory.ai/cli \| sh` |
+| Droid | [factory.ai](https://factory.ai/) |
 
 roborev auto-detects installed agents.
 
