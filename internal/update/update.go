@@ -414,10 +414,16 @@ func extractTarGz(archivePath, destDir string) error {
 
 // sanitizeTarPath validates and sanitizes a tar entry path to prevent directory traversal
 func sanitizeTarPath(destDir, name string) (string, error) {
+	// Reject Unix-style absolute paths explicitly (before Clean converts / to \\ on Windows)
+	// This ensures consistent behavior across platforms for tar entries created on Unix
+	if strings.HasPrefix(name, "/") {
+		return "", fmt.Errorf("absolute path not allowed")
+	}
+
 	// Clean the path to remove . and .. components
 	cleanName := filepath.Clean(name)
 
-	// Reject absolute paths
+	// Reject absolute paths (Windows drive letters, UNC paths, etc.)
 	if filepath.IsAbs(cleanName) {
 		return "", fmt.Errorf("absolute path not allowed")
 	}

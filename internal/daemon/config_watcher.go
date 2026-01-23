@@ -99,6 +99,7 @@ func (cw *ConfigWatcher) Start(ctx context.Context) error {
 
 	if err := watcher.Add(configDir); err != nil {
 		watcher.Close()
+		cw.watcher = nil // Prevent double-close if Stop() is called later
 		return err
 	}
 

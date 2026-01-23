@@ -1,7 +1,7 @@
 package main
 
 // NOTE: Tests in this package mutate package-level variables (serverAddr,
-// pollStartInterval, pollMaxInterval) and environment variables (HOME).
+// pollStartInterval, pollMaxInterval) and environment variables (ROBOREV_DATA_DIR).
 // Do not use t.Parallel() in this package as it will cause race conditions.
 
 import (

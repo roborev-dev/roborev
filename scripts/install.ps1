@@ -129,7 +129,7 @@ function Install-Roborev {
         Write-Info "Downloading $archiveName..."
         Invoke-WebRequestCompat -Uri $downloadUrl -OutFile $archivePath
 
-        # Verify checksum (fail-closed: errors abort installation unless -SkipChecksum is set)
+        # Verify checksum (fail-closed: errors abort installation unless ROBOREV_SKIP_CHECKSUM env var is set)
         $checksumUrl = "https://github.com/$repo/releases/download/$version/SHA256SUMS"
         $checksumFile = Join-Path $tmpDir "SHA256SUMS"
 
@@ -145,22 +145,36 @@ function Install-Roborev {
                 exit 1
             }
 
-            # Use exact string match (not regex) and ensure single match
-            $escapedName = [regex]::Escape($archiveName)
-            $matches = Get-Content $checksumFile | Where-Object { $_ -match "\s$escapedName$" }
+            # Parse checksum file and find matching entry
+            # Handle SHA256SUMS formats: "hash  filename", "hash *filename" (binary), "hash  ./filename"
+            $matchingLines = @()
+            foreach ($line in Get-Content $checksumFile) {
+                if ($line -match '^\s*$') { continue }  # Skip empty lines
+                $parts = $line -split '\s+', 2
+                if ($parts.Count -lt 2) { continue }
+                $hash = $parts[0]
+                $filename = $parts[1]
+                # Normalize: strip leading * (binary mode) or ./ (relative path)
+                $filename = $filename -replace '^[\*]', ''
+                $filename = $filename -replace '^\.\/', ''
+                $filename = $filename -replace '^\.\\', ''  # Windows-style
+                if ($filename -eq $archiveName) {
+                    $matchingLines += $hash
+                }
+            }
 
-            if (-not $matches) {
+            if ($matchingLines.Count -eq 0) {
                 Write-Err "Error: Could not find checksum for $archiveName in SHA256SUMS"
                 Write-Err "Set ROBOREV_SKIP_CHECKSUM=1 to bypass verification (not recommended)"
                 exit 1
             }
 
-            if ($matches -is [array] -and $matches.Count -gt 1) {
+            if ($matchingLines.Count -gt 1) {
                 Write-Err "Error: Multiple checksum entries found for $archiveName"
                 exit 1
             }
 
-            $expectedHash = ($matches -split '\s+')[0]
+            $expectedHash = $matchingLines[0]
             $actualHash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
 
             if ($actualHash -ne $expectedHash.ToLower()) {

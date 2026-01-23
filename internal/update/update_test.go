@@ -20,7 +20,7 @@ func TestSanitizeTarPath(t *testing.T) {
 	}{
 		{"normal file", "roborev", false, false},
 		{"nested file", "bin/roborev", false, false},
-		{"absolute path Unix", "/etc/passwd", true, true}, // Not absolute on Windows
+		{"absolute path Unix", "/etc/passwd", true, false}, // Rejected on all platforms (explicit / check)
 		{"path traversal with ..", "../../../etc/passwd", true, false},
 		{"path traversal mid-path", "foo/../../../etc/passwd", true, false},
 		{"hidden traversal", "foo/bar/../../..", true, false},
