@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"path/filepath"
 	"sync"
@@ -43,6 +44,9 @@ func (sc *StaticConfig) Config() *config.Config {
 // restart-required settings, so they remain in effect for the daemon's lifetime.
 // The config object may show file values after reload, but the actual running
 // server address and worker pool size are fixed at startup.
+//
+// Note: ConfigWatcher is not restart-safe. Once Stop() is called, Start() will
+// return an error. Create a new ConfigWatcher instance if restart is needed.
 type ConfigWatcher struct {
 	configPath     string
 	cfg            *config.Config
@@ -51,7 +55,9 @@ type ConfigWatcher struct {
 	watcher        *fsnotify.Watcher
 	stopCh         chan struct{}
 	stopOnce       sync.Once
+	stopped        bool // True after Stop() is called
 	lastReloadedAt time.Time // Time of last successful config reload
+	reloadCounter  uint64 // Monotonic counter for reload events (sub-second precision)
 }
 
 // NewConfigWatcher creates a new config watcher
@@ -64,8 +70,17 @@ func NewConfigWatcher(configPath string, cfg *config.Config, broadcaster Broadca
 	}
 }
 
-// Start begins watching the config file for changes
+// Start begins watching the config file for changes.
+// Returns an error if the watcher has already been stopped.
 func (cw *ConfigWatcher) Start(ctx context.Context) error {
+	// Check if already stopped (not restart-safe)
+	cw.cfgMu.RLock()
+	stopped := cw.stopped
+	cw.cfgMu.RUnlock()
+	if stopped {
+		return fmt.Errorf("config watcher already stopped; create a new instance to restart")
+	}
+
 	// Skip watching if no config path provided (e.g., in tests)
 	if cw.configPath == "" {
 		return nil
@@ -94,6 +109,9 @@ func (cw *ConfigWatcher) Start(ctx context.Context) error {
 // Stop stops the config watcher. Safe to call multiple times.
 func (cw *ConfigWatcher) Stop() {
 	cw.stopOnce.Do(func() {
+		cw.cfgMu.Lock()
+		cw.stopped = true
+		cw.cfgMu.Unlock()
 		close(cw.stopCh)
 		if cw.watcher != nil {
 			cw.watcher.Close()
@@ -113,6 +131,15 @@ func (cw *ConfigWatcher) LastReloadedAt() time.Time {
 	cw.cfgMu.RLock()
 	defer cw.cfgMu.RUnlock()
 	return cw.lastReloadedAt
+}
+
+// ReloadCounter returns a monotonic counter incremented on each reload.
+// Use this instead of timestamp comparison to detect reloads that happen
+// within the same second.
+func (cw *ConfigWatcher) ReloadCounter() uint64 {
+	cw.cfgMu.RLock()
+	defer cw.cfgMu.RUnlock()
+	return cw.reloadCounter
 }
 
 func (cw *ConfigWatcher) watchLoop(ctx context.Context, configFile string) {
@@ -170,6 +197,7 @@ func (cw *ConfigWatcher) reloadConfig() {
 	oldCfg := cw.cfg
 	cw.cfg = newCfg
 	cw.lastReloadedAt = time.Now()
+	cw.reloadCounter++
 	cw.cfgMu.Unlock()
 
 	// Update global agent settings

@@ -339,3 +339,139 @@ func TestConfigWatcher_StopAfterStart(t *testing.T) {
 	cw.Stop()
 	cw.Stop()
 }
+
+func TestConfigWatcher_StartAfterStopErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	if err := os.WriteFile(configPath, []byte("default_agent = \"test\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, _ := config.LoadGlobalFrom(configPath)
+	broadcaster := NewBroadcaster()
+	cw := NewConfigWatcher(configPath, cfg, broadcaster)
+
+	ctx := context.Background()
+
+	// Start and stop
+	if err := cw.Start(ctx); err != nil {
+		t.Fatalf("First Start failed: %v", err)
+	}
+	cw.Stop()
+
+	// Start after Stop should error (not restart-safe)
+	err := cw.Start(ctx)
+	if err == nil {
+		t.Error("Expected error when calling Start after Stop")
+	}
+}
+
+func TestConfigWatcher_ReloadCounter(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	if err := os.WriteFile(configPath, []byte("default_agent = \"v1\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := config.LoadGlobalFrom(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	broadcaster := NewBroadcaster()
+	_, eventCh := broadcaster.Subscribe("")
+
+	cw := NewConfigWatcher(configPath, cfg, broadcaster)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := cw.Start(ctx); err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+	defer cw.Stop()
+
+	// Initial counter should be 0
+	if cw.ReloadCounter() != 0 {
+		t.Errorf("Initial ReloadCounter = %d, want 0", cw.ReloadCounter())
+	}
+
+	// First reload
+	if err := os.WriteFile(configPath, []byte("default_agent = \"v2\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	waitForReload(t, eventCh)
+	if cw.ReloadCounter() != 1 {
+		t.Errorf("After first reload, ReloadCounter = %d, want 1", cw.ReloadCounter())
+	}
+
+	// Second reload
+	if err := os.WriteFile(configPath, []byte("default_agent = \"v3\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+	waitForReload(t, eventCh)
+	if cw.ReloadCounter() != 2 {
+		t.Errorf("After second reload, ReloadCounter = %d, want 2", cw.ReloadCounter())
+	}
+}
+
+func TestConfigWatcher_AtomicSaveViaRename(t *testing.T) {
+	// Test that config reloads work when editors do atomic saves via rename
+	// (e.g., write to temp file then rename over original)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	if err := os.WriteFile(configPath, []byte("default_agent = \"original\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := config.LoadGlobalFrom(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	broadcaster := NewBroadcaster()
+	_, eventCh := broadcaster.Subscribe("")
+
+	cw := NewConfigWatcher(configPath, cfg, broadcaster)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := cw.Start(ctx); err != nil {
+		t.Fatalf("Failed to start: %v", err)
+	}
+	defer cw.Stop()
+
+	// Simulate atomic save: write to temp file then rename
+	tmpFile := filepath.Join(tmpDir, "config.toml.tmp")
+	if err := os.WriteFile(tmpFile, []byte("default_agent = \"atomic-saved\"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
+	if err := os.Rename(tmpFile, configPath); err != nil {
+		t.Fatalf("Failed to rename: %v", err)
+	}
+
+	// Wait for reload event
+	waitForReload(t, eventCh)
+
+	// Verify config was updated
+	if cw.Config().DefaultAgent != "atomic-saved" {
+		t.Errorf("After atomic save, DefaultAgent = %q, want %q", cw.Config().DefaultAgent, "atomic-saved")
+	}
+}
+
+func waitForReload(t *testing.T, eventCh <-chan Event) {
+	t.Helper()
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case event := <-eventCh:
+			if event.Type == "config.reloaded" {
+				return
+			}
+		case <-timeout:
+			t.Fatal("Timeout waiting for config.reloaded event")
+		}
+	}
+}

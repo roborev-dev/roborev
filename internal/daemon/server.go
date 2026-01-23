@@ -823,23 +823,25 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get config reload time if any
+	// Get config reload time and counter
 	configReloadedAt := ""
 	if t := s.configWatcher.LastReloadedAt(); !t.IsZero() {
-		configReloadedAt = t.Format(time.RFC3339)
+		configReloadedAt = t.Format(time.RFC3339Nano)
 	}
+	configReloadCounter := s.configWatcher.ReloadCounter()
 
 	status := storage.DaemonStatus{
-		Version:          version.Version,
-		QueuedJobs:       queued,
-		RunningJobs:      running,
-		CompletedJobs:    done,
-		FailedJobs:       failed,
-		CanceledJobs:     canceled,
-		ActiveWorkers:    s.workerPool.ActiveWorkers(),
-		MaxWorkers:       s.workerPool.MaxWorkers(),
-		MachineID:        s.getMachineID(),
-		ConfigReloadedAt: configReloadedAt,
+		Version:             version.Version,
+		QueuedJobs:          queued,
+		RunningJobs:         running,
+		CompletedJobs:       done,
+		FailedJobs:          failed,
+		CanceledJobs:        canceled,
+		ActiveWorkers:       s.workerPool.ActiveWorkers(),
+		MaxWorkers:          s.workerPool.MaxWorkers(),
+		MachineID:           s.getMachineID(),
+		ConfigReloadedAt:    configReloadedAt,
+		ConfigReloadCounter: configReloadCounter,
 	}
 
 	writeJSON(w, http.StatusOK, status)

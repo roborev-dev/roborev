@@ -104,8 +104,9 @@ type DaemonStatus struct {
 	CanceledJobs     int    `json:"canceled_jobs"`
 	ActiveWorkers    int    `json:"active_workers"`
 	MaxWorkers       int    `json:"max_workers"`
-	MachineID        string `json:"machine_id,omitempty"`         // Local machine ID for remote job detection
-	ConfigReloadedAt string `json:"config_reloaded_at,omitempty"` // Last config reload timestamp (RFC3339)
+	MachineID           string `json:"machine_id,omitempty"`            // Local machine ID for remote job detection
+	ConfigReloadedAt    string `json:"config_reloaded_at,omitempty"`    // Last config reload timestamp (RFC3339Nano)
+	ConfigReloadCounter uint64 `json:"config_reload_counter,omitempty"` // Monotonic reload counter (for sub-second detection)
 }
 
 // HealthStatus represents the overall daemon health

@@ -5422,10 +5422,10 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 	m := newTuiModel("http://localhost:7373")
 
 	t.Run("no flash on first status fetch", func(t *testing.T) {
-		// First status fetch with a ConfigReloadedAt should NOT flash
+		// First status fetch with a ConfigReloadCounter should NOT flash
 		status1 := tuiStatusMsg(storage.DaemonStatus{
-			Version:          "1.0.0",
-			ConfigReloadedAt: "2026-01-23T10:00:00Z",
+			Version:             "1.0.0",
+			ConfigReloadCounter: 1,
 		})
 
 		updated, _ := m.Update(status1)
@@ -5437,8 +5437,8 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		if !m2.statusFetchedOnce {
 			t.Error("Expected statusFetchedOnce to be true after first fetch")
 		}
-		if m2.lastConfigReloadedAt != "2026-01-23T10:00:00Z" {
-			t.Errorf("Expected lastConfigReloadedAt to be set, got %q", m2.lastConfigReloadedAt)
+		if m2.lastConfigReloadCounter != 1 {
+			t.Errorf("Expected lastConfigReloadCounter to be 1, got %d", m2.lastConfigReloadCounter)
 		}
 	})
 
@@ -5446,12 +5446,12 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		// Start with a model that has already fetched status once
 		m := newTuiModel("http://localhost:7373")
 		m.statusFetchedOnce = true
-		m.lastConfigReloadedAt = "2026-01-23T10:00:00Z"
+		m.lastConfigReloadCounter = 1
 
-		// Second status with different ConfigReloadedAt should flash
+		// Second status with different ConfigReloadCounter should flash
 		status2 := tuiStatusMsg(storage.DaemonStatus{
-			Version:          "1.0.0",
-			ConfigReloadedAt: "2026-01-23T10:05:00Z",
+			Version:             "1.0.0",
+			ConfigReloadCounter: 2,
 		})
 
 		updated, _ := m.Update(status2)
@@ -5460,47 +5460,47 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 		if m2.flashMessage != "Config reloaded" {
 			t.Errorf("Expected flash 'Config reloaded', got %q", m2.flashMessage)
 		}
-		if m2.lastConfigReloadedAt != "2026-01-23T10:05:00Z" {
-			t.Errorf("Expected lastConfigReloadedAt updated, got %q", m2.lastConfigReloadedAt)
+		if m2.lastConfigReloadCounter != 2 {
+			t.Errorf("Expected lastConfigReloadCounter updated to 2, got %d", m2.lastConfigReloadCounter)
 		}
 	})
 
-	t.Run("flash when ConfigReloadedAt changes from empty to non-empty", func(t *testing.T) {
+	t.Run("flash when ConfigReloadCounter changes from zero to non-zero", func(t *testing.T) {
 		// Model has fetched status once but daemon hadn't reloaded yet
 		m := newTuiModel("http://localhost:7373")
 		m.statusFetchedOnce = true
-		m.lastConfigReloadedAt = "" // No reload had occurred
+		m.lastConfigReloadCounter = 0 // No reload had occurred
 
 		// Now config is reloaded
 		status := tuiStatusMsg(storage.DaemonStatus{
-			Version:          "1.0.0",
-			ConfigReloadedAt: "2026-01-23T10:00:00Z",
+			Version:             "1.0.0",
+			ConfigReloadCounter: 1,
 		})
 
 		updated, _ := m.Update(status)
 		m2 := updated.(tuiModel)
 
 		if m2.flashMessage != "Config reloaded" {
-			t.Errorf("Expected flash when ConfigReloadedAt goes from empty to set, got %q", m2.flashMessage)
+			t.Errorf("Expected flash when ConfigReloadCounter goes from 0 to 1, got %q", m2.flashMessage)
 		}
 	})
 
-	t.Run("no flash when ConfigReloadedAt unchanged", func(t *testing.T) {
+	t.Run("no flash when ConfigReloadCounter unchanged", func(t *testing.T) {
 		m := newTuiModel("http://localhost:7373")
 		m.statusFetchedOnce = true
-		m.lastConfigReloadedAt = "2026-01-23T10:00:00Z"
+		m.lastConfigReloadCounter = 1
 
-		// Same timestamp
+		// Same counter
 		status := tuiStatusMsg(storage.DaemonStatus{
-			Version:          "1.0.0",
-			ConfigReloadedAt: "2026-01-23T10:00:00Z",
+			Version:             "1.0.0",
+			ConfigReloadCounter: 1,
 		})
 
 		updated, _ := m.Update(status)
 		m2 := updated.(tuiModel)
 
 		if m2.flashMessage != "" {
-			t.Errorf("Expected no flash when timestamp unchanged, got %q", m2.flashMessage)
+			t.Errorf("Expected no flash when counter unchanged, got %q", m2.flashMessage)
 		}
 	})
 }
