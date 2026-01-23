@@ -68,8 +68,8 @@ func (a *DroidAgent) buildArgs(repoPath, outputFile, prompt string, agenticMode 
 		args = append(args, "--auto", "low")
 	}
 
-	// Set working directory
-	args = append(args, "-C", repoPath)
+	// Note: working directory is set via cmd.Dir in Review(), not via CLI flag
+	// (droid doesn't support -C like some other tools)
 
 	// Set output file
 	args = append(args, "-o", outputFile)
