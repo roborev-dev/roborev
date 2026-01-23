@@ -129,29 +129,47 @@ function Install-Roborev {
         Write-Info "Downloading $archiveName..."
         Invoke-WebRequestCompat -Uri $downloadUrl -OutFile $archivePath
 
-        # Verify checksum
+        # Verify checksum (fail-closed: errors abort installation unless -SkipChecksum is set)
         $checksumUrl = "https://github.com/$repo/releases/download/$version/SHA256SUMS"
         $checksumFile = Join-Path $tmpDir "SHA256SUMS"
-        try {
-            Write-Info "Verifying checksum..."
-            Invoke-WebRequestCompat -Uri $checksumUrl -OutFile $checksumFile
 
-            $expectedHash = (Get-Content $checksumFile | Where-Object { $_ -match $archiveName } | ForEach-Object { ($_ -split '\s+')[0] })
-            if (-not $expectedHash) {
-                Write-Warn "Warning: Could not find checksum for $archiveName in SHA256SUMS"
-            } else {
-                $actualHash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
-                if ($actualHash -ne $expectedHash.ToLower()) {
-                    Write-Err "Error: Checksum verification failed!"
-                    Write-Err "Expected: $expectedHash"
-                    Write-Err "Got:      $actualHash"
-                    exit 1
-                }
-                Write-Info "Checksum verified."
+        if ($env:ROBOREV_SKIP_CHECKSUM) {
+            Write-Warn "Warning: Skipping checksum verification (ROBOREV_SKIP_CHECKSUM is set)"
+        } else {
+            Write-Info "Verifying checksum..."
+            try {
+                Invoke-WebRequestCompat -Uri $checksumUrl -OutFile $checksumFile
+            } catch {
+                Write-Err "Error: Could not download checksums file: $_"
+                Write-Err "Set ROBOREV_SKIP_CHECKSUM=1 to bypass verification (not recommended)"
+                exit 1
             }
-        } catch {
-            Write-Warn "Warning: Could not verify checksum: $_"
-            Write-Warn "Proceeding with installation..."
+
+            # Use exact string match (not regex) and ensure single match
+            $escapedName = [regex]::Escape($archiveName)
+            $matches = Get-Content $checksumFile | Where-Object { $_ -match "\s$escapedName$" }
+
+            if (-not $matches) {
+                Write-Err "Error: Could not find checksum for $archiveName in SHA256SUMS"
+                Write-Err "Set ROBOREV_SKIP_CHECKSUM=1 to bypass verification (not recommended)"
+                exit 1
+            }
+
+            if ($matches -is [array] -and $matches.Count -gt 1) {
+                Write-Err "Error: Multiple checksum entries found for $archiveName"
+                exit 1
+            }
+
+            $expectedHash = ($matches -split '\s+')[0]
+            $actualHash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+
+            if ($actualHash -ne $expectedHash.ToLower()) {
+                Write-Err "Error: Checksum verification failed!"
+                Write-Err "Expected: $expectedHash"
+                Write-Err "Got:      $actualHash"
+                exit 1
+            }
+            Write-Info "Checksum verified."
         }
 
         Write-Info "Extracting..."
