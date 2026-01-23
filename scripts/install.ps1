@@ -35,10 +35,29 @@ function Get-Architecture {
     }
 }
 
+function Invoke-WebRequestCompat {
+    # -UseBasicParsing is required in PowerShell 5.x but removed in 6+
+    param([string]$Uri, [string]$OutFile)
+
+    $params = @{ Uri = $Uri }
+    if ($OutFile) { $params.OutFile = $OutFile }
+
+    # Only add -UseBasicParsing for PowerShell 5.x (it's removed in 6+)
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        $params.UseBasicParsing = $true
+    }
+
+    if ($OutFile) {
+        Invoke-WebRequest @params
+    } else {
+        Invoke-RestMethod @params
+    }
+}
+
 function Get-LatestVersion {
     $url = "https://api.github.com/repos/$repo/releases/latest"
     try {
-        $response = Invoke-RestMethod -Uri $url -UseBasicParsing
+        $response = Invoke-WebRequestCompat -Uri $url
         return $response.tag_name
     } catch {
         throw "Failed to fetch latest version: $_"
@@ -77,11 +96,11 @@ function Install-Roborev {
     $arch = Get-Architecture
     Write-Info "Platform: windows/$arch"
 
-    # Currently only amd64 is built for Windows
-    if ($arch -ne 'amd64') {
-        Write-Warn "Note: Only amd64 binaries are currently available."
-        Write-Warn "Attempting to use amd64 binary (may work via emulation on ARM64)."
-        $arch = 'amd64'
+    # Handle unsupported architectures
+    if ($arch -eq '386') {
+        Write-Err "Error: 32-bit Windows is not supported."
+        Write-Err "roborev requires 64-bit Windows (amd64 or arm64)."
+        exit 1
     }
 
     $version = Get-LatestVersion
@@ -108,7 +127,32 @@ function Install-Roborev {
         $archivePath = Join-Path $tmpDir $archiveName
 
         Write-Info "Downloading $archiveName..."
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing
+        Invoke-WebRequestCompat -Uri $downloadUrl -OutFile $archivePath
+
+        # Verify checksum
+        $checksumUrl = "https://github.com/$repo/releases/download/$version/SHA256SUMS"
+        $checksumFile = Join-Path $tmpDir "SHA256SUMS"
+        try {
+            Write-Info "Verifying checksum..."
+            Invoke-WebRequestCompat -Uri $checksumUrl -OutFile $checksumFile
+
+            $expectedHash = (Get-Content $checksumFile | Where-Object { $_ -match $archiveName } | ForEach-Object { ($_ -split '\s+')[0] })
+            if (-not $expectedHash) {
+                Write-Warn "Warning: Could not find checksum for $archiveName in SHA256SUMS"
+            } else {
+                $actualHash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+                if ($actualHash -ne $expectedHash.ToLower()) {
+                    Write-Err "Error: Checksum verification failed!"
+                    Write-Err "Expected: $expectedHash"
+                    Write-Err "Got:      $actualHash"
+                    exit 1
+                }
+                Write-Info "Checksum verified."
+            }
+        } catch {
+            Write-Warn "Warning: Could not verify checksum: $_"
+            Write-Warn "Proceeding with installation..."
+        }
 
         Write-Info "Extracting..."
         # Windows 10+ has tar built-in
