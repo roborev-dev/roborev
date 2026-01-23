@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
@@ -2523,12 +2524,14 @@ func (m tuiModel) renderRespondView() string {
 			if textLinesWritten >= maxTextLines {
 				break
 			}
-			// Truncate lines that are too long (use runes to avoid breaking multi-byte characters)
-			runes := []rune(line)
-			if len(runes) > boxWidth-2 {
-				line = string(runes[:boxWidth-2])
+			// Truncate lines that are too long (use visual width for wide characters)
+			line = runewidth.Truncate(line, boxWidth-2, "")
+			// Pad based on visual width, not rune count
+			padding := boxWidth - 2 - runewidth.StringWidth(line)
+			if padding < 0 {
+				padding = 0
 			}
-			b.WriteString(fmt.Sprintf("| %-*s |\x1b[K\n", boxWidth-2, line))
+			b.WriteString(fmt.Sprintf("| %s%s |\x1b[K\n", line, strings.Repeat(" ", padding)))
 			textLinesWritten++
 		}
 	}
