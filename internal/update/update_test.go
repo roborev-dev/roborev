@@ -13,23 +13,27 @@ func TestSanitizeTarPath(t *testing.T) {
 	destDir := t.TempDir()
 
 	tests := []struct {
-		name    string
-		path    string
-		wantErr bool
+		name      string
+		path      string
+		wantErr   bool
+		skipOnWin bool // Skip on Windows (e.g., Unix-style absolute paths)
 	}{
-		{"normal file", "roborev", false},
-		{"nested file", "bin/roborev", false},
-		{"absolute path Unix", "/etc/passwd", true},
-		{"path traversal with ..", "../../../etc/passwd", true},
-		{"path traversal mid-path", "foo/../../../etc/passwd", true},
-		{"hidden traversal", "foo/bar/../../..", true},
-		{"dot only", ".", false},
-		{"double dot only", "..", true},
-		{"empty path", "", false},
+		{"normal file", "roborev", false, false},
+		{"nested file", "bin/roborev", false, false},
+		{"absolute path Unix", "/etc/passwd", true, true}, // Not absolute on Windows
+		{"path traversal with ..", "../../../etc/passwd", true, false},
+		{"path traversal mid-path", "foo/../../../etc/passwd", true, false},
+		{"hidden traversal", "foo/bar/../../..", true, false},
+		{"dot only", ".", false, false},
+		{"double dot only", "..", true, false},
+		{"empty path", "", false, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.skipOnWin && runtime.GOOS == "windows" {
+				t.Skip("Unix-style absolute path not applicable on Windows")
+			}
 			_, err := sanitizeTarPath(destDir, tt.path)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("sanitizeTarPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
