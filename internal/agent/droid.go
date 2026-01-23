@@ -79,8 +79,9 @@ func (a *DroidAgent) buildArgs(repoPath, outputFile, prompt string, agenticMode 
 		args = append(args, "--reasoning-effort", effort)
 	}
 
-	// Add the prompt as the final argument
-	args = append(args, prompt)
+	// Add -- to stop flag parsing, then the prompt as the final argument
+	// This prevents prompts starting with "-" from being parsed as flags
+	args = append(args, "--", prompt)
 
 	return args
 }

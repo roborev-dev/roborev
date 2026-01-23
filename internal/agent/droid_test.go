@@ -189,6 +189,42 @@ exit 1
 	}
 }
 
+func TestDroidBuildArgsPromptWithDash(t *testing.T) {
+	a := NewDroidAgent("droid")
+
+	// Test that prompts starting with "-" are passed as data, not flags
+	// The "--" terminator must appear before the prompt
+	prompt := "-o /tmp/malicious --auto high"
+	args := a.buildArgs("/repo", "/tmp/out", prompt, false)
+
+	// Find the position of "--" and the prompt
+	dashDashIdx := -1
+	promptIdx := -1
+	for i, arg := range args {
+		if arg == "--" {
+			dashDashIdx = i
+		}
+		if arg == prompt {
+			promptIdx = i
+		}
+	}
+
+	if dashDashIdx == -1 {
+		t.Fatalf("expected '--' terminator in args, got %v", args)
+	}
+	if promptIdx == -1 {
+		t.Fatalf("expected prompt in args, got %v", args)
+	}
+	if dashDashIdx >= promptIdx {
+		t.Fatalf("expected '--' before prompt, got %v", args)
+	}
+
+	// Verify the prompt is passed exactly as-is (not split or interpreted)
+	if args[len(args)-1] != prompt {
+		t.Fatalf("expected prompt as last arg, got %v", args)
+	}
+}
+
 func TestDroidReviewAgenticModeFromGlobal(t *testing.T) {
 	prevAllowUnsafe := AllowUnsafeAgents()
 	SetAllowUnsafeAgents(true)
