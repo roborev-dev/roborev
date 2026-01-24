@@ -1304,6 +1304,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.currentView = tuiViewReview
 					m.reviewScroll = 0
 					return m, nil
+				} else {
+					// Queued, running, or canceled - show flash notification
+					var status string
+					switch job.Status {
+					case storage.JobStatusQueued:
+						status = "queued"
+					case storage.JobStatusRunning:
+						status = "in progress"
+					case storage.JobStatusCanceled:
+						status = "canceled"
+					default:
+						status = string(job.Status)
+					}
+					m.flashMessage = fmt.Sprintf("Job #%d is %s — no review yet", job.ID, status)
+					m.flashExpiresAt = time.Now().Add(2 * time.Second)
+					m.flashView = tuiViewQueue
+					return m, nil
 				}
 			}
 
@@ -1500,6 +1517,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
 					// Need to fetch review first, then copy
 					return m, m.fetchReviewAndCopy(job.ID)
+				} else {
+					// Queued, running, or canceled - show flash notification
+					var status string
+					switch job.Status {
+					case storage.JobStatusQueued:
+						status = "queued"
+					case storage.JobStatusRunning:
+						status = "in progress"
+					case storage.JobStatusCanceled:
+						status = "canceled"
+					default:
+						status = string(job.Status)
+					}
+					m.flashMessage = fmt.Sprintf("Job #%d is %s — no review to copy", job.ID, status)
+					m.flashExpiresAt = time.Now().Add(2 * time.Second)
+					m.flashView = tuiViewQueue
+					return m, nil
 				}
 			}
 
