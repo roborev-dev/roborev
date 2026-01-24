@@ -120,17 +120,19 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Compute SHA256 for macOS binaries
+      - name: Compute SHA256 for all binaries
         id: sha256
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-          INTEL_SHA=$(sha256sum artifacts/roborev_${VERSION}_darwin_amd64.tar.gz | cut -d' ' -f1)
-          ARM64_SHA=$(sha256sum artifacts/roborev_${VERSION}_darwin_arm64.tar.gz | cut -d' ' -f1)
+          # macOS
+          echo "darwin_amd64=$(sha256sum artifacts/roborev_${VERSION}_darwin_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "darwin_arm64=$(sha256sum artifacts/roborev_${VERSION}_darwin_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
-          echo "intel_sha256=$INTEL_SHA" >> $GITHUB_OUTPUT
-          echo "arm64_sha256=$ARM64_SHA" >> $GITHUB_OUTPUT
+          # Linux
+          echo "linux_amd64=$(sha256sum artifacts/roborev_${VERSION}_linux_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "linux_arm64=$(sha256sum artifacts/roborev_${VERSION}_linux_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Checkout tap repository
         uses: actions/checkout@v4
@@ -140,28 +142,110 @@ jobs:
           path: homebrew-taps
 
       - name: Update formula
+        env:
+          VERSION: ${{ steps.sha256.outputs.version }}
+          DARWIN_AMD64_SHA: ${{ steps.sha256.outputs.darwin_amd64 }}
+          DARWIN_ARM64_SHA: ${{ steps.sha256.outputs.darwin_arm64 }}
+          LINUX_AMD64_SHA: ${{ steps.sha256.outputs.linux_amd64 }}
+          LINUX_ARM64_SHA: ${{ steps.sha256.outputs.linux_arm64 }}
         run: |
           cd homebrew-taps
-          VERSION=${{ steps.sha256.outputs.version }}
-          INTEL_SHA=${{ steps.sha256.outputs.intel_sha256 }}
-          ARM64_SHA=${{ steps.sha256.outputs.arm64_sha256 }}
 
-          # Update version
-          sed -i "s/version \".*\"/version \"$VERSION\"/" Formula/roborev.rb
+          # Use Ruby to update the formula (more robust than sed for nested blocks)
+          ruby -i -e '
+            content = File.read("Formula/roborev.rb")
 
-          # Update Intel SHA256
-          sed -i "/Hardware::CPU.intel?/,/sha256/{s/sha256 \".*\"/sha256 \"$INTEL_SHA\"/}" Formula/roborev.rb
+            # Update version
+            content.gsub!(/version "[^"]*"/, %Q{version "#{ENV["VERSION"]}"})
 
-          # Update ARM64 SHA256
-          sed -i "/Hardware::CPU.arm?/,/sha256/{s/sha256 \".*\"/sha256 \"$ARM64_SHA\"/}" Formula/roborev.rb
+            # Track which sha256 values we update
+            in_macos = false
+            in_linux = false
+            in_intel = false
+            in_arm = false
+            updated = { darwin_amd64: false, darwin_arm64: false, linux_amd64: false, linux_arm64: false }
 
+            lines = content.lines.map do |line|
+              # Track block context
+              in_macos = true if line.include?("on_macos do")
+              in_macos = false if in_macos && line.strip == "end" && !in_intel && !in_arm
+              in_linux = true if line.include?("on_linux do")
+              in_linux = false if in_linux && line.strip == "end" && !in_intel && !in_arm
+
+              in_intel = true if line.include?("Hardware::CPU.intel?")
+              in_arm = true if line.include?("Hardware::CPU.arm?")
+
+              if line.include?("sha256")
+                if in_macos && in_intel
+                  line = line.gsub(/sha256 "[^"]*"/, %Q{sha256 "#{ENV["DARWIN_AMD64_SHA"]}"})
+                  updated[:darwin_amd64] = true
+                  in_intel = false
+                elsif in_macos && in_arm
+                  line = line.gsub(/sha256 "[^"]*"/, %Q{sha256 "#{ENV["DARWIN_ARM64_SHA"]}"})
+                  updated[:darwin_arm64] = true
+                  in_arm = false
+                elsif in_linux && in_intel
+                  line = line.gsub(/sha256 "[^"]*"/, %Q{sha256 "#{ENV["LINUX_AMD64_SHA"]}"})
+                  updated[:linux_amd64] = true
+                  in_intel = false
+                elsif in_linux && in_arm
+                  line = line.gsub(/sha256 "[^"]*"/, %Q{sha256 "#{ENV["LINUX_ARM64_SHA"]}"})
+                  updated[:linux_arm64] = true
+                  in_arm = false
+                end
+              end
+              line
+            end
+
+            # Verify all checksums were updated
+            missing = updated.select { |k, v| !v }.keys
+            unless missing.empty?
+              STDERR.puts "ERROR: Failed to update sha256 for: #{missing.join(", ")}"
+              exit 1
+            end
+
+            File.write("Formula/roborev.rb", lines.join)
+            puts "Successfully updated formula to v#{ENV["VERSION"]}"
+          ' Formula/roborev.rb
+
+          echo "--- Updated formula ---"
           cat Formula/roborev.rb
+
+      - name: Verify checksums in formula
+        env:
+          DARWIN_AMD64_SHA: ${{ steps.sha256.outputs.darwin_amd64 }}
+          DARWIN_ARM64_SHA: ${{ steps.sha256.outputs.darwin_arm64 }}
+          LINUX_AMD64_SHA: ${{ steps.sha256.outputs.linux_amd64 }}
+          LINUX_ARM64_SHA: ${{ steps.sha256.outputs.linux_arm64 }}
+        run: |
+          cd homebrew-taps
+          ERRORS=0
+
+          for sha in "$DARWIN_AMD64_SHA" "$DARWIN_ARM64_SHA" "$LINUX_AMD64_SHA" "$LINUX_ARM64_SHA"; do
+            if ! grep -q "sha256 \"$sha\"" Formula/roborev.rb; then
+              echo "ERROR: sha256 $sha not found in formula"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          if [ $ERRORS -gt 0 ]; then
+            echo "Checksum verification failed"
+            exit 1
+          fi
+          echo "All checksums verified"
 
       - name: Commit and push
         run: |
           cd homebrew-taps
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if there are changes to commit (handles re-runs)
+          if git diff --quiet Formula/roborev.rb; then
+            echo "No changes to formula, skipping commit"
+            exit 0
+          fi
+
           git add Formula/roborev.rb
           git commit -m "Update roborev to v${{ steps.sha256.outputs.version }}"
           git push

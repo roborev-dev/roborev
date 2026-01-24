@@ -24,7 +24,12 @@ faster with immediate critical feedback on your agents' work.
 
 ## Installation
 
-**macOS / Linux:**
+**Homebrew (macOS / Linux):**
+```bash
+brew install wesm/taps/roborev
+```
+
+**Shell Script (macOS / Linux):**
 ```bash
 curl -fsSL https://roborev.io/install.sh | bash
 ```
