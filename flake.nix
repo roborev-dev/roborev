@@ -15,7 +15,7 @@
         packages = {
           default = pkgs.buildGoModule {
             pname = "roborev";
-            version = "0.15.2";
+            version = "0.16.0";
 
             src = ./.;
 
