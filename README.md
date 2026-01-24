@@ -10,7 +10,7 @@ Continuous, non-invasive background code review using AI agents
 (Claude Code, Codex, Gemini, Copilot, OpenCode). Work smarter and
 faster with immediate critical feedback on your agents' work.
 
-<video src="https://www.roborev.io/tui-hero.webm" autoplay loop muted playsinline width="100%"></video>
+https://github.com/user-attachments/assets/7789eb79-8176-4f6b-a9db-f3e4a328ceb9
 
 ## Features
 
@@ -53,7 +53,7 @@ git commit -m "..."   # Reviews happen automatically
 roborev tui           # View reviews in interactive UI
 ```
 
-<video src="https://www.roborev.io/quickstart-demo.webm" autoplay loop muted playsinline width="100%"></video>
+https://github.com/user-attachments/assets/5657b98c-de24-41d4-99f2-bf1aeae34c63
 
 ## Commands
 
