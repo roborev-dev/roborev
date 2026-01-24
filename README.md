@@ -24,14 +24,14 @@ https://github.com/user-attachments/assets/7789eb79-8176-4f6b-a9db-f3e4a328ceb9
 
 ## Installation
 
-**Homebrew (macOS / Linux):**
-```bash
-brew install roborev-dev/tap/roborev
-```
-
 **Shell Script (macOS / Linux):**
 ```bash
 curl -fsSL https://roborev.io/install.sh | bash
+```
+
+**Homebrew (macOS / Linux):**
+```bash
+brew install roborev-dev/tap/roborev
 ```
 
 **Windows (PowerShell):**
