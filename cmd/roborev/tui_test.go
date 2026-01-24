@@ -1371,6 +1371,233 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 	}
 }
 
+func TestTUIFilterClearWithEscLayered(t *testing.T) {
+	// Test that escape clears filters one layer at a time:
+	// 1. First escape clears project filter (keeps hide-addressed)
+	// 2. Second escape clears hide-addressed
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.hideAddressed = true
+
+	// First Esc: clear project filter, keep hide-addressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if len(m2.activeRepoFilter) != 0 {
+		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
+	}
+	if !m2.hideAddressed {
+		t.Error("Expected hideAddressed to remain true after first escape")
+	}
+
+	// Second Esc: clear hide-addressed
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m3 := updated.(tuiModel)
+
+	if m3.hideAddressed {
+		t.Error("Expected hideAddressed to be false after second escape")
+	}
+}
+
+func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
+	// Test that escape clears hide-addressed when no project filter is active
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.hideAddressed = true
+	// No project filter active
+
+	// Esc should clear hide-addressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if m2.hideAddressed {
+		t.Error("Expected hideAddressed to be false after escape")
+	}
+	if m2.selectedIdx != -1 {
+		t.Errorf("Expected selectedIdx=-1 (invalidated pending refetch), got %d", m2.selectedIdx)
+	}
+}
+
+func TestTUIFilterEscapeWhileLoadingQueuesPendingRefetch(t *testing.T) {
+	// Test that escape while loading sets pendingRefetch instead of starting new fetch
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.loadingJobs = true // Already loading
+
+	// Press Esc while loading - should set pendingRefetch, not start new fetch
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if len(m2.activeRepoFilter) != 0 {
+		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
+	}
+	if !m2.pendingRefetch {
+		t.Error("Expected pendingRefetch to be true when escape pressed while loading")
+	}
+	if cmd != nil {
+		t.Error("Expected no command when escape pressed while loading (should queue refetch instead)")
+	}
+
+	// Simulate jobs fetch completing - should trigger another fetch
+	updated, cmd = m2.Update(tuiJobsMsg{jobs: []storage.ReviewJob{{ID: 2}}, hasMore: false})
+	m3 := updated.(tuiModel)
+
+	if m3.pendingRefetch {
+		t.Error("Expected pendingRefetch to be cleared after jobs message")
+	}
+	if !m3.loadingJobs {
+		t.Error("Expected loadingJobs to be true (refetch triggered)")
+	}
+	if cmd == nil {
+		t.Error("Expected a fetch command after jobs message with pendingRefetch")
+	}
+}
+
+func TestTUIFilterEscapeWhileLoadingErrorTriggersRefetch(t *testing.T) {
+	// Test that pendingRefetch triggers a retry even when fetch fails
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.loadingJobs = true
+	m.pendingRefetch = true // Simulates escape pressed while loading
+
+	// Simulate jobs fetch failing
+	updated, cmd := m.Update(tuiJobsErrMsg{err: fmt.Errorf("network error")})
+	m2 := updated.(tuiModel)
+
+	if m2.pendingRefetch {
+		t.Error("Expected pendingRefetch to be cleared after error")
+	}
+	if !m2.loadingJobs {
+		t.Error("Expected loadingJobs to be true (refetch triggered after error)")
+	}
+	if cmd == nil {
+		t.Error("Expected a fetch command after error with pendingRefetch")
+	}
+	if m2.err == nil {
+		t.Error("Expected error to be set")
+	}
+}
+
+func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
+	// Test that escape while pagination is in flight queues refetch and
+	// discards stale append response
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.loadingMore = true  // Pagination in flight
+	m.loadingJobs = false // Not a full refresh
+
+	// Press Esc while pagination loading - should set pendingRefetch
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if len(m2.activeRepoFilter) != 0 {
+		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
+	}
+	if !m2.pendingRefetch {
+		t.Error("Expected pendingRefetch to be true when escape pressed during pagination")
+	}
+	if cmd != nil {
+		t.Error("Expected no command when escape pressed while pagination in flight")
+	}
+
+	// Simulate stale pagination response arriving - should be discarded and trigger fresh fetch
+	updated, cmd = m2.Update(tuiJobsMsg{
+		jobs:    []storage.ReviewJob{{ID: 99, RepoName: "stale"}},
+		hasMore: true,
+		append:  true, // This is a pagination append
+	})
+	m3 := updated.(tuiModel)
+
+	if m3.pendingRefetch {
+		t.Error("Expected pendingRefetch to be cleared")
+	}
+	if !m3.loadingJobs {
+		t.Error("Expected loadingJobs to be true (fresh fetch triggered)")
+	}
+	if cmd == nil {
+		t.Error("Expected a fetch command after stale append discarded")
+	}
+	// Stale data should NOT have been appended
+	if len(m3.jobs) > 0 {
+		for _, job := range m3.jobs {
+			if job.ID == 99 {
+				t.Error("Stale pagination data should have been discarded, not appended")
+			}
+		}
+	}
+}
+
+func TestTUIFilterEscapeWhilePaginationErrorTriggersRefetch(t *testing.T) {
+	// Test that pendingRefetch triggers a retry when pagination fails
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.loadingMore = true
+	m.loadingJobs = false
+	m.pendingRefetch = true // Simulates escape pressed while pagination loading
+
+	// Simulate pagination fetch failing
+	updated, cmd := m.Update(tuiPaginationErrMsg{err: fmt.Errorf("network error")})
+	m2 := updated.(tuiModel)
+
+	if m2.pendingRefetch {
+		t.Error("Expected pendingRefetch to be cleared after pagination error")
+	}
+	if !m2.loadingJobs {
+		t.Error("Expected loadingJobs to be true (refetch triggered after pagination error)")
+	}
+	if m2.loadingMore {
+		t.Error("Expected loadingMore to be false after pagination error")
+	}
+	if cmd == nil {
+		t.Error("Expected a fetch command after pagination error with pendingRefetch")
+	}
+	if m2.err == nil {
+		t.Error("Expected error to be set")
+	}
+}
+
 func TestTUIFilterEscapeCloses(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
@@ -4614,6 +4841,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{} // Empty queue
+	m.loadingJobs = false          // Not loading, so should show "No jobs in queue"
 
 	output := m.View()
 
@@ -4641,6 +4869,7 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
 	m.activeRepoFilter = []string{"/some/repo"} // Filter active but no matching jobs
+	m.loadingJobs = false                       // Not loading, so should show "No jobs matching filters"
 
 	output := m.View()
 
@@ -4652,6 +4881,63 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 	// Should contain the filter message
 	if !strings.Contains(output, "No jobs matching filters") {
 		t.Error("Expected 'No jobs matching filters' message in output")
+	}
+}
+
+func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
+	// Test that loading state shows "Loading..." instead of "No jobs" messages
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{}
+	m.loadingJobs = true // Loading in progress
+
+	output := m.View()
+
+	if !strings.Contains(output, "Loading...") {
+		t.Error("Expected 'Loading...' message when loadingJobs is true")
+	}
+	if strings.Contains(output, "No jobs in queue") {
+		t.Error("Should not show 'No jobs in queue' while loading")
+	}
+	if strings.Contains(output, "No jobs matching filters") {
+		t.Error("Should not show 'No jobs matching filters' while loading")
+	}
+}
+
+func TestTUILoadingShowsForPendingRefetch(t *testing.T) {
+	// Test that "Loading..." shows when pendingRefetch is set (e.g., after escape during pagination)
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{} // Empty after filter clear
+	m.loadingJobs = false
+	m.loadingMore = false
+	m.pendingRefetch = true // Refetch queued but not yet started
+
+	output := m.View()
+
+	if !strings.Contains(output, "Loading...") {
+		t.Error("Expected 'Loading...' message when pendingRefetch is true")
+	}
+	if strings.Contains(output, "No jobs in queue") {
+		t.Error("Should not show 'No jobs in queue' while refetch pending")
+	}
+}
+
+func TestTUILoadingShowsForLoadingMore(t *testing.T) {
+	// Test that "Loading..." shows when loadingMore is set on empty queue
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{} // Empty after filter clear
+	m.loadingJobs = false
+	m.loadingMore = true // Pagination in flight
+
+	output := m.View()
+
+	if !strings.Contains(output, "Loading...") {
+		t.Error("Expected 'Loading...' message when loadingMore is true")
 	}
 }
 

@@ -99,6 +99,7 @@ type tuiModel struct {
 	hasMore        bool // true if there are more jobs to load
 	loadingMore    bool // true if currently loading more jobs (pagination)
 	loadingJobs    bool // true if currently loading jobs (full refresh)
+	pendingRefetch bool // true if filter changed while loading, needs refetch when done
 	heightDetected bool // true after first WindowSizeMsg (real terminal height known)
 
 	// Filter modal state
@@ -1588,16 +1589,34 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "esc":
-			if m.currentView == tuiViewQueue && (len(m.activeRepoFilter) > 0 || m.hideAddressed) {
-				// Clear filters and refetch all jobs
+			if m.currentView == tuiViewQueue && len(m.activeRepoFilter) > 0 {
+				// Clear project filter first (keep hide-addressed if active)
 				m.activeRepoFilter = nil
-				m.hideAddressed = false
-				// Reset to default view (clear jobs so fetchJobs uses appropriate limit)
 				m.jobs = nil
 				m.hasMore = false
-				// Invalidate selection until refetch completes
 				m.selectedIdx = -1
 				m.selectedJobID = 0
+				// If already loading (full refresh or pagination), queue a refetch
+				// to avoid out-of-order responses mixing stale data
+				if m.loadingJobs || m.loadingMore {
+					m.pendingRefetch = true
+					return m, nil
+				}
+				m.loadingJobs = true
+				return m, m.fetchJobs()
+			} else if m.currentView == tuiViewQueue && m.hideAddressed {
+				// Clear hide-addressed filter (no project filter active)
+				m.hideAddressed = false
+				m.jobs = nil
+				m.hasMore = false
+				m.selectedIdx = -1
+				m.selectedJobID = 0
+				// If already loading (full refresh or pagination), queue a refetch
+				// to avoid out-of-order responses mixing stale data
+				if m.loadingJobs || m.loadingMore {
+					m.pendingRefetch = true
+					return m, nil
+				}
 				m.loadingJobs = true
 				return m, m.fetchJobs()
 			} else if m.currentView == tuiViewReview {
@@ -1652,6 +1671,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.append {
 			m.loadingJobs = false
 		}
+
+		// If filter changed while this fetch was in flight, discard stale data
+		// and trigger a fresh fetch with the current filter state
+		if m.pendingRefetch {
+			m.pendingRefetch = false
+			m.loadingJobs = true
+			return m, m.fetchJobs()
+		}
+
 		m.hasMore = msg.hasMore
 
 		// Update display name cache for new jobs
@@ -1932,9 +1960,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		m.loadingJobs = false // Clear loading state so refreshes can resume
 
+		// If filter changed while loading, retry immediately with current filter state
+		if m.pendingRefetch {
+			m.pendingRefetch = false
+			m.loadingJobs = true
+			return m, m.fetchJobs()
+		}
+
 	case tuiPaginationErrMsg:
 		m.err = msg.err
 		m.loadingMore = false // Clear loading state so user can retry pagination
+
+		// If filter changed while pagination was in flight, trigger fresh fetch
+		if m.pendingRefetch {
+			m.pendingRefetch = false
+			m.loadingJobs = true
+			return m, m.fetchJobs()
+		}
 
 	case tuiErrMsg:
 		m.err = msg
@@ -2022,7 +2064,10 @@ func (m tuiModel) renderQueueView() string {
 	end := 0
 
 	if len(visibleJobList) == 0 {
-		if len(m.activeRepoFilter) > 0 || m.hideAddressed {
+		if m.loadingJobs || m.loadingMore || m.pendingRefetch {
+			b.WriteString("Loading...")
+			b.WriteString("\x1b[K\n")
+		} else if len(m.activeRepoFilter) > 0 || m.hideAddressed {
 			b.WriteString("No jobs matching filters")
 			b.WriteString("\x1b[K\n")
 		} else {
