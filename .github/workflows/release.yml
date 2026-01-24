@@ -126,6 +126,17 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+          # Verify all expected artifacts exist
+          for platform in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
+            file="artifacts/roborev_${VERSION}_${platform}.tar.gz"
+            if [ ! -f "$file" ]; then
+              echo "ERROR: Missing artifact: $file"
+              echo "Available artifacts:"
+              ls -la artifacts/
+              exit 1
+            fi
+          done
+
           # macOS
           echo "darwin_amd64=$(sha256sum artifacts/roborev_${VERSION}_darwin_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
           echo "darwin_arm64=$(sha256sum artifacts/roborev_${VERSION}_darwin_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
@@ -158,42 +169,61 @@ jobs:
             # Update version
             content.gsub!(/version "[^"]*"/, %Q{version "#{ENV["VERSION"]}"})
 
-            # Track which sha256 values we update
-            in_macos = false
-            in_linux = false
+            # Track block depth for proper nesting
+            # Formula structure: on_macos do / on_linux do > if Hardware::CPU.intel?/arm? > sha256
+            macos_depth = 0
+            linux_depth = 0
             in_intel = false
             in_arm = false
             updated = { darwin_amd64: false, darwin_arm64: false, linux_amd64: false, linux_arm64: false }
 
             lines = content.lines.map do |line|
-              # Track block context
-              in_macos = true if line.include?("on_macos do")
-              in_macos = false if in_macos && line.strip == "end" && !in_intel && !in_arm
-              in_linux = true if line.include?("on_linux do")
-              in_linux = false if in_linux && line.strip == "end" && !in_intel && !in_arm
+              stripped = line.strip
 
-              in_intel = true if line.include?("Hardware::CPU.intel?")
-              in_arm = true if line.include?("Hardware::CPU.arm?")
+              # Track on_macos/on_linux blocks by depth
+              if line.include?("on_macos do")
+                macos_depth = 1
+              elsif line.include?("on_linux do")
+                linux_depth = 1
+              end
 
-              if line.include?("sha256")
-                if in_macos && in_intel
+              # Track CPU architecture blocks
+              if line.include?("Hardware::CPU.intel?")
+                in_intel = true
+              elsif line.include?("Hardware::CPU.arm?")
+                in_arm = true
+              end
+
+              # Update sha256 based on current context
+              if line.include?("sha256") && line.include?("\"")
+                if macos_depth > 0 && in_intel
                   line = line.gsub(/sha256 "[^"]*"/, %Q{sha256 "#{ENV["DARWIN_AMD64_SHA"]}"})
                   updated[:darwin_amd64] = true
-                  in_intel = false
-                elsif in_macos && in_arm
+                elsif macos_depth > 0 && in_arm
                   line = line.gsub(/sha256 "[^"]*"/, %Q{sha256 "#{ENV["DARWIN_ARM64_SHA"]}"})
                   updated[:darwin_arm64] = true
-                  in_arm = false
-                elsif in_linux && in_intel
+                elsif linux_depth > 0 && in_intel
                   line = line.gsub(/sha256 "[^"]*"/, %Q{sha256 "#{ENV["LINUX_AMD64_SHA"]}"})
                   updated[:linux_amd64] = true
-                  in_intel = false
-                elsif in_linux && in_arm
+                elsif linux_depth > 0 && in_arm
                   line = line.gsub(/sha256 "[^"]*"/, %Q{sha256 "#{ENV["LINUX_ARM64_SHA"]}"})
                   updated[:linux_arm64] = true
-                  in_arm = false
                 end
               end
+
+              # Track end statements - reset CPU flags on end, decrement block depth
+              if stripped == "end"
+                if in_intel
+                  in_intel = false
+                elsif in_arm
+                  in_arm = false
+                elsif macos_depth > 0
+                  macos_depth = 0
+                elsif linux_depth > 0
+                  linux_depth = 0
+                end
+              end
+
               line
             end
 
