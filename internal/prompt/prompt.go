@@ -24,14 +24,15 @@ const SystemPromptSingle = `You are a code reviewer. Review the git commit shown
 
 Do not review the commit message itself - focus only on the code changes in the diff.
 
-After reviewing against all criteria above:
+After reviewing, provide:
 
-If you find issues, list them with:
-- Severity (high/medium/low)
-- File and line reference where possible
-- A brief explanation of the problem and suggested fix
+1. A brief summary of what the commit does
+2. Any issues found, listed with:
+   - Severity (high/medium/low)
+   - File and line reference where possible
+   - A brief explanation of the problem and suggested fix
 
-If you find no issues, state "No issues found." then briefly summarize what the commit does.`
+If you find no issues, state "No issues found." after the summary.`
 
 // SystemPromptDirty is the base instruction for reviewing uncommitted (dirty) changes
 const SystemPromptDirty = `You are a code reviewer. Review the following uncommitted changes for:
@@ -42,14 +43,15 @@ const SystemPromptDirty = `You are a code reviewer. Review the following uncommi
 4. **Regressions**: Changes that might break existing functionality
 5. **Code quality**: Duplication that should be refactored, overly complex logic, unclear naming
 
-After reviewing against all criteria above:
+After reviewing, provide:
 
-If you find issues, list them with:
-- Severity (high/medium/low)
-- File and line reference where possible
-- A brief explanation of the problem and suggested fix
+1. A brief summary of what the changes do
+2. Any issues found, listed with:
+   - Severity (high/medium/low)
+   - File and line reference where possible
+   - A brief explanation of the problem and suggested fix
 
-If you find no issues, state "No issues found." then briefly summarize what the changes do.`
+If you find no issues, state "No issues found." after the summary.`
 
 // SystemPromptRange is the base instruction for commit range reviews
 const SystemPromptRange = `You are a code reviewer. Review the git commit range shown below for:
@@ -62,14 +64,15 @@ const SystemPromptRange = `You are a code reviewer. Review the git commit range 
 
 Do not review the commit message itself - focus only on the code changes in the diff.
 
-After reviewing against all criteria above:
+After reviewing, provide:
 
-If you find issues, list them with:
-- Severity (high/medium/low)
-- File and line reference where possible
-- A brief explanation of the problem and suggested fix
+1. A brief summary of what the commits do
+2. Any issues found, listed with:
+   - Severity (high/medium/low)
+   - File and line reference where possible
+   - A brief explanation of the problem and suggested fix
 
-If you find no issues, state "No issues found." then briefly summarize what the commits do.`
+If you find no issues, state "No issues found." after the summary.`
 
 // PreviousReviewsHeader introduces the previous reviews section
 const PreviousReviewsHeader = `
@@ -120,20 +123,20 @@ func NewBuilder(db *storage.DB) *Builder {
 }
 
 // Build constructs a review prompt for a commit or range with context from previous reviews
-func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int) (string, error) {
+func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int, agentName string) (string, error) {
 	if git.IsRange(gitRef) {
-		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount)
+		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName)
 	}
-	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount)
+	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName)
 }
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
 // The diff is provided directly since it was captured at enqueue time.
-func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int) (string, error) {
+func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int, agentName string) (string, error) {
 	var sb strings.Builder
 
 	// Start with system prompt for dirty changes
-	sb.WriteString(SystemPromptDirty)
+	sb.WriteString(getSystemPrompt(agentName, "dirty"))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -188,11 +191,11 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
-func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int) (string, error) {
+func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName string) (string, error) {
 	var sb strings.Builder
 
 	// Start with system prompt
-	sb.WriteString(SystemPromptSingle)
+	sb.WriteString(getSystemPrompt(agentName, "review"))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -265,11 +268,11 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 }
 
 // buildRangePrompt constructs a prompt for a commit range
-func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int) (string, error) {
+func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName string) (string, error) {
 	var sb strings.Builder
 
 	// Start with system prompt for ranges
-	sb.WriteString(SystemPromptRange)
+	sb.WriteString(getSystemPrompt(agentName, "range"))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -456,9 +459,9 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 }
 
 // BuildSimple constructs a simpler prompt without database context
-func BuildSimple(repoPath, sha string) (string, error) {
+func BuildSimple(repoPath, sha, agentName string) (string, error) {
 	b := &Builder{}
-	return b.Build(repoPath, sha, 0, 0)
+	return b.Build(repoPath, sha, 0, 0, agentName)
 }
 
 // SystemPromptAddress is the instruction for addressing review findings
@@ -505,7 +508,7 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 	var sb strings.Builder
 
 	// System prompt
-	sb.WriteString(SystemPromptAddress)
+	sb.WriteString(getSystemPrompt(review.Agent, "address"))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured

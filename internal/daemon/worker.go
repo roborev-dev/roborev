@@ -260,10 +260,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reviewPrompt = job.Prompt
 	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
-		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount)
+		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent)
 	} else {
 		// Normal job - build prompt from git ref
-		reviewPrompt, err = wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount)
+		reviewPrompt, err = wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent)
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)

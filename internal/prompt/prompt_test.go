@@ -60,7 +60,7 @@ func TestBuildPromptWithoutContext(t *testing.T) {
 	targetSHA := commits[len(commits)-1]
 
 	// Build prompt without database (no previous reviews)
-	prompt, err := BuildSimple(repoPath, targetSHA)
+	prompt, err := BuildSimple(repoPath, targetSHA, "")
 	if err != nil {
 		t.Fatalf("BuildSimple failed: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestBuildPromptWithPreviousReviews(t *testing.T) {
 
 	// Build prompt with 5 previous commits context
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 5)
+	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 5, "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 
 	// Build prompt for commit 6 with context from previous 5 commits
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 5)
+	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 5, "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestBuildPromptWithNoParentCommits(t *testing.T) {
 
 	// Build prompt - should work even with no parent commits
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(tmpDir, sha, 0, 5)
+	prompt, err := builder.Build(tmpDir, sha, 0, 5, "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestPromptContainsExpectedFormat(t *testing.T) {
 	db.CompleteJob(job.ID, "test", "prompt", "Found 1 issue:\n1. pkg/cache/store.go:112 - Race condition")
 
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 3)
+	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 3, "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -386,7 +386,7 @@ All public APIs must have documentation comments.
 	}
 
 	// Build prompt without database
-	prompt, err := BuildSimple(repoPath, targetSHA)
+	prompt, err := BuildSimple(repoPath, targetSHA, "")
 	if err != nil {
 		t.Fatalf("BuildSimple failed: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestBuildPromptWithoutProjectGuidelines(t *testing.T) {
 	}
 
 	// Build prompt
-	prompt, err := BuildSimple(repoPath, targetSHA)
+	prompt, err := BuildSimple(repoPath, targetSHA, "")
 	if err != nil {
 		t.Fatalf("BuildSimple failed: %v", err)
 	}
@@ -438,10 +438,8 @@ func TestBuildPromptNoConfig(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 	targetSHA := commits[len(commits)-1]
 
-	// No .roborev.toml at all
-
 	// Build prompt
-	prompt, err := BuildSimple(repoPath, targetSHA)
+	prompt, err := BuildSimple(repoPath, targetSHA, "")
 	if err != nil {
 		t.Fatalf("BuildSimple failed: %v", err)
 	}
@@ -472,7 +470,7 @@ func TestBuildPromptGuidelinesOrder(t *testing.T) {
 	}
 
 	// Build prompt
-	prompt, err := BuildSimple(repoPath, targetSHA)
+	prompt, err := BuildSimple(repoPath, targetSHA, "")
 	if err != nil {
 		t.Fatalf("BuildSimple failed: %v", err)
 	}
@@ -541,7 +539,7 @@ func TestBuildPromptWithPreviousAttempts(t *testing.T) {
 
 	// Build prompt - should include previous attempts for the same commit
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, targetSHA, repo.ID, 0)
+	prompt, err := builder.Build(repoPath, targetSHA, repo.ID, 0, "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -595,7 +593,7 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 
 	// Build prompt for a new review of the same commit
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, targetSHA, repo.ID, 0)
+	prompt, err := builder.Build(repoPath, targetSHA, repo.ID, 0, "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -620,5 +618,29 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 
 	if !strings.Contains(prompt, "developer") {
 		t.Error("Prompt should contain the responder name")
+	}
+}
+
+func TestBuildPromptWithGeminiAgent(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+	targetSHA := commits[len(commits)-1]
+
+	// Build prompt for Gemini agent
+	prompt, err := BuildSimple(repoPath, targetSHA, "gemini")
+	if err != nil {
+		t.Fatalf("BuildSimple failed: %v", err)
+	}
+
+	// Should contain Gemini-specific instructions
+	if !strings.Contains(prompt, "extremely concise and professional") {
+		t.Error("Prompt should contain Gemini-specific instruction")
+	}
+	if !strings.Contains(prompt, "Summary") {
+		t.Error("Prompt should contain 'Summary' section")
+	}
+
+	// Should NOT contain default system prompt text
+	if strings.Contains(prompt, "Brief explanation of the problem and suggested fix") {
+		t.Error("Prompt should not contain default system prompt text")
 	}
 }
