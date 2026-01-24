@@ -5089,8 +5089,9 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 		t.Errorf("Expected no error, got %v", result.err)
 	}
 
-	if mock.lastText != "This is the review content to copy" {
-		t.Errorf("Expected clipboard to contain review content, got %q", mock.lastText)
+	expectedContent := "Review #1\n\nThis is the review content to copy"
+	if mock.lastText != expectedContent {
+		t.Errorf("Expected clipboard to contain review with header, got %q", mock.lastText)
 	}
 }
 
@@ -5265,7 +5266,7 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	m := newTuiModel(ts.URL)
 
 	// Execute fetchReviewAndCopy
-	cmd := m.fetchReviewAndCopy(123)
+	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
 	result, ok := msg.(tuiClipboardResultMsg)
@@ -5277,8 +5278,10 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 		t.Errorf("Expected no error, got %v", result.err)
 	}
 
-	if mock.lastText != "Review content for clipboard" {
-		t.Errorf("Expected clipboard to contain review content, got %q", mock.lastText)
+	// Clipboard should contain header + review content
+	expectedContent := "Review #1\n\nReview content for clipboard"
+	if mock.lastText != expectedContent {
+		t.Errorf("Expected clipboard to contain review with header, got %q", mock.lastText)
 	}
 }
 
@@ -5291,7 +5294,7 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 
 	m := newTuiModel(ts.URL)
 
-	cmd := m.fetchReviewAndCopy(123)
+	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
 	result, ok := msg.(tuiClipboardResultMsg)
@@ -5323,7 +5326,7 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 
 	m := newTuiModel(ts.URL)
 
-	cmd := m.fetchReviewAndCopy(123)
+	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
 	result, ok := msg.(tuiClipboardResultMsg)
@@ -5401,7 +5404,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 	m := newTuiModel(ts.URL)
 
 	// Fetch succeeds but clipboard write fails
-	cmd := m.fetchReviewAndCopy(123)
+	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
 	result, ok := msg.(tuiClipboardResultMsg)
@@ -5415,6 +5418,179 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 
 	if !strings.Contains(result.err.Error(), "clipboard unavailable") {
 		t.Errorf("Expected clipboard error message, got %q", result.err.Error())
+	}
+}
+
+func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
+	// Save original clipboard writer and restore after test
+	originalClipboard := clipboardWriter
+	mock := &mockClipboard{}
+	clipboardWriter = mock
+	defer func() { clipboardWriter = originalClipboard }()
+
+	// Create test server that returns a review WITHOUT Job populated
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		review := storage.Review{
+			ID:     42,
+			JobID:  123,
+			Agent:  "test",
+			Output: "Review content",
+			// Job is intentionally nil
+		}
+		json.NewEncoder(w).Encode(review)
+	}))
+	defer ts.Close()
+
+	m := newTuiModel(ts.URL)
+
+	// Pass a job parameter - this should be injected when review.Job is nil
+	job := &storage.ReviewJob{
+		ID:       123,
+		RepoPath: "/path/to/repo",
+		GitRef:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", // 40 hex chars
+	}
+
+	cmd := m.fetchReviewAndCopy(123, job)
+	msg := cmd()
+
+	result, ok := msg.(tuiClipboardResultMsg)
+	if !ok {
+		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+	}
+
+	if result.err != nil {
+		t.Errorf("Expected no error, got %v", result.err)
+	}
+
+	// Clipboard should contain header with injected job info (truncated SHA)
+	expectedContent := "Review #42 /path/to/repo a1b2c3d\n\nReview content"
+	if mock.lastText != expectedContent {
+		t.Errorf("Expected clipboard with injected job info, got %q", mock.lastText)
+	}
+}
+
+func TestFormatClipboardContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		review   *storage.Review
+		expected string
+	}{
+		{
+			name:     "nil review",
+			review:   nil,
+			expected: "",
+		},
+		{
+			name: "empty output",
+			review: &storage.Review{
+				ID:     1,
+				Output: "",
+			},
+			expected: "",
+		},
+		{
+			name: "review with ID only (no job)",
+			review: &storage.Review{
+				ID:     42,
+				Output: "Content here",
+			},
+			expected: "Review #42\n\nContent here",
+		},
+		{
+			name: "review with ID 0 and no job (no header)",
+			review: &storage.Review{
+				ID:     0,
+				Output: "Content here",
+			},
+			expected: "Content here",
+		},
+		{
+			name: "review with job - full SHA truncated",
+			review: &storage.Review{
+				ID:     99,
+				Output: "Review content",
+				Job: &storage.ReviewJob{
+					ID:       99,
+					RepoPath: "/Users/test/myrepo",
+					GitRef:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", // exactly 40 hex chars
+				},
+			},
+			expected: "Review #99 /Users/test/myrepo a1b2c3d\n\nReview content",
+		},
+		{
+			name: "long branch name not truncated",
+			review: &storage.Review{
+				ID:     101,
+				Output: "Review content",
+				Job: &storage.ReviewJob{
+					ID:       101,
+					RepoPath: "/repo",
+					GitRef:   "feature/very-long-branch-name-that-exceeds-forty-characters",
+				},
+			},
+			expected: "Review #101 /repo feature/very-long-branch-name-that-exceeds-forty-characters\n\nReview content",
+		},
+		{
+			name: "review with job - range not truncated",
+			review: &storage.Review{
+				ID:     100,
+				Output: "Review content",
+				Job: &storage.ReviewJob{
+					ID:       100,
+					RepoPath: "/path/to/repo",
+					GitRef:   "abc1234..def5678",
+				},
+			},
+			expected: "Review #100 /path/to/repo abc1234..def5678\n\nReview content",
+		},
+		{
+			name: "review ID 0 uses job ID instead",
+			review: &storage.Review{
+				ID:     0,
+				Output: "Failed job content",
+				Job: &storage.ReviewJob{
+					ID:       555,
+					RepoPath: "/repo/path",
+					GitRef:   "abcdef1234567890abcdef1234567890abcdef12",
+				},
+			},
+			expected: "Review #555 /repo/path abcdef1\n\nFailed job content",
+		},
+		{
+			name: "short git ref not truncated",
+			review: &storage.Review{
+				ID:     10,
+				Output: "Content",
+				Job: &storage.ReviewJob{
+					ID:       10,
+					RepoPath: "/repo",
+					GitRef:   "abc1234",
+				},
+			},
+			expected: "Review #10 /repo abc1234\n\nContent",
+		},
+		{
+			name: "uppercase SHA truncated",
+			review: &storage.Review{
+				ID:     102,
+				Output: "Content",
+				Job: &storage.ReviewJob{
+					ID:       102,
+					RepoPath: "/repo",
+					GitRef:   "ABCDEF1234567890ABCDEF1234567890ABCDEF12", // uppercase 40 hex chars
+				},
+			},
+			expected: "Review #102 /repo ABCDEF1\n\nContent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatClipboardContent(tt.review)
+			if got != tt.expected {
+				t.Errorf("formatClipboardContent() = %q, want %q", got, tt.expected)
+			}
+		})
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -52,6 +53,9 @@ var (
 	tuiHelpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
 )
+
+// fullSHAPattern matches a 40-character hex git SHA (not ranges or branch names)
+var fullSHAPattern = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 
 type tuiView int
 
@@ -542,15 +546,46 @@ func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
 	}
 }
 
-func (m tuiModel) copyToClipboard(text string) tea.Cmd {
+// formatClipboardContent prepares review content for clipboard with a header line
+func formatClipboardContent(review *storage.Review) string {
+	if review == nil || review.Output == "" {
+		return ""
+	}
+
+	// Build header: "Review #ID /repo/path abc1234"
+	// Use job ID if review ID is 0 (e.g., failed jobs with no review record)
+	var header string
+	if review.Job != nil {
+		gitRef := review.Job.GitRef
+		// Truncate SHA to 7 chars if it's a full 40-char hex SHA (not a range or branch name)
+		if fullSHAPattern.MatchString(gitRef) {
+			gitRef = gitRef[:7]
+		}
+		id := review.ID
+		if id == 0 {
+			id = review.Job.ID
+		}
+		header = fmt.Sprintf("Review #%d %s %s\n\n", id, review.Job.RepoPath, gitRef)
+	} else if review.ID != 0 {
+		header = fmt.Sprintf("Review #%d\n\n", review.ID)
+	}
+
+	return header + review.Output
+}
+
+func (m tuiModel) copyToClipboard(review *storage.Review) tea.Cmd {
 	view := m.currentView // Capture view at trigger time
+	content := formatClipboardContent(review)
 	return func() tea.Msg {
-		err := clipboardWriter.WriteText(text)
+		if content == "" {
+			return tuiClipboardResultMsg{err: fmt.Errorf("no content to copy"), view: view}
+		}
+		err := clipboardWriter.WriteText(content)
 		return tuiClipboardResultMsg{err: err, view: view}
 	}
 }
 
-func (m tuiModel) fetchReviewAndCopy(jobID int64) tea.Cmd {
+func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cmd {
 	view := m.currentView // Capture view at trigger time
 	return func() tea.Msg {
 		resp, err := m.client.Get(fmt.Sprintf("%s/api/review?job_id=%d", m.serverAddr, jobID))
@@ -575,7 +610,13 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64) tea.Cmd {
 			return tuiClipboardResultMsg{err: fmt.Errorf("review has no content"), view: view}
 		}
 
-		err = clipboardWriter.WriteText(review.Output)
+		// Attach job info if not already present (for header formatting)
+		if review.Job == nil && job != nil {
+			review.Job = job
+		}
+
+		content := formatClipboardContent(&review)
+		err = clipboardWriter.WriteText(content)
 		return tuiClipboardResultMsg{err: err, view: view}
 	}
 }
@@ -1510,13 +1551,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Yank (copy) review content to clipboard
 			if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.Output != "" {
 				// Copy from review view - we already have the content
-				return m, m.copyToClipboard(m.currentReview.Output)
+				return m, m.copyToClipboard(m.currentReview)
 			} else if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 				job := m.jobs[m.selectedIdx]
 				// Only allow copying from completed or failed jobs
 				if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
 					// Need to fetch review first, then copy
-					return m, m.fetchReviewAndCopy(job.ID)
+					return m, m.fetchReviewAndCopy(job.ID, &job)
 				} else {
 					// Queued, running, or canceled - show flash notification
 					var status string
