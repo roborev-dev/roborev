@@ -26,7 +26,7 @@ faster with immediate critical feedback on your agents' work.
 
 **Homebrew (macOS / Linux):**
 ```bash
-brew install wesm/taps/roborev
+brew install roborev-dev/tap/roborev
 ```
 
 **Shell Script (macOS / Linux):**
