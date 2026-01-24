@@ -553,21 +553,30 @@ func formatClipboardContent(review *storage.Review) string {
 	}
 
 	// Build header: "Review #ID /repo/path abc1234"
-	// Use job ID if review ID is 0 (e.g., failed jobs with no review record)
+	// Always use job ID for consistency with queue and review screen display
+	// ID priority: Job.ID → JobID → review.ID
+	var id int64
+	if review.Job != nil && review.Job.ID != 0 {
+		id = review.Job.ID
+	} else if review.JobID != 0 {
+		id = review.JobID
+	} else {
+		id = review.ID
+	}
+
 	var header string
-	if review.Job != nil {
-		gitRef := review.Job.GitRef
-		// Truncate SHA to 7 chars if it's a full 40-char hex SHA (not a range or branch name)
-		if fullSHAPattern.MatchString(gitRef) {
-			gitRef = gitRef[:7]
+	if id != 0 {
+		if review.Job != nil && review.Job.RepoPath != "" {
+			// Include repo path and git ref when available
+			gitRef := review.Job.GitRef
+			// Truncate SHA to 7 chars if it's a full 40-char hex SHA (not a range or branch name)
+			if fullSHAPattern.MatchString(gitRef) {
+				gitRef = gitRef[:7]
+			}
+			header = fmt.Sprintf("Review #%d %s %s\n\n", id, review.Job.RepoPath, gitRef)
+		} else {
+			header = fmt.Sprintf("Review #%d\n\n", id)
 		}
-		id := review.ID
-		if id == 0 {
-			id = review.Job.ID
-		}
-		header = fmt.Sprintf("Review #%d %s %s\n\n", id, review.Job.RepoPath, gitRef)
-	} else if review.ID != 0 {
-		header = fmt.Sprintf("Review #%d\n\n", review.ID)
 	}
 
 	return header + review.Output

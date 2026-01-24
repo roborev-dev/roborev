@@ -5278,8 +5278,8 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 		t.Errorf("Expected no error, got %v", result.err)
 	}
 
-	// Clipboard should contain header + review content
-	expectedContent := "Review #1\n\nReview content for clipboard"
+	// Clipboard should contain header with JobID + review content
+	expectedContent := "Review #123\n\nReview content for clipboard"
 	if mock.lastText != expectedContent {
 		t.Errorf("Expected clipboard to contain review with header, got %q", mock.lastText)
 	}
@@ -5462,8 +5462,8 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 		t.Errorf("Expected no error, got %v", result.err)
 	}
 
-	// Clipboard should contain header with injected job info (truncated SHA)
-	expectedContent := "Review #42 /path/to/repo a1b2c3d\n\nReview content"
+	// Clipboard should contain header with injected job info (job ID, truncated SHA)
+	expectedContent := "Review #123 /path/to/repo a1b2c3d\n\nReview content"
 	if mock.lastText != expectedContent {
 		t.Errorf("Expected clipboard with injected job info, got %q", mock.lastText)
 	}
@@ -5489,17 +5489,28 @@ func TestFormatClipboardContent(t *testing.T) {
 			expected: "",
 		},
 		{
-			name: "review with ID only (no job)",
+			name: "review with JobID only (no job struct)",
 			review: &storage.Review{
-				ID:     42,
+				ID:     99, // review.ID is different from JobID
+				JobID:  42,
 				Output: "Content here",
 			},
 			expected: "Review #42\n\nContent here",
 		},
 		{
-			name: "review with ID 0 and no job (no header)",
+			name: "review with JobID 0 but review ID set (legacy fallback)",
+			review: &storage.Review{
+				ID:     77,
+				JobID:  0,
+				Output: "Content here",
+			},
+			expected: "Review #77\n\nContent here",
+		},
+		{
+			name: "review with all IDs 0 and no job struct (no header)",
 			review: &storage.Review{
 				ID:     0,
+				JobID:  0,
 				Output: "Content here",
 			},
 			expected: "Content here",
@@ -5544,17 +5555,45 @@ func TestFormatClipboardContent(t *testing.T) {
 			expected: "Review #100 /path/to/repo abc1234..def5678\n\nReview content",
 		},
 		{
-			name: "review ID 0 uses job ID instead",
+			name: "always uses job ID from Job struct",
 			review: &storage.Review{
-				ID:     0,
-				Output: "Failed job content",
+				ID:     999, // review.ID is ignored when Job is present with valid ID
+				Output: "Review content",
 				Job: &storage.ReviewJob{
 					ID:       555,
 					RepoPath: "/repo/path",
 					GitRef:   "abcdef1234567890abcdef1234567890abcdef12",
 				},
 			},
-			expected: "Review #555 /repo/path abcdef1\n\nFailed job content",
+			expected: "Review #555 /repo/path abcdef1\n\nReview content",
+		},
+		{
+			name: "Job present but Job.ID is 0 falls back to JobID with context",
+			review: &storage.Review{
+				ID:     999,
+				JobID:  123,
+				Output: "Review content",
+				Job: &storage.ReviewJob{
+					ID:       0, // zero ID, should fall back to JobID
+					RepoPath: "/repo/path",
+					GitRef:   "abc1234",
+				},
+			},
+			expected: "Review #123 /repo/path abc1234\n\nReview content",
+		},
+		{
+			name: "Job present but Job.ID is 0 falls back to review.ID with context",
+			review: &storage.Review{
+				ID:     999,
+				JobID:  0,
+				Output: "Review content",
+				Job: &storage.ReviewJob{
+					ID:       0, // zero ID, should fall back to review.ID
+					RepoPath: "/repo/path",
+					GitRef:   "abc1234",
+				},
+			},
+			expected: "Review #999 /repo/path abc1234\n\nReview content",
 		},
 		{
 			name: "short git ref not truncated",
