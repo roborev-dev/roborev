@@ -63,7 +63,8 @@ func main() {
 	rootCmd.AddCommand(streamCmd())
 	rootCmd.AddCommand(tuiCmd())
 	rootCmd.AddCommand(refineCmd())
-	rootCmd.AddCommand(promptCmd())
+	rootCmd.AddCommand(runCmd())
+	rootCmd.AddCommand(promptCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(repoCmd())
 	rootCmd.AddCommand(skillsCmd())
 	rootCmd.AddCommand(syncCmd())
@@ -2335,6 +2336,18 @@ func shortRef(ref string) string {
 		return ref
 	}
 	return shortSHA(ref)
+}
+
+// shortJobRef returns a display-friendly ref for a job, handling run jobs specially.
+// Run jobs display as "run" regardless of GitRef value.
+// Regular review jobs display their GitRef normally.
+func shortJobRef(job storage.ReviewJob) string {
+	// Run jobs are identified by: no CommitID, no DiffContent, and GitRef is "run" or "prompt"
+	// (Note: Prompt field is set for ALL jobs after worker starts, so can't use that)
+	if job.CommitID == nil && job.DiffContent == nil && (job.GitRef == "run" || job.GitRef == "prompt") {
+		return "run"
+	}
+	return shortRef(job.GitRef)
 }
 
 // generateHookContent creates the post-commit hook script content.

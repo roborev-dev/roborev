@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/5657b98c-de24-41d4-99f2-bf1aeae34c63
 | `roborev review --dirty` | Review uncommitted changes |
 | `roborev refine` | Auto-fix failed reviews using AI |
 | `roborev show [sha]` | Display review for commit |
-| `roborev prompt "<text>"` | Run ad-hoc prompt with AI agent |
+| `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev address <id>` | Mark review as addressed |
 | `roborev skills install` | Install agent skills for Claude/Codex |
 

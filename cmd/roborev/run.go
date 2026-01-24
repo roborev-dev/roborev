@@ -17,7 +17,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func promptCmd() *cobra.Command {
+func runCmd() *cobra.Command {
 	var (
 		agentName string
 		reasoning string
@@ -28,16 +28,16 @@ func promptCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "prompt [prompt-text]",
-		Short: "Execute an ad-hoc prompt with an AI agent",
-		Long: `Execute an arbitrary prompt using an AI agent.
+		Use:   "run [task]",
+		Short: "Execute a task with an AI agent",
+		Long: `Execute a task using an AI agent.
 
-This command runs a prompt directly with an agent, useful for ad-hoc
+This command runs a task directly with an agent, useful for ad-hoc
 work that may not be a traditional code review.
 
-The prompt can be provided as:
-  1. A positional argument: roborev prompt "your prompt here"
-  2. Via stdin: echo "your prompt" | roborev prompt
+The task can be provided as:
+  1. A positional argument: roborev run "your task here"
+  2. Via stdin: echo "your task" | roborev run
 
 By default, the job is enqueued and the command returns immediately.
 Use --wait to wait for completion and display the result.
@@ -49,13 +49,13 @@ By default, agents run in review mode (read-only tools). Use --agentic
 to enable write tools (Edit, Write, Bash) for tasks that modify files.
 
 Examples:
-  roborev prompt "Explain the architecture of this codebase"
-  roborev prompt --agent claude-code "Refactor the error handling in main.go"
-  roborev prompt --reasoning thorough "Find potential security issues"
-  roborev prompt --wait "What does the main function do?"
-  roborev prompt --no-context "What is 2+2?"
-  roborev prompt --agentic "Create a new test file for main.go"
-  cat instructions.txt | roborev prompt --wait
+  roborev run "Explain the architecture of this codebase"
+  roborev run --agent claude-code "Refactor the error handling in main.go"
+  roborev run --reasoning thorough "Find potential security issues"
+  roborev run --wait "What does the main function do?"
+  roborev run --no-context "What is 2+2?"
+  roborev run --agentic "Create a new test file for main.go"
+  cat instructions.txt | roborev run --wait
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPrompt(cmd, args, agentName, reasoning, wait, quiet, !noContext, agentic)
@@ -70,6 +70,14 @@ Examples:
 	cmd.Flags().BoolVar(&agentic, "agentic", false, "enable agentic mode (allow file edits and commands)")
 	cmd.Flags().BoolVar(&agentic, "yolo", false, "alias for --agentic")
 
+	return cmd
+}
+
+// promptCmd returns a hidden alias for backward compatibility
+func promptCmd() *cobra.Command {
+	cmd := runCmd()
+	cmd.Use = "prompt [task]"
+	cmd.Hidden = true
 	return cmd
 }
 
@@ -126,7 +134,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 	// Build the request
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"repo_path":     repoRoot,
-		"git_ref":       "prompt",
+		"git_ref":       "run",
 		"agent":         agentName,
 		"reasoning":     reasoningStr,
 		"custom_prompt": fullPrompt,
@@ -154,7 +162,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 	}
 
 	if !quiet {
-		cmd.Printf("Enqueued prompt job %d (agent: %s)\n", job.ID, job.Agent)
+		cmd.Printf("Enqueued task %d (agent: %s)\n", job.ID, job.Agent)
 	}
 
 	// If --wait, poll until job completes and show result
@@ -176,7 +184,7 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	if !quiet {
-		cmd.Printf("Waiting for review to complete...")
+		cmd.Printf("Waiting for task to complete...")
 	}
 
 	// Poll with exponential backoff

@@ -1664,3 +1664,64 @@ func TestDaemonStopPermissionError(t *testing.T) {
 		t.Errorf("expected permission error, got: %v", err)
 	}
 }
+
+func TestShortJobRef(t *testing.T) {
+	commitID := int64(123)
+	diffContent := "some diff"
+
+	tests := []struct {
+		name     string
+		job      storage.ReviewJob
+		expected string
+	}{
+		{
+			name:     "run job with new git_ref",
+			job:      storage.ReviewJob{GitRef: "run", CommitID: nil, DiffContent: nil},
+			expected: "run",
+		},
+		{
+			name:     "legacy prompt job",
+			job:      storage.ReviewJob{GitRef: "prompt", CommitID: nil, DiffContent: nil},
+			expected: "run",
+		},
+		{
+			name:     "branch literally named prompt (has CommitID)",
+			job:      storage.ReviewJob{GitRef: "prompt", CommitID: &commitID},
+			expected: "prompt",
+		},
+		{
+			name:     "branch literally named run (has CommitID)",
+			job:      storage.ReviewJob{GitRef: "run", CommitID: &commitID},
+			expected: "run",
+		},
+		{
+			name:     "normal SHA review",
+			job:      storage.ReviewJob{GitRef: "abc1234567890", CommitID: &commitID},
+			expected: "abc1234",
+		},
+		{
+			name:     "normal SHA review with Prompt set (after worker starts)",
+			job:      storage.ReviewJob{GitRef: "abc1234567890", CommitID: &commitID, Prompt: "Review this commit..."},
+			expected: "abc1234",
+		},
+		{
+			name:     "commit range",
+			job:      storage.ReviewJob{GitRef: "abc1234..def5678", CommitID: nil},
+			expected: "abc1234..def5678",
+		},
+		{
+			name:     "dirty review (has DiffContent)",
+			job:      storage.ReviewJob{GitRef: "dirty", CommitID: nil, DiffContent: &diffContent},
+			expected: "dirty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shortJobRef(tt.job)
+			if got != tt.expected {
+				t.Errorf("shortJobRef() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

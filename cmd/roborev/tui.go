@@ -2186,7 +2186,7 @@ func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
 }
 
 func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, colWidths columnWidths) string {
-	ref := shortRef(job.GitRef)
+	ref := shortJobRef(job)
 	if len(ref) > colWidths.ref {
 		ref = ref[:max(1, colWidths.ref-3)] + "..."
 	}
@@ -2332,7 +2332,7 @@ func (m tuiModel) renderReviewView() string {
 	var title string
 	var titleLen int
 	if review.Job != nil {
-		ref := shortRef(review.Job.GitRef)
+		ref := shortJobRef(*review.Job)
 		idStr := fmt.Sprintf("#%d ", review.Job.ID)
 		// Use cached display name, falling back to RepoName, then basename of RepoPath
 		defaultName := review.Job.RepoName
@@ -2486,7 +2486,7 @@ func (m tuiModel) renderPromptView() string {
 
 	review := m.currentReview
 	if review.Job != nil {
-		ref := shortRef(review.Job.GitRef)
+		ref := shortJobRef(*review.Job)
 		title := fmt.Sprintf("Prompt: %s (%s)", ref, review.Agent)
 		b.WriteString(tuiTitleStyle.Render(title))
 	} else {
