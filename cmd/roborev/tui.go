@@ -1428,6 +1428,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Job:    &job,
 						}
 					}
+				} else {
+					m.flashMessage = "No newer review"
+					m.flashExpiresAt = time.Now().Add(2 * time.Second)
+					m.flashView = tuiViewReview
 				}
 			} else if m.currentView == tuiViewPrompt {
 				if m.promptScroll > 0 {
@@ -1485,6 +1489,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Job:    &job,
 						}
 					}
+				} else {
+					m.flashMessage = "No older review"
+					m.flashExpiresAt = time.Now().Add(2 * time.Second)
+					m.flashView = tuiViewReview
 				}
 			} else if m.currentView == tuiViewPrompt {
 				m.promptScroll++
