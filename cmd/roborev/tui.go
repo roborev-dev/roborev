@@ -771,8 +771,7 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 
 			// Fetch info for each commit
 			var content strings.Builder
-			content.WriteString(fmt.Sprintf("Commits in %s (%d commits):\n", job.GitRef, len(commits)))
-			content.WriteString(strings.Repeat("─", 60) + "\n\n")
+			content.WriteString(fmt.Sprintf("Commits in %s (%d commits):\n\n", job.GitRef, len(commits)))
 
 			for i, sha := range commits {
 				info, err := git.GetCommitInfo(job.RepoPath, sha)
@@ -804,8 +803,7 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 		var content strings.Builder
 		content.WriteString(fmt.Sprintf("Commit: %s\n", info.SHA))
 		content.WriteString(fmt.Sprintf("Author: %s\n", info.Author))
-		content.WriteString(fmt.Sprintf("Date:   %s\n", info.Timestamp.Format("2006-01-02 15:04:05 -0700")))
-		content.WriteString(strings.Repeat("─", 60) + "\n\n")
+		content.WriteString(fmt.Sprintf("Date:   %s\n\n", info.Timestamp.Format("2006-01-02 15:04:05 -0700")))
 		content.WriteString(info.Subject + "\n")
 		if info.Body != "" {
 			content.WriteString("\n" + info.Body + "\n")
