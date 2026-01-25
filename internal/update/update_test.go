@@ -274,6 +274,11 @@ func TestIsDevBuildVersion(t *testing.T) {
 		{"0.4.0-5-gabcdef", true},
 		{"1.2.3-100-gdeadbeef", true},
 
+		// Git describe with -dirty suffix - ARE dev builds
+		{"0.16.1-2-g75d300a-dirty", true},
+		{"v0.16.1-2-g75d300a-dirty", true},
+		{"0.4.0-5-gabcdef-dirty", true},
+
 		// Pure hash/dev - ARE dev builds
 		{"dev", true},
 		{"abc1234", true},

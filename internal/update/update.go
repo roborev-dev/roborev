@@ -561,9 +561,9 @@ func extractBaseSemver(v string) string {
 	return v
 }
 
-// gitDescribePattern matches git describe format: v0.16.1-2-gabcdef
-// The -N-gHASH suffix indicates N commits after the tag
-var gitDescribePattern = regexp.MustCompile(`-\d+-g[0-9a-f]+$`)
+// gitDescribePattern matches git describe format: v0.16.1-2-gabcdef or v0.16.1-2-gabcdef-dirty
+// The -N-gHASH suffix indicates N commits after the tag, with optional -dirty suffix
+var gitDescribePattern = regexp.MustCompile(`-\d+-g[0-9a-f]+(-dirty)?$`)
 
 // isDevBuildVersion returns true if the version is a dev build.
 // Dev builds are either:
