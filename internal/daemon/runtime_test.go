@@ -61,3 +61,39 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 		t.Error("Expected error after RemoveRuntime")
 	}
 }
+
+func TestIsLoopbackAddr(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		// Valid loopback addresses
+		{"127.0.0.1:7373", true},
+		{"127.0.0.1:80", true},
+		{"127.0.1.1:7373", true},
+		{"localhost:7373", true},
+		{"[::1]:7373", true},
+
+		// Invalid/non-loopback
+		{"192.168.1.1:7373", false},
+		{"10.0.0.1:7373", false},
+		{"8.8.8.8:7373", false},
+		{"example.com:7373", false},
+		{"", false},
+
+		// Bypass attempts
+		{"127.0.0.1.evil.com:80", false},      // Hostname that starts with 127
+		{"127.0.0.1@evil.com:80", false},      // Userinfo bypass
+		{"localhost.evil.com:7373", false},   // Hostname that starts with localhost
+		{"evil.com:7373", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			got := isLoopbackAddr(tt.addr)
+			if got != tt.want {
+				t.Errorf("isLoopbackAddr(%q) = %v, want %v", tt.addr, got, tt.want)
+			}
+		})
+	}
+}

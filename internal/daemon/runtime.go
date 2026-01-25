@@ -161,13 +161,34 @@ func IsDaemonAlive(addr string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// isLoopbackAddr checks if an address is a loopback address (localhost/127.x.x.x)
+// isLoopbackAddr checks if an address is a loopback address.
+// Supports IPv4 (127.x.x.x), IPv6 (::1), and localhost.
+// Uses strict parsing to prevent bypass via userinfo or hostname tricks.
 func isLoopbackAddr(addr string) bool {
-	host := addr
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		host = addr[:idx]
+	// Use net.SplitHostPort for proper parsing (handles IPv6 brackets)
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// Maybe just a host without port
+		host = addr
 	}
-	return host == "localhost" || host == "127.0.0.1" || strings.HasPrefix(host, "127.")
+
+	// Reject if host contains @ (userinfo bypass attempt)
+	if strings.Contains(host, "@") {
+		return false
+	}
+
+	// Check for localhost (exact match only)
+	if host == "localhost" {
+		return true
+	}
+
+	// Parse as IP and check if loopback
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false // Not a valid IP and not "localhost"
+	}
+
+	return ip.IsLoopback()
 }
 
 // KillDaemon attempts to gracefully shut down a daemon, then force kill if needed.
@@ -178,8 +199,8 @@ func KillDaemon(info *RuntimeInfo) bool {
 		return true
 	}
 
-	// First try graceful HTTP shutdown
-	if info.Addr != "" {
+	// First try graceful HTTP shutdown (only for loopback addresses)
+	if info.Addr != "" && isLoopbackAddr(info.Addr) {
 		client := &http.Client{Timeout: 2 * time.Second}
 		resp, err := client.Post(fmt.Sprintf("http://%s/api/shutdown", info.Addr), "application/json", nil)
 		if err == nil {
