@@ -2742,7 +2742,7 @@ func (m tuiModel) renderReviewView() string {
 
 	// Append responses if any
 	if len(m.currentResponses) > 0 {
-		content.WriteString("\n\n--- Responses ---\n")
+		content.WriteString("\n\n--- Comments ---\n")
 		for _, r := range m.currentResponses {
 			timestamp := r.CreatedAt.Format("Jan 02 15:04")
 			content.WriteString(fmt.Sprintf("\n[%s] %s:\n", timestamp, r.Responder))
@@ -3009,14 +3009,14 @@ func (m tuiModel) renderFilterView() string {
 func (m tuiModel) renderRespondView() string {
 	var b strings.Builder
 
-	title := "Respond to Review"
+	title := "Add Comment"
 	if m.respondCommit != "" {
-		title = fmt.Sprintf("Respond to Review (%s)", m.respondCommit)
+		title = fmt.Sprintf("Add Comment (%s)", m.respondCommit)
 	}
 	b.WriteString(tuiTitleStyle.Render(title))
 	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
 
-	b.WriteString(tuiStatusStyle.Render("Enter your response (e.g., \"This is a known issue, can be ignored\")"))
+	b.WriteString(tuiStatusStyle.Render("Enter your comment (e.g., \"This is a known issue, can be ignored\")"))
 	b.WriteString("\x1b[K\n\x1b[K\n")
 
 	// Simple text box with border
@@ -3036,7 +3036,7 @@ func (m tuiModel) renderRespondView() string {
 
 	if m.respondText == "" {
 		// Show placeholder (styled, but we pad manually to avoid ANSI issues)
-		placeholder := "Type your response..."
+		placeholder := "Type your comment..."
 		padded := placeholder + strings.Repeat(" ", boxWidth-2-len(placeholder))
 		b.WriteString("| " + tuiStatusStyle.Render(padded) + " |\x1b[K\n")
 		textLinesWritten++
@@ -3215,7 +3215,7 @@ func (m tuiModel) renderHelpView() string {
 			group: "Actions",
 			keys: []struct{ key, desc string }{
 				{"a", "Mark as addressed"},
-				{"c", "Respond to review"},
+				{"c", "Add comment"},
 				{"x", "Cancel job"},
 				{"r", "Re-run job"},
 				{"y", "Copy review to clipboard"},

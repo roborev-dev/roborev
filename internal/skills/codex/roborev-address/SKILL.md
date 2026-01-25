@@ -41,10 +41,10 @@ Parse the findings from the output (severity, file paths, line numbers), then:
 
 After fixing, **record what was done** by executing:
 ```bash
-roborev respond --job <job_id> "<summary of changes>"
+roborev comment --job <job_id> "<summary of changes>"
 ```
 
-This records your response in roborev so the review shows it was addressed.
+This records your comment in roborev so the review shows it was addressed.
 
 Then ask the user if they want to commit the changes.
 
@@ -56,5 +56,5 @@ Agent:
 1. Executes `roborev show --job 1019`
 2. Sees verdict is Fail with 2 findings
 3. Reads files, fixes the issues, runs tests
-4. Executes `roborev respond --job 1019 "Fixed null check in foo.go and added error handling in bar.go"`
-5. Asks: "I've addressed both findings and recorded the response. Tests pass. Would you like me to commit these changes?"
+4. Executes `roborev comment --job 1019 "Fixed null check in foo.go and added error handling in bar.go"`
+5. Asks: "I've addressed both findings and recorded a comment. Tests pass. Would you like me to commit these changes?"

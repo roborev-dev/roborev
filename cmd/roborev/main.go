@@ -54,7 +54,8 @@ func main() {
 	rootCmd.AddCommand(reviewCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(showCmd())
-	rootCmd.AddCommand(respondCmd())
+	rootCmd.AddCommand(commentCmd())
+	rootCmd.AddCommand(respondCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(addressCmd())
 	rootCmd.AddCommand(installHookCmd())
 	rootCmd.AddCommand(uninstallHookCmd())
@@ -1199,7 +1200,7 @@ Examples:
 	return cmd
 }
 
-func respondCmd() *cobra.Command {
+func commentCmd() *cobra.Command {
 	var (
 		responder  string
 		message    string
@@ -1207,19 +1208,19 @@ func respondCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "respond <job_id|sha> [message]",
-		Short: "Add a response to a review",
-		Long: `Add a response or note to a review.
+		Use:   "comment <job_id|sha> [message]",
+		Short: "Add a comment to a review",
+		Long: `Add a comment or note to a review.
 
 The first argument can be either a job ID (numeric) or a commit SHA.
 Using job IDs is recommended since they are displayed in the TUI.
 
 Examples:
-  roborev respond 42 "Fixed the null pointer issue"
-  roborev respond 42 -m "Added missing error handling"
-  roborev respond abc123 "Addressed by refactoring"
-  roborev respond 42     # Opens editor for message
-  roborev respond --job 1234567 "msg"  # Force numeric arg as job ID`,
+  roborev comment 42 "Fixed the null pointer issue"
+  roborev comment 42 -m "Added missing error handling"
+  roborev comment abc123 "Addressed by refactoring"
+  roborev comment 42     # Opens editor for message
+  roborev comment --job 1234567 "msg"  # Force numeric arg as job ID`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running
@@ -1295,7 +1296,7 @@ Examples:
 			}
 
 			if message == "" {
-				return fmt.Errorf("empty response, aborting")
+				return fmt.Errorf("empty comment, aborting")
 			}
 
 			if responder == "" {
@@ -1327,18 +1328,26 @@ Examples:
 
 			if resp.StatusCode != http.StatusCreated {
 				body, _ := io.ReadAll(resp.Body)
-				return fmt.Errorf("failed to add response: %s", body)
+				return fmt.Errorf("failed to add comment: %s", body)
 			}
 
-			fmt.Println("Response added successfully")
+			fmt.Println("Comment added successfully")
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&responder, "responder", "", "responder name (default: $USER)")
-	cmd.Flags().StringVarP(&message, "message", "m", "", "response message (opens editor if not provided)")
+	cmd.Flags().StringVar(&responder, "commenter", "", "commenter name (default: $USER)")
+	cmd.Flags().StringVarP(&message, "message", "m", "", "comment message (opens editor if not provided)")
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID (not SHA)")
 
+	return cmd
+}
+
+// respondCmd returns a hidden alias for backward compatibility
+func respondCmd() *cobra.Command {
+	cmd := commentCmd()
+	cmd.Use = "respond <job_id|sha> [message]"
+	cmd.Hidden = true
 	return cmd
 }
 

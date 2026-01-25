@@ -1,6 +1,6 @@
 package main
 
-// Tests for the respond command
+// Tests for the comment command
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
-func TestRespondJobFlag(t *testing.T) {
+func TestCommentJobFlag(t *testing.T) {
 	t.Run("--job forces job ID interpretation", func(t *testing.T) {
 		var receivedJobID int64
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +34,7 @@ func TestRespondJobFlag(t *testing.T) {
 		defer cleanup()
 
 		// "1234567" could be a SHA, but --job forces job ID interpretation
-		cmd := respondCmd()
+		cmd := commentCmd()
 		cmd.SetArgs([]string{"--job", "1234567", "-m", "test message"})
 		err := cmd.Execute()
 		if err != nil {
@@ -52,7 +52,7 @@ func TestRespondJobFlag(t *testing.T) {
 		}))
 		defer cleanup()
 
-		cmd := respondCmd()
+		cmd := commentCmd()
 		cmd.SetArgs([]string{"--job", "abc123", "-m", "test"})
 		err := cmd.Execute()
 		if err == nil {
