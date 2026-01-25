@@ -1542,17 +1542,18 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 
 	// Insert a test job to verify data survives migration
 	testJobUUID := uuid.NewString()
-	_, err = setupPool.Exec(ctx, `
-		INSERT INTO roborev.repos (identity) VALUES ('test-repo-v1-migration')
-	`)
+	var repoID int64
+	err = setupPool.QueryRow(ctx, `
+		INSERT INTO roborev.repos (identity) VALUES ('test-repo-v1-migration') RETURNING id
+	`).Scan(&repoID)
 	if err != nil {
 		setupPool.Close()
 		t.Fatalf("Failed to insert test repo: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `
 		INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, agent, status, source_machine_id, enqueued_at)
-		VALUES ($1, 1, 'HEAD', 'test-agent', 'done', '00000000-0000-0000-0000-000000000001', NOW())
-	`, testJobUUID)
+		VALUES ($1, $2, 'HEAD', 'test-agent', 'done', '00000000-0000-0000-0000-000000000001', NOW())
+	`, testJobUUID, repoID)
 	if err != nil {
 		setupPool.Close()
 		t.Fatalf("Failed to insert test job: %v", err)
