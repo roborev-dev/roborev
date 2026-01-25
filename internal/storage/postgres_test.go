@@ -37,17 +37,17 @@ func TestDefaultPgPoolConfig(t *testing.T) {
 
 func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
 	requiredTables := []string{
-		"CREATE TABLE IF NOT EXISTS schema_version",
-		"CREATE TABLE IF NOT EXISTS machines",
-		"CREATE TABLE IF NOT EXISTS repos",
-		"CREATE TABLE IF NOT EXISTS commits",
-		"CREATE TABLE IF NOT EXISTS review_jobs",
-		"CREATE TABLE IF NOT EXISTS reviews",
-		"CREATE TABLE IF NOT EXISTS responses",
+		"CREATE TABLE IF NOT EXISTS roborev.schema_version",
+		"CREATE TABLE IF NOT EXISTS roborev.machines",
+		"CREATE TABLE IF NOT EXISTS roborev.repos",
+		"CREATE TABLE IF NOT EXISTS roborev.commits",
+		"CREATE TABLE IF NOT EXISTS roborev.review_jobs",
+		"CREATE TABLE IF NOT EXISTS roborev.reviews",
+		"CREATE TABLE IF NOT EXISTS roborev.responses",
 	}
 
 	// Join all statements to search across the actual executed schema
-	allStatements := strings.Join(pgSchemaStatements, "\n")
+	allStatements := strings.Join(pgSchemaStatements(), "\n")
 
 	for _, table := range requiredTables {
 		if !strings.Contains(allStatements, table) {
@@ -67,7 +67,7 @@ func TestPgSchemaStatementsContainsRequiredIndexes(t *testing.T) {
 	}
 
 	// Join all statements to search across the actual executed schema
-	allStatements := strings.Join(pgSchemaStatements, "\n")
+	allStatements := strings.Join(pgSchemaStatements(), "\n")
 
 	for _, idx := range requiredIndexes {
 		if !strings.Contains(allStatements, idx) {

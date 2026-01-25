@@ -1,5 +1,6 @@
 -- PostgreSQL schema version 2
 -- Added model column to review_jobs for specifying which model an agent should use.
+-- Note: Version is managed by EnsureSchema(), not this file.
 
 CREATE SCHEMA IF NOT EXISTS roborev;
 
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS roborev.review_jobs (
   commit_id INTEGER REFERENCES roborev.commits(id),
   git_ref TEXT NOT NULL,
   agent TEXT NOT NULL,
-  model TEXT,  -- Added in v2
+  model TEXT,
   reasoning TEXT,
   status TEXT NOT NULL CHECK(status IN ('done', 'failed', 'canceled')),
   agentic BOOLEAN DEFAULT FALSE,
@@ -88,5 +89,3 @@ CREATE TABLE IF NOT EXISTS roborev.sync_metadata (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-
-INSERT INTO roborev.schema_version (version) VALUES (2);

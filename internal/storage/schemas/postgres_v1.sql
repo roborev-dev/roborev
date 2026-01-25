@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS roborev.schema_version (
   applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+INSERT INTO roborev.schema_version (version) VALUES (1);
+
 CREATE TABLE IF NOT EXISTS roborev.machines (
   id SERIAL PRIMARY KEY,
   machine_id UUID UNIQUE NOT NULL,
@@ -89,5 +91,3 @@ CREATE TABLE IF NOT EXISTS roborev.sync_metadata (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-
-INSERT INTO roborev.schema_version (version) VALUES (1);

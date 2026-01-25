@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,93 +19,33 @@ const pgSchemaVersion = 2
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-// pgSchemaStatements are the individual DDL statements for schema creation.
-// Defined as a slice to avoid SQL parsing issues with semicolons, comments, etc.
-// Note: Tables are created in the 'roborev' schema (set via search_path on connection).
-var pgSchemaStatements = []string{
-	// Create dedicated schema for roborev
-	`CREATE SCHEMA IF NOT EXISTS roborev`,
+//go:embed schemas/postgres_v2.sql
+var pgSchemaSQL string
 
-	`CREATE TABLE IF NOT EXISTS schema_version (
-  version INTEGER PRIMARY KEY,
-  applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-)`,
-	`CREATE TABLE IF NOT EXISTS machines (
-  id SERIAL PRIMARY KEY,
-  machine_id UUID UNIQUE NOT NULL,
-  name TEXT,
-  last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-)`,
-	`CREATE TABLE IF NOT EXISTS repos (
-  id SERIAL PRIMARY KEY,
-  identity TEXT UNIQUE NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-)`,
-	`CREATE TABLE IF NOT EXISTS commits (
-  id SERIAL PRIMARY KEY,
-  repo_id INTEGER REFERENCES repos(id),
-  sha TEXT NOT NULL,
-  author TEXT NOT NULL,
-  subject TEXT NOT NULL,
-  timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(repo_id, sha)
-)`,
-	`CREATE TABLE IF NOT EXISTS review_jobs (
-  id SERIAL PRIMARY KEY,
-  uuid UUID UNIQUE NOT NULL,
-  repo_id INTEGER NOT NULL REFERENCES repos(id),
-  commit_id INTEGER REFERENCES commits(id),
-  git_ref TEXT NOT NULL,
-  agent TEXT NOT NULL,
-  model TEXT,
-  reasoning TEXT,
-  status TEXT NOT NULL CHECK(status IN ('done', 'failed', 'canceled')),
-  agentic BOOLEAN DEFAULT FALSE,
-  enqueued_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  started_at TIMESTAMP WITH TIME ZONE,
-  finished_at TIMESTAMP WITH TIME ZONE,
-  prompt TEXT,
-  diff_content TEXT,
-  error TEXT,
-  source_machine_id UUID NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-)`,
-	`CREATE TABLE IF NOT EXISTS reviews (
-  id SERIAL PRIMARY KEY,
-  uuid UUID UNIQUE NOT NULL,
-  job_uuid UUID NOT NULL REFERENCES review_jobs(uuid),
-  agent TEXT NOT NULL,
-  prompt TEXT NOT NULL,
-  output TEXT NOT NULL,
-  addressed BOOLEAN NOT NULL DEFAULT FALSE,
-  updated_by_machine_id UUID NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-)`,
-	`CREATE TABLE IF NOT EXISTS responses (
-  id SERIAL PRIMARY KEY,
-  uuid UUID UNIQUE NOT NULL,
-  job_uuid UUID NOT NULL REFERENCES review_jobs(uuid),
-  responder TEXT NOT NULL,
-  response TEXT NOT NULL,
-  source_machine_id UUID NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-)`,
-	`CREATE INDEX IF NOT EXISTS idx_review_jobs_source ON review_jobs(source_machine_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_review_jobs_updated ON review_jobs(updated_at)`,
-	`CREATE INDEX IF NOT EXISTS idx_reviews_job_uuid ON reviews(job_uuid)`,
-	`CREATE INDEX IF NOT EXISTS idx_reviews_updated ON reviews(updated_at)`,
-	`CREATE INDEX IF NOT EXISTS idx_responses_job_uuid ON responses(job_uuid)`,
-	`CREATE INDEX IF NOT EXISTS idx_responses_id ON responses(id)`,
-	// sync_metadata stores database-level sync configuration
-	// database_id is a unique ID for this Postgres instance, used to detect
-	// when a client is syncing to a different database than before
-	`CREATE TABLE IF NOT EXISTS sync_metadata (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-)`,
+// pgSchemaStatements returns the individual DDL statements for schema creation.
+// Parsed from the embedded SQL file.
+func pgSchemaStatements() []string {
+	var stmts []string
+	for _, stmt := range strings.Split(pgSchemaSQL, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		// Skip pure comment lines
+		lines := strings.Split(stmt, "\n")
+		hasCode := false
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "--") {
+				hasCode = true
+				break
+			}
+		}
+		if hasCode {
+			stmts = append(stmts, stmt)
+		}
+	}
+	return stmts
 }
 
 // PgPool wraps a pgx connection pool with reconnection logic
@@ -212,7 +154,7 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 
 	// Execute each schema statement individually since pgx prepared
 	// statement mode doesn't support multi-statement execution
-	for _, stmt := range pgSchemaStatements {
+	for _, stmt := range pgSchemaStatements() {
 		if _, err := p.pool.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("create schema: %w", err)
 		}
