@@ -6431,8 +6431,13 @@ func TestSanitizeForDisplay(t *testing.T) {
 			expected: "hello",
 		},
 		{
-			name:     "strips OSC sequences (title set)",
+			name:     "strips OSC sequences (title set with BEL)",
 			input:    "\x1b]0;Evil Title\x07normal text",
+			expected: "normal text",
+		},
+		{
+			name:     "strips OSC sequences (title set with ST)",
+			input:    "\x1b]0;Evil Title\x1b\\normal text",
 			expected: "normal text",
 		},
 		{

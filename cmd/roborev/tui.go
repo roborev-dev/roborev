@@ -66,7 +66,8 @@ var (
 var fullSHAPattern = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 
 // ansiEscapePattern matches ANSI escape sequences (colors, cursor movement, etc.)
-var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07`)
+// Handles CSI sequences (\x1b[...X) and OSC sequences terminated by BEL (\x07) or ST (\x1b\\)
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\]([^\x07\x1b]|\x1b[^\\])*(\x07|\x1b\\)`)
 
 // sanitizeForDisplay strips ANSI escape sequences and control characters from text
 // to prevent terminal injection when displaying untrusted content (e.g., commit messages).
@@ -738,7 +739,8 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 	jobID := job.ID
 	return func() tea.Msg {
 		// Handle dirty reviews (uncommitted changes)
-		if job.DiffContent != nil {
+		// Check both DiffContent and GitRef since job lists may not populate DiffContent
+		if job.DiffContent != nil || job.GitRef == "dirty" || job.GitRef == "" {
 			return tuiCommitMsgMsg{
 				jobID: jobID,
 				err:   fmt.Errorf("no commit message for uncommitted changes"),

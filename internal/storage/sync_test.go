@@ -1835,7 +1835,7 @@ func TestBatchMarkSynced(t *testing.T) {
 		}
 	})
 
-	t.Run("MarkResponsesSynced marks multiple responses", func(t *testing.T) {
+	t.Run("MarkCommentsSynced marks multiple comments", func(t *testing.T) {
 		// Get responses for synced jobs
 		responses, err := h.db.GetCommentsToSync(h.machineID, 100)
 		if err != nil {
@@ -1873,7 +1873,7 @@ func TestBatchMarkSynced(t *testing.T) {
 			t.Errorf("MarkReviewsSynced with empty slice failed: %v", err)
 		}
 		if err := h.db.MarkCommentsSynced([]int64{}); err != nil {
-			t.Errorf("MarkResponsesSynced with empty slice failed: %v", err)
+			t.Errorf("MarkCommentsSynced with empty slice failed: %v", err)
 		}
 	})
 }
