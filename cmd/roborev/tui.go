@@ -225,7 +225,7 @@ var clipboardWriter ClipboardWriter = &realClipboard{}
 func newTuiModel(serverAddr string) tuiModel {
 	// Read daemon version from runtime file (authoritative source)
 	daemonVersion := "?"
-	if info, err := daemon.ReadRuntime(); err == nil && info.Version != "" {
+	if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
 		daemonVersion = info.Version
 	}
 	return tuiModel{

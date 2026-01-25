@@ -16,10 +16,11 @@ import (
 
 // RuntimeInfo stores daemon runtime state
 type RuntimeInfo struct {
-	PID     int    `json:"pid"`
-	Addr    string `json:"addr"`
-	Port    int    `json:"port"`
-	Version string `json:"version"`
+	PID        int    `json:"pid"`
+	Addr       string `json:"addr"`
+	Port       int    `json:"port"`
+	Version    string `json:"version"`
+	SourcePath string `json:"-"` // Path to the runtime file (not serialized, set by ListAllRuntimes)
 }
 
 // RuntimePath returns the path to the runtime info file for the current process
@@ -89,7 +90,8 @@ func RemoveRuntimeForPID(pid int) {
 	os.Remove(RuntimePathForPID(pid))
 }
 
-// ListAllRuntimes returns info for all daemon runtime files found
+// ListAllRuntimes returns info for all daemon runtime files found.
+// Sets SourcePath on each RuntimeInfo for proper cleanup.
 func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	dataDir := config.DataDir()
 	pattern := filepath.Join(dataDir, "daemon.*.json")
@@ -108,6 +110,11 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	for _, path := range matches {
 		data, err := os.ReadFile(path)
 		if err != nil {
+			// Permission error - report it so caller knows something is wrong
+			if os.IsPermission(err) {
+				return nil, fmt.Errorf("cannot read runtime file %s: %w", path, err)
+			}
+			// Other read errors (file disappeared, etc.) - skip
 			continue
 		}
 		var info RuntimeInfo
@@ -116,6 +123,8 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 			os.Remove(path)
 			continue
 		}
+		// Track source path for proper cleanup
+		info.SourcePath = path
 		runtimes = append(runtimes, &info)
 	}
 	return runtimes, nil
@@ -199,6 +208,15 @@ func KillDaemon(info *RuntimeInfo) bool {
 		return true
 	}
 
+	// Helper to remove the runtime file using SourcePath if available, otherwise by PID
+	removeRuntimeFile := func() {
+		if info.SourcePath != "" {
+			os.Remove(info.SourcePath)
+		} else if info.PID > 0 {
+			RemoveRuntimeForPID(info.PID)
+		}
+	}
+
 	// First try graceful HTTP shutdown (only for loopback addresses)
 	if info.Addr != "" && isLoopbackAddr(info.Addr) {
 		client := &http.Client{Timeout: 2 * time.Second}
@@ -209,7 +227,7 @@ func KillDaemon(info *RuntimeInfo) bool {
 			for i := 0; i < 10; i++ {
 				time.Sleep(200 * time.Millisecond)
 				if !IsDaemonAlive(info.Addr) {
-					RemoveRuntimeForPID(info.PID)
+					removeRuntimeFile()
 					return true
 				}
 			}
@@ -220,7 +238,7 @@ func KillDaemon(info *RuntimeInfo) bool {
 	// Only do this if we have a valid PID
 	if info.PID > 0 {
 		if killProcess(info.PID) {
-			RemoveRuntimeForPID(info.PID)
+			removeRuntimeFile()
 			return true
 		}
 		// Kill failed - don't remove runtime file, daemon may still be running
@@ -229,7 +247,7 @@ func KillDaemon(info *RuntimeInfo) bool {
 
 	// No valid PID, just check if it's still alive
 	if info.Addr != "" && !IsDaemonAlive(info.Addr) {
-		RemoveRuntimeForPID(info.PID)
+		removeRuntimeFile()
 		return true
 	}
 

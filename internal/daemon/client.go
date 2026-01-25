@@ -69,7 +69,7 @@ func NewHTTPClient(addr string) *HTTPClient {
 func NewHTTPClientFromRuntime() (*HTTPClient, error) {
 	var lastErr error
 	for i := 0; i < 5; i++ {
-		info, err := ReadRuntime()
+		info, err := GetAnyRunningDaemon()
 		if err == nil {
 			return NewHTTPClient(fmt.Sprintf("http://%s", info.Addr)), nil
 		}
