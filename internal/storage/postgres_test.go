@@ -1477,3 +1477,162 @@ func TestIntegration_BatchOperations(t *testing.T) {
 		}
 	})
 }
+
+func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
+	// This test verifies that a v1 schema (without model column) gets migrated to v2
+	connString := getTestPostgresURL(t)
+	ctx := t.Context()
+
+	// Create a pool without AfterConnect to set up test state
+	cfg, err := pgxpool.ParseConfig(connString)
+	if err != nil {
+		t.Fatalf("Failed to parse config: %v", err)
+	}
+	setupPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Failed to create setup pool: %v", err)
+	}
+
+	// Cleanup
+	t.Cleanup(func() {
+		cleanupCfg, _ := pgxpool.ParseConfig(connString)
+		cleanupPool, _ := pgxpool.NewWithConfig(ctx, cleanupCfg)
+		if cleanupPool != nil {
+			cleanupPool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+			cleanupPool.Close()
+		}
+	})
+
+	// Check if roborev schema already has tables
+	var roborevHasTables bool
+	err = setupPool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'roborev' AND table_name = 'review_jobs'
+		)
+	`).Scan(&roborevHasTables)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to check roborev schema: %v", err)
+	}
+	if roborevHasTables {
+		setupPool.Close()
+		t.Skip("Skipping migration test: roborev schema already has tables")
+	}
+
+	// Create roborev schema and v1 tables (without model column)
+	_, err = setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to create roborev schema: %v", err)
+	}
+	_, err = setupPool.Exec(ctx, `SET search_path TO roborev`)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to set search_path: %v", err)
+	}
+
+	// Create schema_version at v1
+	_, err = setupPool.Exec(ctx, `CREATE TABLE schema_version (version INTEGER PRIMARY KEY)`)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to create schema_version: %v", err)
+	}
+	_, err = setupPool.Exec(ctx, `INSERT INTO schema_version (version) VALUES (1)`)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to insert v1: %v", err)
+	}
+
+	// Create v1 review_jobs table (without model column)
+	_, err = setupPool.Exec(ctx, `
+		CREATE TABLE review_jobs (
+			id SERIAL PRIMARY KEY,
+			uuid UUID UNIQUE NOT NULL,
+			repo_id INTEGER NOT NULL,
+			commit_id INTEGER,
+			git_ref TEXT NOT NULL,
+			agent TEXT NOT NULL,
+			reasoning TEXT,
+			status TEXT NOT NULL DEFAULT 'queued',
+			agentic BOOLEAN DEFAULT FALSE,
+			enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			started_at TIMESTAMPTZ,
+			finished_at TIMESTAMPTZ,
+			prompt TEXT,
+			diff_content TEXT,
+			error TEXT,
+			source_machine_id UUID,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to create v1 review_jobs: %v", err)
+	}
+
+	// Insert a test job (no model column)
+	testJobUUID := uuid.NewString()
+	_, err = setupPool.Exec(ctx, `
+		INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status)
+		VALUES ($1, 1, 'HEAD', 'test-agent', 'done')
+	`, testJobUUID)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to insert test job: %v", err)
+	}
+
+	setupPool.Close()
+
+	// Now connect with the normal pool and run EnsureSchema - should migrate v1→v2
+	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer pool.Close()
+
+	err = pool.EnsureSchema(ctx)
+	if err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	// Verify schema version advanced to 2
+	var version int
+	err = pool.pool.QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version)
+	if err != nil {
+		t.Fatalf("Failed to query schema version: %v", err)
+	}
+	if version != pgSchemaVersion {
+		t.Errorf("Expected schema version %d, got %d", pgSchemaVersion, version)
+	}
+
+	// Verify model column was added
+	var hasModelColumn bool
+	err = pool.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = 'model'
+		)
+	`).Scan(&hasModelColumn)
+	if err != nil {
+		t.Fatalf("Failed to check for model column: %v", err)
+	}
+	if !hasModelColumn {
+		t.Error("Expected model column to exist after v1→v2 migration")
+	}
+
+	// Verify existing job still accessible and model is NULL
+	var jobAgent string
+	var jobModel *string
+	err = pool.pool.QueryRow(ctx, `SELECT agent, model FROM review_jobs WHERE uuid = $1`, testJobUUID).Scan(&jobAgent, &jobModel)
+	if err != nil {
+		t.Fatalf("Failed to query test job: %v", err)
+	}
+	if jobAgent != "test-agent" {
+		t.Errorf("Expected agent 'test-agent', got %q", jobAgent)
+	}
+	if jobModel != nil {
+		t.Errorf("Expected model to be NULL for pre-migration job, got %q", *jobModel)
+	}
+}

@@ -490,6 +490,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			status = EXCLUDED.status,
 			finished_at = EXCLUDED.finished_at,
 			error = EXCLUDED.error,
+			model = COALESCE(EXCLUDED.model, review_jobs.model),
 			updated_at = NOW()
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, j.Agent, nullString(j.Model), nullString(j.Reasoning),
 		j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,

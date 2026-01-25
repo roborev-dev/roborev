@@ -538,6 +538,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			status = excluded.status,
 			finished_at = excluded.finished_at,
 			error = excluded.error,
+			model = COALESCE(excluded.model, review_jobs.model),
 			updated_at = excluded.updated_at,
 			synced_at = ?
 	`, j.UUID, repoID, commitID, j.GitRef, j.Agent, nullStr(j.Model), j.Reasoning, // reasoning can be empty string, not NULL
