@@ -1663,7 +1663,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.loadingMore || m.loadingJobs {
 			return m, tea.Batch(m.tick(), m.fetchStatus())
 		}
-		m.loadingJobs = true
+		// Don't set loadingJobs for background refreshes - avoids flickering
+		// "Loading..." when there are no jobs. loadingJobs is only set for
+		// initial load or user-initiated actions (filter changes, etc.)
 		return m, tea.Batch(m.tick(), m.fetchJobs(), m.fetchStatus())
 
 	case tuiJobsMsg:
