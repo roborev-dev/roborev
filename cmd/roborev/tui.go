@@ -3256,6 +3256,7 @@ func (m tuiModel) renderHelpView() string {
 			keys: []struct{ key, desc string }{
 				{"p", "View prompt"},
 				{"↑/↓", "Scroll content"},
+				{"←/→", "Previous / next review"},
 			},
 		},
 	}
