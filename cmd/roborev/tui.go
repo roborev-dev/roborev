@@ -2369,7 +2369,20 @@ func (m tuiModel) renderQueueView() string {
 			m.status.CanceledJobs)
 	}
 	b.WriteString(tuiStatusStyle.Render(statusLine))
-	b.WriteString("\x1b[K\n\x1b[K\n") // Clear status line and blank line
+	b.WriteString("\x1b[K\n") // Clear status line
+
+	// Update notification on line 3 (above the table)
+	if m.updateAvailable != "" {
+		updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
+		var updateMsg string
+		if m.updateIsDevBuild {
+			updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update --force'", m.updateAvailable)
+		} else {
+			updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
+		}
+		b.WriteString(updateStyle.Render(updateMsg))
+	}
+	b.WriteString("\x1b[K\n") // Clear line 3
 
 	visibleJobList := m.getVisibleJobs()
 	visibleSelectedIdx := m.getVisibleSelectedIdx()
@@ -2487,19 +2500,10 @@ func (m tuiModel) renderQueueView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	// Status line: flash message (temporary) takes priority, then update notification, then blank
+	// Status line: flash message (temporary)
 	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewQueue {
 		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46")) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
-	} else if m.updateAvailable != "" {
-		updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
-		var updateMsg string
-		if m.updateIsDevBuild {
-			updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update --force'", m.updateAvailable)
-		} else {
-			updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
-		}
-		b.WriteString(updateStyle.Render(updateMsg))
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
