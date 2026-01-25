@@ -3084,15 +3084,15 @@ func (m tuiModel) renderRespondView() string {
 
 func (m tuiModel) submitComment(jobID int64, text string) tea.Cmd {
 	return func() tea.Msg {
-		responder := os.Getenv("USER")
-		if responder == "" {
-			responder = "anonymous"
+		commenter := os.Getenv("USER")
+		if commenter == "" {
+			commenter = "anonymous"
 		}
 
 		payload := map[string]interface{}{
 			"job_id":    jobID,
-			"responder": responder,
-			"response":  strings.TrimSpace(text),
+			"commenter": commenter,
+			"comment":   strings.TrimSpace(text),
 		}
 
 		body, err := json.Marshal(payload)

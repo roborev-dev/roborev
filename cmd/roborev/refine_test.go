@@ -23,7 +23,7 @@ type mockDaemonClient struct {
 
 	// Track calls for assertions
 	addressedReviews []int64
-	addedResponses   []addedResponse
+	addedComments   []addedComment
 	enqueuedReviews  []enqueuedReview
 
 	// Configurable errors for testing error paths
@@ -31,10 +31,10 @@ type mockDaemonClient struct {
 	getReviewBySHAErr  error
 }
 
-type addedResponse struct {
+type addedComment struct {
 	JobID     int64
-	Responder string
-	Response  string
+	Commenter string
+	Comment   string
 }
 
 type enqueuedReview struct {
@@ -78,8 +78,8 @@ func (m *mockDaemonClient) MarkReviewAddressed(reviewID int64) error {
 	return nil
 }
 
-func (m *mockDaemonClient) AddComment(jobID int64, responder, response string) error {
-	m.addedResponses = append(m.addedResponses, addedResponse{jobID, responder, response})
+func (m *mockDaemonClient) AddComment(jobID int64, commenter, comment string) error {
+	m.addedComments = append(m.addedComments, addedComment{jobID, commenter, comment})
 	return nil
 }
 

@@ -1202,7 +1202,7 @@ Examples:
 
 func commentCmd() *cobra.Command {
 	var (
-		responder  string
+		commenter  string
 		message    string
 		forceJobID bool
 	)
@@ -1299,17 +1299,17 @@ Examples:
 				return fmt.Errorf("empty comment, aborting")
 			}
 
-			if responder == "" {
-				responder = os.Getenv("USER")
-				if responder == "" {
-					responder = "anonymous"
+			if commenter == "" {
+				commenter = os.Getenv("USER")
+				if commenter == "" {
+					commenter = "anonymous"
 				}
 			}
 
 			// Build request with either job_id or sha
 			reqData := map[string]interface{}{
-				"responder": responder,
-				"response":  message,
+				"commenter": commenter,
+				"comment":   message,
 			}
 			if jobID != 0 {
 				reqData["job_id"] = jobID
@@ -1336,7 +1336,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&responder, "commenter", "", "commenter name (default: $USER)")
+	cmd.Flags().StringVar(&commenter, "commenter", "", "commenter name (default: $USER)")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "comment message (opens editor if not provided)")
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID (not SHA)")
 

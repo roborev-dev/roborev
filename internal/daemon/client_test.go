@@ -39,11 +39,11 @@ func TestHTTPClientAddComment(t *testing.T) {
 	if received["job_id"].(float64) != 42 {
 		t.Errorf("expected job_id 42, got %v", received["job_id"])
 	}
-	if received["responder"] != "test-agent" {
-		t.Errorf("expected responder test-agent, got %v", received["responder"])
+	if received["commenter"] != "test-agent" {
+		t.Errorf("expected commenter test-agent, got %v", received["commenter"])
 	}
-	if received["response"] != "Fixed the issue" {
-		t.Errorf("expected response to match, got %v", received["response"])
+	if received["comment"] != "Fixed the issue" {
+		t.Errorf("expected comment to match, got %v", received["comment"])
 	}
 }
 

@@ -71,8 +71,6 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/review/address", s.handleAddressReview)
 	mux.HandleFunc("/api/comment", s.handleAddComment)
 	mux.HandleFunc("/api/comments", s.handleListComments)
-	mux.HandleFunc("/api/respond", s.handleAddComment)   // backward compat
-	mux.HandleFunc("/api/responses", s.handleListComments) // backward compat
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stream/events", s.handleStreamEvents)
 	mux.HandleFunc("/api/sync/now", s.handleSyncNow)
@@ -712,8 +710,8 @@ func (s *Server) handleGetReview(w http.ResponseWriter, r *http.Request) {
 type AddCommentRequest struct {
 	SHA       string `json:"sha,omitempty"`    // Legacy: link to commit by SHA
 	JobID     int64  `json:"job_id,omitempty"` // Preferred: link to job
-	Responder string `json:"responder"`
-	Response  string `json:"response"`
+	Commenter string `json:"commenter"`
+	Comment   string `json:"comment"`
 }
 
 func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
@@ -728,8 +726,8 @@ func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Responder == "" || req.Response == "" {
-		writeError(w, http.StatusBadRequest, "responder and response are required")
+	if req.Commenter == "" || req.Comment == "" {
+		writeError(w, http.StatusBadRequest, "commenter and comment are required")
 		return
 	}
 
@@ -744,7 +742,7 @@ func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
 
 	if req.JobID != 0 {
 		// Link to job (preferred method)
-		resp, err = s.db.AddCommentToJob(req.JobID, req.Responder, req.Response)
+		resp, err = s.db.AddCommentToJob(req.JobID, req.Commenter, req.Comment)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, "job not found")
@@ -761,7 +759,7 @@ func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		resp, err = s.db.AddComment(commit.ID, req.Responder, req.Response)
+		resp, err = s.db.AddComment(commit.ID, req.Commenter, req.Comment)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("add comment: %v", err))
 			return

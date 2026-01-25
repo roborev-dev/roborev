@@ -27,7 +27,7 @@ type Client interface {
 	MarkReviewAddressed(reviewID int64) error
 
 	// AddComment adds a comment to a job
-	AddComment(jobID int64, responder, response string) error
+	AddComment(jobID int64, commenter, comment string) error
 
 	// EnqueueReview enqueues a review job and returns the job ID
 	EnqueueReview(repoPath, gitRef, agentName string) (int64, error)
@@ -150,11 +150,11 @@ func (c *HTTPClient) MarkReviewAddressed(reviewID int64) error {
 	return nil
 }
 
-func (c *HTTPClient) AddComment(jobID int64, responder, response string) error {
+func (c *HTTPClient) AddComment(jobID int64, commenter, comment string) error {
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"job_id":    jobID,
-		"responder": responder,
-		"response":  response,
+		"commenter": commenter,
+		"comment":   comment,
 	})
 
 	resp, err := c.httpClient.Post(c.addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
