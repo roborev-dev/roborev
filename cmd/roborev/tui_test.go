@@ -6352,6 +6352,97 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	}
 }
 
+func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
+	// Test that fetchCommitMsg correctly identifies job types and returns appropriate errors
+	// This is critical: Prompt field is populated for ALL jobs (stores review prompt),
+	// so we must check GitRef == "prompt" to identify run tasks, not Prompt != ""
+
+	m := newTuiModel("http://localhost")
+
+	tests := []struct {
+		name        string
+		job         storage.ReviewJob
+		expectError string // empty means no early error (will try git lookup)
+	}{
+		{
+			name: "regular commit with Prompt populated should not error early",
+			job: storage.ReviewJob{
+				ID:     1,
+				GitRef: "abc123def456",                      // valid commit SHA
+				Prompt: "You are a code reviewer...",        // review prompt is stored for all jobs
+			},
+			expectError: "", // should attempt git lookup, not return "run tasks" error
+		},
+		{
+			name: "run task (GitRef=prompt) should error",
+			job: storage.ReviewJob{
+				ID:     2,
+				GitRef: "prompt",
+				Prompt: "Explain this codebase",
+			},
+			expectError: "no commit message for run tasks",
+		},
+		{
+			name: "dirty job (GitRef=dirty) should error",
+			job: storage.ReviewJob{
+				ID:     3,
+				GitRef: "dirty",
+			},
+			expectError: "no commit message for uncommitted changes",
+		},
+		{
+			name: "dirty job with DiffContent should error",
+			job: storage.ReviewJob{
+				ID:         4,
+				GitRef:     "some-ref",
+				DiffContent: func() *string { s := "diff content"; return &s }(),
+			},
+			expectError: "no commit message for uncommitted changes",
+		},
+		{
+			name: "empty GitRef should error",
+			job: storage.ReviewJob{
+				ID:     5,
+				GitRef: "",
+			},
+			expectError: "no commit message for uncommitted changes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := m.fetchCommitMsg(&tt.job)
+			msg := cmd()
+
+			result, ok := msg.(tuiCommitMsgMsg)
+			if !ok {
+				t.Fatalf("Expected tuiCommitMsgMsg, got %T", msg)
+			}
+
+			if tt.expectError != "" {
+				if result.err == nil {
+					t.Errorf("Expected error %q, got nil", tt.expectError)
+				} else if result.err.Error() != tt.expectError {
+					t.Errorf("Expected error %q, got %q", tt.expectError, result.err.Error())
+				}
+			} else {
+				// For valid commits, we expect a git error (repo doesn't exist in test)
+				// but NOT the "run tasks" or "uncommitted changes" error
+				if result.err != nil {
+					errMsg := result.err.Error()
+					if errMsg == "no commit message for run tasks" {
+						t.Errorf("Regular commit with Prompt should not be detected as run task")
+					}
+					if errMsg == "no commit message for uncommitted changes" {
+						t.Errorf("Regular commit should not be detected as uncommitted changes")
+					}
+					// Other errors (like git errors) are expected in test environment
+				}
+			}
+		})
+	}
+}
+
 func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 	// Test that '?' opens help from queue and pressing '?' again returns to queue
 	m := newTuiModel("http://localhost")
