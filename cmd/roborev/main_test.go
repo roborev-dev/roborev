@@ -1552,11 +1552,12 @@ func TestDaemonStopInvalidPID(t *testing.T) {
 		t.Fatalf("write daemon.json: %v", err)
 	}
 
-	// stopDaemon finds the stale runtime file, KillDaemon cleans it up (daemon not alive,
-	// PID 0 doesn't exist), so stopDaemon returns nil (success - stale file cleaned up)
+	// ListAllRuntimes validates files and removes invalid ones (pid <= 0),
+	// so it returns an empty list, and stopDaemon returns ErrDaemonNotRunning.
+	// The key is that the invalid file gets cleaned up.
 	err := stopDaemon()
-	if err != nil {
-		t.Errorf("expected nil (stale daemon file cleaned up), got %v", err)
+	if err != ErrDaemonNotRunning {
+		t.Errorf("expected ErrDaemonNotRunning (invalid file removed during listing), got %v", err)
 	}
 
 	// Verify daemon.json was cleaned up

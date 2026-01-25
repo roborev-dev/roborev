@@ -6,15 +6,47 @@ import (
 	"bytes"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 )
 
+// isRoborevProcess checks if a process is a roborev daemon.
+// This prevents killing unrelated processes if a PID was reused.
+func isRoborevProcess(pid int) bool {
+	// Use wmic to get the command line for the process
+	pidStr := strconv.Itoa(pid)
+	cmd := exec.Command("wmic", "process", "where", "ProcessId="+pidStr, "get", "commandline")
+	output, err := cmd.Output()
+	if err != nil {
+		// Fall back to checking process name via tasklist
+		cmd := exec.Command("tasklist", "/FI", "PID eq "+pidStr, "/FO", "CSV", "/NH")
+		output, err := cmd.Output()
+		if err != nil {
+			return false // Can't determine, assume not ours
+		}
+		// CSV format: "Image Name","PID",...
+		// Check if it's roborev.exe
+		return bytes.Contains(bytes.ToLower(output), []byte("roborev"))
+	}
+	// Check if command line contains roborev and daemon
+	cmdStr := strings.ToLower(string(output))
+	return strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon")
+}
+
 // killProcess kills a process by PID on Windows.
 // Returns true only if the process is confirmed dead.
+// Verifies the process is a roborev daemon before killing to prevent
+// killing unrelated processes if the PID was reused.
 func killProcess(pid int) bool {
 	// Check if process exists before trying to kill
 	if !processExists(pid) {
 		return true // Already dead
+	}
+
+	// Verify this is actually a roborev daemon process before killing
+	if !isRoborevProcess(pid) {
+		// Not a roborev process - the original daemon is gone and PID was reused
+		return true
 	}
 
 	// Use taskkill to terminate the process

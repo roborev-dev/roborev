@@ -5,12 +5,38 @@ package daemon
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
 
+// isRoborevProcess checks if a process is a roborev daemon.
+// This prevents killing unrelated processes if a PID was reused.
+func isRoborevProcess(pid int) bool {
+	// Try reading /proc/<pid>/cmdline (Linux)
+	cmdline, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err == nil {
+		// cmdline uses null bytes as separators
+		cmdStr := strings.ReplaceAll(string(cmdline), "\x00", " ")
+		return strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon")
+	}
+
+	// Fall back to ps (macOS/BSD)
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	output, err := cmd.Output()
+	if err != nil {
+		return false // Can't determine, assume not ours
+	}
+	cmdStr := string(output)
+	return strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon")
+}
+
 // killProcess kills a process by PID on Unix systems.
 // Returns true only if the process is confirmed dead.
+// Verifies the process is a roborev daemon before killing to prevent
+// killing unrelated processes if the PID was reused.
 func killProcess(pid int) bool {
 	// os.FindProcess on Unix never returns an error, it always succeeds
 	process, _ := os.FindProcess(pid)
@@ -23,6 +49,14 @@ func killProcess(pid int) bool {
 			return false
 		}
 		// ESRCH or other errors mean process doesn't exist
+		return true
+	}
+
+	// Verify this is actually a roborev daemon process before killing
+	// This prevents killing unrelated processes if the PID was reused
+	if !isRoborevProcess(pid) {
+		// Not a roborev process - the original daemon is gone and PID was reused
+		// Return true to indicate the daemon is no longer running
 		return true
 	}
 

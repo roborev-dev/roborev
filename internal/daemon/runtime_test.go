@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -138,17 +139,22 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 }
 
 func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
-	// Use temp home directory
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Create the data directory
-	dataDir := tmpHome + "/.roborev"
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatalf("Failed to create data dir: %v", err)
+	// Skip on Windows where chmod 0000 doesn't block reads
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0000 doesn't block reads on Windows")
 	}
+
+	// Use ROBOREV_DATA_DIR to override data directory (works cross-platform)
+	dataDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", dataDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
 
 	// Create a valid runtime file
 	validContent := `{"pid": 12345, "addr": "127.0.0.1:7373", "port": 7373, "version": "test"}`
@@ -157,12 +163,18 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 		t.Fatalf("Failed to write valid runtime file: %v", err)
 	}
 
-	// Create an unreadable runtime file (skip on Windows where chmod doesn't work the same)
+	// Create an unreadable runtime file
 	unreadablePath := dataDir + "/daemon.99999.json"
-	if err := os.WriteFile(unreadablePath, []byte(`{"pid": 99999}`), 0000); err != nil {
+	if err := os.WriteFile(unreadablePath, []byte(`{"pid": 99999, "addr": "127.0.0.1:7374"}`), 0000); err != nil {
 		t.Fatalf("Failed to write unreadable runtime file: %v", err)
 	}
 	defer os.Chmod(unreadablePath, 0644) // Restore permissions for cleanup
+
+	// Probe whether chmod 0000 actually blocks reads on this filesystem
+	if f, probeErr := os.Open(unreadablePath); probeErr == nil {
+		f.Close()
+		t.Skip("filesystem does not enforce chmod 0000 read restrictions")
+	}
 
 	// ListAllRuntimes should return the readable entry without error
 	runtimes, err := ListAllRuntimes()

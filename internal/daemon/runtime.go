@@ -121,6 +121,11 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 			os.Remove(path)
 			continue
 		}
+		// Validate required fields - remove invalid entries
+		if info.PID <= 0 || info.Addr == "" {
+			os.Remove(path)
+			continue
+		}
 		// Track source path for proper cleanup
 		info.SourcePath = path
 		runtimes = append(runtimes, &info)
@@ -149,6 +154,7 @@ func GetAnyRunningDaemon() (*RuntimeInfo, error) {
 // IsDaemonAlive checks if a daemon at the given address is actually responding.
 // This is more reliable than checking PID and works cross-platform.
 // Only allows loopback addresses to prevent SSRF via malicious runtime files.
+// Uses retry logic to avoid misclassifying a slow or transiently failing daemon.
 func IsDaemonAlive(addr string) bool {
 	if addr == "" {
 		return false
@@ -159,13 +165,25 @@ func IsDaemonAlive(addr string) bool {
 		return false
 	}
 
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-	resp, err := client.Get(fmt.Sprintf("http://%s/api/status", addr))
-	if err != nil {
-		return false
+	// Use longer timeout and retry to avoid false negatives on slow/busy daemons
+	client := &http.Client{Timeout: 1 * time.Second}
+	url := fmt.Sprintf("http://%s/api/status", addr)
+
+	// Try up to 2 times with a short delay between attempts
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			time.Sleep(200 * time.Millisecond)
+		}
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return true
+		}
 	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return false
 }
 
 // isLoopbackAddr checks if an address is a loopback address.
