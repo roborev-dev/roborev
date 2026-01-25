@@ -1497,7 +1497,14 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 		t.Fatalf("Failed to create setup pool: %v", err)
 	}
 
-	// Cleanup
+	// Drop any existing schema to start fresh - this test needs to verify v1→v2 migration
+	_, err = setupPool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to drop existing schema: %v", err)
+	}
+
+	// Cleanup after test
 	t.Cleanup(func() {
 		cleanupCfg, _ := pgxpool.ParseConfig(connString)
 		cleanupPool, _ := pgxpool.NewWithConfig(ctx, cleanupCfg)
@@ -1507,27 +1514,23 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 		}
 	})
 
-	// Check if roborev schema already has tables
-	var roborevHasTables bool
-	err = setupPool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = 'roborev' AND table_name = 'review_jobs'
-		)
-	`).Scan(&roborevHasTables)
-	if err != nil {
-		setupPool.Close()
-		t.Fatalf("Failed to check roborev schema: %v", err)
-	}
-	if roborevHasTables {
-		setupPool.Close()
-		t.Skip("Skipping migration test: roborev schema already has tables")
-	}
-
 	// Load and execute v1 schema from embedded SQL file
+	// Use same parsing logic as pgSchemaStatements() to handle comments correctly
 	for _, stmt := range strings.Split(postgresV1Schema, ";") {
 		stmt = strings.TrimSpace(stmt)
-		if stmt == "" || strings.HasPrefix(stmt, "--") {
+		if stmt == "" {
+			continue
+		}
+		// Skip statements that are only comments
+		hasCode := false
+		for _, line := range strings.Split(stmt, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "--") {
+				hasCode = true
+				break
+			}
+		}
+		if !hasCode {
 			continue
 		}
 		if _, err := setupPool.Exec(ctx, stmt); err != nil {
