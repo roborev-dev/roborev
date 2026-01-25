@@ -86,6 +86,16 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 
 // Start begins the server and worker pool
 func (s *Server) Start(ctx context.Context) error {
+	// Check if another daemon is already running (there can be only one)
+	if info, err := ReadRuntime(); err == nil && info.Addr != "" {
+		if IsDaemonAlive(info.Addr) {
+			return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Addr)
+		}
+		// Stale runtime file from crashed daemon - clean it up
+		log.Printf("Cleaning up stale runtime file (pid %d no longer responding)", info.PID)
+		RemoveRuntime()
+	}
+
 	// Reset stale jobs from previous runs
 	if err := s.db.ResetStaleJobs(); err != nil {
 		log.Printf("Warning: failed to reset stale jobs: %v", err)

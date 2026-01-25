@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
 )
@@ -65,6 +67,21 @@ func ReadRuntime() (*RuntimeInfo, error) {
 // RemoveRuntime removes the runtime info file
 func RemoveRuntime() {
 	os.Remove(RuntimePath())
+}
+
+// IsDaemonAlive checks if a daemon at the given address is actually responding.
+// This is more reliable than checking PID and works cross-platform.
+func IsDaemonAlive(addr string) bool {
+	if addr == "" {
+		return false
+	}
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://%s/api/status", addr))
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // FindAvailablePort finds an available port starting from the given port
