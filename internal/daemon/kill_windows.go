@@ -53,9 +53,12 @@ func getCommandLineWmic(pidStr string) string {
 	// Normalize and remove the header
 	result := normalizeCommandLine(string(output))
 	// Remove the "CommandLine" header if present (case-insensitive)
-	if strings.HasPrefix(strings.ToLower(result), "commandline") {
+	lower := strings.ToLower(result)
+	if strings.HasPrefix(lower, "commandline") {
 		result = strings.TrimSpace(result[11:]) // len("commandline") == 11
 	}
+	// If result is empty or just the header was present, return empty
+	// This ensures header-only output is treated as "no data" (unknown)
 	return result
 }
 
@@ -75,12 +78,16 @@ func getCommandLinePowerShell(pidStr string) string {
 }
 
 // normalizeCommandLine cleans up command line output from system tools.
-// Strips BOM, NUL bytes (from UTF-16LE encoding issues), and trims whitespace.
+// Strips BOMs, NUL bytes (from UTF-16LE encoding issues), and trims whitespace.
 func normalizeCommandLine(s string) string {
-	// Strip UTF-8 BOM if present
-	s = strings.TrimPrefix(s, "\xef\xbb\xbf")
-	// Strip NUL bytes (common with UTF-16LE encoding issues)
+	// Strip NUL bytes first (common with UTF-16LE encoding issues)
 	s = strings.ReplaceAll(s, "\x00", "")
+	// Strip UTF-8 BOM
+	s = strings.TrimPrefix(s, "\xef\xbb\xbf")
+	// Strip UTF-16LE BOM (after NUL removal, this becomes \xff\xfe)
+	s = strings.TrimPrefix(s, "\xff\xfe")
+	// Strip UTF-16BE BOM
+	s = strings.TrimPrefix(s, "\xfe\xff")
 	return strings.TrimSpace(s)
 }
 

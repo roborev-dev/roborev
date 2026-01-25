@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,55 @@ func TestClassifyCommandLineStripsNulBytes(t *testing.T) {
 	}
 }
 
+func TestWmicHeaderOnlyOutput(t *testing.T) {
+	// Verify that WMIC output containing only the header is treated as empty.
+	// This simulates the flow in getCommandLineWmic without spawning wmic.
+
+	tests := []struct {
+		name       string
+		wmicOutput string
+		wantEmpty  bool
+	}{
+		{
+			name:       "header only",
+			wmicOutput: "CommandLine\r\n",
+			wantEmpty:  true,
+		},
+		{
+			name:       "header with trailing whitespace",
+			wmicOutput: "CommandLine  \r\n  \r\n",
+			wantEmpty:  true,
+		},
+		{
+			name:       "header with UTF-16LE BOM (after NUL removal)",
+			wmicOutput: "\xff\xfeCommandLine\r\n",
+			wantEmpty:  true,
+		},
+		{
+			name:       "header with actual data",
+			wmicOutput: "CommandLine\r\nroborev.exe daemon run\r\n",
+			wantEmpty:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate getCommandLineWmic logic
+			result := normalizeCommandLine(tt.wmicOutput)
+			lower := strings.ToLower(result)
+			if strings.HasPrefix(lower, "commandline") {
+				result = strings.TrimSpace(result[11:])
+			}
+
+			gotEmpty := result == ""
+			if gotEmpty != tt.wantEmpty {
+				t.Errorf("header extraction: got empty=%v, want empty=%v (result=%q)",
+					gotEmpty, tt.wantEmpty, result)
+			}
+		})
+	}
+}
+
 func TestNormalizeCommandLine(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -118,6 +168,21 @@ func TestNormalizeCommandLine(t *testing.T) {
 			name:  "BOM with whitespace becomes empty",
 			input: "\xef\xbb\xbf   ",
 			want:  "",
+		},
+		{
+			name:  "strips UTF-16LE BOM after NUL removal",
+			input: "\xff\xferoborev daemon",
+			want:  "roborev daemon",
+		},
+		{
+			name:  "strips UTF-16BE BOM",
+			input: "\xfe\xffroborev daemon",
+			want:  "roborev daemon",
+		},
+		{
+			name:  "handles real UTF-16LE with BOM",
+			input: "\xff\x00\xfe\x00r\x00o\x00b\x00o\x00r\x00e\x00v\x00",
+			want:  "roborev", // After NUL removal: \xff\xferoborev, then BOM stripped
 		},
 	}
 
