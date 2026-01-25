@@ -2070,8 +2070,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiErrMsg:
 		m.err = msg
-		// tuiErrMsg is typically for application-level errors (404, parse errors, etc.)
-		// Don't count these for reconnection - only connection failures matter
+		// Count connection errors for reconnection (status/review/repo fetches use tuiErrMsg)
+		if isConnectionError(msg) {
+			m.consecutiveErrors++
+			// Try to reconnect after consecutive connection failures
+			if m.consecutiveErrors >= 3 && !m.reconnecting {
+				m.reconnecting = true
+				return m, m.tryReconnect()
+			}
+		}
 
 	case tuiReconnectMsg:
 		m.reconnecting = false

@@ -6155,6 +6155,44 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("status/review connection errors trigger reconnection", func(t *testing.T) {
+		m := newTuiModel("http://localhost:7373")
+		m.consecutiveErrors = 2
+
+		// Connection error via tuiErrMsg (from fetchStatus, fetchReview, etc.)
+		updated, cmd := m.Update(tuiErrMsg(mockConnError("connection refused")))
+		m2 := updated.(tuiModel)
+
+		if m2.consecutiveErrors != 3 {
+			t.Errorf("Expected consecutiveErrors=3, got %d", m2.consecutiveErrors)
+		}
+		if !m2.reconnecting {
+			t.Error("Expected reconnecting=true for tuiErrMsg connection errors")
+		}
+		if cmd == nil {
+			t.Error("Expected reconnect command")
+		}
+	})
+
+	t.Run("status/review application errors do not trigger reconnection", func(t *testing.T) {
+		m := newTuiModel("http://localhost:7373")
+		m.consecutiveErrors = 2
+
+		// Application error via tuiErrMsg should not increment
+		updated, cmd := m.Update(tuiErrMsg(fmt.Errorf("review not found")))
+		m2 := updated.(tuiModel)
+
+		if m2.consecutiveErrors != 2 {
+			t.Errorf("Expected consecutiveErrors unchanged at 2, got %d", m2.consecutiveErrors)
+		}
+		if m2.reconnecting {
+			t.Error("Expected reconnecting=false for application errors")
+		}
+		if cmd != nil {
+			t.Error("Expected no reconnect command for application errors")
+		}
+	})
+
 	t.Run("resets error count on successful jobs fetch", func(t *testing.T) {
 		m := newTuiModel("http://localhost:7373")
 		m.consecutiveErrors = 5
