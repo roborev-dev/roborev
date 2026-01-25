@@ -27,6 +27,12 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
+// Tick intervals for adaptive polling
+const (
+	tickIntervalActive = 2 * time.Second  // Poll frequently when jobs are running/pending
+	tickIntervalIdle   = 10 * time.Second // Poll less when queue is idle
+)
+
 // TUI styles
 var (
 	tuiTitleStyle = lipgloss.NewStyle().
@@ -281,9 +287,23 @@ func (m *tuiModel) updateDisplayNameCache(jobs []storage.ReviewJob) {
 }
 
 func (m tuiModel) tick() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(m.tickInterval(), func(t time.Time) tea.Msg {
 		return tuiTickMsg(t)
 	})
+}
+
+// tickInterval returns the appropriate polling interval based on queue activity.
+// Uses faster polling when jobs are running or pending, slower when idle.
+func (m tuiModel) tickInterval() time.Duration {
+	// Before first status fetch, use active interval to be responsive on startup
+	if !m.statusFetchedOnce {
+		return tickIntervalActive
+	}
+	// Poll frequently when there's activity
+	if m.status.RunningJobs > 0 || m.status.QueuedJobs > 0 {
+		return tickIntervalActive
+	}
+	return tickIntervalIdle
 }
 
 func (m tuiModel) fetchJobs() tea.Cmd {
