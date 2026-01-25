@@ -38,3 +38,16 @@ func TestGeminiRunTemplateLoads(t *testing.T) {
 		t.Errorf("Expected Gemini run template content, got: %s", result[:min(100, len(result))])
 	}
 }
+
+func TestNonGeminiRunReturnsEmpty(t *testing.T) {
+	// Non-Gemini agents without a run template should return empty string,
+	// NOT the review prompt. This ensures roborev run uses raw prompts
+	// without review-style preambles for agents that don't have one.
+	agents := []string{"claude-code", "claude", "unknown-agent"}
+	for _, agent := range agents {
+		result := GetSystemPrompt(agent, "run")
+		if result != "" {
+			t.Errorf("GetSystemPrompt(%q, \"run\") = %q, want empty string", agent, result[:min(50, len(result))])
+		}
+	}
+}

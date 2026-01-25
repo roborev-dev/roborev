@@ -43,6 +43,9 @@ func GetSystemPrompt(agentName string, promptType string) string {
 		return SystemPromptRange
 	case "address":
 		return SystemPromptAddress
+	case "run":
+		// No default run preamble - return empty so raw prompts are used
+		return ""
 	default:
 		return SystemPromptSingle
 	}
