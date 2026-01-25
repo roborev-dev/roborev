@@ -78,7 +78,7 @@ func (m *mockDaemonClient) MarkReviewAddressed(reviewID int64) error {
 	return nil
 }
 
-func (m *mockDaemonClient) AddResponse(jobID int64, responder, response string) error {
+func (m *mockDaemonClient) AddComment(jobID int64, responder, response string) error {
 	m.addedResponses = append(m.addedResponses, addedResponse{jobID, responder, response})
 	return nil
 }
@@ -116,7 +116,7 @@ func (m *mockDaemonClient) FindPendingJobForRef(repoPath, gitRef string) (*stora
 	return nil, nil
 }
 
-func (m *mockDaemonClient) GetResponsesForJob(jobID int64) ([]storage.Response, error) {
+func (m *mockDaemonClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) {
 	return m.responses[jobID], nil
 }
 

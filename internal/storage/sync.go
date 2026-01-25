@@ -452,9 +452,9 @@ type SyncableResponse struct {
 	CreatedAt       time.Time
 }
 
-// GetResponsesToSync returns responses created locally that need to be pushed.
-// Only returns responses whose parent job has already been synced.
-func (db *DB) GetResponsesToSync(machineID string, limit int) ([]SyncableResponse, error) {
+// GetCommentsToSync returns comments created locally that need to be pushed.
+// Only returns comments whose parent job has already been synced.
+func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse, error) {
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
@@ -497,15 +497,15 @@ func (db *DB) GetResponsesToSync(machineID string, limit int) ([]SyncableRespons
 	return responses, rows.Err()
 }
 
-// MarkResponseSynced updates the synced_at timestamp for a response
-func (db *DB) MarkResponseSynced(responseID int64) error {
+// MarkCommentSynced updates the synced_at timestamp for a comment
+func (db *DB) MarkCommentSynced(responseID int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := db.Exec(`UPDATE responses SET synced_at = ? WHERE id = ?`, now, responseID)
 	return err
 }
 
-// MarkResponsesSynced updates the synced_at timestamp for multiple responses
-func (db *DB) MarkResponsesSynced(responseIDs []int64) error {
+// MarkCommentsSynced updates the synced_at timestamp for multiple comments
+func (db *DB) MarkCommentsSynced(responseIDs []int64) error {
 	if len(responseIDs) == 0 {
 		return nil
 	}

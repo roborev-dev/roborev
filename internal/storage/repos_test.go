@@ -523,8 +523,8 @@ func TestDeleteRepo(t *testing.T) {
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
-		// Add a response
-		db.AddResponseToJob(job.ID, "user", "comment")
+		// Add a comment
+		db.AddCommentToJob(job.ID, "user", "comment")
 
 		err := db.DeleteRepo(repo.ID, true)
 		if err != nil {
@@ -720,13 +720,13 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 	repo, _ := db.GetOrCreateRepo("/tmp/delete-legacy-resp-test")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "legacy-resp-commit", "A", "S", time.Now())
 
-	// Add legacy commit-based response (not job-based)
-	_, err := db.AddResponse(commit.ID, "reviewer", "Legacy comment on commit")
+	// Add legacy commit-based comment (not job-based)
+	_, err := db.AddComment(commit.ID, "reviewer", "Legacy comment on commit")
 	if err != nil {
-		t.Fatalf("AddResponse failed: %v", err)
+		t.Fatalf("AddComment failed: %v", err)
 	}
 
-	// Verify response exists
+	// Verify comment exists
 	var beforeCount int
 	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&beforeCount)
 	if beforeCount != 1 {

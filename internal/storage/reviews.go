@@ -252,8 +252,8 @@ func (db *DB) GetReviewByID(reviewID int64) (*Review, error) {
 	return &r, nil
 }
 
-// AddResponse adds a response to a commit (legacy - use AddResponseToJob for new code)
-func (db *DB) AddResponse(commitID int64, responder, response string) (*Response, error) {
+// AddComment adds a comment to a commit (legacy - use AddCommentToJob for new code)
+func (db *DB) AddComment(commitID int64, responder, response string) (*Response, error) {
 	uuid := GenerateUUID()
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
@@ -277,8 +277,8 @@ func (db *DB) AddResponse(commitID int64, responder, response string) (*Response
 	}, nil
 }
 
-// AddResponseToJob adds a response linked to a job/review
-func (db *DB) AddResponseToJob(jobID int64, responder, response string) (*Response, error) {
+// AddCommentToJob adds a comment linked to a job/review
+func (db *DB) AddCommentToJob(jobID int64, responder, response string) (*Response, error) {
 	// Verify job exists first to return proper 404 instead of FK violation or orphaned row
 	var exists int
 	err := db.QueryRow(`SELECT 1 FROM review_jobs WHERE id = ?`, jobID).Scan(&exists)
@@ -312,8 +312,8 @@ func (db *DB) AddResponseToJob(jobID int64, responder, response string) (*Respon
 	}, nil
 }
 
-// GetResponsesForCommit returns all responses for a commit
-func (db *DB) GetResponsesForCommit(commitID int64) ([]Response, error) {
+// GetCommentsForCommit returns all comments for a commit
+func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 	rows, err := db.Query(`
 		SELECT id, commit_id, job_id, responder, response, created_at
 		FROM responses
@@ -346,8 +346,8 @@ func (db *DB) GetResponsesForCommit(commitID int64) ([]Response, error) {
 	return responses, rows.Err()
 }
 
-// GetResponsesForJob returns all responses linked to a job
-func (db *DB) GetResponsesForJob(jobID int64) ([]Response, error) {
+// GetCommentsForJob returns all comments linked to a job
+func (db *DB) GetCommentsForJob(jobID int64) ([]Response, error) {
 	rows, err := db.Query(`
 		SELECT id, commit_id, job_id, responder, response, created_at
 		FROM responses
@@ -380,11 +380,11 @@ func (db *DB) GetResponsesForJob(jobID int64) ([]Response, error) {
 	return responses, rows.Err()
 }
 
-// GetResponsesForCommitSHA returns all responses for a commit by SHA
-func (db *DB) GetResponsesForCommitSHA(sha string) ([]Response, error) {
+// GetCommentsForCommitSHA returns all comments for a commit by SHA
+func (db *DB) GetCommentsForCommitSHA(sha string) ([]Response, error) {
 	commit, err := db.GetCommitBySHA(sha)
 	if err != nil {
 		return nil, err
 	}
-	return db.GetResponsesForCommit(commit.ID)
+	return db.GetCommentsForCommit(commit.ID)
 }

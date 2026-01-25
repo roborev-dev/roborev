@@ -1476,7 +1476,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 	})
 }
 
-func TestGetResponsesToSync_LegacyResponsesExcluded(t *testing.T) {
+func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	// This test verifies that legacy responses with job_id IS NULL (tied only to commit_id)
 	// are excluded from sync since they cannot be synced via job_uuid.
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -1521,9 +1521,9 @@ func TestGetResponsesToSync_LegacyResponsesExcluded(t *testing.T) {
 		t.Fatalf("MarkJobSynced failed: %v", err)
 	}
 
-	jobResp, err := db.AddResponseToJob(job.ID, "human", "This is a job response")
+	jobResp, err := db.AddCommentToJob(job.ID, "human", "This is a job response")
 	if err != nil {
-		t.Fatalf("AddResponseToJob failed: %v", err)
+		t.Fatalf("AddCommentToJob failed: %v", err)
 	}
 
 	// Create a legacy commit-only response by directly inserting with job_id IS NULL
@@ -1537,9 +1537,9 @@ func TestGetResponsesToSync_LegacyResponsesExcluded(t *testing.T) {
 	legacyRespID, _ := result.LastInsertId()
 
 	// Get responses to sync - should only include the job-based response
-	responses, err := db.GetResponsesToSync(machineID, 100)
+	responses, err := db.GetCommentsToSync(machineID, 100)
 	if err != nil {
-		t.Fatalf("GetResponsesToSync failed: %v", err)
+		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
 
 	foundJobResp := false
@@ -1702,9 +1702,9 @@ func TestClearAllSyncedAt(t *testing.T) {
 	job := h.createCompletedJob("clear-test-sha")
 
 	// Add a response
-	_, err := h.db.AddResponseToJob(job.ID, "user", "test response")
+	_, err := h.db.AddCommentToJob(job.ID, "user", "test response")
 	if err != nil {
-		t.Fatalf("AddResponseToJob failed: %v", err)
+		t.Fatalf("AddCommentToJob failed: %v", err)
 	}
 
 	// Mark everything as synced
@@ -1756,9 +1756,9 @@ func TestClearAllSyncedAt(t *testing.T) {
 		t.Errorf("Expected 1 review to sync after clear, got %d", len(reviews))
 	}
 
-	responses, err := h.db.GetResponsesToSync(h.machineID, 100)
+	responses, err := h.db.GetCommentsToSync(h.machineID, 100)
 	if err != nil {
-		t.Fatalf("GetResponsesToSync failed: %v", err)
+		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
 	if len(responses) != 1 {
 		t.Errorf("Expected 1 response to sync after clear, got %d", len(responses))
@@ -1774,9 +1774,9 @@ func TestBatchMarkSynced(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		job := h.createCompletedJob(fmt.Sprintf("batch-test-sha-%d", i))
 		jobs = append(jobs, job)
-		_, err := h.db.AddResponseToJob(job.ID, "user", fmt.Sprintf("response %d", i))
+		_, err := h.db.AddCommentToJob(job.ID, "user", fmt.Sprintf("response %d", i))
 		if err != nil {
-			t.Fatalf("AddResponseToJob failed: %v", err)
+			t.Fatalf("AddCommentToJob failed: %v", err)
 		}
 	}
 
@@ -1837,9 +1837,9 @@ func TestBatchMarkSynced(t *testing.T) {
 
 	t.Run("MarkResponsesSynced marks multiple responses", func(t *testing.T) {
 		// Get responses for synced jobs
-		responses, err := h.db.GetResponsesToSync(h.machineID, 100)
+		responses, err := h.db.GetCommentsToSync(h.machineID, 100)
 		if err != nil {
-			t.Fatalf("GetResponsesToSync failed: %v", err)
+			t.Fatalf("GetCommentsToSync failed: %v", err)
 		}
 		if len(responses) != 3 {
 			t.Fatalf("Expected 3 responses to sync (jobs 0-2 synced), got %d", len(responses))
@@ -1850,14 +1850,14 @@ func TestBatchMarkSynced(t *testing.T) {
 		for i, r := range responses {
 			responseIDs[i] = r.ID
 		}
-		if err := h.db.MarkResponsesSynced(responseIDs); err != nil {
-			t.Fatalf("MarkResponsesSynced failed: %v", err)
+		if err := h.db.MarkCommentsSynced(responseIDs); err != nil {
+			t.Fatalf("MarkCommentsSynced failed: %v", err)
 		}
 
 		// Verify no responses left to sync (for synced jobs)
-		responses, err = h.db.GetResponsesToSync(h.machineID, 100)
+		responses, err = h.db.GetCommentsToSync(h.machineID, 100)
 		if err != nil {
-			t.Fatalf("GetResponsesToSync failed: %v", err)
+			t.Fatalf("GetCommentsToSync failed: %v", err)
 		}
 		if len(responses) != 0 {
 			t.Errorf("Expected 0 responses to sync after batch mark, got %d", len(responses))
@@ -1872,7 +1872,7 @@ func TestBatchMarkSynced(t *testing.T) {
 		if err := h.db.MarkReviewsSynced([]int64{}); err != nil {
 			t.Errorf("MarkReviewsSynced with empty slice failed: %v", err)
 		}
-		if err := h.db.MarkResponsesSynced([]int64{}); err != nil {
+		if err := h.db.MarkCommentsSynced([]int64{}); err != nil {
 			t.Errorf("MarkResponsesSynced with empty slice failed: %v", err)
 		}
 	})
@@ -1960,24 +1960,24 @@ func TestGetReviewsToSync_RequiresJobSynced(t *testing.T) {
 	}
 }
 
-// TestGetResponsesToSync_RequiresJobSynced verifies that responses are only
+// TestGetCommentsToSync_RequiresJobSynced verifies that responses are only
 // returned when their parent job has been synced (j.synced_at IS NOT NULL).
-func TestGetResponsesToSync_RequiresJobSynced(t *testing.T) {
+func TestGetCommentsToSync_RequiresJobSynced(t *testing.T) {
 	h := newSyncTestHelper(t)
 
 	// Create a completed job (not synced yet)
 	job := h.createCompletedJob("response-sync-sha")
 
 	// Add a response to the job
-	_, err := h.db.AddResponseToJob(job.ID, "test-user", "test response")
+	_, err := h.db.AddCommentToJob(job.ID, "test-user", "test response")
 	if err != nil {
 		t.Fatalf("Failed to add response: %v", err)
 	}
 
 	// Before job is synced, GetResponsesToSync should return nothing
-	responses, err := h.db.GetResponsesToSync(h.machineID, 100)
+	responses, err := h.db.GetCommentsToSync(h.machineID, 100)
 	if err != nil {
-		t.Fatalf("GetResponsesToSync failed: %v", err)
+		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
 	if len(responses) != 0 {
 		t.Errorf("Expected 0 responses before job is synced, got %d", len(responses))
@@ -1989,9 +1989,9 @@ func TestGetResponsesToSync_RequiresJobSynced(t *testing.T) {
 	}
 
 	// Now GetResponsesToSync should return the response
-	responses, err = h.db.GetResponsesToSync(h.machineID, 100)
+	responses, err = h.db.GetCommentsToSync(h.machineID, 100)
 	if err != nil {
-		t.Fatalf("GetResponsesToSync failed: %v", err)
+		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
 	if len(responses) != 1 {
 		t.Errorf("Expected 1 response after job is synced, got %d", len(responses))
@@ -2064,7 +2064,7 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 		job := h.createCompletedJob("workflow-sha-" + string(rune('a'+i)))
 		createdJobs = append(createdJobs, job)
 		// Add a response
-		_, err := h.db.AddResponseToJob(job.ID, "user", "response")
+		_, err := h.db.AddCommentToJob(job.ID, "user", "response")
 		if err != nil {
 			t.Fatalf("Failed to add response %d: %v", i, err)
 		}
@@ -2087,9 +2087,9 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 		t.Errorf("Expected 0 reviews to sync (jobs not synced), got %d", len(reviews))
 	}
 
-	responses, err := h.db.GetResponsesToSync(h.machineID, 100)
+	responses, err := h.db.GetCommentsToSync(h.machineID, 100)
 	if err != nil {
-		t.Fatalf("GetResponsesToSync failed: %v", err)
+		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
 	if len(responses) != 0 {
 		t.Errorf("Expected 0 responses to sync (jobs not synced), got %d", len(responses))
@@ -2117,9 +2117,9 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 		t.Errorf("Expected 1 review to sync, got %d", len(reviews))
 	}
 
-	responses, err = h.db.GetResponsesToSync(h.machineID, 100)
+	responses, err = h.db.GetCommentsToSync(h.machineID, 100)
 	if err != nil {
-		t.Fatalf("GetResponsesToSync failed: %v", err)
+		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
 	if len(responses) != 1 {
 		t.Errorf("Expected 1 response to sync, got %d", len(responses))
@@ -2149,9 +2149,9 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 		t.Errorf("Expected 3 reviews to sync, got %d", len(reviews))
 	}
 
-	responses, err = h.db.GetResponsesToSync(h.machineID, 100)
+	responses, err = h.db.GetCommentsToSync(h.machineID, 100)
 	if err != nil {
-		t.Fatalf("GetResponsesToSync failed: %v", err)
+		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
 	if len(responses) != 3 {
 		t.Errorf("Expected 3 responses to sync, got %d", len(responses))

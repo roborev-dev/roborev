@@ -69,8 +69,8 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/repos", s.handleListRepos)
 	mux.HandleFunc("/api/review", s.handleGetReview)
 	mux.HandleFunc("/api/review/address", s.handleAddressReview)
-	mux.HandleFunc("/api/respond", s.handleAddResponse)
-	mux.HandleFunc("/api/responses", s.handleListResponses)
+	mux.HandleFunc("/api/respond", s.handleAddComment)
+	mux.HandleFunc("/api/responses", s.handleListComments)
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stream/events", s.handleStreamEvents)
 	mux.HandleFunc("/api/sync/now", s.handleSyncNow)
@@ -707,20 +707,20 @@ func (s *Server) handleGetReview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, review)
 }
 
-type AddResponseRequest struct {
+type AddCommentRequest struct {
 	SHA       string `json:"sha,omitempty"`    // Legacy: link to commit by SHA
 	JobID     int64  `json:"job_id,omitempty"` // Preferred: link to job
 	Responder string `json:"responder"`
 	Response  string `json:"response"`
 }
 
-func (s *Server) handleAddResponse(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	var req AddResponseRequest
+	var req AddCommentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -742,13 +742,13 @@ func (s *Server) handleAddResponse(w http.ResponseWriter, r *http.Request) {
 
 	if req.JobID != 0 {
 		// Link to job (preferred method)
-		resp, err = s.db.AddResponseToJob(req.JobID, req.Responder, req.Response)
+		resp, err = s.db.AddCommentToJob(req.JobID, req.Responder, req.Response)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, "job not found")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("add response: %v", err))
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("add comment: %v", err))
 			return
 		}
 	} else {
@@ -759,9 +759,9 @@ func (s *Server) handleAddResponse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		resp, err = s.db.AddResponse(commit.ID, req.Responder, req.Response)
+		resp, err = s.db.AddComment(commit.ID, req.Responder, req.Response)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("add response: %v", err))
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("add comment: %v", err))
 			return
 		}
 	}
@@ -769,7 +769,7 @@ func (s *Server) handleAddResponse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-func (s *Server) handleListResponses(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -785,13 +785,13 @@ func (s *Server) handleListResponses(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid job_id")
 			return
 		}
-		responses, err = s.db.GetResponsesForJob(jobID)
+		responses, err = s.db.GetCommentsForJob(jobID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("get responses: %v", err))
 			return
 		}
 	} else if sha := r.URL.Query().Get("sha"); sha != "" {
-		responses, err = s.db.GetResponsesForCommitSHA(sha)
+		responses, err = s.db.GetCommentsForCommitSHA(sha)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "commit not found")
 			return

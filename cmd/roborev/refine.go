@@ -351,9 +351,9 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 		}
 
 		// Get previous attempts for context
-		previousAttempts, err := client.GetResponsesForJob(currentFailedReview.JobID)
+		previousAttempts, err := client.GetCommentsForJob(currentFailedReview.JobID)
 		if err != nil {
-			return fmt.Errorf("fetch previous responses: %w", err)
+			return fmt.Errorf("fetch previous comments: %w", err)
 		}
 
 		// Build address prompt
@@ -434,7 +434,7 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 			cleanupWorktree()
 			fmt.Println("Agent made no changes")
 			// Check how many times we've tried this review (only count our own attempts)
-			attempts, err := client.GetResponsesForJob(currentFailedReview.JobID)
+			attempts, err := client.GetCommentsForJob(currentFailedReview.JobID)
 			if err != nil {
 				return fmt.Errorf("fetch attempts: %w", err)
 			}
@@ -448,12 +448,12 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 				// Tried 3 times (including this one), give up on this review
 				// Do NOT mark as addressed - the review still needs attention
 				fmt.Println("Giving up after multiple failed attempts (review remains unaddressed)")
-				client.AddResponse(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings (attempt 3, giving up)")
+				client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings (attempt 3, giving up)")
 				skippedReviews[currentFailedReview.ID] = true // Don't re-select this run
 				currentFailedReview = nil                     // Move on to next oldest failed commit
 			} else {
 				// Record attempt but don't mark addressed - might work on retry with different context
-				client.AddResponse(currentFailedReview.JobID, "roborev-refine", fmt.Sprintf("Agent could not determine how to address findings (attempt %d)", noChangeAttempts+1))
+				client.AddComment(currentFailedReview.JobID, "roborev-refine", fmt.Sprintf("Agent could not determine how to address findings (attempt %d)", noChangeAttempts+1))
 				fmt.Printf("Attempt %d failed, will retry\n", noChangeAttempts+1)
 			}
 			continue
@@ -476,7 +476,7 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 
 		// Add response recording what was done (include full agent output for database)
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", newCommit[:7], output)
-		client.AddResponse(currentFailedReview.JobID, "roborev-refine", responseText)
+		client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText)
 
 		// Mark old review as addressed
 		if err := client.MarkReviewAddressed(currentFailedReview.ID); err != nil {

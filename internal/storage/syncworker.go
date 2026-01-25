@@ -639,10 +639,10 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 	}
 
-	// Push responses - batch operation
-	responses, err := w.db.GetResponsesToSync(machineID, syncBatchSize)
+	// Push comments - batch operation
+	responses, err := w.db.GetCommentsToSync(machineID, syncBatchSize)
 	if err != nil {
-		return stats, fmt.Errorf("get responses to sync: %w", err)
+		return stats, fmt.Errorf("get comments to sync: %w", err)
 	}
 
 	if len(responses) > 0 {
@@ -660,8 +660,8 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			}
 		}
 		if len(syncedResponseIDs) > 0 {
-			if err := w.db.MarkResponsesSynced(syncedResponseIDs); err != nil {
-				log.Printf("Sync: failed to mark responses synced: %v", err)
+			if err := w.db.MarkCommentsSynced(syncedResponseIDs); err != nil {
+				log.Printf("Sync: failed to mark comments synced: %v", err)
 			}
 		}
 	}

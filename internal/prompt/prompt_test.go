@@ -212,14 +212,14 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 	db.ClaimJob("test-worker")
 	db.CompleteJob(job.ID, "test", "prompt", "Found potential memory leak in connection pool")
 
-	// Add responses to the previous review
-	_, err = db.AddResponseToJob(job.ID, "alice", "Known issue, will fix in next sprint")
+	// Add comments to the previous review
+	_, err = db.AddCommentToJob(job.ID, "alice", "Known issue, will fix in next sprint")
 	if err != nil {
-		t.Fatalf("AddResponseToJob failed: %v", err)
+		t.Fatalf("AddCommentToJob failed: %v", err)
 	}
-	_, err = db.AddResponseToJob(job.ID, "bob", "Added to tech debt backlog")
+	_, err = db.AddCommentToJob(job.ID, "bob", "Added to tech debt backlog")
 	if err != nil {
-		t.Fatalf("AddResponseToJob failed: %v", err)
+		t.Fatalf("AddCommentToJob failed: %v", err)
 	}
 
 	// Also add commits 4 and 5 to DB
@@ -586,9 +586,9 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 	db.CompleteJob(job.ID, "test", "prompt", "Found issue: missing null check")
 
 	// Add a response to the previous review
-	_, err = db.AddResponseToJob(job.ID, "developer", "This is intentional, the value is never null here")
+	_, err = db.AddCommentToJob(job.ID, "developer", "This is intentional, the value is never null here")
 	if err != nil {
-		t.Fatalf("AddResponseToJob failed: %v", err)
+		t.Fatalf("AddCommentToJob failed: %v", err)
 	}
 
 	// Build prompt for a new review of the same commit

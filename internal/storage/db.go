@@ -618,7 +618,7 @@ func (db *DB) migrateSyncColumns() error {
 		return fmt.Errorf("create idx_responses_uuid: %w", err)
 	}
 
-	// Create index for GetResponsesToSync query pattern (source_machine_id + synced_at)
+	// Create index for GetCommentsToSync query pattern (source_machine_id + synced_at)
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_responses_sync ON responses(source_machine_id, synced_at)`)
 	if err != nil {
 		return fmt.Errorf("create idx_responses_sync: %w", err)

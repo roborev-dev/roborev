@@ -311,24 +311,24 @@ func TestResponseOperations(t *testing.T) {
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "resp123", "Author", "Subject", time.Now())
 
-	// Add response
-	resp, err := db.AddResponse(commit.ID, "test-user", "LGTM!")
+	// Add comment
+	resp, err := db.AddComment(commit.ID, "test-user", "LGTM!")
 	if err != nil {
-		t.Fatalf("AddResponse failed: %v", err)
+		t.Fatalf("AddComment failed: %v", err)
 	}
 
 	if resp.Response != "LGTM!" {
-		t.Errorf("Expected response 'LGTM!', got '%s'", resp.Response)
+		t.Errorf("Expected comment 'LGTM!', got '%s'", resp.Response)
 	}
 
-	// Get responses
-	responses, err := db.GetResponsesForCommit(commit.ID)
+	// Get comments
+	comments, err := db.GetCommentsForCommit(commit.ID)
 	if err != nil {
-		t.Fatalf("GetResponsesForCommit failed: %v", err)
+		t.Fatalf("GetCommentsForCommit failed: %v", err)
 	}
 
-	if len(responses) != 1 {
-		t.Errorf("Expected 1 response, got %d", len(responses))
+	if len(comments) != 1 {
+		t.Errorf("Expected 1 comment, got %d", len(comments))
 	}
 }
 

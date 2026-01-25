@@ -293,7 +293,7 @@ func TestRefineNoChangeRetryLogic(t *testing.T) {
 		}))
 		defer cleanup()
 
-		responses, _ := getResponsesForJob(1)
+		responses, _ := getCommentsForJob(1)
 
 		// Count no-change attempts
 		noChangeAttempts := 0
@@ -807,7 +807,7 @@ func TestRefineLoopNoChangeRetryScenario(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
 		defer cleanup()
 
-		responses, err := getResponsesForJob(42)
+		responses, err := getCommentsForJob(42)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -834,7 +834,7 @@ func TestRefineLoopNoChangeRetryScenario(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
 		defer cleanup()
 
-		responses, _ := getResponsesForJob(42)
+		responses, _ := getCommentsForJob(42)
 		noChangeAttempts := countNoChangeAttempts(responses)
 
 		// Should not give up yet (first attempt)
@@ -856,7 +856,7 @@ func TestRefineLoopNoChangeRetryScenario(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
 		defer cleanup()
 
-		responses, _ := getResponsesForJob(42)
+		responses, _ := getCommentsForJob(42)
 		noChangeAttempts := countNoChangeAttempts(responses)
 
 		// Should only count the 1 response from roborev-refine, not the others

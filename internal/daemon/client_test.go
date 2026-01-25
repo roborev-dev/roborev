@@ -15,7 +15,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func TestHTTPClientAddResponse(t *testing.T) {
+func TestHTTPClientAddComment(t *testing.T) {
 	var received map[string]interface{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,8 +32,8 @@ func TestHTTPClientAddResponse(t *testing.T) {
 	defer server.Close()
 
 	client := NewHTTPClient(server.URL)
-	if err := client.AddResponse(42, "test-agent", "Fixed the issue"); err != nil {
-		t.Fatalf("AddResponse failed: %v", err)
+	if err := client.AddComment(42, "test-agent", "Fixed the issue"); err != nil {
+		t.Fatalf("AddComment failed: %v", err)
 	}
 
 	if received["job_id"].(float64) != 42 {

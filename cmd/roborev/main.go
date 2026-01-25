@@ -1570,8 +1570,8 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 	return job.ID, nil
 }
 
-// getResponsesForJob fetches responses for a job
-func getResponsesForJob(jobID int64) ([]storage.Response, error) {
+// getCommentsForJob fetches comments for a job
+func getCommentsForJob(jobID int64) ([]storage.Response, error) {
 	addr := getDaemonAddr()
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -1582,7 +1582,7 @@ func getResponsesForJob(jobID int64) ([]storage.Response, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch responses: %s", resp.Status)
+		return nil, fmt.Errorf("fetch comments: %s", resp.Status)
 	}
 
 	var result struct {
@@ -2148,7 +2148,7 @@ func syncStatusCmd() *cobra.Command {
 			const maxPending = 1000
 			jobs, jobsErr := db.GetJobsToSync(machineID, maxPending)
 			reviews, reviewsErr := db.GetReviewsToSync(machineID, maxPending)
-			responses, responsesErr := db.GetResponsesToSync(machineID, maxPending)
+			responses, responsesErr := db.GetCommentsToSync(machineID, maxPending)
 
 			fmt.Println()
 			if jobsErr != nil || reviewsErr != nil || responsesErr != nil {

@@ -157,22 +157,22 @@ func TestDatabaseIntegration(t *testing.T) {
 		t.Errorf("Review output doesn't contain expected text: %s", review.Output)
 	}
 
-	// Add a response
-	resp, err := db.AddResponse(commit.ID, "human-reviewer", "Agreed, LGTM!")
+	// Add a comment
+	resp, err := db.AddComment(commit.ID, "human-reviewer", "Agreed, LGTM!")
 	if err != nil {
-		t.Fatalf("AddResponse failed: %v", err)
+		t.Fatalf("AddComment failed: %v", err)
 	}
 	if resp.Response != "Agreed, LGTM!" {
-		t.Errorf("Response not saved correctly")
+		t.Errorf("Comment not saved correctly")
 	}
 
-	// Verify response can be fetched
-	responses, err := db.GetResponsesForCommitSHA("abc123")
+	// Verify comment can be fetched
+	comments, err := db.GetCommentsForCommitSHA("abc123")
 	if err != nil {
-		t.Fatalf("GetResponsesForCommitSHA failed: %v", err)
+		t.Fatalf("GetCommentsForCommitSHA failed: %v", err)
 	}
-	if len(responses) != 1 {
-		t.Errorf("Expected 1 response, got %d", len(responses))
+	if len(comments) != 1 {
+		t.Errorf("Expected 1 comment, got %d", len(comments))
 	}
 }
 

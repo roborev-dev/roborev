@@ -411,9 +411,9 @@ func (b *Builder) writePreviousAttemptsForGitRef(sb *strings.Builder, gitRef str
 		sb.WriteString(review.Output)
 		sb.WriteString("\n")
 
-		// Fetch and include responses for this review
+		// Fetch and include comments for this review
 		if review.JobID > 0 {
-			responses, err := b.db.GetResponsesForJob(review.JobID)
+			responses, err := b.db.GetCommentsForJob(review.JobID)
 			if err == nil && len(responses) > 0 {
 				sb.WriteString("\nComments on this review:\n")
 				for _, resp := range responses {
@@ -442,9 +442,9 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 		if err == nil {
 			ctx.Review = review
 
-			// Also fetch responses for this review's job
+			// Also fetch comments for this review's job
 			if review.JobID > 0 {
-				responses, err := b.db.GetResponsesForJob(review.JobID)
+				responses, err := b.db.GetCommentsForJob(review.JobID)
 				if err == nil {
 					ctx.Responses = responses
 				}

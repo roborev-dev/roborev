@@ -26,8 +26,8 @@ type Client interface {
 	// MarkReviewAddressed marks a review as addressed
 	MarkReviewAddressed(reviewID int64) error
 
-	// AddResponse adds a response to a job
-	AddResponse(jobID int64, responder, response string) error
+	// AddComment adds a comment to a job
+	AddComment(jobID int64, responder, response string) error
 
 	// EnqueueReview enqueues a review job and returns the job ID
 	EnqueueReview(repoPath, gitRef, agentName string) (int64, error)
@@ -41,8 +41,8 @@ type Client interface {
 	// FindPendingJobForRef finds a queued or running job for any git ref
 	FindPendingJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error)
 
-	// GetResponsesForJob fetches responses for a job
-	GetResponsesForJob(jobID int64) ([]storage.Response, error)
+	// GetCommentsForJob fetches comments for a job
+	GetCommentsForJob(jobID int64) ([]storage.Response, error)
 }
 
 // DefaultPollInterval is the default polling interval for WaitForReview.
@@ -150,7 +150,7 @@ func (c *HTTPClient) MarkReviewAddressed(reviewID int64) error {
 	return nil
 }
 
-func (c *HTTPClient) AddResponse(jobID int64, responder, response string) error {
+func (c *HTTPClient) AddComment(jobID int64, responder, response string) error {
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"job_id":    jobID,
 		"responder": responder,
@@ -165,7 +165,7 @@ func (c *HTTPClient) AddResponse(jobID int64, responder, response string) error 
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("add response: %s: %s", resp.Status, body)
+		return fmt.Errorf("add comment: %s: %s", resp.Status, body)
 	}
 
 	return nil
@@ -373,7 +373,7 @@ func (c *HTTPClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.Rev
 	return nil, nil
 }
 
-func (c *HTTPClient) GetResponsesForJob(jobID int64) ([]storage.Response, error) {
+func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) {
 	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/responses?job_id=%d", c.addr, jobID))
 	if err != nil {
 		return nil, err

@@ -1,6 +1,6 @@
 package main
 
-// Tests for daemon client functions (getResponsesForJob, waitForReview, findJobForCommit)
+// Tests for daemon client functions (getCommentsForJob, waitForReview, findJobForCommit)
 
 import (
 	"encoding/json"
@@ -14,7 +14,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func TestGetResponsesForJob(t *testing.T) {
+func TestGetCommentsForJob(t *testing.T) {
 	t.Run("returns responses for job", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/responses" || r.Method != "GET" {
@@ -36,7 +36,7 @@ func TestGetResponsesForJob(t *testing.T) {
 		}))
 		defer cleanup()
 
-		responses, err := getResponsesForJob(42)
+		responses, err := getCommentsForJob(42)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -51,7 +51,7 @@ func TestGetResponsesForJob(t *testing.T) {
 		}))
 		defer cleanup()
 
-		_, err := getResponsesForJob(42)
+		_, err := getCommentsForJob(42)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
