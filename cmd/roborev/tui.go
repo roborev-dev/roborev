@@ -73,6 +73,8 @@ const (
 	tuiViewPrompt
 	tuiViewFilter
 	tuiViewRespond
+	tuiViewCommitMsg
+	tuiViewHelp
 )
 
 // repoFilterItem represents a repo (or group of repos with same display name) in the filter modal
@@ -147,6 +149,14 @@ type tuiModel struct {
 	// Daemon reconnection state
 	consecutiveErrors int  // Count of consecutive connection failures
 	reconnecting      bool // True if currently attempting reconnection
+
+	// Commit message view state
+	commitMsgContent string // Formatted commit message(s) content
+	commitMsgScroll  int    // Scroll position in commit message view
+	commitMsgJobID   int64  // Job ID for the commit message being viewed
+
+	// Help view state
+	helpFromView tuiView // View to return to after closing help
 }
 
 // pendingState tracks a pending addressed toggle with sequence number
@@ -211,6 +221,11 @@ type tuiRespondResultMsg struct {
 type tuiClipboardResultMsg struct {
 	err  error
 	view tuiView // The view where copy was triggered (for flash attribution)
+}
+type tuiCommitMsgMsg struct {
+	jobID   int64
+	content string
+	err     error
 }
 type tuiReconnectMsg struct {
 	newAddr string // New daemon address if found, empty if not found
@@ -692,6 +707,89 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 		content := formatClipboardContent(&review)
 		err = clipboardWriter.WriteText(content)
 		return tuiClipboardResultMsg{err: err, view: view}
+	}
+}
+
+// fetchCommitMsg fetches commit message(s) for a job.
+// For single commits, returns the commit message.
+// For ranges, returns all commit messages in the range.
+// For dirty reviews or prompt jobs, returns an error.
+func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
+	jobID := job.ID
+	return func() tea.Msg {
+		// Handle dirty reviews (uncommitted changes)
+		if job.DiffContent != nil {
+			return tuiCommitMsgMsg{
+				jobID: jobID,
+				err:   fmt.Errorf("no commit message for uncommitted changes"),
+			}
+		}
+
+		// Handle prompt/run jobs
+		if job.Prompt != "" {
+			return tuiCommitMsgMsg{
+				jobID: jobID,
+				err:   fmt.Errorf("no commit message for run tasks"),
+			}
+		}
+
+		// Check if this is a range (contains "..")
+		if strings.Contains(job.GitRef, "..") {
+			// Fetch all commits in range
+			commits, err := git.GetRangeCommits(job.RepoPath, job.GitRef)
+			if err != nil {
+				return tuiCommitMsgMsg{jobID: jobID, err: err}
+			}
+			if len(commits) == 0 {
+				return tuiCommitMsgMsg{
+					jobID: jobID,
+					err:   fmt.Errorf("no commits in range %s", job.GitRef),
+				}
+			}
+
+			// Fetch info for each commit
+			var content strings.Builder
+			content.WriteString(fmt.Sprintf("Commits in %s (%d commits):\n", job.GitRef, len(commits)))
+			content.WriteString(strings.Repeat("─", 60) + "\n\n")
+
+			for i, sha := range commits {
+				info, err := git.GetCommitInfo(job.RepoPath, sha)
+				if err != nil {
+					content.WriteString(fmt.Sprintf("%d. %s: (error: %v)\n\n", i+1, sha[:7], err))
+					continue
+				}
+				content.WriteString(fmt.Sprintf("%d. %s %s\n", i+1, info.SHA[:7], info.Subject))
+				content.WriteString(fmt.Sprintf("   Author: %s | %s\n", info.Author, info.Timestamp.Format("2006-01-02 15:04")))
+				if info.Body != "" {
+					// Indent body
+					bodyLines := strings.Split(info.Body, "\n")
+					for _, line := range bodyLines {
+						content.WriteString("   " + line + "\n")
+					}
+				}
+				content.WriteString("\n")
+			}
+
+			return tuiCommitMsgMsg{jobID: jobID, content: content.String()}
+		}
+
+		// Single commit
+		info, err := git.GetCommitInfo(job.RepoPath, job.GitRef)
+		if err != nil {
+			return tuiCommitMsgMsg{jobID: jobID, err: err}
+		}
+
+		var content strings.Builder
+		content.WriteString(fmt.Sprintf("Commit: %s\n", info.SHA))
+		content.WriteString(fmt.Sprintf("Author: %s\n", info.Author))
+		content.WriteString(fmt.Sprintf("Date:   %s\n", info.Timestamp.Format("2006-01-02 15:04:05 -0700")))
+		content.WriteString(strings.Repeat("─", 60) + "\n\n")
+		content.WriteString(info.Subject + "\n")
+		if info.Body != "" {
+			content.WriteString("\n" + info.Body + "\n")
+		}
+
+		return tuiCommitMsgMsg{jobID: jobID, content: content.String()}
 	}
 }
 
@@ -1250,6 +1348,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+			if m.currentView == tuiViewCommitMsg {
+				m.currentView = tuiViewQueue
+				m.commitMsgContent = ""
+				m.commitMsgScroll = 0
+				return m, nil
+			}
+			if m.currentView == tuiViewHelp {
+				m.currentView = m.helpFromView
+				return m, nil
+			}
 			return m, tea.Quit
 
 		case "up":
@@ -1267,6 +1375,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentView == tuiViewPrompt {
 				if m.promptScroll > 0 {
 					m.promptScroll--
+				}
+			} else if m.currentView == tuiViewCommitMsg {
+				if m.commitMsgScroll > 0 {
+					m.commitMsgScroll--
 				}
 			}
 
@@ -1319,6 +1431,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.reviewScroll++
 			} else if m.currentView == tuiViewPrompt {
 				m.promptScroll++
+			} else if m.currentView == tuiViewCommitMsg {
+				m.commitMsgScroll++
 			}
 
 		case "j", "left":
@@ -1652,6 +1766,34 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "m":
+			// Show commit message(s) for the selected job
+			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
+				job := m.jobs[m.selectedIdx]
+				m.commitMsgJobID = job.ID
+				m.commitMsgContent = ""
+				m.commitMsgScroll = 0
+				return m, m.fetchCommitMsg(&job)
+			} else if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.Job != nil {
+				job := m.currentReview.Job
+				m.commitMsgJobID = job.ID
+				m.commitMsgContent = ""
+				m.commitMsgScroll = 0
+				return m, m.fetchCommitMsg(job)
+			}
+
+		case "?":
+			// Toggle help modal
+			if m.currentView == tuiViewHelp {
+				m.currentView = m.helpFromView
+				return m, nil
+			}
+			if m.currentView == tuiViewQueue || m.currentView == tuiViewReview {
+				m.helpFromView = m.currentView
+				m.currentView = tuiViewHelp
+				return m, nil
+			}
+
 		case "esc":
 			if m.currentView == tuiViewQueue && len(m.activeRepoFilter) > 0 {
 				// Clear project filter first (keep hide-addressed if active)
@@ -1704,6 +1846,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.currentView = tuiViewReview
 					m.promptScroll = 0
 				}
+			} else if m.currentView == tuiViewCommitMsg {
+				// Go back to queue view
+				m.currentView = tuiViewQueue
+				m.commitMsgContent = ""
+				m.commitMsgScroll = 0
+			} else if m.currentView == tuiViewHelp {
+				// Go back to previous view
+				m.currentView = m.helpFromView
 			}
 		}
 
@@ -2027,6 +2177,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashView = msg.view // Use view from trigger time, not current view
 		}
 
+	case tuiCommitMsgMsg:
+		// Ignore stale messages (job changed while fetching)
+		if msg.jobID != m.commitMsgJobID {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.flashMessage = msg.err.Error()
+			m.flashExpiresAt = time.Now().Add(2 * time.Second)
+			m.flashView = m.currentView
+			return m, nil
+		}
+		m.commitMsgContent = msg.content
+		m.commitMsgScroll = 0
+		m.currentView = tuiViewCommitMsg
+
 	case tuiJobsErrMsg:
 		m.err = msg.err
 		m.loadingJobs = false // Clear loading state so refreshes can resume
@@ -2110,6 +2275,12 @@ func (m tuiModel) View() string {
 	}
 	if m.currentView == tuiViewFilter {
 		return m.renderFilterView()
+	}
+	if m.currentView == tuiViewCommitMsg {
+		return m.renderCommitMsgView()
+	}
+	if m.currentView == tuiViewHelp {
+		return m.renderHelpView()
 	}
 	if m.currentView == tuiViewPrompt && m.currentReview != nil {
 		return m.renderPromptView()
@@ -2299,8 +2470,8 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Help (two lines)
-	helpLine1 := "up/down/pgup/pgdn: navigate | enter: review | p: prompt | c: respond | y: copy | q: quit"
-	helpLine2 := "f: filter | h: hide | a: toggle addressed | x: cancel | r: rerun"
+	helpLine1 := "↑/↓: navigate | enter: review | y: copy | m: commit msg | q: quit | ?: help"
+	helpLine2 := "f: filter | h: hide addressed | a: toggle addressed | x: cancel"
 	if len(m.activeRepoFilter) > 0 || m.hideAddressed {
 		helpLine2 += " | esc: clear filters"
 	}
@@ -2591,7 +2762,7 @@ func (m tuiModel) renderReviewView() string {
 	}
 
 	// Help text wraps at narrow terminals
-	const helpText = "up/down: scroll | j/k: prev/next | a: addressed | c: respond | y: copy | p: prompt | esc/q: back"
+	const helpText = "↑/↓: scroll | j/k: prev/next | a: addressed | y: copy | m: commit msg | ?: help | esc/q: back"
 	helpLines := 1
 	if m.width > 0 && m.width < len(helpText) {
 		helpLines = (len(helpText) + m.width - 1) / m.width
@@ -2945,6 +3116,173 @@ func (m tuiModel) submitResponse(jobID int64, text string) tea.Cmd {
 
 		return tuiRespondResultMsg{jobID: jobID, err: nil}
 	}
+}
+
+func (m tuiModel) renderCommitMsgView() string {
+	var b strings.Builder
+
+	b.WriteString(tuiTitleStyle.Render("Commit Message"))
+	b.WriteString("\x1b[K\n") // Clear to end of line
+
+	if m.commitMsgContent == "" {
+		b.WriteString(tuiStatusStyle.Render("Loading commit message..."))
+		b.WriteString("\x1b[K\n")
+		// Pad to fill terminal
+		linesWritten := 2
+		for linesWritten < m.height-1 {
+			b.WriteString("\x1b[K\n")
+			linesWritten++
+		}
+		b.WriteString(tuiHelpStyle.Render("esc/q: back"))
+		b.WriteString("\x1b[K")
+		b.WriteString("\x1b[J")
+		return b.String()
+	}
+
+	// Wrap text to terminal width minus padding
+	wrapWidth := max(20, min(m.width-4, 200))
+	lines := wrapText(m.commitMsgContent, wrapWidth)
+
+	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)
+	visibleLines := m.height - 4
+	if visibleLines < 1 {
+		visibleLines = 1
+	}
+
+	// Clamp scroll position to valid range
+	maxScroll := len(lines) - visibleLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	start := m.commitMsgScroll
+	if start > maxScroll {
+		start = maxScroll
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := min(start+visibleLines, len(lines))
+
+	linesWritten := 0
+	for i := start; i < end; i++ {
+		b.WriteString(lines[i])
+		b.WriteString("\x1b[K\n") // Clear to end of line before newline
+		linesWritten++
+	}
+
+	// Pad with clear-to-end-of-line sequences to prevent ghost text
+	for linesWritten < visibleLines {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
+	}
+
+	// Scroll indicator
+	if len(lines) > visibleLines {
+		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
+	b.WriteString("\x1b[K\n") // Clear scroll indicator line
+
+	b.WriteString(tuiHelpStyle.Render("up/down: scroll | esc/q: back"))
+	b.WriteString("\x1b[K") // Clear help line
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
+
+	return b.String()
+}
+
+func (m tuiModel) renderHelpView() string {
+	var b strings.Builder
+
+	b.WriteString(tuiTitleStyle.Render("Keyboard Shortcuts"))
+	b.WriteString("\x1b[K\n\x1b[K\n")
+
+	// Define shortcuts in groups
+	shortcuts := []struct {
+		group string
+		keys  []struct{ key, desc string }
+	}{
+		{
+			group: "Navigation",
+			keys: []struct{ key, desc string }{
+				{"↑/k", "Move up / previous review"},
+				{"↓/j", "Move down / next review"},
+				{"enter", "View review details"},
+				{"esc", "Go back / clear filter"},
+				{"q", "Quit"},
+			},
+		},
+		{
+			group: "Actions",
+			keys: []struct{ key, desc string }{
+				{"a", "Mark as addressed"},
+				{"c", "Respond to review"},
+				{"x", "Cancel job"},
+				{"r", "Re-run job"},
+				{"y", "Copy review to clipboard"},
+				{"m", "Show commit message(s)"},
+			},
+		},
+		{
+			group: "Filtering",
+			keys: []struct{ key, desc string }{
+				{"f", "Filter by repository"},
+				{"h", "Toggle hide addressed"},
+			},
+		},
+		{
+			group: "Review View",
+			keys: []struct{ key, desc string }{
+				{"p", "View prompt"},
+				{"↑/↓", "Scroll content"},
+			},
+		},
+	}
+
+	// Calculate visible area
+	// Reserve: title(1) + blank(1) + padding + help(1)
+	reservedLines := 3
+	visibleLines := m.height - reservedLines
+	if visibleLines < 5 {
+		visibleLines = 5
+	}
+
+	linesWritten := 0
+	for _, g := range shortcuts {
+		if linesWritten >= visibleLines-2 {
+			break
+		}
+		// Group header
+		b.WriteString(tuiSelectedStyle.Render(g.group))
+		b.WriteString("\x1b[K\n")
+		linesWritten++
+
+		for _, k := range g.keys {
+			if linesWritten >= visibleLines {
+				break
+			}
+			line := fmt.Sprintf("  %-12s %s", k.key, k.desc)
+			b.WriteString(line)
+			b.WriteString("\x1b[K\n")
+			linesWritten++
+		}
+		// Blank line between groups
+		if linesWritten < visibleLines {
+			b.WriteString("\x1b[K\n")
+			linesWritten++
+		}
+	}
+
+	// Pad remaining space
+	for linesWritten < visibleLines {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
+	}
+
+	b.WriteString(tuiHelpStyle.Render("esc/q/?: close"))
+	b.WriteString("\x1b[K")
+	b.WriteString("\x1b[J") // Clear to end of screen
+
+	return b.String()
 }
 
 func tuiCmd() *cobra.Command {

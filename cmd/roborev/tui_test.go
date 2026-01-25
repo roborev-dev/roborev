@@ -4035,9 +4035,9 @@ func TestTUIRenderFailedJobNoBranchShown(t *testing.T) {
 
 func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 	// Test that visibleLines = height - 3 when no verdict (title + status + help)
-	// Help text is 87 chars, so use width >= 87 to avoid wrapping
+	// Help text is ~106 chars, so use width >= 110 to avoid wrapping
 	m := newTuiModel("http://localhost")
-	m.width = 100
+	m.width = 120
 	m.height = 10 // Small height to test calculation
 	m.currentView = tuiViewReview
 	// Create 20 lines of content to ensure scrolling
@@ -4077,10 +4077,10 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 
 func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
 	// Test that visibleLines = height - 4 when verdict present (title + verdict + status + help)
-	// Help text is 87 chars, so use width >= 87 to avoid wrapping
+	// Help text is ~106 chars, so use width >= 110 to avoid wrapping
 	verdictPass := "P"
 	m := newTuiModel("http://localhost")
-	m.width = 100
+	m.width = 120
 	m.height = 10 // Small height to test calculation
 	m.currentView = tuiViewReview
 	// Create 20 lines of content to ensure scrolling
@@ -4119,7 +4119,7 @@ func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
 
 func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 	// Test that visibleLines accounts for help text wrapping at narrow terminals
-	// Help text is 87 chars, at width=50 it wraps to 2 lines: ceil(87/50) = 2
+	// Help text is ~91 chars, at width=50 it wraps to 2 lines: ceil(91/50) = 2
 	m := newTuiModel("http://localhost")
 	m.width = 50
 	m.height = 10
@@ -4160,7 +4160,7 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 
 func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 	// Test narrow terminal with verdict - validates extra header line branch
-	// Help text is 87 chars, at width=50 it wraps to 2 lines: ceil(87/50) = 2
+	// Help text is ~91 chars, at width=50 it wraps to 2 lines: ceil(91/50) = 2
 	verdictFail := "F"
 	m := newTuiModel("http://localhost")
 	m.width = 50
@@ -4234,7 +4234,7 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 	// "Review #1 very-long-repository-name-here abc1234..def5678 (claude-code) on feature/very-long-branch-name [ADDRESSED]"
 	// = 7 + 3 + 31 + 17 + 14 + 34 + 12 = ~118 chars
 	// At width=50: ceil(118/50) = 3 title lines
-	// Help at width=50: ceil(87/50) = 2 help lines
+	// Help at width=50: ceil(91/50) = 2 help lines
 	// Non-content: title (3) + status line (1) + help (2) = 6
 	// visibleLines = 12 - 6 = 6
 	contentCount := 0
