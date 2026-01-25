@@ -1626,6 +1626,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// No job associated - track by review ID instead
 					m.pendingReviewAddressed[m.currentReview.ID] = pendingState{newState: newState, seq: seq}
 				}
+				// Don't update selectedIdx here - keep it pointing at the current (now hidden) job.
+				// The findNextViewableJob/findPrevViewableJob functions start searching from
+				// selectedIdx +/- 1, so left/right navigation will naturally find the correct
+				// adjacent visible jobs. Moving selectedIdx would cause navigation to skip a job.
 				return m, m.addressReview(m.currentReview.ID, jobID, newState, oldState, seq)
 			} else if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 				job := &m.jobs[m.selectedIdx]

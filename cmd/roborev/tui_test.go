@@ -208,8 +208,9 @@ func TestTUIToggleAddressedNoReview(t *testing.T) {
 
 func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 	// When hideAddressed is on and user marks a review as addressed from review view,
-	// selection should move to next visible job when returning to queue (on escape),
-	// not immediately on 'a' press (so j/k navigation still works in review view)
+	// selectedIdx should NOT change immediately. The findNextViewableJob/findPrevViewableJob
+	// functions start from selectedIdx +/- 1, so left/right navigation will naturally
+	// find the correct adjacent visible jobs. Selection only moves on escape.
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
@@ -228,26 +229,29 @@ func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 		Job:      &m.jobs[1],
 	}
 
-	// Press 'a' to mark as addressed - selection should NOT move yet
+	// Press 'a' to mark as addressed - selection stays at current position
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m2 := updated.(tuiModel)
 
-	// Selection stays at index 1 so j/k navigation still works relative to current review
+	// Selection stays at index 1 so left/right navigation works correctly from current position
 	if m2.selectedIdx != 1 {
 		t.Errorf("After 'a': expected selectedIdx=1 (unchanged), got %d", m2.selectedIdx)
 	}
 	if m2.selectedJobID != 2 {
 		t.Errorf("After 'a': expected selectedJobID=2 (unchanged), got %d", m2.selectedJobID)
 	}
+	// Still viewing the current review
+	if m2.currentView != tuiViewReview {
+		t.Errorf("After 'a': expected view=review (unchanged), got %d", m2.currentView)
+	}
 
-	// Press escape to return to queue - NOW selection should move
+	// Press escape to return to queue - NOW selection moves via normalizeSelectionIfHidden
 	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
 	m3 := updated2.(tuiModel)
 
-	// Selection should have moved to next visible job (job 3, index 2)
-	// since job 2 is now addressed and hidden
+	// Selection moved to next visible job (job 3, index 2)
 	if m3.selectedIdx != 2 {
-		t.Errorf("After escape: expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
+		t.Errorf("After escape: expected selectedIdx=2, got %d", m3.selectedIdx)
 	}
 	if m3.selectedJobID != 3 {
 		t.Errorf("After escape: expected selectedJobID=3, got %d", m3.selectedJobID)
