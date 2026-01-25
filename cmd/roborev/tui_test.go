@@ -6285,3 +6285,179 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
+	// Test that pressing escape in commit message view returns to the originating view (queue)
+	m := newTuiModel("http://localhost")
+	m.jobs = []storage.ReviewJob{{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.commitMsgJobID = 1              // Set to match incoming message (normally set by 'm' key handler)
+	m.commitMsgFromView = tuiViewQueue // Track where we came from
+
+	// Simulate receiving commit message content (sets view to CommitMsg)
+	updated, _ := m.Update(tuiCommitMsgMsg{jobID: 1, content: "test message"})
+	m2 := updated.(tuiModel)
+
+	if m2.currentView != tuiViewCommitMsg {
+		t.Errorf("Expected tuiViewCommitMsg, got %d", m2.currentView)
+	}
+
+	// Press escape to go back
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m3 := updated.(tuiModel)
+
+	if m3.currentView != tuiViewQueue {
+		t.Errorf("Expected to return to tuiViewQueue, got %d", m3.currentView)
+	}
+	if m3.commitMsgContent != "" {
+		t.Error("Expected commitMsgContent to be cleared")
+	}
+}
+
+func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
+	// Test that pressing escape in commit message view returns to the originating view (review)
+	m := newTuiModel("http://localhost")
+	job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}
+	m.jobs = []storage.ReviewJob{*job}
+	m.currentReview = &storage.Review{ID: 1, JobID: 1, Job: job}
+	m.currentView = tuiViewReview
+	m.commitMsgFromView = tuiViewReview
+	m.commitMsgContent = "test message"
+	m.currentView = tuiViewCommitMsg
+
+	// Press escape to go back
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if m2.currentView != tuiViewReview {
+		t.Errorf("Expected to return to tuiViewReview, got %d", m2.currentView)
+	}
+}
+
+func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
+	// Test that pressing 'q' in commit message view also returns to originating view
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewCommitMsg
+	m.commitMsgFromView = tuiViewReview
+	m.commitMsgContent = "test message"
+
+	// Press 'q' to go back
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m2 := updated.(tuiModel)
+
+	if m2.currentView != tuiViewReview {
+		t.Errorf("Expected to return to tuiViewReview after 'q', got %d", m2.currentView)
+	}
+}
+
+func TestTUIHelpViewToggleFromQueue(t *testing.T) {
+	// Test that '?' opens help from queue and pressing '?' again returns to queue
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+
+	// Press '?' to open help
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m2 := updated.(tuiModel)
+
+	if m2.currentView != tuiViewHelp {
+		t.Errorf("Expected tuiViewHelp, got %d", m2.currentView)
+	}
+	if m2.helpFromView != tuiViewQueue {
+		t.Errorf("Expected helpFromView to be tuiViewQueue, got %d", m2.helpFromView)
+	}
+
+	// Press '?' again to close help
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m3 := updated.(tuiModel)
+
+	if m3.currentView != tuiViewQueue {
+		t.Errorf("Expected to return to tuiViewQueue, got %d", m3.currentView)
+	}
+}
+
+func TestTUIHelpViewToggleFromReview(t *testing.T) {
+	// Test that '?' opens help from review and escape returns to review
+	m := newTuiModel("http://localhost")
+	job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}
+	m.currentReview = &storage.Review{ID: 1, JobID: 1, Job: job}
+	m.currentView = tuiViewReview
+
+	// Press '?' to open help
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m2 := updated.(tuiModel)
+
+	if m2.currentView != tuiViewHelp {
+		t.Errorf("Expected tuiViewHelp, got %d", m2.currentView)
+	}
+	if m2.helpFromView != tuiViewReview {
+		t.Errorf("Expected helpFromView to be tuiViewReview, got %d", m2.helpFromView)
+	}
+
+	// Press escape to close help
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m3 := updated.(tuiModel)
+
+	if m3.currentView != tuiViewReview {
+		t.Errorf("Expected to return to tuiViewReview, got %d", m3.currentView)
+	}
+}
+
+func TestSanitizeForDisplay(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "plain text unchanged",
+			input:    "Hello, world!",
+			expected: "Hello, world!",
+		},
+		{
+			name:     "preserves newlines and tabs",
+			input:    "Line1\n\tIndented",
+			expected: "Line1\n\tIndented",
+		},
+		{
+			name:     "strips ANSI color codes",
+			input:    "\x1b[31mred text\x1b[0m",
+			expected: "red text",
+		},
+		{
+			name:     "strips cursor movement",
+			input:    "\x1b[2Jhello\x1b[H",
+			expected: "hello",
+		},
+		{
+			name:     "strips OSC sequences (title set)",
+			input:    "\x1b]0;Evil Title\x07normal text",
+			expected: "normal text",
+		},
+		{
+			name:     "strips control characters",
+			input:    "hello\x00world\x07\x08test",
+			expected: "helloworldtest",
+		},
+		{
+			name:     "handles complex escape sequence",
+			input:    "\x1b[1;32mBold Green\x1b[0m and \x1b[4munderline\x1b[24m",
+			expected: "Bold Green and underline",
+		},
+		{
+			name:     "empty string unchanged",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeForDisplay(tt.input)
+			if got != tt.expected {
+				t.Errorf("sanitizeForDisplay(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

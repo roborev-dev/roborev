@@ -65,6 +65,25 @@ var (
 // fullSHAPattern matches a 40-character hex git SHA (not ranges or branch names)
 var fullSHAPattern = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 
+// ansiEscapePattern matches ANSI escape sequences (colors, cursor movement, etc.)
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07`)
+
+// sanitizeForDisplay strips ANSI escape sequences and control characters from text
+// to prevent terminal injection when displaying untrusted content (e.g., commit messages).
+func sanitizeForDisplay(s string) string {
+	// Strip ANSI escape sequences
+	s = ansiEscapePattern.ReplaceAllString(s, "")
+	// Strip control characters except newline (\n) and tab (\t)
+	var result strings.Builder
+	result.Grow(len(s))
+	for _, r := range s {
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
 type tuiView int
 
 const (
@@ -151,9 +170,10 @@ type tuiModel struct {
 	reconnecting      bool // True if currently attempting reconnection
 
 	// Commit message view state
-	commitMsgContent string // Formatted commit message(s) content
-	commitMsgScroll  int    // Scroll position in commit message view
-	commitMsgJobID   int64  // Job ID for the commit message being viewed
+	commitMsgContent  string  // Formatted commit message(s) content
+	commitMsgScroll   int     // Scroll position in commit message view
+	commitMsgJobID    int64   // Job ID for the commit message being viewed
+	commitMsgFromView tuiView // View to return to after closing commit message view
 
 	// Help view state
 	helpFromView tuiView // View to return to after closing help
@@ -770,7 +790,7 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 				content.WriteString("\n")
 			}
 
-			return tuiCommitMsgMsg{jobID: jobID, content: content.String()}
+			return tuiCommitMsgMsg{jobID: jobID, content: sanitizeForDisplay(content.String())}
 		}
 
 		// Single commit
@@ -789,7 +809,7 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 			content.WriteString("\n" + info.Body + "\n")
 		}
 
-		return tuiCommitMsgMsg{jobID: jobID, content: content.String()}
+		return tuiCommitMsgMsg{jobID: jobID, content: sanitizeForDisplay(content.String())}
 	}
 }
 
@@ -1349,7 +1369,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.currentView == tuiViewCommitMsg {
-				m.currentView = tuiViewQueue
+				m.currentView = m.commitMsgFromView
 				m.commitMsgContent = ""
 				m.commitMsgScroll = 0
 				return m, nil
@@ -1770,12 +1790,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Show commit message(s) for the selected job
 			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 				job := m.jobs[m.selectedIdx]
+				m.commitMsgFromView = m.currentView
 				m.commitMsgJobID = job.ID
 				m.commitMsgContent = ""
 				m.commitMsgScroll = 0
 				return m, m.fetchCommitMsg(&job)
 			} else if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.Job != nil {
 				job := m.currentReview.Job
+				m.commitMsgFromView = m.currentView
 				m.commitMsgJobID = job.ID
 				m.commitMsgContent = ""
 				m.commitMsgScroll = 0
@@ -1847,8 +1869,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.promptScroll = 0
 				}
 			} else if m.currentView == tuiViewCommitMsg {
-				// Go back to queue view
-				m.currentView = tuiViewQueue
+				// Go back to originating view
+				m.currentView = m.commitMsgFromView
 				m.commitMsgContent = ""
 				m.commitMsgScroll = 0
 			} else if m.currentView == tuiViewHelp {
