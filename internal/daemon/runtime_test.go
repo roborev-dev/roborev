@@ -228,6 +228,30 @@ func TestKillProcessConservativeOnUnknown(t *testing.T) {
 	}
 }
 
+func TestKillProcessUnknownIdentityIsConservative(t *testing.T) {
+	// Test that killProcess returns false when identity is unknown for a live process
+	// We do this by temporarily replacing identifyProcess with a mock
+
+	// Save original and restore after test
+	origIdentifyProcess := identifyProcess
+	defer func() { identifyProcess = origIdentifyProcess }()
+
+	// Mock identifyProcess to always return unknown
+	identifyProcess = func(pid int) processIdentity {
+		return processUnknown
+	}
+
+	// Use current process PID (definitely exists)
+	currentPID := os.Getpid()
+
+	// killProcess should return false (conservative - don't clean up)
+	// when identity is unknown for a live process
+	result := killProcess(currentPID)
+	if result {
+		t.Error("killProcess should return false (conservative) when identity is unknown for live process")
+	}
+}
+
 func TestIsLoopbackAddr(t *testing.T) {
 	tests := []struct {
 		addr string

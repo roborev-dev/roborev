@@ -24,12 +24,18 @@ const (
 // identifyProcess checks if a process is a roborev daemon.
 // Returns processIsRoborev, processNotRoborev, or processUnknown.
 // This prevents killing unrelated processes if a PID was reused.
-func identifyProcess(pid int) processIdentity {
+var identifyProcess = identifyProcessImpl
+
+func identifyProcessImpl(pid int) processIdentity {
 	// Try reading /proc/<pid>/cmdline (Linux)
 	cmdline, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
 	if err == nil {
 		// cmdline uses null bytes as separators
-		cmdStr := strings.ReplaceAll(string(cmdline), "\x00", " ")
+		cmdStr := strings.TrimSpace(strings.ReplaceAll(string(cmdline), "\x00", " "))
+		if cmdStr == "" {
+			// Empty cmdline (e.g., kernel thread or permission issue) - unknown
+			return processUnknown
+		}
 		if strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon") {
 			return processIsRoborev
 		}
@@ -44,7 +50,11 @@ func identifyProcess(pid int) processIdentity {
 		// Can't determine - could be permissions, missing ps, etc.
 		return processUnknown
 	}
-	cmdStr := string(output)
+	cmdStr := strings.TrimSpace(string(output))
+	if cmdStr == "" {
+		// Empty output - can't determine identity
+		return processUnknown
+	}
 	if strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon") {
 		return processIsRoborev
 	}

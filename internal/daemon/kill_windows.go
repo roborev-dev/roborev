@@ -22,20 +22,63 @@ const (
 // identifyProcess checks if a process is a roborev daemon.
 // Returns processIsRoborev, processNotRoborev, or processUnknown.
 // This prevents killing unrelated processes if a PID was reused.
-func identifyProcess(pid int) processIdentity {
-	// Use wmic to get the command line for the process
+var identifyProcess = identifyProcessImpl
+
+func identifyProcessImpl(pid int) processIdentity {
 	pidStr := strconv.Itoa(pid)
+
+	// Try wmic first (available on most Windows versions)
+	if cmdLine := getCommandLineWmic(pidStr); cmdLine != "" {
+		return classifyCommandLine(cmdLine)
+	}
+
+	// Fall back to PowerShell Get-CimInstance (Win11 and newer without wmic)
+	if cmdLine := getCommandLinePowerShell(pidStr); cmdLine != "" {
+		return classifyCommandLine(cmdLine)
+	}
+
+	// Neither method worked - can't determine identity
+	return processUnknown
+}
+
+// getCommandLineWmic tries to get process command line via wmic.
+// Returns empty string on failure or if no command line data.
+func getCommandLineWmic(pidStr string) string {
 	cmd := exec.Command("wmic", "process", "where", "ProcessId="+pidStr, "get", "commandline")
 	output, err := cmd.Output()
 	if err != nil {
-		// wmic failed - we can't reliably determine if this is a daemon
-		// tasklist only gives us image name, which could match any roborev.exe
-		// (e.g., CLI commands, not just daemon). Return unknown to be safe.
+		return ""
+	}
+	// wmic output has header line "CommandLine" followed by data
+	// Trim and check for actual content beyond the header
+	trimmed := strings.TrimSpace(string(output))
+	// Remove the "CommandLine" header if present
+	trimmed = strings.TrimPrefix(trimmed, "CommandLine")
+	trimmed = strings.TrimSpace(trimmed)
+	return trimmed
+}
+
+// getCommandLinePowerShell tries to get process command line via PowerShell.
+// Returns empty string on failure or if no command line data.
+func getCommandLinePowerShell(pidStr string) string {
+	// Use Get-CimInstance which is the modern replacement for wmic
+	script := `(Get-CimInstance Win32_Process -Filter "ProcessId=` + pidStr + `").CommandLine`
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// classifyCommandLine determines process identity from command line string.
+func classifyCommandLine(cmdLine string) processIdentity {
+	if cmdLine == "" {
+		// Empty command line - can't determine, treat as unknown
 		return processUnknown
 	}
-	// Check if command line contains roborev and daemon
-	cmdStr := strings.ToLower(string(output))
-	if strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon") {
+	cmdLower := strings.ToLower(cmdLine)
+	if strings.Contains(cmdLower, "roborev") && strings.Contains(cmdLower, "daemon") {
 		return processIsRoborev
 	}
 	// We got command line but it's not roborev daemon
