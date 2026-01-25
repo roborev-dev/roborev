@@ -17,8 +17,18 @@ func TestIsRoborevDaemonCommand(t *testing.T) {
 			want:    true,
 		},
 		{
-			name:    "daemon run with flags",
+			name:    "daemon run with flags after",
 			cmdLine: "/usr/local/bin/roborev daemon run --port 7373",
+			want:    true,
+		},
+		{
+			name:    "daemon run with flags between",
+			cmdLine: "/usr/local/bin/roborev daemon --verbose run",
+			want:    true,
+		},
+		{
+			name:    "daemon run with multiple flags between",
+			cmdLine: "/usr/local/bin/roborev daemon -v --config /etc/roborev.toml run",
 			want:    true,
 		},
 		{

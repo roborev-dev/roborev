@@ -108,7 +108,7 @@ func classifyCommandLine(cmdLine string) processIdentity {
 }
 
 // isRoborevDaemonCommand checks if a command line is a roborev daemon process.
-// Requires "daemon" followed by "run" as adjacent tokens to distinguish from
+// Requires "daemon" followed by "run" as a standalone token to distinguish from
 // CLI commands like "roborev daemon status" or paths containing "\run\".
 // Case-insensitive for Windows compatibility.
 func isRoborevDaemonCommand(cmdLine string) bool {
@@ -117,13 +117,21 @@ func isRoborevDaemonCommand(cmdLine string) bool {
 	if !strings.Contains(cmdLower, "roborev") {
 		return false
 	}
-	// Tokenize and look for "daemon" immediately followed by "run"
+	// Tokenize and look for "daemon" followed by "run" as standalone token
 	fields := strings.Fields(cmdLower)
-	for i := 0; i < len(fields)-1; i++ {
-		// Check if this token ends with "daemon" (handles paths) and next token is "run"
-		// On Windows, paths use backslash, so check for both
-		if (fields[i] == "daemon" || strings.HasSuffix(fields[i], "\\daemon") || strings.HasSuffix(fields[i], "/daemon")) &&
-			fields[i+1] == "run" {
+	foundDaemon := false
+	for _, field := range fields {
+		if !foundDaemon {
+			// Look for "daemon" token (or path ending in \daemon or /daemon)
+			if field == "daemon" || strings.HasSuffix(field, "\\daemon") || strings.HasSuffix(field, "/daemon") {
+				foundDaemon = true
+			}
+			continue
+		}
+		// After finding "daemon", look for exact "run" token anywhere
+		// This handles flags and flag values between daemon and run
+		// Flags like --dry-run won't match because they start with -
+		if field == "run" {
 			return true
 		}
 	}

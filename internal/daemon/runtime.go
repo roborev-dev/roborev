@@ -87,7 +87,9 @@ func WriteRuntime(addr string, port int, version string) error {
 		return err
 	}
 
-	// Set permissions to 0644 (os.CreateTemp uses 0600 by default)
+	// Set permissions to 0644 explicitly. This intentionally ignores umask
+	// because the runtime file must be readable by other processes (CLI commands
+	// discovering the daemon). The file contains only PID/port/version, not secrets.
 	if err := os.Chmod(path, 0644); err != nil {
 		return err
 	}

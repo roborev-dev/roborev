@@ -29,8 +29,18 @@ func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 			want:    processIsRoborev,
 		},
 		{
-			name:    "roborev daemon run with flags returns isRoborev",
+			name:    "roborev daemon run with flags after returns isRoborev",
 			cmdLine: `C:\Program Files\roborev\roborev.exe daemon run --port 7373`,
+			want:    processIsRoborev,
+		},
+		{
+			name:    "roborev daemon run with flags between returns isRoborev",
+			cmdLine: `C:\Program Files\roborev\roborev.exe daemon --verbose run`,
+			want:    processIsRoborev,
+		},
+		{
+			name:    "roborev daemon run with multiple flags between returns isRoborev",
+			cmdLine: `C:\Program Files\roborev\roborev.exe daemon -v --config C:\roborev.toml run`,
 			want:    processIsRoborev,
 		},
 		{

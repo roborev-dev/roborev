@@ -63,20 +63,29 @@ func identifyProcessImpl(pid int) processIdentity {
 }
 
 // isRoborevDaemonCommand checks if a command line is a roborev daemon process.
-// Requires "daemon" followed by "run" as adjacent tokens to distinguish from
+// Requires "daemon" followed by "run" as a standalone token to distinguish from
 // CLI commands like "roborev daemon status" or paths containing "/run/".
 func isRoborevDaemonCommand(cmdStr string) bool {
 	// Must contain roborev somewhere (binary name or path)
 	if !strings.Contains(cmdStr, "roborev") {
 		return false
 	}
-	// Tokenize and look for "daemon" immediately followed by "run"
+	// Tokenize and look for "daemon" followed by "run" as standalone token
 	fields := strings.Fields(cmdStr)
-	for i := 0; i < len(fields)-1; i++ {
-		// Check if this token ends with "daemon" (handles paths like /usr/bin/roborev)
-		// and next token is "run"
-		if (fields[i] == "daemon" || strings.HasSuffix(fields[i], "/daemon")) &&
-			fields[i+1] == "run" {
+	foundDaemon := false
+	for _, field := range fields {
+		if !foundDaemon {
+			// Look for "daemon" token (or path ending in /daemon)
+			if field == "daemon" || strings.HasSuffix(field, "/daemon") {
+				foundDaemon = true
+			}
+			continue
+		}
+		// After finding "daemon", look for exact "run" token anywhere
+		// This handles flags and flag values between daemon and run
+		// Flags like --dry-run won't match because they start with -
+		// Paths like /var/run/foo won't match because we need exact "run"
+		if field == "run" {
 			return true
 		}
 	}
