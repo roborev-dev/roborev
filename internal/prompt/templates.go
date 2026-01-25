@@ -19,10 +19,14 @@ func getSystemPrompt(agentName string, promptType string) string {
 		agentName = "claude-code"
 	}
 
-	// Try to load template: templates/{agent}_{type}.tmpl
-	// e.g. templates/gemini_review.tmpl
-	tmplName := fmt.Sprintf("templates/%s_%s.tmpl", agentName, promptType)
-	
+	// For review operations (review, range, dirty), use {agent}_review.tmpl
+	// These are all code reviews, just with different input formats
+	templateType := promptType
+	if promptType == "range" || promptType == "dirty" {
+		templateType = "review"
+	}
+
+	tmplName := fmt.Sprintf("templates/%s_%s.tmpl", agentName, templateType)
 	content, err := templateFS.ReadFile(tmplName)
 	if err == nil {
 		return string(content)
