@@ -63,12 +63,24 @@ func identifyProcessImpl(pid int) processIdentity {
 }
 
 // isRoborevDaemonCommand checks if a command line is a roborev daemon process.
-// Requires "roborev" and "daemon" and "run" to distinguish from CLI commands
-// like "roborev daemon status" or "roborev daemon stop".
+// Requires "daemon" followed by "run" as adjacent tokens to distinguish from
+// CLI commands like "roborev daemon status" or paths containing "/run/".
 func isRoborevDaemonCommand(cmdStr string) bool {
-	return strings.Contains(cmdStr, "roborev") &&
-		strings.Contains(cmdStr, "daemon") &&
-		strings.Contains(cmdStr, "run")
+	// Must contain roborev somewhere (binary name or path)
+	if !strings.Contains(cmdStr, "roborev") {
+		return false
+	}
+	// Tokenize and look for "daemon" immediately followed by "run"
+	fields := strings.Fields(cmdStr)
+	for i := 0; i < len(fields)-1; i++ {
+		// Check if this token ends with "daemon" (handles paths like /usr/bin/roborev)
+		// and next token is "run"
+		if (fields[i] == "daemon" || strings.HasSuffix(fields[i], "/daemon")) &&
+			fields[i+1] == "run" {
+			return true
+		}
+	}
+	return false
 }
 
 // killProcess kills a process by PID on Unix systems.

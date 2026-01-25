@@ -87,6 +87,11 @@ func WriteRuntime(addr string, port int, version string) error {
 		return err
 	}
 
+	// Set permissions to 0644 (os.CreateTemp uses 0600 by default)
+	if err := os.Chmod(path, 0644); err != nil {
+		return err
+	}
+
 	success = true
 	return nil
 }

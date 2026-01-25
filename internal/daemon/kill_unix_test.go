@@ -44,6 +44,30 @@ func TestIsRoborevDaemonCommand(t *testing.T) {
 			want:    false,
 		},
 
+		// Should NOT match - "run" in path (false positive prevention)
+		{
+			name:    "run in path with daemon status",
+			cmdLine: "/run/user/1000/roborev daemon status",
+			want:    false,
+		},
+		{
+			name:    "run in path with daemon stop",
+			cmdLine: "/var/run/roborev daemon stop",
+			want:    false,
+		},
+
+		// Should NOT match - "run" in flags (false positive prevention)
+		{
+			name:    "dry-run flag with daemon status",
+			cmdLine: "/usr/local/bin/roborev daemon status --dry-run",
+			want:    false,
+		},
+		{
+			name:    "run-once flag with daemon stop",
+			cmdLine: "/usr/local/bin/roborev daemon stop --run-once",
+			want:    false,
+		},
+
 		// Should NOT match - other commands
 		{
 			name:    "review command",
