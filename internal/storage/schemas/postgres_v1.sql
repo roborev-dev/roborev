@@ -1,6 +1,10 @@
 -- PostgreSQL schema version 1
 -- This is the original schema before the model column was added to review_jobs.
 -- Used for migration testing.
+--
+-- Note: This is the Postgres SYNC schema, which only stores completed jobs
+-- (status IN 'done', 'failed', 'canceled'). The local SQLite database has
+-- additional statuses ('queued', 'running') that are not synced to Postgres.
 
 CREATE SCHEMA IF NOT EXISTS roborev;
 

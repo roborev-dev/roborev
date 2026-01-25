@@ -36,7 +36,8 @@ func TestDefaultPgPoolConfig(t *testing.T) {
 }
 
 func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
-	requiredTables := []string{
+	requiredStatements := []string{
+		"CREATE SCHEMA IF NOT EXISTS roborev",
 		"CREATE TABLE IF NOT EXISTS roborev.schema_version",
 		"CREATE TABLE IF NOT EXISTS roborev.machines",
 		"CREATE TABLE IF NOT EXISTS roborev.repos",
@@ -49,9 +50,9 @@ func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
 	// Join all statements to search across the actual executed schema
 	allStatements := strings.Join(pgSchemaStatements(), "\n")
 
-	for _, table := range requiredTables {
-		if !strings.Contains(allStatements, table) {
-			t.Errorf("Schema missing: %s", table)
+	for _, required := range requiredStatements {
+		if !strings.Contains(allStatements, required) {
+			t.Errorf("Schema missing: %s", required)
 		}
 	}
 }
@@ -1539,6 +1540,24 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 		}
 	}
 
+	// Insert a test job to verify data survives migration
+	testJobUUID := uuid.NewString()
+	_, err = setupPool.Exec(ctx, `
+		INSERT INTO roborev.repos (identity) VALUES ('test-repo-v1-migration')
+	`)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to insert test repo: %v", err)
+	}
+	_, err = setupPool.Exec(ctx, `
+		INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, agent, status, source_machine_id, enqueued_at)
+		VALUES ($1, 1, 'HEAD', 'test-agent', 'done', '00000000-0000-0000-0000-000000000001', NOW())
+	`, testJobUUID)
+	if err != nil {
+		setupPool.Close()
+		t.Fatalf("Failed to insert test job: %v", err)
+	}
+
 	setupPool.Close()
 
 	// Now connect with the normal pool and run EnsureSchema - should migrate v1→v2
@@ -1576,6 +1595,20 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	}
 	if !hasModelColumn {
 		t.Error("Expected model column to exist after v1→v2 migration")
+	}
+
+	// Verify pre-existing job survived migration with model=NULL
+	var jobAgent string
+	var jobModel *string
+	err = pool.pool.QueryRow(ctx, `SELECT agent, model FROM review_jobs WHERE uuid = $1`, testJobUUID).Scan(&jobAgent, &jobModel)
+	if err != nil {
+		t.Fatalf("Failed to query test job after migration: %v", err)
+	}
+	if jobAgent != "test-agent" {
+		t.Errorf("Expected agent 'test-agent', got %q", jobAgent)
+	}
+	if jobModel != nil {
+		t.Errorf("Expected model to be NULL for pre-migration job, got %q", *jobModel)
 	}
 }
 
