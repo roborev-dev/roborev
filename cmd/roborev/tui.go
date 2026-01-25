@@ -738,20 +738,28 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 	jobID := job.ID
 	return func() tea.Msg {
+		// Handle prompt/run jobs first (GitRef == "prompt" indicates a run task, not a commit review)
+		// Check this before dirty to handle backward compatibility with older run jobs
+		if job.GitRef == "prompt" {
+			return tuiCommitMsgMsg{
+				jobID: jobID,
+				err:   fmt.Errorf("no commit message for run tasks"),
+			}
+		}
+
 		// Handle dirty reviews (uncommitted changes)
-		// Check both DiffContent and GitRef since job lists may not populate DiffContent
-		if job.DiffContent != nil || job.GitRef == "dirty" || job.GitRef == "" {
+		if job.DiffContent != nil || job.GitRef == "dirty" {
 			return tuiCommitMsgMsg{
 				jobID: jobID,
 				err:   fmt.Errorf("no commit message for uncommitted changes"),
 			}
 		}
 
-		// Handle prompt/run jobs (GitRef == "prompt" indicates a run task, not a commit review)
-		if job.GitRef == "prompt" {
+		// Handle missing GitRef (could be from incomplete job data or older versions)
+		if job.GitRef == "" {
 			return tuiCommitMsgMsg{
 				jobID: jobID,
-				err:   fmt.Errorf("no commit message for run tasks"),
+				err:   fmt.Errorf("no git reference available for this job"),
 			}
 		}
 

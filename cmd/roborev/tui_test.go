@@ -2383,7 +2383,7 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	m.currentView = tuiViewReview
 	m.currentReview = &storage.Review{ID: 10, Job: &storage.ReviewJob{ID: 1}}
 
-	// Press 'k' at first viewable job - should be no-op
+	// Press 'k' (right) at first viewable job - should show flash message
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	m2 := updated.(tuiModel)
 
@@ -2396,13 +2396,19 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	if cmd != nil {
 		t.Error("Expected no command at boundary")
 	}
+	if m2.flashMessage != "No newer review" {
+		t.Errorf("Expected flash message 'No newer review', got %q", m2.flashMessage)
+	}
+	if m2.flashView != tuiViewReview {
+		t.Errorf("Expected flashView to be tuiViewReview, got %d", m2.flashView)
+	}
 
 	// Now at last viewable job
 	m.selectedIdx = 2
 	m.selectedJobID = 3
 	m.currentReview = &storage.Review{ID: 30, Job: &storage.ReviewJob{ID: 3}}
 
-	// Press 'j' at last viewable job - should be no-op
+	// Press 'j' (left) at last viewable job - should show flash message
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m3 := updated.(tuiModel)
 
@@ -2414,6 +2420,12 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Error("Expected no command at boundary")
+	}
+	if m3.flashMessage != "No older review" {
+		t.Errorf("Expected flash message 'No older review', got %q", m3.flashMessage)
+	}
+	if m3.flashView != tuiViewReview {
+		t.Errorf("Expected flashView to be tuiViewReview, got %d", m3.flashView)
 	}
 }
 
@@ -2613,6 +2625,78 @@ func TestTUIQueueViewArrowsMatchUpDown(t *testing.T) {
 
 	if m3.selectedIdx != 0 {
 		t.Errorf("Right arrow: expected selectedIdx=0, got %d", m3.selectedIdx)
+	}
+}
+
+func TestTUIQueueNavigationBoundaries(t *testing.T) {
+	// Test flash messages when navigating at queue boundaries
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone},
+		{ID: 2, Status: storage.JobStatusDone},
+		{ID: 3, Status: storage.JobStatusDone},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.hasMore = false // No more jobs to load
+
+	// Press 'up' at top of queue - should show flash message
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m2 := updated.(tuiModel)
+
+	if m2.selectedIdx != 0 {
+		t.Errorf("Expected selectedIdx to remain 0 at top, got %d", m2.selectedIdx)
+	}
+	if m2.flashMessage != "No newer review" {
+		t.Errorf("Expected flash message 'No newer review', got %q", m2.flashMessage)
+	}
+	if m2.flashView != tuiViewQueue {
+		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m2.flashView)
+	}
+
+	// Now at bottom of queue
+	m.selectedIdx = 2
+	m.selectedJobID = 3
+	m.flashMessage = "" // Clear
+
+	// Press 'down' at bottom of queue - should show flash message
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m3 := updated.(tuiModel)
+
+	if m3.selectedIdx != 2 {
+		t.Errorf("Expected selectedIdx to remain 2 at bottom, got %d", m3.selectedIdx)
+	}
+	if m3.flashMessage != "No older review" {
+		t.Errorf("Expected flash message 'No older review', got %q", m3.flashMessage)
+	}
+	if m3.flashView != tuiViewQueue {
+		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m3.flashView)
+	}
+}
+
+func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
+	// Test flash messages at bottom when filter is active (prevents auto-load)
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Status: storage.JobStatusDone, RepoPath: "/repo1"},
+		{ID: 2, Status: storage.JobStatusDone, RepoPath: "/repo2"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+	m.hasMore = true // More jobs available but...
+	m.activeRepoFilter = []string{"/repo1"} // Filter is active, prevents auto-load
+
+	// Press 'down' - only job 1 matches filter, so we're at bottom
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m2 := updated.(tuiModel)
+
+	// Should show flash since filter prevents loading more
+	if m2.flashMessage != "No older review" {
+		t.Errorf("Expected flash message 'No older review' with filter active, got %q", m2.flashMessage)
 	}
 }
 
@@ -5587,6 +5671,56 @@ func TestTUIFlashMessageNotShownInDifferentView(t *testing.T) {
 	}
 }
 
+func TestTUIUpdateNotificationInQueueView(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.width = 80
+	m.height = 24
+	m.updateAvailable = "1.2.3"
+
+	output := m.renderQueueView()
+	if !strings.Contains(output, "Update available: 1.2.3") {
+		t.Error("Expected update notification in queue view")
+	}
+	if !strings.Contains(output, "run 'roborev update'") {
+		t.Error("Expected update instructions in queue view")
+	}
+}
+
+func TestTUIUpdateNotificationDevBuild(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.width = 80
+	m.height = 24
+	m.updateAvailable = "1.2.3"
+	m.updateIsDevBuild = true
+
+	output := m.renderQueueView()
+	if !strings.Contains(output, "Dev build") {
+		t.Error("Expected 'Dev build' in notification for dev builds")
+	}
+	if !strings.Contains(output, "roborev update --force") {
+		t.Error("Expected --force flag in update instructions for dev builds")
+	}
+}
+
+func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.width = 80
+	m.height = 24
+	m.updateAvailable = "1.2.3"
+	m.currentReview = &storage.Review{
+		ID:     1,
+		Output: "Test review content",
+	}
+
+	output := m.renderReviewView()
+	if strings.Contains(output, "Update available") {
+		t.Error("Update notification should not appear in review view")
+	}
+}
+
 func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	// Save original clipboard writer and restore after test
 	originalClipboard := clipboardWriter
@@ -6404,10 +6538,28 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 			expectError: "no commit message for uncommitted changes",
 		},
 		{
-			name: "empty GitRef should error",
+			name: "empty GitRef should error with missing ref message",
 			job: storage.ReviewJob{
 				ID:     5,
 				GitRef: "",
+			},
+			expectError: "no git reference available for this job",
+		},
+		{
+			name: "empty GitRef with Prompt (backward compat run job) should error with missing ref",
+			job: storage.ReviewJob{
+				ID:     6,
+				GitRef: "",
+				Prompt: "Explain this codebase", // older run job without GitRef=prompt
+			},
+			expectError: "no git reference available for this job",
+		},
+		{
+			name: "dirty job with nil DiffContent but GitRef=dirty should error",
+			job: storage.ReviewJob{
+				ID:         7,
+				GitRef:     "dirty",
+				DiffContent: nil,
 			},
 			expectError: "no commit message for uncommitted changes",
 		},
