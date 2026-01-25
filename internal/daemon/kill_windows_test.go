@@ -79,6 +79,17 @@ func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 			cmdLine: `C:\Program Files\roborev\roborev.exe daemon stop --run-once`,
 			want:    processNotRoborev,
 		},
+		// False positive prevention - "run" as flag value after another subcommand
+		{
+			name:    "run as flag value after status",
+			cmdLine: `C:\Program Files\roborev\roborev.exe daemon status --output run`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "run as positional arg after status",
+			cmdLine: `C:\Program Files\roborev\roborev.exe daemon status run`,
+			want:    processNotRoborev,
+		},
 	}
 
 	for _, tt := range tests {

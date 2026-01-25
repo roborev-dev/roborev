@@ -78,6 +78,23 @@ func TestIsRoborevDaemonCommand(t *testing.T) {
 			want:    false,
 		},
 
+		// Should NOT match - "run" as flag value after another subcommand
+		{
+			name:    "run as flag value after status",
+			cmdLine: "/usr/local/bin/roborev daemon status --output run",
+			want:    false,
+		},
+		{
+			name:    "run as positional arg after status",
+			cmdLine: "/usr/local/bin/roborev daemon status run",
+			want:    false,
+		},
+		{
+			name:    "run as flag value after stop",
+			cmdLine: "/usr/local/bin/roborev daemon stop --format run",
+			want:    false,
+		},
+
 		// Should NOT match - other commands
 		{
 			name:    "review command",

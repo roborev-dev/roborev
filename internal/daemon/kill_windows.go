@@ -108,8 +108,8 @@ func classifyCommandLine(cmdLine string) processIdentity {
 }
 
 // isRoborevDaemonCommand checks if a command line is a roborev daemon process.
-// Requires "daemon" followed by "run" as a standalone token to distinguish from
-// CLI commands like "roborev daemon status" or paths containing "\run\".
+// Requires "daemon" followed by "run" as the first subcommand to distinguish from
+// CLI commands like "roborev daemon status" or "roborev daemon status --output run".
 // Case-insensitive for Windows compatibility.
 func isRoborevDaemonCommand(cmdLine string) bool {
 	cmdLower := strings.ToLower(cmdLine)
@@ -117,7 +117,7 @@ func isRoborevDaemonCommand(cmdLine string) bool {
 	if !strings.Contains(cmdLower, "roborev") {
 		return false
 	}
-	// Tokenize and look for "daemon" followed by "run" as standalone token
+	// Tokenize and look for "daemon" followed by "run" as first subcommand
 	fields := strings.Fields(cmdLower)
 	foundDaemon := false
 	for _, field := range fields {
@@ -128,12 +128,43 @@ func isRoborevDaemonCommand(cmdLine string) bool {
 			}
 			continue
 		}
-		// After finding "daemon", look for exact "run" token anywhere
-		// This handles flags and flag values between daemon and run
-		// Flags like --dry-run won't match because they start with -
-		if field == "run" {
-			return true
+		// Skip flags
+		if strings.HasPrefix(field, "-") {
+			continue
 		}
+		// Skip tokens that look like flag values (paths, numbers, key=value)
+		if looksLikeFlagValue(field) {
+			continue
+		}
+		// First subcommand-like token after "daemon" - must be "run"
+		return field == "run"
+	}
+	return false
+}
+
+// looksLikeFlagValue returns true if the token looks like a flag value rather
+// than a subcommand. This helps distinguish "daemon --config C:\foo run" from
+// "daemon status --output run".
+func looksLikeFlagValue(token string) bool {
+	// Paths contain separators
+	if strings.ContainsAny(token, "/\\") {
+		return true
+	}
+	// Windows drive letters or URLs contain colons
+	if strings.Contains(token, ":") {
+		return true
+	}
+	// Key=value pairs
+	if strings.Contains(token, "=") {
+		return true
+	}
+	// Numbers (port numbers, timeouts, etc.)
+	if len(token) > 0 && token[0] >= '0' && token[0] <= '9' {
+		return true
+	}
+	// File extensions suggest paths
+	if strings.Contains(token, ".") {
+		return true
 	}
 	return false
 }
