@@ -1521,24 +1521,20 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	}
 
 	// Create roborev schema and v1 tables (without model column)
+	// Use schema-qualified names to avoid connection pooling issues with SET search_path
 	_, err = setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
 	if err != nil {
 		setupPool.Close()
 		t.Fatalf("Failed to create roborev schema: %v", err)
 	}
-	_, err = setupPool.Exec(ctx, `SET search_path TO roborev`)
-	if err != nil {
-		setupPool.Close()
-		t.Fatalf("Failed to set search_path: %v", err)
-	}
 
 	// Create schema_version at v1
-	_, err = setupPool.Exec(ctx, `CREATE TABLE schema_version (version INTEGER PRIMARY KEY)`)
+	_, err = setupPool.Exec(ctx, `CREATE TABLE roborev.schema_version (version INTEGER PRIMARY KEY)`)
 	if err != nil {
 		setupPool.Close()
 		t.Fatalf("Failed to create schema_version: %v", err)
 	}
-	_, err = setupPool.Exec(ctx, `INSERT INTO schema_version (version) VALUES (1)`)
+	_, err = setupPool.Exec(ctx, `INSERT INTO roborev.schema_version (version) VALUES (1)`)
 	if err != nil {
 		setupPool.Close()
 		t.Fatalf("Failed to insert v1: %v", err)
@@ -1546,7 +1542,7 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 
 	// Create v1 review_jobs table (without model column)
 	_, err = setupPool.Exec(ctx, `
-		CREATE TABLE review_jobs (
+		CREATE TABLE roborev.review_jobs (
 			id SERIAL PRIMARY KEY,
 			uuid UUID UNIQUE NOT NULL,
 			repo_id INTEGER NOT NULL,
@@ -1575,7 +1571,7 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	// Insert a test job (no model column)
 	testJobUUID := uuid.NewString()
 	_, err = setupPool.Exec(ctx, `
-		INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status)
+		INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, agent, status)
 		VALUES ($1, 1, 'HEAD', 'test-agent', 'done')
 	`, testJobUUID)
 	if err != nil {
@@ -1634,5 +1630,106 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	}
 	if jobModel != nil {
 		t.Errorf("Expected model to be NULL for pre-migration job, got %q", *jobModel)
+	}
+}
+
+func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
+	// This test verifies that upserting a job with a model value backfills
+	// an existing job that has NULL model (COALESCE behavior)
+	connString := getTestPostgresURL(t)
+	ctx := t.Context()
+
+	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema failed: %v", err)
+	}
+
+	// Create test data
+	machineID := uuid.NewString()
+	jobUUID := uuid.NewString()
+	repoIdentity := "test-repo-backfill-" + time.Now().Format("20060102150405")
+
+	defer func() {
+		// Cleanup
+		pool.pool.Exec(ctx, `DELETE FROM review_jobs WHERE uuid = $1`, jobUUID)
+		pool.pool.Exec(ctx, `DELETE FROM repos WHERE identity = $1`, repoIdentity)
+		pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, machineID)
+	}()
+
+	// Register machine and create repo
+	if err := pool.RegisterMachine(ctx, machineID, "test"); err != nil {
+		t.Fatalf("RegisterMachine failed: %v", err)
+	}
+	repoID, err := pool.GetOrCreateRepo(ctx, repoIdentity)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	// Insert job with NULL model directly
+	_, err = pool.pool.Exec(ctx, `
+		INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, source_machine_id, enqueued_at, created_at, updated_at)
+		VALUES ($1, $2, 'HEAD', 'test-agent', 'done', $3, NOW(), NOW(), NOW())
+	`, jobUUID, repoID, machineID)
+	if err != nil {
+		t.Fatalf("Failed to insert job with NULL model: %v", err)
+	}
+
+	// Verify model is NULL
+	var modelBefore *string
+	err = pool.pool.QueryRow(ctx, `SELECT model FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&modelBefore)
+	if err != nil {
+		t.Fatalf("Failed to query model before: %v", err)
+	}
+	if modelBefore != nil {
+		t.Fatalf("Expected model to be NULL before upsert, got %q", *modelBefore)
+	}
+
+	// Upsert with a model value - should backfill
+	job := SyncableJob{
+		UUID:            jobUUID,
+		RepoIdentity:    repoIdentity,
+		GitRef:          "HEAD",
+		Agent:           "test-agent",
+		Model:           "gpt-4", // Now providing a model
+		Status:          "done",
+		SourceMachineID: machineID,
+		EnqueuedAt:      time.Now(),
+	}
+	err = pool.UpsertJob(ctx, job, repoID, nil)
+	if err != nil {
+		t.Fatalf("UpsertJob failed: %v", err)
+	}
+
+	// Verify model was backfilled
+	var modelAfter *string
+	err = pool.pool.QueryRow(ctx, `SELECT model FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&modelAfter)
+	if err != nil {
+		t.Fatalf("Failed to query model after: %v", err)
+	}
+	if modelAfter == nil {
+		t.Error("Expected model to be backfilled, but it's still NULL")
+	} else if *modelAfter != "gpt-4" {
+		t.Errorf("Expected model 'gpt-4', got %q", *modelAfter)
+	}
+
+	// Also verify that upserting with empty model doesn't clear existing model
+	job.Model = "" // Empty model
+	err = pool.UpsertJob(ctx, job, repoID, nil)
+	if err != nil {
+		t.Fatalf("UpsertJob (empty model) failed: %v", err)
+	}
+
+	var modelPreserved *string
+	err = pool.pool.QueryRow(ctx, `SELECT model FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&modelPreserved)
+	if err != nil {
+		t.Fatalf("Failed to query model preserved: %v", err)
+	}
+	if modelPreserved == nil || *modelPreserved != "gpt-4" {
+		t.Errorf("Expected model to be preserved as 'gpt-4' when upserting with empty model, got %v", modelPreserved)
 	}
 }
