@@ -8,10 +8,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,7 +37,22 @@ import (
 func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func()) {
 	t.Helper()
 
-	ts := httptest.NewServer(handler)
+	// Wrap handler to handle /api/status requests.
+	// IsDaemonAlive calls /api/status to verify daemon is alive.
+	// ensureDaemon also calls /api/status to check the daemon version.
+	// We need to return a proper response with version info to prevent
+	// ensureDaemon from trying to restart the daemon (which would kill the test).
+	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/status" && r.Method == http.MethodGet {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"version": version.Version,
+			})
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+
+	ts := httptest.NewServer(wrappedHandler)
 
 	// Use ROBOREV_DATA_DIR to override data directory (works cross-platform)
 	// On Windows, HOME doesn't work since os.UserHomeDir() uses USERPROFILE
@@ -1531,16 +1544,19 @@ func TestDaemonStopInvalidPID(t *testing.T) {
 		}
 	}()
 
-	// Create daemon.json with PID 0
-	daemonInfo := daemon.RuntimeInfo{PID: 0, Addr: "127.0.0.1:7373"}
+	// Create daemon.json with PID 0 and an address on a port that's definitely not in use
+	// Port 59999 is unlikely to be in use and will get connection refused quickly
+	daemonInfo := daemon.RuntimeInfo{PID: 0, Addr: "127.0.0.1:59999"}
 	data, _ := json.Marshal(daemonInfo)
 	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644); err != nil {
 		t.Fatalf("write daemon.json: %v", err)
 	}
 
+	// stopDaemon finds the stale runtime file, KillDaemon cleans it up (daemon not alive,
+	// PID 0 doesn't exist), so stopDaemon returns nil (success - stale file cleaned up)
 	err := stopDaemon()
-	if err != ErrDaemonNotRunning {
-		t.Errorf("expected ErrDaemonNotRunning for PID 0, got %v", err)
+	if err != nil {
+		t.Errorf("expected nil (stale daemon file cleaned up), got %v", err)
 	}
 
 	// Verify daemon.json was cleaned up
@@ -1611,8 +1627,11 @@ func TestDaemonStopTruncatedFile(t *testing.T) {
 	}
 }
 
-// TestDaemonStopPermissionError verifies stopDaemon propagates permission errors
-func TestDaemonStopPermissionError(t *testing.T) {
+// TestDaemonStopUnreadableFileSkipped verifies stopDaemon skips unreadable files
+// With the new per-PID runtime file pattern, ListAllRuntimes continues scanning
+// even when some files are unreadable. This allows daemon discovery to work even
+// if some runtime files are temporarily inaccessible.
+func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("skipping permission test when running as root")
 	}
@@ -1652,16 +1671,10 @@ func TestDaemonStopPermissionError(t *testing.T) {
 	}
 
 	err := stopDaemon()
-	// Should propagate the permission error, not ErrDaemonNotRunning
-	if err == ErrDaemonNotRunning {
-		t.Error("expected permission error to be propagated, got ErrDaemonNotRunning")
-	}
-	if err == nil {
-		t.Error("expected error for permission denied, got nil")
-	}
-	// Check that the underlying error is a permission error (using errors.Is to unwrap)
-	if !errors.Is(err, fs.ErrPermission) {
-		t.Errorf("expected permission error, got: %v", err)
+	// With the new behavior, unreadable files are skipped during ListAllRuntimes.
+	// Since no readable daemon files exist, stopDaemon returns ErrDaemonNotRunning.
+	if err != ErrDaemonNotRunning {
+		t.Errorf("expected ErrDaemonNotRunning (unreadable file skipped), got: %v", err)
 	}
 }
 
