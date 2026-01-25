@@ -72,7 +72,7 @@ const (
 	tuiViewReview
 	tuiViewPrompt
 	tuiViewFilter
-	tuiViewRespond
+	tuiViewComment
 	tuiViewCommitMsg
 	tuiViewHelp
 )
@@ -117,11 +117,11 @@ type tuiModel struct {
 	filterSelectedIdx int              // Currently highlighted repo in filter list
 	filterSearch      string           // Search/filter text typed by user
 
-	// Respond modal state
-	respondText     string  // The response text being typed
-	respondJobID    int64   // Job ID we're responding to
-	respondCommit   string  // Short commit SHA for display
-	respondFromView tuiView // View to return to after respond modal closes
+	// Comment modal state
+	commentText     string  // The response text being typed
+	commentJobID    int64   // Job ID we're responding to
+	commentCommit   string  // Short commit SHA for display
+	commentFromView tuiView // View to return to after comment modal closes
 
 	// Active filter (applied to queue view)
 	activeRepoFilter []string // Empty = show all, otherwise repo root_paths to filter by
@@ -214,7 +214,7 @@ type tuiReposMsg struct {
 	repos      []repoFilterItem
 	totalCount int
 }
-type tuiRespondResultMsg struct {
+type tuiCommentResultMsg struct {
 	jobID int64
 	err   error
 }
@@ -1236,39 +1236,39 @@ func (m tuiModel) findLastVisibleJob() int {
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Handle respond view first (it captures most keys for typing)
-		if m.currentView == tuiViewRespond {
+		// Handle comment view first (it captures most keys for typing)
+		if m.currentView == tuiViewComment {
 			switch msg.String() {
 			case "ctrl+c":
 				return m, tea.Quit
 			case "esc":
-				m.currentView = m.respondFromView
-				m.respondText = ""
-				m.respondJobID = 0
+				m.currentView = m.commentFromView
+				m.commentText = ""
+				m.commentJobID = 0
 				return m, nil
 			case "enter":
-				if strings.TrimSpace(m.respondText) != "" {
-					text := m.respondText
-					jobID := m.respondJobID
+				if strings.TrimSpace(m.commentText) != "" {
+					text := m.commentText
+					jobID := m.commentJobID
 					// Return to previous view but keep text until submit succeeds
-					m.currentView = m.respondFromView
-					return m, m.submitResponse(jobID, text)
+					m.currentView = m.commentFromView
+					return m, m.submitComment(jobID, text)
 				}
 				return m, nil
 			case "backspace":
-				if len(m.respondText) > 0 {
-					runes := []rune(m.respondText)
-					m.respondText = string(runes[:len(runes)-1])
+				if len(m.commentText) > 0 {
+					runes := []rune(m.commentText)
+					m.commentText = string(runes[:len(runes)-1])
 				}
 				return m, nil
 			default:
 				// Handle typing (supports non-ASCII runes and newlines)
 				if msg.String() == "shift+enter" || msg.String() == "ctrl+j" {
-					m.respondText += "\n"
+					m.commentText += "\n"
 				} else if len(msg.Runes) > 0 {
 					for _, r := range msg.Runes {
 						if unicode.IsPrint(r) || r == '\n' || r == '\t' {
-							m.respondText += string(r)
+							m.commentText += string(r)
 						}
 					}
 				}
@@ -1699,39 +1699,39 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "c":
-			// Open respond modal (from queue or review view)
+			// Open comment modal (from queue or review view)
 			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 				job := m.jobs[m.selectedIdx]
 				// Only allow responding to completed or failed reviews
 				if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
 					// Only clear text if opening for a different job (preserve for retry)
-					if m.respondJobID != job.ID {
-						m.respondText = ""
+					if m.commentJobID != job.ID {
+						m.commentText = ""
 					}
-					m.respondJobID = job.ID
-					m.respondCommit = job.GitRef
-					if len(m.respondCommit) > 7 {
-						m.respondCommit = m.respondCommit[:7]
+					m.commentJobID = job.ID
+					m.commentCommit = job.GitRef
+					if len(m.commentCommit) > 7 {
+						m.commentCommit = m.commentCommit[:7]
 					}
-					m.respondFromView = tuiViewQueue
-					m.currentView = tuiViewRespond
+					m.commentFromView = tuiViewQueue
+					m.currentView = tuiViewComment
 				}
 				return m, nil
 			} else if m.currentView == tuiViewReview && m.currentReview != nil {
 				// Only clear text if opening for a different job (preserve for retry)
-				if m.respondJobID != m.currentReview.JobID {
-					m.respondText = ""
+				if m.commentJobID != m.currentReview.JobID {
+					m.commentText = ""
 				}
-				m.respondJobID = m.currentReview.JobID
-				m.respondCommit = ""
+				m.commentJobID = m.currentReview.JobID
+				m.commentCommit = ""
 				if m.currentReview.Job != nil {
-					m.respondCommit = m.currentReview.Job.GitRef
-					if len(m.respondCommit) > 7 {
-						m.respondCommit = m.respondCommit[:7]
+					m.commentCommit = m.currentReview.Job.GitRef
+					if len(m.commentCommit) > 7 {
+						m.commentCommit = m.commentCommit[:7]
 					}
 				}
-				m.respondFromView = tuiViewReview
-				m.currentView = tuiViewRespond
+				m.commentFromView = tuiViewReview
+				m.currentView = tuiViewComment
 				return m, nil
 			}
 
@@ -2151,16 +2151,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case tuiRespondResultMsg:
+	case tuiCommentResultMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			// Keep respondText and respondJobID so user can retry
+			// Keep commentText and commentJobID so user can retry
 		} else {
 			// Success - clear the response state only if still for the same job
 			// (user may have started a new draft for a different job while this was in flight)
-			if m.respondJobID == msg.jobID {
-				m.respondText = ""
-				m.respondJobID = 0
+			if m.commentJobID == msg.jobID {
+				m.commentText = ""
+				m.commentJobID = 0
 			}
 			// Refresh the review to show the new response (if viewing a review)
 			if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.JobID == msg.jobID {
@@ -2270,7 +2270,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) View() string {
-	if m.currentView == tuiViewRespond {
+	if m.currentView == tuiViewComment {
 		return m.renderRespondView()
 	}
 	if m.currentView == tuiViewFilter {
@@ -3010,8 +3010,8 @@ func (m tuiModel) renderRespondView() string {
 	var b strings.Builder
 
 	title := "Add Comment"
-	if m.respondCommit != "" {
-		title = fmt.Sprintf("Add Comment (%s)", m.respondCommit)
+	if m.commentCommit != "" {
+		title = fmt.Sprintf("Add Comment (%s)", m.commentCommit)
 	}
 	b.WriteString(tuiTitleStyle.Render(title))
 	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
@@ -3034,14 +3034,14 @@ func (m tuiModel) renderRespondView() string {
 		maxTextLines = 3
 	}
 
-	if m.respondText == "" {
+	if m.commentText == "" {
 		// Show placeholder (styled, but we pad manually to avoid ANSI issues)
 		placeholder := "Type your comment..."
 		padded := placeholder + strings.Repeat(" ", boxWidth-2-len(placeholder))
 		b.WriteString("| " + tuiStatusStyle.Render(padded) + " |\x1b[K\n")
 		textLinesWritten++
 	} else {
-		lines := strings.Split(m.respondText, "\n")
+		lines := strings.Split(m.commentText, "\n")
 		for _, line := range lines {
 			if textLinesWritten >= maxTextLines {
 				break
@@ -3082,7 +3082,7 @@ func (m tuiModel) renderRespondView() string {
 	return b.String()
 }
 
-func (m tuiModel) submitResponse(jobID int64, text string) tea.Cmd {
+func (m tuiModel) submitComment(jobID int64, text string) tea.Cmd {
 	return func() tea.Msg {
 		responder := os.Getenv("USER")
 		if responder == "" {
@@ -3097,7 +3097,7 @@ func (m tuiModel) submitResponse(jobID int64, text string) tea.Cmd {
 
 		body, err := json.Marshal(payload)
 		if err != nil {
-			return tuiRespondResultMsg{jobID: jobID, err: fmt.Errorf("marshal request: %w", err)}
+			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("marshal request: %w", err)}
 		}
 
 		resp, err := m.client.Post(
@@ -3106,15 +3106,15 @@ func (m tuiModel) submitResponse(jobID int64, text string) tea.Cmd {
 			bytes.NewReader(body),
 		)
 		if err != nil {
-			return tuiRespondResultMsg{jobID: jobID, err: fmt.Errorf("submit response: %w", err)}
+			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit response: %w", err)}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusCreated {
-			return tuiRespondResultMsg{jobID: jobID, err: fmt.Errorf("submit response: HTTP %d", resp.StatusCode)}
+			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit response: HTTP %d", resp.StatusCode)}
 		}
 
-		return tuiRespondResultMsg{jobID: jobID, err: nil}
+		return tuiCommentResultMsg{jobID: jobID, err: nil}
 	}
 }
 

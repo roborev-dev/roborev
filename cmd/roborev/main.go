@@ -1343,11 +1343,11 @@ Examples:
 	return cmd
 }
 
-// respondCmd returns a hidden alias for backward compatibility
+// respondCmd returns an alias for commentCmd
 func respondCmd() *cobra.Command {
 	cmd := commentCmd()
 	cmd.Use = "respond <job_id|sha> [message]"
-	cmd.Hidden = true
+	cmd.Short = "Alias for 'comment' - add a comment to a review"
 	return cmd
 }
 

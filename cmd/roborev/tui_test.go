@@ -5148,28 +5148,28 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = updated.(tuiModel)
 
-	if m.currentView != tuiViewRespond {
-		t.Fatalf("Expected tuiViewRespond, got %v", m.currentView)
+	if m.currentView != tuiViewComment {
+		t.Fatalf("Expected tuiViewComment, got %v", m.currentView)
 	}
-	if m.respondJobID != 1 {
-		t.Fatalf("Expected respondJobID=1, got %d", m.respondJobID)
+	if m.commentJobID != 1 {
+		t.Fatalf("Expected commentJobID=1, got %d", m.commentJobID)
 	}
 
 	// 2. Type some text
-	m.respondText = "My draft response"
+	m.commentText = "My draft response"
 
 	// 3. Simulate failed submission - press enter then receive error
-	m.currentView = m.respondFromView // Simulate what happens on enter
-	errMsg := tuiRespondResultMsg{jobID: 1, err: fmt.Errorf("network error")}
+	m.currentView = m.commentFromView // Simulate what happens on enter
+	errMsg := tuiCommentResultMsg{jobID: 1, err: fmt.Errorf("network error")}
 	updated, _ = m.Update(errMsg)
 	m = updated.(tuiModel)
 
 	// Text should be preserved after error
-	if m.respondText != "My draft response" {
-		t.Errorf("Expected text preserved after error, got %q", m.respondText)
+	if m.commentText != "My draft response" {
+		t.Errorf("Expected text preserved after error, got %q", m.commentText)
 	}
-	if m.respondJobID != 1 {
-		t.Errorf("Expected respondJobID preserved after error, got %d", m.respondJobID)
+	if m.commentJobID != 1 {
+		t.Errorf("Expected commentJobID preserved after error, got %d", m.commentJobID)
 	}
 
 	// 4. Re-open respond for Job 1 (Retry) - text should still be there
@@ -5178,8 +5178,8 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = updated.(tuiModel)
 
-	if m.respondText != "My draft response" {
-		t.Errorf("Expected text preserved on retry for same job, got %q", m.respondText)
+	if m.commentText != "My draft response" {
+		t.Errorf("Expected text preserved on retry for same job, got %q", m.commentText)
 	}
 
 	// 5. Go back to queue and switch to Job 2 - text should be cleared
@@ -5189,11 +5189,11 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = updated.(tuiModel)
 
-	if m.respondText != "" {
-		t.Errorf("Expected text cleared for different job, got %q", m.respondText)
+	if m.commentText != "" {
+		t.Errorf("Expected text cleared for different job, got %q", m.commentText)
 	}
-	if m.respondJobID != 2 {
-		t.Errorf("Expected respondJobID=2, got %d", m.respondJobID)
+	if m.commentJobID != 2 {
+		t.Errorf("Expected commentJobID=2, got %d", m.commentJobID)
 	}
 }
 
@@ -5205,32 +5205,32 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 	}
 
 	// User submitted response for job 1, then started drafting for job 2
-	m.respondJobID = 2
-	m.respondText = "New draft for job 2"
+	m.commentJobID = 2
+	m.commentText = "New draft for job 2"
 
 	// Success message arrives for job 1 (the old submission)
-	successMsg := tuiRespondResultMsg{jobID: 1, err: nil}
+	successMsg := tuiCommentResultMsg{jobID: 1, err: nil}
 	updated, _ := m.Update(successMsg)
 	m = updated.(tuiModel)
 
 	// Draft for job 2 should NOT be cleared
-	if m.respondText != "New draft for job 2" {
-		t.Errorf("Expected draft preserved for different job, got %q", m.respondText)
+	if m.commentText != "New draft for job 2" {
+		t.Errorf("Expected draft preserved for different job, got %q", m.commentText)
 	}
-	if m.respondJobID != 2 {
-		t.Errorf("Expected respondJobID=2 preserved, got %d", m.respondJobID)
+	if m.commentJobID != 2 {
+		t.Errorf("Expected commentJobID=2 preserved, got %d", m.commentJobID)
 	}
 
 	// Now success for job 2 should clear
-	successMsg = tuiRespondResultMsg{jobID: 2, err: nil}
+	successMsg = tuiCommentResultMsg{jobID: 2, err: nil}
 	updated, _ = m.Update(successMsg)
 	m = updated.(tuiModel)
 
-	if m.respondText != "" {
-		t.Errorf("Expected text cleared for matching job, got %q", m.respondText)
+	if m.commentText != "" {
+		t.Errorf("Expected text cleared for matching job, got %q", m.commentText)
 	}
-	if m.respondJobID != 0 {
-		t.Errorf("Expected respondJobID=0 after success, got %d", m.respondJobID)
+	if m.commentJobID != 0 {
+		t.Errorf("Expected commentJobID=0 after success, got %d", m.commentJobID)
 	}
 }
 
@@ -5268,42 +5268,42 @@ func TestTUIFilterBackspaceMultiByte(t *testing.T) {
 
 func TestTUIRespondBackspaceMultiByte(t *testing.T) {
 	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewRespond
-	m.respondJobID = 1
+	m.currentView = tuiViewComment
+	m.commentJobID = 1
 
 	// Type text with multi-byte characters
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Hello 世界")})
 	m = updated.(tuiModel)
 
-	if m.respondText != "Hello 世界" {
-		t.Errorf("Expected respondText='Hello 世界', got %q", m.respondText)
+	if m.commentText != "Hello 世界" {
+		t.Errorf("Expected commentText='Hello 世界', got %q", m.commentText)
 	}
 
 	// Backspace should remove '界' (one character), not corrupt it
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = updated.(tuiModel)
-	if m.respondText != "Hello 世" {
-		t.Errorf("Expected respondText='Hello 世' after backspace, got %q", m.respondText)
+	if m.commentText != "Hello 世" {
+		t.Errorf("Expected commentText='Hello 世' after backspace, got %q", m.commentText)
 	}
 
 	// Backspace should remove '世'
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = updated.(tuiModel)
-	if m.respondText != "Hello " {
-		t.Errorf("Expected respondText='Hello ' after second backspace, got %q", m.respondText)
+	if m.commentText != "Hello " {
+		t.Errorf("Expected commentText='Hello ' after second backspace, got %q", m.commentText)
 	}
 }
 
 func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewRespond
-	m.respondJobID = 1
+	m.currentView = tuiViewComment
+	m.commentJobID = 1
 	m.width = 30
 	m.height = 20
 
 	// Set text with multi-byte characters that would be truncated
 	// The box has boxWidth-2 available space for text
-	m.respondText = "あいうえおかきくけこさしすせそ" // 15 Japanese characters (30 cells wide)
+	m.commentText = "あいうえおかきくけこさしすせそ" // 15 Japanese characters (30 cells wide)
 
 	// Render should not panic or corrupt characters
 	output := m.renderRespondView()
@@ -5342,13 +5342,13 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 
 func TestTUIRespondViewTabExpansion(t *testing.T) {
 	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewRespond
-	m.respondJobID = 1
+	m.currentView = tuiViewComment
+	m.commentJobID = 1
 	m.width = 40
 	m.height = 20
 
 	// Set text with tabs
-	m.respondText = "a\tb\tc"
+	m.commentText = "a\tb\tc"
 
 	output := m.renderRespondView()
 	plainOutput := stripANSI(output)

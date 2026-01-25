@@ -99,8 +99,8 @@ func TestInstallClaudeWhenDirExists(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-address", "SKILL.md")); err != nil {
 		t.Error("expected roborev-address/SKILL.md to exist")
 	}
-	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-comment", "SKILL.md")); err != nil {
-		t.Error("expected roborev-comment/SKILL.md to exist")
+	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-respond", "SKILL.md")); err != nil {
+		t.Error("expected roborev-respond/SKILL.md to exist")
 	}
 }
 
@@ -143,8 +143,8 @@ func TestInstallCodexWhenDirExists(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-address", "SKILL.md")); err != nil {
 		t.Error("expected roborev-address/SKILL.md to exist")
 	}
-	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-comment", "SKILL.md")); err != nil {
-		t.Error("expected roborev-comment/SKILL.md to exist")
+	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-respond", "SKILL.md")); err != nil {
+		t.Error("expected roborev-respond/SKILL.md to exist")
 	}
 }
 
@@ -220,7 +220,7 @@ func TestIsInstalledClaude(t *testing.T) {
 
 	// Create only respond skill (not address)
 	skillsDir := filepath.Join(claudeDir, "skills")
-	respondDir := filepath.Join(skillsDir, "roborev-comment")
+	respondDir := filepath.Join(skillsDir, "roborev-respond")
 	if err := os.MkdirAll(respondDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestIsInstalledClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !IsInstalled(AgentClaude) {
-		t.Error("expected IsInstalled=true when roborev-comment/SKILL.md exists")
+		t.Error("expected IsInstalled=true when roborev-respond/SKILL.md exists")
 	}
 
 	// Remove respond, add address
@@ -265,7 +265,7 @@ func TestIsInstalledCodex(t *testing.T) {
 	}
 
 	// Create only respond skill
-	respondDir := filepath.Join(codexDir, "skills", "roborev-comment")
+	respondDir := filepath.Join(codexDir, "skills", "roborev-respond")
 	if err := os.MkdirAll(respondDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestIsInstalledCodex(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !IsInstalled(AgentCodex) {
-		t.Error("expected IsInstalled=true when roborev-comment/SKILL.md exists")
+		t.Error("expected IsInstalled=true when roborev-respond/SKILL.md exists")
 	}
 }
 
@@ -318,7 +318,7 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		defer cleanup()
 
 		// Create .claude with only respond skill installed
-		claudeSkillsDir := filepath.Join(tmpHome, ".claude", "skills", "roborev-comment")
+		claudeSkillsDir := filepath.Join(tmpHome, ".claude", "skills", "roborev-respond")
 		if err := os.MkdirAll(claudeSkillsDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -381,7 +381,7 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		defer cleanup()
 
 		// Create .codex with only respond skill installed
-		codexSkillsDir := filepath.Join(tmpHome, ".codex", "skills", "roborev-comment")
+		codexSkillsDir := filepath.Join(tmpHome, ".codex", "skills", "roborev-respond")
 		if err := os.MkdirAll(codexSkillsDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -417,7 +417,7 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		}
 
 		// Create .codex with skills
-		codexSkillsDir := filepath.Join(tmpHome, ".codex", "skills", "roborev-comment")
+		codexSkillsDir := filepath.Join(tmpHome, ".codex", "skills", "roborev-respond")
 		if err := os.MkdirAll(codexSkillsDir, 0755); err != nil {
 			t.Fatal(err)
 		}
