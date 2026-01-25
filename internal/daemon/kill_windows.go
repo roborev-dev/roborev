@@ -62,17 +62,25 @@ func getCommandLineWmic(pidStr string) string {
 // Returns empty string on failure or if no command line data.
 func getCommandLinePowerShell(pidStr string) string {
 	// Use Get-CimInstance which is the modern replacement for wmic
-	script := `(Get-CimInstance Win32_Process -Filter "ProcessId=` + pidStr + `").CommandLine`
+	// Force UTF-8 output to avoid UTF-16LE encoding issues when capturing stdout
+	script := `[Console]::OutputEncoding=[Text.Encoding]::UTF8;` +
+		`(Get-CimInstance Win32_Process -Filter "ProcessId=` + pidStr + `").CommandLine`
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	// Also strip any BOM or stray NUL bytes that might slip through
+	result := strings.TrimSpace(string(output))
+	result = strings.ReplaceAll(result, "\x00", "")
+	return result
 }
 
 // classifyCommandLine determines process identity from command line string.
 func classifyCommandLine(cmdLine string) processIdentity {
+	// Strip any stray NUL bytes (can happen with encoding issues)
+	cmdLine = strings.ReplaceAll(cmdLine, "\x00", "")
+	cmdLine = strings.TrimSpace(cmdLine)
 	if cmdLine == "" {
 		// Empty command line - can't determine, treat as unknown
 		return processUnknown
