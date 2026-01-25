@@ -86,14 +86,14 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 
 // Start begins the server and worker pool
 func (s *Server) Start(ctx context.Context) error {
-	// Check if another daemon is already running (there can be only one)
-	if info, err := ReadRuntime(); err == nil && info.Addr != "" {
-		if IsDaemonAlive(info.Addr) {
-			return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Addr)
-		}
-		// Stale runtime file from crashed daemon - clean it up
-		log.Printf("Cleaning up stale runtime file (pid %d no longer responding)", info.PID)
-		RemoveRuntime()
+	// Clean up any zombie daemons first (there can be only one)
+	if cleaned := CleanupZombieDaemons(); cleaned > 0 {
+		log.Printf("Cleaned up %d zombie daemon(s)", cleaned)
+	}
+
+	// Check if a responsive daemon is still running after cleanup
+	if info, err := GetAnyRunningDaemon(); err == nil && IsDaemonAlive(info.Addr) {
+		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Addr)
 	}
 
 	// Reset stale jobs from previous runs

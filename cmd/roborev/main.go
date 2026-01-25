@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -82,7 +81,7 @@ func main() {
 
 // getDaemonAddr returns the daemon address from runtime file or default
 func getDaemonAddr() string {
-	if info, err := daemon.ReadRuntime(); err == nil {
+	if info, err := daemon.GetAnyRunningDaemon(); err == nil {
 		return fmt.Sprintf("http://%s", info.Addr)
 	}
 	return serverAddr
@@ -93,8 +92,8 @@ func getDaemonAddr() string {
 func ensureDaemon() error {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 
-	// First check runtime file for daemon address
-	if info, err := daemon.ReadRuntime(); err == nil {
+	// First check runtime files for any running daemon
+	if info, err := daemon.GetAnyRunningDaemon(); err == nil {
 		addr := fmt.Sprintf("http://%s/api/status", info.Addr)
 		resp, err := client.Get(addr)
 		if err == nil {
@@ -165,7 +164,7 @@ func startDaemon() error {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	for i := 0; i < 30; i++ {
 		time.Sleep(100 * time.Millisecond)
-		if info, err := daemon.ReadRuntime(); err == nil {
+		if info, err := daemon.GetAnyRunningDaemon(); err == nil {
 			addr := fmt.Sprintf("http://%s", info.Addr)
 			resp, err := client.Get(addr + "/api/status")
 			if err == nil {
@@ -182,46 +181,19 @@ func startDaemon() error {
 // ErrDaemonNotRunning indicates no daemon runtime file was found
 var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)")
 
-// stopDaemon stops the running daemon using PID from daemon.json.
-// Returns ErrDaemonNotRunning if the runtime file is missing.
-// For corrupted/malformed files (JSON parse errors), removes them and returns ErrDaemonNotRunning.
-// Propagates permission/IO errors to the caller.
+// stopDaemon stops any running daemons.
+// Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	info, err := daemon.ReadRuntime()
-	if err != nil {
-		if os.IsNotExist(err) {
-			return ErrDaemonNotRunning
-		}
-		// Check if it's a JSON parse error (corrupted file)
-		// This includes SyntaxError, UnmarshalTypeError, and UnexpectedEOF (truncated files)
-		var syntaxErr *json.SyntaxError
-		var typeErr *json.UnmarshalTypeError
-		if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) || errors.Is(err, io.ErrUnexpectedEOF) {
-			// Corrupted file - remove it and treat as not running
-			daemon.RemoveRuntime()
-			return ErrDaemonNotRunning
-		}
-		// Permission/IO error - propagate to caller
-		return fmt.Errorf("failed to read daemon runtime file: %w", err)
-	}
-	if info.PID <= 0 {
-		daemon.RemoveRuntime() // Clean up invalid runtime file
+	runtimes, err := daemon.ListAllRuntimes()
+	if err != nil || len(runtimes) == 0 {
 		return ErrDaemonNotRunning
 	}
 
-	// Kill by specific PID (works regardless of process name)
-	if runtime.GOOS == "windows" {
-		exec.Command("taskkill", "/PID", fmt.Sprintf("%d", info.PID), "/F").Run()
-	} else {
-		// Send SIGTERM first for graceful shutdown
-		exec.Command("kill", "-TERM", fmt.Sprintf("%d", info.PID)).Run()
-		time.Sleep(500 * time.Millisecond)
-		// Then SIGKILL to ensure it's dead
-		exec.Command("kill", "-KILL", fmt.Sprintf("%d", info.PID)).Run()
+	// Kill all found daemons
+	for _, info := range runtimes {
+		daemon.KillDaemon(info)
 	}
-	// Clean up runtime file
-	daemon.RemoveRuntime()
-	time.Sleep(500 * time.Millisecond)
+
 	return nil
 }
 
@@ -2038,10 +2010,10 @@ official release over a dev build.`,
 				}
 			}
 
-			// Restart daemon if running
-			if daemonInfo, err := daemon.ReadRuntime(); err == nil && daemonInfo != nil {
+			// Restart daemon if any are running
+			if runtimes, err := daemon.ListAllRuntimes(); err == nil && len(runtimes) > 0 {
 				fmt.Print("Restarting daemon... ")
-				// Properly stop daemon using SIGTERM/SIGKILL (same as restartDaemon)
+				// Stop all running daemons
 				_ = stopDaemon()
 				// Kill any orphaned daemon processes
 				killAllDaemons()
