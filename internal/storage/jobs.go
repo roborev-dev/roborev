@@ -940,7 +940,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	query += " ORDER BY j.enqueued_at DESC"
+	query += " ORDER BY j.id DESC"
 
 	if limit > 0 {
 		query += " LIMIT ?"
