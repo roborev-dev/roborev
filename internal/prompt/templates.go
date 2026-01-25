@@ -9,10 +9,11 @@ import (
 //go:embed templates/*.tmpl
 var templateFS embed.FS
 
-// getSystemPrompt returns the system prompt for the specified agent and type.
+// GetSystemPrompt returns the system prompt for the specified agent and type.
 // If a specific template exists for the agent, it uses that.
 // Otherwise, it falls back to the default constant.
-func getSystemPrompt(agentName string, promptType string) string {
+// Supported prompt types: review, range, dirty, address, run
+func GetSystemPrompt(agentName string, promptType string) string {
 	// Normalize agent name
 	agentName = strings.ToLower(agentName)
 	if agentName == "claude" {

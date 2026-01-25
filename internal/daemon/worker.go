@@ -256,8 +256,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var reviewPrompt string
 	var err error
 	if job.GitRef == "prompt" && job.Prompt != "" {
-		// Custom prompt job - use pre-stored prompt directly
-		reviewPrompt = job.Prompt
+		// Custom prompt job - prepend agent-specific preamble if available
+		preamble := prompt.GetSystemPrompt(job.Agent, "run")
+		if preamble != "" {
+			reviewPrompt = preamble + "\n" + job.Prompt
+		} else {
+			reviewPrompt = job.Prompt
+		}
 	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
 		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent)

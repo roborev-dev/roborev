@@ -136,7 +136,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	var sb strings.Builder
 
 	// Start with system prompt for dirty changes
-	sb.WriteString(getSystemPrompt(agentName, "dirty"))
+	sb.WriteString(GetSystemPrompt(agentName, "dirty"))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -195,7 +195,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	var sb strings.Builder
 
 	// Start with system prompt
-	sb.WriteString(getSystemPrompt(agentName, "review"))
+	sb.WriteString(GetSystemPrompt(agentName, "review"))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -272,7 +272,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	var sb strings.Builder
 
 	// Start with system prompt for ranges
-	sb.WriteString(getSystemPrompt(agentName, "range"))
+	sb.WriteString(GetSystemPrompt(agentName, "range"))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -508,7 +508,7 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 	var sb strings.Builder
 
 	// System prompt
-	sb.WriteString(getSystemPrompt(review.Agent, "address"))
+	sb.WriteString(GetSystemPrompt(review.Agent, "address"))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
