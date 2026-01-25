@@ -76,7 +76,7 @@ type cachedCheck struct {
 // Uses a 1-hour cache to avoid hitting GitHub API too often
 func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 	currentVersion := strings.TrimPrefix(version.Version, "v")
-	isDevBuild := extractBaseSemver(currentVersion) == ""
+	isDevBuild := isDevBuildVersion(currentVersion)
 
 	// Check cache first (unless forced)
 	// Use shorter cache for dev builds so they learn about releases sooner
@@ -559,6 +559,24 @@ func extractBaseSemver(v string) string {
 		v = v[:idx]
 	}
 	return v
+}
+
+// gitDescribePattern matches git describe format: v0.16.1-2-gabcdef
+// The -N-gHASH suffix indicates N commits after the tag
+var gitDescribePattern = regexp.MustCompile(`-\d+-g[0-9a-f]+$`)
+
+// isDevBuildVersion returns true if the version is a dev build.
+// Dev builds are either:
+// - Pure hashes with no semver (e.g., "9c2baf2", "dev")
+// - Git describe format with commits after tag (e.g., "v0.16.1-2-gabcdef")
+func isDevBuildVersion(v string) bool {
+	v = strings.TrimPrefix(v, "v")
+	// Pure hash or "dev" - no semver base
+	if extractBaseSemver(v) == "" {
+		return true
+	}
+	// Git describe format: has commits after a tag
+	return gitDescribePattern.MatchString(v)
 }
 
 // isNewer returns true if v1 is newer than v2

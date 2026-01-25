@@ -257,6 +257,44 @@ func TestExtractBaseSemver(t *testing.T) {
 	}
 }
 
+func TestIsDevBuildVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		// Official releases - NOT dev builds
+		{"0.16.1", false},
+		{"v0.16.1", false},
+		{"1.0.0", false},
+		{"v1.0.0", false},
+
+		// Git describe format - ARE dev builds
+		{"0.16.1-2-g75d300a", true},
+		{"v0.16.1-2-g75d300a", true},
+		{"0.4.0-5-gabcdef", true},
+		{"1.2.3-100-gdeadbeef", true},
+
+		// Pure hash/dev - ARE dev builds
+		{"dev", true},
+		{"abc1234", true},
+		{"88be010", true},
+
+		// Prerelease tags - NOT dev builds (intentional releases)
+		{"0.16.1-rc1", false},
+		{"v1.0.0-beta.1", false},
+		{"0.4.0-alpha", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			got := isDevBuildVersion(tt.version)
+			if got != tt.want {
+				t.Errorf("isDevBuildVersion(%q) = %v, want %v", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsNewer(t *testing.T) {
 	tests := []struct {
 		v1, v2 string
