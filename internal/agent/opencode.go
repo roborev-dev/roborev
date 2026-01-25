@@ -3,9 +3,11 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 )
 
 // OpenCodeAgent runs code reviews using the OpenCode CLI
@@ -47,6 +49,34 @@ func (a *OpenCodeAgent) CommandName() string {
 	return a.Command
 }
 
+// filterOpencodeToolCallLines removes OpenCode tool-call JSON lines from stdout.
+// opencode run --format default streams {"name":"...","arguments":{...}} for tool
+// requests; roborev needs only the final text. We drop lines that are solely such objects.
+func filterOpencodeToolCallLines(s string) string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if isOpencodeToolCallLine(line) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+func isOpencodeToolCallLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "{") {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		return false
+	}
+	_, hasName := m["name"]
+	_, hasArgs := m["arguments"]
+	return hasName && hasArgs
+}
+
 func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// OpenCode CLI supports a headless invocation via `opencode run [message..]`.
 	// We run it from the repo root so it can use project context, and pass the full
@@ -79,11 +109,10 @@ func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt 
 		)
 	}
 
-	result := stdout.String()
+	result := filterOpencodeToolCallLines(stdout.String())
 	if len(result) == 0 {
 		return "No review output generated", nil
 	}
-
 	return result, nil
 }
 
