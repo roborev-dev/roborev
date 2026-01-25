@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -285,5 +286,76 @@ func TestIsLoopbackAddr(t *testing.T) {
 				t.Errorf("isLoopbackAddr(%q) = %v, want %v", tt.addr, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIsDaemonAliveStatusCodes(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantAlive  bool
+	}{
+		{"200 OK", http.StatusOK, true},
+		{"500 Internal Server Error", http.StatusInternalServerError, true},
+		{"503 Service Unavailable", http.StatusServiceUnavailable, true},
+		{"404 Not Found", http.StatusNotFound, false},
+		{"405 Method Not Allowed", http.StatusMethodNotAllowed, false},
+		{"400 Bad Request", http.StatusBadRequest, true}, // Daemon exists, just bad request
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+			}))
+			defer server.Close()
+
+			addr := strings.TrimPrefix(server.URL, "http://")
+			got := IsDaemonAlive(addr)
+			if got != tt.wantAlive {
+				t.Errorf("IsDaemonAlive with %d = %v, want %v", tt.statusCode, got, tt.wantAlive)
+			}
+		})
+	}
+}
+
+func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
+	// Create a temp directory with glob metacharacters in the name
+	tmpDir := t.TempDir()
+	// Create a subdirectory with brackets (glob metacharacter)
+	dataDir := filepath.Join(tmpDir, "data[test]")
+	if err := os.Mkdir(dataDir, 0755); err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+
+	// Set ROBOREV_DATA_DIR to the directory with metacharacters
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", dataDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
+
+	// Create a valid runtime file
+	validContent := `{"pid": 12345, "addr": "127.0.0.1:7373", "port": 7373, "version": "test"}`
+	validPath := filepath.Join(dataDir, "daemon.12345.json")
+	if err := os.WriteFile(validPath, []byte(validContent), 0644); err != nil {
+		t.Fatalf("Failed to write valid runtime file: %v", err)
+	}
+
+	// ListAllRuntimes should work despite glob metacharacters in path
+	runtimes, err := ListAllRuntimes()
+	if err != nil {
+		t.Fatalf("ListAllRuntimes failed with glob metacharacters in path: %v", err)
+	}
+
+	if len(runtimes) != 1 {
+		t.Errorf("Expected 1 runtime, got %d", len(runtimes))
+	}
+	if len(runtimes) > 0 && runtimes[0].PID != 12345 {
+		t.Errorf("Expected PID 12345, got %d", runtimes[0].PID)
 	}
 }

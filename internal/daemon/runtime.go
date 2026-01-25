@@ -203,8 +203,12 @@ func IsDaemonAlive(addr string) bool {
 			continue
 		}
 		resp.Body.Close()
-		// Any HTTP response means daemon is alive (even 500/503 under load).
+		// Accept 2xx/5xx as alive (daemon responding, possibly under load).
+		// Reject 404/405 - indicates a different service that doesn't have our API.
 		// Status code validation for version mismatch happens in ensureDaemon.
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+			return false
+		}
 		return true
 	}
 	return false
