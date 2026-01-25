@@ -141,6 +141,10 @@ type tuiModel struct {
 	statusFetchedOnce       bool   // True after first successful status fetch (for flash logic)
 	pendingReviewAddressed map[int64]pendingState // review ID -> pending state (for reviews without jobs)
 	addressedSeq           uint64                 // monotonic counter for request sequencing
+
+	// Daemon reconnection state
+	consecutiveErrors int  // Count of consecutive connection failures
+	reconnecting      bool // True if currently attempting reconnection
 }
 
 // pendingState tracks a pending addressed toggle with sequence number
@@ -205,6 +209,10 @@ type tuiRespondResultMsg struct {
 type tuiClipboardResultMsg struct {
 	err  error
 	view tuiView // The view where copy was triggered (for flash attribution)
+}
+type tuiReconnectMsg struct {
+	newAddr string // New daemon address if found, empty if not found
+	err     error
 }
 
 // ClipboardWriter is an interface for clipboard operations (allows mocking in tests)
@@ -415,6 +423,19 @@ func (m tuiModel) checkForUpdate() tea.Cmd {
 			return tuiUpdateCheckMsg{} // No update or error
 		}
 		return tuiUpdateCheckMsg{version: info.LatestVersion, isDevBuild: info.IsDevBuild}
+	}
+}
+
+// tryReconnect attempts to find a running daemon at a new address.
+// This is called after consecutive connection failures to handle daemon restarts.
+func (m tuiModel) tryReconnect() tea.Cmd {
+	return func() tea.Msg {
+		info, err := daemon.GetAnyRunningDaemon()
+		if err != nil {
+			return tuiReconnectMsg{err: err}
+		}
+		newAddr := fmt.Sprintf("http://%s", info.Addr)
+		return tuiReconnectMsg{newAddr: newAddr}
 	}
 }
 
@@ -1693,6 +1714,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.append {
 			m.loadingJobs = false
 		}
+		m.consecutiveErrors = 0 // Reset on successful fetch
 
 		// If filter changed while this fetch was in flight, discard stale data
 		// and trigger a fresh fetch with the current filter state
@@ -1824,6 +1846,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiStatusMsg:
 		m.status = storage.DaemonStatus(msg)
+		m.consecutiveErrors = 0 // Reset on successful fetch
 		if m.status.Version != "" {
 			m.daemonVersion = m.status.Version
 		}
@@ -1981,6 +2004,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiJobsErrMsg:
 		m.err = msg.err
 		m.loadingJobs = false // Clear loading state so refreshes can resume
+		m.consecutiveErrors++
 
 		// If filter changed while loading, retry immediately with current filter state
 		if m.pendingRefetch {
@@ -1989,9 +2013,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchJobs()
 		}
 
+		// Try to reconnect after consecutive failures
+		if m.consecutiveErrors >= 3 && !m.reconnecting {
+			m.reconnecting = true
+			return m, m.tryReconnect()
+		}
+
 	case tuiPaginationErrMsg:
 		m.err = msg.err
 		m.loadingMore = false // Clear loading state so user can retry pagination
+		m.consecutiveErrors++
 
 		// If filter changed while pagination was in flight, trigger fresh fetch
 		if m.pendingRefetch {
@@ -2000,8 +2031,38 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchJobs()
 		}
 
+		// Try to reconnect after consecutive failures
+		if m.consecutiveErrors >= 3 && !m.reconnecting {
+			m.reconnecting = true
+			return m, m.tryReconnect()
+		}
+
 	case tuiErrMsg:
 		m.err = msg
+		m.consecutiveErrors++
+
+		// Try to reconnect after consecutive failures
+		if m.consecutiveErrors >= 3 && !m.reconnecting {
+			m.reconnecting = true
+			return m, m.tryReconnect()
+		}
+
+	case tuiReconnectMsg:
+		m.reconnecting = false
+		if msg.err == nil && msg.newAddr != "" && msg.newAddr != m.serverAddr {
+			// Found daemon at new address - switch to it
+			m.serverAddr = msg.newAddr
+			m.consecutiveErrors = 0
+			m.err = nil
+			// Update daemon version from new daemon
+			if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
+				m.daemonVersion = info.Version
+			}
+			// Trigger immediate refresh
+			m.loadingJobs = true
+			return m, tea.Batch(m.fetchJobs(), m.fetchStatus())
+		}
+		// Reconnection failed or same address - will retry on next tick
 	}
 
 	return m, nil
