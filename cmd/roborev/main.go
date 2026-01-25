@@ -2041,15 +2041,10 @@ official release over a dev build.`,
 			// Restart daemon if running
 			if daemonInfo, err := daemon.ReadRuntime(); err == nil && daemonInfo != nil {
 				fmt.Print("Restarting daemon... ")
-				// Stop old daemon with timeout
-				stopURL := fmt.Sprintf("http://%s/api/shutdown", daemonInfo.Addr)
-				client := &http.Client{Timeout: 5 * time.Second}
-				if resp, err := client.Post(stopURL, "application/json", nil); err != nil {
-					fmt.Printf("warning: failed to stop daemon: %v\n", err)
-				} else {
-					resp.Body.Close()
-				}
-				time.Sleep(500 * time.Millisecond)
+				// Properly stop daemon using SIGTERM/SIGKILL (same as restartDaemon)
+				_ = stopDaemon()
+				// Kill any orphaned daemon processes
+				killAllDaemons()
 
 				// Start new daemon using "roborev daemon run"
 				newBinary := filepath.Join(binDir, "roborev")
