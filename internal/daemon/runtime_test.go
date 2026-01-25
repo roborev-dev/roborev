@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestFindAvailablePort(t *testing.T) {
@@ -68,13 +69,13 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 
 func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
 	// Test with non-loopback address - should not make HTTP request
-	// We verify this by checking isLoopbackAddr directly and by the fact that
-	// KillDaemon with a non-loopback addr and invalid PID returns quickly
-	// (if it tried HTTP to a non-existent host, it would timeout)
+	// We verify this by checking isLoopbackAddr directly and by timing:
+	// if HTTP was attempted to a non-routable IP, it would take at least
+	// 500ms (client timeout). Without HTTP, it returns in <100ms.
 
 	info := &RuntimeInfo{
 		PID:  999999,               // Non-existent PID
-		Addr: "192.168.1.100:7373", // Non-loopback
+		Addr: "192.168.1.100:7373", // Non-loopback, non-routable
 	}
 
 	// Verify the address is correctly identified as non-loopback
@@ -82,14 +83,20 @@ func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
 		t.Error("192.168.1.100:7373 should not be identified as loopback")
 	}
 
-	// This should return quickly without making HTTP calls
-	// (if it tried HTTP, it would timeout after 2s)
+	// Time the call - if HTTP is attempted, it would timeout after 500ms+
+	start := time.Now()
 	result := KillDaemon(info)
+	elapsed := time.Since(start)
 
 	// With non-existent PID and non-loopback addr, should return true
-	// (process doesn't exist)
 	if !result {
 		t.Error("KillDaemon should return true for non-existent PID")
+	}
+
+	// Should complete quickly (no HTTP call). Allow 200ms for process checks.
+	// If HTTP was attempted, it would take at least 500ms (client timeout).
+	if elapsed > 200*time.Millisecond {
+		t.Errorf("KillDaemon took %v, suggesting HTTP was attempted to non-loopback address", elapsed)
 	}
 }
 
@@ -127,6 +134,48 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 	}
 	if requestCount.Load() == 0 {
 		t.Error("KillDaemon should have made at least one HTTP request")
+	}
+}
+
+func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
+	// Use temp home directory
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Create the data directory
+	dataDir := tmpHome + "/.roborev"
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatalf("Failed to create data dir: %v", err)
+	}
+
+	// Create a valid runtime file
+	validContent := `{"pid": 12345, "addr": "127.0.0.1:7373", "port": 7373, "version": "test"}`
+	validPath := dataDir + "/daemon.12345.json"
+	if err := os.WriteFile(validPath, []byte(validContent), 0644); err != nil {
+		t.Fatalf("Failed to write valid runtime file: %v", err)
+	}
+
+	// Create an unreadable runtime file (skip on Windows where chmod doesn't work the same)
+	unreadablePath := dataDir + "/daemon.99999.json"
+	if err := os.WriteFile(unreadablePath, []byte(`{"pid": 99999}`), 0000); err != nil {
+		t.Fatalf("Failed to write unreadable runtime file: %v", err)
+	}
+	defer os.Chmod(unreadablePath, 0644) // Restore permissions for cleanup
+
+	// ListAllRuntimes should return the readable entry without error
+	runtimes, err := ListAllRuntimes()
+	if err != nil {
+		t.Fatalf("ListAllRuntimes should not error on unreadable files: %v", err)
+	}
+
+	// Should have found the valid runtime
+	if len(runtimes) != 1 {
+		t.Errorf("Expected 1 runtime, got %d", len(runtimes))
+	}
+	if len(runtimes) > 0 && runtimes[0].PID != 12345 {
+		t.Errorf("Expected PID 12345, got %d", runtimes[0].PID)
 	}
 }
 
