@@ -14,6 +14,7 @@ import (
 // CodexAgent runs code reviews using the Codex CLI
 type CodexAgent struct {
 	Command   string         // The codex command to run (default: "codex")
+	Model     string         // Model to use (e.g., "o3", "o4-mini")
 	Reasoning ReasoningLevel // Reasoning level for the agent
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 }
@@ -34,21 +35,27 @@ func NewCodexAgent(command string) *CodexAgent {
 
 // WithReasoning returns a copy of the agent with the specified reasoning level
 func (a *CodexAgent) WithReasoning(level ReasoningLevel) Agent {
-	return &CodexAgent{Command: a.Command, Reasoning: level, Agentic: a.Agentic}
+	return &CodexAgent{Command: a.Command, Model: a.Model, Reasoning: level, Agentic: a.Agentic}
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *CodexAgent) WithAgentic(agentic bool) Agent {
 	return &CodexAgent{
 		Command:   a.Command,
+		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
 	}
 }
 
-// WithModel returns the agent unchanged (model selection not supported for codex).
+// WithModel returns a copy of the agent configured to use the specified model.
 func (a *CodexAgent) WithModel(model string) Agent {
-	return a
+	return &CodexAgent{
+		Command:   a.Command,
+		Model:     model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+	}
 }
 
 // codexReasoningEffort maps ReasoningLevel to codex-specific effort values
@@ -85,6 +92,9 @@ func (a *CodexAgent) buildArgs(repoPath, outputFile string, agenticMode, autoApp
 		"-C", repoPath,
 		"-o", outputFile,
 	)
+	if a.Model != "" {
+		args = append(args, "-m", a.Model)
+	}
 	if effort := a.codexReasoningEffort(); effort != "" {
 		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, effort))
 	}

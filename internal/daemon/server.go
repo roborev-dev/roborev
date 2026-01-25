@@ -397,8 +397,8 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent (uses main repo root for config lookup)
 	agentName := config.ResolveAgent(req.Agent, repoRoot, s.configWatcher.Config())
 
-	// Resolve opencode model (uses main repo root for config lookup)
-	model := config.ResolveOpencodeModel(req.Model, repoRoot, s.configWatcher.Config())
+	// Resolve model (uses main repo root for config lookup)
+	model := config.ResolveModel(req.Model, repoRoot, s.configWatcher.Config())
 
 	// Resolve reasoning level (uses main repo root for config lookup)
 	reasoning, err := config.ResolveReviewReasoning(req.Reasoning, repoRoot)

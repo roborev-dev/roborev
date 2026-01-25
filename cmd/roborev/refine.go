@@ -228,7 +228,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 	reasoningLevel := agent.ParseReasoningLevel(resolvedReasoning)
 
 	// Resolve model from CLI or config
-	resolvedModel := config.ResolveOpencodeModel(modelStr, repoPath, cfg)
+	resolvedModel := config.ResolveModel(modelStr, repoPath, cfg)
 
 	// Get the agent with configured reasoning level and model
 	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel)

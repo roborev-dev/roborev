@@ -942,6 +942,145 @@ func TestResolveRepoIdentity(t *testing.T) {
 	})
 }
 
+func TestResolveModel(t *testing.T) {
+	t.Run("explicit model takes precedence", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("explicit-model", tmpDir, cfg)
+		if model != "explicit-model" {
+			t.Errorf("Expected 'explicit-model', got '%s'", model)
+		}
+	})
+
+	t.Run("explicit with whitespace is trimmed", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("  explicit-model  ", tmpDir, cfg)
+		if model != "explicit-model" {
+			t.Errorf("Expected 'explicit-model', got '%s'", model)
+		}
+	})
+
+	t.Run("empty explicit falls back to repo config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`model = "repo-model"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "repo-model" {
+			t.Errorf("Expected 'repo-model' from repo config, got '%s'", model)
+		}
+	})
+
+	t.Run("repo config with whitespace is trimmed", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`model = "  repo-model  "`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "repo-model" {
+			t.Errorf("Expected 'repo-model', got '%s'", model)
+		}
+	})
+
+	t.Run("no repo config falls back to global config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "global-model" {
+			t.Errorf("Expected 'global-model' from global config, got '%s'", model)
+		}
+	})
+
+	t.Run("global config with whitespace is trimmed", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "  global-model  "}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "global-model" {
+			t.Errorf("Expected 'global-model', got '%s'", model)
+		}
+	})
+
+	t.Run("no config returns empty", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		model := ResolveModel("", tmpDir, nil)
+		if model != "" {
+			t.Errorf("Expected empty string when no config, got '%s'", model)
+		}
+	})
+
+	t.Run("empty global config returns empty", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: ""}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "" {
+			t.Errorf("Expected empty string when global model is empty, got '%s'", model)
+		}
+	})
+
+	t.Run("whitespace-only explicit falls through to repo config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`model = "repo-model"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("   ", tmpDir, cfg)
+		if model != "repo-model" {
+			t.Errorf("Expected 'repo-model' when explicit is whitespace, got '%s'", model)
+		}
+	})
+
+	t.Run("whitespace-only repo config falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`model = "   "`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "global-model" {
+			t.Errorf("Expected 'global-model' when repo model is whitespace, got '%s'", model)
+		}
+	})
+
+	t.Run("explicit overrides repo config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`model = "repo-model"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("explicit-model", tmpDir, cfg)
+		if model != "explicit-model" {
+			t.Errorf("Expected 'explicit-model', got '%s'", model)
+		}
+	})
+
+	t.Run("malformed repo config falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`this is not valid toml {{{`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "global-model" {
+			t.Errorf("Expected 'global-model' when repo config is malformed, got '%s'", model)
+		}
+	})
+}
+
 func TestStripURLCredentials(t *testing.T) {
 	tests := []struct {
 		name     string

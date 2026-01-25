@@ -207,3 +207,170 @@ type failingWriter struct {
 func (w *failingWriter) Write(p []byte) (int, error) {
 	return 0, w.err
 }
+
+// getAgentModel extracts the model from any agent type
+func getAgentModel(a Agent) string {
+	switch v := a.(type) {
+	case *CodexAgent:
+		return v.Model
+	case *ClaudeAgent:
+		return v.Model
+	case *GeminiAgent:
+		return v.Model
+	case *CopilotAgent:
+		return v.Model
+	case *OpenCodeAgent:
+		return v.Model
+	default:
+		return ""
+	}
+}
+
+func TestAgentWithModelPersistence(t *testing.T) {
+	tests := []struct {
+		name      string
+		newAgent  func() Agent
+		model     string
+		wantModel string
+	}{
+		{"codex", func() Agent { return NewCodexAgent("") }, "o3", "o3"},
+		{"claude", func() Agent { return NewClaudeAgent("") }, "opus", "opus"},
+		{"gemini", func() Agent { return NewGeminiAgent("") }, "gemini-2.5-pro", "gemini-2.5-pro"},
+		{"copilot", func() Agent { return NewCopilotAgent("") }, "gpt-4o", "gpt-4o"},
+		{"opencode", func() Agent { return NewOpenCodeAgent("") }, "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+"/WithModel sets model", func(t *testing.T) {
+			a := tt.newAgent().WithModel(tt.model)
+			if got := getAgentModel(a); got != tt.wantModel {
+				t.Errorf("got model %q, want %q", got, tt.wantModel)
+			}
+		})
+
+		t.Run(tt.name+"/model persists through WithReasoning", func(t *testing.T) {
+			a := tt.newAgent().WithModel(tt.model).WithReasoning(ReasoningThorough)
+			if got := getAgentModel(a); got != tt.wantModel {
+				t.Errorf("after WithReasoning: got model %q, want %q", got, tt.wantModel)
+			}
+		})
+
+		t.Run(tt.name+"/model persists through WithAgentic", func(t *testing.T) {
+			a := tt.newAgent().WithModel(tt.model).WithAgentic(true)
+			if got := getAgentModel(a); got != tt.wantModel {
+				t.Errorf("after WithAgentic: got model %q, want %q", got, tt.wantModel)
+			}
+		})
+
+		t.Run(tt.name+"/model persists through chained calls", func(t *testing.T) {
+			a := tt.newAgent().WithModel(tt.model).WithReasoning(ReasoningFast).WithAgentic(true)
+			if got := getAgentModel(a); got != tt.wantModel {
+				t.Errorf("after chained calls: got model %q, want %q", got, tt.wantModel)
+			}
+		})
+	}
+}
+
+// containsSequence checks if args contains needle1 immediately followed by needle2
+func containsSequence(args []string, needle1, needle2 string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == needle1 && args[i+1] == needle2 {
+			return true
+		}
+	}
+	return false
+}
+
+// containsArg checks if args contains the given argument
+func containsArg(args []string, needle string) bool {
+	for _, arg := range args {
+		if arg == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func TestAgentBuildArgsWithModel(t *testing.T) {
+	tests := []struct {
+		name     string
+		buildFn  func(model string) []string
+		flag     string // e.g. "-m" or "--model"
+		model    string
+		wantFlag bool
+	}{
+		{
+			name: "codex with model",
+			buildFn: func(model string) []string {
+				return (&CodexAgent{Model: model}).buildArgs("/tmp", "/tmp/out.txt", false, true)
+			},
+			flag: "-m", model: "o3", wantFlag: true,
+		},
+		{
+			name: "codex without model",
+			buildFn: func(model string) []string {
+				return (&CodexAgent{Model: model}).buildArgs("/tmp", "/tmp/out.txt", false, true)
+			},
+			flag: "-m", model: "", wantFlag: false,
+		},
+		{
+			name: "claude with model",
+			buildFn: func(model string) []string {
+				return (&ClaudeAgent{Model: model}).buildArgs(false)
+			},
+			flag: "--model", model: "opus", wantFlag: true,
+		},
+		{
+			name: "claude without model",
+			buildFn: func(model string) []string {
+				return (&ClaudeAgent{Model: model}).buildArgs(false)
+			},
+			flag: "--model", model: "", wantFlag: false,
+		},
+		{
+			name: "gemini with model",
+			buildFn: func(model string) []string {
+				return (&GeminiAgent{Model: model}).buildArgs(false)
+			},
+			flag: "-m", model: "gemini-2.5-pro", wantFlag: true,
+		},
+		{
+			name: "gemini without model",
+			buildFn: func(model string) []string {
+				return (&GeminiAgent{Model: model}).buildArgs(false)
+			},
+			flag: "-m", model: "", wantFlag: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := tt.buildFn(tt.model)
+			hasFlag := containsArg(args, tt.flag)
+			if tt.wantFlag {
+				if !hasFlag {
+					t.Errorf("expected flag %q in args %v", tt.flag, args)
+				}
+				if !containsSequence(args, tt.flag, tt.model) {
+					t.Errorf("expected %q %q sequence in args %v", tt.flag, tt.model, args)
+				}
+			} else {
+				if hasFlag {
+					t.Errorf("expected no flag %q in args %v", tt.flag, args)
+				}
+			}
+		})
+	}
+}
+
+func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
+	a := &CodexAgent{Model: "o4-mini", Reasoning: ReasoningThorough}
+	args := a.buildArgs("/tmp", "/tmp/out.txt", false, true)
+
+	if !containsSequence(args, "-m", "o4-mini") {
+		t.Errorf("expected -m o4-mini in args %v", args)
+	}
+	if !containsSequence(args, "-c", `model_reasoning_effort="high"`) {
+		t.Errorf("expected reasoning effort config in args %v", args)
+	}
+}

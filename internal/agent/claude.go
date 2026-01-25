@@ -16,6 +16,7 @@ import (
 // ClaudeAgent runs code reviews using Claude Code CLI
 type ClaudeAgent struct {
 	Command   string         // The claude command to run (default: "claude")
+	Model     string         // Model to use (e.g., "opus", "sonnet", or full name)
 	Reasoning ReasoningLevel // Reasoning level (for future extended thinking support)
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 }
@@ -32,23 +33,34 @@ func NewClaudeAgent(command string) *ClaudeAgent {
 	return &ClaudeAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
-// WithReasoning returns the agent unchanged (reasoning not supported).
+// WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *ClaudeAgent) WithReasoning(level ReasoningLevel) Agent {
-	return a
+	return &ClaudeAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Reasoning: level,
+		Agentic:   a.Agentic,
+	}
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *ClaudeAgent) WithAgentic(agentic bool) Agent {
 	return &ClaudeAgent{
 		Command:   a.Command,
+		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
 	}
 }
 
-// WithModel returns the agent unchanged (model selection not supported for claude-code).
+// WithModel returns a copy of the agent configured to use the specified model.
 func (a *ClaudeAgent) WithModel(model string) Agent {
-	return a
+	return &ClaudeAgent{
+		Command:   a.Command,
+		Model:     model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+	}
 }
 
 func (a *ClaudeAgent) Name() string {
@@ -63,6 +75,10 @@ func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
 	// Always use stdin piping + stream-json for non-interactive execution
 	// (following claude-code-action pattern from Anthropic)
 	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
+
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
 
 	if agenticMode {
 		// Agentic mode: Claude can use tools and make file changes

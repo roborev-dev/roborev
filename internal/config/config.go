@@ -18,7 +18,7 @@ type Config struct {
 	MaxWorkers         int    `toml:"max_workers"`
 	ReviewContextCount int    `toml:"review_context_count"`
 	DefaultAgent       string `toml:"default_agent"`
-	OpencodeModel      string `toml:"opencode_model"` // Model for opencode agent (e.g., "anthropic/claude-sonnet-4-20250514")
+	DefaultModel       string `toml:"default_model"` // Default model for agents (format varies by agent)
 	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
 	AllowUnsafeAgents  *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
@@ -97,7 +97,7 @@ func (c *SyncConfig) Validate() []string {
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
 	Agent              string   `toml:"agent"`
-	OpencodeModel      string   `toml:"opencode_model"` // Model for opencode agent (e.g., "anthropic/claude-sonnet-4-20250514")
+	Model              string   `toml:"model"` // Model for agents (format varies by agent)
 	ReviewContextCount int      `toml:"review_context_count"`
 	ReviewGuidelines   string   `toml:"review_guidelines"`
 	JobTimeoutMinutes  int      `toml:"job_timeout_minutes"`
@@ -277,22 +277,22 @@ func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 	return "standard", nil // Default for refine: balanced analysis
 }
 
-// ResolveOpencodeModel determines which model to use for opencode based on config priority:
+// ResolveModel determines which model to use based on config priority:
 // 1. Explicit model parameter (if non-empty)
-// 2. Per-repo config (opencode_model)
-// 3. Global config (opencode_model)
-// 4. Default (empty string, opencode uses its default)
-func ResolveOpencodeModel(explicit string, repoPath string, globalCfg *Config) string {
+// 2. Per-repo config (model)
+// 3. Global config (default_model)
+// 4. Default (empty string, agent uses its default)
+func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 	if strings.TrimSpace(explicit) != "" {
 		return strings.TrimSpace(explicit)
 	}
 
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.OpencodeModel) != "" {
-		return strings.TrimSpace(repoCfg.OpencodeModel)
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.Model) != "" {
+		return strings.TrimSpace(repoCfg.Model)
 	}
 
-	if globalCfg != nil && strings.TrimSpace(globalCfg.OpencodeModel) != "" {
-		return strings.TrimSpace(globalCfg.OpencodeModel)
+	if globalCfg != nil && strings.TrimSpace(globalCfg.DefaultModel) != "" {
+		return strings.TrimSpace(globalCfg.DefaultModel)
 	}
 
 	return ""

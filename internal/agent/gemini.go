@@ -30,6 +30,7 @@ func truncateStderr(stderr string) string {
 // GeminiAgent runs code reviews using the Gemini CLI
 type GeminiAgent struct {
 	Command   string         // The gemini command to run (default: "gemini")
+	Model     string         // Model to use (e.g., "gemini-2.5-pro")
 	Reasoning ReasoningLevel // Reasoning level (for future support)
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 }
@@ -42,23 +43,34 @@ func NewGeminiAgent(command string) *GeminiAgent {
 	return &GeminiAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
-// WithReasoning returns the agent unchanged (reasoning not supported).
+// WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *GeminiAgent) WithReasoning(level ReasoningLevel) Agent {
-	return a
+	return &GeminiAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Reasoning: level,
+		Agentic:   a.Agentic,
+	}
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
 func (a *GeminiAgent) WithAgentic(agentic bool) Agent {
 	return &GeminiAgent{
 		Command:   a.Command,
+		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
 	}
 }
 
-// WithModel returns the agent unchanged (model selection not supported for gemini).
+// WithModel returns a copy of the agent configured to use the specified model.
 func (a *GeminiAgent) WithModel(model string) Agent {
-	return a
+	return &GeminiAgent{
+		Command:   a.Command,
+		Model:     model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+	}
 }
 
 func (a *GeminiAgent) Name() string {
@@ -72,6 +84,10 @@ func (a *GeminiAgent) CommandName() string {
 func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
 	// Use stream-json output for parsing, prompt via stdin
 	args := []string{"--output-format", "stream-json"}
+
+	if a.Model != "" {
+		args = append(args, "-m", a.Model)
+	}
 
 	if agenticMode {
 		// Agentic mode: auto-approve all actions, allow write tools

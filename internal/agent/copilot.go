@@ -11,6 +11,7 @@ import (
 // CopilotAgent runs code reviews using the GitHub Copilot CLI
 type CopilotAgent struct {
 	Command   string         // The copilot command to run (default: "copilot")
+	Model     string         // Model to use
 	Reasoning ReasoningLevel // Reasoning level (for future support)
 	Agentic   bool           // Whether agentic mode is enabled (note: Copilot requires manual approval for actions)
 }
@@ -23,9 +24,14 @@ func NewCopilotAgent(command string) *CopilotAgent {
 	return &CopilotAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
-// WithReasoning returns the agent unchanged (reasoning not supported).
+// WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *CopilotAgent) WithReasoning(level ReasoningLevel) Agent {
-	return a
+	return &CopilotAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Reasoning: level,
+		Agentic:   a.Agentic,
+	}
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
@@ -34,14 +40,20 @@ func (a *CopilotAgent) WithReasoning(level ReasoningLevel) Agent {
 func (a *CopilotAgent) WithAgentic(agentic bool) Agent {
 	return &CopilotAgent{
 		Command:   a.Command,
+		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
 	}
 }
 
-// WithModel returns the agent unchanged (model selection not supported for copilot).
+// WithModel returns a copy of the agent configured to use the specified model.
 func (a *CopilotAgent) WithModel(model string) Agent {
-	return a
+	return &CopilotAgent{
+		Command:   a.Command,
+		Model:     model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+	}
 }
 
 func (a *CopilotAgent) Name() string {
@@ -54,9 +66,11 @@ func (a *CopilotAgent) CommandName() string {
 
 func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// Use copilot with --prompt for non-interactive mode
-	args := []string{
-		"--prompt", prompt,
+	args := []string{}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
 	}
+	args = append(args, "--prompt", prompt)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
