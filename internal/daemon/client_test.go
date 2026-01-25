@@ -19,7 +19,7 @@ func TestHTTPClientAddComment(t *testing.T) {
 	var received map[string]interface{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/respond" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/comment" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return

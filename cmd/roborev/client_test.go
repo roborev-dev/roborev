@@ -17,7 +17,7 @@ import (
 func TestGetCommentsForJob(t *testing.T) {
 	t.Run("returns responses for job", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/responses" || r.Method != "GET" {
+			if r.URL.Path != "/api/comments" || r.Method != "GET" {
 				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 				w.WriteHeader(http.StatusNotFound)
 				return

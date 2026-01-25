@@ -4289,7 +4289,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 			return
 		}
 
-		if r.URL.Path == "/api/responses" {
+		if r.URL.Path == "/api/comments" {
 			jobID := r.URL.Query().Get("job_id")
 			sha := r.URL.Query().Get("sha")
 
@@ -4375,7 +4375,7 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 			return
 		}
 
-		if r.URL.Path == "/api/responses" {
+		if r.URL.Path == "/api/comments" {
 			// Return empty responses for job_id
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"responses": []storage.Response{},

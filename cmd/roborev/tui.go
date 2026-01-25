@@ -551,7 +551,7 @@ func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
 
 		// Fetch responses for this job
 		var responses []storage.Response
-		respResp, err := m.client.Get(fmt.Sprintf("%s/api/responses?job_id=%d", m.serverAddr, jobID))
+		respResp, err := m.client.Get(fmt.Sprintf("%s/api/comments?job_id=%d", m.serverAddr, jobID))
 		if err == nil {
 			defer respResp.Body.Close()
 			if respResp.StatusCode == http.StatusOK {
@@ -566,7 +566,7 @@ func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
 		// Also fetch legacy responses by SHA for single commits (not ranges or dirty reviews)
 		// and merge with job responses to preserve full history during migration
 		if review.Job != nil && !strings.Contains(review.Job.GitRef, "..") && review.Job.GitRef != "dirty" {
-			shaResp, err := m.client.Get(fmt.Sprintf("%s/api/responses?sha=%s", m.serverAddr, review.Job.GitRef))
+			shaResp, err := m.client.Get(fmt.Sprintf("%s/api/comments?sha=%s", m.serverAddr, review.Job.GitRef))
 			if err == nil {
 				defer shaResp.Body.Close()
 				if shaResp.StatusCode == http.StatusOK {
@@ -3101,17 +3101,17 @@ func (m tuiModel) submitComment(jobID int64, text string) tea.Cmd {
 		}
 
 		resp, err := m.client.Post(
-			fmt.Sprintf("%s/api/respond", m.serverAddr),
+			fmt.Sprintf("%s/api/comment", m.serverAddr),
 			"application/json",
 			bytes.NewReader(body),
 		)
 		if err != nil {
-			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit response: %w", err)}
+			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit comment: %w", err)}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusCreated {
-			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit response: HTTP %d", resp.StatusCode)}
+			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit comment: HTTP %d", resp.StatusCode)}
 		}
 
 		return tuiCommentResultMsg{jobID: jobID, err: nil}

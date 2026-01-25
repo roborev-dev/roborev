@@ -69,8 +69,10 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/repos", s.handleListRepos)
 	mux.HandleFunc("/api/review", s.handleGetReview)
 	mux.HandleFunc("/api/review/address", s.handleAddressReview)
-	mux.HandleFunc("/api/respond", s.handleAddComment)
-	mux.HandleFunc("/api/responses", s.handleListComments)
+	mux.HandleFunc("/api/comment", s.handleAddComment)
+	mux.HandleFunc("/api/comments", s.handleListComments)
+	mux.HandleFunc("/api/respond", s.handleAddComment)   // backward compat
+	mux.HandleFunc("/api/responses", s.handleListComments) // backward compat
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stream/events", s.handleStreamEvents)
 	mux.HandleFunc("/api/sync/now", s.handleSyncNow)

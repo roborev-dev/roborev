@@ -157,7 +157,7 @@ func (c *HTTPClient) AddComment(jobID int64, responder, response string) error {
 		"response":  response,
 	})
 
-	resp, err := c.httpClient.Post(c.addr+"/api/respond", "application/json", bytes.NewReader(reqBody))
+	resp, err := c.httpClient.Post(c.addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -374,7 +374,7 @@ func (c *HTTPClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.Rev
 }
 
 func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) {
-	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/responses?job_id=%d", c.addr, jobID))
+	resp, err := c.httpClient.Get(fmt.Sprintf("%s/api/comments?job_id=%d", c.addr, jobID))
 	if err != nil {
 		return nil, err
 	}

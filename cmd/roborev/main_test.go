@@ -350,7 +350,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 			json.NewEncoder(w).Encode(storage.Review{
 				ID: 1, JobID: 1, Output: "**Bug found**: fail", Addressed: false,
 			})
-		case r.URL.Path == "/api/responses":
+		case r.URL.Path == "/api/comments":
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -634,7 +634,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			}
 			json.NewEncoder(w).Encode(reviewCopy)
 
-		case r.URL.Path == "/api/responses" && r.Method == "GET":
+		case r.URL.Path == "/api/comments" && r.Method == "GET":
 			jobIDStr := r.URL.Query().Get("job_id")
 			var jobID int64
 			fmt.Sscanf(jobIDStr, "%d", &jobID)
@@ -648,7 +648,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				"responses": responses,
 			})
 
-		case r.URL.Path == "/api/respond" && r.Method == "POST":
+		case r.URL.Path == "/api/comment" && r.Method == "POST":
 			var req struct {
 				JobID     int64  `json:"job_id"`
 				Responder string `json:"responder"`
@@ -1068,7 +1068,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 			}
 			json.NewEncoder(w).Encode(review)
 
-		case r.URL.Path == "/api/responses" && r.Method == http.MethodGet:
+		case r.URL.Path == "/api/comments" && r.Method == http.MethodGet:
 			jobIDStr := r.URL.Query().Get("job_id")
 			var jobID int64
 			fmt.Sscanf(jobIDStr, "%d", &jobID)
@@ -1080,7 +1080,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 				"responses": responses,
 			})
 
-		case r.URL.Path == "/api/respond" && r.Method == http.MethodPost:
+		case r.URL.Path == "/api/comment" && r.Method == http.MethodPost:
 			var req struct {
 				JobID     int64  `json:"job_id"`
 				Responder string `json:"responder"`

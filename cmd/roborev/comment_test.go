@@ -20,7 +20,7 @@ func TestCommentJobFlag(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 				return
 			}
-			if r.URL.Path == "/api/respond" && r.Method == "POST" {
+			if r.URL.Path == "/api/comment" && r.Method == "POST" {
 				var req struct {
 					JobID int64 `json:"job_id"`
 				}

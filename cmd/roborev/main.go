@@ -1320,7 +1320,7 @@ Examples:
 			reqBody, _ := json.Marshal(reqData)
 
 			addr := getDaemonAddr()
-			resp, err := http.Post(addr+"/api/respond", "application/json", bytes.NewReader(reqBody))
+			resp, err := http.Post(addr+"/api/comment", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
@@ -1575,7 +1575,7 @@ func getCommentsForJob(jobID int64) ([]storage.Response, error) {
 	addr := getDaemonAddr()
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	resp, err := client.Get(fmt.Sprintf("%s/api/responses?job_id=%d", addr, jobID))
+	resp, err := client.Get(fmt.Sprintf("%s/api/comments?job_id=%d", addr, jobID))
 	if err != nil {
 		return nil, err
 	}
