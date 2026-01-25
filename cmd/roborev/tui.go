@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -212,6 +214,7 @@ type tuiClipboardResultMsg struct {
 }
 type tuiReconnectMsg struct {
 	newAddr string // New daemon address if found, empty if not found
+	version string // Daemon version (to avoid sync call in Update)
 	err     error
 }
 
@@ -229,6 +232,26 @@ func (r *realClipboard) WriteText(text string) error {
 
 // clipboardWriter is the clipboard implementation used by the TUI (can be overridden for tests)
 var clipboardWriter ClipboardWriter = &realClipboard{}
+
+// isConnectionError checks if an error indicates a network/connection failure
+// (as opposed to an application-level error like 404 or invalid response).
+// Only connection errors should trigger reconnection attempts.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check for url.Error (wraps network errors from http.Client)
+	var urlErr *neturl.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
+	// Check for net.Error (timeout, connection refused, etc.)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return false
+}
 
 func newTuiModel(serverAddr string) tuiModel {
 	// Read daemon version from runtime file (authoritative source)
@@ -435,7 +458,7 @@ func (m tuiModel) tryReconnect() tea.Cmd {
 			return tuiReconnectMsg{err: err}
 		}
 		newAddr := fmt.Sprintf("http://%s", info.Addr)
-		return tuiReconnectMsg{newAddr: newAddr}
+		return tuiReconnectMsg{newAddr: newAddr, version: info.Version}
 	}
 }
 
@@ -2004,7 +2027,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiJobsErrMsg:
 		m.err = msg.err
 		m.loadingJobs = false // Clear loading state so refreshes can resume
-		m.consecutiveErrors++
+
+		// Only count connection errors for reconnection (not 404s, parse errors, etc.)
+		if isConnectionError(msg.err) {
+			m.consecutiveErrors++
+		}
 
 		// If filter changed while loading, retry immediately with current filter state
 		if m.pendingRefetch {
@@ -2013,7 +2040,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchJobs()
 		}
 
-		// Try to reconnect after consecutive failures
+		// Try to reconnect after consecutive connection failures
 		if m.consecutiveErrors >= 3 && !m.reconnecting {
 			m.reconnecting = true
 			return m, m.tryReconnect()
@@ -2022,7 +2049,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiPaginationErrMsg:
 		m.err = msg.err
 		m.loadingMore = false // Clear loading state so user can retry pagination
-		m.consecutiveErrors++
+
+		// Only count connection errors for reconnection
+		if isConnectionError(msg.err) {
+			m.consecutiveErrors++
+		}
 
 		// If filter changed while pagination was in flight, trigger fresh fetch
 		if m.pendingRefetch {
@@ -2031,7 +2062,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchJobs()
 		}
 
-		// Try to reconnect after consecutive failures
+		// Try to reconnect after consecutive connection failures
 		if m.consecutiveErrors >= 3 && !m.reconnecting {
 			m.reconnecting = true
 			return m, m.tryReconnect()
@@ -2039,13 +2070,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiErrMsg:
 		m.err = msg
-		m.consecutiveErrors++
-
-		// Try to reconnect after consecutive failures
-		if m.consecutiveErrors >= 3 && !m.reconnecting {
-			m.reconnecting = true
-			return m, m.tryReconnect()
-		}
+		// tuiErrMsg is typically for application-level errors (404, parse errors, etc.)
+		// Don't count these for reconnection - only connection failures matter
 
 	case tuiReconnectMsg:
 		m.reconnecting = false
@@ -2054,9 +2080,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.serverAddr = msg.newAddr
 			m.consecutiveErrors = 0
 			m.err = nil
-			// Update daemon version from new daemon
-			if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
-				m.daemonVersion = info.Version
+			// Update daemon version from reconnect result (avoid sync call)
+			if msg.version != "" {
+				m.daemonVersion = msg.version
 			}
 			// Trigger immediate refresh
 			m.loadingJobs = true
