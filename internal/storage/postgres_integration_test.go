@@ -84,7 +84,7 @@ func TestIntegration_SyncFullCycle(t *testing.T) {
 	}
 
 	// Enqueue a job
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123def456", "test", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123def456", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -204,8 +204,8 @@ func TestIntegration_SyncMultipleRepos(t *testing.T) {
 	commit2, _ := db.GetOrCreateCommit(repo2.ID, sameSHA, "Author", "Subject", time.Now())
 
 	// Create jobs for both repos and complete them (only terminal jobs are synced)
-	job1, _ := db.EnqueueJob(repo1.ID, commit1.ID, sameSHA, "test", "")
-	job2, _ := db.EnqueueJob(repo2.ID, commit2.ID, sameSHA, "test", "")
+	job1, _ := db.EnqueueJob(repo1.ID, commit1.ID, sameSHA, "test", "", "")
+	job2, _ := db.EnqueueJob(repo2.ID, commit2.ID, sameSHA, "test", "", "")
 
 	// Complete both jobs
 	db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job1.ID)
@@ -544,7 +544,7 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		t.Fatalf("Machine A: GetOrCreateCommit failed: %v", err)
 	}
 
-	jobA, err := dbA.EnqueueJob(repoA.ID, commitA.ID, "aaaa1111", "test", "")
+	jobA, err := dbA.EnqueueJob(repoA.ID, commitA.ID, "aaaa1111", "test", "", "")
 	if err != nil {
 		t.Fatalf("Machine A: EnqueueJob failed: %v", err)
 	}
@@ -571,7 +571,7 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		t.Fatalf("Machine B: GetOrCreateCommit failed: %v", err)
 	}
 
-	jobB, err := dbB.EnqueueJob(repoB.ID, commitB.ID, "bbbb2222", "test", "")
+	jobB, err := dbB.EnqueueJob(repoB.ID, commitB.ID, "bbbb2222", "test", "", "")
 	if err != nil {
 		t.Fatalf("Machine B: EnqueueJob failed: %v", err)
 	}
@@ -775,7 +775,7 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Machine A: GetOrCreateCommit failed: %v", err)
 	}
-	jobA, err := dbA.EnqueueJob(repoA.ID, commitA.ID, sharedCommitSHA, "test", "")
+	jobA, err := dbA.EnqueueJob(repoA.ID, commitA.ID, sharedCommitSHA, "test", "", "")
 	if err != nil {
 		t.Fatalf("Machine A: EnqueueJob failed: %v", err)
 	}
@@ -798,7 +798,7 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Machine B: GetOrCreateCommit failed: %v", err)
 	}
-	jobB, err := dbB.EnqueueJob(repoB.ID, commitB.ID, sharedCommitSHA, "test", "")
+	jobB, err := dbB.EnqueueJob(repoB.ID, commitB.ID, sharedCommitSHA, "test", "", "")
 	if err != nil {
 		t.Fatalf("Machine B: EnqueueJob failed: %v", err)
 	}
@@ -1034,7 +1034,7 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		if err != nil {
 			return nil, fmt.Errorf("GetOrCreateCommit: %w", err)
 		}
-		job, err := db.EnqueueJob(repoID, commit.ID, sha, "test", "")
+		job, err := db.EnqueueJob(repoID, commit.ID, sha, "test", "", "")
 		if err != nil {
 			return nil, fmt.Errorf("EnqueueJob: %w", err)
 		}
@@ -1492,7 +1492,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Machine A: GetOrCreateCommit failed: %v", err)
 	}
-	jobA1, err := dbA.EnqueueJob(repoA.ID, commitA1.ID, "dddd4444", "test", "")
+	jobA1, err := dbA.EnqueueJob(repoA.ID, commitA1.ID, "dddd4444", "test", "", "")
 	if err != nil {
 		t.Fatalf("Machine A: EnqueueJob failed: %v", err)
 	}
@@ -1533,7 +1533,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Machine A offline: GetOrCreateCommit failed: %v", err)
 	}
-	jobA2, err := dbA.EnqueueJob(repoA.ID, commitA2.ID, "eeee5555", "test", "")
+	jobA2, err := dbA.EnqueueJob(repoA.ID, commitA2.ID, "eeee5555", "test", "", "")
 	if err != nil {
 		t.Fatalf("Machine A offline: EnqueueJob failed: %v", err)
 	}
@@ -1548,7 +1548,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Machine A offline: GetOrCreateCommit failed: %v", err)
 	}
-	jobA3, err := dbA.EnqueueJob(repoA.ID, commitA3.ID, "ffff6666", "test", "")
+	jobA3, err := dbA.EnqueueJob(repoA.ID, commitA3.ID, "ffff6666", "test", "", "")
 	if err != nil {
 		t.Fatalf("Machine A offline: EnqueueJob failed: %v", err)
 	}

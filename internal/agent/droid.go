@@ -37,6 +37,11 @@ func (a *DroidAgent) WithAgentic(agentic bool) Agent {
 	}
 }
 
+// WithModel returns the agent unchanged (model selection not supported for droid).
+func (a *DroidAgent) WithModel(model string) Agent {
+	return a
+}
+
 // droidReasoningEffort maps ReasoningLevel to droid-specific effort values
 func (a *DroidAgent) droidReasoningEffort() string {
 	switch a.Reasoning {

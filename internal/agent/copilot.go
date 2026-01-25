@@ -39,6 +39,11 @@ func (a *CopilotAgent) WithAgentic(agentic bool) Agent {
 	}
 }
 
+// WithModel returns the agent unchanged (model selection not supported for copilot).
+func (a *CopilotAgent) WithModel(model string) Agent {
+	return a
+}
+
 func (a *CopilotAgent) Name() string {
 	return "copilot"
 }

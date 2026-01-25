@@ -20,6 +20,7 @@ import (
 func runCmd() *cobra.Command {
 	var (
 		agentName string
+		model     string
 		reasoning string
 		wait      bool
 		quiet     bool
@@ -58,11 +59,12 @@ Examples:
   cat instructions.txt | roborev run --wait
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPrompt(cmd, args, agentName, reasoning, wait, quiet, !noContext, agentic)
+			return runPrompt(cmd, args, agentName, model, reasoning, wait, quiet, !noContext, agentic)
 		},
 	}
 
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use (default: from config)")
+	cmd.Flags().StringVar(&model, "model", "", "model to use for opencode (e.g., anthropic/claude-sonnet-4-20250514)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, or thorough (default)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for job to complete and show result")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (just enqueue)")
@@ -81,7 +83,7 @@ func promptCmd() *cobra.Command {
 	return cmd
 }
 
-func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string, wait, quiet, includeContext, agentic bool) error {
+func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoningStr string, wait, quiet, includeContext, agentic bool) error {
 	// Get prompt from args or stdin
 	var promptText string
 	if len(args) > 0 {
@@ -136,6 +138,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, reasoningStr string
 		"repo_path":     repoRoot,
 		"git_ref":       "run",
 		"agent":         agentName,
+		"model":         modelStr,
 		"reasoning":     reasoningStr,
 		"custom_prompt": fullPrompt,
 		"agentic":       agentic,

@@ -52,6 +52,11 @@ type Agent interface {
 	// In agentic mode, agents can edit files and run commands.
 	// If false, agents operate in read-only review mode.
 	WithAgentic(agentic bool) Agent
+
+	// WithModel returns a copy of the agent configured to use the specified model.
+	// Agents that don't support model selection may return themselves unchanged.
+	// For opencode, the model format is "provider/model" (e.g., "anthropic/claude-sonnet-4-20250514").
+	WithModel(model string) Agent
 }
 
 // CommandAgent is an agent that uses an external command

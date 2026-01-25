@@ -46,6 +46,11 @@ func (a *CodexAgent) WithAgentic(agentic bool) Agent {
 	}
 }
 
+// WithModel returns the agent unchanged (model selection not supported for codex).
+func (a *CodexAgent) WithModel(model string) Agent {
+	return a
+}
+
 // codexReasoningEffort maps ReasoningLevel to codex-specific effort values
 func (a *CodexAgent) codexReasoningEffort() string {
 	switch a.Reasoning {

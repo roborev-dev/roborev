@@ -193,7 +193,7 @@ func TestHandleListRepos(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test", ""); err != nil {
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -205,7 +205,7 @@ func TestHandleListRepos(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test", ""); err != nil {
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -284,7 +284,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test", ""); err != nil {
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -296,7 +296,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test", ""); err != nil {
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -582,7 +582,7 @@ func TestHandleCancelJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "canceltest", "test", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "canceltest", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestHandleCancelJob(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		job2, err := db.EnqueueJob(repo.ID, commit2.ID, "cancelrunning", "test", "")
+		job2, err := db.EnqueueJob(repo.ID, commit2.ID, "cancelrunning", "test", "", "")
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -706,7 +706,7 @@ func TestListJobsPagination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		_, err = db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("sha%d", i), "test", "")
+		_, err = db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("sha%d", i), "test", "", "")
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -830,7 +830,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	refs := []string{"abc123", "def456", "abc123..def456"}
 	for _, ref := range refs {
 		commit, _ := db.GetOrCreateCommit(repo.ID, ref, "A", "S", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, ref, "codex", "")
+		db.EnqueueJob(repo.ID, commit.ID, ref, "codex", "", "")
 	}
 
 	t.Run("git_ref filter returns matching job", func(t *testing.T) {
@@ -1360,7 +1360,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun failed job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "test", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "test", "", "")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "some error")
 
@@ -1385,7 +1385,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun canceled job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "test", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "test", "", "")
 		db.CancelJob(job.ID)
 
 		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
@@ -1409,7 +1409,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun done job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "test", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "test", "", "")
 		// Claim and complete job
 		var claimed *storage.ReviewJob
 		for {
@@ -1445,7 +1445,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "test", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "test", "", "")
 
 		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
 		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))

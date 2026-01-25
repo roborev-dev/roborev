@@ -126,7 +126,7 @@ var _ daemon.Client = (*mockDaemonClient)(nil)
 func TestSelectRefineAgentCodexFallback(t *testing.T) {
 	t.Setenv("PATH", "")
 
-	selected, err := selectRefineAgent("codex", agent.ReasoningFast)
+	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "")
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 
 	t.Setenv("PATH", tmpDir)
 
-	selected, err := selectRefineAgent("codex", agent.ReasoningFast)
+	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "")
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	t.Setenv("PATH", tmpDir)
 
 	// Request an unavailable agent (claude), codex should be used as fallback
-	selected, err := selectRefineAgent("claude", agent.ReasoningThorough)
+	selected, err := selectRefineAgent("claude", agent.ReasoningThorough, "")
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}

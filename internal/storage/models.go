@@ -36,6 +36,7 @@ type ReviewJob struct {
 	CommitID   *int64     `json:"commit_id,omitempty"` // nil for ranges
 	GitRef     string     `json:"git_ref"`             // SHA or "start..end" for ranges
 	Agent      string     `json:"agent"`
+	Model      string     `json:"model,omitempty"`     // Model to use (for opencode: provider/model format)
 	Reasoning  string     `json:"reasoning,omitempty"` // thorough, standard, fast (default: thorough)
 	Status     JobStatus  `json:"status"`
 	EnqueuedAt time.Time  `json:"enqueued_at"`

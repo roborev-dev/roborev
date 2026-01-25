@@ -39,6 +39,11 @@ func (a *TestAgent) WithAgentic(agentic bool) Agent {
 	return a
 }
 
+// WithModel returns the agent unchanged (model selection not supported for test agent).
+func (a *TestAgent) WithModel(model string) Agent {
+	return a
+}
+
 func (a *TestAgent) Name() string {
 	return "test"
 }

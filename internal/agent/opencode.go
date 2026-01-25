@@ -13,6 +13,7 @@ import (
 // OpenCodeAgent runs code reviews using the OpenCode CLI
 type OpenCodeAgent struct {
 	Command   string         // The opencode command to run (default: "opencode")
+	Model     string         // Model to use (provider/model format, e.g., "anthropic/claude-sonnet-4-20250514")
 	Reasoning ReasoningLevel // Reasoning level (for future support)
 	Agentic   bool           // Whether agentic mode is enabled (OpenCode auto-approves in non-interactive mode)
 }
@@ -36,8 +37,19 @@ func (a *OpenCodeAgent) WithReasoning(level ReasoningLevel) Agent {
 func (a *OpenCodeAgent) WithAgentic(agentic bool) Agent {
 	return &OpenCodeAgent{
 		Command:   a.Command,
+		Model:     a.Model,
 		Reasoning: a.Reasoning,
 		Agentic:   agentic,
+	}
+}
+
+// WithModel returns a copy of the agent configured to use the specified model.
+func (a *OpenCodeAgent) WithModel(model string) Agent {
+	return &OpenCodeAgent{
+		Command:   a.Command,
+		Model:     model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
 	}
 }
 
@@ -91,7 +103,11 @@ func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt 
 	// Helpful reference:
 	//   opencode --help
 	//   opencode run --help
-	args := []string{"run", "--format", "default", prompt}
+	args := []string{"run", "--format", "default"}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	args = append(args, prompt)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath

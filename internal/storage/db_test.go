@@ -100,7 +100,7 @@ func TestJobLifecycle(t *testing.T) {
 	}
 
 	// Enqueue job
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "codex", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "codex", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestJobFailure(t *testing.T) {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
 
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "def456", "codex", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "def456", "codex", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestReviewOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "rev123", "codex", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "rev123", "codex", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 
 	t.Run("verdict populated when output exists and no error", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-pass", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-pass", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-pass", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found. The code looks good.")
 
@@ -251,7 +251,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 
 	t.Run("verdict nil when output is empty", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-empty", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-empty", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-empty", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "the prompt", "") // empty output
 
@@ -266,7 +266,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 
 	t.Run("verdict nil when job has error", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-error", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-error", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-error", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "API rate limit exceeded")
 
@@ -287,7 +287,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 
 	t.Run("GetReviewByCommitSHA also respects verdict guard", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-sha", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-sha", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-sha", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found.")
 
@@ -338,7 +338,7 @@ func TestMarkReviewAddressed(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "addr123", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "addr123", "codex", "")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "addr123", "codex", "", "")
 	db.ClaimJob("worker-1")
 	db.CompleteJob(job.ID, "codex", "prompt", "output")
 
@@ -403,12 +403,12 @@ func TestJobCounts(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		sha := fmt.Sprintf("queued%d", i)
 		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "A", "S", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, sha, "codex", "")
+		db.EnqueueJob(repo.ID, commit.ID, sha, "codex", "", "")
 	}
 
 	// Create a job, claim it, and complete it
 	commit, _ := db.GetOrCreateCommit(repo.ID, "done1", "A", "S", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "done1", "codex", "")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "done1", "codex", "", "")
 	_, _ = db.ClaimJob("w1") // Claims oldest queued job (one of queued0-2)
 	_, _ = db.ClaimJob("w1") // Claims next
 	_, _ = db.ClaimJob("w1") // Claims next
@@ -419,7 +419,7 @@ func TestJobCounts(t *testing.T) {
 
 	// Create a job, claim it, and fail it
 	commit2, _ := db.GetOrCreateCommit(repo.ID, "fail1", "A", "S", time.Now())
-	_, _ = db.EnqueueJob(repo.ID, commit2.ID, "fail1", "codex", "")
+	_, _ = db.EnqueueJob(repo.ID, commit2.ID, "fail1", "codex", "", "")
 	claimed2, _ := db.ClaimJob("w2")
 	if claimed2 != nil {
 		db.FailJob(claimed2.ID, "err")
@@ -450,7 +450,7 @@ func TestCountStalledJobs(t *testing.T) {
 
 	// Create a job and claim it (makes it running with current timestamp)
 	commit1, _ := db.GetOrCreateCommit(repo.ID, "recent1", "A", "S", time.Now())
-	db.EnqueueJob(repo.ID, commit1.ID, "recent1", "codex", "")
+	db.EnqueueJob(repo.ID, commit1.ID, "recent1", "codex", "", "")
 	_, _ = db.ClaimJob("worker-1")
 
 	// No stalled jobs yet (just started)
@@ -465,7 +465,7 @@ func TestCountStalledJobs(t *testing.T) {
 	// Create a job and manually set started_at to 1 hour ago (simulating stalled job)
 	// Use UTC format (ends with Z) to test basic case
 	commit2, _ := db.GetOrCreateCommit(repo.ID, "stalled1", "A", "S", time.Now())
-	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "stalled1", "codex", "")
+	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "stalled1", "codex", "", "")
 	oldTimeUTC := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, oldTimeUTC, job2.ID)
 	if err != nil {
@@ -484,7 +484,7 @@ func TestCountStalledJobs(t *testing.T) {
 	// Create another stalled job with a non-UTC timezone offset to verify datetime() handles offsets
 	// This exercises the fix for RFC3339 timestamps with timezone offsets like "-07:00"
 	commit3, _ := db.GetOrCreateCommit(repo.ID, "stalled2", "A", "S", time.Now())
-	job3, _ := db.EnqueueJob(repo.ID, commit3.ID, "stalled2", "codex", "")
+	job3, _ := db.EnqueueJob(repo.ID, commit3.ID, "stalled2", "codex", "", "")
 	// Use a fixed timezone offset (e.g., UTC-7) instead of UTC
 	tzMinus7 := time.FixedZone("UTC-7", -7*60*60)
 	oldTimeWithOffset := time.Now().Add(-1 * time.Hour).In(tzMinus7).Format(time.RFC3339)
@@ -518,7 +518,7 @@ func TestRetryJob(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "retry123", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry123", "codex", "")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry123", "codex", "", "")
 
 	// Claim the job (makes it running)
 	_, _ = db.ClaimJob("worker-1")
@@ -576,7 +576,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "retry-status", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry-status", "codex", "")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry-status", "codex", "", "")
 
 	// Try to retry a queued job (should fail - not running)
 	retried, err := db.RetryJob(job.ID, 3)
@@ -606,7 +606,7 @@ func TestRetryJobAtomic(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "retry-atomic", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry-atomic", "codex", "")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry-atomic", "codex", "", "")
 	_, _ = db.ClaimJob("worker-1")
 
 	// Simulate two concurrent retries - only first should succeed
@@ -636,7 +636,7 @@ func TestCancelJob(t *testing.T) {
 
 	t.Run("cancel queued job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-queued", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-queued", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-queued", "codex", "", "")
 
 		err := db.CancelJob(job.ID)
 		if err != nil {
@@ -651,7 +651,7 @@ func TestCancelJob(t *testing.T) {
 
 	t.Run("cancel running job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-running", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-running", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-running", "codex", "", "")
 		db.ClaimJob("worker-1")
 
 		err := db.CancelJob(job.ID)
@@ -667,7 +667,7 @@ func TestCancelJob(t *testing.T) {
 
 	t.Run("cancel done job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-done", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-done", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-done", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
@@ -679,7 +679,7 @@ func TestCancelJob(t *testing.T) {
 
 	t.Run("cancel failed job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-failed", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-failed", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-failed", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "some error")
 
@@ -691,7 +691,7 @@ func TestCancelJob(t *testing.T) {
 
 	t.Run("complete respects canceled status", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "complete-canceled", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "complete-canceled", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "complete-canceled", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.CancelJob(job.ID)
 
@@ -714,7 +714,7 @@ func TestCancelJob(t *testing.T) {
 
 	t.Run("fail respects canceled status", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "fail-canceled", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "fail-canceled", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "fail-canceled", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.CancelJob(job.ID)
 
@@ -730,7 +730,7 @@ func TestCancelJob(t *testing.T) {
 	t.Run("canceled jobs counted correctly", func(t *testing.T) {
 		// Create and cancel a new job
 		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-count", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-count", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cancel-count", "codex", "", "")
 		db.CancelJob(job.ID)
 
 		_, _, _, _, canceled, err := db.GetJobCounts()
@@ -844,7 +844,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	// Verify the new constraint allows 'canceled' status
 	repo, _ := db.GetOrCreateRepo("/tmp/test2")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "def456", "A", "S", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "def456", "codex", "")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "def456", "codex", "", "")
 	db.ClaimJob("worker-1")
 
 	// This should succeed with new schema (would fail with old constraint)
@@ -1046,7 +1046,7 @@ func TestMigrationWithAlterTableColumnOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	newJob, err := db.EnqueueJob(repo2.ID, commit2.ID, "newsha", "codex", "")
+	newJob, err := db.EnqueueJob(repo2.ID, commit2.ID, "newsha", "codex", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -1253,7 +1253,7 @@ func TestListReposWithReviewCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "codex", ""); err != nil {
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "codex", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -1265,7 +1265,7 @@ func TestListReposWithReviewCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "codex", ""); err != nil {
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "codex", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -1361,7 +1361,7 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "codex", ""); err != nil {
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "codex", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -1373,7 +1373,7 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "codex", ""); err != nil {
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "codex", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -1518,7 +1518,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo.ID, commit.ID, ref, "codex", ""); err != nil {
+		if _, err := db.EnqueueJob(repo.ID, commit.ID, ref, "codex", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -1588,7 +1588,7 @@ func TestReenqueueJob(t *testing.T) {
 
 	t.Run("rerun failed job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "some error")
 
@@ -1614,7 +1614,7 @@ func TestReenqueueJob(t *testing.T) {
 
 	t.Run("rerun canceled job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "codex", "", "")
 		db.CancelJob(job.ID)
 
 		err := db.ReenqueueJob(job.ID)
@@ -1630,7 +1630,7 @@ func TestReenqueueJob(t *testing.T) {
 
 	t.Run("rerun done job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "codex", "", "")
 		// ClaimJob returns the claimed job; keep claiming until we get ours
 		var claimed *ReviewJob
 		for {
@@ -1659,7 +1659,7 @@ func TestReenqueueJob(t *testing.T) {
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "codex", "", "")
 
 		err := db.ReenqueueJob(job.ID)
 		if err == nil {
@@ -1669,7 +1669,7 @@ func TestReenqueueJob(t *testing.T) {
 
 	t.Run("rerun running job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-running", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-running", "codex", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-running", "codex", "", "")
 		db.ClaimJob("worker-1")
 
 		err := db.ReenqueueJob(job.ID)
@@ -1692,7 +1692,7 @@ func TestReenqueueJob(t *testing.T) {
 
 		isolatedRepo, _ := isolatedDB.GetOrCreateRepo("/tmp/isolated-repo")
 		commit, _ := isolatedDB.GetOrCreateCommit(isolatedRepo.ID, "rerun-complete-cycle", "A", "S", time.Now())
-		job, _ := isolatedDB.EnqueueJob(isolatedRepo.ID, commit.ID, "rerun-complete-cycle", "codex", "")
+		job, _ := isolatedDB.EnqueueJob(isolatedRepo.ID, commit.ID, "rerun-complete-cycle", "codex", "", "")
 
 		// First completion cycle
 		claimed, _ := isolatedDB.ClaimJob("worker-1")
@@ -1758,7 +1758,7 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 	}
 
 	// Enqueue a prompt job with agentic=true
-	job, err := db.EnqueuePromptJob(repo.ID, "test-agent", "thorough", "Review this code", true)
+	job, err := db.EnqueuePromptJob(repo.ID, "test-agent", "", "thorough", "Review this code", true)
 	if err != nil {
 		t.Fatalf("EnqueuePromptJob failed: %v", err)
 	}
@@ -1805,7 +1805,7 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 
 	// Also test with agentic=false to ensure we're not just always returning true
 	t.Run("non-agentic job returns Agentic=false", func(t *testing.T) {
-		nonAgenticJob, err := db.EnqueuePromptJob(repo.ID, "test-agent", "thorough", "Another review", false)
+		nonAgenticJob, err := db.EnqueuePromptJob(repo.ID, "test-agent", "", "thorough", "Another review", false)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}

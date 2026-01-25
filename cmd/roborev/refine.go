@@ -31,6 +31,7 @@ var postCommitWaitDelay = 1 * time.Second
 func refineCmd() *cobra.Command {
 	var (
 		agentName         string
+		model             string
 		reasoning         string
 		maxIterations     int
 		quiet             bool
@@ -61,11 +62,12 @@ Use --since to specify a starting commit when on the main branch or to
 limit how far back to look for reviews to address.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			unsafeFlagChanged := cmd.Flags().Changed("allow-unsafe-agents")
-			return runRefine(agentName, reasoning, maxIterations, quiet, allowUnsafeAgents, unsafeFlagChanged, since)
+			return runRefine(agentName, model, reasoning, maxIterations, quiet, allowUnsafeAgents, unsafeFlagChanged, since)
 		},
 	}
 
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for addressing findings (default: from config)")
+	cmd.Flags().StringVar(&model, "model", "", "model to use for opencode (e.g., anthropic/claude-sonnet-4-20250514)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard (default), or thorough")
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 10, "maximum refinement iterations")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "suppress agent output, show elapsed time instead")
@@ -185,7 +187,7 @@ func validateRefineContext(since string) (repoPath, currentBranch, defaultBranch
 	return repoPath, currentBranch, defaultBranch, mergeBase, nil
 }
 
-func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool, unsafeFlagChanged bool, since string) error {
+func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool, unsafeFlagChanged bool, since string) error {
 	// 1. Validate git and branch context (before touching daemon)
 	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(since)
 	if err != nil {
@@ -225,8 +227,11 @@ func runRefine(agentName, reasoningStr string, maxIterations int, quiet bool, al
 	}
 	reasoningLevel := agent.ParseReasoningLevel(resolvedReasoning)
 
-	// Get the agent with configured reasoning level
-	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel)
+	// Resolve model from CLI or config
+	resolvedModel := config.ResolveOpencodeModel(modelStr, repoPath, cfg)
+
+	// Get the agent with configured reasoning level and model
+	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel)
 	if err != nil {
 		return fmt.Errorf("no agent available: %w", err)
 	}
@@ -777,18 +782,18 @@ func applyWorktreeChanges(repoPath, worktreePath string) error {
 	return nil
 }
 
-func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel) (agent.Agent, error) {
+func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string) (agent.Agent, error) {
 	if resolvedAgent == "codex" && agent.IsAvailable("codex") {
 		baseAgent, err := agent.Get("codex")
 		if err != nil {
 			return nil, err
 		}
-		return baseAgent.WithReasoning(reasoningLevel), nil
+		return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
 	}
 
 	baseAgent, err := agent.GetAvailable(resolvedAgent)
 	if err != nil {
 		return nil, err
 	}
-	return baseAgent.WithReasoning(reasoningLevel), nil
+	return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
 }

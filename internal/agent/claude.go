@@ -46,6 +46,11 @@ func (a *ClaudeAgent) WithAgentic(agentic bool) Agent {
 	}
 }
 
+// WithModel returns the agent unchanged (model selection not supported for claude-code).
+func (a *ClaudeAgent) WithModel(model string) Agent {
+	return a
+}
+
 func (a *ClaudeAgent) Name() string {
 	return "claude-code"
 }

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   commit_id INTEGER REFERENCES commits(id),
   git_ref TEXT NOT NULL,
   agent TEXT NOT NULL DEFAULT 'codex',
+  model TEXT,
   reasoning TEXT NOT NULL DEFAULT 'thorough',
   status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled')) DEFAULT 'queued',
   enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -188,6 +189,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add model column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'model'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check model column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN model TEXT`)
+		if err != nil {
+			return fmt.Errorf("add model column: %w", err)
+		}
+	}
+
 	// Migration: update CHECK constraint to include 'canceled' status
 	// SQLite requires table recreation to modify CHECK constraints
 	var tableSql string
@@ -228,6 +241,7 @@ func (db *DB) migrate() error {
 				commit_id INTEGER REFERENCES commits(id),
 				git_ref TEXT NOT NULL,
 				agent TEXT NOT NULL DEFAULT 'codex',
+				model TEXT,
 				reasoning TEXT NOT NULL DEFAULT 'thorough',
 				status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled')) DEFAULT 'queued',
 				enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -246,8 +260,8 @@ func (db *DB) migrate() error {
 		}
 
 		// Check which optional columns exist in source table
-		var hasDiffContent, hasReasoning, hasAgentic bool
-		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic')`)
+		var hasDiffContent, hasReasoning, hasAgentic, hasModel bool
+		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model')`)
 		if checkErr == nil {
 			for checkRows.Next() {
 				var colName string
@@ -259,6 +273,8 @@ func (db *DB) migrate() error {
 					hasReasoning = true
 				case "agentic":
 					hasAgentic = true
+				case "model":
+					hasModel = true
 				}
 			}
 			checkRows.Close()
@@ -270,6 +286,14 @@ func (db *DB) migrate() error {
 		cols := "id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
 		if hasReasoning {
 			cols = "id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
+		}
+		if hasModel {
+			// Insert model after agent
+			if hasReasoning {
+				cols = "id, repo_id, commit_id, git_ref, agent, model, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
+			} else {
+				cols = "id, repo_id, commit_id, git_ref, agent, model, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
+			}
 		}
 		if hasDiffContent {
 			cols += ", diff_content"

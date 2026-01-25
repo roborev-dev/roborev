@@ -190,6 +190,7 @@ func (f failingAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 func (f failingAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return f }
 func (f failingAgent) WithAgentic(agentic bool) agent.Agent                 { return f }
+func (f failingAgent) WithModel(model string) agent.Agent                   { return f }
 
 func TestEnqueueReviewRefine(t *testing.T) {
 	t.Run("returns job ID on success", func(t *testing.T) {
@@ -367,7 +368,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	}
 	defer os.Chdir(origDir)
 
-	if err := runRefine("test", "", 1, true, false, false, ""); err == nil {
+	if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
@@ -397,7 +398,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	defer func() { isTerminal = origIsTerminal }()
 
 	output := captureStdout(t, func() {
-		if err := runRefine("test", "", 1, true, false, false, ""); err == nil {
+		if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
 			t.Fatal("expected error, got nil")
 		}
 	})
@@ -438,7 +439,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	defer agent.Register(agent.NewTestAgent())
 
 	output := captureStdout(t, func() {
-		if err := runRefine("test", "", 1, true, false, false, ""); err == nil {
+		if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
 			t.Fatal("expected error, got nil")
 		}
 	})
@@ -484,7 +485,7 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 
 	output := captureStdout(t, func() {
 		// With 2 iterations and a failing agent, should exhaust iterations
-		err := runRefine("test", "", 2, true, false, false, "")
+		err := runRefine("test", "", "", 2, true, false, false, "")
 		if err == nil {
 			t.Fatal("expected error after exhausting iterations, got nil")
 		}
@@ -1004,6 +1005,10 @@ func (a *changingAgent) WithAgentic(agentic bool) agent.Agent {
 	return a
 }
 
+func (a *changingAgent) WithModel(model string) agent.Agent {
+	return a
+}
+
 func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	setupFastPolling(t)
 	repoDir, _ := setupRefineRepo(t)
@@ -1192,7 +1197,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	agent.Register(changer)
 	defer agent.Register(agent.NewTestAgent())
 
-	if err := runRefine("test", "", 2, true, false, false, ""); err == nil {
+	if err := runRefine("test", "", "", 2, true, false, false, ""); err == nil {
 		t.Fatal("expected error from reaching max iterations")
 	}
 
@@ -1392,7 +1397,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	// an iteration, this would fail with "max iterations reached". Since the
 	// pending job transitions to Done with a passing review (and no failed
 	// reviews exist), refine should succeed.
-	err = runRefine("test", "", 1, true, false, false, "")
+	err = runRefine("test", "", "", 1, true, false, false, "")
 
 	// Should succeed - all reviews pass after waiting for the pending one
 	if err != nil {

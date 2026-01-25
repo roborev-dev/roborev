@@ -56,6 +56,11 @@ func (a *GeminiAgent) WithAgentic(agentic bool) Agent {
 	}
 }
 
+// WithModel returns the agent unchanged (model selection not supported for gemini).
+func (a *GeminiAgent) WithModel(model string) Agent {
+	return a
+}
+
 func (a *GeminiAgent) Name() string {
 	return "gemini"
 }
