@@ -92,6 +92,7 @@ func RemoveRuntimeForPID(pid int) {
 
 // ListAllRuntimes returns info for all daemon runtime files found.
 // Sets SourcePath on each RuntimeInfo for proper cleanup.
+// Continues scanning even if some files are unreadable (e.g., permission errors).
 func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	dataDir := config.DataDir()
 	pattern := filepath.Join(dataDir, "daemon.*.json")
@@ -110,11 +111,8 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	for _, path := range matches {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			// Permission error - report it so caller knows something is wrong
-			if os.IsPermission(err) {
-				return nil, fmt.Errorf("cannot read runtime file %s: %w", path, err)
-			}
-			// Other read errors (file disappeared, etc.) - skip
+			// Skip unreadable files (permission errors, file disappeared, etc.)
+			// Don't abort the whole scan - there may be other valid daemon files
 			continue
 		}
 		var info RuntimeInfo

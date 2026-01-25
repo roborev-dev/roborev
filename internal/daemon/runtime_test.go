@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -66,41 +67,47 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 }
 
 func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
-	// Create a test server that fails the test if called
-	httpCalled := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpCalled = true
-		t.Error("HTTP request should not be made to non-loopback address")
-	}))
-	defer server.Close()
-
-	// Extract the address (will be 127.0.0.1:xxxxx which IS loopback)
-	// So we need to create a fake non-loopback address
-	// KillDaemon should skip HTTP for non-loopback and go straight to PID kill
-
 	// Test with non-loopback address - should not make HTTP request
+	// We verify this by checking isLoopbackAddr directly and by the fact that
+	// KillDaemon with a non-loopback addr and invalid PID returns quickly
+	// (if it tried HTTP to a non-existent host, it would timeout)
+
 	info := &RuntimeInfo{
-		PID:  999999, // Non-existent PID
+		PID:  999999,               // Non-existent PID
 		Addr: "192.168.1.100:7373", // Non-loopback
 	}
 
-	// This should return without making HTTP calls (PID doesn't exist, so kill fails)
-	KillDaemon(info)
+	// Verify the address is correctly identified as non-loopback
+	if isLoopbackAddr(info.Addr) {
+		t.Error("192.168.1.100:7373 should not be identified as loopback")
+	}
 
-	if httpCalled {
-		t.Error("KillDaemon should not make HTTP requests to non-loopback addresses")
+	// This should return quickly without making HTTP calls
+	// (if it tried HTTP, it would timeout after 2s)
+	result := KillDaemon(info)
+
+	// With non-existent PID and non-loopback addr, should return true
+	// (process doesn't exist)
+	if !result {
+		t.Error("KillDaemon should return true for non-existent PID")
 	}
 }
 
 func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 	// Create a test server that tracks if shutdown was called
-	shutdownCalled := false
+	var shutdownCalled atomic.Bool
+	var requestCount atomic.Int32
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
 		if strings.HasSuffix(r.URL.Path, "/api/shutdown") {
-			shutdownCalled = true
+			shutdownCalled.Store(true)
+			// Return OK for shutdown
+			w.WriteHeader(http.StatusOK)
+		} else {
+			// Return 500 for status checks so KillDaemon exits quickly
+			w.WriteHeader(http.StatusInternalServerError)
 		}
-		// Return OK for both shutdown and status checks
-		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
@@ -115,8 +122,11 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 	// This should make HTTP request since address is loopback
 	KillDaemon(info)
 
-	if !shutdownCalled {
+	if !shutdownCalled.Load() {
 		t.Error("KillDaemon should make HTTP shutdown request to loopback addresses")
+	}
+	if requestCount.Load() == 0 {
+		t.Error("KillDaemon should have made at least one HTTP request")
 	}
 }
 
