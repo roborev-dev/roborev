@@ -67,7 +67,7 @@ limit how far back to look for reviews to address.`,
 	}
 
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for addressing findings (default: from config)")
-	cmd.Flags().StringVar(&model, "model", "", "model to use for opencode (e.g., anthropic/claude-sonnet-4-20250514)")
+	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard (default), or thorough")
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 10, "maximum refinement iterations")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "suppress agent output, show elapsed time instead")

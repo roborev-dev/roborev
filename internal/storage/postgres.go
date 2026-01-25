@@ -12,7 +12,7 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 1
+const pgSchemaVersion = 2
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
@@ -56,6 +56,7 @@ var pgSchemaStatements = []string{
   commit_id INTEGER REFERENCES commits(id),
   git_ref TEXT NOT NULL,
   agent TEXT NOT NULL,
+  model TEXT,
   reasoning TEXT,
   status TEXT NOT NULL CHECK(status IN ('done', 'failed', 'canceled')),
   agentic BOOLEAN DEFAULT FALSE,
@@ -232,8 +233,21 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		}
 	} else if currentVersion > pgSchemaVersion {
 		return fmt.Errorf("database schema version %d is newer than supported version %d", currentVersion, pgSchemaVersion)
+	} else if currentVersion < pgSchemaVersion {
+		// Run migrations
+		if currentVersion < 2 {
+			// Migration 1->2: Add model column to review_jobs
+			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS model TEXT`)
+			if err != nil {
+				return fmt.Errorf("migrate to v2 (add model column): %w", err)
+			}
+		}
+		// Update version
+		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
+		if err != nil {
+			return fmt.Errorf("update schema version: %w", err)
+		}
 	}
-	// Note: migrations for version upgrades would go here
 
 	return nil
 }
@@ -468,16 +482,16 @@ func (p *PgPool) Tx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, pgCommitID *int64) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO review_jobs (
-			uuid, repo_id, commit_id, git_ref, agent, reasoning, status, agentic,
+			uuid, repo_id, commit_id, git_ref, agent, model, reasoning, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error,
 			source_machine_id, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			finished_at = EXCLUDED.finished_at,
 			error = EXCLUDED.error,
 			updated_at = NOW()
-	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, j.Agent, nullString(j.Reasoning),
+	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, j.Agent, nullString(j.Model), nullString(j.Reasoning),
 		j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(j.Error), j.SourceMachineID)
 	return err
@@ -520,6 +534,7 @@ type PulledJob struct {
 	CommitTimestamp time.Time
 	GitRef          string
 	Agent           string
+	Model           string
 	Reasoning       string
 	Status          string
 	Agentic         bool
@@ -551,7 +566,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
-			j.git_ref, j.agent, COALESCE(j.reasoning, ''), j.status, j.agentic,
+			j.git_ref, j.agent, COALESCE(j.model, ''), COALESCE(j.reasoning, ''), j.status, j.agentic,
 			j.enqueued_at, j.started_at, j.finished_at,
 			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''),
 			j.source_machine_id, j.updated_at, j.id
@@ -578,7 +593,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 
 		err := rows.Scan(
 			&j.UUID, &j.RepoIdentity, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &j.CommitTimestamp,
-			&j.GitRef, &j.Agent, &j.Reasoning, &j.Status, &j.Agentic,
+			&j.GitRef, &j.Agent, &j.Model, &j.Reasoning, &j.Status, &j.Agentic,
 			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
 			&j.Prompt, &diffContent, &j.Error,
 			&j.SourceMachineID, &j.UpdatedAt, &lastID,

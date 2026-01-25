@@ -64,7 +64,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use (default: from config)")
-	cmd.Flags().StringVar(&model, "model", "", "model to use for opencode (e.g., anthropic/claude-sonnet-4-20250514)")
+	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, or thorough (default)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for job to complete and show result")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (just enqueue)")

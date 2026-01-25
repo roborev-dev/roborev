@@ -922,7 +922,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.addressed, rv.output,
-		       j.source_machine_id, j.uuid
+		       j.source_machine_id, j.uuid, j.model
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -970,7 +970,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var addressed sql.NullInt64
@@ -979,7 +979,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
 			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &addressed, &output,
-			&sourceMachineID, &jobUUID)
+			&sourceMachineID, &jobUUID, &model)
 		if err != nil {
 			return nil, err
 		}
@@ -1015,6 +1015,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		if sourceMachineID.Valid {
 			j.SourceMachineID = sourceMachineID.String
 		}
+		if model.Valid {
+			j.Model = model.String
+		}
 		if addressed.Valid {
 			val := addressed.Int64 != 0
 			j.Addressed = &val
@@ -1043,17 +1046,18 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var agentic int
 
+	var model sql.NullString
 	err := db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
-		       r.root_path, r.name, c.subject
+		       r.root_path, r.name, c.subject, j.model
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE j.id = ?
 	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &agentic,
-		&j.RepoPath, &j.RepoName, &commitSubject)
+		&j.RepoPath, &j.RepoName, &commitSubject, &model)
 	if err != nil {
 		return nil, err
 	}
@@ -1082,6 +1086,9 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	}
 	if prompt.Valid {
 		j.Prompt = prompt.String
+	}
+	if model.Valid {
+		j.Model = model.String
 	}
 
 	return &j, nil
