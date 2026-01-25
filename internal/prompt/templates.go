@@ -4,7 +4,6 @@ import (
 	"embed"
 	"fmt"
 	"strings"
-	"text/template"
 )
 
 //go:embed templates/*.tmpl
@@ -42,19 +41,4 @@ func getSystemPrompt(agentName string, promptType string) string {
 	default:
 		return SystemPromptSingle
 	}
-}
-
-// executeTemplate executes a template with data if it exists, otherwise returns error
-func executeTemplate(name string, data interface{}) (string, error) {
-	tmpl, err := template.ParseFS(templateFS, name)
-	if err != nil {
-		return "", err
-	}
-
-	var sb strings.Builder
-	if err := tmpl.Execute(&sb, data); err != nil {
-		return "", err
-	}
-
-	return sb.String(), nil
 }
