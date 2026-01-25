@@ -747,8 +747,8 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 			}
 		}
 
-		// Handle prompt/run jobs
-		if job.Prompt != "" {
+		// Handle prompt/run jobs (GitRef == "prompt" indicates a run task, not a commit review)
+		if job.GitRef == "prompt" {
 			return tuiCommitMsgMsg{
 				jobID: jobID,
 				err:   fmt.Errorf("no commit message for run tasks"),
