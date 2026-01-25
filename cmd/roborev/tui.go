@@ -3228,6 +3228,7 @@ func (m tuiModel) renderHelpView() string {
 			keys: []struct{ key, desc string }{
 				{"↑/k", "Move up / previous review"},
 				{"↓/j", "Move down / next review"},
+				{"PgUp/PgDn", "Scroll by page"},
 				{"enter", "View review details"},
 				{"esc", "Go back / clear filter"},
 				{"q", "Quit"},
