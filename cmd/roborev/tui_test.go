@@ -3281,6 +3281,59 @@ func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
 	}
 }
 
+func TestTUITickInterval(t *testing.T) {
+	tests := []struct {
+		name              string
+		statusFetchedOnce bool
+		runningJobs       int
+		queuedJobs        int
+		wantInterval      time.Duration
+	}{
+		{
+			name:              "before first status fetch uses active interval",
+			statusFetchedOnce: false,
+			runningJobs:       0,
+			queuedJobs:        0,
+			wantInterval:      tickIntervalActive,
+		},
+		{
+			name:              "running jobs uses active interval",
+			statusFetchedOnce: true,
+			runningJobs:       1,
+			queuedJobs:        0,
+			wantInterval:      tickIntervalActive,
+		},
+		{
+			name:              "queued jobs uses active interval",
+			statusFetchedOnce: true,
+			runningJobs:       0,
+			queuedJobs:        3,
+			wantInterval:      tickIntervalActive,
+		},
+		{
+			name:              "idle queue uses idle interval",
+			statusFetchedOnce: true,
+			runningJobs:       0,
+			queuedJobs:        0,
+			wantInterval:      tickIntervalIdle,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTuiModel("http://localhost")
+			m.statusFetchedOnce = tt.statusFetchedOnce
+			m.status.RunningJobs = tt.runningJobs
+			m.status.QueuedJobs = tt.queuedJobs
+
+			got := m.tickInterval()
+			if got != tt.wantInterval {
+				t.Errorf("tickInterval() = %v, want %v", got, tt.wantInterval)
+			}
+		})
+	}
+}
+
 func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
