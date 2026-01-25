@@ -1928,6 +1928,7 @@ it only updates existing installations. Used by 'roborev update'.`,
 func updateCmd() *cobra.Command {
 	var checkOnly bool
 	var yes bool
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -1935,7 +1936,10 @@ func updateCmd() *cobra.Command {
 		Long: `Check for and install roborev updates.
 
 Shows exactly what will be downloaded and where it will be installed.
-Requires confirmation before making changes (use --yes to skip).`,
+Requires confirmation before making changes (use --yes to skip).
+
+Dev builds are not replaced by default. Use --force to install the latest
+official release over a dev build.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("Checking for updates...")
 
@@ -1952,7 +1956,7 @@ Requires confirmation before making changes (use --yes to skip).`,
 			fmt.Printf("\n  Current version: %s\n", info.CurrentVersion)
 			fmt.Printf("  Latest version:  %s\n", info.LatestVersion)
 			if info.IsDevBuild {
-				fmt.Println("\nYou're running a dev build. Latest stable release available.")
+				fmt.Println("\nYou're running a dev build. Latest official release available.")
 			} else {
 				fmt.Println("\nUpdate available!")
 			}
@@ -1975,6 +1979,15 @@ Requires confirmation before making changes (use --yes to skip).`,
 			fmt.Printf("  %s\n", binDir)
 
 			if checkOnly {
+				if info.IsDevBuild {
+					fmt.Println("\nUse --force to install the latest official release.")
+				}
+				return nil
+			}
+
+			// Dev builds require --force to update
+			if info.IsDevBuild && !force {
+				fmt.Println("\nUse --force to install the latest official release.")
 				return nil
 			}
 
@@ -2082,6 +2095,7 @@ Requires confirmation before making changes (use --yes to skip).`,
 
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "only check for updates, don't install")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "replace dev build with latest official release")
 
 	return cmd
 }
