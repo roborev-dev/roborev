@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -372,5 +373,45 @@ func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
 	}
 	if !containsSequence(args, "-c", `model_reasoning_effort="high"`) {
 		t.Errorf("expected reasoning effort config in args %v", args)
+	}
+}
+
+func TestOpenCodeReviewPassesModelFlag(t *testing.T) {
+	skipIfWindows(t)
+	// Script that echoes its arguments so we can verify --model was passed
+	script := `#!/bin/sh
+echo "args: $@"
+`
+	cmdPath := writeTempCommand(t, script)
+	a := NewOpenCodeAgent(cmdPath).WithModel("anthropic/claude-sonnet-4")
+	result, err := a.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if !strings.Contains(result, "--model") {
+		t.Errorf("expected --model in args, got: %q", result)
+	}
+	if !strings.Contains(result, "anthropic/claude-sonnet-4") {
+		t.Errorf("expected model value in args, got: %q", result)
+	}
+}
+
+func TestCopilotReviewPassesModelFlag(t *testing.T) {
+	skipIfWindows(t)
+	// Script that echoes its arguments so we can verify --model was passed
+	script := `#!/bin/sh
+echo "args: $@"
+`
+	cmdPath := writeTempCommand(t, script)
+	a := NewCopilotAgent(cmdPath).WithModel("gpt-4o")
+	result, err := a.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if !strings.Contains(result, "--model") {
+		t.Errorf("expected --model in args, got: %q", result)
+	}
+	if !strings.Contains(result, "gpt-4o") {
+		t.Errorf("expected model value in args, got: %q", result)
 	}
 }

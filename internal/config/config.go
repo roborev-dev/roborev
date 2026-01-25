@@ -279,8 +279,8 @@ func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 
 // ResolveModel determines which model to use based on config priority:
 // 1. Explicit model parameter (if non-empty)
-// 2. Per-repo config (model)
-// 3. Global config (default_model)
+// 2. Per-repo config (model in .roborev.toml)
+// 3. Global config (default_model in config.toml)
 // 4. Default (empty string, agent uses its default)
 func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 	if strings.TrimSpace(explicit) != "" {
