@@ -295,12 +295,26 @@ func TestIsDaemonAliveStatusCodes(t *testing.T) {
 		statusCode int
 		wantAlive  bool
 	}{
+		// 2xx - success, daemon is alive
 		{"200 OK", http.StatusOK, true},
+		{"201 Created", http.StatusCreated, true},
+		{"204 No Content", http.StatusNoContent, true},
+
+		// 5xx - server error, daemon is alive but having issues
 		{"500 Internal Server Error", http.StatusInternalServerError, true},
+		{"502 Bad Gateway", http.StatusBadGateway, true},
 		{"503 Service Unavailable", http.StatusServiceUnavailable, true},
+
+		// 3xx - redirect, likely different service
+		{"301 Moved Permanently", http.StatusMovedPermanently, false},
+		{"302 Found", http.StatusFound, false},
+
+		// 4xx - client error, likely different service (auth proxy, unrelated API)
+		{"400 Bad Request", http.StatusBadRequest, false},
+		{"401 Unauthorized", http.StatusUnauthorized, false},
+		{"403 Forbidden", http.StatusForbidden, false},
 		{"404 Not Found", http.StatusNotFound, false},
 		{"405 Method Not Allowed", http.StatusMethodNotAllowed, false},
-		{"400 Bad Request", http.StatusBadRequest, true}, // Daemon exists, just bad request
 	}
 
 	for _, tt := range tests {
