@@ -185,28 +185,37 @@ var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
 	runtimes, err := daemon.ListAllRuntimes()
-	if err != nil || len(runtimes) == 0 {
+	if err != nil {
+		// Check if it's just a "not exist" type error
+		if os.IsNotExist(err) {
+			return ErrDaemonNotRunning
+		}
+		// Propagate other errors (permission, IO, etc.)
+		return fmt.Errorf("failed to list daemon runtimes: %w", err)
+	}
+	if len(runtimes) == 0 {
 		return ErrDaemonNotRunning
 	}
 
-	// Kill all found daemons
+	// Kill all found daemons, track failures
+	var lastErr error
 	for _, info := range runtimes {
-		daemon.KillDaemon(info)
+		if !daemon.KillDaemon(info) {
+			lastErr = fmt.Errorf("failed to kill daemon (pid %d)", info.PID)
+		}
 	}
 
-	return nil
+	return lastErr
 }
 
 // killAllDaemons kills any roborev daemon processes that might be running
 // This handles orphaned processes from old binaries or crashed restarts
 func killAllDaemons() {
 	if runtime.GOOS == "windows" {
-		// On Windows, use wmic to kill roborev.exe processes except our own PID
-		// taskkill /IM would kill the CLI itself, so we filter by PID
-		myPID := os.Getpid()
-		// Use wmic to find and kill daemon processes, excluding our PID
+		// On Windows, use wmic to find daemon processes by command line
+		// and kill only those running "daemon run"
 		exec.Command("wmic", "process", "where",
-			fmt.Sprintf("name='roborev.exe' and processid!=%d", myPID),
+			"commandline like '%roborev%daemon%run%'",
 			"call", "terminate").Run()
 	} else {
 		// On Unix, use pkill to kill all roborev daemon processes

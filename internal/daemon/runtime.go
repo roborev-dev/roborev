@@ -121,35 +121,37 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	return runtimes, nil
 }
 
-// GetAnyRunningDaemon returns info about any running daemon, preferring responsive ones
+// GetAnyRunningDaemon returns info about a responsive daemon.
+// Returns os.ErrNotExist if no responsive daemon is found.
 func GetAnyRunningDaemon() (*RuntimeInfo, error) {
 	runtimes, err := ListAllRuntimes()
 	if err != nil {
 		return nil, err
 	}
 
-	// First, try to find a responsive daemon
+	// Only return a daemon that's actually responding
 	for _, info := range runtimes {
 		if IsDaemonAlive(info.Addr) {
 			return info, nil
 		}
 	}
 
-	// No responsive daemon found
-	if len(runtimes) == 0 {
-		return nil, os.ErrNotExist
-	}
-
-	// Return first one (even if unresponsive) so caller can try to clean up
-	return runtimes[0], nil
+	return nil, os.ErrNotExist
 }
 
 // IsDaemonAlive checks if a daemon at the given address is actually responding.
 // This is more reliable than checking PID and works cross-platform.
+// Only allows loopback addresses to prevent SSRF via malicious runtime files.
 func IsDaemonAlive(addr string) bool {
 	if addr == "" {
 		return false
 	}
+
+	// Validate address is loopback to prevent SSRF
+	if !isLoopbackAddr(addr) {
+		return false
+	}
+
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	resp, err := client.Get(fmt.Sprintf("http://%s/api/status", addr))
 	if err != nil {
@@ -159,8 +161,18 @@ func IsDaemonAlive(addr string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
+// isLoopbackAddr checks if an address is a loopback address (localhost/127.x.x.x)
+func isLoopbackAddr(addr string) bool {
+	host := addr
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		host = addr[:idx]
+	}
+	return host == "localhost" || host == "127.0.0.1" || strings.HasPrefix(host, "127.")
+}
+
 // KillDaemon attempts to gracefully shut down a daemon, then force kill if needed.
 // Returns true if the daemon was killed or is no longer running.
+// Only removes runtime file if the daemon is confirmed dead.
 func KillDaemon(info *RuntimeInfo) bool {
 	if info == nil {
 		return true
@@ -184,11 +196,20 @@ func KillDaemon(info *RuntimeInfo) bool {
 	}
 
 	// HTTP shutdown failed or timed out, try OS-level kill
+	// Only do this if we have a valid PID
 	if info.PID > 0 {
 		if killProcess(info.PID) {
 			RemoveRuntimeForPID(info.PID)
 			return true
 		}
+		// Kill failed - don't remove runtime file, daemon may still be running
+		return false
+	}
+
+	// No valid PID, just check if it's still alive
+	if info.Addr != "" && !IsDaemonAlive(info.Addr) {
+		RemoveRuntimeForPID(info.PID)
+		return true
 	}
 
 	return false
@@ -215,10 +236,23 @@ func CleanupZombieDaemons() int {
 		}
 	}
 
-	// Also clean up legacy daemon.json if it exists
+	// Clean up legacy daemon.json - it may contain stale info
+	// that ListAllRuntimes picked up
 	legacyPath := LegacyRuntimePath()
 	if _, err := os.Stat(legacyPath); err == nil {
-		os.Remove(legacyPath)
+		// Read it to check if it's for a dead daemon
+		if data, err := os.ReadFile(legacyPath); err == nil {
+			var info RuntimeInfo
+			if json.Unmarshal(data, &info) == nil {
+				if !IsDaemonAlive(info.Addr) {
+					// Legacy file points to dead daemon, remove it
+					os.Remove(legacyPath)
+				}
+			} else {
+				// Corrupted, remove it
+				os.Remove(legacyPath)
+			}
+		}
 	}
 
 	return cleaned

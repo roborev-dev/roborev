@@ -8,34 +8,46 @@ import (
 	"time"
 )
 
-// killProcess kills a process by PID on Unix systems
+// killProcess kills a process by PID on Unix systems.
+// Returns true only if the process is confirmed dead.
 func killProcess(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return true // Process doesn't exist
 	}
 
+	// Check if process is alive first
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		return true // Already dead
+	}
+
 	// First try SIGTERM for graceful shutdown
 	if err := process.Signal(syscall.SIGTERM); err != nil {
-		// Process already dead or we don't have permission
-		return true
+		// Check if it died between our check and signal
+		if err := process.Signal(syscall.Signal(0)); err != nil {
+			return true
+		}
+		return false // Can't signal and still alive
 	}
 
 	// Wait up to 2 seconds for graceful shutdown
 	for i := 0; i < 20; i++ {
 		time.Sleep(100 * time.Millisecond)
-		// Check if process is still alive using signal 0
 		if err := process.Signal(syscall.Signal(0)); err != nil {
 			return true // Process is dead
 		}
 	}
 
 	// Still alive, use SIGKILL
-	if err := process.Signal(syscall.SIGKILL); err != nil {
-		return true // Already dead or no permission
+	_ = process.Signal(syscall.SIGKILL)
+
+	// Wait and verify death
+	for i := 0; i < 5; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := process.Signal(syscall.Signal(0)); err != nil {
+			return true // Process is dead
+		}
 	}
 
-	// Wait a bit more for SIGKILL to take effect
-	time.Sleep(200 * time.Millisecond)
-	return true
+	return false // Failed to kill
 }
