@@ -370,7 +370,7 @@ func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewCon
 
 		// Include responses to this review
 		if len(ctx.Responses) > 0 {
-			sb.WriteString("\nResponses to this review:\n")
+			sb.WriteString("\nComments on this review:\n")
 			for _, resp := range ctx.Responses {
 				sb.WriteString(fmt.Sprintf("- %s: %q\n", resp.Responder, resp.Response))
 			}
@@ -415,7 +415,7 @@ func (b *Builder) writePreviousAttemptsForGitRef(sb *strings.Builder, gitRef str
 		if review.JobID > 0 {
 			responses, err := b.db.GetResponsesForJob(review.JobID)
 			if err == nil && len(responses) > 0 {
-				sb.WriteString("\nResponses to this review:\n")
+				sb.WriteString("\nComments on this review:\n")
 				for _, resp := range responses {
 					sb.WriteString(fmt.Sprintf("- %s: %q\n", resp.Responder, resp.Response))
 				}

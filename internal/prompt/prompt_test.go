@@ -244,25 +244,25 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 		t.Error("Prompt should contain the previous review text")
 	}
 
-	// Should contain responses to the previous review
-	if !strings.Contains(prompt, "Responses to this review:") {
-		t.Error("Prompt should contain responses section for previous review")
+	// Should contain comments on the previous review
+	if !strings.Contains(prompt, "Comments on this review:") {
+		t.Error("Prompt should contain comments section for previous review")
 	}
 
 	if !strings.Contains(prompt, "alice") {
-		t.Error("Prompt should contain responder 'alice'")
+		t.Error("Prompt should contain commenter 'alice'")
 	}
 
 	if !strings.Contains(prompt, "Known issue, will fix in next sprint") {
-		t.Error("Prompt should contain alice's response text")
+		t.Error("Prompt should contain alice's comment text")
 	}
 
 	if !strings.Contains(prompt, "bob") {
-		t.Error("Prompt should contain responder 'bob'")
+		t.Error("Prompt should contain commenter 'bob'")
 	}
 
 	if !strings.Contains(prompt, "Added to tech debt backlog") {
-		t.Error("Prompt should contain bob's response text")
+		t.Error("Prompt should contain bob's comment text")
 	}
 }
 
@@ -607,17 +607,17 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 		t.Error("Prompt should contain the previous review text")
 	}
 
-	// Should contain the response
-	if !strings.Contains(prompt, "Responses to this review:") {
-		t.Error("Prompt should contain responses section")
+	// Should contain the comment
+	if !strings.Contains(prompt, "Comments on this review:") {
+		t.Error("Prompt should contain comments section")
 	}
 
 	if !strings.Contains(prompt, "This is intentional") {
-		t.Error("Prompt should contain the response text")
+		t.Error("Prompt should contain the comment text")
 	}
 
 	if !strings.Contains(prompt, "developer") {
-		t.Error("Prompt should contain the responder name")
+		t.Error("Prompt should contain the commenter name")
 	}
 }
 

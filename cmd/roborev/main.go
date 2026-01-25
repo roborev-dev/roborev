@@ -1273,7 +1273,7 @@ Examples:
 					editor = "vim"
 				}
 
-				tmpfile, err := os.CreateTemp("", "roborev-response-*.md")
+				tmpfile, err := os.CreateTemp("", "roborev-comment-*.md")
 				if err != nil {
 					return fmt.Errorf("create temp file: %w", err)
 				}
@@ -1290,7 +1290,7 @@ Examples:
 
 				content, err := os.ReadFile(tmpfile.Name())
 				if err != nil {
-					return fmt.Errorf("read response: %w", err)
+					return fmt.Errorf("read comment: %w", err)
 				}
 				message = strings.TrimSpace(string(content))
 			}
@@ -2162,7 +2162,7 @@ func syncStatusCmd() *cobra.Command {
 				}
 				return fmt.Sprintf("%d", count)
 			}
-			fmt.Printf("Pending push: %s jobs, %s reviews, %s responses\n",
+			fmt.Printf("Pending push: %s jobs, %s reviews, %s comments\n",
 				formatCount(len(jobs)), formatCount(len(reviews)), formatCount(len(responses)))
 
 			// Try to connect to PostgreSQL
@@ -2266,13 +2266,13 @@ func syncNowCmd() *cobra.Command {
 						totalJobs := getInt(msg, "total_jobs")
 						totalRevs := getInt(msg, "total_revs")
 						totalResps := getInt(msg, "total_resps")
-						fmt.Printf("\rPushing: batch %d (total: %d jobs, %d reviews, %d responses)     ",
+						fmt.Printf("\rPushing: batch %d (total: %d jobs, %d reviews, %d comments)     ",
 							batch, totalJobs, totalRevs, totalResps)
 					} else if phase == "pull" {
 						totalJobs := getInt(msg, "total_jobs")
 						totalRevs := getInt(msg, "total_revs")
 						totalResps := getInt(msg, "total_resps")
-						fmt.Printf("\rPulled: %d jobs, %d reviews, %d responses     \n",
+						fmt.Printf("\rPulled: %d jobs, %d reviews, %d comments     \n",
 							totalJobs, totalRevs, totalResps)
 					}
 				case "error":
@@ -2298,9 +2298,9 @@ func syncNowCmd() *cobra.Command {
 			}
 
 			fmt.Println("Sync completed")
-			fmt.Printf("Pushed: %d jobs, %d reviews, %d responses\n",
+			fmt.Printf("Pushed: %d jobs, %d reviews, %d comments\n",
 				finalPushed.Jobs, finalPushed.Reviews, finalPushed.Responses)
-			fmt.Printf("Pulled: %d jobs, %d reviews, %d responses\n",
+			fmt.Printf("Pulled: %d jobs, %d reviews, %d comments\n",
 				finalPulled.Jobs, finalPulled.Reviews, finalPulled.Responses)
 
 			return nil
