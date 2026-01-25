@@ -12,25 +12,44 @@ import (
 	"time"
 )
 
-// isRoborevProcess checks if a process is a roborev daemon.
+// processIdentity represents the result of identifying a process.
+type processIdentity int
+
+const (
+	processUnknown    processIdentity = iota // Can't determine identity
+	processIsRoborev                         // Confirmed roborev daemon
+	processNotRoborev                        // Confirmed NOT roborev daemon
+)
+
+// identifyProcess checks if a process is a roborev daemon.
+// Returns processIsRoborev, processNotRoborev, or processUnknown.
 // This prevents killing unrelated processes if a PID was reused.
-func isRoborevProcess(pid int) bool {
+func identifyProcess(pid int) processIdentity {
 	// Try reading /proc/<pid>/cmdline (Linux)
 	cmdline, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
 	if err == nil {
 		// cmdline uses null bytes as separators
 		cmdStr := strings.ReplaceAll(string(cmdline), "\x00", " ")
-		return strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon")
+		if strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon") {
+			return processIsRoborev
+		}
+		// We got cmdline but it's not roborev daemon
+		return processNotRoborev
 	}
 
 	// Fall back to ps (macOS/BSD)
 	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
 	output, err := cmd.Output()
 	if err != nil {
-		return false // Can't determine, assume not ours
+		// Can't determine - could be permissions, missing ps, etc.
+		return processUnknown
 	}
 	cmdStr := string(output)
-	return strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon")
+	if strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon") {
+		return processIsRoborev
+	}
+	// We got ps output but it's not roborev daemon
+	return processNotRoborev
 }
 
 // killProcess kills a process by PID on Unix systems.
@@ -54,10 +73,15 @@ func killProcess(pid int) bool {
 
 	// Verify this is actually a roborev daemon process before killing
 	// This prevents killing unrelated processes if the PID was reused
-	if !isRoborevProcess(pid) {
-		// Not a roborev process - the original daemon is gone and PID was reused
-		// Return true to indicate the daemon is no longer running
+	switch identifyProcess(pid) {
+	case processNotRoborev:
+		// Confirmed not a roborev process - PID was reused, daemon is gone
 		return true
+	case processUnknown:
+		// Can't determine identity - be conservative, don't kill or clean up
+		return false
+	case processIsRoborev:
+		// Confirmed roborev daemon - proceed with kill below
 	}
 
 	// First try SIGTERM for graceful shutdown

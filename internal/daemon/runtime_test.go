@@ -191,6 +191,43 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 	}
 }
 
+func TestIdentifyProcessTriState(t *testing.T) {
+	// Test that identifyProcess returns appropriate tri-state values
+
+	// Non-existent PID should return processUnknown (can't determine)
+	// or processNotRoborev if the system can confirm no such process
+	result := identifyProcess(999999999)
+	// Either unknown or not-roborev is acceptable for non-existent PID
+	if result == processIsRoborev {
+		t.Error("identifyProcess(999999999) should not return processIsRoborev for non-existent PID")
+	}
+
+	// Current process is a test binary, not roborev daemon
+	// Should return processNotRoborev (confirmed not a daemon)
+	currentPID := os.Getpid()
+	result = identifyProcess(currentPID)
+	if result == processIsRoborev {
+		t.Errorf("identifyProcess(%d) should not return processIsRoborev for test process", currentPID)
+	}
+	// On most systems we should be able to identify our own process
+	if result == processUnknown {
+		t.Logf("identifyProcess(%d) returned processUnknown (may be expected on some systems)", currentPID)
+	}
+}
+
+func TestKillProcessConservativeOnUnknown(t *testing.T) {
+	// Test that killProcess is conservative when process identity is unknown
+	// Using a very high PID that almost certainly doesn't exist
+	nonExistentPID := 999999999
+
+	// killProcess should return true for non-existent PID (process is dead)
+	// This is safe because the process doesn't exist at all
+	result := killProcess(nonExistentPID)
+	if !result {
+		t.Error("killProcess should return true for non-existent PID")
+	}
+}
+
 func TestIsLoopbackAddr(t *testing.T) {
 	tests := []struct {
 		addr string
