@@ -95,16 +95,40 @@ func RemoveRuntimeForPID(pid int) {
 // Continues scanning even if some files are unreadable (e.g., permission errors).
 func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	dataDir := config.DataDir()
-	pattern := filepath.Join(dataDir, "daemon.*.json")
-	matches, err := filepath.Glob(pattern)
+
+	// Use os.ReadDir instead of filepath.Glob to handle paths with glob metacharacters
+	entries, err := os.ReadDir(dataDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // No data dir yet, no runtimes
+		}
 		return nil, err
 	}
 
-	// Also check for legacy daemon.json
+	// Filter for daemon.*.json files
+	var matches []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, "daemon.") && strings.HasSuffix(name, ".json") {
+			matches = append(matches, filepath.Join(dataDir, name))
+		}
+	}
+
+	// Also check for legacy daemon.json (already covered by the pattern above,
+	// but keep explicit check for clarity)
 	legacyPath := LegacyRuntimePath()
 	if _, err := os.Stat(legacyPath); err == nil {
-		matches = append(matches, legacyPath)
+		// Check if already in matches (daemon.json matches daemon.*.json pattern)
+		found := false
+		for _, m := range matches {
+			if m == legacyPath {
+				found = true
+				break
+			}
+		}
+		if !found {
+			matches = append(matches, legacyPath)
+		}
 	}
 
 	var runtimes []*RuntimeInfo
@@ -179,9 +203,9 @@ func IsDaemonAlive(addr string) bool {
 			continue
 		}
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			return true
-		}
+		// Any HTTP response means daemon is alive (even 500/503 under load).
+		// Status code validation for version mismatch happens in ensureDaemon.
+		return true
 	}
 	return false
 }
