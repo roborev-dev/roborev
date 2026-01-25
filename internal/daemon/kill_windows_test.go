@@ -68,16 +68,65 @@ func TestClassifyCommandLineStripsNulBytes(t *testing.T) {
 	}
 }
 
-func TestGetCommandLinePowerShellStripsNuls(t *testing.T) {
-	// This test verifies the NUL stripping logic in getCommandLinePowerShell
-	// by checking that the function exists and handles the PID parameter.
-	// We can't easily test the actual PowerShell execution in unit tests,
-	// but we can verify the function signature and that it returns empty
-	// for non-existent PIDs.
+func TestNormalizeCommandLine(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "simple string unchanged",
+			input: "roborev daemon run",
+			want:  "roborev daemon run",
+		},
+		{
+			name:  "strips leading/trailing whitespace",
+			input: "  roborev daemon run  \n",
+			want:  "roborev daemon run",
+		},
+		{
+			name:  "strips NUL bytes",
+			input: "r\x00o\x00b\x00o\x00r\x00e\x00v\x00",
+			want:  "roborev",
+		},
+		{
+			name:  "strips UTF-8 BOM",
+			input: "\xef\xbb\xbfroborev daemon",
+			want:  "roborev daemon",
+		},
+		{
+			name:  "handles UTF-16LE style with NULs",
+			input: "r\x00o\x00b\x00o\x00r\x00e\x00v\x00 \x00d\x00a\x00e\x00m\x00o\x00n\x00",
+			want:  "roborev daemon",
+		},
+		{
+			name:  "empty string stays empty",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "only whitespace becomes empty",
+			input: "   \t\n  ",
+			want:  "",
+		},
+		{
+			name:  "only NULs becomes empty",
+			input: "\x00\x00\x00",
+			want:  "",
+		},
+		{
+			name:  "BOM with whitespace becomes empty",
+			input: "\xef\xbb\xbf   ",
+			want:  "",
+		},
+	}
 
-	// Non-existent PID should return empty string
-	result := getCommandLinePowerShell("999999999")
-	if result != "" {
-		t.Logf("getCommandLinePowerShell returned non-empty for non-existent PID: %q", result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeCommandLine(tt.input)
+			if got != tt.want {
+				t.Errorf("normalizeCommandLine(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

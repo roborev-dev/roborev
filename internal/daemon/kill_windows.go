@@ -50,12 +50,13 @@ func getCommandLineWmic(pidStr string) string {
 		return ""
 	}
 	// wmic output has header line "CommandLine" followed by data
-	// Trim and check for actual content beyond the header
-	trimmed := strings.TrimSpace(string(output))
-	// Remove the "CommandLine" header if present
-	trimmed = strings.TrimPrefix(trimmed, "CommandLine")
-	trimmed = strings.TrimSpace(trimmed)
-	return trimmed
+	// Normalize and remove the header
+	result := normalizeCommandLine(string(output))
+	// Remove the "CommandLine" header if present (case-insensitive)
+	if strings.HasPrefix(strings.ToLower(result), "commandline") {
+		result = strings.TrimSpace(result[11:]) // len("commandline") == 11
+	}
+	return result
 }
 
 // getCommandLinePowerShell tries to get process command line via PowerShell.
@@ -70,10 +71,17 @@ func getCommandLinePowerShell(pidStr string) string {
 	if err != nil {
 		return ""
 	}
-	// Also strip any BOM or stray NUL bytes that might slip through
-	result := strings.TrimSpace(string(output))
-	result = strings.ReplaceAll(result, "\x00", "")
-	return result
+	return normalizeCommandLine(string(output))
+}
+
+// normalizeCommandLine cleans up command line output from system tools.
+// Strips BOM, NUL bytes (from UTF-16LE encoding issues), and trims whitespace.
+func normalizeCommandLine(s string) string {
+	// Strip UTF-8 BOM if present
+	s = strings.TrimPrefix(s, "\xef\xbb\xbf")
+	// Strip NUL bytes (common with UTF-16LE encoding issues)
+	s = strings.ReplaceAll(s, "\x00", "")
+	return strings.TrimSpace(s)
 }
 
 // classifyCommandLine determines process identity from command line string.
