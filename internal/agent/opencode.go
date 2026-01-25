@@ -26,9 +26,14 @@ func NewOpenCodeAgent(command string) *OpenCodeAgent {
 	return &OpenCodeAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
-// WithReasoning returns the agent unchanged (reasoning not supported).
+// WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
 func (a *OpenCodeAgent) WithReasoning(level ReasoningLevel) Agent {
-	return a
+	return &OpenCodeAgent{
+		Command:   a.Command,
+		Model:     a.Model,
+		Reasoning: level,
+		Agentic:   a.Agentic,
+	}
 }
 
 // WithAgentic returns a copy of the agent configured for agentic mode.
@@ -61,9 +66,13 @@ func (a *OpenCodeAgent) CommandName() string {
 	return a.Command
 }
 
-// filterOpencodeToolCallLines removes OpenCode tool-call JSON lines from stdout.
-// opencode run --format default streams {"name":"...","arguments":{...}} for tool
-// requests; roborev needs only the final text. We drop lines that are solely such objects.
+// filterOpencodeToolCallLines removes LLM tool-call JSON lines that may appear in stdout.
+// When LLM providers stream responses, raw tool calls in the standard format
+// {"name":"...","arguments":{...}} (exactly 2 keys) may occasionally leak through
+// to stdout. Normally OpenCode formats these with ANSI codes, but edge cases
+// (streaming glitches, format failures) can expose the raw JSON.
+// We filter lines matching this exact format while preserving legitimate JSON
+// examples which would have additional keys.
 func filterOpencodeToolCallLines(s string) string {
 	var out []string
 	for _, line := range strings.Split(s, "\n") {
