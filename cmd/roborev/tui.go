@@ -1387,6 +1387,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if prevIdx >= 0 {
 					m.selectedIdx = prevIdx
 					m.updateSelectedJobID()
+				} else {
+					m.flashMessage = "No newer review"
+					m.flashExpiresAt = time.Now().Add(2 * time.Second)
+					m.flashView = tuiViewQueue
 				}
 			} else if m.currentView == tuiViewReview {
 				if m.reviewScroll > 0 {
@@ -1450,6 +1454,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
+				} else if !m.hasMore || len(m.activeRepoFilter) > 0 {
+					// Truly at the bottom - no more to load or filter prevents auto-load
+					m.flashMessage = "No older review"
+					m.flashExpiresAt = time.Now().Add(2 * time.Second)
+					m.flashView = tuiViewQueue
 				}
 			} else if m.currentView == tuiViewReview {
 				m.reviewScroll++
