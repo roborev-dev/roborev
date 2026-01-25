@@ -2402,6 +2402,9 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	if m2.flashView != tuiViewReview {
 		t.Errorf("Expected flashView to be tuiViewReview, got %d", m2.flashView)
 	}
+	if m2.flashExpiresAt.IsZero() || m2.flashExpiresAt.Before(time.Now()) {
+		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m2.flashExpiresAt)
+	}
 
 	// Now at last viewable job
 	m.selectedIdx = 2
@@ -2426,6 +2429,9 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	}
 	if m3.flashView != tuiViewReview {
 		t.Errorf("Expected flashView to be tuiViewReview, got %d", m3.flashView)
+	}
+	if m3.flashExpiresAt.IsZero() || m3.flashExpiresAt.Before(time.Now()) {
+		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m3.flashExpiresAt)
 	}
 }
 
@@ -2655,6 +2661,9 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	if m2.flashView != tuiViewQueue {
 		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m2.flashView)
 	}
+	if m2.flashExpiresAt.IsZero() || m2.flashExpiresAt.Before(time.Now()) {
+		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m2.flashExpiresAt)
+	}
 
 	// Now at bottom of queue
 	m.selectedIdx = 2
@@ -2673,6 +2682,9 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	}
 	if m3.flashView != tuiViewQueue {
 		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m3.flashView)
+	}
+	if m3.flashExpiresAt.IsZero() || m3.flashExpiresAt.Before(time.Now()) {
+		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m3.flashExpiresAt)
 	}
 }
 
@@ -2697,6 +2709,12 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	// Should show flash since filter prevents loading more
 	if m2.flashMessage != "No older review" {
 		t.Errorf("Expected flash message 'No older review' with filter active, got %q", m2.flashMessage)
+	}
+	if m2.flashView != tuiViewQueue {
+		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m2.flashView)
+	}
+	if m2.flashExpiresAt.IsZero() || m2.flashExpiresAt.Before(time.Now()) {
+		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m2.flashExpiresAt)
 	}
 }
 
@@ -5684,6 +5702,17 @@ func TestTUIUpdateNotificationInQueueView(t *testing.T) {
 	}
 	if !strings.Contains(output, "run 'roborev update'") {
 		t.Error("Expected update instructions in queue view")
+	}
+
+	// Verify update notification appears on line 3 (index 2) - above the table
+	// Layout: line 0 = title, line 1 = status, line 2 = update notification
+	lines := strings.Split(output, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("Expected at least 3 lines, got %d", len(lines))
+	}
+	// Line 2 (third line) should contain the update notification
+	if !strings.Contains(lines[2], "Update available") {
+		t.Errorf("Expected update notification on line 3 (index 2), got: %q", lines[2])
 	}
 }
 
