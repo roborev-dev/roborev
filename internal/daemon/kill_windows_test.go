@@ -24,9 +24,24 @@ func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 			want:    processUnknown,
 		},
 		{
-			name:    "roborev daemon returns isRoborev",
+			name:    "roborev daemon run returns isRoborev",
 			cmdLine: `C:\Program Files\roborev\roborev.exe daemon run`,
 			want:    processIsRoborev,
+		},
+		{
+			name:    "roborev daemon run with flags returns isRoborev",
+			cmdLine: `C:\Program Files\roborev\roborev.exe daemon run --port 7373`,
+			want:    processIsRoborev,
+		},
+		{
+			name:    "roborev daemon status returns notRoborev",
+			cmdLine: `C:\Program Files\roborev\roborev.exe daemon status`,
+			want:    processNotRoborev,
+		},
+		{
+			name:    "roborev daemon stop returns notRoborev",
+			cmdLine: `C:\Program Files\roborev\roborev.exe daemon stop`,
+			want:    processNotRoborev,
 		},
 		{
 			name:    "roborev without daemon returns notRoborev",
@@ -57,13 +72,13 @@ func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 
 func TestClassifyCommandLineStripsNulBytes(t *testing.T) {
 	// Simulate UTF-16LE remnants with NUL bytes interspersed
-	// "roborev daemon" with NUL bytes between chars (simulating partial UTF-16)
-	cmdWithNuls := "r\x00o\x00b\x00o\x00r\x00e\x00v\x00 \x00d\x00a\x00e\x00m\x00o\x00n\x00"
+	// "roborev daemon run" with NUL bytes between chars (simulating partial UTF-16)
+	cmdWithNuls := "r\x00o\x00b\x00o\x00r\x00e\x00v\x00 \x00d\x00a\x00e\x00m\x00o\x00n\x00 \x00r\x00u\x00n\x00"
 
 	// classifyCommandLine strips NUL bytes before matching
 	result := classifyCommandLine(cmdWithNuls)
 
-	// After stripping NULs, should match "roborev daemon"
+	// After stripping NULs, should match "roborev daemon run"
 	if result != processIsRoborev {
 		t.Errorf("classifyCommandLine should match after stripping NUL bytes, got %v", result)
 	}
@@ -95,7 +110,7 @@ func TestWmicHeaderOnlyOutput(t *testing.T) {
 		},
 		{
 			name:       "header with actual data",
-			wmicOutput: "CommandLine\r\nroborev.exe daemon run\r\n",
+			wmicOutput: "CommandLine\r\nroborev.exe daemon run --port 7373\r\n",
 			wantEmpty:  false,
 		},
 	}

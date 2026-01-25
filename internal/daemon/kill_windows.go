@@ -100,12 +100,22 @@ func classifyCommandLine(cmdLine string) processIdentity {
 		// Empty command line - can't determine, treat as unknown
 		return processUnknown
 	}
-	cmdLower := strings.ToLower(cmdLine)
-	if strings.Contains(cmdLower, "roborev") && strings.Contains(cmdLower, "daemon") {
+	if isRoborevDaemonCommand(cmdLine) {
 		return processIsRoborev
 	}
 	// We got command line but it's not roborev daemon
 	return processNotRoborev
+}
+
+// isRoborevDaemonCommand checks if a command line is a roborev daemon process.
+// Requires "roborev" and "daemon" and "run" to distinguish from CLI commands
+// like "roborev daemon status" or "roborev daemon stop".
+// Case-insensitive for Windows compatibility.
+func isRoborevDaemonCommand(cmdLine string) bool {
+	cmdLower := strings.ToLower(cmdLine)
+	return strings.Contains(cmdLower, "roborev") &&
+		strings.Contains(cmdLower, "daemon") &&
+		strings.Contains(cmdLower, "run")
 }
 
 // killProcess kills a process by PID on Windows.

@@ -36,7 +36,7 @@ func identifyProcessImpl(pid int) processIdentity {
 			// Empty cmdline (e.g., kernel thread or permission issue) - unknown
 			return processUnknown
 		}
-		if strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon") {
+		if isRoborevDaemonCommand(cmdStr) {
 			return processIsRoborev
 		}
 		// We got cmdline but it's not roborev daemon
@@ -55,11 +55,20 @@ func identifyProcessImpl(pid int) processIdentity {
 		// Empty output - can't determine identity
 		return processUnknown
 	}
-	if strings.Contains(cmdStr, "roborev") && strings.Contains(cmdStr, "daemon") {
+	if isRoborevDaemonCommand(cmdStr) {
 		return processIsRoborev
 	}
 	// We got ps output but it's not roborev daemon
 	return processNotRoborev
+}
+
+// isRoborevDaemonCommand checks if a command line is a roborev daemon process.
+// Requires "roborev" and "daemon" and "run" to distinguish from CLI commands
+// like "roborev daemon status" or "roborev daemon stop".
+func isRoborevDaemonCommand(cmdStr string) bool {
+	return strings.Contains(cmdStr, "roborev") &&
+		strings.Contains(cmdStr, "daemon") &&
+		strings.Contains(cmdStr, "run")
 }
 
 // killProcess kills a process by PID on Unix systems.

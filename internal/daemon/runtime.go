@@ -38,7 +38,8 @@ func LegacyRuntimePath() string {
 	return filepath.Join(config.DataDir(), "daemon.json")
 }
 
-// WriteRuntime saves the daemon runtime info
+// WriteRuntime saves the daemon runtime info atomically.
+// Uses write-to-temp-then-rename to prevent readers from seeing partial writes.
 func WriteRuntime(addr string, port int, version string) error {
 	info := RuntimeInfo{
 		PID:     os.Getpid(),
@@ -48,7 +49,8 @@ func WriteRuntime(addr string, port int, version string) error {
 	}
 
 	path := RuntimePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
@@ -57,7 +59,36 @@ func WriteRuntime(addr string, port int, version string) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	// Write to temp file first for atomic creation
+	tmpFile, err := os.CreateTemp(dir, "daemon.*.json.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+
+	// Clean up temp file on any error
+	success := false
+	defer func() {
+		if !success {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	// Atomic rename to final path
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
 }
 
 // ReadRuntime reads the daemon runtime info for the current process

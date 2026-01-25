@@ -1892,6 +1892,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.jobID != m.selectedJobID {
 			return m, nil
 		}
+		m.consecutiveErrors = 0 // Reset on successful fetch
 		m.currentReview = msg.review
 		m.currentResponses = msg.responses
 		m.currentBranch = msg.branchName
@@ -1899,6 +1900,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reviewScroll = 0
 
 	case tuiPromptMsg:
+		m.consecutiveErrors = 0 // Reset on successful fetch
 		m.currentReview = msg
 		m.currentView = tuiViewPrompt
 		m.promptScroll = 0
@@ -1975,6 +1977,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiReposMsg:
+		m.consecutiveErrors = 0 // Reset on successful fetch
 		// Populate filter repos with "All repos" as first option
 		m.filterRepos = []repoFilterItem{{name: "", count: msg.totalCount}}
 		m.filterRepos = append(m.filterRepos, msg.repos...)
