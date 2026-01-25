@@ -2290,7 +2290,7 @@ func (m tuiModel) renderQueueView() string {
 		updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
 		var updateMsg string
 		if m.updateIsDevBuild {
-			updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update'", m.updateAvailable)
+			updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update --force'", m.updateAvailable)
 		} else {
 			updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
 		}
