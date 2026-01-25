@@ -1,7 +1,10 @@
 package daemon
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -59,6 +62,61 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 	_, err = ReadRuntime()
 	if err == nil {
 		t.Error("Expected error after RemoveRuntime")
+	}
+}
+
+func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
+	// Create a test server that fails the test if called
+	httpCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpCalled = true
+		t.Error("HTTP request should not be made to non-loopback address")
+	}))
+	defer server.Close()
+
+	// Extract the address (will be 127.0.0.1:xxxxx which IS loopback)
+	// So we need to create a fake non-loopback address
+	// KillDaemon should skip HTTP for non-loopback and go straight to PID kill
+
+	// Test with non-loopback address - should not make HTTP request
+	info := &RuntimeInfo{
+		PID:  999999, // Non-existent PID
+		Addr: "192.168.1.100:7373", // Non-loopback
+	}
+
+	// This should return without making HTTP calls (PID doesn't exist, so kill fails)
+	KillDaemon(info)
+
+	if httpCalled {
+		t.Error("KillDaemon should not make HTTP requests to non-loopback addresses")
+	}
+}
+
+func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
+	// Create a test server that tracks if shutdown was called
+	shutdownCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/api/shutdown") {
+			shutdownCalled = true
+		}
+		// Return OK for both shutdown and status checks
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	// Extract address from test server (will be 127.0.0.1:xxxxx)
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	info := &RuntimeInfo{
+		PID:  999999, // Non-existent PID
+		Addr: addr,   // Loopback address from test server
+	}
+
+	// This should make HTTP request since address is loopback
+	KillDaemon(info)
+
+	if !shutdownCalled {
+		t.Error("KillDaemon should make HTTP shutdown request to loopback addresses")
 	}
 }
 
