@@ -660,27 +660,34 @@ func (db *DB) migrateSyncColumns() error {
 		}
 	}
 
-	// Create unique index on repos.identity (allows NULL values, only enforces uniqueness on non-NULL)
-	// First normalize empty strings to NULL (treat empty as "unset")
+	// Normalize empty strings to NULL (treat empty as "unset")
 	_, err = db.Exec(`UPDATE repos SET identity = NULL WHERE identity = ''`)
 	if err != nil {
 		return fmt.Errorf("normalize empty identities to NULL: %w", err)
 	}
 
-	// Check for duplicates that would prevent index creation
-	var dupCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM (
-		SELECT identity FROM repos WHERE identity IS NOT NULL
-		GROUP BY identity HAVING COUNT(*) > 1
-	)`).Scan(&dupCount)
-	if err != nil {
-		return fmt.Errorf("check duplicate identities: %w", err)
+	// Create non-unique index on repos.identity for query performance.
+	// Note: identity is NOT unique because multiple local clones of the same repo
+	// (e.g., ~/project-1 and ~/project-2 both cloned from the same remote)
+	// should be allowed and will share the same identity.
+	// See: https://github.com/roborev-dev/roborev/issues/131
+
+	// Migration: If an old UNIQUE index exists, drop it first
+	var indexSQL sql.NullString
+	err = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_repos_identity'`).Scan(&indexSQL)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("check existing idx_repos_identity: %w", err)
 	}
-	if dupCount > 0 {
-		return fmt.Errorf("cannot create unique index on repos.identity: %d duplicate non-NULL identities exist; resolve duplicates before upgrading", dupCount)
+	if indexSQL.Valid && strings.Contains(strings.ToUpper(indexSQL.String), "UNIQUE") {
+		// Drop the old unique index
+		_, err = db.Exec(`DROP INDEX idx_repos_identity`)
+		if err != nil {
+			return fmt.Errorf("drop old unique idx_repos_identity: %w", err)
+		}
 	}
 
-	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_repos_identity ON repos(identity) WHERE identity IS NOT NULL`)
+	// Create non-unique index (or recreate after dropping unique)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_repos_identity ON repos(identity) WHERE identity IS NOT NULL`)
 	if err != nil {
 		return fmt.Errorf("create idx_repos_identity: %w", err)
 	}

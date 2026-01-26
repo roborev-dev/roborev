@@ -680,9 +680,10 @@ func openRawDB(dbPath string) (*sql.DB, error) {
 	return sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 }
 
-func TestDuplicateRepoIdentity_MigrationError(t *testing.T) {
-	// This test verifies that migration fails with a clear error if duplicate
-	// non-NULL repos.identity values exist before creating the unique index.
+func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {
+	// This test verifies that migration succeeds even when duplicate
+	// repos.identity values exist. Multiple clones of the same repo
+	// should be allowed (fix for https://github.com/roborev-dev/roborev/issues/131).
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
 	rawDB, err := openRawDB(dbPath)
@@ -690,7 +691,7 @@ func TestDuplicateRepoIdentity_MigrationError(t *testing.T) {
 		t.Fatalf("Failed to open raw database: %v", err)
 	}
 
-	// Create schema with identity column but no unique index (simulates partial migration)
+	// Create schema with identity column but no index (simulates partial migration)
 	_, err = rawDB.Exec(`
 		CREATE TABLE repos (
 			id INTEGER PRIMARY KEY,
@@ -751,13 +752,13 @@ func TestDuplicateRepoIdentity_MigrationError(t *testing.T) {
 		t.Fatalf("Failed to create schema: %v", err)
 	}
 
-	// Insert two repos with the same identity (duplicate)
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'dup-identity')`)
+	// Insert two repos with the same identity (e.g., two clones of same remote)
+	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
 	if err != nil {
 		rawDB.Close()
 		t.Fatalf("Failed to insert repo1: %v", err)
 	}
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'dup-identity')`)
+	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'git@github.com:org/repo.git')`)
 	if err != nil {
 		rawDB.Close()
 		t.Fatalf("Failed to insert repo2: %v", err)
@@ -765,19 +766,126 @@ func TestDuplicateRepoIdentity_MigrationError(t *testing.T) {
 
 	rawDB.Close()
 
-	// Now open with storage.Open which runs migrations - should fail with clear error
-	_, err = Open(dbPath)
-	if err == nil {
-		t.Fatal("Expected migration to fail due to duplicate identities, but it succeeded")
+	// Now open with storage.Open which runs migrations - should succeed
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Expected migration to succeed with duplicate identities, but got error: %v", err)
 	}
-	if !regexp.MustCompile(`duplicate.*identit`).MatchString(err.Error()) {
-		t.Errorf("Expected error about duplicate identities, got: %v", err)
+	defer db.Close()
+
+	// Verify both repos exist
+	repos, err := db.ListRepos()
+	if err != nil {
+		t.Fatalf("ListRepos failed: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Errorf("Expected 2 repos, got %d", len(repos))
 	}
 }
 
+func TestUniqueIndexMigration(t *testing.T) {
+	// This test verifies that an existing database with the old UNIQUE index
+	// on repos.identity is properly migrated to a non-unique index.
+	// See: https://github.com/roborev-dev/roborev/issues/131
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	rawDB, err := openRawDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open raw database: %v", err)
+	}
+
+	// Create schema with identity column AND the old unique index
+	_, err = rawDB.Exec(`
+		CREATE TABLE repos (
+			id INTEGER PRIMARY KEY,
+			root_path TEXT UNIQUE NOT NULL,
+			name TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			identity TEXT
+		);
+		CREATE UNIQUE INDEX idx_repos_identity ON repos(identity) WHERE identity IS NOT NULL;
+		CREATE TABLE commits (
+			id INTEGER PRIMARY KEY,
+			repo_id INTEGER NOT NULL REFERENCES repos(id),
+			sha TEXT NOT NULL,
+			author TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(repo_id, sha)
+		);
+		CREATE TABLE review_jobs (
+			id INTEGER PRIMARY KEY,
+			repo_id INTEGER NOT NULL REFERENCES repos(id),
+			commit_id INTEGER REFERENCES commits(id),
+			git_ref TEXT NOT NULL,
+			agent TEXT NOT NULL DEFAULT 'codex',
+			reasoning TEXT NOT NULL DEFAULT 'thorough',
+			status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled')) DEFAULT 'queued',
+			enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
+			started_at TEXT,
+			finished_at TEXT,
+			worker_id TEXT,
+			error TEXT,
+			prompt TEXT,
+			retry_count INTEGER NOT NULL DEFAULT 0,
+			diff_content TEXT,
+			agentic INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE TABLE reviews (
+			id INTEGER PRIMARY KEY,
+			job_id INTEGER UNIQUE NOT NULL REFERENCES review_jobs(id),
+			agent TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			output TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			addressed INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE TABLE responses (
+			id INTEGER PRIMARY KEY,
+			commit_id INTEGER REFERENCES commits(id),
+			job_id INTEGER REFERENCES review_jobs(id),
+			responder TEXT NOT NULL,
+			response TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+		CREATE INDEX idx_commits_sha ON commits(sha);
+	`)
+	if err != nil {
+		rawDB.Close()
+		t.Fatalf("Failed to create schema: %v", err)
+	}
+
+	// Insert one repo
+	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
+	if err != nil {
+		rawDB.Close()
+		t.Fatalf("Failed to insert repo1: %v", err)
+	}
+
+	rawDB.Close()
+
+	// Open with storage.Open which runs migrations
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Migration failed: %v", err)
+	}
+
+	// Verify we can now insert a second repo with the same identity
+	// (this would fail if the unique index wasn't converted to non-unique)
+	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'git@github.com:org/repo.git')`)
+	if err != nil {
+		db.Close()
+		t.Fatalf("Inserting second repo with same identity should succeed after migration, but got: %v", err)
+	}
+
+	db.Close()
+}
+
 func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
-	// This test verifies GetRepoByIdentity returns an error if duplicates exist
-	// (which shouldn't happen with the unique index, but tests the code path)
+	// This test verifies GetRepoByIdentity returns an error if duplicates exist.
+	// Multiple repos can share the same identity (e.g., multiple clones of the same remote),
+	// but GetRepoByIdentity should return an error when asked to find a unique repo.
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := Open(dbPath)
 	if err != nil {
@@ -785,13 +893,7 @@ func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Create two repos with different paths but we'll manually set same identity
-	// bypassing the unique constraint by using raw SQL after dropping the index
-	_, err = db.Exec(`DROP INDEX IF EXISTS idx_repos_identity`)
-	if err != nil {
-		t.Fatalf("Failed to drop index: %v", err)
-	}
-
+	// Create two repos with same identity (simulates two clones of the same remote)
 	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/path1', 'repo1', 'same-id')`)
 	if err != nil {
 		t.Fatalf("Failed to insert repo1: %v", err)

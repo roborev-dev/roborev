@@ -1906,6 +1906,61 @@ func TestRepoIdentity(t *testing.T) {
 			t.Errorf("Expected identity to remain 'original-identity', got %q", repo2.Identity)
 		}
 	})
+
+	t.Run("multiple clones with same identity allowed", func(t *testing.T) {
+		// This tests the fix for https://github.com/roborev-dev/roborev/issues/131
+		// Multiple clones of the same repo (e.g., ~/project-1 and ~/project-2 both
+		// cloned from the same remote) should be allowed and share the same identity.
+		db := openTestDB(t)
+		defer db.Close()
+
+		sharedIdentity := "git@github.com:org/shared-repo.git"
+
+		// Create first clone
+		repo1, err := db.GetOrCreateRepo("/tmp/clone-1", sharedIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo for clone-1 failed: %v", err)
+		}
+		if repo1.Identity != sharedIdentity {
+			t.Errorf("Expected identity %q for clone-1, got %q", sharedIdentity, repo1.Identity)
+		}
+
+		// Create second clone with same identity - should succeed (was failing before fix)
+		repo2, err := db.GetOrCreateRepo("/tmp/clone-2", sharedIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo for clone-2 failed: %v (multiple clones with same identity should be allowed)", err)
+		}
+		if repo2.Identity != sharedIdentity {
+			t.Errorf("Expected identity %q for clone-2, got %q", sharedIdentity, repo2.Identity)
+		}
+
+		// Verify they are different repos
+		if repo1.ID == repo2.ID {
+			t.Errorf("Expected different repo IDs, but both are %d", repo1.ID)
+		}
+		if repo1.RootPath == repo2.RootPath {
+			t.Errorf("Expected different root paths")
+		}
+
+		// Verify both repos exist and can be retrieved
+		repos, err := db.ListRepos()
+		if err != nil {
+			t.Fatalf("ListRepos failed: %v", err)
+		}
+
+		foundClone1, foundClone2 := false, false
+		for _, r := range repos {
+			if r.ID == repo1.ID {
+				foundClone1 = true
+			}
+			if r.ID == repo2.ID {
+				foundClone2 = true
+			}
+		}
+		if !foundClone1 || !foundClone2 {
+			t.Errorf("Expected both clones to exist in ListRepos, found clone1=%v clone2=%v", foundClone1, foundClone2)
+		}
+	})
 }
 
 func TestDuplicateSHAHandling(t *testing.T) {
