@@ -3542,7 +3542,12 @@ func (m tuiModel) renderTailView() string {
 	// Status line with position and follow mode
 	var status string
 	if len(m.tailLines) > visibleLines {
-		status = fmt.Sprintf("[%d-%d of %d lines]", scroll+1, scroll+linesWritten, len(m.tailLines))
+		// Calculate actual displayed range (not including padding)
+		displayEnd := scroll + visibleLines
+		if displayEnd > len(m.tailLines) {
+			displayEnd = len(m.tailLines)
+		}
+		status = fmt.Sprintf("[%d-%d of %d lines]", scroll+1, displayEnd, len(m.tailLines))
 	} else {
 		status = fmt.Sprintf("[%d lines]", len(m.tailLines))
 	}
