@@ -699,9 +699,9 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			}
 			resp.Body.Close()
 
-			// If there are NULL branches, fetch jobs to backfill
+			// If there are NULL branches, fetch all jobs to backfill
 			if checkResult.NullsRemaining > 0 {
-				resp, err := client.Get(serverAddr + "/api/jobs?limit=5000")
+				resp, err := client.Get(serverAddr + "/api/jobs")
 				if err != nil {
 					return tuiErrMsg(err)
 				}
