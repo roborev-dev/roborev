@@ -393,6 +393,67 @@ func TestMarkReviewAddressedNotFound(t *testing.T) {
 	}
 }
 
+func TestMarkReviewAddressedByJobID(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
+	commit, _ := db.GetOrCreateCommit(repo.ID, "jobaddr123", "Author", "Subject", time.Now())
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "jobaddr123", "codex", "", "")
+	db.ClaimJob("worker-1")
+	db.CompleteJob(job.ID, "codex", "prompt", "output")
+
+	// Get the review to verify initial state
+	review, err := db.GetReviewByJobID(job.ID)
+	if err != nil {
+		t.Fatalf("GetReviewByJobID failed: %v", err)
+	}
+
+	// Initially not addressed
+	if review.Addressed {
+		t.Error("Review should not be addressed initially")
+	}
+
+	// Mark as addressed using job ID
+	err = db.MarkReviewAddressedByJobID(job.ID, true)
+	if err != nil {
+		t.Fatalf("MarkReviewAddressedByJobID failed: %v", err)
+	}
+
+	// Verify it's addressed
+	updated, _ := db.GetReviewByJobID(job.ID)
+	if !updated.Addressed {
+		t.Error("Review should be addressed after MarkReviewAddressedByJobID(true)")
+	}
+
+	// Mark as unaddressed using job ID
+	err = db.MarkReviewAddressedByJobID(job.ID, false)
+	if err != nil {
+		t.Fatalf("MarkReviewAddressedByJobID(false) failed: %v", err)
+	}
+
+	updated2, _ := db.GetReviewByJobID(job.ID)
+	if updated2.Addressed {
+		t.Error("Review should not be addressed after MarkReviewAddressedByJobID(false)")
+	}
+}
+
+func TestMarkReviewAddressedByJobIDNotFound(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Try to mark a non-existent job
+	err := db.MarkReviewAddressedByJobID(999999, true)
+	if err == nil {
+		t.Fatal("Expected error for non-existent job")
+	}
+
+	// Should be sql.ErrNoRows
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("Expected sql.ErrNoRows, got: %v", err)
+	}
+}
+
 func TestJobCounts(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

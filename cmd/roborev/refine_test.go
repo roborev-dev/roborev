@@ -22,7 +22,7 @@ type mockDaemonClient struct {
 	responses map[int64][]storage.Response
 
 	// Track calls for assertions
-	addressedReviews []int64
+	addressedJobIDs []int64
 	addedComments   []addedComment
 	enqueuedReviews  []enqueuedReview
 
@@ -70,11 +70,11 @@ func (m *mockDaemonClient) GetReviewByJobID(jobID int64) (*storage.Review, error
 	return m.reviews[job.GitRef], nil
 }
 
-func (m *mockDaemonClient) MarkReviewAddressed(reviewID int64) error {
+func (m *mockDaemonClient) MarkReviewAddressed(jobID int64) error {
 	if m.markAddressedErr != nil {
 		return m.markAddressedErr
 	}
-	m.addressedReviews = append(m.addressedReviews, reviewID)
+	m.addressedJobIDs = append(m.addressedJobIDs, jobID)
 	return nil
 }
 
@@ -497,18 +497,18 @@ func TestFindFailedReviewForBranch_MarksPassingAsAddressed(t *testing.T) {
 		t.Errorf("expected no failed reviews, got job %d", found.JobID)
 	}
 
-	// Both passing reviews should be marked as addressed
-	if len(client.addressedReviews) != 2 {
-		t.Errorf("expected 2 reviews to be marked addressed, got %d", len(client.addressedReviews))
+	// Both passing reviews should be marked as addressed (by job ID)
+	if len(client.addressedJobIDs) != 2 {
+		t.Errorf("expected 2 reviews to be marked addressed, got %d", len(client.addressedJobIDs))
 	}
 
-	// Verify the specific review IDs were marked
+	// Verify the specific job IDs were marked
 	addressed := make(map[int64]bool)
-	for _, id := range client.addressedReviews {
+	for _, id := range client.addressedJobIDs {
 		addressed[id] = true
 	}
-	if !addressed[1] || !addressed[2] {
-		t.Errorf("expected reviews 1 and 2 to be marked addressed, got %v", client.addressedReviews)
+	if !addressed[100] || !addressed[200] {
+		t.Errorf("expected jobs 100 and 200 to be marked addressed, got %v", client.addressedJobIDs)
 	}
 }
 
@@ -533,12 +533,12 @@ func TestFindFailedReviewForBranch_MarksPassingBeforeFailure(t *testing.T) {
 		t.Errorf("expected failed review (job 200), got %v", found)
 	}
 
-	// Passing review before the failure should be marked addressed
-	if len(client.addressedReviews) != 1 {
-		t.Errorf("expected 1 review to be marked addressed, got %d", len(client.addressedReviews))
+	// Passing review before the failure should be marked addressed (by job ID)
+	if len(client.addressedJobIDs) != 1 {
+		t.Errorf("expected 1 review to be marked addressed, got %d", len(client.addressedJobIDs))
 	}
-	if len(client.addressedReviews) > 0 && client.addressedReviews[0] != 1 {
-		t.Errorf("expected review 1 to be marked addressed, got %v", client.addressedReviews)
+	if len(client.addressedJobIDs) > 0 && client.addressedJobIDs[0] != 100 {
+		t.Errorf("expected job 100 to be marked addressed, got %v", client.addressedJobIDs)
 	}
 }
 
@@ -563,8 +563,8 @@ func TestFindFailedReviewForBranch_DoesNotMarkAlreadyAddressed(t *testing.T) {
 	}
 
 	// Already-addressed review should NOT be marked again
-	if len(client.addressedReviews) != 0 {
-		t.Errorf("expected no reviews to be marked addressed (already addressed), got %v", client.addressedReviews)
+	if len(client.addressedJobIDs) != 0 {
+		t.Errorf("expected no reviews to be marked addressed (already addressed), got %v", client.addressedJobIDs)
 	}
 }
 
@@ -598,16 +598,16 @@ func TestFindFailedReviewForBranch_MixedScenario(t *testing.T) {
 	}
 
 	// commit1 and commit4 should be marked as addressed (unaddressed passing reviews)
-	if len(client.addressedReviews) != 2 {
-		t.Errorf("expected 2 reviews to be marked addressed, got %d: %v", len(client.addressedReviews), client.addressedReviews)
+	if len(client.addressedJobIDs) != 2 {
+		t.Errorf("expected 2 reviews to be marked addressed, got %d: %v", len(client.addressedJobIDs), client.addressedJobIDs)
 	}
 
 	addressed := make(map[int64]bool)
-	for _, id := range client.addressedReviews {
+	for _, id := range client.addressedJobIDs {
 		addressed[id] = true
 	}
-	if !addressed[1] || !addressed[4] {
-		t.Errorf("expected reviews 1 and 4 to be marked addressed, got %v", client.addressedReviews)
+	if !addressed[100] || !addressed[400] {
+		t.Errorf("expected jobs 100 and 400 to be marked addressed, got %v", client.addressedJobIDs)
 	}
 }
 
@@ -635,8 +635,8 @@ func TestFindFailedReviewForBranch_StopsAtFirstFailure(t *testing.T) {
 	}
 
 	// No reviews should be marked as addressed (we stopped at first failure)
-	if len(client.addressedReviews) != 0 {
-		t.Errorf("expected no reviews to be marked addressed, got %v", client.addressedReviews)
+	if len(client.addressedJobIDs) != 0 {
+		t.Errorf("expected no reviews to be marked addressed, got %v", client.addressedJobIDs)
 	}
 }
 
@@ -663,10 +663,10 @@ func TestFindFailedReviewForBranch_MarkAddressedError(t *testing.T) {
 		t.Errorf("expected nil review when error occurs, got job %d", found.JobID)
 	}
 
-	// Error message should indicate which review failed
-	expectedMsg := "marking review 1 as addressed"
+	// Error message should indicate which job failed
+	expectedMsg := "marking review (job 100) as addressed"
 	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("error should mention review ID, got: %v", err)
+		t.Errorf("error should mention job ID, got: %v", err)
 	}
 }
 
