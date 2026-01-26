@@ -2935,7 +2935,13 @@ func (m tuiModel) renderReviewView() string {
 			branchStr = " on " + m.currentBranch
 		}
 
-		title = fmt.Sprintf("Review %s%s%s (%s)%s", idStr, repoStr, ref, review.Agent, branchStr)
+		// Build agent string, including model if explicitly set
+		agentStr := review.Agent
+		if review.Job.Model != "" {
+			agentStr = fmt.Sprintf("%s: %s", review.Agent, review.Job.Model)
+		}
+
+		title = fmt.Sprintf("Review %s%s%s (%s)%s", idStr, repoStr, ref, agentStr, branchStr)
 		titleLen = len(title)
 		if review.Addressed {
 			titleLen += len(" [ADDRESSED]")
@@ -3075,7 +3081,12 @@ func (m tuiModel) renderPromptView() string {
 	review := m.currentReview
 	if review.Job != nil {
 		ref := shortJobRef(*review.Job)
-		title := fmt.Sprintf("Prompt: %s (%s)", ref, review.Agent)
+		// Build agent string, including model if explicitly set
+		agentStr := review.Agent
+		if review.Job.Model != "" {
+			agentStr = fmt.Sprintf("%s: %s", review.Agent, review.Job.Model)
+		}
+		title := fmt.Sprintf("Prompt: %s (%s)", ref, agentStr)
 		b.WriteString(tuiTitleStyle.Render(title))
 	} else {
 		b.WriteString(tuiTitleStyle.Render("Prompt"))

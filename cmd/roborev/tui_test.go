@@ -3869,6 +3869,62 @@ func TestTUIRenderReviewViewWithBranchAndAddressed(t *testing.T) {
 	}
 }
 
+func TestTUIRenderReviewViewWithModel(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Agent:  "codex",
+		Output: "Some review output",
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc1234",
+			RepoName: "myrepo",
+			Agent:    "codex",
+			Model:    "o3",
+		},
+	}
+
+	output := m.View()
+
+	// Should contain agent with model in format "(codex: o3)"
+	if !strings.Contains(output, "(codex: o3)") {
+		t.Errorf("Expected output to contain '(codex: o3)', got:\n%s", output)
+	}
+}
+
+func TestTUIRenderReviewViewWithoutModel(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:     10,
+		Agent:  "codex",
+		Output: "Some review output",
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc1234",
+			RepoName: "myrepo",
+			Agent:    "codex",
+			Model:    "", // No model set
+		},
+	}
+
+	output := m.View()
+
+	// Should contain just the agent "(codex)" without model
+	if !strings.Contains(output, "(codex)") {
+		t.Errorf("Expected output to contain '(codex)', got:\n%s", output)
+	}
+	// Should NOT contain the colon separator that would indicate a model
+	if strings.Contains(output, "(codex:") {
+		t.Error("Expected output NOT to contain '(codex:' when no model is set")
+	}
+}
+
 func TestTUIRenderReviewViewNoBranchForRange(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.width = 100
