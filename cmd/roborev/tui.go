@@ -35,31 +35,32 @@ const (
 	tickIntervalIdle   = 10 * time.Second // Poll less when queue is idle
 )
 
-// TUI styles
+// TUI styles using AdaptiveColor for light/dark terminal support.
+// Light colors are chosen for dark-on-light terminals; Dark colors for light-on-dark.
 var (
 	tuiTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("205"))
+			Foreground(lipgloss.AdaptiveColor{Light: "125", Dark: "205"}) // Magenta/Pink
 
 	tuiStatusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241"))
+			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
 
 	tuiSelectedStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color("212"))
+				Foreground(lipgloss.AdaptiveColor{Light: "127", Dark: "212"}) // Magenta/Pink
 
-	tuiQueuedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // Yellow
-	tuiRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))  // Blue
-	tuiDoneStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))  // Green
-	tuiFailedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
-	tuiCanceledStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // Orange
+	tuiQueuedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}) // Yellow/Gold
+	tuiRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "25", Dark: "33"})   // Blue
+	tuiDoneStyle     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})   // Green
+	tuiFailedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}) // Red
+	tuiCanceledStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "166", Dark: "208"}) // Orange
 
-	tuiPassStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))  // Green
-	tuiFailStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
-	tuiAddressedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51"))  // Cyan
+	tuiPassStyle      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})   // Green
+	tuiFailStyle      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}) // Red
+	tuiAddressedStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "30", Dark: "51"})   // Cyan
 
 	tuiHelpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241"))
+			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
 )
 
 // fullSHAPattern matches a 40-character hex git SHA (not ranges or branch names)
@@ -2579,7 +2580,7 @@ func (m tuiModel) renderQueueView() string {
 
 	// Update notification on line 3 (above the table)
 	if m.updateAvailable != "" {
-		updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
+		updateStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true)
 		var updateMsg string
 		if m.updateIsDevBuild {
 			updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update --force'", m.updateAvailable)
@@ -2708,14 +2709,14 @@ func (m tuiModel) renderQueueView() string {
 
 	// Status line: flash message (temporary)
 	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewQueue {
-		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46")) // Green
+		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Version mismatch error (persistent, red)
 	if m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true) // Bright red
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
 		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
 		b.WriteString("\x1b[K\n")
 	}
@@ -3074,7 +3075,7 @@ func (m tuiModel) renderReviewView() string {
 
 	// Status line: flash message (temporary) takes priority over scroll indicator
 	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewReview {
-		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46")) // Green
+		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	} else if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
@@ -3084,7 +3085,7 @@ func (m tuiModel) renderReviewView() string {
 
 	// Version mismatch error (persistent, red)
 	if m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true)
 		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
 		b.WriteString("\x1b[K\n")
 	}
