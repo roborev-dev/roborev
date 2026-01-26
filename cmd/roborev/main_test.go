@@ -1475,7 +1475,8 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	}
 
 	// Create the daemon run command with custom flags
-	// Use a high port number to avoid conflicts (FindAvailablePort will increment if busy)
+	// Use a high base port to avoid conflicts with production (7373).
+	// FindAvailablePort will auto-increment if 17373 is busy.
 	cmd := daemonRunCmd()
 	cmd.SetArgs([]string{
 		"--db", dbPath,
@@ -1515,33 +1516,37 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	// The runtime file is written before ListenAndServe, so we need to verify
 	// the HTTP server is actually accepting connections
 	var info *daemon.RuntimeInfo
+	myPID := os.Getpid()
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		runtimes, err := daemon.ListAllRuntimes()
-		if err == nil && len(runtimes) > 0 {
-			info = runtimes[0]
-			// Verify daemon is actually responding to HTTP
-			if daemon.IsDaemonAlive(info.Addr) {
+		if err == nil {
+			// Find the runtime for OUR daemon (matching our PID), not a stale one
+			for _, rt := range runtimes {
+				if rt.PID == myPID && daemon.IsDaemonAlive(rt.Addr) {
+					info = rt
+					break
+				}
+			}
+			if info != nil {
 				break
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	if info == nil {
-		t.Fatal("daemon did not create runtime file")
-	}
-	if !daemon.IsDaemonAlive(info.Addr) {
-		t.Fatal("daemon is not responding to HTTP requests")
+		t.Fatal("daemon did not create runtime file or is not responding")
 	}
 
-	// The daemon runs in a goroutine within this test process, so info.PID is
-	// guaranteed to be os.Getpid(). Use os.Interrupt to trigger the signal handler.
-	// PID reuse is not a concern since we're signaling our own process.
-	proc, err := os.FindProcess(os.Getpid())
+	// The daemon runs in a goroutine within this test process.
+	// Use os.Interrupt to trigger the signal handler.
+	proc, err := os.FindProcess(myPID)
 	if err != nil {
 		t.Fatalf("failed to find own process: %v", err)
 	}
-	proc.Signal(os.Interrupt)
+	if err := proc.Signal(os.Interrupt); err != nil {
+		t.Fatalf("failed to send interrupt signal: %v", err)
+	}
 
 	// Wait for daemon to exit
 	select {
