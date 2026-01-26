@@ -1514,10 +1514,11 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 
 	// Wait for daemon to be fully started and responsive
 	// The runtime file is written before ListenAndServe, so we need to verify
-	// the HTTP server is actually accepting connections
+	// the HTTP server is actually accepting connections.
+	// Use longer timeout for race detector which adds significant overhead.
 	var info *daemon.RuntimeInfo
 	myPID := os.Getpid()
-	deadline = time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		runtimes, err := daemon.ListAllRuntimes()
 		if err == nil {
@@ -1532,10 +1533,12 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 				break
 			}
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	if info == nil {
-		t.Fatal("daemon did not create runtime file or is not responding")
+		// Provide more context for debugging CI failures
+		runtimes, _ := daemon.ListAllRuntimes()
+		t.Fatalf("daemon did not create runtime file or is not responding (myPID=%d, found %d runtimes)", myPID, len(runtimes))
 	}
 
 	// The daemon runs in a goroutine within this test process.
@@ -1548,12 +1551,12 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 		t.Fatalf("failed to send interrupt signal: %v", err)
 	}
 
-	// Wait for daemon to exit
+	// Wait for daemon to exit (longer timeout for race detector)
 	select {
 	case <-errCh:
 		// Daemon exited - good
-	case <-time.After(5 * time.Second):
-		t.Fatal("daemon did not exit within 5 second timeout")
+	case <-time.After(10 * time.Second):
+		t.Fatal("daemon did not exit within 10 second timeout")
 	}
 }
 
