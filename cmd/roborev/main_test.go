@@ -1525,23 +1525,21 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 		t.Fatal("daemon did not create runtime file")
 	}
 
-	// The daemon runs in a goroutine within this test process, so info.PID
-	// will be os.Getpid(). Send os.Interrupt (works on all platforms) to
-	// trigger the daemon's signal handler for graceful shutdown.
-	if info.PID > 0 && info.PID == os.Getpid() {
+	// Send os.Interrupt to trigger the daemon's signal handler for graceful shutdown.
+	// Works whether daemon runs in-process (current design) or as separate process (future).
+	if info.PID > 0 {
 		proc, err := os.FindProcess(info.PID)
 		if err == nil {
-			// Use os.Interrupt - registered on all platforms including Windows
 			proc.Signal(os.Interrupt)
 		}
 	}
 
-	// Wait for daemon to exit (don't force-kill our own process)
+	// Wait for daemon to exit
 	select {
 	case <-errCh:
 		// Daemon exited - good
 	case <-time.After(5 * time.Second):
-		t.Log("Warning: daemon did not exit within timeout")
+		t.Fatal("daemon did not exit within 5 second timeout")
 	}
 }
 
