@@ -2953,7 +2953,7 @@ func (m tuiModel) renderQueueView() string {
 		colWidths := m.calculateColumnWidths(idWidth)
 
 		// Header (with 2-char prefix to align with row selector)
-		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-7s %-3s %-12s %-8s %s",
+		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-8s %-3s %-12s %-8s %s",
 			idWidth, "ID",
 			colWidths.ref, "Ref",
 			colWidths.branch, "Branch",
@@ -3059,9 +3059,9 @@ type columnWidths struct {
 }
 
 func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (7), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
+	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
 	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
-	fixedWidth := 2 + idWidth + 7 + 3 + 12 + 8 + 6 + 9
+	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 6 + 9
 
 	// Available width for flexible columns (ref, branch, repo, agent)
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
@@ -3172,8 +3172,8 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 		}
 	}
 	// Pad after coloring since lipgloss strips trailing spaces
-	// Width 7 accommodates "running" (7 chars) - retry count shown in queued only
-	padding := 7 - len(status)
+	// Width 8 accommodates "canceled" (8 chars)
+	padding := 8 - len(status)
 	if padding > 0 {
 		styledStatus += strings.Repeat(" ", padding)
 	}
