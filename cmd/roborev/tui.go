@@ -1469,14 +1469,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.tailScroll < 0 {
 					m.tailScroll = 0
 				}
-				return m, nil
+				return m, tea.ClearScreen
 			case "pgdown":
 				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
 				}
 				m.tailScroll += visibleLines
-				return m, nil
+				return m, tea.ClearScreen
 			case "home":
 				m.tailFollow = false // Stop auto-scroll when going to top
 				m.tailScroll = 0
@@ -1512,7 +1512,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.tailFollow = false
 					m.tailScroll = 0
 				}
-				return m, nil
+				return m, tea.ClearScreen
 			}
 			return m, nil
 		}
