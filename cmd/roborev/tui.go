@@ -169,6 +169,9 @@ type tuiModel struct {
 	// Branch name cache (keyed by job ID) - caches derived branches to avoid repeated git calls
 	branchNames map[int64]string
 
+	// Track if branch backfill has run this session (one-time migration)
+	branchBackfillDone bool
+
 	// Pending addressed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
 	// distinguish between multiple requests for the same state (e.g., true→false→true)
@@ -655,6 +658,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 	machineID := m.status.MachineID
 	client := m.client
 	serverAddr := m.serverAddr
+	backfillDone := m.branchBackfillDone
 
 	return func() tea.Msg {
 		// Fetch jobs to extract branches (no API endpoint for branches directly)
@@ -675,39 +679,83 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			return tuiErrMsg(err)
 		}
 
-		// Count jobs per branch, deriving branch from git if not stored
-		branchCounts := make(map[string]int)
-		var branchOrder []string
-		// Collect jobs to backfill
-		type backfillJob struct {
-			id     int64
-			branch string
+		// Count jobs with NULL branch to determine if backfill is needed
+		var nullBranchCount int
+		if !backfillDone {
+			for _, job := range result.Jobs {
+				if job.Branch == "" {
+					nullBranchCount++
+				}
+			}
 		}
-		var toBackfill []backfillJob
 
-		for _, job := range result.Jobs {
-			branch := job.Branch
+		// Backfill branches from git if there are any NULL branches (one-time migration)
+		var backfillCount int
+		if nullBranchCount > 0 {
+			type backfillJob struct {
+				id     int64
+				branch string
+			}
+			var toBackfill []backfillJob
 
-			// Derive branch from git if not stored (same logic as getBranchForJob)
-			if branch == "" {
+			for _, job := range result.Jobs {
+				if job.Branch != "" {
+					continue // Already has branch
+				}
 				// Skip dirty/prompt jobs
-				if job.GitRef != "dirty" && job.GitRef != "run" && job.GitRef != "prompt" {
-					// Only try git lookup for local repos
-					if job.RepoPath != "" && (machineID == "" || job.SourceMachineID == "" || job.SourceMachineID == machineID) {
-						sha := job.GitRef
-						if idx := strings.Index(sha, ".."); idx != -1 {
-							sha = sha[idx+2:]
-						}
-						branch = git.GetBranchName(job.RepoPath, sha)
+				if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
+					continue
+				}
+				// Only try git lookup for local repos
+				if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
+					continue
+				}
 
-						// Queue for backfill if we derived a branch
-						if branch != "" {
-							toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
-						}
-					}
+				sha := job.GitRef
+				if idx := strings.Index(sha, ".."); idx != -1 {
+					sha = sha[idx+2:]
+				}
+				branch := git.GetBranchName(job.RepoPath, sha)
+				if branch != "" {
+					toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
 				}
 			}
 
+			// Persist to database
+			for _, bf := range toBackfill {
+				reqBody, _ := json.Marshal(map[string]interface{}{
+					"job_id": bf.id,
+					"branch": bf.branch,
+				})
+				resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
+				if err == nil {
+					if resp.StatusCode == http.StatusOK {
+						var result struct {
+							Updated bool `json:"updated"`
+						}
+						if json.NewDecoder(resp.Body).Decode(&result) == nil && result.Updated {
+							backfillCount++
+						}
+					}
+					resp.Body.Close()
+				}
+			}
+
+			// Re-fetch jobs to get updated branch values
+			resp, err := client.Get(serverAddr + "/api/jobs?limit=5000")
+			if err == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					json.NewDecoder(resp.Body).Decode(&result)
+				}
+			}
+		}
+
+		// Count jobs per branch
+		branchCounts := make(map[string]int)
+		var branchOrder []string
+		for _, job := range result.Jobs {
+			branch := job.Branch
 			if branch == "" {
 				branch = "(none)"
 			}
@@ -715,27 +763,6 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				branchOrder = append(branchOrder, branch)
 			}
 			branchCounts[branch]++
-		}
-
-		// Backfill branches to database (synchronous - one-time migration)
-		var backfillCount int
-		for _, bf := range toBackfill {
-			reqBody, _ := json.Marshal(map[string]interface{}{
-				"job_id": bf.id,
-				"branch": bf.branch,
-			})
-			resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
-			if err == nil {
-				if resp.StatusCode == http.StatusOK {
-					var result struct {
-						Updated bool `json:"updated"`
-					}
-					if json.NewDecoder(resp.Body).Decode(&result) == nil && result.Updated {
-						backfillCount++
-					}
-				}
-				resp.Body.Close()
-			}
 		}
 
 		// Build branch list
@@ -2678,6 +2705,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiBranchesMsg:
 		m.consecutiveErrors = 0 // Reset on successful fetch
+		m.branchBackfillDone = true // Mark backfill as done for this session
 		// Populate filter branches with "All branches" as first option
 		m.filterBranches = []branchFilterItem{{name: "", count: msg.totalCount}}
 		m.filterBranches = append(m.filterBranches, msg.branches...)
