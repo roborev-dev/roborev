@@ -6262,6 +6262,7 @@ func TestFormatClipboardContent(t *testing.T) {
 }
 
 func TestTUIConfigReloadFlash(t *testing.T) {
+	setupTuiTestEnv(t)
 	m := newTuiModel(testServerAddr)
 
 	t.Run("no flash on first status fetch", func(t *testing.T) {
@@ -6349,6 +6350,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 }
 
 func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
+	setupTuiTestEnv(t)
 	t.Run("triggers reconnection after 3 consecutive connection errors", func(t *testing.T) {
 		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 2 // Already had 2 connection errors
