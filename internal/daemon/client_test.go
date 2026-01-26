@@ -68,8 +68,8 @@ func TestHTTPClientMarkReviewAddressed(t *testing.T) {
 		t.Fatalf("MarkReviewAddressed failed: %v", err)
 	}
 
-	if received["review_id"].(float64) != 99 {
-		t.Errorf("expected review_id 99, got %v", received["review_id"])
+	if received["job_id"].(float64) != 99 {
+		t.Errorf("expected job_id 99, got %v", received["job_id"])
 	}
 	if received["addressed"] != true {
 		t.Errorf("expected addressed true, got %v", received["addressed"])

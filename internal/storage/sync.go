@@ -621,27 +621,102 @@ func (db *DB) GetKnownJobUUIDs() ([]string, error) {
 	return uuids, rows.Err()
 }
 
-// GetOrCreateRepoByIdentity finds or creates a repo by identity.
-// If the repo doesn't exist, creates it with a placeholder path.
+// GetOrCreateRepoByIdentity finds or creates a repo for syncing by identity.
+// The logic is:
+//  1. If exactly one local repo has this identity, use it (always preferred)
+//  2. If a placeholder repo exists (root_path == identity), use it
+//  3. If 0 or 2+ local repos have this identity, create a placeholder
+//
+// This ensures synced jobs attach to the right repo:
+//   - Single clone: jobs attach directly to the local repo
+//   - Multiple clones: jobs attach to a neutral placeholder
+//   - No local clone: placeholder serves as a sync-only repo
+//
+// Note: Single local repos are always preferred, even if a placeholder exists
+// from a previous sync (e.g., when there were 0 or 2+ clones before).
 func (db *DB) GetOrCreateRepoByIdentity(identity string) (int64, error) {
-	// Try to find existing repo
-	repo, err := db.GetRepoByIdentity(identity)
+	// First, check for local repos with this identity
+	// (excluding placeholders where root_path == identity)
+	rows, err := db.Query(`SELECT id FROM repos WHERE identity = ? AND root_path != ?`, identity, identity)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("find repos by identity: %w", err)
 	}
-	if repo != nil {
-		return repo.ID, nil
+	defer rows.Close()
+
+	var repoIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, fmt.Errorf("scan repo id: %w", err)
+		}
+		repoIDs = append(repoIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate repos: %w", err)
 	}
 
-	// Create a placeholder repo - path is identity since we don't know the local path
+	// If exactly one local repo exists, always use it (even if placeholder exists)
+	if len(repoIDs) == 1 {
+		return repoIDs[0], nil
+	}
+
+	// 0 or 2+ local repos - look for existing placeholder
+	var placeholderID int64
+	err = db.QueryRow(`SELECT id FROM repos WHERE root_path = ? AND identity = ?`, identity, identity).Scan(&placeholderID)
+	if err == nil {
+		return placeholderID, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("find placeholder repo: %w", err)
+	}
+
+	// No placeholder exists - create one
+	// Use extracted repo name for display, but root_path stays as identity to mark it as a placeholder
+	displayName := ExtractRepoNameFromIdentity(identity)
 	result, err := db.Exec(`
 		INSERT INTO repos (root_path, name, identity)
 		VALUES (?, ?, ?)
-	`, identity, identity, identity)
+	`, identity, displayName, identity)
 	if err != nil {
-		return 0, fmt.Errorf("create repo: %w", err)
+		return 0, fmt.Errorf("create placeholder repo: %w", err)
 	}
 	return result.LastInsertId()
+}
+
+// ExtractRepoNameFromIdentity extracts a human-readable name from a git identity.
+// Examples:
+//   - "git@github.com:org/repo.git" -> "repo"
+//   - "https://github.com/org/my-project.git" -> "my-project"
+//   - "https://github.com/org/repo" -> "repo"
+//   - "" -> "unknown"
+func ExtractRepoNameFromIdentity(identity string) string {
+	// Handle empty identity
+	if identity == "" {
+		return "unknown"
+	}
+
+	// Remove trailing .git if present
+	name := strings.TrimSuffix(identity, ".git")
+
+	// Find the last path component
+	// Handle both SSH (git@host:path) and HTTPS (https://host/path) formats
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	} else if idx := strings.LastIndex(name, ":"); idx >= 0 {
+		// SSH format like git@github.com:org/repo - get part after last /
+		afterColon := name[idx+1:]
+		if slashIdx := strings.LastIndex(afterColon, "/"); slashIdx >= 0 {
+			name = afterColon[slashIdx+1:]
+		} else {
+			name = afterColon
+		}
+	}
+
+	// If we ended up with empty string, use the identity as-is
+	if name == "" {
+		return identity
+	}
+	return name
 }
 
 // GetOrCreateCommitByRepoAndSHA finds or creates a commit.

@@ -393,6 +393,67 @@ func TestMarkReviewAddressedNotFound(t *testing.T) {
 	}
 }
 
+func TestMarkReviewAddressedByJobID(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
+	commit, _ := db.GetOrCreateCommit(repo.ID, "jobaddr123", "Author", "Subject", time.Now())
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "jobaddr123", "codex", "", "")
+	db.ClaimJob("worker-1")
+	db.CompleteJob(job.ID, "codex", "prompt", "output")
+
+	// Get the review to verify initial state
+	review, err := db.GetReviewByJobID(job.ID)
+	if err != nil {
+		t.Fatalf("GetReviewByJobID failed: %v", err)
+	}
+
+	// Initially not addressed
+	if review.Addressed {
+		t.Error("Review should not be addressed initially")
+	}
+
+	// Mark as addressed using job ID
+	err = db.MarkReviewAddressedByJobID(job.ID, true)
+	if err != nil {
+		t.Fatalf("MarkReviewAddressedByJobID failed: %v", err)
+	}
+
+	// Verify it's addressed
+	updated, _ := db.GetReviewByJobID(job.ID)
+	if !updated.Addressed {
+		t.Error("Review should be addressed after MarkReviewAddressedByJobID(true)")
+	}
+
+	// Mark as unaddressed using job ID
+	err = db.MarkReviewAddressedByJobID(job.ID, false)
+	if err != nil {
+		t.Fatalf("MarkReviewAddressedByJobID(false) failed: %v", err)
+	}
+
+	updated2, _ := db.GetReviewByJobID(job.ID)
+	if updated2.Addressed {
+		t.Error("Review should not be addressed after MarkReviewAddressedByJobID(false)")
+	}
+}
+
+func TestMarkReviewAddressedByJobIDNotFound(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Try to mark a non-existent job
+	err := db.MarkReviewAddressedByJobID(999999, true)
+	if err == nil {
+		t.Fatal("Expected error for non-existent job")
+	}
+
+	// Should be sql.ErrNoRows
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("Expected sql.ErrNoRows, got: %v", err)
+	}
+}
+
 func TestJobCounts(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -1904,6 +1965,61 @@ func TestRepoIdentity(t *testing.T) {
 		}
 		if repo2.Identity != "original-identity" {
 			t.Errorf("Expected identity to remain 'original-identity', got %q", repo2.Identity)
+		}
+	})
+
+	t.Run("multiple clones with same identity allowed", func(t *testing.T) {
+		// This tests the fix for https://github.com/roborev-dev/roborev/issues/131
+		// Multiple clones of the same repo (e.g., ~/project-1 and ~/project-2 both
+		// cloned from the same remote) should be allowed and share the same identity.
+		db := openTestDB(t)
+		defer db.Close()
+
+		sharedIdentity := "git@github.com:org/shared-repo.git"
+
+		// Create first clone
+		repo1, err := db.GetOrCreateRepo("/tmp/clone-1", sharedIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo for clone-1 failed: %v", err)
+		}
+		if repo1.Identity != sharedIdentity {
+			t.Errorf("Expected identity %q for clone-1, got %q", sharedIdentity, repo1.Identity)
+		}
+
+		// Create second clone with same identity - should succeed (was failing before fix)
+		repo2, err := db.GetOrCreateRepo("/tmp/clone-2", sharedIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo for clone-2 failed: %v (multiple clones with same identity should be allowed)", err)
+		}
+		if repo2.Identity != sharedIdentity {
+			t.Errorf("Expected identity %q for clone-2, got %q", sharedIdentity, repo2.Identity)
+		}
+
+		// Verify they are different repos
+		if repo1.ID == repo2.ID {
+			t.Errorf("Expected different repo IDs, but both are %d", repo1.ID)
+		}
+		if repo1.RootPath == repo2.RootPath {
+			t.Errorf("Expected different root paths")
+		}
+
+		// Verify both repos exist and can be retrieved
+		repos, err := db.ListRepos()
+		if err != nil {
+			t.Fatalf("ListRepos failed: %v", err)
+		}
+
+		foundClone1, foundClone2 := false, false
+		for _, r := range repos {
+			if r.ID == repo1.ID {
+				foundClone1 = true
+			}
+			if r.ID == repo2.ID {
+				foundClone2 = true
+			}
+		}
+		if !foundClone1 || !foundClone2 {
+			t.Errorf("Expected both clones to exist in ListRepos, found clone1=%v clone2=%v", foundClone1, foundClone2)
 		}
 	})
 }

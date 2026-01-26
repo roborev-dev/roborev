@@ -570,6 +570,45 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 	})
 }
 
+func TestSyncConfigGetRepoDisplayName(t *testing.T) {
+	t.Run("nil receiver returns empty", func(t *testing.T) {
+		var cfg *SyncConfig
+		if got := cfg.GetRepoDisplayName("any"); got != "" {
+			t.Errorf("Expected empty string for nil receiver, got %q", got)
+		}
+	})
+
+	t.Run("nil map returns empty", func(t *testing.T) {
+		cfg := &SyncConfig{}
+		if got := cfg.GetRepoDisplayName("any"); got != "" {
+			t.Errorf("Expected empty string for nil map, got %q", got)
+		}
+	})
+
+	t.Run("missing key returns empty", func(t *testing.T) {
+		cfg := &SyncConfig{
+			RepoNames: map[string]string{
+				"git@github.com:org/repo.git": "my-repo",
+			},
+		}
+		if got := cfg.GetRepoDisplayName("unknown"); got != "" {
+			t.Errorf("Expected empty string for missing key, got %q", got)
+		}
+	})
+
+	t.Run("returns configured name", func(t *testing.T) {
+		cfg := &SyncConfig{
+			RepoNames: map[string]string{
+				"git@github.com:org/repo.git": "my-custom-name",
+			},
+		}
+		expected := "my-custom-name"
+		if got := cfg.GetRepoDisplayName("git@github.com:org/repo.git"); got != expected {
+			t.Errorf("Expected %q, got %q", expected, got)
+		}
+	})
+}
+
 func TestSyncConfigValidate(t *testing.T) {
 	t.Run("disabled returns no warnings", func(t *testing.T) {
 		cfg := SyncConfig{Enabled: false}

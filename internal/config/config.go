@@ -50,6 +50,10 @@ type SyncConfig struct {
 
 	// ConnectTimeout is the connection timeout (e.g., "5s"). Default: 5s
 	ConnectTimeout string `toml:"connect_timeout"`
+
+	// RepoNames provides custom display names for synced repos by identity.
+	// Example: {"git@github.com:org/repo.git": "my-project"}
+	RepoNames map[string]string `toml:"repo_names"`
 }
 
 // PostgresURLExpanded returns the PostgreSQL URL with environment variables expanded.
@@ -59,6 +63,15 @@ func (c *SyncConfig) PostgresURLExpanded() string {
 		return ""
 	}
 	return os.ExpandEnv(c.PostgresURL)
+}
+
+// GetRepoDisplayName returns the configured display name for a repo identity,
+// or empty string if no override is configured.
+func (c *SyncConfig) GetRepoDisplayName(identity string) string {
+	if c == nil || c.RepoNames == nil {
+		return ""
+	}
+	return c.RepoNames[identity]
 }
 
 // Validate checks the sync configuration for common issues.

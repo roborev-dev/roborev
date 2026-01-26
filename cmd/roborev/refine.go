@@ -284,8 +284,8 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 				if verdict == "F" && !review.Addressed {
 					currentFailedReview = review
 				} else if verdict == "P" {
-					if err := client.MarkReviewAddressed(review.ID); err != nil {
-						fmt.Printf("Warning: failed to mark review %d as addressed: %v\n", review.ID, err)
+					if err := client.MarkReviewAddressed(review.JobID); err != nil {
+						fmt.Printf("Warning: failed to mark review (job %d) as addressed: %v\n", review.JobID, err)
 					}
 					continue // Loop back to check for more
 				}
@@ -484,8 +484,8 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText)
 
 		// Mark old review as addressed
-		if err := client.MarkReviewAddressed(currentFailedReview.ID); err != nil {
-			fmt.Printf("Warning: failed to mark review %d as addressed: %v\n", currentFailedReview.ID, err)
+		if err := client.MarkReviewAddressed(currentFailedReview.JobID); err != nil {
+			fmt.Printf("Warning: failed to mark review (job %d) as addressed: %v\n", currentFailedReview.JobID, err)
 		}
 
 		// Wait for new commit to be reviewed (if post-commit hook triggers it)
@@ -511,8 +511,8 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		verdict := storage.ParseVerdict(review.Output)
 		if verdict == "P" {
 			fmt.Println("New commit passed review!")
-			if err := client.MarkReviewAddressed(review.ID); err != nil {
-				fmt.Printf("Warning: failed to mark review %d as addressed: %v\n", review.ID, err)
+			if err := client.MarkReviewAddressed(review.JobID); err != nil {
+				fmt.Printf("Warning: failed to mark review (job %d) as addressed: %v\n", review.JobID, err)
 			}
 			currentFailedReview = nil // Move on to next oldest failed commit
 		} else {
@@ -573,8 +573,8 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 
 		// Mark passing reviews as addressed so they don't need to be checked again
 		if verdict == "P" {
-			if err := client.MarkReviewAddressed(review.ID); err != nil {
-				return nil, fmt.Errorf("marking review %d as addressed: %w", review.ID, err)
+			if err := client.MarkReviewAddressed(review.JobID); err != nil {
+				return nil, fmt.Errorf("marking review (job %d) as addressed: %w", review.JobID, err)
 			}
 		}
 	}
