@@ -7385,3 +7385,114 @@ func TestTUIRemoveFilterFromStack(t *testing.T) {
 		t.Errorf("Expected filterStack length to remain 2, got %d", len(m.filterStack))
 	}
 }
+
+// Backfill gating tests
+
+func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
+	// Test that branchBackfillDone is set only when nullsRemaining is 0
+	m := newTuiModel("http://localhost")
+	m.branchBackfillDone = false
+
+	// Receive message with no NULLs remaining
+	updated, _ := m.Update(tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 5}},
+		totalCount:     5,
+		backfillCount:  0,
+		nullsRemaining: 0,
+	})
+	m2 := updated.(tuiModel)
+
+	if !m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to be true when nullsRemaining is 0")
+	}
+}
+
+func TestTUIBranchBackfillDoneNotSetWhenNullsRemain(t *testing.T) {
+	// Test that branchBackfillDone is NOT set when nullsRemaining > 0
+	m := newTuiModel("http://localhost")
+	m.branchBackfillDone = false
+
+	// Receive message with some NULLs remaining
+	updated, _ := m.Update(tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 3}},
+		totalCount:     8,
+		backfillCount:  2,
+		nullsRemaining: 3, // Some jobs still have NULL branches
+	})
+	m2 := updated.(tuiModel)
+
+	if m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to remain false when nullsRemaining > 0")
+	}
+}
+
+func TestTUIBranchBackfillRetryAllowedWhenNullsRemain(t *testing.T) {
+	// Test that backfill can retry on subsequent fetches when NULLs remain
+	m := newTuiModel("http://localhost")
+	m.branchBackfillDone = false
+
+	// First fetch: some NULLs remain, backfillDone should stay false
+	updated, _ := m.Update(tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 2}},
+		totalCount:     7,
+		backfillCount:  1,
+		nullsRemaining: 2,
+	})
+	m2 := updated.(tuiModel)
+
+	if m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to remain false after first fetch with NULLs")
+	}
+
+	// Second fetch: all NULLs resolved
+	updated, _ = m2.Update(tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 7}},
+		totalCount:     7,
+		backfillCount:  2,
+		nullsRemaining: 0,
+	})
+	m3 := updated.(tuiModel)
+
+	if !m3.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to be true after NULLs resolved")
+	}
+}
+
+func TestTUIStatusColumnTruncation(t *testing.T) {
+	// Test that the queue view renders without error for jobs with high retry counts
+	// The status "running(99)" (11 chars) should be truncated to fit column width (10)
+	m := newTuiModel("http://localhost")
+	m.width = 200  // Wide enough terminal
+	m.height = 30  // Enough rows
+	m.currentView = tuiViewQueue
+
+	m.jobs = []storage.ReviewJob{
+		{
+			ID:         1,
+			RepoName:   "test-repo",
+			RepoPath:   "/path/to/repo",
+			GitRef:     "abc1234",
+			Status:     storage.JobStatusRunning,
+			RetryCount: 99, // Will create "running(99)" = 11 chars, truncated to 10
+		},
+		{
+			ID:         2,
+			RepoName:   "test-repo",
+			RepoPath:   "/path/to/repo",
+			GitRef:     "def5678",
+			Status:     storage.JobStatusQueued,
+			RetryCount: 100, // Will create "queued(100)" = 11 chars, truncated to 10
+		},
+	}
+	m.selectedIdx = 0
+
+	// Render the view - should not panic and should produce output
+	output := m.View()
+	if len(output) == 0 {
+		t.Error("Expected non-empty view output")
+	}
+
+	// The truncated status should appear (running(9 from running(99))
+	// Full "running(99)" with trailing space should not appear as it would be 12 chars
+	// This is a basic smoke test to ensure truncation doesn't break rendering
+}

@@ -284,9 +284,10 @@ type tuiReposMsg struct {
 	totalCount int
 }
 type tuiBranchesMsg struct {
-	branches      []branchFilterItem
-	totalCount    int
-	backfillCount int // Number of branches successfully backfilled to the database
+	branches       []branchFilterItem
+	totalCount     int
+	backfillCount  int // Number of branches successfully backfilled to the database
+	nullsRemaining int // Number of jobs still without branch info (for backfill gating)
 }
 type tuiCommentResultMsg struct {
 	jobID int64
@@ -826,10 +827,16 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 		}
 
 		// Count jobs per branch (filtered by active repo filter if set)
+		// Also count remaining NULL branches for backfill gating
 		branchCounts := make(map[string]int)
 		var branchOrder []string
 		var filteredTotal int
+		var nullsRemaining int
 		for _, job := range result.Jobs {
+			// Count NULLs across all jobs (not just filtered)
+			if job.Branch == "" {
+				nullsRemaining++
+			}
 			// Skip jobs that don't match repo filter
 			if len(activeRepoFilter) > 0 {
 				matches := false
@@ -862,7 +869,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				count: branchCounts[name],
 			}
 		}
-		return tuiBranchesMsg{branches: branches, totalCount: filteredTotal, backfillCount: backfillCount}
+		return tuiBranchesMsg{branches: branches, totalCount: filteredTotal, backfillCount: backfillCount, nullsRemaining: nullsRemaining}
 	}
 }
 
@@ -2843,7 +2850,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiBranchesMsg:
 		m.consecutiveErrors = 0 // Reset on successful fetch
-		m.branchBackfillDone = true // Mark backfill as done for this session
+		// Only mark backfill done when no NULL branches remain
+		// This allows retry if new jobs with NULL branches appear later
+		if msg.nullsRemaining == 0 {
+			m.branchBackfillDone = true
+		}
 		// Populate filter branches with "All branches" as first option
 		m.filterBranches = []branchFilterItem{{name: "", count: msg.totalCount}}
 		m.filterBranches = append(m.filterBranches, msg.branches...)
@@ -3124,7 +3135,7 @@ func (m tuiModel) renderQueueView() string {
 		colWidths := m.calculateColumnWidths(idWidth)
 
 		// Header (with 2-char prefix to align with row selector)
-		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-8s %-3s %-12s %-8s %s",
+		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-10s %-3s %-12s %-8s %s",
 			idWidth, "ID",
 			colWidths.ref, "Ref",
 			colWidths.branch, "Branch",
@@ -3230,9 +3241,10 @@ type columnWidths struct {
 }
 
 func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
+	// Fixed widths: ID (idWidth), Status (10), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
+	// Status width 10 accommodates "running(9)" - higher retry counts get truncated
 	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
-	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 6 + 9
+	fixedWidth := 2 + idWidth + 10 + 3 + 12 + 8 + 6 + 9
 
 	// Available width for flexible columns (ref, branch, repo, agent)
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
@@ -3342,9 +3354,25 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 			styledStatus = status
 		}
 	}
+	// Truncate/pad to width 10 (accommodates "running(9)", truncates higher)
+	if len(status) > 10 {
+		status = status[:10]
+		// Re-apply styling after truncation
+		if !selected {
+			switch job.Status {
+			case storage.JobStatusQueued:
+				styledStatus = tuiQueuedStyle.Render(status)
+			case storage.JobStatusRunning:
+				styledStatus = tuiRunningStyle.Render(status)
+			default:
+				styledStatus = status
+			}
+		} else {
+			styledStatus = status
+		}
+	}
 	// Pad after coloring since lipgloss strips trailing spaces
-	// Width 8 accommodates "canceled" (8 chars)
-	padding := 8 - len(status)
+	padding := 10 - len(status)
 	if padding > 0 {
 		styledStatus += strings.Repeat(" ", padding)
 	}
