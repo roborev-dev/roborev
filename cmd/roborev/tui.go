@@ -431,6 +431,12 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 		return ""
 	}
 
+	// Check if repo exists locally before attempting git lookup
+	if _, err := os.Stat(job.RepoPath); os.IsNotExist(err) {
+		// Don't cache - repo might be cloned later
+		return ""
+	}
+
 	// For ranges (SHA..SHA), use the end SHA
 	sha := job.GitRef
 	if idx := strings.Index(sha, ".."); idx != -1 {
@@ -438,8 +444,9 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 	}
 
 	branch := git.GetBranchName(job.RepoPath, sha)
-	// Only cache non-empty results - if repo becomes available later, we can retry
-	if branch != "" && m.branchNames != nil {
+	// Cache result (including empty for detached HEAD / commit not on branch)
+	// We only skip caching above when repo doesn't exist yet
+	if m.branchNames != nil {
 		m.branchNames[job.ID] = branch
 	}
 	return branch
