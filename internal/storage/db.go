@@ -214,12 +214,6 @@ func (db *DB) migrate() error {
 		}
 	}
 
-	// Migration: add index on branch column if missing
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_branch ON review_jobs(branch)`)
-	if err != nil {
-		return fmt.Errorf("create branch index: %w", err)
-	}
-
 	// Migration: update CHECK constraint to include 'canceled' status
 	// SQLite requires table recreation to modify CHECK constraints
 	var tableSql string
@@ -372,6 +366,13 @@ func (db *DB) migrate() error {
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("foreign key check iteration failed: %w", err)
 		}
+	}
+
+	// Migration: add index on branch column if missing
+	// This must be after the table recreation migration above (which drops and recreates the table)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_branch ON review_jobs(branch)`)
+	if err != nil {
+		return fmt.Errorf("create branch index: %w", err)
 	}
 
 	// Migration: make commit_id nullable in responses table (for job-based responses)
