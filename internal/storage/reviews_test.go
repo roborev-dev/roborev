@@ -234,6 +234,54 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 	}
 }
 
+func TestGetReviewByJobIDIncludesModel(t *testing.T) {
+	db := openReviewsTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		gitRef        string
+		model         string
+		expectedModel string
+	}{
+		{"model is populated when set", "abc123", "o3", "o3"},
+		{"model is empty when not set", "def456", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job, err := db.EnqueueRangeJob(repo.ID, tt.gitRef, "codex", tt.model, "thorough")
+			if err != nil {
+				t.Fatalf("EnqueueRangeJob failed: %v", err)
+			}
+
+			// Claim job to move to running, then complete it
+			db.ClaimJob("test-worker")
+			err = db.CompleteJob(job.ID, "codex", "test prompt", "Test review output\n\n## Verdict: PASS")
+			if err != nil {
+				t.Fatalf("CompleteJob failed: %v", err)
+			}
+
+			review, err := db.GetReviewByJobID(job.ID)
+			if err != nil {
+				t.Fatalf("GetReviewByJobID failed: %v", err)
+			}
+
+			if review.Job == nil {
+				t.Fatal("Expected review.Job to be populated")
+			}
+			if review.Job.Model != tt.expectedModel {
+				t.Errorf("Expected model %q, got %q", tt.expectedModel, review.Job.Model)
+			}
+		})
+	}
+}
+
 func openReviewsTestDB(t *testing.T) *DB {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

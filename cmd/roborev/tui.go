@@ -2926,11 +2926,7 @@ func (m tuiModel) renderReviewView() string {
 		}
 		repoStr := m.getDisplayName(review.Job.RepoPath, defaultName)
 
-		// Build agent string, including model if explicitly set
-		agentStr := review.Agent
-		if review.Job.Model != "" {
-			agentStr = fmt.Sprintf("%s: %s", review.Agent, review.Job.Model)
-		}
+		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
 
 		title = fmt.Sprintf("Review %s%s (%s)", idStr, repoStr, agentStr)
 		titleLen = len(title)
@@ -3084,11 +3080,7 @@ func (m tuiModel) renderPromptView() string {
 	review := m.currentReview
 	if review.Job != nil {
 		ref := shortJobRef(*review.Job)
-		// Build agent string, including model if explicitly set
-		agentStr := review.Agent
-		if review.Job.Model != "" {
-			agentStr = fmt.Sprintf("%s: %s", review.Agent, review.Job.Model)
-		}
+		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
 		title := fmt.Sprintf("Prompt: %s (%s)", ref, agentStr)
 		b.WriteString(tuiTitleStyle.Render(title))
 	} else {

@@ -2352,6 +2352,15 @@ func shortJobRef(job storage.ReviewJob) string {
 	return shortRef(job.GitRef)
 }
 
+// formatAgentLabel returns the agent display string, including model if set.
+// Format: "agent" or "agent: model"
+func formatAgentLabel(agent string, model string) string {
+	if model != "" {
+		return fmt.Sprintf("%s: %s", agent, model)
+	}
+	return agent
+}
+
 // generateHookContent creates the post-commit hook script content.
 // It bakes the path to the currently running binary for consistency.
 // Falls back to PATH lookup if the baked path becomes unavailable.
