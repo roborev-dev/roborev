@@ -2930,7 +2930,7 @@ func (m tuiModel) renderReviewView() string {
 		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
 
 		title = fmt.Sprintf("Review %s%s (%s)", idStr, repoStr, agentStr)
-		titleLen = len(title)
+		titleLen = runewidth.StringWidth(title)
 
 		b.WriteString(tuiTitleStyle.Render(title))
 		b.WriteString("\x1b[K") // Clear to end of line
@@ -2950,7 +2950,7 @@ func (m tuiModel) renderReviewView() string {
 		if m.currentBranch != "" {
 			locationLine += " on " + m.currentBranch
 		}
-		locationLineLen = len(locationLine)
+		locationLineLen = runewidth.StringWidth(locationLine)
 		b.WriteString(tuiStatusStyle.Render(locationLine))
 		b.WriteString("\x1b[K") // Clear to end of line
 

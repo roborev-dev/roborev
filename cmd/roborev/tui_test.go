@@ -4109,26 +4109,31 @@ func TestTUIRenderReviewViewAddressedWithoutVerdict(t *testing.T) {
 	output := m.View()
 	lines := strings.Split(output, "\n")
 
+	// Require at least 4 lines: title, location, addressed, content
+	if len(lines) < 4 {
+		t.Fatalf("Expected at least 4 lines, got %d:\n%s", len(lines), output)
+	}
+
 	// Line 0: Title
 	if !strings.Contains(lines[0], "Review") {
 		t.Errorf("Line 0 should contain 'Review', got: %s", lines[0])
 	}
 
 	// Line 1: Location (ref)
-	if len(lines) > 1 && !strings.Contains(lines[1], "abc1234") {
+	if !strings.Contains(lines[1], "abc1234") {
 		t.Errorf("Line 1 should contain ref 'abc1234', got: %s", lines[1])
 	}
 
 	// Line 2: [ADDRESSED] (no verdict)
-	if len(lines) > 2 && !strings.Contains(lines[2], "[ADDRESSED]") {
+	if !strings.Contains(lines[2], "[ADDRESSED]") {
 		t.Errorf("Line 2 should contain '[ADDRESSED]', got: %s", lines[2])
 	}
-	if len(lines) > 2 && strings.Contains(lines[2], "Verdict") {
+	if strings.Contains(lines[2], "Verdict") {
 		t.Errorf("Line 2 should not contain 'Verdict' when no verdict is set, got: %s", lines[2])
 	}
 
 	// Line 3: Content
-	if len(lines) > 3 && !strings.Contains(lines[3], "Line 1") {
+	if !strings.Contains(lines[3], "Line 1") {
 		t.Errorf("Line 3 should contain content 'Line 1', got: %s", lines[3])
 	}
 }
