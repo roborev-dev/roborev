@@ -2331,3 +2331,174 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 		t.Errorf("Unexpected comment: %q", comments[0].Response)
 	}
 }
+
+// TestHandleJobOutput_InvalidJobID tests that invalid job_id returns 400.
+func TestHandleJobOutput_InvalidJobID(t *testing.T) {
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=notanumber", nil)
+	w := httptest.NewRecorder()
+
+	server.handleJobOutput(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleJobOutput_NonExistentJob tests that non-existent job returns 404.
+func TestHandleJobOutput_NonExistentJob(t *testing.T) {
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=99999", nil)
+	w := httptest.NewRecorder()
+
+	server.handleJobOutput(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleJobOutput_PollingRunningJob tests polling mode for a running job.
+func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	// Create a running job
+	repo, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+	commit, _ := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+	w := httptest.NewRecorder()
+
+	server.handleJobOutput(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		JobID   int64 `json:"job_id"`
+		Status  string `json:"status"`
+		Lines   []struct {
+			TS       string `json:"ts"`
+			Text     string `json:"text"`
+			LineType string `json:"line_type"`
+		} `json:"lines"`
+		HasMore bool `json:"has_more"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.JobID != job.ID {
+		t.Errorf("Expected job_id %d, got %d", job.ID, resp.JobID)
+	}
+	if resp.Status != "running" {
+		t.Errorf("Expected status 'running', got %q", resp.Status)
+	}
+	if !resp.HasMore {
+		t.Error("Expected has_more=true for running job")
+	}
+}
+
+// TestHandleJobOutput_PollingCompletedJob tests polling mode for a completed job.
+func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	// Create a completed job
+	repo, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+	commit, _ := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	db.Exec(`UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`, job.ID)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+	w := httptest.NewRecorder()
+
+	server.handleJobOutput(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		JobID   int64  `json:"job_id"`
+		Status  string `json:"status"`
+		HasMore bool   `json:"has_more"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.Status != "done" {
+		t.Errorf("Expected status 'done', got %q", resp.Status)
+	}
+	if resp.HasMore {
+		t.Error("Expected has_more=false for completed job")
+	}
+}
+
+// TestHandleJobOutput_StreamingCompletedJob tests that streaming mode for a
+// completed job returns an immediate complete response instead of hanging.
+func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	// Create a completed job
+	repo, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+	commit, _ := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	db.Exec(`UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`, job.ID)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d&stream=1", job.ID), nil)
+	w := httptest.NewRecorder()
+
+	server.handleJobOutput(w, req)
+
+	// Should return immediately with complete message, not hang
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Type   string `json:"type"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.Type != "complete" {
+		t.Errorf("Expected type 'complete', got %q", resp.Type)
+	}
+	if resp.Status != "done" {
+		t.Errorf("Expected status 'done', got %q", resp.Status)
+	}
+}
+
+// TestHandleJobOutput_MissingJobID tests that missing job_id returns 400.
+func TestHandleJobOutput_MissingJobID(t *testing.T) {
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/job/output", nil)
+	w := httptest.NewRecorder()
+
+	server.handleJobOutput(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
