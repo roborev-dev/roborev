@@ -3067,17 +3067,17 @@ func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
 	availableWidth := max(4, m.width-fixedWidth) // At least 4 chars total for columns
 
-	// Distribute available width: ref (15%), branch (25%), repo (35%), agent (25%)
+	// Distribute available width: ref (15%), branch (35%), repo (35%), agent (15%)
 	refWidth := max(1, availableWidth*15/100)
-	branchWidth := max(1, availableWidth*25/100)
+	branchWidth := max(1, availableWidth*35/100)
 	repoWidth := max(1, availableWidth*35/100)
-	agentWidth := max(1, availableWidth*25/100)
+	agentWidth := max(1, availableWidth*15/100)
 
 	// Scale down if total exceeds available (can happen due to rounding with small values)
 	total := refWidth + branchWidth + repoWidth + agentWidth
 	if total > availableWidth && availableWidth > 0 {
 		refWidth = max(1, availableWidth*15/100)
-		branchWidth = max(1, availableWidth*25/100)
+		branchWidth = max(1, availableWidth*35/100)
 		repoWidth = max(1, availableWidth*35/100)
 		agentWidth = availableWidth - refWidth - branchWidth - repoWidth // Give remainder to agent
 		if agentWidth < 1 {

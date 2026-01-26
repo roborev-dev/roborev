@@ -606,6 +606,12 @@ func GetBranchName(repoPath, sha string) string {
 		return ""
 	}
 
+	// Strip ~N or ^N suffix (e.g., "main~12" -> "main")
+	// These indicate the commit is N commits behind the branch tip
+	if idx := strings.IndexAny(name, "~^"); idx != -1 {
+		name = name[:idx]
+	}
+
 	return name
 }
 

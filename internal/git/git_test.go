@@ -829,11 +829,10 @@ func TestGetBranchName(t *testing.T) {
 		exec.Command("git", "-C", tmpDir, "add", ".").Run()
 		exec.Command("git", "-C", tmpDir, "commit", "-m", "second").Run()
 
-		// Original commit should now show as branch~1
+		// Original commit should still return just the branch name (suffix stripped)
 		branch := GetBranchName(tmpDir, commitSHA)
-		expected := expectedBranch + "~1"
-		if branch != expected {
-			t.Errorf("expected %s, got %s", expected, branch)
+		if branch != expectedBranch {
+			t.Errorf("expected %s (suffix stripped), got %s", expectedBranch, branch)
 		}
 	})
 
