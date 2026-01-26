@@ -183,7 +183,7 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
 
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}

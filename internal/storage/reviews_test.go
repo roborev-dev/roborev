@@ -57,7 +57,7 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a job for this test case
-			job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "claude-code", "", "thorough")
+			job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "claude-code", "", "thorough")
 			if err != nil {
 				t.Fatalf("EnqueueJob failed: %v", err)
 			}
@@ -148,7 +148,7 @@ func TestAddCommentToJobMultipleComments(t *testing.T) {
 	}
 
 	// Create a job and set it to running (in-progress)
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "claude-code", "", "thorough")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "claude-code", "", "thorough")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 	}
 
 	// Create a job (no review is created yet - job is just queued)
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "claude-code", "", "thorough")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "claude-code", "", "thorough")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			job, err := db.EnqueueRangeJob(repo.ID, tt.gitRef, "codex", tt.model, "thorough")
+			job, err := db.EnqueueRangeJob(repo.ID, tt.gitRef, "", "codex", tt.model, "thorough")
 			if err != nil {
 				t.Fatalf("EnqueueRangeJob failed: %v", err)
 			}

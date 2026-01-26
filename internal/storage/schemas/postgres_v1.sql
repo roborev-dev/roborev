@@ -1,10 +1,6 @@
 -- PostgreSQL schema version 1
--- This is the original schema before the model column was added to review_jobs.
--- Used for migration testing.
---
--- Note: This is the Postgres SYNC schema, which only stores completed jobs
--- (status IN 'done', 'failed', 'canceled'). The local SQLite database has
--- additional statuses ('queued', 'running') that are not synced to Postgres.
+-- Initial schema without model or branch columns.
+-- Note: Version is managed by EnsureSchema(), not this file.
 
 CREATE SCHEMA IF NOT EXISTS roborev;
 
@@ -12,8 +8,6 @@ CREATE TABLE IF NOT EXISTS roborev.schema_version (
   version INTEGER PRIMARY KEY,
   applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-
-INSERT INTO roborev.schema_version (version) VALUES (1);
 
 CREATE TABLE IF NOT EXISTS roborev.machines (
   id SERIAL PRIMARY KEY,
@@ -46,7 +40,6 @@ CREATE TABLE IF NOT EXISTS roborev.review_jobs (
   commit_id INTEGER REFERENCES roborev.commits(id),
   git_ref TEXT NOT NULL,
   agent TEXT NOT NULL,
-  -- NOTE: no model column in v1
   reasoning TEXT,
   status TEXT NOT NULL CHECK(status IN ('done', 'failed', 'canceled')),
   agentic BOOLEAN DEFAULT FALSE,
@@ -95,3 +88,5 @@ CREATE TABLE IF NOT EXISTS roborev.sync_metadata (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+INSERT INTO roborev.schema_version (version) VALUES (1);

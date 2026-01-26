@@ -103,7 +103,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
 
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "codex", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "codex", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}

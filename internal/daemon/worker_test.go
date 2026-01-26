@@ -29,7 +29,7 @@ func TestWorkerPoolE2E(t *testing.T) {
 	}
 
 	// Enqueue a job with test agent
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha123", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha123", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		sha := "concurrentsha" + string(rune('0'+i))
 		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, sha, "test", "", "")
+		db.EnqueueJob(repo.ID, commit.ID, sha, "", "test", "", "")
 	}
 
 	broadcaster := NewBroadcaster()
@@ -119,7 +119,7 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "cancelsha", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "cancelsha", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestWorkerPoolPendingCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "pending-cancel", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "pending-cancel", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "api-cancel-race", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "api-cancel-race", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "finish-window", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "finish-window", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "register-during", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "register-during", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "deadlock-test", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "deadlock-test", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}

@@ -84,7 +84,7 @@ func TestIntegration_SyncFullCycle(t *testing.T) {
 	}
 
 	// Enqueue a job
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123def456", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123def456", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -204,8 +204,8 @@ func TestIntegration_SyncMultipleRepos(t *testing.T) {
 	commit2, _ := db.GetOrCreateCommit(repo2.ID, sameSHA, "Author", "Subject", time.Now())
 
 	// Create jobs for both repos and complete them (only terminal jobs are synced)
-	job1, _ := db.EnqueueJob(repo1.ID, commit1.ID, sameSHA, "test", "", "")
-	job2, _ := db.EnqueueJob(repo2.ID, commit2.ID, sameSHA, "test", "", "")
+	job1, _ := db.EnqueueJob(repo1.ID, commit1.ID, sameSHA, "", "test", "", "")
+	job2, _ := db.EnqueueJob(repo2.ID, commit2.ID, sameSHA, "", "test", "", "")
 
 	// Complete both jobs
 	db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job1.ID)
@@ -1034,7 +1034,7 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		if err != nil {
 			return nil, fmt.Errorf("GetOrCreateCommit: %w", err)
 		}
-		job, err := db.EnqueueJob(repoID, commit.ID, sha, "test", "", "")
+		job, err := db.EnqueueJob(repoID, commit.ID, sha, "", "test", "", "")
 		if err != nil {
 			return nil, fmt.Errorf("EnqueueJob: %w", err)
 		}

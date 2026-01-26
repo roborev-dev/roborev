@@ -745,10 +745,14 @@ Examples:
 				gitRef = sha
 			}
 
+			// Get current branch name for tracking
+			branchName := git.GetCurrentBranch(root)
+
 			// Make request - server will validate and resolve refs
 			reqBody, _ := json.Marshal(map[string]interface{}{
 				"repo_path":    root,
 				"git_ref":      gitRef,
+				"branch":       branchName,
 				"agent":        agent,
 				"model":        model,
 				"reasoning":    reasoning,

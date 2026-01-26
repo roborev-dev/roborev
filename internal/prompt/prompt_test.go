@@ -127,7 +127,7 @@ func TestBuildPromptWithPreviousReviews(t *testing.T) {
 
 		// Create review for some commits
 		if reviewText, ok := reviewTexts[i]; ok {
-			job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "test", "", "")
+			job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "", "test", "", "")
 			if err != nil {
 				t.Fatalf("EnqueueJob failed: %v", err)
 			}
@@ -208,7 +208,7 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 	// Create review for commit 3 (parent of commit 6) with responses
 	parentSHA := commits[2] // commit 3
 	commit3, _ := db.GetOrCreateCommit(repo.ID, parentSHA, "Test", "commit 3", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit3.ID, parentSHA, "test", "", "")
+	job, _ := db.EnqueueJob(repo.ID, commit3.ID, parentSHA, "", "test", "", "")
 	db.ClaimJob("test-worker")
 	db.CompleteJob(job.ID, "test", "prompt", "Found potential memory leak in connection pool")
 
@@ -339,7 +339,7 @@ func TestPromptContainsExpectedFormat(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo(repoPath)
 	commit, _ := db.GetOrCreateCommit(repo.ID, commits[4], "Test", "test", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, commits[4], "test", "", "")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, commits[4], "", "test", "", "")
 	db.ClaimJob("test-worker")
 	db.CompleteJob(job.ID, "test", "prompt", "Found 1 issue:\n1. pkg/cache/store.go:112 - Race condition")
 
@@ -523,7 +523,7 @@ func TestBuildPromptWithPreviousAttempts(t *testing.T) {
 	}
 
 	for _, reviewText := range reviewTexts {
-		job, err := db.EnqueueJob(repo.ID, commit.ID, targetSHA, "test", "", "")
+		job, err := db.EnqueueJob(repo.ID, commit.ID, targetSHA, "", "test", "", "")
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -581,7 +581,7 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 	commit, _ := db.GetOrCreateCommit(repo.ID, targetSHA, "Test", "test", time.Now())
 
 	// Create a previous review
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, targetSHA, "test", "", "")
+	job, _ := db.EnqueueJob(repo.ID, commit.ID, targetSHA, "", "test", "", "")
 	db.ClaimJob("test-worker")
 	db.CompleteJob(job.ID, "test", "prompt", "Found issue: missing null check")
 

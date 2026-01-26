@@ -294,6 +294,7 @@ type EnqueueRequest struct {
 	RepoPath     string `json:"repo_path"`
 	CommitSHA    string `json:"commit_sha,omitempty"`    // Single commit (for backwards compat)
 	GitRef       string `json:"git_ref,omitempty"`       // Single commit, range like "abc..def", or "dirty"
+	Branch       string `json:"branch,omitempty"`        // Branch name at time of job creation
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
 	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
@@ -431,14 +432,14 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var job *storage.ReviewJob
 	if isPrompt {
 		// Custom prompt job - use provided prompt directly
-		job, err = s.db.EnqueuePromptJob(repo.ID, agentName, model, reasoning, req.CustomPrompt, req.Agentic)
+		job, err = s.db.EnqueuePromptJob(repo.ID, req.Branch, agentName, model, reasoning, req.CustomPrompt, req.Agentic)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
 			return
 		}
 	} else if isDirty {
 		// Dirty review - use pre-captured diff
-		job, err = s.db.EnqueueDirtyJob(repo.ID, gitRef, agentName, model, reasoning, req.DiffContent)
+		job, err = s.db.EnqueueDirtyJob(repo.ID, gitRef, req.Branch, agentName, model, reasoning, req.DiffContent)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue dirty job: %v", err))
 			return
@@ -460,7 +461,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 		// Store as full SHA range
 		fullRef := startSHA + ".." + endSHA
-		job, err = s.db.EnqueueRangeJob(repo.ID, fullRef, agentName, model, reasoning)
+		job, err = s.db.EnqueueRangeJob(repo.ID, fullRef, req.Branch, agentName, model, reasoning)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
 			return
@@ -487,7 +488,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		job, err = s.db.EnqueueJob(repo.ID, commit.ID, sha, agentName, model, reasoning)
+		job, err = s.db.EnqueueJob(repo.ID, commit.ID, sha, req.Branch, agentName, model, reasoning)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
 			return

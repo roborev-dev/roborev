@@ -18,7 +18,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("creates job with custom prompt", func(t *testing.T) {
 		customPrompt := "Explain the architecture of this codebase"
-		job, err := db.EnqueuePromptJob(repo.ID, "claude-code", "", "thorough", customPrompt, false)
+		job, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "thorough", customPrompt, false)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -41,7 +41,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("defaults reasoning to thorough", func(t *testing.T) {
-		job, err := db.EnqueuePromptJob(repo.ID, "codex", "", "", "test prompt", false)
+		job, err := db.EnqueuePromptJob(repo.ID, "", "codex", "", "", "test prompt", false)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		customPrompt := "Find security issues in the codebase"
-		_, err := db.EnqueuePromptJob(repo.ID, "claude-code", "", "standard", customPrompt, false)
+		_, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "standard", customPrompt, false)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -95,7 +95,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		// Enqueue with agentic=true
-		job, err := db.EnqueuePromptJob(repo.ID, "claude-code", "", "thorough", "Test agentic prompt", true)
+		job, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "thorough", "Test agentic prompt", true)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -138,7 +138,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		// Enqueue with agentic=false
-		job, err := db.EnqueuePromptJob(repo.ID, "codex", "", "standard", "Non-agentic prompt", false)
+		job, err := db.EnqueuePromptJob(repo.ID, "", "codex", "", "standard", "Non-agentic prompt", false)
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -379,13 +379,13 @@ func TestGetRepoStats(t *testing.T) {
 
 	// Add some jobs
 	commit1, _ := db.GetOrCreateCommit(repo.ID, "stats-sha1", "A", "S", time.Now())
-	job1, _ := db.EnqueueJob(repo.ID, commit1.ID, "stats-sha1", "codex", "", "")
+	job1, _ := db.EnqueueJob(repo.ID, commit1.ID, "stats-sha1", "", "codex", "", "")
 
 	commit2, _ := db.GetOrCreateCommit(repo.ID, "stats-sha2", "A", "S", time.Now())
-	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "stats-sha2", "codex", "", "")
+	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "stats-sha2", "", "codex", "", "")
 
 	commit3, _ := db.GetOrCreateCommit(repo.ID, "stats-sha3", "A", "S", time.Now())
-	job3, _ := db.EnqueueJob(repo.ID, commit3.ID, "stats-sha3", "codex", "", "")
+	job3, _ := db.EnqueueJob(repo.ID, commit3.ID, "stats-sha3", "", "codex", "", "")
 
 	// Complete job1 with PASS verdict
 	db.ClaimJob("worker-1")
@@ -436,12 +436,12 @@ func TestGetRepoStats(t *testing.T) {
 
 		// Create a regular job with PASS verdict
 		commit, _ := db.GetOrCreateCommit(repo.ID, "stats-prompt-sha1", "A", "S", time.Now())
-		job1, _ := db.EnqueueJob(repo.ID, commit.ID, "stats-prompt-sha1", "codex", "", "")
+		job1, _ := db.EnqueueJob(repo.ID, commit.ID, "stats-prompt-sha1", "", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
 
 		// Create a prompt job with output that contains verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "", "thorough", "Test prompt", false)
+		promptJob, _ := db.EnqueuePromptJob(repo.ID, "", "codex", "", "thorough", "Test prompt", false)
 		db.ClaimJob("worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
@@ -495,7 +495,7 @@ func TestDeleteRepo(t *testing.T) {
 
 		repo, _ := db.GetOrCreateRepo("/tmp/delete-with-jobs")
 		commit, _ := db.GetOrCreateCommit(repo.ID, "delete-sha", "A", "S", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, "delete-sha", "codex", "", "")
+		db.EnqueueJob(repo.ID, commit.ID, "delete-sha", "", "codex", "", "")
 
 		// Without cascade, delete should return ErrRepoHasJobs
 		err := db.DeleteRepo(repo.ID, false)
@@ -519,7 +519,7 @@ func TestDeleteRepo(t *testing.T) {
 
 		repo, _ := db.GetOrCreateRepo("/tmp/delete-cascade")
 		commit, _ := db.GetOrCreateCommit(repo.ID, "cascade-sha", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cascade-sha", "codex", "", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cascade-sha", "", "codex", "", "")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
@@ -570,13 +570,13 @@ func TestMergeRepos(t *testing.T) {
 
 		// Create jobs in source
 		commit1, _ := db.GetOrCreateCommit(source.ID, "merge-sha1", "A", "S", time.Now())
-		db.EnqueueJob(source.ID, commit1.ID, "merge-sha1", "codex", "", "")
+		db.EnqueueJob(source.ID, commit1.ID, "merge-sha1", "", "codex", "", "")
 		commit2, _ := db.GetOrCreateCommit(source.ID, "merge-sha2", "A", "S", time.Now())
-		db.EnqueueJob(source.ID, commit2.ID, "merge-sha2", "codex", "", "")
+		db.EnqueueJob(source.ID, commit2.ID, "merge-sha2", "", "codex", "", "")
 
 		// Create job in target
 		commit3, _ := db.GetOrCreateCommit(target.ID, "merge-sha3", "A", "S", time.Now())
-		db.EnqueueJob(target.ID, commit3.ID, "merge-sha3", "codex", "", "")
+		db.EnqueueJob(target.ID, commit3.ID, "merge-sha3", "", "codex", "", "")
 
 		moved, err := db.MergeRepos(source.ID, target.ID)
 		if err != nil {
@@ -652,8 +652,8 @@ func TestMergeRepos(t *testing.T) {
 		// Create commits in source
 		commit1, _ := db.GetOrCreateCommit(source.ID, "commit-sha-1", "Author", "Subject 1", time.Now())
 		commit2, _ := db.GetOrCreateCommit(source.ID, "commit-sha-2", "Author", "Subject 2", time.Now())
-		db.EnqueueJob(source.ID, commit1.ID, "commit-sha-1", "codex", "", "")
-		db.EnqueueJob(source.ID, commit2.ID, "commit-sha-2", "codex", "", "")
+		db.EnqueueJob(source.ID, commit1.ID, "commit-sha-1", "", "codex", "", "")
+		db.EnqueueJob(source.ID, commit2.ID, "commit-sha-2", "", "codex", "", "")
 
 		// Verify commits belong to source before merge
 		var sourceCommitCount int
@@ -690,8 +690,8 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 	repo, _ := db.GetOrCreateRepo("/tmp/delete-commits-test")
 	commit1, _ := db.GetOrCreateCommit(repo.ID, "del-commit-1", "A", "S1", time.Now())
 	commit2, _ := db.GetOrCreateCommit(repo.ID, "del-commit-2", "A", "S2", time.Now())
-	db.EnqueueJob(repo.ID, commit1.ID, "del-commit-1", "codex", "", "")
-	db.EnqueueJob(repo.ID, commit2.ID, "del-commit-2", "codex", "", "")
+	db.EnqueueJob(repo.ID, commit1.ID, "del-commit-1", "", "codex", "", "")
+	db.EnqueueJob(repo.ID, commit2.ID, "del-commit-2", "", "codex", "", "")
 
 	// Verify commits exist before delete
 	var beforeCount int
@@ -754,7 +754,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		repo, _ := db.GetOrCreateRepo("/tmp/verdict-prompt-test")
 
 		// Create a prompt job and complete it with output containing verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "", "thorough", "Test prompt", false)
+		promptJob, _ := db.EnqueuePromptJob(repo.ID, "", "codex", "", "thorough", "Test prompt", false)
 		db.ClaimJob("worker-1")
 		// Output that would normally be parsed as FAIL
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")
@@ -786,7 +786,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-sha", "Author", "Subject", time.Now())
 
 		// Create a regular job and complete it
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-sha", "codex", "", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-sha", "", "codex", "", "")
 		db.ClaimJob("worker-1")
 		// Output that should be parsed as PASS
 		db.CompleteJob(job.ID, "codex", "prompt", "No issues found in this commit.")

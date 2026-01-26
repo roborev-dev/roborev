@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   repo_id INTEGER NOT NULL REFERENCES repos(id),
   commit_id INTEGER REFERENCES commits(id),
   git_ref TEXT NOT NULL,
+  branch TEXT,
   agent TEXT NOT NULL DEFAULT 'codex',
   model TEXT,
   reasoning TEXT NOT NULL DEFAULT 'thorough',
@@ -201,6 +202,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add branch column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'branch'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check branch column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN branch TEXT`)
+		if err != nil {
+			return fmt.Errorf("add branch column: %w", err)
+		}
+	}
+
 	// Migration: update CHECK constraint to include 'canceled' status
 	// SQLite requires table recreation to modify CHECK constraints
 	var tableSql string
@@ -240,6 +253,7 @@ func (db *DB) migrate() error {
 				repo_id INTEGER NOT NULL REFERENCES repos(id),
 				commit_id INTEGER REFERENCES commits(id),
 				git_ref TEXT NOT NULL,
+				branch TEXT,
 				agent TEXT NOT NULL DEFAULT 'codex',
 				model TEXT,
 				reasoning TEXT NOT NULL DEFAULT 'thorough',
@@ -260,8 +274,8 @@ func (db *DB) migrate() error {
 		}
 
 		// Check which optional columns exist in source table
-		var hasDiffContent, hasReasoning, hasAgentic, hasModel bool
-		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model')`)
+		var hasDiffContent, hasReasoning, hasAgentic, hasModel, hasBranch bool
+		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model', 'branch')`)
 		if checkErr == nil {
 			for checkRows.Next() {
 				var colName string
@@ -275,6 +289,8 @@ func (db *DB) migrate() error {
 					hasAgentic = true
 				case "model":
 					hasModel = true
+				case "branch":
+					hasBranch = true
 				}
 			}
 			checkRows.Close()
@@ -283,24 +299,26 @@ func (db *DB) migrate() error {
 		// Build INSERT statement based on which columns exist
 		// We need to handle all combinations of optional columns
 		var insertSQL string
-		cols := "id, repo_id, commit_id, git_ref, agent, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
-		if hasReasoning {
-			cols = "id, repo_id, commit_id, git_ref, agent, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
+		// Base columns that always exist
+		baseCols := []string{"id", "repo_id", "commit_id", "git_ref"}
+		if hasBranch {
+			baseCols = append(baseCols, "branch")
 		}
+		baseCols = append(baseCols, "agent")
 		if hasModel {
-			// Insert model after agent
-			if hasReasoning {
-				cols = "id, repo_id, commit_id, git_ref, agent, model, reasoning, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
-			} else {
-				cols = "id, repo_id, commit_id, git_ref, agent, model, status, enqueued_at, started_at, finished_at, worker_id, error, prompt, retry_count"
-			}
+			baseCols = append(baseCols, "model")
 		}
+		if hasReasoning {
+			baseCols = append(baseCols, "reasoning")
+		}
+		baseCols = append(baseCols, "status", "enqueued_at", "started_at", "finished_at", "worker_id", "error", "prompt", "retry_count")
 		if hasDiffContent {
-			cols += ", diff_content"
+			baseCols = append(baseCols, "diff_content")
 		}
 		if hasAgentic {
-			cols += ", agentic"
+			baseCols = append(baseCols, "agentic")
 		}
+		cols := strings.Join(baseCols, ", ")
 		insertSQL = fmt.Sprintf(`INSERT INTO review_jobs_new (%s) SELECT %s FROM review_jobs`, cols, cols)
 		_, err = tx.Exec(insertSQL)
 		if err != nil {
