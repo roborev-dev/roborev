@@ -169,9 +169,6 @@ type tuiModel struct {
 	// Branch name cache (keyed by job ID) - caches derived branches to avoid repeated git calls
 	branchNames map[int64]string
 
-	// Track job IDs already queued for backfill to prevent duplicate goroutines
-	backfillQueued map[int64]bool
-
 	// Pending addressed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
 	// distinguish between multiple requests for the same state (e.g., true→false→true)
@@ -283,10 +280,9 @@ type tuiReposMsg struct {
 	totalCount int
 }
 type tuiBranchesMsg struct {
-	branches         []branchFilterItem
-	totalCount       int
-	backfillAttempted int      // Number of branches queued for backfill (async, may not all succeed)
-	backfillJobIDs   []int64  // Job IDs queued for backfill (to track and prevent duplicates)
+	branches      []branchFilterItem
+	totalCount    int
+	backfillCount int // Number of branches successfully backfilled to the database
 }
 type tuiCommentResultMsg struct {
 	jobID int64
@@ -359,7 +355,6 @@ func newTuiModel(serverAddr string) tuiModel {
 		loadingJobs:            true,                           // Init() calls fetchJobs, so mark as loading
 		displayNames:           make(map[string]string),        // Cache display names to avoid disk reads on render
 		branchNames:            make(map[int64]string),         // Cache derived branch names to avoid git calls on render
-		backfillQueued:         make(map[int64]bool),           // Track jobs already queued for backfill
 		pendingAddressed:       make(map[int64]pendingState),   // Track pending addressed changes (by job ID)
 		pendingReviewAddressed: make(map[int64]pendingState),   // Track pending addressed changes (by review ID)
 	}
@@ -660,11 +655,6 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 	machineID := m.status.MachineID
 	client := m.client
 	serverAddr := m.serverAddr
-	// Copy the set of already-queued job IDs to avoid re-queuing
-	alreadyQueued := make(map[int64]bool, len(m.backfillQueued))
-	for id := range m.backfillQueued {
-		alreadyQueued[id] = true
-	}
 
 	return func() tea.Msg {
 		// Fetch jobs to extract branches (no API endpoint for branches directly)
@@ -688,13 +678,12 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 		// Count jobs per branch, deriving branch from git if not stored
 		branchCounts := make(map[string]int)
 		var branchOrder []string
-		// Collect jobs to backfill - we'll do this async after returning
+		// Collect jobs to backfill
 		type backfillJob struct {
 			id     int64
 			branch string
 		}
 		var toBackfill []backfillJob
-		var backfillJobIDs []int64
 
 		for _, job := range result.Jobs {
 			branch := job.Branch
@@ -711,10 +700,9 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 						}
 						branch = git.GetBranchName(job.RepoPath, sha)
 
-						// Queue for async backfill if we derived a branch and haven't already queued it
-						if branch != "" && !alreadyQueued[job.ID] {
+						// Queue for backfill if we derived a branch
+						if branch != "" {
 							toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
-							backfillJobIDs = append(backfillJobIDs, job.ID)
 						}
 					}
 				}
@@ -729,20 +717,25 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			branchCounts[branch]++
 		}
 
-		// Fire-and-forget backfill to avoid blocking the UI
-		if len(toBackfill) > 0 {
-			go func() {
-				for _, bf := range toBackfill {
-					reqBody, _ := json.Marshal(map[string]interface{}{
-						"job_id": bf.id,
-						"branch": bf.branch,
-					})
-					resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
-					if err == nil {
-						resp.Body.Close()
+		// Backfill branches to database (synchronous - one-time migration)
+		var backfillCount int
+		for _, bf := range toBackfill {
+			reqBody, _ := json.Marshal(map[string]interface{}{
+				"job_id": bf.id,
+				"branch": bf.branch,
+			})
+			resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
+			if err == nil {
+				if resp.StatusCode == http.StatusOK {
+					var result struct {
+						Updated bool `json:"updated"`
+					}
+					if json.NewDecoder(resp.Body).Decode(&result) == nil && result.Updated {
+						backfillCount++
 					}
 				}
-			}()
+				resp.Body.Close()
+			}
 		}
 
 		// Build branch list
@@ -753,7 +746,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				count: branchCounts[name],
 			}
 		}
-		return tuiBranchesMsg{branches: branches, totalCount: len(result.Jobs), backfillAttempted: len(toBackfill), backfillJobIDs: backfillJobIDs}
+		return tuiBranchesMsg{branches: branches, totalCount: len(result.Jobs), backfillCount: backfillCount}
 	}
 }
 
@@ -2697,13 +2690,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		// Track which job IDs were queued for backfill to prevent duplicate goroutines
-		for _, jobID := range msg.backfillJobIDs {
-			m.backfillQueued[jobID] = true
-		}
-		// Show flash message if branches were queued for backfill
-		if msg.backfillAttempted > 0 {
-			m.flashMessage = fmt.Sprintf("Backfilling branch info for %d jobs", msg.backfillAttempted)
+		// Show flash message if branches were backfilled
+		if msg.backfillCount > 0 {
+			m.flashMessage = fmt.Sprintf("Backfilled branch info for %d jobs", msg.backfillCount)
 			m.flashExpiresAt = time.Now().Add(5 * time.Second)
 			m.flashView = tuiViewBranchFilter
 		}
