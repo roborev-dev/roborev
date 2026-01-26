@@ -542,7 +542,8 @@ func daemonRunCmd() *cobra.Command {
 				if err := server.Stop(); err != nil {
 					log.Printf("Shutdown error: %v", err)
 				}
-				os.Exit(0)
+				// Note: Don't call os.Exit here - let server.Start() return naturally
+				// after Stop() is called. This allows proper cleanup and testability.
 			}()
 
 			// Start server (blocks until shutdown)

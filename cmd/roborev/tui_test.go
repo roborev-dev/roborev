@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -18,9 +19,30 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+// testServerAddr is a placeholder address used in tests that don't make real HTTP calls.
+// Tests that need actual HTTP should use httptest.NewServer and pass ts.URL.
+const testServerAddr = "http://test.invalid:9999"
+
+// setupTuiTestEnv isolates the test from the production roborev environment
+// by setting ROBOREV_DATA_DIR to a temp directory. This prevents tests from
+// reading production daemon.json or affecting production state.
+func setupTuiTestEnv(t *testing.T) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	t.Cleanup(func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	})
+}
+
 // mockConnError creates a connection error (url.Error) for testing
 func mockConnError(msg string) error {
-	return &url.Error{Op: "Get", URL: "http://localhost:7373", Err: errors.New(msg)}
+	return &url.Error{Op: "Get", URL: testServerAddr, Err: errors.New(msg)}
 }
 
 // stripANSI removes ANSI escape sequences from a string
@@ -6240,7 +6262,7 @@ func TestFormatClipboardContent(t *testing.T) {
 }
 
 func TestTUIConfigReloadFlash(t *testing.T) {
-	m := newTuiModel("http://localhost:7373")
+	m := newTuiModel(testServerAddr)
 
 	t.Run("no flash on first status fetch", func(t *testing.T) {
 		// First status fetch with a ConfigReloadCounter should NOT flash
@@ -6265,7 +6287,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 
 	t.Run("flash on config reload after first fetch", func(t *testing.T) {
 		// Start with a model that has already fetched status once
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 1
 
@@ -6288,7 +6310,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 
 	t.Run("flash when ConfigReloadCounter changes from zero to non-zero", func(t *testing.T) {
 		// Model has fetched status once but daemon hadn't reloaded yet
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 0 // No reload had occurred
 
@@ -6307,7 +6329,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 	})
 
 	t.Run("no flash when ConfigReloadCounter unchanged", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 1
 
@@ -6328,7 +6350,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 
 func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	t.Run("triggers reconnection after 3 consecutive connection errors", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 2 // Already had 2 connection errors
 
 		// Third connection error should trigger reconnection
@@ -6347,7 +6369,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("does not trigger reconnection before 3 errors", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 1 // Only 1 error so far
 
 		updated, cmd := m.Update(tuiJobsErrMsg{err: mockConnError("connection refused")})
@@ -6365,7 +6387,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("does not count application errors for reconnection", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 2 // 2 connection errors
 
 		// Application error (404, parse error, etc.) should not increment counter
@@ -6384,7 +6406,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("does not count non-connection errors in jobs fetch", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 2
 
 		// Non-connection error (like parse error) should not increment
@@ -6397,7 +6419,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("pagination errors also trigger reconnection", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 2
 
 		// Connection error in pagination should trigger reconnection
@@ -6416,7 +6438,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("status/review connection errors trigger reconnection", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 2
 
 		// Connection error via tuiErrMsg (from fetchStatus, fetchReview, etc.)
@@ -6435,7 +6457,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("status/review application errors do not trigger reconnection", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 2
 
 		// Application error via tuiErrMsg should not increment
@@ -6454,7 +6476,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("resets error count on successful jobs fetch", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 5
 
 		updated, _ := m.Update(tuiJobsMsg{jobs: []storage.ReviewJob{}, hasMore: false})
@@ -6466,7 +6488,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("resets error count on successful status fetch", func(t *testing.T) {
-		m := newTuiModel("http://localhost:7373")
+		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 5
 
 		updated, _ := m.Update(tuiStatusMsg(storage.DaemonStatus{Version: "1.0.0"}))
@@ -6478,7 +6500,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("updates server address on successful reconnection", func(t *testing.T) {
-		m := newTuiModel("http://127.0.0.1:7373")
+		m := newTuiModel(testServerAddr)
 		m.reconnecting = true
 
 		updated, cmd := m.Update(tuiReconnectMsg{newAddr: "http://127.0.0.1:7374", version: "2.0.0"})
@@ -6505,15 +6527,15 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("handles reconnection to same address", func(t *testing.T) {
-		m := newTuiModel("http://127.0.0.1:7373")
+		m := newTuiModel(testServerAddr)
 		m.reconnecting = true
 		m.consecutiveErrors = 3
 
 		// Same address - no change needed
-		updated, cmd := m.Update(tuiReconnectMsg{newAddr: "http://127.0.0.1:7373"})
+		updated, cmd := m.Update(tuiReconnectMsg{newAddr: testServerAddr})
 		m2 := updated.(tuiModel)
 
-		if m2.serverAddr != "http://127.0.0.1:7373" {
+		if m2.serverAddr != testServerAddr {
 			t.Errorf("Expected serverAddr unchanged, got %s", m2.serverAddr)
 		}
 		if m2.reconnecting {
@@ -6526,7 +6548,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	})
 
 	t.Run("handles failed reconnection", func(t *testing.T) {
-		m := newTuiModel("http://127.0.0.1:7373")
+		m := newTuiModel(testServerAddr)
 		m.reconnecting = true
 		m.consecutiveErrors = 3
 

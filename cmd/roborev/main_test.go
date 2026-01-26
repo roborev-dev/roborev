@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1510,9 +1511,41 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 		// Daemon is still running - good
 	}
 
-	// The daemon is blocking in server.Start(), so we can't easily stop it
-	// without sending a signal. For this unit test, we just verify it started.
-	// A full integration test would require a separate process.
+	// Find the daemon's runtime file (daemon.<PID>.json) to get PID
+	var info *daemon.RuntimeInfo
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runtimes, err := daemon.ListAllRuntimes()
+		if err == nil && len(runtimes) > 0 {
+			info = runtimes[0]
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if info == nil {
+		t.Fatal("daemon did not create runtime file")
+	}
+
+	// Send SIGTERM to stop the daemon gracefully
+	if info.PID > 0 {
+		proc, err := os.FindProcess(info.PID)
+		if err == nil {
+			proc.Signal(syscall.SIGTERM)
+		}
+	}
+
+	// Wait for daemon to exit
+	select {
+	case <-errCh:
+		// Daemon exited - good
+	case <-time.After(5 * time.Second):
+		// Force kill if still running
+		if info.PID > 0 {
+			if proc, err := os.FindProcess(info.PID); err == nil {
+				proc.Kill()
+			}
+		}
+	}
 }
 
 // TestDaemonStopNotRunning verifies daemon stop reports when no daemon is running
