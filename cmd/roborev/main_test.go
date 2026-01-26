@@ -1475,11 +1475,12 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	}
 
 	// Create the daemon run command with custom flags
+	// Use a high port number to avoid conflicts (FindAvailablePort will increment if busy)
 	cmd := daemonRunCmd()
 	cmd.SetArgs([]string{
 		"--db", dbPath,
 		"--config", configPath,
-		"--addr", "127.0.0.1:0", // Use port 0 to get a free port
+		"--addr", "127.0.0.1:17373",
 	})
 
 	// Run daemon in goroutine
@@ -1510,29 +1511,37 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 		// Daemon is still running - good
 	}
 
-	// Find the daemon's runtime file (daemon.<PID>.json) to get PID
+	// Wait for daemon to be fully started and responsive
+	// The runtime file is written before ListenAndServe, so we need to verify
+	// the HTTP server is actually accepting connections
 	var info *daemon.RuntimeInfo
-	deadline = time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		runtimes, err := daemon.ListAllRuntimes()
 		if err == nil && len(runtimes) > 0 {
 			info = runtimes[0]
-			break
+			// Verify daemon is actually responding to HTTP
+			if daemon.IsDaemonAlive(info.Addr) {
+				break
+			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	if info == nil {
 		t.Fatal("daemon did not create runtime file")
 	}
-
-	// Send os.Interrupt to trigger the daemon's signal handler for graceful shutdown.
-	// Works whether daemon runs in-process (current design) or as separate process (future).
-	if info.PID > 0 {
-		proc, err := os.FindProcess(info.PID)
-		if err == nil {
-			proc.Signal(os.Interrupt)
-		}
+	if !daemon.IsDaemonAlive(info.Addr) {
+		t.Fatal("daemon is not responding to HTTP requests")
 	}
+
+	// The daemon runs in a goroutine within this test process, so info.PID is
+	// guaranteed to be os.Getpid(). Use os.Interrupt to trigger the signal handler.
+	// PID reuse is not a concern since we're signaling our own process.
+	proc, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("failed to find own process: %v", err)
+	}
+	proc.Signal(os.Interrupt)
 
 	// Wait for daemon to exit
 	select {
