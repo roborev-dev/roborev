@@ -1464,9 +1464,9 @@ func (m tuiModel) branchMatchesFilter(job storage.ReviewJob) bool {
 	return branch == m.activeBranchFilter
 }
 
-// getVisibleJobs returns jobs filtered by active filters (repo, addressed)
+// getVisibleJobs returns jobs filtered by active filters (repo, branch, addressed)
 func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
-	if len(m.activeRepoFilter) == 0 && !m.hideAddressed {
+	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideAddressed {
 		return m.jobs
 	}
 	var visible []storage.ReviewJob
@@ -1484,7 +1484,7 @@ func (m tuiModel) getVisibleSelectedIdx() int {
 	if m.selectedIdx < 0 {
 		return -1
 	}
-	if len(m.activeRepoFilter) == 0 && !m.hideAddressed {
+	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideAddressed {
 		return m.selectedIdx
 	}
 	count := 0
