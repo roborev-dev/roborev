@@ -95,6 +95,66 @@ func TestOutputBuffer_OversizedLine(t *testing.T) {
 	}
 }
 
+func TestOutputBuffer_GlobalLimitPreservesExistingLines(t *testing.T) {
+	// Scenario: job has lines, per-job eviction would occur, but global limit rejects.
+	// Existing lines should be preserved (not evicted for nothing).
+	// Per-job: 50 bytes, Global: 80 bytes
+	ob := NewOutputBuffer(50, 80)
+
+	// Job 1: add 40 bytes (two 20-byte lines)
+	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes
+	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes, job1=40, total=40
+
+	// Job 2: add 30 bytes
+	ob.Append(2, OutputLine{Text: "123456789012345678901234567890", Type: "text"}) // 30 bytes, total=70
+
+	// Verify initial state
+	lines1 := ob.GetLines(1)
+	lines2 := ob.GetLines(2)
+	if len(lines1) != 2 {
+		t.Fatalf("expected 2 lines for job 1, got %d", len(lines1))
+	}
+	if len(lines2) != 1 {
+		t.Fatalf("expected 1 line for job 2, got %d", len(lines2))
+	}
+
+	// Now try to add 20 bytes to job 1
+	// Per-job: 40+20=60 > 50, would need to evict 20 bytes (1 line)
+	// After eviction: job1=40, but total would be 70-20+20=70, still under 80
+	// This SHOULD succeed
+	ob.Append(1, OutputLine{Text: "AAAAAAAAAAAAAAAAAAAA", Type: "text"}) // 20 bytes
+
+	lines1 = ob.GetLines(1)
+	if len(lines1) != 2 {
+		t.Errorf("expected 2 lines for job 1 after eviction+add, got %d", len(lines1))
+	}
+
+	// Now global is at 70. Try to add 20 more bytes to job 1.
+	// Per-job: 40+20=60 > 50, would evict 20 bytes
+	// After eviction: total would be 70-20+20=70, under 80
+	// This SHOULD succeed
+	ob.Append(1, OutputLine{Text: "BBBBBBBBBBBBBBBBBBBB", Type: "text"}) // 20 bytes
+
+	lines1 = ob.GetLines(1)
+	if len(lines1) != 2 {
+		t.Errorf("expected 2 lines for job 1 after second eviction+add, got %d", len(lines1))
+	}
+
+	// Now try to add 15 bytes to job 2 (total would be 70+15=85 > 80)
+	// Per-job: 30+15=45 < 50, no eviction
+	// Global: 70+15=85 > 80, REJECTED
+	// Job 2 should keep its original line
+	ob.Append(2, OutputLine{Text: "123456789012345", Type: "text"}) // 15 bytes - rejected
+
+	lines2 = ob.GetLines(2)
+	if len(lines2) != 1 {
+		t.Errorf("expected job 2 to keep 1 line after global rejection, got %d", len(lines2))
+	}
+	if lines2[0].Text != "123456789012345678901234567890" {
+		t.Errorf("job 2 original line was modified: %q", lines2[0].Text)
+	}
+}
+
 func TestOutputBuffer_CloseJob(t *testing.T) {
 	ob := NewOutputBuffer(1024, 4096)
 

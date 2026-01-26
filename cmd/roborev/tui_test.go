@@ -6742,3 +6742,114 @@ func TestSanitizeForDisplay(t *testing.T) {
 		})
 	}
 }
+
+func TestTUITailOutputPreservesLinesOnEmptyResponse(t *testing.T) {
+	// Test that when a job completes and the server returns empty lines
+	// (because the buffer was closed), the TUI preserves the existing lines.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTail
+	m.tailJobID = 1
+	m.tailStreaming = true
+	m.height = 30
+
+	// Set up initial lines as if we had been streaming output
+	m.tailLines = []tailLine{
+		{timestamp: time.Now(), text: "Line 1", lineType: "text"},
+		{timestamp: time.Now(), text: "Line 2", lineType: "text"},
+		{timestamp: time.Now(), text: "Line 3", lineType: "text"},
+	}
+
+	// Simulate job completion: server returns empty lines, hasMore=false
+	emptyMsg := tuiTailOutputMsg{
+		lines:   []tailLine{},
+		hasMore: false,
+		err:     nil,
+	}
+
+	updated, _ := m.Update(emptyMsg)
+	m2 := updated.(tuiModel)
+
+	// Lines should be preserved (not cleared)
+	if len(m2.tailLines) != 3 {
+		t.Errorf("Expected 3 lines preserved, got %d", len(m2.tailLines))
+	}
+
+	// Streaming should stop
+	if m2.tailStreaming {
+		t.Error("Expected tailStreaming to be false after job completes")
+	}
+
+	// Verify the original content is still there
+	if m2.tailLines[0].text != "Line 1" {
+		t.Errorf("Expected 'Line 1', got %q", m2.tailLines[0].text)
+	}
+}
+
+func TestTUITailOutputUpdatesLinesWhenStreaming(t *testing.T) {
+	// Test that when streaming and new lines arrive, they are updated
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTail
+	m.tailJobID = 1
+	m.tailStreaming = true
+	m.height = 30
+
+	// Set up initial lines
+	m.tailLines = []tailLine{
+		{timestamp: time.Now(), text: "Old line", lineType: "text"},
+	}
+
+	// New lines arrive while still streaming
+	newMsg := tuiTailOutputMsg{
+		lines: []tailLine{
+			{timestamp: time.Now(), text: "Old line", lineType: "text"},
+			{timestamp: time.Now(), text: "New line", lineType: "text"},
+		},
+		hasMore: true, // Still streaming
+		err:     nil,
+	}
+
+	updated, _ := m.Update(newMsg)
+	m2 := updated.(tuiModel)
+
+	// Lines should be updated
+	if len(m2.tailLines) != 2 {
+		t.Errorf("Expected 2 lines, got %d", len(m2.tailLines))
+	}
+
+	// Streaming should continue
+	if !m2.tailStreaming {
+		t.Error("Expected tailStreaming to be true while job is running")
+	}
+}
+
+func TestTUITailOutputIgnoredWhenNotInTailView(t *testing.T) {
+	// Test that tail output messages are ignored when not in tail view
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue // Not in tail view
+	m.tailJobID = 1
+
+	// Existing lines from a previous tail session
+	m.tailLines = []tailLine{
+		{timestamp: time.Now(), text: "Previous session line", lineType: "text"},
+	}
+
+	// New lines arrive (stale message from previous tail)
+	msg := tuiTailOutputMsg{
+		lines: []tailLine{
+			{timestamp: time.Now(), text: "Should be ignored", lineType: "text"},
+		},
+		hasMore: false,
+		err:     nil,
+	}
+
+	updated, _ := m.Update(msg)
+	m2 := updated.(tuiModel)
+
+	// Lines should not be updated since we're not in tail view
+	if len(m2.tailLines) != 1 {
+		t.Errorf("Expected 1 line (unchanged), got %d", len(m2.tailLines))
+	}
+	if m2.tailLines[0].text != "Previous session line" {
+		t.Errorf("Lines should not be updated when not in tail view")
+	}
+}

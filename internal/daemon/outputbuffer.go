@@ -77,24 +77,33 @@ func (ob *OutputBuffer) Append(jobID int64, line OutputLine) {
 		return
 	}
 
-	// Evict oldest lines if this job exceeds its limit
-	for jo.totalBytes+lineBytes > ob.maxPerJob && len(jo.lines) > 0 {
-		evicted := jo.lines[0]
-		jo.lines = jo.lines[1:]
-		jo.totalBytes -= len(evicted.Text)
-		ob.mu.Lock()
-		ob.totalBytes -= len(evicted.Text)
-		ob.mu.Unlock()
+	// Calculate how many bytes would be evicted for per-job limit
+	evictBytes := 0
+	tempTotal := jo.totalBytes
+	evictCount := 0
+	for tempTotal+lineBytes > ob.maxPerJob && evictCount < len(jo.lines) {
+		evictBytes += len(jo.lines[evictCount].Text)
+		tempTotal -= len(jo.lines[evictCount].Text)
+		evictCount++
 	}
 
-	// Check global memory limit - drop line if we'd exceed maxTotal
+	// Check global memory limit BEFORE evicting - if we'd still exceed
+	// maxTotal after eviction, reject without losing existing lines
 	ob.mu.Lock()
-	if ob.totalBytes+lineBytes > ob.maxTotal {
+	if ob.totalBytes-evictBytes+lineBytes > ob.maxTotal {
 		ob.mu.Unlock()
 		return // Drop line to enforce global memory limit
 	}
-	ob.totalBytes += lineBytes
+
+	// Now safe to evict and add - update global total
+	ob.totalBytes = ob.totalBytes - evictBytes + lineBytes
 	ob.mu.Unlock()
+
+	// Perform the eviction
+	if evictCount > 0 {
+		jo.lines = jo.lines[evictCount:]
+		jo.totalBytes -= evictBytes
+	}
 
 	// Add the line
 	jo.lines = append(jo.lines, line)
