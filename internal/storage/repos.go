@@ -183,11 +183,49 @@ type BranchListResult struct {
 
 // ListBranchesWithCounts returns all branches with their job counts
 // If repoPaths is non-empty, filters to jobs in those repos only
-func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, error) {
+// If limit > 0, only counts branches from the most recent N jobs
+func (db *DB) ListBranchesWithCounts(repoPaths []string, limit int) (*BranchListResult, error) {
 	var rows *sql.Rows
 	var err error
 
-	if len(repoPaths) == 0 {
+	if limit > 0 {
+		// Limited query - count branches from recent jobs using simple ID threshold
+		if len(repoPaths) == 0 {
+			rows, err = db.Query(`
+				SELECT COALESCE(NULLIF(branch, ''), '(none)') as branch_name, COUNT(*) as job_count
+				FROM review_jobs
+				WHERE id > (SELECT MAX(id) - ? FROM review_jobs)
+				GROUP BY branch_name
+				ORDER BY job_count DESC, branch_name
+			`, limit)
+		} else if len(repoPaths) == 1 {
+			rows, err = db.Query(`
+				SELECT COALESCE(NULLIF(rj.branch, ''), '(none)') as branch_name, COUNT(*) as job_count
+				FROM review_jobs rj
+				INNER JOIN repos r ON rj.repo_id = r.id
+				WHERE rj.id > (SELECT MAX(id) - ? FROM review_jobs) AND r.root_path = ?
+				GROUP BY branch_name
+				ORDER BY job_count DESC, branch_name
+			`, limit, repoPaths[0])
+		} else {
+			placeholders := make([]string, len(repoPaths))
+			args := make([]interface{}, len(repoPaths)+1)
+			args[0] = limit
+			for i, p := range repoPaths {
+				placeholders[i] = "?"
+				args[i+1] = p
+			}
+			query := fmt.Sprintf(`
+				SELECT COALESCE(NULLIF(rj.branch, ''), '(none)') as branch_name, COUNT(*) as job_count
+				FROM review_jobs rj
+				INNER JOIN repos r ON rj.repo_id = r.id
+				WHERE rj.id > (SELECT MAX(id) - ? FROM review_jobs) AND r.root_path IN (%s)
+				GROUP BY branch_name
+				ORDER BY job_count DESC, branch_name
+			`, strings.Join(placeholders, ","))
+			rows, err = db.Query(query, args...)
+		}
+	} else if len(repoPaths) == 0 {
 		// No repo filter - count branches across all repos
 		rows, err = db.Query(`
 			SELECT COALESCE(NULLIF(branch, ''), '(none)') as branch_name, COUNT(*) as job_count
@@ -236,11 +274,17 @@ func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, err
 		}
 		result.Branches = append(result.Branches, bc)
 		result.TotalCount += bc.Count
-		if bc.Name == "(none)" {
-			result.NullsRemaining = bc.Count
-		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Count actual NULL branches (not empty string or "(none)" sentinel)
+	if err := db.QueryRow("SELECT COUNT(*) FROM review_jobs WHERE branch IS NULL").Scan(&result.NullsRemaining); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // RenameRepo updates the display name of a repo identified by its path or current name
