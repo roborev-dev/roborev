@@ -510,6 +510,37 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 			t.Errorf("Expected same placeholder ID, got %d and %d", placeholderID, placeholderID2)
 		}
 	})
+
+	t.Run("prefers single local repo over existing placeholder", func(t *testing.T) {
+		// This tests the fix for review #2658: when a placeholder exists from
+		// a previous sync (e.g., when there were 0 clones), but now there's
+		// exactly one local repo, we should prefer the local repo.
+		placeholderIdentity := "git@github.com:org/placeholder-then-clone.git"
+
+		// First, create a placeholder (simulates sync with no local clone)
+		_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+			placeholderIdentity, "placeholder-then-clone", placeholderIdentity)
+		if err != nil {
+			t.Fatalf("Insert placeholder failed: %v", err)
+		}
+
+		// Now create a single local clone (user cloned the repo after syncing)
+		result, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+			"/home/user/new-clone", "new-clone", placeholderIdentity)
+		if err != nil {
+			t.Fatalf("Insert local clone failed: %v", err)
+		}
+		localRepoID, _ := result.LastInsertId()
+
+		// GetOrCreateRepoByIdentity should return the local repo, not the placeholder
+		gotID, err := db.GetOrCreateRepoByIdentity(placeholderIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepoByIdentity failed: %v", err)
+		}
+		if gotID != localRepoID {
+			t.Errorf("Expected to prefer local repo ID %d over placeholder, got %d", localRepoID, gotID)
+		}
+	})
 }
 
 func TestExtractRepoNameFromIdentity(t *testing.T) {

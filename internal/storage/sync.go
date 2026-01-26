@@ -623,27 +623,20 @@ func (db *DB) GetKnownJobUUIDs() ([]string, error) {
 
 // GetOrCreateRepoByIdentity finds or creates a repo for syncing by identity.
 // The logic is:
-//  1. If a placeholder repo exists (root_path == identity), use it
-//  2. If exactly one local repo has this identity, use it (no placeholder needed)
-//  3. If 0 or 2+ local repos have this identity, create/use a placeholder
+//  1. If exactly one local repo has this identity, use it (always preferred)
+//  2. If a placeholder repo exists (root_path == identity), use it
+//  3. If 0 or 2+ local repos have this identity, create a placeholder
 //
 // This ensures synced jobs attach to the right repo:
 //   - Single clone: jobs attach directly to the local repo
 //   - Multiple clones: jobs attach to a neutral placeholder
 //   - No local clone: placeholder serves as a sync-only repo
+//
+// Note: Single local repos are always preferred, even if a placeholder exists
+// from a previous sync (e.g., when there were 0 or 2+ clones before).
 func (db *DB) GetOrCreateRepoByIdentity(identity string) (int64, error) {
-	// First, look for an existing placeholder repo (root_path == identity)
-	var placeholderID int64
-	err := db.QueryRow(`SELECT id FROM repos WHERE root_path = ? AND identity = ?`, identity, identity).Scan(&placeholderID)
-	if err == nil {
-		return placeholderID, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, fmt.Errorf("find placeholder repo: %w", err)
-	}
-
-	// No placeholder exists - check for local repos with this identity
-	// (excluding the placeholder pattern where root_path == identity)
+	// First, check for local repos with this identity
+	// (excluding placeholders where root_path == identity)
 	rows, err := db.Query(`SELECT id FROM repos WHERE identity = ? AND root_path != ?`, identity, identity)
 	if err != nil {
 		return 0, fmt.Errorf("find repos by identity: %w", err)
@@ -662,12 +655,22 @@ func (db *DB) GetOrCreateRepoByIdentity(identity string) (int64, error) {
 		return 0, fmt.Errorf("iterate repos: %w", err)
 	}
 
-	// If exactly one local repo exists, use it directly
+	// If exactly one local repo exists, always use it (even if placeholder exists)
 	if len(repoIDs) == 1 {
 		return repoIDs[0], nil
 	}
 
-	// 0 or 2+ local repos - create a placeholder
+	// 0 or 2+ local repos - look for existing placeholder
+	var placeholderID int64
+	err = db.QueryRow(`SELECT id FROM repos WHERE root_path = ? AND identity = ?`, identity, identity).Scan(&placeholderID)
+	if err == nil {
+		return placeholderID, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("find placeholder repo: %w", err)
+	}
+
+	// No placeholder exists - create one
 	// Use extracted repo name for display, but root_path stays as identity to mark it as a placeholder
 	displayName := ExtractRepoNameFromIdentity(identity)
 	result, err := db.Exec(`
