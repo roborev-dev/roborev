@@ -1,0 +1,223 @@
+package daemon
+
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+)
+
+// ansiEscapePattern matches ANSI escape sequences (colors, cursor movement, etc.)
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\]([^\x07\x1b]|\x1b[^\\])*(\x07|\x1b\\)`)
+
+// GetNormalizer returns the appropriate normalizer for an agent.
+func GetNormalizer(agentName string) OutputNormalizer {
+	switch agentName {
+	case "claude-code":
+		return NormalizeClaudeOutput
+	case "opencode":
+		return NormalizeOpenCodeOutput
+	default:
+		return NormalizeGenericOutput
+	}
+}
+
+// claudeNoisePatterns are status messages from Claude CLI that aren't useful progress info
+var claudeNoisePatterns = []string{
+	"mcp startup:",
+	"Initializing",
+	"Connected to",
+	"Session started",
+}
+
+// isClaudeNoise returns true if the line is a Claude CLI status message to filter out
+func isClaudeNoise(line string) bool {
+	for _, pattern := range claudeNoisePatterns {
+		if strings.Contains(line, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeClaudeOutput parses Claude's stream-json format and extracts readable content.
+func NormalizeClaudeOutput(line string) *OutputLine {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	// Filter out Claude CLI noise/status messages
+	if isClaudeNoise(line) {
+		return nil
+	}
+
+	// Try to parse as JSON
+	var msg struct {
+		Type    string `json:"type"`
+		Subtype string `json:"subtype,omitempty"`
+		Message struct {
+			Content string `json:"content,omitempty"`
+		} `json:"message,omitempty"`
+		Result    string `json:"result,omitempty"`
+		SessionID string `json:"session_id,omitempty"`
+
+		// Tool-related fields
+		Name  string          `json:"name,omitempty"`
+		Input json.RawMessage `json:"input,omitempty"`
+
+		// Content delta for streaming
+		ContentBlockDelta struct {
+			Delta struct {
+				Text string `json:"text,omitempty"`
+			} `json:"delta,omitempty"`
+		} `json:"content_block_delta,omitempty"`
+	}
+
+	if err := json.Unmarshal([]byte(line), &msg); err != nil {
+		// Not JSON - return as raw text (shouldn't happen with Claude)
+		return &OutputLine{Text: stripANSI(line), Type: "text"}
+	}
+
+	switch msg.Type {
+	case "assistant":
+		// Full assistant message with content
+		if msg.Message.Content != "" {
+			// Replace embedded newlines with spaces to keep output on single line
+			text := strings.ReplaceAll(msg.Message.Content, "\n", " ")
+			text = strings.ReplaceAll(text, "\r", "")
+			return &OutputLine{Text: text, Type: "text"}
+		}
+		// Skip empty assistant messages (e.g., start of response)
+		return nil
+
+	case "result":
+		// Final result summary
+		if msg.Result != "" {
+			// Replace embedded newlines with spaces
+			text := strings.ReplaceAll(msg.Result, "\n", " ")
+			text = strings.ReplaceAll(text, "\r", "")
+			return &OutputLine{Text: text, Type: "text"}
+		}
+		return nil
+
+	case "tool_use":
+		// Tool being called
+		if msg.Name != "" {
+			return &OutputLine{Text: "[Tool: " + msg.Name + "]", Type: "tool"}
+		}
+		return nil
+
+	case "tool_result":
+		// Tool finished - could show brief indicator
+		return &OutputLine{Text: "[Tool completed]", Type: "tool"}
+
+	case "content_block_start":
+		// Start of a content block - skip
+		return nil
+
+	case "content_block_delta":
+		// Streaming text delta
+		if msg.ContentBlockDelta.Delta.Text != "" {
+			// Replace embedded newlines with spaces
+			text := strings.ReplaceAll(msg.ContentBlockDelta.Delta.Text, "\n", " ")
+			text = strings.ReplaceAll(text, "\r", "")
+			if text == "" || text == " " {
+				return nil
+			}
+			return &OutputLine{Text: text, Type: "text"}
+		}
+		return nil
+
+	case "content_block_stop":
+		// End of content block - skip
+		return nil
+
+	case "message_start", "message_delta", "message_stop":
+		// Message lifecycle events - skip
+		return nil
+
+	case "system":
+		// System messages (e.g., init)
+		if msg.Subtype == "init" {
+			if msg.SessionID != "" {
+				return &OutputLine{Text: "[Session: " + msg.SessionID[:8] + "...]", Type: "text"}
+			}
+		}
+		return nil
+
+	case "error":
+		// Error message
+		return &OutputLine{Text: "[Error in stream]", Type: "error"}
+
+	default:
+		// Unknown type - skip to avoid noise
+		return nil
+	}
+}
+
+// NormalizeOpenCodeOutput normalizes OpenCode output (plain text with ANSI codes).
+func NormalizeOpenCodeOutput(line string) *OutputLine {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	// Filter tool call JSON lines (same logic as in agent package)
+	if isToolCallJSON(line) {
+		return &OutputLine{Text: "[Tool call]", Type: "tool"}
+	}
+
+	// Strip ANSI codes for clean display
+	text := stripANSI(line)
+	if text == "" {
+		return nil
+	}
+
+	return &OutputLine{Text: text, Type: "text"}
+}
+
+// NormalizeGenericOutput is the default normalizer for other agents.
+func NormalizeGenericOutput(line string) *OutputLine {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	// Strip ANSI codes
+	text := stripANSI(line)
+	if text == "" {
+		return nil
+	}
+
+	// Filter tool call JSON if present
+	if isToolCallJSON(text) {
+		return &OutputLine{Text: "[Tool call]", Type: "tool"}
+	}
+
+	return &OutputLine{Text: text, Type: "text"}
+}
+
+// stripANSI removes ANSI escape sequences from a string.
+func stripANSI(s string) string {
+	return ansiEscapePattern.ReplaceAllString(s, "")
+}
+
+// isToolCallJSON checks if a line is a tool call JSON object.
+// Tool calls have exactly "name" and "arguments" keys.
+func isToolCallJSON(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "{") {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
+		return false
+	}
+	// Tool calls have exactly "name" and "arguments" keys
+	if len(m) != 2 {
+		return false
+	}
+	_, hasName := m["name"]
+	_, hasArgs := m["arguments"]
+	return hasName && hasArgs
+}

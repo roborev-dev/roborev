@@ -33,6 +33,9 @@ type WorkerPool struct {
 	pendingCancels map[int64]bool // Jobs canceled before registered
 	runningJobsMu  sync.Mutex
 
+	// Output capture for tail command
+	outputBuffers *OutputBuffer
+
 	// Test hooks for deterministic synchronization (nil in production)
 	testHookAfterSecondCheck func() // Called after second runningJobs check, before second DB lookup
 }
@@ -49,6 +52,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		stopCh:         make(chan struct{}),
 		runningJobs:    make(map[int64]context.CancelFunc),
 		pendingCancels: make(map[int64]bool),
+		outputBuffers:  NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
 	}
 }
 
@@ -78,6 +82,22 @@ func (wp *WorkerPool) ActiveWorkers() int {
 // MaxWorkers returns the total number of workers in the pool
 func (wp *WorkerPool) MaxWorkers() int {
 	return wp.numWorkers
+}
+
+// GetJobOutput returns the current output lines for a job.
+func (wp *WorkerPool) GetJobOutput(jobID int64) []OutputLine {
+	return wp.outputBuffers.GetLines(jobID)
+}
+
+// SubscribeJobOutput returns initial lines and a channel for new output.
+// Call cancel when done to unsubscribe.
+func (wp *WorkerPool) SubscribeJobOutput(jobID int64) ([]OutputLine, <-chan OutputLine, func()) {
+	return wp.outputBuffers.Subscribe(jobID)
+}
+
+// HasJobOutput returns true if there's active output capture for a job.
+func (wp *WorkerPool) HasJobOutput(jobID int64) bool {
+	return wp.outputBuffers.IsActive(jobID)
 }
 
 // CancelJob cancels a running job by its ID, killing the subprocess.
@@ -315,9 +335,17 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Agent:    agentName,
 	})
 
+	// Create output writer for tail command
+	normalizer := GetNormalizer(agentName)
+	outputWriter := wp.outputBuffers.Writer(job.ID, normalizer)
+	defer func() {
+		outputWriter.Flush()
+		wp.outputBuffers.CloseJob(job.ID)
+	}()
+
 	// Run the review
 	log.Printf("[%s] Running %s review...", workerID, agentName)
-	output, err := a.Review(ctx, job.RepoPath, job.GitRef, reviewPrompt, nil)
+	output, err := a.Review(ctx, job.RepoPath, job.GitRef, reviewPrompt, outputWriter)
 	if err != nil {
 		// Check if this was a cancellation
 		if ctx.Err() == context.Canceled {

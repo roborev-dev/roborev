@@ -1,0 +1,262 @@
+package daemon
+
+import (
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestOutputBuffer_Append(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+
+	ob.Append(1, OutputLine{Text: "line 1", Type: "text"})
+	ob.Append(1, OutputLine{Text: "line 2", Type: "tool"})
+
+	lines := ob.GetLines(1)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if lines[0].Text != "line 1" {
+		t.Errorf("expected 'line 1', got %q", lines[0].Text)
+	}
+	if lines[1].Type != "tool" {
+		t.Errorf("expected type 'tool', got %q", lines[1].Type)
+	}
+}
+
+func TestOutputBuffer_GetLinesEmpty(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+
+	lines := ob.GetLines(999)
+	if lines != nil {
+		t.Errorf("expected nil for non-existent job, got %v", lines)
+	}
+}
+
+func TestOutputBuffer_PerJobLimit(t *testing.T) {
+	// Small limit: 50 bytes per job
+	ob := NewOutputBuffer(50, 1000)
+
+	// Add lines that exceed the limit
+	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes
+	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes
+	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes - should evict first
+
+	lines := ob.GetLines(1)
+	// First line should be evicted to make room
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines after eviction, got %d", len(lines))
+	}
+}
+
+func TestOutputBuffer_CloseJob(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+
+	ob.Append(1, OutputLine{Text: "test", Type: "text"})
+	if !ob.IsActive(1) {
+		t.Error("expected job to be active")
+	}
+
+	ob.CloseJob(1)
+
+	if ob.IsActive(1) {
+		t.Error("expected job to be inactive after close")
+	}
+
+	lines := ob.GetLines(1)
+	if lines != nil {
+		t.Error("expected nil lines after close")
+	}
+}
+
+func TestOutputBuffer_Subscribe(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+
+	// Add initial line
+	ob.Append(1, OutputLine{Text: "initial", Type: "text"})
+
+	// Subscribe
+	initial, ch, cancel := ob.Subscribe(1)
+	defer cancel()
+
+	if len(initial) != 1 {
+		t.Fatalf("expected 1 initial line, got %d", len(initial))
+	}
+	if initial[0].Text != "initial" {
+		t.Errorf("expected 'initial', got %q", initial[0].Text)
+	}
+
+	// Add more lines after subscription
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		ob.Append(1, OutputLine{Text: "new", Type: "text"})
+	}()
+
+	select {
+	case line := <-ch:
+		if line.Text != "new" {
+			t.Errorf("expected 'new', got %q", line.Text)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("timeout waiting for subscribed line")
+	}
+}
+
+func TestOutputBuffer_SubscribeCancel(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+
+	_, ch, cancel := ob.Subscribe(1)
+	cancel()
+
+	// Channel should be closed
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("expected channel to be closed")
+		}
+	default:
+		// Channel closed, as expected
+	}
+}
+
+func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+
+	ob.Append(1, OutputLine{Text: "test", Type: "text"})
+	_, ch, _ := ob.Subscribe(1)
+
+	ob.CloseJob(1)
+
+	// Channel should be closed
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("expected channel to be closed after CloseJob")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("channel not closed after CloseJob")
+	}
+}
+
+func TestOutputWriter_Write(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+	normalize := func(line string) *OutputLine {
+		return &OutputLine{Text: line, Type: "text"}
+	}
+
+	w := ob.Writer(1, normalize)
+
+	// Write with newline
+	w.Write([]byte("hello\n"))
+	w.Write([]byte("world\n"))
+
+	lines := ob.GetLines(1)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if lines[0].Text != "hello" {
+		t.Errorf("expected 'hello', got %q", lines[0].Text)
+	}
+	if lines[1].Text != "world" {
+		t.Errorf("expected 'world', got %q", lines[1].Text)
+	}
+}
+
+func TestOutputWriter_WritePartialLines(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+	normalize := func(line string) *OutputLine {
+		return &OutputLine{Text: line, Type: "text"}
+	}
+
+	w := ob.Writer(1, normalize)
+
+	// Write partial line
+	w.Write([]byte("hel"))
+	w.Write([]byte("lo\nwor"))
+	w.Write([]byte("ld\n"))
+
+	lines := ob.GetLines(1)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if lines[0].Text != "hello" {
+		t.Errorf("expected 'hello', got %q", lines[0].Text)
+	}
+	if lines[1].Text != "world" {
+		t.Errorf("expected 'world', got %q", lines[1].Text)
+	}
+}
+
+func TestOutputWriter_Flush(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+	normalize := func(line string) *OutputLine {
+		return &OutputLine{Text: line, Type: "text"}
+	}
+
+	w := ob.Writer(1, normalize)
+
+	// Write without newline
+	w.Write([]byte("incomplete"))
+
+	// Should not appear yet
+	lines := ob.GetLines(1)
+	if len(lines) != 0 {
+		t.Fatalf("expected 0 lines before flush, got %d", len(lines))
+	}
+
+	// Flush should process remaining
+	w.Flush()
+
+	lines = ob.GetLines(1)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line after flush, got %d", len(lines))
+	}
+	if lines[0].Text != "incomplete" {
+		t.Errorf("expected 'incomplete', got %q", lines[0].Text)
+	}
+}
+
+func TestOutputWriter_NormalizeFilters(t *testing.T) {
+	ob := NewOutputBuffer(1024, 4096)
+	// Normalizer that filters out empty lines
+	normalize := func(line string) *OutputLine {
+		if line == "" {
+			return nil
+		}
+		return &OutputLine{Text: line, Type: "text"}
+	}
+
+	w := ob.Writer(1, normalize)
+
+	w.Write([]byte("keep\n\nskip empty\n"))
+
+	lines := ob.GetLines(1)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (empty filtered), got %d", len(lines))
+	}
+}
+
+func TestOutputBuffer_Concurrent(t *testing.T) {
+	ob := NewOutputBuffer(10240, 40960)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(jobID int64) {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				ob.Append(jobID, OutputLine{Text: "test", Type: "text"})
+			}
+		}(int64(i))
+	}
+
+	wg.Wait()
+
+	// All jobs should have lines
+	for i := 0; i < 10; i++ {
+		lines := ob.GetLines(int64(i))
+		if len(lines) == 0 {
+			t.Errorf("job %d has no lines", i)
+		}
+	}
+}

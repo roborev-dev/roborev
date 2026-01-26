@@ -65,6 +65,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/jobs", s.handleListJobs)
 	mux.HandleFunc("/api/job/cancel", s.handleCancelJob)
+	mux.HandleFunc("/api/job/output", s.handleJobOutput)
 	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
 	mux.HandleFunc("/api/repos", s.handleListRepos)
 	mux.HandleFunc("/api/review", s.handleGetReview)
@@ -644,6 +645,113 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	s.workerPool.CancelJob(req.JobID)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// JobOutputResponse is the response for /api/job/output
+type JobOutputResponse struct {
+	JobID   int64        `json:"job_id"`
+	Status  string       `json:"status"`
+	Lines   []OutputLine `json:"lines"`
+	HasMore bool         `json:"has_more"`
+}
+
+func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	jobIDStr := r.URL.Query().Get("job_id")
+	if jobIDStr == "" {
+		writeError(w, http.StatusBadRequest, "job_id required")
+		return
+	}
+
+	var jobID int64
+	if _, err := fmt.Sscanf(jobIDStr, "%d", &jobID); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid job_id")
+		return
+	}
+
+	// Check job exists
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "job not found")
+		return
+	}
+
+	// Check if streaming mode requested
+	stream := r.URL.Query().Get("stream") == "1"
+
+	if !stream {
+		// Return current buffer (polling mode)
+		lines := s.workerPool.GetJobOutput(jobID)
+		if lines == nil {
+			lines = []OutputLine{}
+		}
+
+		resp := JobOutputResponse{
+			JobID:   jobID,
+			Status:  string(job.Status),
+			Lines:   lines,
+			HasMore: job.Status == storage.JobStatusRunning,
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	// Streaming mode via SSE
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	// Subscribe to output
+	initial, ch, cancel := s.workerPool.SubscribeJobOutput(jobID)
+	defer cancel()
+
+	encoder := json.NewEncoder(w)
+
+	// Send initial lines
+	for _, line := range initial {
+		encoder.Encode(map[string]interface{}{
+			"type":      "line",
+			"ts":        line.Timestamp.Format(time.RFC3339Nano),
+			"text":      line.Text,
+			"line_type": line.Type,
+		})
+	}
+	flusher.Flush()
+
+	// Stream new lines until job completes or client disconnects
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case line, ok := <-ch:
+			if !ok {
+				// Job finished - channel closed
+				encoder.Encode(map[string]interface{}{
+					"type":   "complete",
+					"status": "done",
+				})
+				flusher.Flush()
+				return
+			}
+			encoder.Encode(map[string]interface{}{
+				"type":      "line",
+				"ts":        line.Timestamp.Format(time.RFC3339Nano),
+				"text":      line.Text,
+				"line_type": line.Type,
+			})
+			flusher.Flush()
+		}
+	}
 }
 
 type RerunJobRequest struct {
