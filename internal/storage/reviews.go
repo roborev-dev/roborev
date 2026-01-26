@@ -210,7 +210,7 @@ func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error)
 	return reviews, rows.Err()
 }
 
-// MarkReviewAddressed marks a review as addressed (or unaddressed)
+// MarkReviewAddressed marks a review as addressed (or unaddressed) by review ID
 func (db *DB) MarkReviewAddressed(reviewID int64, addressed bool) error {
 	val := 0
 	if addressed {
@@ -220,6 +220,29 @@ func (db *DB) MarkReviewAddressed(reviewID int64, addressed bool) error {
 	machineID, _ := db.GetMachineID()
 
 	result, err := db.Exec(`UPDATE reviews SET addressed = ?, updated_by_machine_id = ?, updated_at = ? WHERE id = ?`, val, machineID, now, reviewID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// MarkReviewAddressedByJobID marks a review as addressed (or unaddressed) by job ID
+func (db *DB) MarkReviewAddressedByJobID(jobID int64, addressed bool) error {
+	val := 0
+	if addressed {
+		val = 1
+	}
+	now := time.Now().Format(time.RFC3339)
+	machineID, _ := db.GetMachineID()
+
+	result, err := db.Exec(`UPDATE reviews SET addressed = ?, updated_by_machine_id = ?, updated_at = ? WHERE job_id = ?`, val, machineID, now, jobID)
 	if err != nil {
 		return err
 	}

@@ -1358,7 +1358,7 @@ func addressCmd() *cobra.Command {
 	var unaddress bool
 
 	cmd := &cobra.Command{
-		Use:   "address <review_id>",
+		Use:   "address <job_id>",
 		Short: "Mark a review as addressed",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1367,14 +1367,14 @@ func addressCmd() *cobra.Command {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			reviewID, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil || reviewID <= 0 {
-				return fmt.Errorf("invalid review_id: %s", args[0])
+			jobID, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil || jobID <= 0 {
+				return fmt.Errorf("invalid job_id: %s", args[0])
 			}
 
 			addressed := !unaddress
 			reqBody, _ := json.Marshal(map[string]interface{}{
-				"review_id": reviewID,
+				"job_id":    jobID,
 				"addressed": addressed,
 			})
 
@@ -1391,9 +1391,9 @@ func addressCmd() *cobra.Command {
 			}
 
 			if addressed {
-				fmt.Printf("Review %d marked as addressed\n", reviewID)
+				fmt.Printf("Job %d marked as addressed\n", jobID)
 			} else {
-				fmt.Printf("Review %d marked as unaddressed\n", reviewID)
+				fmt.Printf("Job %d marked as unaddressed\n", jobID)
 			}
 			return nil
 		},

@@ -986,7 +986,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type AddressReviewRequest struct {
-	ReviewID  int64 `json:"review_id"`
+	JobID     int64 `json:"job_id"`
 	Addressed bool  `json:"addressed"`
 }
 
@@ -1002,14 +1002,14 @@ func (s *Server) handleAddressReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ReviewID == 0 {
-		writeError(w, http.StatusBadRequest, "review_id is required")
+	if req.JobID == 0 {
+		writeError(w, http.StatusBadRequest, "job_id is required")
 		return
 	}
 
-	if err := s.db.MarkReviewAddressed(req.ReviewID, req.Addressed); err != nil {
+	if err := s.db.MarkReviewAddressedByJobID(req.JobID, req.Addressed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "review not found")
+			writeError(w, http.StatusNotFound, "review not found for job")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("mark addressed: %v", err))

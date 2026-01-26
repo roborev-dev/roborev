@@ -890,7 +890,7 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 func (m tuiModel) addressReview(reviewID, jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		reqBody, err := json.Marshal(map[string]interface{}{
-			"review_id": reviewID,
+			"job_id":    jobID,
 			"addressed": newState,
 		})
 		if err != nil {
@@ -912,13 +912,19 @@ func (m tuiModel) addressReview(reviewID, jobID int64, newState, oldState bool, 
 	}
 }
 
-// addressReviewInBackground fetches the review ID and updates addressed status.
+// addressReviewInBackground updates addressed status by job ID.
 // Used for optimistic updates from queue view - UI already updated, this syncs to server.
 // On error, returns tuiAddressedResultMsg with oldState for rollback.
 func (m tuiModel) addressReviewInBackground(jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
-		// Fetch the review to get its ID
-		resp, err := m.client.Get(fmt.Sprintf("%s/api/review?job_id=%d", m.serverAddr, jobID))
+		reqBody, err := json.Marshal(map[string]interface{}{
+			"job_id":    jobID,
+			"addressed": newState,
+		})
+		if err != nil {
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
+		}
+		resp, err := m.client.Post(m.serverAddr+"/api/review/address", "application/json", bytes.NewReader(reqBody))
 		if err != nil {
 			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
 		}
@@ -928,40 +934,28 @@ func (m tuiModel) addressReviewInBackground(jobID int64, newState, oldState bool
 			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: fmt.Errorf("no review for this job")}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: fmt.Errorf("fetch review: %s", resp.Status)}
+			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: fmt.Errorf("mark review: %s", resp.Status)}
 		}
-
-		var review storage.Review
-		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
-		}
-
-		// Now mark it
-		reqBody, err := json.Marshal(map[string]interface{}{
-			"review_id": review.ID,
-			"addressed": newState,
-		})
-		if err != nil {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
-		}
-		resp2, err := m.client.Post(m.serverAddr+"/api/review/address", "application/json", bytes.NewReader(reqBody))
-		if err != nil {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
-		}
-		defer resp2.Body.Close()
-
-		if resp2.StatusCode != http.StatusOK {
-			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: fmt.Errorf("mark review: %s", resp2.Status)}
-		}
-		// Success
 		return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: nil}
 	}
 }
 
 func (m tuiModel) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd {
 	return func() tea.Msg {
-		// Fetch the review to get its ID
-		resp, err := m.client.Get(fmt.Sprintf("%s/api/review?job_id=%d", m.serverAddr, jobID))
+		// Toggle the state
+		newState := true
+		if currentState != nil && *currentState {
+			newState = false
+		}
+
+		reqBody, err := json.Marshal(map[string]interface{}{
+			"job_id":    jobID,
+			"addressed": newState,
+		})
+		if err != nil {
+			return tuiErrMsg(err)
+		}
+		resp, err := m.client.Post(m.serverAddr+"/api/review/address", "application/json", bytes.NewReader(reqBody))
 		if err != nil {
 			return tuiErrMsg(err)
 		}
@@ -971,39 +965,7 @@ func (m tuiModel) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd
 			return tuiErrMsg(fmt.Errorf("no review for this job"))
 		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiErrMsg(fmt.Errorf("fetch review: %s", resp.Status))
-		}
-
-		var review storage.Review
-		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
-			return tuiErrMsg(err)
-		}
-
-		// Toggle the state
-		newState := true
-		if currentState != nil && *currentState {
-			newState = false
-		}
-
-		// Now mark it
-		reqBody, err := json.Marshal(map[string]interface{}{
-			"review_id": review.ID,
-			"addressed": newState,
-		})
-		if err != nil {
-			return tuiErrMsg(err)
-		}
-		resp2, err := m.client.Post(m.serverAddr+"/api/review/address", "application/json", bytes.NewReader(reqBody))
-		if err != nil {
-			return tuiErrMsg(err)
-		}
-		defer resp2.Body.Close()
-
-		if resp2.StatusCode == http.StatusNotFound {
-			return tuiErrMsg(fmt.Errorf("review not found"))
-		}
-		if resp2.StatusCode != http.StatusOK {
-			return tuiErrMsg(fmt.Errorf("mark review: %s", resp2.Status))
+			return tuiErrMsg(fmt.Errorf("mark review: %s", resp.Status))
 		}
 		return tuiAddressedMsg(newState)
 	}

@@ -114,8 +114,8 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 		}
 		var req map[string]interface{}
 		json.NewDecoder(r.Body).Decode(&req)
-		if req["review_id"].(float64) != 42 {
-			t.Errorf("Expected review_id 42, got %v", req["review_id"])
+		if req["job_id"].(float64) != 100 {
+			t.Errorf("Expected job_id 100, got %v", req["job_id"])
 		}
 		if req["addressed"].(bool) != true {
 			t.Errorf("Expected addressed true, got %v", req["addressed"])
@@ -138,8 +138,8 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 	if !result.reviewView {
 		t.Error("Expected reviewView to be true")
 	}
-	if result.reviewID != 42 {
-		t.Errorf("Expected reviewID=42, got %d", result.reviewID)
+	if result.jobID != 100 {
+		t.Errorf("Expected jobID=100, got %d", result.jobID)
 	}
 }
 
@@ -164,11 +164,15 @@ func TestTUIAddressReviewNotFound(t *testing.T) {
 
 func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/review" {
-			review := storage.Review{ID: 10, Addressed: false}
-			json.NewEncoder(w).Encode(review)
-		} else if r.URL.Path == "/api/review/address" {
+		if r.URL.Path == "/api/review/address" {
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
+			if req["job_id"].(float64) != 1 {
+				t.Errorf("Expected job_id 1, got %v", req["job_id"])
+			}
 			json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		} else {
+			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 	}))
 	defer ts.Close()
@@ -376,34 +380,26 @@ func TestTUIAddressFromReviewViewExitWithCtrlC(t *testing.T) {
 
 // addressRequest is used to decode and validate POST body in tests
 type addressRequest struct {
-	ReviewID  int64 `json:"review_id"`
+	JobID     int64 `json:"job_id"`
 	Addressed bool  `json:"addressed"`
 }
 
 func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/review" && r.Method == http.MethodGet:
-			if r.URL.Query().Get("job_id") != "42" {
-				t.Errorf("Expected job_id=42, got %s", r.URL.Query().Get("job_id"))
-			}
-			review := storage.Review{ID: 10, Addressed: false}
-			json.NewEncoder(w).Encode(review)
-		case r.URL.Path == "/api/review/address" && r.Method == http.MethodPost:
-			var req addressRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("Failed to decode request body: %v", err)
-			}
-			if req.ReviewID != 10 {
-				t.Errorf("Expected review_id=10, got %d", req.ReviewID)
-			}
-			if req.Addressed != true {
-				t.Errorf("Expected addressed=true, got %v", req.Addressed)
-			}
-			json.NewEncoder(w).Encode(map[string]bool{"success": true})
-		default:
+		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
+		var req addressRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("Failed to decode request body: %v", err)
+		}
+		if req.JobID != 42 {
+			t.Errorf("Expected job_id=42, got %d", req.JobID)
+		}
+		if req.Addressed != true {
+			t.Errorf("Expected addressed=true, got %v", req.Addressed)
+		}
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
 	}))
 	defer ts.Close()
 
@@ -427,15 +423,11 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 	if result.reviewView {
 		t.Error("Expected reviewView=false for queue view command")
 	}
-	// reviewID is intentionally 0 for queue view commands (only jobID is set)
-	if result.reviewID != 0 {
-		t.Errorf("Expected reviewID=0 for queue view, got %d", result.reviewID)
-	}
 }
 
 func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/review" {
+		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -461,78 +453,12 @@ func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
 	}
 }
 
-func TestTUIAddressReviewInBackgroundFetchError(t *testing.T) {
+func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/review" {
+		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
-	cmd := m.addressReviewInBackground(42, true, false, 1)
-	msg := cmd()
-
-	result, ok := msg.(tuiAddressedResultMsg)
-	if !ok {
-		t.Fatalf("Expected tuiAddressedResultMsg, got %T: %v", msg, msg)
-	}
-	if result.err == nil {
-		t.Error("Expected error for 500 response")
-	}
-	if result.jobID != 42 {
-		t.Errorf("Expected jobID=42 for rollback, got %d", result.jobID)
-	}
-}
-
-func TestTUIAddressReviewInBackgroundBadJSON(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/review" {
-			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		w.Write([]byte("not valid json"))
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
-	cmd := m.addressReviewInBackground(42, true, false, 1)
-	msg := cmd()
-
-	result, ok := msg.(tuiAddressedResultMsg)
-	if !ok {
-		t.Fatalf("Expected tuiAddressedResultMsg, got %T: %v", msg, msg)
-	}
-	if result.err == nil {
-		t.Error("Expected error for bad JSON")
-	}
-	if result.jobID != 42 {
-		t.Errorf("Expected jobID=42 for rollback, got %d", result.jobID)
-	}
-}
-
-func TestTUIAddressReviewInBackgroundAddressError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/review" && r.Method == http.MethodGet:
-			review := storage.Review{ID: 10, Addressed: false}
-			json.NewEncoder(w).Encode(review)
-		case r.URL.Path == "/api/review/address" && r.Method == http.MethodPost:
-			// Validate request body before returning error
-			var req addressRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("Failed to decode request body: %v", err)
-			}
-			if req.ReviewID != 10 {
-				t.Errorf("Expected review_id=10, got %d", req.ReviewID)
-			}
-			if req.Addressed != true {
-				t.Errorf("Expected addressed=true, got %v", req.Addressed)
-			}
-			w.WriteHeader(http.StatusInternalServerError)
-		default:
-			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
-		}
 	}))
 	defer ts.Close()
 
