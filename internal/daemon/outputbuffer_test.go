@@ -74,6 +74,27 @@ func TestOutputBuffer_GlobalLimit(t *testing.T) {
 	}
 }
 
+func TestOutputBuffer_OversizedLine(t *testing.T) {
+	// Per-job limit: 20 bytes
+	ob := NewOutputBuffer(20, 1000)
+
+	// Try to add a line larger than per-job limit
+	ob.Append(1, OutputLine{Text: "this line is way too long to fit in buffer", Type: "text"}) // 43 bytes > 20
+
+	// Line should be dropped
+	lines := ob.GetLines(1)
+	if len(lines) != 0 {
+		t.Errorf("expected 0 lines (oversized dropped), got %d", len(lines))
+	}
+
+	// Normal sized lines should still work
+	ob.Append(1, OutputLine{Text: "short", Type: "text"}) // 5 bytes
+	lines = ob.GetLines(1)
+	if len(lines) != 1 {
+		t.Errorf("expected 1 line after normal append, got %d", len(lines))
+	}
+}
+
 func TestOutputBuffer_CloseJob(t *testing.T) {
 	ob := NewOutputBuffer(1024, 4096)
 

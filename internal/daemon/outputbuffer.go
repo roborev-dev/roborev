@@ -11,7 +11,7 @@ import (
 type OutputLine struct {
 	Timestamp time.Time `json:"ts"`
 	Text      string    `json:"text"`
-	Type      string    `json:"type"` // "text", "tool", "thinking", "error"
+	Type      string    `json:"line_type"` // "text", "tool", "thinking", "error"
 }
 
 // JobOutput stores output for a single job
@@ -71,6 +71,11 @@ func (ob *OutputBuffer) Append(jobID int64, line OutputLine) {
 	}
 
 	lineBytes := len(line.Text)
+
+	// Drop oversized lines that exceed per-job limit on their own
+	if lineBytes > ob.maxPerJob {
+		return
+	}
 
 	// Evict oldest lines if this job exceeds its limit
 	for jo.totalBytes+lineBytes > ob.maxPerJob && len(jo.lines) > 0 {

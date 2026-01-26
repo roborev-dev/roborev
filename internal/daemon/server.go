@@ -701,6 +701,18 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Streaming mode via SSE
+	// Don't stream for non-running jobs - they have no active buffer producer
+	// and would hang forever waiting for data
+	if job.Status != storage.JobStatusRunning {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		encoder := json.NewEncoder(w)
+		encoder.Encode(map[string]interface{}{
+			"type":   "complete",
+			"status": string(job.Status),
+		})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
