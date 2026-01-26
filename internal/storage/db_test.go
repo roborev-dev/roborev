@@ -2257,6 +2257,149 @@ func TestDuplicateSHAHandling(t *testing.T) {
 	})
 }
 
+func TestListReposWithReviewCountsByBranch(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Create repos
+	repo1, _ := db.GetOrCreateRepo("/tmp/repo1")
+	repo2, _ := db.GetOrCreateRepo("/tmp/repo2")
+
+	// Create commits and jobs with different branches
+	commit1, _ := db.GetOrCreateCommit(repo1.ID, "abc123", "Author", "Subject", time.Now())
+	commit2, _ := db.GetOrCreateCommit(repo1.ID, "def456", "Author", "Subject", time.Now())
+	commit3, _ := db.GetOrCreateCommit(repo2.ID, "ghi789", "Author", "Subject", time.Now())
+
+	db.EnqueueJob(repo1.ID, commit1.ID, "abc123", "", "claude", "", "")
+	db.EnqueueJob(repo1.ID, commit2.ID, "def456", "", "claude", "", "")
+	db.EnqueueJob(repo2.ID, commit3.ID, "ghi789", "", "claude", "", "")
+
+	// Update some jobs with branches
+	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id = 1")
+	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id = 3")
+	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 2")
+
+	t.Run("filter by main branch", func(t *testing.T) {
+		repos, totalCount, err := db.ListReposWithReviewCountsByBranch("main")
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCountsByBranch failed: %v", err)
+		}
+		if len(repos) != 2 {
+			t.Errorf("Expected 2 repos with main branch, got %d", len(repos))
+		}
+		if totalCount != 2 {
+			t.Errorf("Expected total count 2, got %d", totalCount)
+		}
+	})
+
+	t.Run("filter by feature branch", func(t *testing.T) {
+		repos, totalCount, err := db.ListReposWithReviewCountsByBranch("feature")
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCountsByBranch failed: %v", err)
+		}
+		if len(repos) != 1 {
+			t.Errorf("Expected 1 repo with feature branch, got %d", len(repos))
+		}
+		if totalCount != 1 {
+			t.Errorf("Expected total count 1, got %d", totalCount)
+		}
+	})
+
+	t.Run("filter by (none) branch", func(t *testing.T) {
+		// Add a job with no branch
+		commit4, _ := db.GetOrCreateCommit(repo1.ID, "jkl012", "Author", "Subject", time.Now())
+		db.EnqueueJob(repo1.ID, commit4.ID, "jkl012", "", "claude", "", "")
+
+		repos, totalCount, err := db.ListReposWithReviewCountsByBranch("(none)")
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCountsByBranch failed: %v", err)
+		}
+		if len(repos) != 1 {
+			t.Errorf("Expected 1 repo with (none) branch, got %d", len(repos))
+		}
+		if totalCount != 1 {
+			t.Errorf("Expected total count 1, got %d", totalCount)
+		}
+	})
+
+	t.Run("empty filter returns all", func(t *testing.T) {
+		repos, _, err := db.ListReposWithReviewCountsByBranch("")
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCountsByBranch failed: %v", err)
+		}
+		if len(repos) != 2 {
+			t.Errorf("Expected 2 repos, got %d", len(repos))
+		}
+	})
+}
+
+func TestListBranchesWithCounts(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Create repos
+	repo1, _ := db.GetOrCreateRepo("/tmp/repo1")
+	repo2, _ := db.GetOrCreateRepo("/tmp/repo2")
+
+	// Create commits and jobs with different branches
+	commit1, _ := db.GetOrCreateCommit(repo1.ID, "abc123", "Author", "Subject", time.Now())
+	commit2, _ := db.GetOrCreateCommit(repo1.ID, "def456", "Author", "Subject", time.Now())
+	commit3, _ := db.GetOrCreateCommit(repo1.ID, "ghi789", "Author", "Subject", time.Now())
+	commit4, _ := db.GetOrCreateCommit(repo2.ID, "jkl012", "Author", "Subject", time.Now())
+	commit5, _ := db.GetOrCreateCommit(repo2.ID, "mno345", "Author", "Subject", time.Now())
+
+	db.EnqueueJob(repo1.ID, commit1.ID, "abc123", "", "claude", "", "")
+	db.EnqueueJob(repo1.ID, commit2.ID, "def456", "", "claude", "", "")
+	db.EnqueueJob(repo1.ID, commit3.ID, "ghi789", "", "claude", "", "")
+	db.EnqueueJob(repo2.ID, commit4.ID, "jkl012", "", "claude", "", "")
+	db.EnqueueJob(repo2.ID, commit5.ID, "mno345", "", "claude", "", "")
+
+	// Update branches
+	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4)")
+	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+	// job 5 has no branch (NULL)
+
+	t.Run("list all branches", func(t *testing.T) {
+		result, err := db.ListBranchesWithCounts("")
+		if err != nil {
+			t.Fatalf("ListBranchesWithCounts failed: %v", err)
+		}
+		if len(result.Branches) != 3 {
+			t.Errorf("Expected 3 branches, got %d", len(result.Branches))
+		}
+		if result.TotalCount != 5 {
+			t.Errorf("Expected total count 5, got %d", result.TotalCount)
+		}
+		if result.NullsRemaining != 1 {
+			t.Errorf("Expected 1 null remaining, got %d", result.NullsRemaining)
+		}
+	})
+
+	t.Run("filter by repo", func(t *testing.T) {
+		result, err := db.ListBranchesWithCounts("/tmp/repo1")
+		if err != nil {
+			t.Fatalf("ListBranchesWithCounts failed: %v", err)
+		}
+		if len(result.Branches) != 2 {
+			t.Errorf("Expected 2 branches for repo1, got %d", len(result.Branches))
+		}
+		if result.TotalCount != 3 {
+			t.Errorf("Expected total count 3 for repo1, got %d", result.TotalCount)
+		}
+	})
+
+	t.Run("no nulls when all have branches", func(t *testing.T) {
+		db.Exec("UPDATE review_jobs SET branch = 'develop' WHERE id = 5")
+		result, err := db.ListBranchesWithCounts("")
+		if err != nil {
+			t.Fatalf("ListBranchesWithCounts failed: %v", err)
+		}
+		if result.NullsRemaining != 0 {
+			t.Errorf("Expected 0 nulls remaining, got %d", result.NullsRemaining)
+		}
+	})
+}
+
 func openTestDB(t *testing.T) *DB {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

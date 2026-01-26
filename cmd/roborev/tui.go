@@ -610,74 +610,13 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 	activeBranchFilter := m.activeBranchFilter // Constrain repos by active branch filter
 
 	return func() tea.Msg {
-		// If branch filter is active, fetch all jobs and count client-side
+		// Build URL with optional branch filter
+		url := serverAddr + "/api/repos"
 		if activeBranchFilter != "" {
-			resp, err := client.Get(serverAddr + "/api/jobs?limit=5000")
-			if err != nil {
-				return tuiErrMsg(err)
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				return tuiErrMsg(fmt.Errorf("fetch jobs for repos: %s", resp.Status))
-			}
-
-			var jobsResult struct {
-				Jobs []storage.ReviewJob `json:"jobs"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&jobsResult); err != nil {
-				return tuiErrMsg(err)
-			}
-
-			// Count repos for jobs matching branch filter
-			repoCountMap := make(map[string]int) // rootPath -> count
-			var repoPathOrder []string
-			var filteredTotal int
-			for _, job := range jobsResult.Jobs {
-				// Check if job matches branch filter
-				jobBranch := job.Branch
-				if jobBranch == "" {
-					jobBranch = "(none)"
-				}
-				if jobBranch != activeBranchFilter {
-					continue
-				}
-				filteredTotal++
-				if _, seen := repoCountMap[job.RepoPath]; !seen {
-					repoPathOrder = append(repoPathOrder, job.RepoPath)
-				}
-				repoCountMap[job.RepoPath]++
-			}
-
-			// Aggregate by display name
-			displayNameMap := make(map[string]*repoFilterItem)
-			var displayNameOrder []string
-			for _, rootPath := range repoPathOrder {
-				displayName := config.GetDisplayName(rootPath)
-				if displayName == "" {
-					displayName = filepath.Base(rootPath)
-				}
-				if item, ok := displayNameMap[displayName]; ok {
-					item.rootPaths = append(item.rootPaths, rootPath)
-					item.count += repoCountMap[rootPath]
-				} else {
-					displayNameMap[displayName] = &repoFilterItem{
-						name:      displayName,
-						rootPaths: []string{rootPath},
-						count:     repoCountMap[rootPath],
-					}
-					displayNameOrder = append(displayNameOrder, displayName)
-				}
-			}
-			repos := make([]repoFilterItem, len(displayNameOrder))
-			for i, name := range displayNameOrder {
-				repos[i] = *displayNameMap[name]
-			}
-			return tuiReposMsg{repos: repos, totalCount: filteredTotal}
+			url += "?branch=" + activeBranchFilter
 		}
 
-		// No branch filter - use server-side API
-		resp, err := client.Get(serverAddr + "/api/repos")
+		resp, err := client.Get(url)
 		if err != nil {
 			return tuiErrMsg(err)
 		}
@@ -736,140 +675,138 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 	activeRepoFilter := m.activeRepoFilter // Constrain branches by active repo filter
 
 	return func() tea.Msg {
-		// Fetch jobs to extract branches (no API endpoint for branches directly)
-		resp, err := client.Get(serverAddr + "/api/jobs?limit=5000")
+		var backfillCount int
+
+		// Check if backfill is needed (only if not already done this session)
+		if !backfillDone {
+			// First, check if there are any NULL branches via the API
+			resp, err := client.Get(serverAddr + "/api/branches")
+			if err != nil {
+				return tuiErrMsg(err)
+			}
+			var checkResult struct {
+				NullsRemaining int `json:"nulls_remaining"`
+			}
+			if resp.StatusCode == http.StatusOK {
+				json.NewDecoder(resp.Body).Decode(&checkResult)
+			}
+			resp.Body.Close()
+
+			// If there are NULL branches, fetch jobs to backfill
+			if checkResult.NullsRemaining > 0 {
+				resp, err := client.Get(serverAddr + "/api/jobs?limit=5000")
+				if err != nil {
+					return tuiErrMsg(err)
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != http.StatusOK {
+					return tuiErrMsg(fmt.Errorf("fetch jobs for backfill: %s", resp.Status))
+				}
+
+				var jobsResult struct {
+					Jobs []storage.ReviewJob `json:"jobs"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&jobsResult); err != nil {
+					return tuiErrMsg(err)
+				}
+
+				// Find jobs that need backfill
+				type backfillJob struct {
+					id     int64
+					branch string
+				}
+				var toBackfill []backfillJob
+
+				for _, job := range jobsResult.Jobs {
+					if job.Branch != "" {
+						continue // Already has branch
+					}
+					// Skip dirty/prompt jobs
+					if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
+						continue
+					}
+					// Only try git lookup for local repos
+					if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
+						continue
+					}
+
+					sha := job.GitRef
+					if idx := strings.Index(sha, ".."); idx != -1 {
+						sha = sha[idx+2:]
+					}
+					branch := git.GetBranchName(job.RepoPath, sha)
+					if branch != "" {
+						toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
+					}
+				}
+
+				// Persist to database
+				for _, bf := range toBackfill {
+					reqBody, _ := json.Marshal(map[string]interface{}{
+						"job_id": bf.id,
+						"branch": bf.branch,
+					})
+					resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
+					if err == nil {
+						if resp.StatusCode == http.StatusOK {
+							var updateResult struct {
+								Updated bool `json:"updated"`
+							}
+							if json.NewDecoder(resp.Body).Decode(&updateResult) == nil && updateResult.Updated {
+								backfillCount++
+							}
+						}
+						resp.Body.Close()
+					}
+				}
+			}
+		}
+
+		// Now fetch branches from server with optional repo filter
+		url := serverAddr + "/api/branches"
+		if len(activeRepoFilter) > 0 {
+			// Use first repo path for filtering (aggregated repos share display name but have different paths)
+			url += "?repo=" + activeRepoFilter[0]
+		}
+
+		resp, err := client.Get(url)
 		if err != nil {
 			return tuiErrMsg(err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiErrMsg(fmt.Errorf("fetch jobs for branches: %s", resp.Status))
+			return tuiErrMsg(fmt.Errorf("fetch branches: %s", resp.Status))
 		}
 
 		var result struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
+			Branches []struct {
+				Name  string `json:"name"`
+				Count int    `json:"count"`
+			} `json:"branches"`
+			TotalCount     int `json:"total_count"`
+			NullsRemaining int `json:"nulls_remaining"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return tuiErrMsg(err)
 		}
 
-		// Count jobs with NULL branch to determine if backfill is needed
-		var nullBranchCount int
-		if !backfillDone {
-			for _, job := range result.Jobs {
-				if job.Branch == "" {
-					nullBranchCount++
-				}
-			}
-		}
-
-		// Backfill branches from git if there are any NULL branches (one-time migration)
-		var backfillCount int
-		if nullBranchCount > 0 {
-			type backfillJob struct {
-				id     int64
-				branch string
-			}
-			var toBackfill []backfillJob
-
-			for _, job := range result.Jobs {
-				if job.Branch != "" {
-					continue // Already has branch
-				}
-				// Skip dirty/prompt jobs
-				if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
-					continue
-				}
-				// Only try git lookup for local repos
-				if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
-					continue
-				}
-
-				sha := job.GitRef
-				if idx := strings.Index(sha, ".."); idx != -1 {
-					sha = sha[idx+2:]
-				}
-				branch := git.GetBranchName(job.RepoPath, sha)
-				if branch != "" {
-					toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
-				}
-			}
-
-			// Persist to database
-			for _, bf := range toBackfill {
-				reqBody, _ := json.Marshal(map[string]interface{}{
-					"job_id": bf.id,
-					"branch": bf.branch,
-				})
-				resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
-				if err == nil {
-					if resp.StatusCode == http.StatusOK {
-						var result struct {
-							Updated bool `json:"updated"`
-						}
-						if json.NewDecoder(resp.Body).Decode(&result) == nil && result.Updated {
-							backfillCount++
-						}
-					}
-					resp.Body.Close()
-				}
-			}
-
-			// Re-fetch jobs to get updated branch values
-			resp, err := client.Get(serverAddr + "/api/jobs?limit=5000")
-			if err == nil {
-				defer resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					json.NewDecoder(resp.Body).Decode(&result)
-				}
-			}
-		}
-
-		// Count jobs per branch (filtered by active repo filter if set)
-		// Also count remaining NULL branches for backfill gating
-		branchCounts := make(map[string]int)
-		var branchOrder []string
-		var filteredTotal int
-		var nullsRemaining int
-		for _, job := range result.Jobs {
-			// Count NULLs across all jobs (not just filtered)
-			if job.Branch == "" {
-				nullsRemaining++
-			}
-			// Skip jobs that don't match repo filter
-			if len(activeRepoFilter) > 0 {
-				matches := false
-				for _, p := range activeRepoFilter {
-					if p == job.RepoPath {
-						matches = true
-						break
-					}
-				}
-				if !matches {
-					continue
-				}
-			}
-			filteredTotal++
-			branch := job.Branch
-			if branch == "" {
-				branch = "(none)"
-			}
-			if _, seen := branchCounts[branch]; !seen {
-				branchOrder = append(branchOrder, branch)
-			}
-			branchCounts[branch]++
-		}
-
-		// Build branch list
-		branches := make([]branchFilterItem, len(branchOrder))
-		for i, name := range branchOrder {
+		// Convert to branchFilterItem
+		branches := make([]branchFilterItem, len(result.Branches))
+		for i, b := range result.Branches {
 			branches[i] = branchFilterItem{
-				name:  name,
-				count: branchCounts[name],
+				name:  b.Name,
+				count: b.Count,
 			}
 		}
-		return tuiBranchesMsg{branches: branches, totalCount: filteredTotal, backfillCount: backfillCount, nullsRemaining: nullsRemaining}
+
+		return tuiBranchesMsg{
+			branches:       branches,
+			totalCount:     result.TotalCount,
+			backfillCount:  backfillCount,
+			nullsRemaining: result.NullsRemaining,
+		}
 	}
 }
 

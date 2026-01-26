@@ -69,6 +69,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
 	mux.HandleFunc("/api/job/update-branch", s.handleUpdateJobBranch)
 	mux.HandleFunc("/api/repos", s.handleListRepos)
+	mux.HandleFunc("/api/branches", s.handleListBranches)
 	mux.HandleFunc("/api/review", s.handleGetReview)
 	mux.HandleFunc("/api/review/address", s.handleAddressReview)
 	mux.HandleFunc("/api/comment", s.handleAddComment)
@@ -600,7 +601,18 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repos, totalCount, err := s.db.ListReposWithReviewCounts()
+	// Optional branch filter
+	branch := r.URL.Query().Get("branch")
+
+	var repos []storage.RepoWithCount
+	var totalCount int
+	var err error
+
+	if branch != "" {
+		repos, totalCount, err = s.db.ListReposWithReviewCountsByBranch(branch)
+	} else {
+		repos, totalCount, err = s.db.ListReposWithReviewCounts()
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list repos: %v", err))
 		return
@@ -609,6 +621,28 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"repos":       repos,
 		"total_count": totalCount,
+	})
+}
+
+func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Optional repo filter (by path)
+	repoPath := r.URL.Query().Get("repo")
+
+	result, err := s.db.ListBranchesWithCounts(repoPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list branches: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"branches":        result.Branches,
+		"total_count":     result.TotalCount,
+		"nulls_remaining": result.NullsRemaining,
 	})
 }
 

@@ -1,4 +1,9 @@
 review_guidelines = """
+The daemon and client evolve in lockstep, and the daemon is restarted after
+updates and so API changes do not require backward compatibility shims, and
+we do not expect newer clients to be able to talk to older daemons at the
+present time.
+
 TUI overflow on very narrow terminals (e.g. 60 characters wide or less) is acceptable
 and so please omit pedantic comments on these extreme scenarios.
 """

@@ -262,6 +262,179 @@ func TestHandleListRepos(t *testing.T) {
 	})
 }
 
+func TestHandleListReposWithBranchFilter(t *testing.T) {
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	// Create repos
+	repo1, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
+	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
+
+	// Add jobs to repos
+	for i := 0; i < 3; i++ {
+		sha := "repo1sha" + string(rune('a'+i))
+		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
+		db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
+	}
+	for i := 0; i < 2; i++ {
+		sha := "repo2sha" + string(rune('a'+i))
+		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
+		db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
+	}
+
+	// Set branches: repo1 jobs 1,2 = main, job 3 = feature; repo2 jobs 4,5 = main
+	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4, 5)")
+	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+
+	t.Run("filter by main branch", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=main", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListRepos(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		repos := response["repos"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		if len(repos) != 2 {
+			t.Errorf("Expected 2 repos with main branch, got %d", len(repos))
+		}
+		if totalCount != 4 {
+			t.Errorf("Expected total_count 4, got %d", totalCount)
+		}
+	})
+
+	t.Run("filter by feature branch", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=feature", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListRepos(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		repos := response["repos"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		if len(repos) != 1 {
+			t.Errorf("Expected 1 repo with feature branch, got %d", len(repos))
+		}
+		if totalCount != 1 {
+			t.Errorf("Expected total_count 1, got %d", totalCount)
+		}
+	})
+
+	t.Run("nonexistent branch returns empty", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=nonexistent", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListRepos(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		totalCount := int(response["total_count"].(float64))
+		if totalCount != 0 {
+			t.Errorf("Expected total_count 0 for nonexistent branch, got %d", totalCount)
+		}
+	})
+}
+
+func TestHandleListBranches(t *testing.T) {
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	// Create repos
+	repo1, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
+	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
+
+	// Add jobs to repos
+	for i := 0; i < 3; i++ {
+		sha := "repo1sha" + string(rune('a'+i))
+		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
+		db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
+	}
+	for i := 0; i < 2; i++ {
+		sha := "repo2sha" + string(rune('a'+i))
+		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
+		db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
+	}
+
+	// Set branches: jobs 1,2,4 = main, job 3 = feature, job 5 = no branch
+	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4)")
+	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+
+	t.Run("list all branches", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/branches", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		branches := response["branches"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+		nullsRemaining := int(response["nulls_remaining"].(float64))
+
+		if len(branches) != 3 {
+			t.Errorf("Expected 3 branches, got %d", len(branches))
+		}
+		if totalCount != 5 {
+			t.Errorf("Expected total_count 5, got %d", totalCount)
+		}
+		if nullsRemaining != 1 {
+			t.Errorf("Expected nulls_remaining 1, got %d", nullsRemaining)
+		}
+	})
+
+	t.Run("filter by repo", func(t *testing.T) {
+		repoPath := filepath.Join(tmpDir, "repo1")
+		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repoPath, nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		branches := response["branches"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		if len(branches) != 2 {
+			t.Errorf("Expected 2 branches for repo1, got %d", len(branches))
+		}
+		if totalCount != 3 {
+			t.Errorf("Expected total_count 3 for repo1, got %d", totalCount)
+		}
+	})
+
+	t.Run("wrong method fails", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/branches", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405 for POST, got %d", w.Code)
+		}
+	})
+}
+
 func TestHandleListJobsWithFilter(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
