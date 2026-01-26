@@ -610,13 +610,15 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 	activeBranchFilter := m.activeBranchFilter // Constrain repos by active branch filter
 
 	return func() tea.Msg {
-		// Build URL with optional branch filter
-		url := serverAddr + "/api/repos"
+		// Build URL with optional branch filter (URL-encoded)
+		reposURL := serverAddr + "/api/repos"
 		if activeBranchFilter != "" {
-			url += "?branch=" + activeBranchFilter
+			params := neturl.Values{}
+			params.Set("branch", activeBranchFilter)
+			reposURL += "?" + params.Encode()
 		}
 
-		resp, err := client.Get(url)
+		resp, err := client.Get(reposURL)
 		if err != nil {
 			return tuiErrMsg(err)
 		}
@@ -626,7 +628,7 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 			return tuiErrMsg(fmt.Errorf("fetch repos: %s", resp.Status))
 		}
 
-		var result struct {
+		var reposResult struct {
 			Repos []struct {
 				Name     string `json:"name"`
 				RootPath string `json:"root_path"`
@@ -634,14 +636,14 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 			} `json:"repos"`
 			TotalCount int `json:"total_count"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.NewDecoder(resp.Body).Decode(&reposResult); err != nil {
 			return tuiErrMsg(err)
 		}
 
 		// Aggregate repos by display name
 		displayNameMap := make(map[string]*repoFilterItem)
 		var displayNameOrder []string // Preserve order for stable display
-		for _, r := range result.Repos {
+		for _, r := range reposResult.Repos {
 			displayName := config.GetDisplayName(r.RootPath)
 			if displayName == "" {
 				displayName = r.Name
@@ -662,7 +664,7 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 		for i, name := range displayNameOrder {
 			repos[i] = *displayNameMap[name]
 		}
-		return tuiReposMsg{repos: repos, totalCount: result.TotalCount}
+		return tuiReposMsg{repos: repos, totalCount: reposResult.TotalCount}
 	}
 }
 
@@ -687,8 +689,13 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			var checkResult struct {
 				NullsRemaining int `json:"nulls_remaining"`
 			}
-			if resp.StatusCode == http.StatusOK {
-				json.NewDecoder(resp.Body).Decode(&checkResult)
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				return tuiErrMsg(fmt.Errorf("check branches for backfill: %s", resp.Status))
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&checkResult); err != nil {
+				resp.Body.Close()
+				return tuiErrMsg(fmt.Errorf("decode branches response: %w", err))
 			}
 			resp.Body.Close()
 
@@ -764,13 +771,17 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 		}
 
 		// Now fetch branches from server with optional repo filter
-		url := serverAddr + "/api/branches"
+		branchURL := serverAddr + "/api/branches"
 		if len(activeRepoFilter) > 0 {
-			// Use first repo path for filtering (aggregated repos share display name but have different paths)
-			url += "?repo=" + activeRepoFilter[0]
+			// Pass all repo paths for aggregated display names
+			params := neturl.Values{}
+			for _, repoPath := range activeRepoFilter {
+				params.Add("repo", repoPath)
+			}
+			branchURL += "?" + params.Encode()
 		}
 
-		resp, err := client.Get(url)
+		resp, err := client.Get(branchURL)
 		if err != nil {
 			return tuiErrMsg(err)
 		}
@@ -780,7 +791,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			return tuiErrMsg(fmt.Errorf("fetch branches: %s", resp.Status))
 		}
 
-		var result struct {
+		var branchResult struct {
 			Branches []struct {
 				Name  string `json:"name"`
 				Count int    `json:"count"`
@@ -788,13 +799,13 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			TotalCount     int `json:"total_count"`
 			NullsRemaining int `json:"nulls_remaining"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.NewDecoder(resp.Body).Decode(&branchResult); err != nil {
 			return tuiErrMsg(err)
 		}
 
 		// Convert to branchFilterItem
-		branches := make([]branchFilterItem, len(result.Branches))
-		for i, b := range result.Branches {
+		branches := make([]branchFilterItem, len(branchResult.Branches))
+		for i, b := range branchResult.Branches {
 			branches[i] = branchFilterItem{
 				name:  b.Name,
 				count: b.Count,
@@ -803,9 +814,9 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 
 		return tuiBranchesMsg{
 			branches:       branches,
-			totalCount:     result.TotalCount,
+			totalCount:     branchResult.TotalCount,
 			backfillCount:  backfillCount,
-			nullsRemaining: result.NullsRemaining,
+			nullsRemaining: branchResult.NullsRemaining,
 		}
 	}
 }

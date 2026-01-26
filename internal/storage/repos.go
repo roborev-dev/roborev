@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -181,12 +182,12 @@ type BranchListResult struct {
 }
 
 // ListBranchesWithCounts returns all branches with their job counts
-// If repoPath is non-empty, filters to jobs in that repo only
-func (db *DB) ListBranchesWithCounts(repoPath string) (*BranchListResult, error) {
+// If repoPaths is non-empty, filters to jobs in those repos only
+func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, error) {
 	var rows *sql.Rows
 	var err error
 
-	if repoPath == "" {
+	if len(repoPaths) == 0 {
 		// No repo filter - count branches across all repos
 		rows, err = db.Query(`
 			SELECT COALESCE(NULLIF(branch, ''), '(none)') as branch_name, COUNT(*) as job_count
@@ -194,8 +195,8 @@ func (db *DB) ListBranchesWithCounts(repoPath string) (*BranchListResult, error)
 			GROUP BY branch_name
 			ORDER BY job_count DESC, branch_name
 		`)
-	} else {
-		// Filter by repo path
+	} else if len(repoPaths) == 1 {
+		// Single repo filter
 		rows, err = db.Query(`
 			SELECT COALESCE(NULLIF(rj.branch, ''), '(none)') as branch_name, COUNT(*) as job_count
 			FROM review_jobs rj
@@ -203,7 +204,24 @@ func (db *DB) ListBranchesWithCounts(repoPath string) (*BranchListResult, error)
 			WHERE r.root_path = ?
 			GROUP BY branch_name
 			ORDER BY job_count DESC, branch_name
-		`, repoPath)
+		`, repoPaths[0])
+	} else {
+		// Multiple repo paths - build IN clause with placeholders
+		placeholders := make([]string, len(repoPaths))
+		args := make([]interface{}, len(repoPaths))
+		for i, p := range repoPaths {
+			placeholders[i] = "?"
+			args[i] = p
+		}
+		query := fmt.Sprintf(`
+			SELECT COALESCE(NULLIF(rj.branch, ''), '(none)') as branch_name, COUNT(*) as job_count
+			FROM review_jobs rj
+			INNER JOIN repos r ON rj.repo_id = r.id
+			WHERE r.root_path IN (%s)
+			GROUP BY branch_name
+			ORDER BY job_count DESC, branch_name
+		`, strings.Join(placeholders, ","))
+		rows, err = db.Query(query, args...)
 	}
 	if err != nil {
 		return nil, err

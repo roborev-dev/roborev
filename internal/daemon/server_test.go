@@ -423,6 +423,30 @@ func TestHandleListBranches(t *testing.T) {
 		}
 	})
 
+	t.Run("filter by multiple repos", func(t *testing.T) {
+		repo1Path := filepath.Join(tmpDir, "repo1")
+		repo2Path := filepath.Join(tmpDir, "repo2")
+		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repo1Path+"&repo="+repo2Path, nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		branches := response["branches"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		if len(branches) != 3 {
+			t.Errorf("Expected 3 branches for both repos, got %d", len(branches))
+		}
+		if totalCount != 5 {
+			t.Errorf("Expected total_count 5 for both repos, got %d", totalCount)
+		}
+	})
+
 	t.Run("wrong method fails", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/branches", nil)
 		w := httptest.NewRecorder()

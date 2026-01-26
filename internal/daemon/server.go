@@ -630,10 +630,10 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional repo filter (by path)
-	repoPath := r.URL.Query().Get("repo")
+	// Optional repo filter (by path) - supports multiple values
+	repoPaths := r.URL.Query()["repo"]
 
-	result, err := s.db.ListBranchesWithCounts(repoPath)
+	result, err := s.db.ListBranchesWithCounts(repoPaths)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list branches: %v", err))
 		return
