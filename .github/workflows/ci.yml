@@ -45,7 +45,9 @@ jobs:
           go-version: '1.24'
 
       - name: Test with coverage
-        run: go test -race -coverprofile=coverage.out ./...
+        # -p 1 serializes package execution to avoid ROBOREV_DATA_DIR race conditions
+        # between tests in different packages that modify this environment variable
+        run: go test -race -p 1 -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
