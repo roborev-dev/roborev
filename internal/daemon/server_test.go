@@ -2371,10 +2371,25 @@ func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
 	server := NewServer(db, cfg, "")
 
 	// Create a running job
-	repo, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
-	commit, _ := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
-	db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+	result, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID)
+	if err != nil {
+		t.Fatalf("Exec failed: %v", err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		t.Fatalf("Expected 1 row affected, got %d", n)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 	w := httptest.NewRecorder()
@@ -2417,10 +2432,25 @@ func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
 	server := NewServer(db, cfg, "")
 
 	// Create a completed job
-	repo, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
-	commit, _ := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
-	db.Exec(`UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`, job.ID)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+	result, err := db.Exec(`UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`, job.ID)
+	if err != nil {
+		t.Fatalf("Exec failed: %v", err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		t.Fatalf("Expected 1 row affected, got %d", n)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 	w := httptest.NewRecorder()
@@ -2456,10 +2486,25 @@ func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
 	server := NewServer(db, cfg, "")
 
 	// Create a completed job
-	repo, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
-	commit, _ := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
-	db.Exec(`UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`, job.ID)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+	result, err := db.Exec(`UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`, job.ID)
+	if err != nil {
+		t.Fatalf("Exec failed: %v", err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		t.Fatalf("Expected 1 row affected, got %d", n)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d&stream=1", job.ID), nil)
 	w := httptest.NewRecorder()
