@@ -2916,6 +2916,7 @@ func (m tuiModel) renderReviewView() string {
 	// Build title string and compute its length for line calculation
 	var title string
 	var titleLen int
+	var locationLineLen int
 	if review.Job != nil {
 		ref := shortJobRef(*review.Job)
 		idStr := fmt.Sprintf("#%d ", review.Job.ID)
@@ -2936,20 +2937,21 @@ func (m tuiModel) renderReviewView() string {
 
 		// Show location line: repo path (or identity/name), git ref, and branch
 		b.WriteString("\n")
-		pathLine := review.Job.RepoPath
-		if pathLine == "" {
+		locationLine := review.Job.RepoPath
+		if locationLine == "" {
 			// No local path - use repo name/identity as fallback
-			pathLine = review.Job.RepoName
+			locationLine = review.Job.RepoName
 		}
-		if pathLine != "" {
-			pathLine += " " + ref
+		if locationLine != "" {
+			locationLine += " " + ref
 		} else {
-			pathLine = ref
+			locationLine = ref
 		}
 		if m.currentBranch != "" {
-			pathLine += " on " + m.currentBranch
+			locationLine += " on " + m.currentBranch
 		}
-		b.WriteString(tuiStatusStyle.Render(pathLine))
+		locationLineLen = len(locationLine)
+		b.WriteString(tuiStatusStyle.Render(locationLine))
 		b.WriteString("\x1b[K") // Clear to end of line
 
 		// Show verdict and addressed status on next line
@@ -3013,11 +3015,17 @@ func (m tuiModel) renderReviewView() string {
 		helpLines = (len(helpText) + m.width - 1) / m.width
 	}
 
-	// headerHeight = title + location line (1) + status line (1) + help + verdict/addressed (0|1)
-	headerHeight := titleLines + 1 + helpLines
+	// Compute location line count (repo path + ref + branch can wrap)
+	locationLines := 0
 	if review.Job != nil {
-		headerHeight++ // Add 1 for location line (repo path + ref + branch)
+		locationLines = 1
+		if m.width > 0 && locationLineLen > m.width {
+			locationLines = (locationLineLen + m.width - 1) / m.width
+		}
 	}
+
+	// headerHeight = title + location line + status line (1) + help + verdict/addressed (0|1)
+	headerHeight := titleLines + locationLines + 1 + helpLines
 	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != ""
 	if hasVerdict || review.Addressed {
 		headerHeight++ // Add 1 for verdict/addressed line

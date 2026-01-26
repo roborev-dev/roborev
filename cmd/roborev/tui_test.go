@@ -4087,6 +4087,52 @@ func TestTUIRenderReviewViewVerdictOnLine2(t *testing.T) {
 	}
 }
 
+func TestTUIRenderReviewViewAddressedWithoutVerdict(t *testing.T) {
+	// Test that [ADDRESSED] appears on line 2 when no verdict is present
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:        10,
+		Output:    "Line 1\nLine 2\nLine 3",
+		Addressed: true,
+		Job: &storage.ReviewJob{
+			ID:       1,
+			GitRef:   "abc1234",
+			RepoName: "myrepo",
+			Agent:    "codex",
+			Verdict:  nil, // No verdict
+		},
+	}
+
+	output := m.View()
+	lines := strings.Split(output, "\n")
+
+	// Line 0: Title
+	if !strings.Contains(lines[0], "Review") {
+		t.Errorf("Line 0 should contain 'Review', got: %s", lines[0])
+	}
+
+	// Line 1: Location (ref)
+	if len(lines) > 1 && !strings.Contains(lines[1], "abc1234") {
+		t.Errorf("Line 1 should contain ref 'abc1234', got: %s", lines[1])
+	}
+
+	// Line 2: [ADDRESSED] (no verdict)
+	if len(lines) > 2 && !strings.Contains(lines[2], "[ADDRESSED]") {
+		t.Errorf("Line 2 should contain '[ADDRESSED]', got: %s", lines[2])
+	}
+	if len(lines) > 2 && strings.Contains(lines[2], "Verdict") {
+		t.Errorf("Line 2 should not contain 'Verdict' when no verdict is set, got: %s", lines[2])
+	}
+
+	// Line 3: Content
+	if len(lines) > 3 && !strings.Contains(lines[3], "Line 1") {
+		t.Errorf("Line 3 should contain content 'Line 1', got: %s", lines[3])
+	}
+}
+
 func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 	// Test that navigating from a successful review with branch to a failed job clears the branch
 	m := newTuiModel("http://localhost")
@@ -4355,15 +4401,15 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 }
 
 func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
-	// Test that long titles correctly wrap and reduce visible lines
+	// Test that long titles and location lines correctly wrap and reduce visible lines
 	// New layout:
 	// - Title: "Review #1 very-long-repository-name-here (claude-code)" = ~54 chars, ceil(54/50) = 2 lines
-	// - Location line: repo + ref + branch = 1 line
+	// - Location line: "very-long-repository-name-here abc1234567890..de on feature/very-long-branch-name" = 81 chars, ceil(81/50) = 2 lines
 	// - Addressed line: 1 line (since Addressed=true)
 	// - Status line: 1 line
 	// - Help: ceil(91/50) = 2 lines
-	// Non-content: 2 + 1 + 1 + 1 + 2 = 7
-	// visibleLines = 12 - 7 = 5
+	// Non-content: 2 + 2 + 1 + 1 + 2 = 8
+	// visibleLines = 12 - 8 = 4
 	m := newTuiModel("http://localhost")
 	m.width = 50
 	m.height = 12
@@ -4392,14 +4438,14 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 		}
 	}
 
-	expectedContent := 5
+	expectedContent := 4
 	if contentCount != expectedContent {
 		t.Errorf("Expected %d content lines with long wrapping title, got %d", expectedContent, contentCount)
 	}
 
 	// Should show scroll indicator with correct range
-	if !strings.Contains(output, "[1-5 of 20 lines]") {
-		t.Errorf("Expected scroll indicator '[1-5 of 20 lines]', output: %s", output)
+	if !strings.Contains(output, "[1-4 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-4 of 20 lines]', output: %s", output)
 	}
 
 	// Should contain the long repo name and branch
