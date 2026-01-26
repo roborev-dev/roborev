@@ -678,7 +678,13 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 		// Count jobs per branch, deriving branch from git if not stored
 		branchCounts := make(map[string]int)
 		var branchOrder []string
-		var backfillCount int
+		// Collect jobs to backfill - we'll do this async after returning
+		type backfillJob struct {
+			id     int64
+			branch string
+		}
+		var toBackfill []backfillJob
+
 		for _, job := range result.Jobs {
 			branch := job.Branch
 
@@ -694,19 +700,9 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 						}
 						branch = git.GetBranchName(job.RepoPath, sha)
 
-						// Backfill the branch to the database if we derived one
+						// Queue for async backfill if we derived a branch
 						if branch != "" {
-							reqBody, _ := json.Marshal(map[string]interface{}{
-								"job_id": job.ID,
-								"branch": branch,
-							})
-							backfillResp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
-							if err == nil {
-								backfillResp.Body.Close()
-								if backfillResp.StatusCode == http.StatusOK {
-									backfillCount++
-								}
-							}
+							toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
 						}
 					}
 				}
@@ -721,6 +717,22 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			branchCounts[branch]++
 		}
 
+		// Fire-and-forget backfill to avoid blocking the UI
+		if len(toBackfill) > 0 {
+			go func() {
+				for _, bf := range toBackfill {
+					reqBody, _ := json.Marshal(map[string]interface{}{
+						"job_id": bf.id,
+						"branch": bf.branch,
+					})
+					resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
+					if err == nil {
+						resp.Body.Close()
+					}
+				}
+			}()
+		}
+
 		// Build branch list
 		branches := make([]branchFilterItem, len(branchOrder))
 		for i, name := range branchOrder {
@@ -729,7 +741,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				count: branchCounts[name],
 			}
 		}
-		return tuiBranchesMsg{branches: branches, totalCount: len(result.Jobs), backfillCount: backfillCount}
+		return tuiBranchesMsg{branches: branches, totalCount: len(result.Jobs), backfillCount: len(toBackfill)}
 	}
 }
 

@@ -214,6 +214,12 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add index on branch column if missing
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_branch ON review_jobs(branch)`)
+	if err != nil {
+		return fmt.Errorf("create branch index: %w", err)
+	}
+
 	// Migration: update CHECK constraint to include 'canceled' status
 	// SQLite requires table recreation to modify CHECK constraints
 	var tableSql string

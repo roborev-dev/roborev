@@ -257,9 +257,12 @@ func TestBranchPersistence(t *testing.T) {
 		}
 
 		// Update the branch
-		err = db.UpdateJobBranch(job.ID, "feature/backfilled")
+		rowsAffected, err := db.UpdateJobBranch(job.ID, "feature/backfilled")
 		if err != nil {
 			t.Fatalf("UpdateJobBranch failed: %v", err)
+		}
+		if rowsAffected != 1 {
+			t.Errorf("Expected 1 row affected, got %d", rowsAffected)
 		}
 
 		// Verify the branch was updated
@@ -280,9 +283,12 @@ func TestBranchPersistence(t *testing.T) {
 		}
 
 		// Try to update - should not change existing branch
-		err = db.UpdateJobBranch(job.ID, "new-branch")
+		rowsAffected, err := db.UpdateJobBranch(job.ID, "new-branch")
 		if err != nil {
 			t.Fatalf("UpdateJobBranch failed: %v", err)
+		}
+		if rowsAffected != 0 {
+			t.Errorf("Expected 0 rows affected (branch already set), got %d", rowsAffected)
 		}
 
 		// Verify the branch was NOT changed

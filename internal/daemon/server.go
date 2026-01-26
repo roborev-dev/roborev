@@ -829,12 +829,16 @@ func (s *Server) handleUpdateJobBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.db.UpdateJobBranch(req.JobID, req.Branch); err != nil {
+	rowsAffected, err := s.db.UpdateJobBranch(req.JobID, req.Branch)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("update branch: %v", err))
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"updated": rowsAffected > 0,
+	})
 }
 
 func (s *Server) handleGetReview(w http.ResponseWriter, r *http.Request) {
