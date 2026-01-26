@@ -2953,7 +2953,7 @@ func (m tuiModel) renderQueueView() string {
 		colWidths := m.calculateColumnWidths(idWidth)
 
 		// Header (with 2-char prefix to align with row selector)
-		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-10s %-3s %-12s %-8s %s",
+		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-7s %-3s %-12s %-8s %s",
 			idWidth, "ID",
 			colWidths.ref, "Ref",
 			colWidths.branch, "Branch",
@@ -3059,26 +3059,26 @@ type columnWidths struct {
 }
 
 func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (10), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
+	// Fixed widths: ID (idWidth), Status (7), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
 	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
-	fixedWidth := 2 + idWidth + 10 + 3 + 12 + 8 + 6 + 9
+	fixedWidth := 2 + idWidth + 7 + 3 + 12 + 8 + 6 + 9
 
 	// Available width for flexible columns (ref, branch, repo, agent)
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
 	availableWidth := max(4, m.width-fixedWidth) // At least 4 chars total for columns
 
-	// Distribute available width: ref (15%), branch (15%), repo (40%), agent (30%)
+	// Distribute available width: ref (15%), branch (25%), repo (35%), agent (25%)
 	refWidth := max(1, availableWidth*15/100)
-	branchWidth := max(1, availableWidth*15/100)
-	repoWidth := max(1, availableWidth*40/100)
-	agentWidth := max(1, availableWidth*30/100)
+	branchWidth := max(1, availableWidth*25/100)
+	repoWidth := max(1, availableWidth*35/100)
+	agentWidth := max(1, availableWidth*25/100)
 
 	// Scale down if total exceeds available (can happen due to rounding with small values)
 	total := refWidth + branchWidth + repoWidth + agentWidth
 	if total > availableWidth && availableWidth > 0 {
 		refWidth = max(1, availableWidth*15/100)
-		branchWidth = max(1, availableWidth*15/100)
-		repoWidth = max(1, availableWidth*40/100)
+		branchWidth = max(1, availableWidth*25/100)
+		repoWidth = max(1, availableWidth*35/100)
 		agentWidth = availableWidth - refWidth - branchWidth - repoWidth // Give remainder to agent
 		if agentWidth < 1 {
 			agentWidth = 1
@@ -3088,9 +3088,9 @@ func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
 	// Apply higher minimums only when there's plenty of space
 	if availableWidth >= 45 {
 		refWidth = max(8, refWidth)
-		branchWidth = max(8, branchWidth)
-		repoWidth = max(12, repoWidth)
-		agentWidth = max(10, agentWidth)
+		branchWidth = max(10, branchWidth)
+		repoWidth = max(10, repoWidth)
+		agentWidth = max(6, agentWidth)
 	}
 
 	return columnWidths{
@@ -3124,6 +3124,10 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 	}
 
 	agent := job.Agent
+	// Normalize agent display names for compactness
+	if agent == "claude-code" {
+		agent = "claude"
+	}
 	if len(agent) > colWidths.agent {
 		agent = agent[:max(1, colWidths.agent-3)] + "..."
 	}
@@ -3168,8 +3172,8 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 		}
 	}
 	// Pad after coloring since lipgloss strips trailing spaces
-	// Width 10 accommodates "running(3)" (10 chars)
-	padding := 10 - len(status)
+	// Width 7 accommodates "running" (7 chars) - retry count shown in queued only
+	padding := 7 - len(status)
 	if padding > 0 {
 		styledStatus += strings.Repeat(" ", padding)
 	}
