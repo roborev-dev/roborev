@@ -68,7 +68,7 @@ func (c *SyncConfig) PostgresURLExpanded() string {
 // GetRepoDisplayName returns the configured display name for a repo identity,
 // or empty string if no override is configured.
 func (c *SyncConfig) GetRepoDisplayName(identity string) string {
-	if c.RepoNames == nil {
+	if c == nil || c.RepoNames == nil {
 		return ""
 	}
 	return c.RepoNames[identity]

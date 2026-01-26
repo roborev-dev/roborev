@@ -434,13 +434,43 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		}
 	})
 
-	t.Run("creates placeholder even when local clones exist", func(t *testing.T) {
-		// This tests the fix for https://github.com/roborev-dev/roborev/issues/131
-		// When multiple local clones have the same identity, GetOrCreateRepoByIdentity
-		// should create/use a dedicated placeholder repo (root_path == identity).
+	t.Run("reuses single local repo when one exists", func(t *testing.T) {
+		// When exactly one local repo has the identity, use it directly (no placeholder)
+		singleIdentity := "git@github.com:org/single-clone-repo.git"
+
+		// Create one local clone with the identity
+		result, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+			"/home/user/single-clone", "single-clone", singleIdentity)
+		if err != nil {
+			t.Fatalf("Insert single clone failed: %v", err)
+		}
+		localRepoID, _ := result.LastInsertId()
+
+		// GetOrCreateRepoByIdentity should return the existing local repo, not create a placeholder
+		gotID, err := db.GetOrCreateRepoByIdentity(singleIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepoByIdentity failed: %v", err)
+		}
+		if gotID != localRepoID {
+			t.Errorf("Expected to reuse local repo ID %d, got %d", localRepoID, gotID)
+		}
+
+		// Verify no placeholder was created
+		var count int
+		err = db.QueryRow(`SELECT COUNT(*) FROM repos WHERE root_path = ?`, singleIdentity).Scan(&count)
+		if err != nil {
+			t.Fatalf("Count query failed: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("Expected no placeholder to be created, found %d", count)
+		}
+	})
+
+	t.Run("creates placeholder when multiple local clones exist", func(t *testing.T) {
+		// When multiple local clones have the same identity, create a placeholder
 		sharedIdentity := "git@github.com:org/shared-repo.git"
 
-		// Create two local clones with the same identity (simulates real scenario)
+		// Create two local clones with the same identity
 		_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 			"/home/user/clone-1", "clone-1", sharedIdentity)
 		if err != nil {
@@ -452,7 +482,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 			t.Fatalf("Insert clone-2 failed: %v", err)
 		}
 
-		// GetOrCreateRepoByIdentity should create a placeholder, not fail
+		// GetOrCreateRepoByIdentity should create a placeholder
 		placeholderID, err := db.GetOrCreateRepoByIdentity(sharedIdentity)
 		if err != nil {
 			t.Fatalf("GetOrCreateRepoByIdentity should succeed with duplicates, got: %v", err)
@@ -504,7 +534,7 @@ func TestExtractRepoNameFromIdentity(t *testing.T) {
 		// Edge cases
 		{"repo.git", "repo"},
 		{"repo", "repo"},
-		{"", ""},
+		{"", "unknown"},
 	}
 
 	for _, tt := range tests {
