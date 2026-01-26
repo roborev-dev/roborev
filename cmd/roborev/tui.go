@@ -1457,7 +1457,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "pgup":
 				m.tailFollow = false // Stop auto-scroll when user scrolls up
-				visibleLines := m.height - 5
+				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
 				}
@@ -1465,21 +1465,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.tailScroll < 0 {
 					m.tailScroll = 0
 				}
-				return m, tea.ClearScreen
+				return m, nil
 			case "pgdown":
-				visibleLines := m.height - 5
+				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
 				}
 				m.tailScroll += visibleLines
-				return m, tea.ClearScreen
+				return m, nil
 			case "home", "g":
 				m.tailFollow = false // Stop auto-scroll when going to top
 				m.tailScroll = 0
 				return m, nil
 			case "end", "G":
 				m.tailFollow = true // Resume auto-scroll when going to bottom
-				visibleLines := m.height - 5
+				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
 				}
@@ -2277,11 +2277,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.currentView == tuiViewTail {
-			m.tailLines = msg.lines
+			// Only update lines if we have new content, or if job is still streaming
+			// This preserves the output when job completes (buffer gets closed on server)
+			if len(msg.lines) > 0 || msg.hasMore {
+				m.tailLines = msg.lines
+			}
 			m.tailStreaming = msg.hasMore
 			// Auto-scroll to bottom only if in follow mode
 			if m.tailFollow && len(m.tailLines) > 0 {
-				visibleLines := m.height - 5
+				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
 				}

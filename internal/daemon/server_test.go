@@ -2171,3 +2171,163 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleAddCommentToJobStates tests that comments can be added to jobs
+// in any state: queued, running, done, failed, and canceled.
+func TestHandleAddCommentToJobStates(t *testing.T) {
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	// Create repo and commit
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test commit", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+
+	testCases := []struct {
+		name       string
+		setupQuery string // SQL to set job to specific state
+	}{
+		{"queued job", ""},
+		{"running job", `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`},
+		{"completed job", `UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`},
+		{"failed job", `UPDATE review_jobs SET status = 'failed', started_at = datetime('now'), finished_at = datetime('now'), error = 'test error' WHERE id = ?`},
+		{"canceled job", `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a job
+			job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+			if err != nil {
+				t.Fatalf("EnqueueJob failed: %v", err)
+			}
+
+			// Set job to desired state
+			if tc.setupQuery != "" {
+				if _, err := db.Exec(tc.setupQuery, job.ID); err != nil {
+					t.Fatalf("Failed to set job state: %v", err)
+				}
+			}
+
+			// Add comment via API
+			reqData := map[string]interface{}{
+				"job_id":    job.ID,
+				"commenter": "test-user",
+				"comment":   "Test comment for " + tc.name,
+			}
+			reqBody, _ := json.Marshal(reqData)
+			req := httptest.NewRequest(http.MethodPost, "/api/comment", bytes.NewReader(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			server.handleAddComment(w, req)
+
+			if w.Code != http.StatusCreated {
+				t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
+			}
+
+			// Verify response contains the comment
+			var resp storage.Response
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("Failed to unmarshal response: %v", err)
+			}
+			if resp.Responder != "test-user" {
+				t.Errorf("Expected responder 'test-user', got %q", resp.Responder)
+			}
+		})
+	}
+}
+
+// TestHandleAddCommentToNonExistentJob tests that adding a comment to a
+// non-existent job returns 404.
+func TestHandleAddCommentToNonExistentJob(t *testing.T) {
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	reqData := map[string]interface{}{
+		"job_id":    99999,
+		"commenter": "test-user",
+		"comment":   "This should fail",
+	}
+	reqBody, _ := json.Marshal(reqData)
+	req := httptest.NewRequest(http.MethodPost, "/api/comment", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.handleAddComment(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "job not found") {
+		t.Errorf("Expected 'job not found' error, got: %s", w.Body.String())
+	}
+}
+
+// TestHandleAddCommentWithoutReview tests that comments can be added to jobs
+// that don't have a review yet (job exists but hasn't completed).
+func TestHandleAddCommentWithoutReview(t *testing.T) {
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	// Create repo, commit, and job (but NO review)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Test commit", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+
+	// Set job to running (no review exists yet)
+	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
+		t.Fatalf("Failed to set job to running: %v", err)
+	}
+
+	// Verify no review exists
+	if _, err := db.GetReviewByJobID(job.ID); err == nil {
+		t.Fatal("Expected no review to exist for job")
+	}
+
+	// Add comment - should succeed even without a review
+	reqData := map[string]interface{}{
+		"job_id":    job.ID,
+		"commenter": "test-user",
+		"comment":   "Comment on in-progress job without review",
+	}
+	reqBody, _ := json.Marshal(reqData)
+	req := httptest.NewRequest(http.MethodPost, "/api/comment", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.handleAddComment(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify comment was stored
+	comments, err := db.GetCommentsForJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetCommentsForJob failed: %v", err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("Expected 1 comment, got %d", len(comments))
+	}
+	if comments[0].Response != "Comment on in-progress job without review" {
+		t.Errorf("Unexpected comment: %q", comments[0].Response)
+	}
+}
