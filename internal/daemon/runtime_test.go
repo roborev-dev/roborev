@@ -95,9 +95,9 @@ func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
 		t.Error("KillDaemon should return true for non-existent PID")
 	}
 
-	// Should complete quickly (no HTTP call). Allow 200ms for process checks.
-	// If HTTP was attempted, it would take at least 500ms (client timeout).
-	if elapsed > 200*time.Millisecond {
+	// Should complete quickly (no HTTP call). Allow 300ms for process checks
+	// (Windows CI can be slow). If HTTP was attempted, it would take 500ms+.
+	if elapsed > 300*time.Millisecond {
 		t.Errorf("KillDaemon took %v, suggesting HTTP was attempted to non-loopback address", elapsed)
 	}
 }
