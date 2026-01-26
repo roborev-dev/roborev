@@ -421,18 +421,13 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 
 	// For dirty or prompt jobs, no branch makes sense
 	if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
-		if m.branchNames != nil {
-			m.branchNames[job.ID] = ""
-		}
 		return ""
 	}
 
 	// Fall back to git lookup if repo path exists locally and we have a SHA
 	// Only try if repo path is set and is not from a remote machine
 	if job.RepoPath == "" || (m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID) {
-		if m.branchNames != nil {
-			m.branchNames[job.ID] = ""
-		}
+		// Don't cache - repo might become available later
 		return ""
 	}
 
@@ -443,7 +438,8 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 	}
 
 	branch := git.GetBranchName(job.RepoPath, sha)
-	if m.branchNames != nil {
+	// Only cache non-empty results - if repo becomes available later, we can retry
+	if branch != "" && m.branchNames != nil {
 		m.branchNames[job.ID] = branch
 	}
 	return branch

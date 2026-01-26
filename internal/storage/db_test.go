@@ -173,7 +173,10 @@ func TestBranchPersistence(t *testing.T) {
 	})
 
 	t.Run("GetJobByID returns branch", func(t *testing.T) {
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "branch456", "main", "codex", "", "")
+		job, err := db.EnqueueJob(repo.ID, commit.ID, "branch456", "main", "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
 		fetched, err := db.GetJobByID(job.ID)
 		if err != nil {
 			t.Fatalf("GetJobByID failed: %v", err)
@@ -184,7 +187,10 @@ func TestBranchPersistence(t *testing.T) {
 	})
 
 	t.Run("ListJobs returns branch", func(t *testing.T) {
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "branch789", "develop", "codex", "", "")
+		job, err := db.EnqueueJob(repo.ID, commit.ID, "branch789", "develop", "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
 		jobs, err := db.ListJobs("", "", 100, 0)
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
@@ -214,7 +220,10 @@ func TestBranchPersistence(t *testing.T) {
 			db.CompleteJob(j.ID, "codex", "p", "o")
 		}
 
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "branchclaim", "release/v1", "codex", "", "")
+		job, err := db.EnqueueJob(repo.ID, commit.ID, "branchclaim", "release/v1", "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
 		claimed, err := db.ClaimJob("test-worker")
 		if err != nil {
 			t.Fatalf("ClaimJob failed: %v", err)
@@ -234,6 +243,55 @@ func TestBranchPersistence(t *testing.T) {
 		}
 		if job.Branch != "" {
 			t.Errorf("Expected empty branch, got '%s'", job.Branch)
+		}
+	})
+
+	t.Run("UpdateJobBranch backfills empty branch", func(t *testing.T) {
+		// Create job with empty branch
+		job, err := db.EnqueueJob(repo.ID, commit.ID, "updatebranch", "", "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
+		if job.Branch != "" {
+			t.Fatalf("Expected empty branch initially, got '%s'", job.Branch)
+		}
+
+		// Update the branch
+		err = db.UpdateJobBranch(job.ID, "feature/backfilled")
+		if err != nil {
+			t.Fatalf("UpdateJobBranch failed: %v", err)
+		}
+
+		// Verify the branch was updated
+		fetched, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		if fetched.Branch != "feature/backfilled" {
+			t.Errorf("Expected branch 'feature/backfilled', got '%s'", fetched.Branch)
+		}
+	})
+
+	t.Run("UpdateJobBranch does not overwrite existing branch", func(t *testing.T) {
+		// Create job with existing branch
+		job, err := db.EnqueueJob(repo.ID, commit.ID, "nooverwrite", "original-branch", "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
+
+		// Try to update - should not change existing branch
+		err = db.UpdateJobBranch(job.ID, "new-branch")
+		if err != nil {
+			t.Fatalf("UpdateJobBranch failed: %v", err)
+		}
+
+		// Verify the branch was NOT changed
+		fetched, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		if fetched.Branch != "original-branch" {
+			t.Errorf("Expected branch 'original-branch' (unchanged), got '%s'", fetched.Branch)
 		}
 	})
 }
