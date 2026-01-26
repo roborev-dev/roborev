@@ -49,6 +49,31 @@ func TestOutputBuffer_PerJobLimit(t *testing.T) {
 	}
 }
 
+func TestOutputBuffer_GlobalLimit(t *testing.T) {
+	// Small global limit: 50 bytes total, 30 bytes per job
+	ob := NewOutputBuffer(30, 50)
+
+	// Add lines across multiple jobs
+	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes, total=20
+	ob.Append(2, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes, total=40
+	ob.Append(3, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes - would exceed 50, dropped
+
+	// Job 3's line should be dropped due to global limit
+	lines1 := ob.GetLines(1)
+	lines2 := ob.GetLines(2)
+	lines3 := ob.GetLines(3)
+
+	if len(lines1) != 1 {
+		t.Errorf("expected 1 line for job 1, got %d", len(lines1))
+	}
+	if len(lines2) != 1 {
+		t.Errorf("expected 1 line for job 2, got %d", len(lines2))
+	}
+	if len(lines3) != 0 {
+		t.Errorf("expected 0 lines for job 3 (global limit exceeded), got %d", len(lines3))
+	}
+}
+
 func TestOutputBuffer_CloseJob(t *testing.T) {
 	ob := NewOutputBuffer(1024, 4096)
 

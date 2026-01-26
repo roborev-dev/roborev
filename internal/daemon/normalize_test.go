@@ -96,6 +96,19 @@ func TestNormalizeClaudeOutput_SystemInit(t *testing.T) {
 	}
 }
 
+func TestNormalizeClaudeOutput_SystemInitShortSessionID(t *testing.T) {
+	// Test that short session IDs don't panic
+	line := `{"type":"system","subtype":"init","session_id":"abc"}`
+	result := NormalizeClaudeOutput(line)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Text != "[Session: abc...]" {
+		t.Errorf("expected short session ID preserved, got %q", result.Text)
+	}
+}
+
 func TestNormalizeClaudeOutput_InvalidJSON(t *testing.T) {
 	line := "not json at all"
 	result := NormalizeClaudeOutput(line)

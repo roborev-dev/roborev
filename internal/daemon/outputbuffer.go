@@ -82,12 +82,18 @@ func (ob *OutputBuffer) Append(jobID int64, line OutputLine) {
 		ob.mu.Unlock()
 	}
 
+	// Check global memory limit - drop line if we'd exceed maxTotal
+	ob.mu.Lock()
+	if ob.totalBytes+lineBytes > ob.maxTotal {
+		ob.mu.Unlock()
+		return // Drop line to enforce global memory limit
+	}
+	ob.totalBytes += lineBytes
+	ob.mu.Unlock()
+
 	// Add the line
 	jo.lines = append(jo.lines, line)
 	jo.totalBytes += lineBytes
-	ob.mu.Lock()
-	ob.totalBytes += lineBytes
-	ob.mu.Unlock()
 
 	// Notify subscribers
 	for _, ch := range jo.subs {

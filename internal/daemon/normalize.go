@@ -140,7 +140,11 @@ func NormalizeClaudeOutput(line string) *OutputLine {
 		// System messages (e.g., init)
 		if msg.Subtype == "init" {
 			if msg.SessionID != "" {
-				return &OutputLine{Text: "[Session: " + msg.SessionID[:8] + "...]", Type: "text"}
+				sessionPrefix := msg.SessionID
+				if len(sessionPrefix) > 8 {
+					sessionPrefix = sessionPrefix[:8]
+				}
+				return &OutputLine{Text: "[Session: " + sessionPrefix + "...]", Type: "text"}
 			}
 		}
 		return nil
