@@ -161,6 +161,7 @@ type tuiModel struct {
 	// Active filter (applied to queue view)
 	activeRepoFilter   []string // Empty = show all, otherwise repo root_paths to filter by
 	activeBranchFilter string   // Empty = show all, otherwise branch name to filter by
+	filterStack        []string // Order of applied filters: "repo", "branch" - for escape to pop in order
 	hideAddressed      bool     // When true, hide jobs with addressed reviews
 
 	// Display name cache (keyed by repo path)
@@ -602,8 +603,80 @@ func (m tuiModel) tryReconnect() tea.Cmd {
 }
 
 func (m tuiModel) fetchRepos() tea.Cmd {
+	// Capture values for use in goroutine
+	client := m.client
+	serverAddr := m.serverAddr
+	activeBranchFilter := m.activeBranchFilter // Constrain repos by active branch filter
+
 	return func() tea.Msg {
-		resp, err := m.client.Get(m.serverAddr + "/api/repos")
+		// If branch filter is active, fetch all jobs and count client-side
+		if activeBranchFilter != "" {
+			resp, err := client.Get(serverAddr + "/api/jobs?limit=5000")
+			if err != nil {
+				return tuiErrMsg(err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return tuiErrMsg(fmt.Errorf("fetch jobs for repos: %s", resp.Status))
+			}
+
+			var jobsResult struct {
+				Jobs []storage.ReviewJob `json:"jobs"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&jobsResult); err != nil {
+				return tuiErrMsg(err)
+			}
+
+			// Count repos for jobs matching branch filter
+			repoCountMap := make(map[string]int) // rootPath -> count
+			var repoPathOrder []string
+			var filteredTotal int
+			for _, job := range jobsResult.Jobs {
+				// Check if job matches branch filter
+				jobBranch := job.Branch
+				if jobBranch == "" {
+					jobBranch = "(none)"
+				}
+				if jobBranch != activeBranchFilter {
+					continue
+				}
+				filteredTotal++
+				if _, seen := repoCountMap[job.RepoPath]; !seen {
+					repoPathOrder = append(repoPathOrder, job.RepoPath)
+				}
+				repoCountMap[job.RepoPath]++
+			}
+
+			// Aggregate by display name
+			displayNameMap := make(map[string]*repoFilterItem)
+			var displayNameOrder []string
+			for _, rootPath := range repoPathOrder {
+				displayName := config.GetDisplayName(rootPath)
+				if displayName == "" {
+					displayName = filepath.Base(rootPath)
+				}
+				if item, ok := displayNameMap[displayName]; ok {
+					item.rootPaths = append(item.rootPaths, rootPath)
+					item.count += repoCountMap[rootPath]
+				} else {
+					displayNameMap[displayName] = &repoFilterItem{
+						name:      displayName,
+						rootPaths: []string{rootPath},
+						count:     repoCountMap[rootPath],
+					}
+					displayNameOrder = append(displayNameOrder, displayName)
+				}
+			}
+			repos := make([]repoFilterItem, len(displayNameOrder))
+			for i, name := range displayNameOrder {
+				repos[i] = *displayNameMap[name]
+			}
+			return tuiReposMsg{repos: repos, totalCount: filteredTotal}
+		}
+
+		// No branch filter - use server-side API
+		resp, err := client.Get(serverAddr + "/api/repos")
 		if err != nil {
 			return tuiErrMsg(err)
 		}
@@ -659,6 +732,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 	client := m.client
 	serverAddr := m.serverAddr
 	backfillDone := m.branchBackfillDone
+	activeRepoFilter := m.activeRepoFilter // Constrain branches by active repo filter
 
 	return func() tea.Msg {
 		// Fetch jobs to extract branches (no API endpoint for branches directly)
@@ -751,10 +825,25 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			}
 		}
 
-		// Count jobs per branch
+		// Count jobs per branch (filtered by active repo filter if set)
 		branchCounts := make(map[string]int)
 		var branchOrder []string
+		var filteredTotal int
 		for _, job := range result.Jobs {
+			// Skip jobs that don't match repo filter
+			if len(activeRepoFilter) > 0 {
+				matches := false
+				for _, p := range activeRepoFilter {
+					if p == job.RepoPath {
+						matches = true
+						break
+					}
+				}
+				if !matches {
+					continue
+				}
+			}
+			filteredTotal++
 			branch := job.Branch
 			if branch == "" {
 				branch = "(none)"
@@ -773,7 +862,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				count: branchCounts[name],
 			}
 		}
-		return tuiBranchesMsg{branches: branches, totalCount: len(result.Jobs), backfillCount: backfillCount}
+		return tuiBranchesMsg{branches: branches, totalCount: filteredTotal, backfillCount: backfillCount}
 	}
 }
 
@@ -1464,6 +1553,44 @@ func (m tuiModel) branchMatchesFilter(job storage.ReviewJob) bool {
 	return branch == m.activeBranchFilter
 }
 
+// pushFilter adds a filter type to the stack (or moves it to the end if already present)
+func (m *tuiModel) pushFilter(filterType string) {
+	// Remove if already present
+	m.removeFilterFromStack(filterType)
+	// Add to end
+	m.filterStack = append(m.filterStack, filterType)
+}
+
+// popFilter removes the most recent filter from the stack and clears its value
+// Returns the filter type that was popped, or empty string if stack was empty
+func (m *tuiModel) popFilter() string {
+	if len(m.filterStack) == 0 {
+		return ""
+	}
+	// Pop the last filter
+	last := m.filterStack[len(m.filterStack)-1]
+	m.filterStack = m.filterStack[:len(m.filterStack)-1]
+	// Clear the corresponding filter value
+	switch last {
+	case "repo":
+		m.activeRepoFilter = nil
+	case "branch":
+		m.activeBranchFilter = ""
+	}
+	return last
+}
+
+// removeFilterFromStack removes a filter type from the stack without clearing its value
+func (m *tuiModel) removeFilterFromStack(filterType string) {
+	var newStack []string
+	for _, f := range m.filterStack {
+		if f != filterType {
+			newStack = append(newStack, f)
+		}
+	}
+	m.filterStack = newStack
+}
+
 // getVisibleJobs returns jobs filtered by active filters (repo, branch, addressed)
 func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideAddressed {
@@ -1602,7 +1729,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				selected := m.getSelectedFilterRepo()
 				if selected != nil {
-					m.activeRepoFilter = selected.rootPaths
+					if len(selected.rootPaths) == 0 {
+						// "All projects" - remove repo filter from stack
+						m.activeRepoFilter = nil
+						m.removeFilterFromStack("repo")
+					} else {
+						// Apply repo filter and push onto stack
+						m.activeRepoFilter = selected.rootPaths
+						m.pushFilter("repo")
+					}
 					m.currentView = tuiViewQueue
 					m.filterSearch = ""
 					// Invalidate selection until refetch completes - prevents
@@ -1654,9 +1789,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				selected := m.getSelectedFilterBranch()
 				if selected != nil {
 					if selected.name == "" {
-						m.activeBranchFilter = "" // "All branches"
+						// "All branches" - remove branch filter from stack
+						m.activeBranchFilter = ""
+						m.removeFilterFromStack("branch")
 					} else {
+						// Apply branch filter and push onto stack
 						m.activeBranchFilter = selected.name
+						m.pushFilter("branch")
 					}
 					m.currentView = tuiViewQueue
 					m.branchFilterSearch = ""
@@ -2302,24 +2441,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "esc":
-			if m.currentView == tuiViewQueue && len(m.activeRepoFilter) > 0 {
-				// Clear project filter first (keep other filters if active)
-				m.activeRepoFilter = nil
-				m.jobs = nil
-				m.hasMore = false
-				m.selectedIdx = -1
-				m.selectedJobID = 0
-				// If already loading (full refresh or pagination), queue a refetch
-				// to avoid out-of-order responses mixing stale data
-				if m.loadingJobs || m.loadingMore {
-					m.pendingRefetch = true
-					return m, nil
+			if m.currentView == tuiViewQueue && len(m.filterStack) > 0 {
+				// Pop the most recent filter from the stack
+				popped := m.popFilter()
+				if popped == "repo" {
+					// Repo filter is server-side, need to refetch
+					m.jobs = nil
+					m.hasMore = false
+					m.selectedIdx = -1
+					m.selectedJobID = 0
+					if m.loadingJobs || m.loadingMore {
+						m.pendingRefetch = true
+						return m, nil
+					}
+					m.loadingJobs = true
+					return m, m.fetchJobs()
 				}
-				m.loadingJobs = true
-				return m, m.fetchJobs()
-			} else if m.currentView == tuiViewQueue && m.activeBranchFilter != "" {
-				// Clear branch filter (client-side, no refetch needed)
-				m.activeBranchFilter = ""
+				// Branch filter is client-side, no refetch needed
 				return m, nil
 			} else if m.currentView == tuiViewQueue && m.hideAddressed {
 				// Clear hide-addressed filter (no project/branch filter active)
@@ -2874,15 +3012,20 @@ func (m tuiModel) View() string {
 func (m tuiModel) renderQueueView() string {
 	var b strings.Builder
 
-	// Title with version, optional update notification, and filter indicators
+	// Title with version, optional update notification, and filter indicators (in stack order)
 	title := fmt.Sprintf("roborev queue (%s)", version.Version)
-	if len(m.activeRepoFilter) > 0 {
-		// Show display name for the filter (all paths share the same display name)
-		filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
-		title += fmt.Sprintf(" [f: %s]", filterName)
-	}
-	if m.activeBranchFilter != "" {
-		title += fmt.Sprintf(" [b: %s]", m.activeBranchFilter)
+	for _, filterType := range m.filterStack {
+		switch filterType {
+		case "repo":
+			if len(m.activeRepoFilter) > 0 {
+				filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
+				title += fmt.Sprintf(" [f: %s]", filterName)
+			}
+		case "branch":
+			if m.activeBranchFilter != "" {
+				title += fmt.Sprintf(" [b: %s]", m.activeBranchFilter)
+			}
+		}
 	}
 	if m.hideAddressed {
 		title += " [hiding addressed]"

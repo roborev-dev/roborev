@@ -1317,6 +1317,7 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
 
 	// Press Esc to clear filter
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
@@ -1345,6 +1346,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
 	m.hideAddressed = true
 
 	// First Esc: clear project filter, keep hide-addressed
@@ -1403,7 +1405,8 @@ func TestTUIFilterEscapeWhileLoadingQueuesPendingRefetch(t *testing.T) {
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
-	m.loadingJobs = true // Already loading
+	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
+	m.loadingJobs = true             // Already loading
 
 	// Press Esc while loading - should set pendingRefetch, not start new fetch
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
@@ -1478,8 +1481,9 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
-	m.loadingMore = true  // Pagination in flight
-	m.loadingJobs = false // Not a full refresh
+	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
+	m.loadingMore = true             // Pagination in flight
+	m.loadingJobs = false            // Not a full refresh
 
 	// Press Esc while pagination loading - should set pendingRefetch
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
@@ -7051,5 +7055,333 @@ func TestTUITailOutputIgnoredWhenNotInTailView(t *testing.T) {
 	}
 	if m2.tailLines[0].text != "Previous session line" {
 		t.Errorf("Lines should not be updated when not in tail view")
+	}
+}
+
+// Branch filter tests
+
+func TestTUIBranchFilterApplied(t *testing.T) {
+	// Test that branch filter correctly filters jobs
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", Branch: "main"},
+		{ID: 2, RepoName: "repo-a", Branch: "feature"},
+		{ID: 3, RepoName: "repo-b", Branch: "main"},
+		{ID: 4, RepoName: "repo-b", Branch: ""}, // No branch
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Apply branch filter
+	m.activeBranchFilter = "main"
+
+	visible := m.getVisibleJobs()
+	if len(visible) != 2 {
+		t.Errorf("Expected 2 visible jobs with branch=main, got %d", len(visible))
+	}
+	for _, job := range visible {
+		if job.Branch != "main" {
+			t.Errorf("Expected all visible jobs to have branch=main, got %s", job.Branch)
+		}
+	}
+}
+
+func TestTUIBranchFilterNone(t *testing.T) {
+	// Test filtering for jobs with no branch
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", Branch: "main"},
+		{ID: 2, RepoName: "repo-a", Branch: ""},
+		{ID: 3, RepoName: "repo-b", Branch: ""},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Apply branch filter for "(none)"
+	m.activeBranchFilter = "(none)"
+
+	visible := m.getVisibleJobs()
+	if len(visible) != 2 {
+		t.Errorf("Expected 2 visible jobs with no branch, got %d", len(visible))
+	}
+	for _, job := range visible {
+		if job.Branch != "" {
+			t.Errorf("Expected all visible jobs to have empty branch, got %s", job.Branch)
+		}
+	}
+}
+
+func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
+	// Test that branch and repo filters work together
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a", Branch: "main"},
+		{ID: 2, RepoName: "repo-a", RepoPath: "/path/to/repo-a", Branch: "feature"},
+		{ID: 3, RepoName: "repo-b", RepoPath: "/path/to/repo-b", Branch: "main"},
+		{ID: 4, RepoName: "repo-b", RepoPath: "/path/to/repo-b", Branch: "feature"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Apply both filters
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.activeBranchFilter = "main"
+
+	visible := m.getVisibleJobs()
+	if len(visible) != 1 {
+		t.Errorf("Expected 1 visible job (repo-a + main), got %d", len(visible))
+	}
+	if len(visible) > 0 && (visible[0].RepoPath != "/path/to/repo-a" || visible[0].Branch != "main") {
+		t.Errorf("Expected repo-a with main branch, got %s with %s", visible[0].RepoPath, visible[0].Branch)
+	}
+}
+
+// Filter stack tests
+
+func TestTUIFilterStackPush(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Push repo filter
+	m.pushFilter("repo")
+	if len(m.filterStack) != 1 || m.filterStack[0] != "repo" {
+		t.Errorf("Expected filterStack=['repo'], got %v", m.filterStack)
+	}
+
+	// Push branch filter
+	m.pushFilter("branch")
+	if len(m.filterStack) != 2 || m.filterStack[0] != "repo" || m.filterStack[1] != "branch" {
+		t.Errorf("Expected filterStack=['repo', 'branch'], got %v", m.filterStack)
+	}
+}
+
+func TestTUIFilterStackPushMovesDuplicate(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Push repo then branch
+	m.pushFilter("repo")
+	m.pushFilter("branch")
+
+	// Push repo again - should move to end
+	m.pushFilter("repo")
+	if len(m.filterStack) != 2 || m.filterStack[0] != "branch" || m.filterStack[1] != "repo" {
+		t.Errorf("Expected filterStack=['branch', 'repo'] after re-pushing repo, got %v", m.filterStack)
+	}
+}
+
+func TestTUIFilterStackPopClearsValue(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.activeRepoFilter = []string{"/path/to/repo"}
+	m.activeBranchFilter = "main"
+	m.filterStack = []string{"repo", "branch"}
+
+	// Pop should remove branch (last)
+	popped := m.popFilter()
+	if popped != "branch" {
+		t.Errorf("Expected popped='branch', got %s", popped)
+	}
+	if m.activeBranchFilter != "" {
+		t.Errorf("Expected activeBranchFilter to be cleared, got %s", m.activeBranchFilter)
+	}
+	if len(m.activeRepoFilter) != 1 {
+		t.Errorf("Expected activeRepoFilter to remain, got %v", m.activeRepoFilter)
+	}
+
+	// Pop again should remove repo
+	popped = m.popFilter()
+	if popped != "repo" {
+		t.Errorf("Expected popped='repo', got %s", popped)
+	}
+	if len(m.activeRepoFilter) != 0 {
+		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m.activeRepoFilter)
+	}
+
+	// Pop on empty stack
+	popped = m.popFilter()
+	if popped != "" {
+		t.Errorf("Expected popped='' on empty stack, got %s", popped)
+	}
+}
+
+func TestTUIFilterStackEscapeOrder(t *testing.T) {
+	// Test that escape pops filters in stack order (LIFO)
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a", Branch: "main"},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Apply repo filter first, then branch filter
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.filterStack = []string{"repo"}
+	m.activeBranchFilter = "main"
+	m.filterStack = append(m.filterStack, "branch")
+
+	// First escape - should clear branch filter
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if m2.activeBranchFilter != "" {
+		t.Errorf("Expected branch filter to be cleared first, got %s", m2.activeBranchFilter)
+	}
+	if len(m2.activeRepoFilter) == 0 {
+		t.Error("Expected repo filter to remain after first escape")
+	}
+	if len(m2.filterStack) != 1 || m2.filterStack[0] != "repo" {
+		t.Errorf("Expected filterStack=['repo'] after first escape, got %v", m2.filterStack)
+	}
+
+	// Second escape - should clear repo filter
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m3 := updated.(tuiModel)
+
+	if len(m3.activeRepoFilter) != 0 {
+		t.Errorf("Expected repo filter to be cleared, got %v", m3.activeRepoFilter)
+	}
+	if len(m3.filterStack) != 0 {
+		t.Errorf("Expected filterStack to be empty, got %v", m3.filterStack)
+	}
+}
+
+func TestTUIFilterStackTitleBarOrder(t *testing.T) {
+	// Test that title bar shows filters in stack order
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "myrepo", RepoPath: "/path/to/myrepo", Branch: "feature"},
+	}
+	m.currentView = tuiViewQueue
+
+	// Apply filters in order: branch first, then repo
+	m.activeBranchFilter = "feature"
+	m.filterStack = []string{"branch"}
+	m.activeRepoFilter = []string{"/path/to/myrepo"}
+	m.filterStack = append(m.filterStack, "repo")
+
+	output := m.View()
+
+	// Should contain both filters in the title
+	if !strings.Contains(output, "[b: feature]") {
+		t.Error("Expected output to contain [b: feature]")
+	}
+	if !strings.Contains(output, "[f: myrepo]") {
+		t.Error("Expected output to contain [f: myrepo]")
+	}
+
+	// Branch should appear before repo (stack order)
+	bIdx := strings.Index(output, "[b: feature]")
+	fIdx := strings.Index(output, "[f: myrepo]")
+	if bIdx > fIdx {
+		t.Error("Expected branch filter to appear before repo filter in title (stack order)")
+	}
+}
+
+func TestTUIFilterStackReverseOrder(t *testing.T) {
+	// Test title bar with reverse order (repo first, then branch)
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "myrepo", RepoPath: "/path/to/myrepo", Branch: "develop"},
+	}
+	m.currentView = tuiViewQueue
+
+	// Apply filters in order: repo first, then branch
+	m.activeRepoFilter = []string{"/path/to/myrepo"}
+	m.filterStack = []string{"repo"}
+	m.activeBranchFilter = "develop"
+	m.filterStack = append(m.filterStack, "branch")
+
+	output := m.View()
+
+	// Repo should appear before branch (stack order)
+	fIdx := strings.Index(output, "[f: myrepo]")
+	bIdx := strings.Index(output, "[b: develop]")
+	if fIdx > bIdx {
+		t.Error("Expected repo filter to appear before branch filter in title (stack order)")
+	}
+}
+
+func TestTUIBranchFilterModalOpensWithB(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, RepoName: "repo-a", Branch: "main"},
+	}
+	m.selectedIdx = 0
+	m.currentView = tuiViewQueue
+
+	// Press 'b' to open branch filter
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m2 := updated.(tuiModel)
+
+	if m2.currentView != tuiViewBranchFilter {
+		t.Errorf("Expected view to be tuiViewBranchFilter, got %v", m2.currentView)
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranches command to be returned")
+	}
+}
+
+func TestTUIBranchFilterSelectAppliesFilter(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.currentView = tuiViewBranchFilter
+	m.filterBranches = []branchFilterItem{
+		{name: "main", count: 5},
+		{name: "feature", count: 3},
+		{name: "(none)", count: 2},
+	}
+	m.branchFilterSelectedIdx = 1 // Select "feature"
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Branch: "main"},
+		{ID: 2, Branch: "feature"},
+	}
+
+	// Press Enter to select
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := updated.(tuiModel)
+
+	if m2.activeBranchFilter != "feature" {
+		t.Errorf("Expected activeBranchFilter='feature', got '%s'", m2.activeBranchFilter)
+	}
+	if m2.currentView != tuiViewQueue {
+		t.Errorf("Expected view to return to queue, got %v", m2.currentView)
+	}
+	// Should be in filter stack
+	found := false
+	for _, f := range m2.filterStack {
+		if f == "branch" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected 'branch' to be in filterStack, got %v", m2.filterStack)
+	}
+}
+
+func TestTUIRemoveFilterFromStack(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.filterStack = []string{"repo", "branch", "other"}
+
+	m.removeFilterFromStack("branch")
+	if len(m.filterStack) != 2 || m.filterStack[0] != "repo" || m.filterStack[1] != "other" {
+		t.Errorf("Expected filterStack=['repo', 'other'], got %v", m.filterStack)
+	}
+
+	// Remove non-existent filter should be no-op
+	m.removeFilterFromStack("nonexistent")
+	if len(m.filterStack) != 2 {
+		t.Errorf("Expected filterStack length to remain 2, got %d", len(m.filterStack))
 	}
 }
