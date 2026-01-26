@@ -7458,41 +7458,50 @@ func TestTUIBranchBackfillRetryAllowedWhenNullsRemain(t *testing.T) {
 	}
 }
 
-func TestTUIStatusColumnTruncation(t *testing.T) {
-	// Test that the queue view renders without error for jobs with high retry counts
-	// The status "running(99)" (11 chars) should be truncated to fit column width (10)
+func TestTUIBranchBackfillDoneResetsWhenNullsAppear(t *testing.T) {
+	// Test that branchBackfillDone is reset to false when new NULL branches appear
 	m := newTuiModel("http://localhost")
-	m.width = 200  // Wide enough terminal
-	m.height = 30  // Enough rows
+	m.branchBackfillDone = true // Previously marked as done
+
+	// Receive message with new NULLs (e.g., new jobs added)
+	updated, _ := m.Update(tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 2}},
+		totalCount:     7,
+		backfillCount:  0,
+		nullsRemaining: 2, // New NULL branches appeared
+	})
+	m2 := updated.(tuiModel)
+
+	if m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to be reset to false when NULLs appear")
+	}
+}
+
+func TestTUIStatusDisplaysCorrectly(t *testing.T) {
+	// Test that the queue view renders status correctly
+	m := newTuiModel("http://localhost")
+	m.width = 200
+	m.height = 30
 	m.currentView = tuiViewQueue
 
 	m.jobs = []storage.ReviewJob{
-		{
-			ID:         1,
-			RepoName:   "test-repo",
-			RepoPath:   "/path/to/repo",
-			GitRef:     "abc1234",
-			Status:     storage.JobStatusRunning,
-			RetryCount: 99, // Will create "running(99)" = 11 chars, truncated to 10
-		},
-		{
-			ID:         2,
-			RepoName:   "test-repo",
-			RepoPath:   "/path/to/repo",
-			GitRef:     "def5678",
-			Status:     storage.JobStatusQueued,
-			RetryCount: 100, // Will create "queued(100)" = 11 chars, truncated to 10
-		},
+		{ID: 1, RepoName: "repo", RepoPath: "/path", GitRef: "abc", Status: storage.JobStatusRunning},
+		{ID: 2, RepoName: "repo", RepoPath: "/path", GitRef: "def", Status: storage.JobStatusQueued},
+		{ID: 3, RepoName: "repo", RepoPath: "/path", GitRef: "ghi", Status: storage.JobStatusDone},
+		{ID: 4, RepoName: "repo", RepoPath: "/path", GitRef: "jkl", Status: storage.JobStatusFailed},
+		{ID: 5, RepoName: "repo", RepoPath: "/path", GitRef: "mno", Status: storage.JobStatusCanceled},
 	}
 	m.selectedIdx = 0
 
-	// Render the view - should not panic and should produce output
 	output := m.View()
 	if len(output) == 0 {
 		t.Error("Expected non-empty view output")
 	}
 
-	// The truncated status should appear (running(9 from running(99))
-	// Full "running(99)" with trailing space should not appear as it would be 12 chars
-	// This is a basic smoke test to ensure truncation doesn't break rendering
+	// Verify all status strings appear in output
+	for _, status := range []string{"running", "queued", "done", "failed", "canceled"} {
+		if !strings.Contains(output, status) {
+			t.Errorf("Expected output to contain status '%s'", status)
+		}
+	}
 }
