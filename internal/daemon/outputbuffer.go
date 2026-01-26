@@ -212,6 +212,7 @@ type outputWriter struct {
 	jobID     int64
 	normalize OutputNormalizer
 	lineBuf   bytes.Buffer
+	maxLine   int // Max line size before forced flush (prevents unbounded growth)
 }
 
 func (w *outputWriter) Write(p []byte) (n int, err error) {
@@ -222,7 +223,24 @@ func (w *outputWriter) Write(p []byte) (n int, err error) {
 		data := w.lineBuf.String()
 		idx := strings.Index(data, "\n")
 		if idx < 0 {
-			// No complete line yet
+			// No complete line yet - check if buffer exceeds max line size
+			if w.maxLine > 0 && w.lineBuf.Len() > w.maxLine {
+				// Force flush truncated line to prevent unbounded growth
+				// Truncate to maxLine-3 to leave room for "..." suffix
+				truncLen := w.maxLine - 3
+				if truncLen < 1 {
+					truncLen = 1
+				}
+				line := data[:truncLen]
+				w.lineBuf.Reset()
+				// Discard the rest of the oversized chunk until next newline
+				// Don't carry forward - it would just accumulate again
+				if normalized := w.normalize(line + "..."); normalized != nil {
+					normalized.Timestamp = time.Now()
+					w.buffer.Append(w.jobID, *normalized)
+				}
+				continue
+			}
 			break
 		}
 		// Extract line and update buffer
@@ -253,10 +271,12 @@ func (w *outputWriter) Flush() {
 }
 
 // Writer returns an io.Writer that normalizes and stores output for a job.
+// Lines exceeding maxPerJob will be truncated to prevent unbounded buffer growth.
 func (ob *OutputBuffer) Writer(jobID int64, normalize OutputNormalizer) *outputWriter {
 	return &outputWriter{
 		buffer:    ob,
 		jobID:     jobID,
 		normalize: normalize,
+		maxLine:   ob.maxPerJob,
 	}
 }

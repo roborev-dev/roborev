@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -339,6 +340,34 @@ func TestOutputWriter_NormalizeFilters(t *testing.T) {
 	lines := ob.GetLines(1)
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 lines (empty filtered), got %d", len(lines))
+	}
+}
+
+func TestOutputWriter_LongLineWithoutNewline(t *testing.T) {
+	// Per-job limit: 50 bytes
+	ob := NewOutputBuffer(50, 1000)
+	normalize := func(line string) *OutputLine {
+		return &OutputLine{Text: line, Type: "text"}
+	}
+
+	w := ob.Writer(1, normalize)
+
+	// Write a very long line without newline - should be force-flushed with truncation
+	longLine := strings.Repeat("x", 100)
+	w.Write([]byte(longLine))
+
+	lines := ob.GetLines(1)
+	// Should have at least one line from forced flush
+	if len(lines) == 0 {
+		t.Fatalf("expected at least 1 line after forced flush, got 0")
+	}
+
+	// First line should be truncated to maxLine-3 + "..." = 50 bytes total
+	if len(lines[0].Text) != 50 {
+		t.Errorf("expected truncated line to be 50 bytes, got %d bytes: %q", len(lines[0].Text), lines[0].Text)
+	}
+	if !strings.HasSuffix(lines[0].Text, "...") {
+		t.Errorf("expected line to end with '...', got %q", lines[0].Text)
 	}
 }
 

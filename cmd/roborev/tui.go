@@ -701,7 +701,11 @@ func (m tuiModel) fetchTailOutput(jobID int64) tea.Cmd {
 
 		lines := make([]tailLine, len(result.Lines))
 		for i, l := range result.Lines {
-			ts, _ := time.Parse(time.RFC3339Nano, l.TS)
+			ts, err := time.Parse(time.RFC3339Nano, l.TS)
+			if err != nil {
+				// Fallback to current time if timestamp is invalid
+				ts = time.Now()
+			}
 			lines[i] = tailLine{timestamp: ts, text: l.Text, lineType: l.LineType}
 		}
 
@@ -1473,11 +1477,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.tailScroll += visibleLines
 				return m, nil
-			case "home", "g":
+			case "home":
 				m.tailFollow = false // Stop auto-scroll when going to top
 				m.tailScroll = 0
 				return m, nil
-			case "end", "G":
+			case "end":
 				m.tailFollow = true // Resume auto-scroll when going to bottom
 				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
@@ -1488,6 +1492,26 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					maxScroll = 0
 				}
 				m.tailScroll = maxScroll
+				return m, nil
+			case "g", "G":
+				// Toggle between top and bottom
+				visibleLines := m.height - 4 // Match renderTailView reservedLines
+				if visibleLines < 1 {
+					visibleLines = 1
+				}
+				maxScroll := len(m.tailLines) - visibleLines
+				if maxScroll < 0 {
+					maxScroll = 0
+				}
+				if m.tailScroll == 0 {
+					// At top, go to bottom
+					m.tailFollow = true
+					m.tailScroll = maxScroll
+				} else {
+					// Not at top, go to top
+					m.tailFollow = false
+					m.tailScroll = 0
+				}
 				return m, nil
 			}
 			return m, nil
@@ -3514,18 +3538,23 @@ func (m tuiModel) renderTailView() string {
 			line := m.tailLines[i]
 			// Format with timestamp
 			ts := line.timestamp.Format("15:04:05")
+
+			// Truncate raw text BEFORE styling to avoid cutting ANSI codes
+			// Account for timestamp prefix (8 chars + 1 space = 9)
+			lineText := line.text
+			maxTextWidth := m.width - 9
+			if maxTextWidth > 3 && runewidth.StringWidth(lineText) > maxTextWidth {
+				lineText = runewidth.Truncate(lineText, maxTextWidth-3, "...")
+			}
+
 			var text string
 			switch line.lineType {
 			case "tool":
-				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), tuiQueuedStyle.Render(line.text))
+				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), tuiQueuedStyle.Render(lineText))
 			case "error":
-				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), tuiFailedStyle.Render(line.text))
+				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), tuiFailedStyle.Render(lineText))
 			default:
-				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), line.text)
-			}
-			// Truncate to width
-			if runewidth.StringWidth(text) > m.width {
-				text = runewidth.Truncate(text, m.width-3, "...")
+				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), lineText)
 			}
 			b.WriteString(text)
 			b.WriteString("\x1b[K\n")
@@ -3560,7 +3589,7 @@ func (m tuiModel) renderTailView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Help
-	help := "↑/↓: scroll | g/G: top/follow | x: cancel | esc/q: back"
+	help := "↑/↓: scroll | g: toggle top/bottom | x: cancel | esc/q: back"
 	b.WriteString(tuiHelpStyle.Render(help))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen

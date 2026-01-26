@@ -747,10 +747,14 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 			return
 		case line, ok := <-ch:
 			if !ok {
-				// Job finished - channel closed
+				// Job finished - channel closed, fetch actual status
+				finalStatus := "done"
+				if finalJob, err := s.db.GetJobByID(jobID); err == nil {
+					finalStatus = string(finalJob.Status)
+				}
 				encoder.Encode(map[string]interface{}{
 					"type":   "complete",
-					"status": "done",
+					"status": finalStatus,
 				})
 				flusher.Flush()
 				return
