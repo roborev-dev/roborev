@@ -149,6 +149,95 @@ func TestJobLifecycle(t *testing.T) {
 	}
 }
 
+func TestBranchPersistence(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/branch-test-repo")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+	commit, err := db.GetOrCreateCommit(repo.ID, "branch123", "Author", "Subject", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit failed: %v", err)
+	}
+
+	t.Run("EnqueueJob stores branch", func(t *testing.T) {
+		job, err := db.EnqueueJob(repo.ID, commit.ID, "branch123", "feature/test-branch", "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
+		if job.Branch != "feature/test-branch" {
+			t.Errorf("Expected branch 'feature/test-branch', got '%s'", job.Branch)
+		}
+	})
+
+	t.Run("GetJobByID returns branch", func(t *testing.T) {
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "branch456", "main", "codex", "", "")
+		fetched, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		if fetched.Branch != "main" {
+			t.Errorf("GetJobByID: expected branch 'main', got '%s'", fetched.Branch)
+		}
+	})
+
+	t.Run("ListJobs returns branch", func(t *testing.T) {
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "branch789", "develop", "codex", "", "")
+		jobs, err := db.ListJobs("", "", 100, 0)
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		var found bool
+		for _, j := range jobs {
+			if j.ID == job.ID {
+				found = true
+				if j.Branch != "develop" {
+					t.Errorf("ListJobs: expected branch 'develop', got '%s'", j.Branch)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Error("ListJobs did not return the job")
+		}
+	})
+
+	t.Run("ClaimJob returns branch", func(t *testing.T) {
+		// Drain existing jobs
+		for {
+			j, _ := db.ClaimJob("drain")
+			if j == nil {
+				break
+			}
+			db.CompleteJob(j.ID, "codex", "p", "o")
+		}
+
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "branchclaim", "release/v1", "codex", "", "")
+		claimed, err := db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+		if claimed == nil || claimed.ID != job.ID {
+			t.Fatal("ClaimJob did not return the expected job")
+		}
+		if claimed.Branch != "release/v1" {
+			t.Errorf("ClaimJob: expected branch 'release/v1', got '%s'", claimed.Branch)
+		}
+	})
+
+	t.Run("empty branch is allowed", func(t *testing.T) {
+		job, err := db.EnqueueJob(repo.ID, commit.ID, "nobranch", "", "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob with empty branch failed: %v", err)
+		}
+		if job.Branch != "" {
+			t.Errorf("Expected empty branch, got '%s'", job.Branch)
+		}
+	})
+}
+
 func TestJobFailure(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

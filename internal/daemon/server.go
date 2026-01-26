@@ -67,6 +67,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/job/cancel", s.handleCancelJob)
 	mux.HandleFunc("/api/job/output", s.handleJobOutput)
 	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
+	mux.HandleFunc("/api/job/update-branch", s.handleUpdateJobBranch)
 	mux.HandleFunc("/api/repos", s.handleListRepos)
 	mux.HandleFunc("/api/review", s.handleGetReview)
 	mux.HandleFunc("/api/review/address", s.handleAddressReview)
@@ -798,6 +799,38 @@ func (s *Server) handleRerunJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("rerun job: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *Server) handleUpdateJobBranch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req struct {
+		JobID  int64  `json:"job_id"`
+		Branch string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.JobID == 0 {
+		writeError(w, http.StatusBadRequest, "job_id is required")
+		return
+	}
+	if req.Branch == "" {
+		writeError(w, http.StatusBadRequest, "branch is required")
+		return
+	}
+
+	if err := s.db.UpdateJobBranch(req.JobID, req.Branch); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("update branch: %v", err))
 		return
 	}
 

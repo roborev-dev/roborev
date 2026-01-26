@@ -166,6 +166,9 @@ type tuiModel struct {
 	// Display name cache (keyed by repo path)
 	displayNames map[string]string
 
+	// Branch name cache (keyed by job ID) - caches derived branches to avoid repeated git calls
+	branchNames map[int64]string
+
 	// Pending addressed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
 	// distinguish between multiple requests for the same state (e.g., true→false→true)
@@ -277,8 +280,9 @@ type tuiReposMsg struct {
 	totalCount int
 }
 type tuiBranchesMsg struct {
-	branches   []branchFilterItem
-	totalCount int
+	branches      []branchFilterItem
+	totalCount    int
+	backfillCount int // Number of branches that were backfilled to the database
 }
 type tuiCommentResultMsg struct {
 	jobID int64
@@ -350,6 +354,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		height:                 24,
 		loadingJobs:            true,                           // Init() calls fetchJobs, so mark as loading
 		displayNames:           make(map[string]string),        // Cache display names to avoid disk reads on render
+		branchNames:            make(map[int64]string),         // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState),   // Track pending addressed changes (by job ID)
 		pendingReviewAddressed: make(map[int64]pendingState),   // Track pending addressed changes (by review ID)
 	}
@@ -400,20 +405,34 @@ func (m *tuiModel) updateDisplayNameCache(jobs []storage.ReviewJob) {
 
 // getBranchForJob returns the branch name for a job, falling back to git lookup
 // if the stored branch is empty and the repo is available locally.
+// Results are cached to avoid repeated git calls on render.
 func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 	// Use stored branch if available
 	if job.Branch != "" {
 		return job.Branch
 	}
 
+	// Check cache for previously derived branch (if cache exists)
+	if m.branchNames != nil {
+		if cached, ok := m.branchNames[job.ID]; ok {
+			return cached
+		}
+	}
+
 	// For dirty or prompt jobs, no branch makes sense
 	if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
+		if m.branchNames != nil {
+			m.branchNames[job.ID] = ""
+		}
 		return ""
 	}
 
 	// Fall back to git lookup if repo path exists locally and we have a SHA
 	// Only try if repo path is set and is not from a remote machine
 	if job.RepoPath == "" || (m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID) {
+		if m.branchNames != nil {
+			m.branchNames[job.ID] = ""
+		}
 		return ""
 	}
 
@@ -423,7 +442,11 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 		sha = sha[idx+2:]
 	}
 
-	return git.GetBranchName(job.RepoPath, sha)
+	branch := git.GetBranchName(job.RepoPath, sha)
+	if m.branchNames != nil {
+		m.branchNames[job.ID] = branch
+	}
+	return branch
 }
 
 func (m tuiModel) tick() tea.Cmd {
@@ -624,9 +647,14 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 }
 
 func (m tuiModel) fetchBranches() tea.Cmd {
+	// Capture values for use in goroutine
+	machineID := m.status.MachineID
+	client := m.client
+	serverAddr := m.serverAddr
+
 	return func() tea.Msg {
 		// Fetch jobs to extract branches (no API endpoint for branches directly)
-		resp, err := m.client.Get(m.serverAddr + "/api/jobs?limit=1000")
+		resp, err := client.Get(serverAddr + "/api/jobs?limit=5000")
 		if err != nil {
 			return tuiErrMsg(err)
 		}
@@ -643,11 +671,43 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			return tuiErrMsg(err)
 		}
 
-		// Count jobs per branch
+		// Count jobs per branch, deriving branch from git if not stored
 		branchCounts := make(map[string]int)
 		var branchOrder []string
+		var backfillCount int
 		for _, job := range result.Jobs {
 			branch := job.Branch
+
+			// Derive branch from git if not stored (same logic as getBranchForJob)
+			if branch == "" {
+				// Skip dirty/prompt jobs
+				if job.GitRef != "dirty" && job.GitRef != "run" && job.GitRef != "prompt" {
+					// Only try git lookup for local repos
+					if job.RepoPath != "" && (machineID == "" || job.SourceMachineID == "" || job.SourceMachineID == machineID) {
+						sha := job.GitRef
+						if idx := strings.Index(sha, ".."); idx != -1 {
+							sha = sha[idx+2:]
+						}
+						branch = git.GetBranchName(job.RepoPath, sha)
+
+						// Backfill the branch to the database if we derived one
+						if branch != "" {
+							reqBody, _ := json.Marshal(map[string]interface{}{
+								"job_id": job.ID,
+								"branch": branch,
+							})
+							backfillResp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
+							if err == nil {
+								backfillResp.Body.Close()
+								if backfillResp.StatusCode == http.StatusOK {
+									backfillCount++
+								}
+							}
+						}
+					}
+				}
+			}
+
 			if branch == "" {
 				branch = "(none)"
 			}
@@ -665,7 +725,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				count: branchCounts[name],
 			}
 		}
-		return tuiBranchesMsg{branches: branches, totalCount: len(result.Jobs)}
+		return tuiBranchesMsg{branches: branches, totalCount: len(result.Jobs), backfillCount: backfillCount}
 	}
 }
 
@@ -2608,6 +2668,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
+		}
+		// Show flash message if branches were backfilled
+		if msg.backfillCount > 0 {
+			m.flashMessage = fmt.Sprintf("Backfilled branch info for %d jobs", msg.backfillCount)
+			m.flashExpiresAt = time.Now().Add(5 * time.Second)
+			m.flashView = tuiViewBranchFilter
 		}
 
 	case tuiCommentResultMsg:
