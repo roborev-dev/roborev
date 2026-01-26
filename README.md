@@ -109,7 +109,7 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Configuration](https://roborev.io/configuration/)
 - [Auto-Fixing with Refine](https://roborev.io/guides/auto-fixing/)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
-- [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
+- [PostgreSQL Sync](https://www.roborev.io/integrations/postgres-sync/)
 
 ## Development
 
