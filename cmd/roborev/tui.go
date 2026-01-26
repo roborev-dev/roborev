@@ -432,8 +432,9 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 	}
 
 	// Check if repo exists locally before attempting git lookup
-	if _, err := os.Stat(job.RepoPath); os.IsNotExist(err) {
-		// Don't cache - repo might be cloned later
+	// Return early on any error (not exists, permission denied, I/O failure)
+	// to avoid caching incorrect results
+	if _, err := os.Stat(job.RepoPath); err != nil {
 		return ""
 	}
 
