@@ -447,6 +447,30 @@ func TestHandleListBranches(t *testing.T) {
 		}
 	})
 
+	t.Run("empty repo param treated as no filter", func(t *testing.T) {
+		// Empty repo param should be ignored, returning all branches
+		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo=", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		branches := response["branches"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		// Should return all 3 branches and 5 jobs, not zero
+		if len(branches) != 3 {
+			t.Errorf("Expected 3 branches (empty repo = no filter), got %d", len(branches))
+		}
+		if totalCount != 5 {
+			t.Errorf("Expected total_count 5 (empty repo = no filter), got %d", totalCount)
+		}
+	})
+
 	t.Run("wrong method fails", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/branches", nil)
 		w := httptest.NewRecorder()

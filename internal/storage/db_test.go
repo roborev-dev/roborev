@@ -2360,7 +2360,7 @@ func TestListBranchesWithCounts(t *testing.T) {
 	// job 5 has no branch (NULL)
 
 	t.Run("list all branches", func(t *testing.T) {
-		result, err := db.ListBranchesWithCounts(nil, 0)
+		result, err := db.ListBranchesWithCounts(nil)
 		if err != nil {
 			t.Fatalf("ListBranchesWithCounts failed: %v", err)
 		}
@@ -2376,7 +2376,7 @@ func TestListBranchesWithCounts(t *testing.T) {
 	})
 
 	t.Run("filter by single repo", func(t *testing.T) {
-		result, err := db.ListBranchesWithCounts([]string{"/tmp/repo1"}, 0)
+		result, err := db.ListBranchesWithCounts([]string{"/tmp/repo1"})
 		if err != nil {
 			t.Fatalf("ListBranchesWithCounts failed: %v", err)
 		}
@@ -2389,7 +2389,7 @@ func TestListBranchesWithCounts(t *testing.T) {
 	})
 
 	t.Run("filter by multiple repos", func(t *testing.T) {
-		result, err := db.ListBranchesWithCounts([]string{"/tmp/repo1", "/tmp/repo2"}, 0)
+		result, err := db.ListBranchesWithCounts([]string{"/tmp/repo1", "/tmp/repo2"})
 		if err != nil {
 			t.Fatalf("ListBranchesWithCounts failed: %v", err)
 		}
@@ -2403,24 +2403,12 @@ func TestListBranchesWithCounts(t *testing.T) {
 
 	t.Run("no nulls when all have branches", func(t *testing.T) {
 		db.Exec("UPDATE review_jobs SET branch = 'develop' WHERE id = 5")
-		result, err := db.ListBranchesWithCounts(nil, 0)
+		result, err := db.ListBranchesWithCounts(nil)
 		if err != nil {
 			t.Fatalf("ListBranchesWithCounts failed: %v", err)
 		}
 		if result.NullsRemaining != 0 {
 			t.Errorf("Expected 0 nulls remaining, got %d", result.NullsRemaining)
-		}
-	})
-
-	t.Run("with limit", func(t *testing.T) {
-		// Only look at most recent 2 jobs (IDs 4, 5 which are "main" and "develop")
-		result, err := db.ListBranchesWithCounts(nil, 2)
-		if err != nil {
-			t.Fatalf("ListBranchesWithCounts with limit failed: %v", err)
-		}
-		// Should only see branches from recent 2 jobs
-		if len(result.Branches) != 2 {
-			t.Errorf("Expected 2 branches with limit, got %d: %v", len(result.Branches), result.Branches)
 		}
 	})
 }

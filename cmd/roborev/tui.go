@@ -151,7 +151,6 @@ type tuiModel struct {
 	filterBranches          []branchFilterItem // Available branches with counts
 	branchFilterSelectedIdx int                // Currently highlighted branch in filter list
 	branchFilterSearch      string             // Search/filter text typed by user
-	branchFilterRecentOnly  bool               // When true, only show branches from recent 500 jobs
 
 	// Comment modal state
 	commentText     string  // The response text being typed
@@ -363,7 +362,6 @@ func newTuiModel(serverAddr string) tuiModel {
 		branchNames:            make(map[int64]string),         // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState),   // Track pending addressed changes (by job ID)
 		pendingReviewAddressed: make(map[int64]pendingState),   // Track pending addressed changes (by review ID)
-		branchFilterRecentOnly: true,                           // Default to recent for faster initial load
 	}
 }
 
@@ -677,7 +675,6 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 	serverAddr := m.serverAddr
 	backfillDone := m.branchBackfillDone
 	activeRepoFilter := m.activeRepoFilter // Constrain branches by active repo filter
-	recentOnly := m.branchFilterRecentOnly // Whether to limit to recent 500 jobs
 
 	return func() tea.Msg {
 		var backfillCount int
@@ -776,17 +773,18 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			}
 		}
 
-		// Now fetch branches from server with optional repo filter and limit
-		params := neturl.Values{}
-		for _, repoPath := range activeRepoFilter {
-			params.Add("repo", repoPath)
-		}
-		if recentOnly {
-			params.Add("limit", "500")
-		}
+		// Now fetch branches from server with optional repo filter
 		branchURL := serverAddr + "/api/branches"
-		if len(params) > 0 {
-			branchURL += "?" + params.Encode()
+		if len(activeRepoFilter) > 0 {
+			params := neturl.Values{}
+			for _, repoPath := range activeRepoFilter {
+				if repoPath != "" { // Skip empty paths
+					params.Add("repo", repoPath)
+				}
+			}
+			if len(params) > 0 {
+				branchURL += "?" + params.Encode()
+			}
 		}
 
 		resp, err := client.Get(branchURL)
@@ -1766,12 +1764,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				return m, nil
-			case "tab":
-				// Toggle between recent 500 and all jobs
-				m.branchFilterRecentOnly = !m.branchFilterRecentOnly
-				m.branchFilterSelectedIdx = 0
-				m.branchFilterSearch = ""
-				return m, m.fetchBranches()
 			case "backspace":
 				if len(m.branchFilterSearch) > 0 {
 					runes := []rune(m.branchFilterSearch)
@@ -3754,11 +3746,7 @@ func (m tuiModel) renderFilterView() string {
 func (m tuiModel) renderBranchFilterView() string {
 	var b strings.Builder
 
-	modeStr := "Recent 500"
-	if !m.branchFilterRecentOnly {
-		modeStr = "All"
-	}
-	b.WriteString(tuiTitleStyle.Render(fmt.Sprintf("Filter by Branch [Tab: %s]", modeStr)))
+	b.WriteString(tuiTitleStyle.Render("Filter by Branch"))
 	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
 
 	// Show loading state if branches haven't been fetched yet
@@ -3860,7 +3848,7 @@ func (m tuiModel) renderBranchFilterView() string {
 	}
 	b.WriteString("\x1b[K\n")
 
-	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | Tab: toggle recent/all | esc: cancel"))
+	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | esc: cancel | type to search"))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J")
 

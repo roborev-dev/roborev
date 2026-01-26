@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -632,17 +631,15 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Optional repo filter (by path) - supports multiple values
-	repoPaths := r.URL.Query()["repo"]
-
-	// Optional limit for "recent N" mode (0 = all)
-	limit := 0
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-			limit = l
+	// Filter out empty strings to treat ?repo= as no filter
+	var repoPaths []string
+	for _, p := range r.URL.Query()["repo"] {
+		if p != "" {
+			repoPaths = append(repoPaths, p)
 		}
 	}
 
-	result, err := s.db.ListBranchesWithCounts(repoPaths, limit)
+	result, err := s.db.ListBranchesWithCounts(repoPaths)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list branches: %v", err))
 		return
