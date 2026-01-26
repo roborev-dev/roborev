@@ -621,27 +621,61 @@ func (db *DB) GetKnownJobUUIDs() ([]string, error) {
 	return uuids, rows.Err()
 }
 
-// GetOrCreateRepoByIdentity finds or creates a repo by identity.
-// If the repo doesn't exist, creates it with a placeholder path.
+// GetOrCreateRepoByIdentity finds or creates a placeholder repo for syncing.
+// A placeholder repo has root_path == identity and is used for synced data.
+// This allows multiple local clones to coexist with a single sync placeholder.
 func (db *DB) GetOrCreateRepoByIdentity(identity string) (int64, error) {
-	// Try to find existing repo
-	repo, err := db.GetRepoByIdentity(identity)
-	if err != nil {
-		return 0, err
+	// First, look for an existing placeholder repo (root_path == identity)
+	var placeholderID int64
+	err := db.QueryRow(`SELECT id FROM repos WHERE root_path = ? AND identity = ?`, identity, identity).Scan(&placeholderID)
+	if err == nil {
+		return placeholderID, nil
 	}
-	if repo != nil {
-		return repo.ID, nil
+	if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("find placeholder repo: %w", err)
 	}
 
-	// Create a placeholder repo - path is identity since we don't know the local path
+	// No placeholder exists - create one
+	// Use extracted repo name for display, but root_path stays as identity to mark it as a placeholder
+	displayName := ExtractRepoNameFromIdentity(identity)
 	result, err := db.Exec(`
 		INSERT INTO repos (root_path, name, identity)
 		VALUES (?, ?, ?)
-	`, identity, identity, identity)
+	`, identity, displayName, identity)
 	if err != nil {
-		return 0, fmt.Errorf("create repo: %w", err)
+		return 0, fmt.Errorf("create placeholder repo: %w", err)
 	}
 	return result.LastInsertId()
+}
+
+// ExtractRepoNameFromIdentity extracts a human-readable name from a git identity.
+// Examples:
+//   - "git@github.com:org/repo.git" -> "repo"
+//   - "https://github.com/org/my-project.git" -> "my-project"
+//   - "https://github.com/org/repo" -> "repo"
+func ExtractRepoNameFromIdentity(identity string) string {
+	// Remove trailing .git if present
+	name := strings.TrimSuffix(identity, ".git")
+
+	// Find the last path component
+	// Handle both SSH (git@host:path) and HTTPS (https://host/path) formats
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	} else if idx := strings.LastIndex(name, ":"); idx >= 0 {
+		// SSH format like git@github.com:org/repo - get part after last /
+		afterColon := name[idx+1:]
+		if slashIdx := strings.LastIndex(afterColon, "/"); slashIdx >= 0 {
+			name = afterColon[slashIdx+1:]
+		} else {
+			name = afterColon
+		}
+	}
+
+	// If we ended up with empty string, use the identity as-is
+	if name == "" {
+		return identity
+	}
+	return name
 }
 
 // GetOrCreateCommitByRepoAndSHA finds or creates a commit.

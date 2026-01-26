@@ -367,10 +367,11 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 			t.Fatalf("Query repo failed: %v", err)
 		}
 		if rootPath != localIdentity {
-			t.Errorf("Expected root_path %q, got %q", localIdentity, rootPath)
+			t.Errorf("Expected root_path %q (placeholder), got %q", localIdentity, rootPath)
 		}
-		if name != localIdentity {
-			t.Errorf("Expected name %q, got %q", localIdentity, name)
+		// Name is extracted from identity
+		if name != "my-local-project" {
+			t.Errorf("Expected name 'my-local-project' (extracted), got %q", name)
 		}
 		if identity != localIdentity {
 			t.Errorf("Expected identity %q, got %q", localIdentity, identity)
@@ -419,16 +420,101 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 			t.Fatalf("GetOrCreateRepoByIdentity failed: %v", err)
 		}
 
-		// Verify identity is set correctly
-		var identity string
-		err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repoID).Scan(&identity)
+		// Verify identity is set correctly and name is extracted
+		var identity, name string
+		err = db.QueryRow(`SELECT identity, name FROM repos WHERE id = ?`, repoID).Scan(&identity, &name)
 		if err != nil {
 			t.Fatalf("Query repo failed: %v", err)
 		}
 		if identity != gitIdentity {
 			t.Errorf("Expected identity %q, got %q", gitIdentity, identity)
 		}
+		if name != "repo" {
+			t.Errorf("Expected name 'repo' (extracted from URL), got %q", name)
+		}
 	})
+
+	t.Run("creates placeholder even when local clones exist", func(t *testing.T) {
+		// This tests the fix for https://github.com/roborev-dev/roborev/issues/131
+		// When multiple local clones have the same identity, GetOrCreateRepoByIdentity
+		// should create/use a dedicated placeholder repo (root_path == identity).
+		sharedIdentity := "git@github.com:org/shared-repo.git"
+
+		// Create two local clones with the same identity (simulates real scenario)
+		_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+			"/home/user/clone-1", "clone-1", sharedIdentity)
+		if err != nil {
+			t.Fatalf("Insert clone-1 failed: %v", err)
+		}
+		_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+			"/home/user/clone-2", "clone-2", sharedIdentity)
+		if err != nil {
+			t.Fatalf("Insert clone-2 failed: %v", err)
+		}
+
+		// GetOrCreateRepoByIdentity should create a placeholder, not fail
+		placeholderID, err := db.GetOrCreateRepoByIdentity(sharedIdentity)
+		if err != nil {
+			t.Fatalf("GetOrCreateRepoByIdentity should succeed with duplicates, got: %v", err)
+		}
+
+		// Verify it created a placeholder (root_path == identity)
+		var rootPath, name string
+		err = db.QueryRow(`SELECT root_path, name FROM repos WHERE id = ?`, placeholderID).Scan(&rootPath, &name)
+		if err != nil {
+			t.Fatalf("Query placeholder failed: %v", err)
+		}
+		if rootPath != sharedIdentity {
+			t.Errorf("Expected placeholder root_path %q, got %q", sharedIdentity, rootPath)
+		}
+		if name != "shared-repo" {
+			t.Errorf("Expected placeholder name 'shared-repo' (extracted), got %q", name)
+		}
+
+		// Subsequent calls should return the same placeholder
+		placeholderID2, err := db.GetOrCreateRepoByIdentity(sharedIdentity)
+		if err != nil {
+			t.Fatalf("Second GetOrCreateRepoByIdentity failed: %v", err)
+		}
+		if placeholderID != placeholderID2 {
+			t.Errorf("Expected same placeholder ID, got %d and %d", placeholderID, placeholderID2)
+		}
+	})
+}
+
+func TestExtractRepoNameFromIdentity(t *testing.T) {
+	tests := []struct {
+		identity string
+		expected string
+	}{
+		// SSH format
+		{"git@github.com:org/repo.git", "repo"},
+		{"git@github.com:user/my-project.git", "my-project"},
+		{"git@gitlab.com:group/subgroup/repo.git", "repo"},
+
+		// HTTPS format
+		{"https://github.com/org/repo.git", "repo"},
+		{"https://github.com/org/repo", "repo"},
+		{"https://gitlab.com/group/subgroup/project.git", "project"},
+
+		// Local format
+		{"local:my-project", "my-project"},
+		{"local:another-repo", "another-repo"},
+
+		// Edge cases
+		{"repo.git", "repo"},
+		{"repo", "repo"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.identity, func(t *testing.T) {
+			got := ExtractRepoNameFromIdentity(tt.identity)
+			if got != tt.expected {
+				t.Errorf("ExtractRepoNameFromIdentity(%q) = %q, want %q", tt.identity, got, tt.expected)
+			}
+		})
+	}
 }
 
 func TestSetRepoIdentity(t *testing.T) {
