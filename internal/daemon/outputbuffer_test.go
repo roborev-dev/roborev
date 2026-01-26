@@ -371,6 +371,52 @@ func TestOutputWriter_LongLineWithoutNewline(t *testing.T) {
 	}
 }
 
+func TestOutputWriter_SmallMaxLine(t *testing.T) {
+	// Test that truncation works correctly with very small maxLine values
+	// where there's no room for "..." suffix
+	tests := []struct {
+		name        string
+		maxLine     int
+		input       string
+		expectLen   int
+		expectNoEll bool // true if no ellipsis expected
+	}{
+		{"maxLine=3", 3, "abcdefgh", 3, true},   // No room for ellipsis
+		{"maxLine=4", 4, "abcdefgh", 4, false},  // Just enough: 1 char + "..."
+		{"maxLine=5", 5, "abcdefgh", 5, false},  // 2 chars + "..."
+		{"maxLine=10", 10, "abcdefghijklmn", 10, false}, // 7 chars + "..."
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ob := NewOutputBuffer(tt.maxLine, 10000)
+			normalize := func(line string) *OutputLine {
+				return &OutputLine{Text: line, Type: "text"}
+			}
+
+			w := ob.Writer(1, normalize)
+			w.Write([]byte(tt.input)) // No newline, triggers truncation
+
+			lines := ob.GetLines(1)
+			if len(lines) != 1 {
+				t.Fatalf("expected 1 line, got %d", len(lines))
+			}
+
+			if len(lines[0].Text) != tt.expectLen {
+				t.Errorf("expected line length %d, got %d: %q", tt.expectLen, len(lines[0].Text), lines[0].Text)
+			}
+
+			hasEllipsis := strings.HasSuffix(lines[0].Text, "...")
+			if tt.expectNoEll && hasEllipsis {
+				t.Errorf("expected no ellipsis for maxLine=%d, got %q", tt.maxLine, lines[0].Text)
+			}
+			if !tt.expectNoEll && !hasEllipsis {
+				t.Errorf("expected ellipsis for maxLine=%d, got %q", tt.maxLine, lines[0].Text)
+			}
+		})
+	}
+}
+
 func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
 	// Test that after truncating a long line, subsequent writes for the
 	// same line are discarded until a newline is seen.

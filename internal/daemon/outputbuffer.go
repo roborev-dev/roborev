@@ -245,16 +245,18 @@ func (w *outputWriter) Write(p []byte) (n int, err error) {
 			// No complete line yet - check if buffer exceeds max line size
 			if w.maxLine > 0 && w.lineBuf.Len() > w.maxLine {
 				// Force flush truncated line to prevent unbounded growth
-				// Truncate to maxLine-3 to leave room for "..." suffix
-				truncLen := w.maxLine - 3
-				if truncLen < 1 {
-					truncLen = 1
+				var line string
+				if w.maxLine >= 4 {
+					// Room for content + "..." suffix
+					line = data[:w.maxLine-3] + "..."
+				} else {
+					// Too small for ellipsis, just truncate
+					line = data[:w.maxLine]
 				}
-				line := data[:truncLen]
 				w.lineBuf.Reset()
 				// Enter discard mode - drop bytes until next newline
 				w.discarding = true
-				if normalized := w.normalize(line + "..."); normalized != nil {
+				if normalized := w.normalize(line); normalized != nil {
 					normalized.Timestamp = time.Now()
 					w.buffer.Append(w.jobID, *normalized)
 				}
