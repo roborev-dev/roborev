@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/version"
 )
 
 // testServerAddr is a placeholder address used in tests that don't make real HTTP calls.
@@ -6259,6 +6260,88 @@ func TestFormatClipboardContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTUIVersionMismatchDetection(t *testing.T) {
+	setupTuiTestEnv(t)
+
+	t.Run("detects version mismatch", func(t *testing.T) {
+		m := newTuiModel(testServerAddr)
+
+		// Simulate receiving status with different version
+		status := tuiStatusMsg(storage.DaemonStatus{
+			Version: "different-version",
+		})
+
+		updated, _ := m.Update(status)
+		m2 := updated.(tuiModel)
+
+		if !m2.versionMismatch {
+			t.Error("Expected versionMismatch=true when daemon version differs")
+		}
+		if m2.daemonVersion != "different-version" {
+			t.Errorf("Expected daemonVersion='different-version', got %q", m2.daemonVersion)
+		}
+	})
+
+	t.Run("no mismatch when versions match", func(t *testing.T) {
+		m := newTuiModel(testServerAddr)
+
+		// Simulate receiving status with same version as TUI
+		status := tuiStatusMsg(storage.DaemonStatus{
+			Version: version.Version,
+		})
+
+		updated, _ := m.Update(status)
+		m2 := updated.(tuiModel)
+
+		if m2.versionMismatch {
+			t.Error("Expected versionMismatch=false when versions match")
+		}
+	})
+
+	t.Run("displays error banner in queue view when mismatched", func(t *testing.T) {
+		m := newTuiModel(testServerAddr)
+		m.width = 100
+		m.height = 30
+		m.currentView = tuiViewQueue
+		m.versionMismatch = true
+		m.daemonVersion = "old-version"
+
+		output := m.View()
+
+		if !strings.Contains(output, "VERSION MISMATCH") {
+			t.Error("Expected queue view to show VERSION MISMATCH error")
+		}
+		if !strings.Contains(output, "old-version") {
+			t.Error("Expected error to show daemon version")
+		}
+	})
+
+	t.Run("displays error banner in review view when mismatched", func(t *testing.T) {
+		m := newTuiModel(testServerAddr)
+		m.width = 100
+		m.height = 30
+		m.currentView = tuiViewReview
+		m.versionMismatch = true
+		m.daemonVersion = "old-version"
+		m.currentReview = &storage.Review{
+			ID:     1,
+			Output: "Test review",
+			Job: &storage.ReviewJob{
+				ID:       1,
+				GitRef:   "abc123",
+				RepoName: "test",
+				Agent:    "test",
+			},
+		}
+
+		output := m.View()
+
+		if !strings.Contains(output, "VERSION MISMATCH") {
+			t.Error("Expected review view to show VERSION MISMATCH error")
+		}
+	})
 }
 
 func TestTUIConfigReloadFlash(t *testing.T) {

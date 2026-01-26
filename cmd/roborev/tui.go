@@ -125,6 +125,7 @@ type tuiModel struct {
 	err               error
 	updateAvailable   string // Latest version if update available, empty if up to date
 	updateIsDevBuild  bool   // True if running a dev build
+	versionMismatch   bool   // True if daemon version doesn't match TUI version
 
 	// Pagination state
 	hasMore        bool // true if there are more jobs to load
@@ -2223,6 +2224,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.consecutiveErrors = 0 // Reset on successful fetch
 		if m.status.Version != "" {
 			m.daemonVersion = m.status.Version
+			// Check for version mismatch between TUI and daemon
+			m.versionMismatch = m.daemonVersion != version.Version
 		}
 		// Show flash notification when config is reloaded
 		// Use counter (not timestamp) to detect reloads that happen within the same second
@@ -2710,6 +2713,13 @@ func (m tuiModel) renderQueueView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
+	// Version mismatch error (persistent, red)
+	if m.versionMismatch {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true) // Bright red
+		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
+		b.WriteString("\x1b[K\n")
+	}
+
 	// Help (two lines)
 	helpLine1 := "↑/↓: navigate | enter: review | y: copy | m: commit msg | q: quit | ?: help"
 	helpLine2 := "f: filter | h: hide addressed | a: toggle addressed | x: cancel"
@@ -3071,6 +3081,13 @@ func (m tuiModel) renderReviewView() string {
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n") // Clear status line
+
+	// Version mismatch error (persistent, red)
+	if m.versionMismatch {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
+		b.WriteString("\x1b[K\n")
+	}
 
 	b.WriteString(tuiHelpStyle.Render(helpText))
 	b.WriteString("\x1b[K") // Clear help line
