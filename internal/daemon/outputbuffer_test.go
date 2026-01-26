@@ -371,6 +371,99 @@ func TestOutputWriter_LongLineWithoutNewline(t *testing.T) {
 	}
 }
 
+func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
+	// Test that after truncating a long line, subsequent writes for the
+	// same line are discarded until a newline is seen.
+	// Key invariant: repeated writes without newlines produce at most ONE truncated line
+	ob := NewOutputBuffer(100, 10000)
+	normalize := func(line string) *OutputLine {
+		return &OutputLine{Text: line, Type: "text"}
+	}
+
+	w := ob.Writer(1, normalize)
+
+	// Write data exceeding maxLine (100 bytes) multiple times WITHOUT a newline
+	// This simulates a single very long line being written in chunks
+	for i := 0; i < 5; i++ {
+		w.Write([]byte(strings.Repeat("x", 50))) // 5 * 50 = 250 bytes total
+	}
+
+	// Should only have 1 line (the truncated one), not 5 fragments
+	lines := ob.GetLines(1)
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly 1 truncated line (not multiple fragments), got %d", len(lines))
+	}
+
+	// Verify it's truncated
+	if !strings.HasSuffix(lines[0].Text, "...") {
+		t.Errorf("expected truncated line to end with '...', got %q", lines[0].Text)
+	}
+}
+
+func TestOutputBuffer_PerJobEvictionBlockedByGlobal(t *testing.T) {
+	// Test the case where per-job eviction would be needed but global limit
+	// would still be exceeded after eviction - no eviction should occur
+	// Per-job: 40 bytes, Global: 50 bytes
+	ob := NewOutputBuffer(40, 50)
+
+	// Job 1: add 30 bytes
+	ob.Append(1, OutputLine{Text: "123456789012345678901234567890", Type: "text"}) // 30 bytes, total=30
+
+	// Job 2: add 20 bytes
+	ob.Append(2, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes, total=50
+
+	// Verify initial state
+	lines1 := ob.GetLines(1)
+	lines2 := ob.GetLines(2)
+	if len(lines1) != 1 || len(lines2) != 1 {
+		t.Fatalf("expected 1 line each, got job1=%d, job2=%d", len(lines1), len(lines2))
+	}
+
+	// Now try to add 25 bytes to job 1
+	// Per-job: 30+25=55 > 40, would need to evict 30 bytes (the existing line)
+	// After eviction: job1=0, total=20, adding 25 would make total=45 < 50
+	// BUT: after eviction total=50-30=20, +25=45 < 50, so this should succeed
+	// Actually wait - let me recalculate:
+	// current job1=30, total=50
+	// new line=25 bytes
+	// per-job check: 30+25=55 > 40, need to evict 15+ bytes, evict whole line (30 bytes)
+	// after eviction: job1=0, total=50-30=20
+	// global check: 20+25=45 < 50, OK
+	// This case should succeed, so it's not the right test case
+
+	// Let me create a case where eviction wouldn't help:
+	// Per-job: 30, Global: 40
+	ob2 := NewOutputBuffer(30, 40)
+
+	// Job 1: add 20 bytes
+	ob2.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes
+
+	// Job 2: add 20 bytes
+	ob2.Append(2, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes, total=40
+
+	// Now try to add 25 bytes to job 1
+	// Per-job: 20+25=45 > 30, would evict 20 bytes (the existing line)
+	// After eviction: job1=0, total=40-20=20, +25=45 > 40 - REJECTED
+	// Existing line should be preserved
+
+	lines1Before := ob2.GetLines(1)
+	if len(lines1Before) != 1 {
+		t.Fatalf("expected 1 line for job 1 before, got %d", len(lines1Before))
+	}
+
+	// Try to add a line that would exceed global limit even after eviction
+	ob2.Append(1, OutputLine{Text: "1234567890123456789012345", Type: "text"}) // 25 bytes
+
+	lines1After := ob2.GetLines(1)
+	if len(lines1After) != 1 {
+		t.Fatalf("expected 1 line for job 1 (preserved), got %d", len(lines1After))
+	}
+	// Original line should still be there
+	if lines1After[0].Text != "12345678901234567890" {
+		t.Errorf("original line should be preserved, got %q", lines1After[0].Text)
+	}
+}
+
 func TestOutputBuffer_Concurrent(t *testing.T) {
 	ob := NewOutputBuffer(10240, 40960)
 

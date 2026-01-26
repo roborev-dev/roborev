@@ -95,11 +95,8 @@ func (ob *OutputBuffer) Append(jobID int64, line OutputLine) {
 		return // Drop line to enforce global memory limit
 	}
 
-	// Now safe to evict and add - update global total
-	ob.totalBytes = ob.totalBytes - evictBytes + lineBytes
-	ob.mu.Unlock()
-
-	// Perform the eviction
+	// Perform the eviction and add BEFORE updating global total
+	// to keep ob.totalBytes in sync with actual memory usage
 	if evictCount > 0 {
 		jo.lines = jo.lines[evictCount:]
 		jo.totalBytes -= evictBytes
@@ -108,6 +105,10 @@ func (ob *OutputBuffer) Append(jobID int64, line OutputLine) {
 	// Add the line
 	jo.lines = append(jo.lines, line)
 	jo.totalBytes += lineBytes
+
+	// Update global total after eviction/add - now reflects actual state
+	ob.totalBytes = ob.totalBytes - evictBytes + lineBytes
+	ob.mu.Unlock()
 
 	// Notify subscribers
 	for _, ch := range jo.subs {
@@ -208,11 +209,12 @@ type OutputNormalizer func(line string) *OutputLine
 
 // outputWriter implements io.Writer and normalizes output to the buffer.
 type outputWriter struct {
-	buffer    *OutputBuffer
-	jobID     int64
-	normalize OutputNormalizer
-	lineBuf   bytes.Buffer
-	maxLine   int // Max line size before forced flush (prevents unbounded growth)
+	buffer     *OutputBuffer
+	jobID      int64
+	normalize  OutputNormalizer
+	lineBuf    bytes.Buffer
+	maxLine    int  // Max line size before forced flush (prevents unbounded growth)
+	discarding bool // True when discarding bytes until next newline (after truncation)
 }
 
 func (w *outputWriter) Write(p []byte) (n int, err error) {
@@ -222,6 +224,23 @@ func (w *outputWriter) Write(p []byte) (n int, err error) {
 	for {
 		data := w.lineBuf.String()
 		idx := strings.Index(data, "\n")
+
+		// If discarding, skip all data until newline
+		if w.discarding {
+			if idx < 0 {
+				// No newline yet, discard everything
+				w.lineBuf.Reset()
+				break
+			}
+			// Found newline, stop discarding and keep remainder
+			w.lineBuf.Reset()
+			if idx+1 < len(data) {
+				w.lineBuf.WriteString(data[idx+1:])
+			}
+			w.discarding = false
+			continue
+		}
+
 		if idx < 0 {
 			// No complete line yet - check if buffer exceeds max line size
 			if w.maxLine > 0 && w.lineBuf.Len() > w.maxLine {
@@ -233,8 +252,8 @@ func (w *outputWriter) Write(p []byte) (n int, err error) {
 				}
 				line := data[:truncLen]
 				w.lineBuf.Reset()
-				// Discard the rest of the oversized chunk until next newline
-				// Don't carry forward - it would just accumulate again
+				// Enter discard mode - drop bytes until next newline
+				w.discarding = true
 				if normalized := w.normalize(line + "..."); normalized != nil {
 					normalized.Timestamp = time.Now()
 					w.buffer.Append(w.jobID, *normalized)

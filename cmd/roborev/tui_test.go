@@ -6771,7 +6771,7 @@ func TestTUITailOutputPreservesLinesOnEmptyResponse(t *testing.T) {
 
 	// Lines should be preserved (not cleared)
 	if len(m2.tailLines) != 3 {
-		t.Errorf("Expected 3 lines preserved, got %d", len(m2.tailLines))
+		t.Fatalf("Expected 3 lines preserved, got %d", len(m2.tailLines))
 	}
 
 	// Streaming should stop
@@ -6847,7 +6847,7 @@ func TestTUITailOutputIgnoredWhenNotInTailView(t *testing.T) {
 
 	// Lines should not be updated since we're not in tail view
 	if len(m2.tailLines) != 1 {
-		t.Errorf("Expected 1 line (unchanged), got %d", len(m2.tailLines))
+		t.Fatalf("Expected 1 line (unchanged), got %d", len(m2.tailLines))
 	}
 	if m2.tailLines[0].text != "Previous session line" {
 		t.Errorf("Lines should not be updated when not in tail view")
