@@ -2925,15 +2925,6 @@ func (m tuiModel) renderReviewView() string {
 			defaultName = filepath.Base(review.Job.RepoPath)
 		}
 		repoStr := m.getDisplayName(review.Job.RepoPath, defaultName)
-		if repoStr != "" {
-			repoStr += " "
-		}
-
-		// Use cached branch name (computed when review was loaded)
-		branchStr := ""
-		if m.currentBranch != "" {
-			branchStr = " on " + m.currentBranch
-		}
 
 		// Build agent string, including model if explicitly set
 		agentStr := review.Agent
@@ -2941,37 +2932,48 @@ func (m tuiModel) renderReviewView() string {
 			agentStr = fmt.Sprintf("%s: %s", review.Agent, review.Job.Model)
 		}
 
-		title = fmt.Sprintf("Review %s%s%s (%s)%s", idStr, repoStr, ref, agentStr, branchStr)
+		title = fmt.Sprintf("Review %s%s (%s)", idStr, repoStr, agentStr)
 		titleLen = len(title)
-		if review.Addressed {
-			titleLen += len(" [ADDRESSED]")
-		}
 
 		b.WriteString(tuiTitleStyle.Render(title))
-
-		// Show [ADDRESSED] with distinct color
-		if review.Addressed {
-			b.WriteString(" ")
-			b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
-		}
 		b.WriteString("\x1b[K") // Clear to end of line
 
-		// Show full repo path on next line
-		if review.Job.RepoPath != "" {
-			b.WriteString("\n")
-			b.WriteString(tuiStatusStyle.Render(review.Job.RepoPath))
-			b.WriteString("\x1b[K") // Clear to end of line
+		// Show location line: repo path (or identity/name), git ref, and branch
+		b.WriteString("\n")
+		pathLine := review.Job.RepoPath
+		if pathLine == "" {
+			// No local path - use repo name/identity as fallback
+			pathLine = review.Job.RepoName
 		}
+		if pathLine != "" {
+			pathLine += " " + ref
+		} else {
+			pathLine = ref
+		}
+		if m.currentBranch != "" {
+			pathLine += " on " + m.currentBranch
+		}
+		b.WriteString(tuiStatusStyle.Render(pathLine))
+		b.WriteString("\x1b[K") // Clear to end of line
 
-		// Show verdict on line 2 (only if present)
+		// Show verdict and addressed status on next line
 		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != ""
-		if hasVerdict {
+		if hasVerdict || review.Addressed {
 			b.WriteString("\n")
-			v := *review.Job.Verdict
-			if v == "P" {
-				b.WriteString(tuiPassStyle.Render("Verdict: Pass"))
-			} else {
-				b.WriteString(tuiFailStyle.Render("Verdict: Fail"))
+			if hasVerdict {
+				v := *review.Job.Verdict
+				if v == "P" {
+					b.WriteString(tuiPassStyle.Render("Verdict: Pass"))
+				} else {
+					b.WriteString(tuiFailStyle.Render("Verdict: Fail"))
+				}
+			}
+			// Show [ADDRESSED] with distinct color (after verdict if present)
+			if review.Addressed {
+				if hasVerdict {
+					b.WriteString(" ")
+				}
+				b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
 			}
 			b.WriteString("\x1b[K") // Clear to end of line
 		}
@@ -3015,13 +3017,14 @@ func (m tuiModel) renderReviewView() string {
 		helpLines = (len(helpText) + m.width - 1) / m.width
 	}
 
-	// headerHeight = title + repo path (0|1) + status line (1) + help + verdict (0|1)
+	// headerHeight = title + location line (1) + status line (1) + help + verdict/addressed (0|1)
 	headerHeight := titleLines + 1 + helpLines
-	if review.Job != nil && review.Job.RepoPath != "" {
-		headerHeight++ // Add 1 for repo path line
+	if review.Job != nil {
+		headerHeight++ // Add 1 for location line (repo path + ref + branch)
 	}
-	if review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" {
-		headerHeight++ // Add 1 for verdict line
+	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != ""
+	if hasVerdict || review.Addressed {
+		headerHeight++ // Add 1 for verdict/addressed line
 	}
 	visibleLines := m.height - headerHeight
 	if visibleLines < 1 {

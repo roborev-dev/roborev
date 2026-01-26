@@ -3975,17 +3975,19 @@ func TestTUIRenderReviewViewNoBlankLineWithoutVerdict(t *testing.T) {
 	output := m.View()
 	lines := strings.Split(output, "\n")
 
-	// First line should be the title
+	// Line 0: Title
 	if !strings.Contains(lines[0], "Review") {
-		t.Errorf("First line should contain 'Review', got: %s", lines[0])
+		t.Errorf("Line 0 should contain 'Review', got: %s", lines[0])
 	}
 
-	// Second line should be content (Line 1), not blank
-	if len(lines) > 1 && strings.TrimSpace(lines[1]) == "" {
-		t.Error("Second line should not be blank when no verdict is present")
+	// Line 1: Location (ref)
+	if len(lines) > 1 && !strings.Contains(lines[1], "abc1234") {
+		t.Errorf("Line 1 should contain ref 'abc1234', got: %s", lines[1])
 	}
-	if len(lines) > 1 && !strings.Contains(lines[1], "Line 1") {
-		t.Errorf("Second line should contain content 'Line 1', got: %s", lines[1])
+
+	// Line 2: Content (no verdict, so content starts here)
+	if len(lines) > 2 && !strings.Contains(lines[2], "Line 1") {
+		t.Errorf("Line 2 should contain content 'Line 1', got: %s", lines[2])
 	}
 }
 
@@ -4010,19 +4012,24 @@ func TestTUIRenderReviewViewVerdictOnLine2(t *testing.T) {
 	output := m.View()
 	lines := strings.Split(output, "\n")
 
-	// First line should be the title
+	// Line 0: Title
 	if !strings.Contains(lines[0], "Review") {
-		t.Errorf("First line should contain 'Review', got: %s", lines[0])
+		t.Errorf("Line 0 should contain 'Review', got: %s", lines[0])
 	}
 
-	// Second line should be the verdict
-	if len(lines) > 1 && !strings.Contains(lines[1], "Verdict") {
-		t.Errorf("Second line should contain 'Verdict', got: %s", lines[1])
+	// Line 1: Location (ref)
+	if len(lines) > 1 && !strings.Contains(lines[1], "abc1234") {
+		t.Errorf("Line 1 should contain ref 'abc1234', got: %s", lines[1])
 	}
 
-	// Third line should be content
-	if len(lines) > 2 && !strings.Contains(lines[2], "Line 1") {
-		t.Errorf("Third line should contain content 'Line 1', got: %s", lines[2])
+	// Line 2: Verdict
+	if len(lines) > 2 && !strings.Contains(lines[2], "Verdict") {
+		t.Errorf("Line 2 should contain 'Verdict', got: %s", lines[2])
+	}
+
+	// Line 3: Content
+	if len(lines) > 3 && !strings.Contains(lines[3], "Line 1") {
+		t.Errorf("Line 3 should contain content 'Line 1', got: %s", lines[3])
 	}
 }
 
@@ -4122,7 +4129,7 @@ func TestTUIRenderFailedJobNoBranchShown(t *testing.T) {
 }
 
 func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
-	// Test that visibleLines = height - 3 when no verdict (title + status + help)
+	// Test that visibleLines = height - 4 when no verdict (title + location + status + help)
 	// Help text is ~106 chars, so use width >= 110 to avoid wrapping
 	m := newTuiModel("http://localhost")
 	m.width = 120
@@ -4142,9 +4149,9 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 
 	output := m.View()
 
-	// With height=10, no verdict, wide terminal: visibleLines = 10 - 3 = 7
-	// Non-content: title (1) + status line (1) + help (1) = 3
-	// Count content lines (L1 through L7)
+	// With height=10, no verdict, wide terminal: visibleLines = 10 - 4 = 6
+	// Non-content: title (1) + location (1) + status line (1) + help (1) = 4
+	// Count content lines (L1 through L6)
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
@@ -4152,19 +4159,19 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 		}
 	}
 
-	expectedContent := 7
+	expectedContent := 6
 	if contentCount != expectedContent {
 		t.Errorf("Expected %d content lines with height=10 and no verdict, got %d", expectedContent, contentCount)
 	}
 
-	// Should show scroll indicator since we have 20 lines but only showing 7
-	if !strings.Contains(output, "[1-7 of 20 lines]") {
-		t.Errorf("Expected scroll indicator '[1-7 of 20 lines]', output: %s", output)
+	// Should show scroll indicator since we have 20 lines but only showing 6
+	if !strings.Contains(output, "[1-6 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-6 of 20 lines]', output: %s", output)
 	}
 }
 
 func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
-	// Test that visibleLines = height - 4 when verdict present (title + verdict + status + help)
+	// Test that visibleLines = height - 5 when verdict present (title + location + verdict + status + help)
 	// Help text is ~106 chars, so use width >= 110 to avoid wrapping
 	verdictPass := "P"
 	m := newTuiModel("http://localhost")
@@ -4185,8 +4192,8 @@ func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
 
 	output := m.View()
 
-	// With height=10, verdict, wide terminal: visibleLines = 10 - 4 = 6
-	// Non-content: title (1) + verdict (1) + status line (1) + help (1) = 4
+	// With height=10, verdict, wide terminal: visibleLines = 10 - 5 = 5
+	// Non-content: title (1) + location (1) + verdict (1) + status line (1) + help (1) = 5
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
@@ -4194,14 +4201,14 @@ func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
 		}
 	}
 
-	expectedContent := 6
+	expectedContent := 5
 	if contentCount != expectedContent {
 		t.Errorf("Expected %d content lines with height=10 and verdict, got %d", expectedContent, contentCount)
 	}
 
-	// Should show scroll indicator since we have 20 lines but only showing 6
-	if !strings.Contains(output, "[1-6 of 20 lines]") {
-		t.Errorf("Expected scroll indicator '[1-6 of 20 lines]', output: %s", output)
+	// Should show scroll indicator since we have 20 lines but only showing 5
+	if !strings.Contains(output, "[1-5 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-5 of 20 lines]', output: %s", output)
 	}
 }
 
@@ -4226,8 +4233,8 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 	output := m.View()
 
 	// With height=10, no verdict, narrow terminal (help wraps to 2 lines):
-	// visibleLines = 10 - 4 = 6
-	// Non-content: title (1) + status line (1) + help (2) = 4
+	// visibleLines = 10 - 5 = 5
+	// Non-content: title (1) + location (1) + status line (1) + help (2) = 5
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
@@ -4235,14 +4242,14 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 		}
 	}
 
-	expectedContent := 6
+	expectedContent := 5
 	if contentCount != expectedContent {
 		t.Errorf("Expected %d content lines with height=10 and narrow terminal (help wraps), got %d", expectedContent, contentCount)
 	}
 
 	// Should show scroll indicator
-	if !strings.Contains(output, "[1-6 of 20 lines]") {
-		t.Errorf("Expected scroll indicator '[1-6 of 20 lines]', output: %s", output)
+	if !strings.Contains(output, "[1-5 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-5 of 20 lines]', output: %s", output)
 	}
 }
 
@@ -4268,8 +4275,8 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 	output := m.View()
 
 	// With height=10, verdict present, narrow terminal (help wraps to 2 lines):
-	// visibleLines = 10 - 5 = 5
-	// Non-content: title (1) + verdict (1) + status line (1) + help (2) = 5
+	// visibleLines = 10 - 6 = 4
+	// Non-content: title (1) + location (1) + verdict (1) + status line (1) + help (2) = 6
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
@@ -4277,14 +4284,14 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 		}
 	}
 
-	expectedContent := 5
+	expectedContent := 4
 	if contentCount != expectedContent {
 		t.Errorf("Expected %d content lines with height=10, verdict, and narrow terminal, got %d", expectedContent, contentCount)
 	}
 
 	// Should show scroll indicator
-	if !strings.Contains(output, "[1-5 of 20 lines]") {
-		t.Errorf("Expected scroll indicator '[1-5 of 20 lines]', output: %s", output)
+	if !strings.Contains(output, "[1-4 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-4 of 20 lines]', output: %s", output)
 	}
 
 	// Should show verdict
@@ -4294,9 +4301,15 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 }
 
 func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
-	// Test that long titles (repo/branch/range) correctly wrap and reduce visible lines
-	// Title: "Review #1 very-long-repository-name-here abc1234..def5678 (claude-code) on feature/very-long-branch-name [ADDRESSED]"
-	// That's about 120 chars, at width=50 it wraps to 3 lines: ceil(120/50) = 3
+	// Test that long titles correctly wrap and reduce visible lines
+	// New layout:
+	// - Title: "Review #1 very-long-repository-name-here (claude-code)" = ~54 chars, ceil(54/50) = 2 lines
+	// - Location line: repo + ref + branch = 1 line
+	// - Addressed line: 1 line (since Addressed=true)
+	// - Status line: 1 line
+	// - Help: ceil(91/50) = 2 lines
+	// Non-content: 2 + 1 + 1 + 1 + 2 = 7
+	// visibleLines = 12 - 7 = 5
 	m := newTuiModel("http://localhost")
 	m.width = 50
 	m.height = 12
@@ -4318,13 +4331,6 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 
 	output := m.View()
 
-	// Calculate expected title length:
-	// "Review #1 very-long-repository-name-here abc1234..def5678 (claude-code) on feature/very-long-branch-name [ADDRESSED]"
-	// = 7 + 3 + 31 + 17 + 14 + 34 + 12 = ~118 chars
-	// At width=50: ceil(118/50) = 3 title lines
-	// Help at width=50: ceil(91/50) = 2 help lines
-	// Non-content: title (3) + status line (1) + help (2) = 6
-	// visibleLines = 12 - 6 = 6
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "L") && len(stripANSI(line)) <= 3 {
@@ -4332,14 +4338,14 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 		}
 	}
 
-	expectedContent := 6
+	expectedContent := 5
 	if contentCount != expectedContent {
 		t.Errorf("Expected %d content lines with long wrapping title, got %d", expectedContent, contentCount)
 	}
 
 	// Should show scroll indicator with correct range
-	if !strings.Contains(output, "[1-6 of 20 lines]") {
-		t.Errorf("Expected scroll indicator '[1-6 of 20 lines]', output: %s", output)
+	if !strings.Contains(output, "[1-5 of 20 lines]") {
+		t.Errorf("Expected scroll indicator '[1-5 of 20 lines]', output: %s", output)
 	}
 
 	// Should contain the long repo name and branch
