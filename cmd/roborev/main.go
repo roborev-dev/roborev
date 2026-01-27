@@ -569,6 +569,7 @@ func reviewCmd() *cobra.Command {
 		agent      string
 		model      string
 		reasoning  string
+		fast       bool
 		quiet      bool
 		dirty      bool
 		wait       bool
@@ -599,6 +600,11 @@ Examples:
 			if quiet {
 				cmd.SilenceErrors = true
 				cmd.SilenceUsage = true
+			}
+
+			// --fast is shorthand for --reasoning fast
+			if fast {
+				reasoning = "fast"
 			}
 
 			// Default to current directory
@@ -817,6 +823,7 @@ Examples:
 	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: thorough (default), standard, or fast")
+	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
 	cmd.Flags().BoolVar(&dirty, "dirty", false, "review uncommitted changes instead of a commit")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")

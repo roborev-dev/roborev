@@ -33,6 +33,7 @@ func refineCmd() *cobra.Command {
 		agentName         string
 		model             string
 		reasoning         string
+		fast              bool
 		maxIterations     int
 		quiet             bool
 		allowUnsafeAgents bool
@@ -61,6 +62,10 @@ The agent will run tests and verify the build before committing.
 Use --since to specify a starting commit when on the main branch or to
 limit how far back to look for reviews to address.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --fast is shorthand for --reasoning fast
+			if fast {
+				reasoning = "fast"
+			}
 			unsafeFlagChanged := cmd.Flags().Changed("allow-unsafe-agents")
 			return runRefine(agentName, model, reasoning, maxIterations, quiet, allowUnsafeAgents, unsafeFlagChanged, since)
 		},
@@ -69,6 +74,7 @@ limit how far back to look for reviews to address.`,
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for addressing findings (default: from config)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard (default), or thorough")
+	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().IntVar(&maxIterations, "max-iterations", 10, "maximum refinement iterations")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "suppress agent output, show elapsed time instead")
 	cmd.Flags().BoolVar(&allowUnsafeAgents, "allow-unsafe-agents", false, "allow agents to run without sandboxing")
