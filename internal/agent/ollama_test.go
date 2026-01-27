@@ -48,6 +48,59 @@ func TestOllamaWithModelReasoningAgentic(t *testing.T) {
 	}
 }
 
+func TestOllamaWithBaseURL(t *testing.T) {
+	t.Run("custom BaseURL is preserved", func(t *testing.T) {
+		a := NewOllamaAgent("http://localhost:11434")
+		a2 := a.WithBaseURL("http://custom:11434").(*OllamaAgent)
+		if a2.BaseURL != "http://custom:11434" {
+			t.Errorf("BaseURL = %q, want \"http://custom:11434\"", a2.BaseURL)
+		}
+		// Verify other fields are preserved
+		if a2.Model != a.Model {
+			t.Errorf("Model changed: got %q, want %q", a2.Model, a.Model)
+		}
+		if a2.Reasoning != a.Reasoning {
+			t.Errorf("Reasoning changed: got %v, want %v", a2.Reasoning, a.Reasoning)
+		}
+		if a2.Agentic != a.Agentic {
+			t.Errorf("Agentic changed: got %v, want %v", a2.Agentic, a.Agentic)
+		}
+	})
+
+	t.Run("empty BaseURL uses default", func(t *testing.T) {
+		a := NewOllamaAgent("http://custom:11434")
+		a2 := a.WithBaseURL("").(*OllamaAgent)
+		if a2.BaseURL != ollamaDefaultBaseURL {
+			t.Errorf("BaseURL = %q, want %q", a2.BaseURL, ollamaDefaultBaseURL)
+		}
+	})
+
+	t.Run("preserves Model, Reasoning, and Agentic", func(t *testing.T) {
+		a := NewOllamaAgent("http://localhost:11434").WithModel("m1").WithReasoning(ReasoningThorough).WithAgentic(true).(*OllamaAgent)
+		a2 := a.WithBaseURL("http://custom:11434").(*OllamaAgent)
+		if a2.Model != "m1" {
+			t.Errorf("Model = %q, want \"m1\"", a2.Model)
+		}
+		if a2.Reasoning != ReasoningThorough {
+			t.Errorf("Reasoning = %v, want %v", a2.Reasoning, ReasoningThorough)
+		}
+		if !a2.Agentic {
+			t.Error("Agentic = false, want true")
+		}
+		if a2.BaseURL != "http://custom:11434" {
+			t.Errorf("BaseURL = %q, want \"http://custom:11434\"", a2.BaseURL)
+		}
+	})
+
+	t.Run("returns new instance", func(t *testing.T) {
+		a := NewOllamaAgent("http://localhost:11434")
+		a2 := a.WithBaseURL("http://custom:11434")
+		if a == a2 {
+			t.Error("WithBaseURL returned same instance, want new instance")
+		}
+	})
+}
+
 func TestOllamaParseStreamNDJSON_ValidStream(t *testing.T) {
 	a := NewOllamaAgent("")
 	input := `{"model":"x","message":{"role":"assistant","content":"Hello "},"done":false}

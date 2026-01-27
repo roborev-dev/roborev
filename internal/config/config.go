@@ -317,6 +317,16 @@ func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 	return ""
 }
 
+// ResolveOllamaBaseURL determines which Ollama base URL to use based on config priority:
+// 1. Global config (ollama_base_url in config.toml)
+// 2. Default ("http://localhost:11434")
+func ResolveOllamaBaseURL(globalCfg *Config) string {
+	if globalCfg != nil && strings.TrimSpace(globalCfg.OllamaBaseURL) != "" {
+		return strings.TrimSpace(globalCfg.OllamaBaseURL)
+	}
+	return "http://localhost:11434"
+}
+
 // SaveGlobal saves the global configuration
 func SaveGlobal(cfg *Config) error {
 	path := GlobalConfigPath()

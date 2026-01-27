@@ -231,7 +231,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 	resolvedModel := config.ResolveModel(modelStr, repoPath, cfg)
 
 	// Get the agent with configured reasoning level and model
-	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel)
+	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel, cfg)
 	if err != nil {
 		return fmt.Errorf("no agent available: %w", err)
 	}
@@ -782,18 +782,24 @@ func applyWorktreeChanges(repoPath, worktreePath string) error {
 	return nil
 }
 
-func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string) (agent.Agent, error) {
+func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string, cfg *config.Config) (agent.Agent, error) {
 	if resolvedAgent == "codex" && agent.IsAvailable("codex") {
 		baseAgent, err := agent.Get("codex")
 		if err != nil {
 			return nil, err
 		}
-		return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
+		a := baseAgent.WithReasoning(reasoningLevel).WithModel(model)
+		// Configure Ollama-specific settings (BaseURL from config)
+		baseURL := config.ResolveOllamaBaseURL(cfg)
+		return agent.WithOllamaBaseURL(a, baseURL), nil
 	}
 
 	baseAgent, err := agent.GetAvailable(resolvedAgent)
 	if err != nil {
 		return nil, err
 	}
-	return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
+	a := baseAgent.WithReasoning(reasoningLevel).WithModel(model)
+	// Configure Ollama-specific settings (BaseURL from config)
+	baseURL := config.ResolveOllamaBaseURL(cfg)
+	return agent.WithOllamaBaseURL(a, baseURL), nil
 }

@@ -126,7 +126,7 @@ var _ daemon.Client = (*mockDaemonClient)(nil)
 func TestSelectRefineAgentCodexFallback(t *testing.T) {
 	t.Setenv("PATH", "")
 
-	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "")
+	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "", nil)
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 
 	t.Setenv("PATH", tmpDir)
 
-	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "")
+	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "", nil)
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	t.Setenv("PATH", tmpDir)
 
 	// Request an unavailable agent (claude), codex should be used as fallback
-	selected, err := selectRefineAgent("claude", agent.ReasoningThorough, "")
+	selected, err := selectRefineAgent("claude", agent.ReasoningThorough, "", nil)
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
@@ -279,6 +279,55 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	if codexAgent.Reasoning != agent.ReasoningThorough {
 		t.Fatalf("expected codex fallback to use requested reasoning (thorough), got %q", codexAgent.Reasoning)
 	}
+}
+
+func TestSelectRefineAgentOllamaBaseURL(t *testing.T) {
+	t.Run("Ollama agent uses BaseURL from config", func(t *testing.T) {
+		cfg := &config.Config{OllamaBaseURL: "http://custom:11434"}
+		selected, err := selectRefineAgent("ollama", agent.ReasoningStandard, "test-model", cfg)
+		if err != nil {
+			t.Fatalf("selectRefineAgent failed: %v", err)
+		}
+		if selected.Name() != "ollama" {
+			t.Skipf("ollama agent not available, skipping test")
+		}
+		ollamaAgent, ok := selected.(*agent.OllamaAgent)
+		if !ok {
+			t.Fatalf("expected *agent.OllamaAgent, got %T", selected)
+		}
+		if ollamaAgent.BaseURL != "http://custom:11434" {
+			t.Errorf("BaseURL = %q, want \"http://custom:11434\"", ollamaAgent.BaseURL)
+		}
+	})
+
+	t.Run("Ollama agent uses default BaseURL when config is nil", func(t *testing.T) {
+		selected, err := selectRefineAgent("ollama", agent.ReasoningStandard, "test-model", nil)
+		if err != nil {
+			t.Fatalf("selectRefineAgent failed: %v", err)
+		}
+		if selected.Name() != "ollama" {
+			t.Skipf("ollama agent not available, skipping test")
+		}
+		ollamaAgent, ok := selected.(*agent.OllamaAgent)
+		if !ok {
+			t.Fatalf("expected *agent.OllamaAgent, got %T", selected)
+		}
+		if ollamaAgent.BaseURL != "http://localhost:11434" {
+			t.Errorf("BaseURL = %q, want \"http://localhost:11434\"", ollamaAgent.BaseURL)
+		}
+	})
+
+	t.Run("non-Ollama agent is unaffected", func(t *testing.T) {
+		cfg := &config.Config{OllamaBaseURL: "http://custom:11434"}
+		selected, err := selectRefineAgent("test", agent.ReasoningStandard, "", cfg)
+		if err != nil {
+			t.Fatalf("selectRefineAgent failed: %v", err)
+		}
+		if selected.Name() != "test" {
+			t.Fatalf("expected test agent, got %s", selected.Name())
+		}
+		// Test agent should be unchanged
+	})
 }
 
 func TestFindFailedReviewForBranch_OldestFirst(t *testing.T) {

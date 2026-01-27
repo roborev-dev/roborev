@@ -77,6 +77,20 @@ func (a *OllamaAgent) WithModel(model string) Agent {
 	}
 }
 
+// WithBaseURL returns a copy of the agent configured to use the specified base URL.
+// If baseURL is empty, uses the default "http://localhost:11434".
+func (a *OllamaAgent) WithBaseURL(baseURL string) Agent {
+	if baseURL == "" {
+		baseURL = ollamaDefaultBaseURL
+	}
+	return &OllamaAgent{
+		BaseURL:   baseURL,
+		Model:     a.Model,
+		Reasoning: a.Reasoning,
+		Agentic:   a.Agentic,
+	}
+}
+
 // IsAvailable reports whether the Ollama server is reachable (HTTP health check to /api/tags, 30s TTL).
 func (a *OllamaAgent) IsAvailable() bool {
 	a.mu.Lock()

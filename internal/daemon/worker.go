@@ -318,6 +318,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(job.Model)
 
+	// Configure Ollama-specific settings (BaseURL from config)
+	baseURL := config.ResolveOllamaBaseURL(cfg)
+	a = agent.WithOllamaBaseURL(a, baseURL)
+
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()
 	if agentName != job.Agent {

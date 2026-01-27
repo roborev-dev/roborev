@@ -195,6 +195,21 @@ func GetAvailable(preferred string) (Agent, error) {
 	return Get(available[0])
 }
 
+// WithOllamaBaseURL configures the BaseURL for an Ollama agent if it is one.
+// Returns the agent unchanged if it's not an Ollama agent.
+func WithOllamaBaseURL(a Agent, baseURL string) Agent {
+	if a.Name() != "ollama" {
+		return a
+	}
+	// Type assertion to OllamaAgent - safe because we checked the name
+	if ollamaAgent, ok := a.(interface {
+		WithBaseURL(baseURL string) Agent
+	}); ok {
+		return ollamaAgent.WithBaseURL(baseURL)
+	}
+	return a
+}
+
 // syncWriter wraps an io.Writer with mutex protection for concurrent writes.
 // This is needed because io.MultiWriter sends both stdout and stderr to the
 // same output concurrently, which could race if the underlying writer isn't

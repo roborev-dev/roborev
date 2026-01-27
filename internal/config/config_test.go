@@ -1177,3 +1177,52 @@ func TestStripURLCredentials(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveOllamaBaseURL(t *testing.T) {
+	t.Run("nil config returns default", func(t *testing.T) {
+		baseURL := ResolveOllamaBaseURL(nil)
+		if baseURL != "http://localhost:11434" {
+			t.Errorf("Expected default 'http://localhost:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("empty config returns default", func(t *testing.T) {
+		cfg := &Config{OllamaBaseURL: ""}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://localhost:11434" {
+			t.Errorf("Expected default 'http://localhost:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("whitespace-only config returns default", func(t *testing.T) {
+		cfg := &Config{OllamaBaseURL: "   "}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://localhost:11434" {
+			t.Errorf("Expected default 'http://localhost:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("configured value is returned", func(t *testing.T) {
+		cfg := &Config{OllamaBaseURL: "http://custom:11434"}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://custom:11434" {
+			t.Errorf("Expected 'http://custom:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("configured value with whitespace is trimmed", func(t *testing.T) {
+		cfg := &Config{OllamaBaseURL: "  http://custom:11434  "}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://custom:11434" {
+			t.Errorf("Expected 'http://custom:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("remote server URL is preserved", func(t *testing.T) {
+		cfg := &Config{OllamaBaseURL: "http://192.168.1.100:11434"}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://192.168.1.100:11434" {
+			t.Errorf("Expected 'http://192.168.1.100:11434', got '%s'", baseURL)
+		}
+	})
+}
