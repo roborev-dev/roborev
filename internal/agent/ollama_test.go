@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -250,8 +251,8 @@ func TestOllamaReview_401Unauthorized(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 401")
 	}
-	if !strings.Contains(err.Error(), "401") && !strings.Contains(err.Error(), "Unauthorized") {
-		t.Errorf("expected 401 or Unauthorized in error, got %v", err)
+	if !strings.Contains(err.Error(), "authentication failed") && !strings.Contains(err.Error(), "401") && !strings.Contains(err.Error(), "Unauthorized") {
+		t.Errorf("expected authentication/401/Unauthorized in error, got %v", err)
 	}
 }
 
@@ -302,8 +303,12 @@ func TestOllamaReview_ConnectionRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when server unreachable")
 	}
-	if !strings.Contains(err.Error(), "not reachable") && !strings.Contains(err.Error(), "connection refused") {
-		t.Errorf("expected reachable/connection error, got %v", err)
+	// Enhanced error message should mention connection refused
+	if !strings.Contains(err.Error(), "connection refused") && !strings.Contains(err.Error(), "not reachable") {
+		t.Errorf("expected connection refused error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ollama serve") {
+		t.Errorf("expected troubleshooting hint, got %v", err)
 	}
 }
 
@@ -373,4 +378,241 @@ func TestOllamaIsAvailable_401(t *testing.T) {
 
 func TestOllamaImplementsAvailabilityChecker(t *testing.T) {
 	var _ AvailabilityChecker = (*OllamaAgent)(nil)
+}
+
+func TestOllamaReview_400BadRequest(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid model format"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("invalid:model:format")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	if !strings.Contains(err.Error(), "invalid model") {
+		t.Errorf("expected invalid model error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "invalid:model:format") {
+		t.Errorf("expected model name in error, got %v", err)
+	}
+}
+
+func TestOllamaReview_404WithErrorResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"model 'missing-model' not found, try pulling it first"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("missing-model")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 404")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected not found error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ollama pull") {
+		t.Errorf("expected pull hint, got %v", err)
+	}
+	// Should include Ollama's error message
+	if !strings.Contains(err.Error(), "try pulling it first") {
+		t.Errorf("expected Ollama error message, got %v", err)
+	}
+}
+
+func TestOllamaReview_500ServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal server error: model loading failed"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 500")
+	}
+	if !strings.Contains(err.Error(), "server error") || !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected server error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "model loading failed") {
+		t.Errorf("expected Ollama error message, got %v", err)
+	}
+}
+
+func TestOllamaReview_ContextTimeout(t *testing.T) {
+	block := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-block
+	}))
+	defer ts.Close()
+	defer close(block)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error when context timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("expected timeout in error message, got %v", err)
+	}
+}
+
+func TestOllamaReview_TimeoutVsCancel(t *testing.T) {
+	block := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-block
+	}))
+	defer ts.Close()
+	defer close(block)
+
+	// Test context cancellation (not timeout)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error when context canceled")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected Canceled, got %v", err)
+	}
+}
+
+func TestOllamaReview_DNSError(t *testing.T) {
+	// Use an invalid hostname that will cause DNS error
+	// Note: DNS errors may be caught as timeouts if context expires first
+	a := NewOllamaAgent("http://nonexistent-hostname-that-does-not-exist-12345.local:11434").WithModel("m")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for DNS failure")
+	}
+	// DNS errors may appear as timeout or DNS error depending on timing
+	// Accept either as valid since DNS resolution can timeout
+	if !strings.Contains(err.Error(), "DNS") && !strings.Contains(err.Error(), "resolve") && !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("expected DNS/resolve/timeout error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_SyntaxErrorWithOffset(t *testing.T) {
+	a := NewOllamaAgent("")
+	// Create JSON with syntax error (missing closing brace)
+	input := `{"model":"x","message":{"role":"assistant","content":"ok"},"done":false}
+{"model":"x","message":{"role":"assistant","content":"test"
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for syntax error")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+	// Should mention line number
+	if !strings.Contains(err.Error(), "line") {
+		t.Errorf("expected line number in error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_MalformedWithContext(t *testing.T) {
+	a := NewOllamaAgent("")
+	// Create malformed JSON
+	input := `{"model":"x","message":{"role":"assistant","content":"ok"},"done":false}
+not json at all
+{"model":"x","message":{"role":"assistant","content":"test"},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+	// Should mention line number
+	if !strings.Contains(err.Error(), "line 2") || !strings.Contains(err.Error(), "line") {
+		t.Errorf("expected line number in error, got %v", err)
+	}
+	// Should show content preview
+	if !strings.Contains(err.Error(), "not json") {
+		t.Errorf("expected content preview in error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_InvalidStructure(t *testing.T) {
+	a := NewOllamaAgent("")
+	// Valid JSON but wrong structure - missing required fields causes unmarshal to succeed
+	// but stream will be incomplete (no done=true with content)
+	// Actually, this will succeed but return empty content, so test incomplete stream instead
+	input := `{"model":"x","message":{"role":"assistant","content":""},"done":false}
+{"model":"x","message":{"role":"assistant","content":""},"done":false}
+`
+	// This should succeed but return empty string (no error, just no content)
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected empty result for empty content chunks, got %q", got)
+	}
+	// Test actual invalid structure - malformed JSON that parses but has wrong type
+	invalidInput := `{"model":"x","message":"not an object","done":false}
+`
+	_, err = a.parseStreamNDJSON(strings.NewReader(invalidInput), nil)
+	if err == nil {
+		t.Fatal("expected error for invalid message structure")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+	// Should mention line number
+	if !strings.Contains(err.Error(), "line") {
+		t.Errorf("expected line number in error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_IncompleteWithLineCount(t *testing.T) {
+	a := NewOllamaAgent("")
+	// Stream that ends without done=true
+	input := `{"model":"x","message":{"role":"assistant","content":"partial"},"done":false}
+{"model":"x","message":{"role":"assistant","content":"more"},"done":false}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for incomplete stream")
+	}
+	if !strings.Contains(err.Error(), "incomplete") || !strings.Contains(err.Error(), "done=true") {
+		t.Errorf("expected incomplete/done error, got %v", err)
+	}
+	// Should mention line count
+	if !strings.Contains(err.Error(), "line") {
+		t.Errorf("expected line count in error, got %v", err)
+	}
+}
+
+func TestOllamaReview_NetworkUnreachable(t *testing.T) {
+	// This test is harder to simulate reliably, but we can test the error classification
+	// by checking that network errors are properly wrapped
+	a := NewOllamaAgent("http://192.0.2.1:11434").WithModel("m") // 192.0.2.1 is TEST-NET-1, should be unreachable
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for unreachable host")
+	}
+	// Should have a network-related error message
+	if !strings.Contains(err.Error(), "network") && !strings.Contains(err.Error(), "timeout") && !strings.Contains(err.Error(), "unreachable") {
+		t.Errorf("expected network error, got %v", err)
+	}
 }

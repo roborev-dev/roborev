@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -143,20 +146,58 @@ func (a *OllamaAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		// Preserve context cancellation/timeout errors
 		if ctx.Err() != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", fmt.Errorf("ollama request timeout: %w", ctx.Err())
+			}
 			return "", ctx.Err()
 		}
-		return "", fmt.Errorf("ollama server not reachable (is it running? start with: ollama serve): %w", err)
+		// Classify network errors for better error messages
+		classifiedErr := classifyNetworkError(err, baseURL)
+		if classifiedErr != "" {
+			return "", fmt.Errorf("%s: %w", classifiedErr, err)
+		}
+		return "", fmt.Errorf("ollama server not reachable: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		slurp, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		msg := strings.TrimSpace(string(slurp))
-		if resp.StatusCode == http.StatusNotFound {
-			return "", fmt.Errorf("model %q not found; pull with: ollama pull %s", a.Model, a.Model)
+		bodyStr := strings.TrimSpace(string(slurp))
+
+		// Try to parse Ollama error response
+		var errResp ollamaErrorResponse
+		hasErrorMsg := false
+		if json.Unmarshal(slurp, &errResp) == nil && errResp.Error != "" {
+			hasErrorMsg = true
+			bodyStr = errResp.Error
 		}
-		return "", fmt.Errorf("ollama API %s: %s", resp.Status, msg)
+
+		switch resp.StatusCode {
+		case http.StatusBadRequest:
+			if hasErrorMsg {
+				return "", fmt.Errorf("invalid model %q: %s (check model name format, e.g., 'model:tag')", a.Model, bodyStr)
+			}
+			return "", fmt.Errorf("invalid request for model %q: %s", a.Model, bodyStr)
+		case http.StatusNotFound:
+			if hasErrorMsg {
+				return "", fmt.Errorf("model %q not found: %s (pull with: ollama pull %s)", a.Model, bodyStr, a.Model)
+			}
+			return "", fmt.Errorf("model %q not found: model not available locally (pull with: ollama pull %s)", a.Model, a.Model)
+		case http.StatusUnauthorized:
+			return "", fmt.Errorf("ollama authentication failed: %s (check server configuration)", bodyStr)
+		case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+			if hasErrorMsg {
+				return "", fmt.Errorf("ollama server error (%s): %s", resp.Status, bodyStr)
+			}
+			return "", fmt.Errorf("ollama server error (%s): %s", resp.Status, bodyStr)
+		default:
+			if hasErrorMsg {
+				return "", fmt.Errorf("ollama API error (%s): %s", resp.Status, bodyStr)
+			}
+			return "", fmt.Errorf("ollama API error (%s): %s", resp.Status, bodyStr)
+		}
 	}
 
 	return a.parseStreamNDJSON(resp.Body, output)
@@ -182,12 +223,71 @@ type ollamaStreamChunk struct {
 	Done bool `json:"done"`
 }
 
+type ollamaErrorResponse struct {
+	Error string `json:"error"`
+}
+
+// classifyNetworkError categorizes network errors and returns a descriptive error message.
+// It distinguishes between connection refused, timeouts, DNS errors, and other network issues.
+func classifyNetworkError(err error, baseURL string) string {
+	if err == nil {
+		return ""
+	}
+
+	// Check for url.Error (wraps network errors from http.Client)
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		// Check underlying error type
+		if urlErr.Timeout() {
+			return fmt.Sprintf("ollama connection timeout: server at %s did not respond in time", baseURL)
+		}
+		// Check for DNS errors
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) {
+			return fmt.Sprintf("ollama DNS error: cannot resolve hostname %s (%s)", dnsErr.Name, dnsErr.Err)
+		}
+		// Check for connection refused
+		if urlErr.Err != nil {
+			if strings.Contains(urlErr.Err.Error(), "connection refused") {
+				return fmt.Sprintf("ollama connection refused: server not running at %s (start with: ollama serve)", baseURL)
+			}
+			if strings.Contains(urlErr.Err.Error(), "no such host") {
+				return fmt.Sprintf("ollama DNS error: cannot resolve hostname for %s", baseURL)
+			}
+			if strings.Contains(urlErr.Err.Error(), "network is unreachable") {
+				return fmt.Sprintf("ollama network unreachable: cannot reach %s", baseURL)
+			}
+		}
+		// Generic url.Error
+		return fmt.Sprintf("ollama network error: %v", urlErr)
+	}
+
+	// Check for net.Error interface (timeout, temporary errors)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return fmt.Sprintf("ollama connection timeout: server at %s did not respond in time", baseURL)
+		}
+		return fmt.Sprintf("ollama network error: %v", netErr)
+	}
+
+	// Check for DNS errors directly
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return fmt.Sprintf("ollama DNS error: cannot resolve hostname %s (%s)", dnsErr.Name, dnsErr.Err)
+	}
+
+	// Generic error
+	return fmt.Sprintf("ollama connection error: %v", err)
+}
+
 // parseStreamNDJSON reads NDJSON from r, streams raw lines to output, and returns accumulated message.content.
 func (a *OllamaAgent) parseStreamNDJSON(r io.Reader, output io.Writer) (string, error) {
 	br := bufio.NewReader(r)
 	var acc strings.Builder
 	var seenDone bool
 	sw := newSyncWriter(output)
+	lineNum := 0
 
 	for {
 		line, err := br.ReadString('\n')
@@ -195,6 +295,7 @@ func (a *OllamaAgent) parseStreamNDJSON(r io.Reader, output io.Writer) (string, 
 			return "", fmt.Errorf("ollama read stream: %w", err)
 		}
 
+		lineNum++
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" {
 			if sw != nil {
@@ -202,7 +303,22 @@ func (a *OllamaAgent) parseStreamNDJSON(r io.Reader, output io.Writer) (string, 
 			}
 			var chunk ollamaStreamChunk
 			if jsonErr := json.Unmarshal([]byte(trimmed), &chunk); jsonErr != nil {
-				return "", fmt.Errorf("ollama NDJSON parse: %w", jsonErr)
+				// Enhanced JSON error with context
+				var syntaxErr *json.SyntaxError
+				if errors.As(jsonErr, &syntaxErr) {
+					// Show preview of malformed content (limit to 100 chars)
+					preview := trimmed
+					if len(preview) > 100 {
+						preview = preview[:100] + "..."
+					}
+					return "", fmt.Errorf("ollama NDJSON parse error at line %d, offset %d: %w (content: %q)", lineNum, syntaxErr.Offset, jsonErr, preview)
+				}
+				// Non-syntax JSON errors (type mismatch, etc.)
+				preview := trimmed
+				if len(preview) > 100 {
+					preview = preview[:100] + "..."
+				}
+				return "", fmt.Errorf("ollama NDJSON parse error at line %d: %w (content: %q)", lineNum, jsonErr, preview)
 			}
 			if chunk.Message.Content != "" {
 				acc.WriteString(chunk.Message.Content)
@@ -219,7 +335,7 @@ func (a *OllamaAgent) parseStreamNDJSON(r io.Reader, output io.Writer) (string, 
 	}
 
 	if !seenDone && acc.Len() > 0 {
-		return "", fmt.Errorf("ollama stream incomplete: missing done=true")
+		return "", fmt.Errorf("ollama stream incomplete: missing done=true after %d lines", lineNum)
 	}
 
 	return acc.String(), nil
