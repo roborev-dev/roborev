@@ -46,8 +46,7 @@ var (
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
 
 	tuiSelectedStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.AdaptiveColor{Light: "127", Dark: "212"}) // Magenta/Pink
+				Background(lipgloss.AdaptiveColor{Light: "153", Dark: "24"}) // Light blue background
 
 	tuiQueuedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}) // Yellow/Gold
 	tuiRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "25", Dark: "33"})   // Blue
@@ -3123,7 +3122,13 @@ func (m tuiModel) renderQueueView() string {
 			selected := i == visibleSelectedIdx
 			line := m.renderJobLine(job, selected, idWidth, colWidths)
 			if selected {
-				line = tuiSelectedStyle.Render("> " + line)
+				// Pad line to full terminal width for background styling
+				lineWidth := lipgloss.Width(line)
+				paddedLine := "> " + line
+				if padding := m.width - lineWidth - 2; padding > 0 {
+					paddedLine += strings.Repeat(" ", padding)
+				}
+				line = tuiSelectedStyle.Render(paddedLine)
 			} else {
 				line = "  " + line
 			}
