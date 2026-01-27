@@ -13,7 +13,6 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/spf13/cobra"
 )
 
 // mockDaemonClient is a test implementation of daemon.Client
@@ -1058,47 +1057,51 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 	}
 }
 
-func TestRefineFastFlag(t *testing.T) {
-	t.Run("fast flag sets reasoning to fast", func(t *testing.T) {
-		cmd := refineCmd()
-		// Override RunE to capture reasoning value
-		var capturedReasoning string
-		cmd.RunE = func(c *cobra.Command, args []string) error {
-			// Get the reasoning value via flag
-			capturedReasoning, _ = c.Flags().GetString("reasoning")
-			// Check if --fast was set and --reasoning wasn't explicitly set
-			fast, _ := c.Flags().GetBool("fast")
-			if fast && !c.Flags().Changed("reasoning") {
-				capturedReasoning = "fast"
-			}
-			return nil
-		}
-		cmd.SetArgs([]string{"--fast"})
-		if err := cmd.Execute(); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if capturedReasoning != "fast" {
-			t.Errorf("expected reasoning 'fast', got %q", capturedReasoning)
-		}
-	})
+func TestResolveReasoningWithFast(t *testing.T) {
+	tests := []struct {
+		name                  string
+		reasoning             string
+		fast                  bool
+		reasoningExplicitlySet bool
+		want                  string
+	}{
+		{
+			name:                  "fast flag sets reasoning to fast",
+			reasoning:             "",
+			fast:                  true,
+			reasoningExplicitlySet: false,
+			want:                  "fast",
+		},
+		{
+			name:                  "explicit reasoning takes precedence over fast",
+			reasoning:             "thorough",
+			fast:                  true,
+			reasoningExplicitlySet: true,
+			want:                  "thorough",
+		},
+		{
+			name:                  "no fast flag preserves reasoning",
+			reasoning:             "standard",
+			fast:                  false,
+			reasoningExplicitlySet: true,
+			want:                  "standard",
+		},
+		{
+			name:                  "no flags returns empty",
+			reasoning:             "",
+			fast:                  false,
+			reasoningExplicitlySet: false,
+			want:                  "",
+		},
+	}
 
-	t.Run("explicit reasoning takes precedence over fast", func(t *testing.T) {
-		cmd := refineCmd()
-		var capturedReasoning string
-		cmd.RunE = func(c *cobra.Command, args []string) error {
-			capturedReasoning, _ = c.Flags().GetString("reasoning")
-			fast, _ := c.Flags().GetBool("fast")
-			if fast && !c.Flags().Changed("reasoning") {
-				capturedReasoning = "fast"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveReasoningWithFast(tt.reasoning, tt.fast, tt.reasoningExplicitlySet)
+			if got != tt.want {
+				t.Errorf("resolveReasoningWithFast(%q, %v, %v) = %q, want %q",
+					tt.reasoning, tt.fast, tt.reasoningExplicitlySet, got, tt.want)
 			}
-			return nil
-		}
-		cmd.SetArgs([]string{"--fast", "--reasoning", "thorough"})
-		if err := cmd.Execute(); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if capturedReasoning != "thorough" {
-			t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", capturedReasoning)
-		}
-	})
+		})
+	}
 }

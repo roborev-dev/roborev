@@ -603,9 +603,7 @@ Examples:
 			}
 
 			// --fast is shorthand for --reasoning fast (explicit --reasoning takes precedence)
-			if fast && !cmd.Flags().Changed("reasoning") {
-				reasoning = "fast"
-			}
+			reasoning = resolveReasoningWithFast(reasoning, fast, cmd.Flags().Changed("reasoning"))
 
 			// Default to current directory
 			if repoPath == "" {
@@ -2371,6 +2369,15 @@ func formatAgentLabel(agent string, model string) string {
 		return fmt.Sprintf("%s: %s", agent, model)
 	}
 	return agent
+}
+
+// resolveReasoningWithFast returns the effective reasoning value, applying
+// the --fast shorthand only when --reasoning wasn't explicitly set.
+func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySet bool) string {
+	if fast && !reasoningExplicitlySet {
+		return "fast"
+	}
+	return reasoning
 }
 
 // generateHookContent creates the post-commit hook script content.

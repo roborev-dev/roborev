@@ -1175,9 +1175,13 @@ func TestReviewFastFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		reasoning := <-reasoningChan
-		if reasoning != "fast" {
-			t.Errorf("expected reasoning 'fast', got %q", reasoning)
+		select {
+		case reasoning := <-reasoningChan:
+			if reasoning != "fast" {
+				t.Errorf("expected reasoning 'fast', got %q", reasoning)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for enqueue request")
 		}
 	})
 
@@ -1224,9 +1228,13 @@ func TestReviewFastFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		reasoning := <-reasoningChan
-		if reasoning != "thorough" {
-			t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", reasoning)
+		select {
+		case reasoning := <-reasoningChan:
+			if reasoning != "thorough" {
+				t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", reasoning)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for enqueue request")
 		}
 	})
 }
