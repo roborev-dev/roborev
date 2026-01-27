@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 func TestFindAvailablePort(t *testing.T) {
@@ -28,11 +30,7 @@ func TestFindAvailablePort(t *testing.T) {
 }
 
 func TestRuntimeInfoReadWrite(t *testing.T) {
-	// Use temp home directory
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	testenv.SetDataDir(t)
 
 	// Write runtime info
 	err := WriteRuntime("127.0.0.1:7373", 7373, "test-version")

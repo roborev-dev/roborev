@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -111,11 +113,7 @@ func TestResolveAgent(t *testing.T) {
 }
 
 func TestSaveAndLoadGlobal(t *testing.T) {
-	// Use temp home directory
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	testenv.SetDataDir(t)
 
 	cfg := DefaultConfig()
 	cfg.DefaultAgent = "claude-code"

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 // TestE2EEnqueueAndReview tests the full flow of enqueueing and reviewing a commit
@@ -178,10 +178,7 @@ func TestDatabaseIntegration(t *testing.T) {
 
 // TestConfigPersistence tests config save/load
 func TestConfigPersistence(t *testing.T) {
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	testenv.SetDataDir(t)
 
 	// Save custom config
 	cfg := config.DefaultConfig()
