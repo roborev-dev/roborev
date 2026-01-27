@@ -759,7 +759,7 @@ Examples:
 
 			// Handle --local mode: run agent directly without daemon
 			if local {
-				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning)
+				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning, quiet)
 			}
 
 			// Make request - server will validate and resolve refs
@@ -844,17 +844,21 @@ Examples:
 }
 
 // runLocalReview runs a review directly without the daemon
-func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning string) error {
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning string, quiet bool) error {
 	// Load config
 	cfg, err := config.LoadGlobal()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// Resolve agent
-	if agentName == "" {
-		agentName = config.ResolveAgent("", repoPath, cfg)
+	// Resolve and validate reasoning (matches daemon behavior)
+	reasoning, err = config.ResolveReviewReasoning(reasoning, repoPath)
+	if err != nil {
+		return fmt.Errorf("invalid reasoning: %w", err)
 	}
+
+	// Resolve agent using workflow-specific resolution (matches daemon behavior)
+	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "review", reasoning)
 
 	// Get the agent
 	a, err := agent.GetAvailable(agentName)
@@ -862,17 +866,22 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 		return fmt.Errorf("get agent: %w", err)
 	}
 
+	// Resolve model using workflow-specific resolution (matches daemon behavior)
+	model = config.ResolveModelForWorkflow(model, repoPath, cfg, "review", reasoning)
+
 	// Configure agent with model and reasoning
-	if model == "" {
-		model = config.ResolveModel("", repoPath, cfg)
-	}
-	if reasoning == "" {
-		reasoning = "thorough"
-	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a = a.WithReasoning(reasoningLevel).WithModel(model)
 
-	cmd.Printf("Running %s review (model: %s, reasoning: %s)...\n\n", a.Name(), model, reasoning)
+	// Use consistent output writer, respecting --quiet
+	var out io.Writer = cmd.OutOrStdout()
+	if quiet {
+		out = io.Discard
+	}
+
+	if !quiet {
+		fmt.Fprintf(out, "Running %s review (model: %s, reasoning: %s)...\n\n", a.Name(), model, reasoning)
+	}
 
 	// Build prompt
 	var reviewPrompt string
@@ -886,14 +895,16 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 		return fmt.Errorf("build prompt: %w", err)
 	}
 
-	// Run review with stdout as output
+	// Run review with output writer
 	ctx := context.Background()
-	_, err = a.Review(ctx, repoPath, gitRef, reviewPrompt, os.Stdout)
+	_, err = a.Review(ctx, repoPath, gitRef, reviewPrompt, out)
 	if err != nil {
 		return fmt.Errorf("review failed: %w", err)
 	}
 
-	fmt.Println() // Final newline
+	if !quiet {
+		fmt.Fprintln(out) // Final newline
+	}
 	return nil
 }
 

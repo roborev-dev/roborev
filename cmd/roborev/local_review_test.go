@@ -82,7 +82,7 @@ func TestLocalReviewRequiresAgent(t *testing.T) {
 	cmd.SetOut(&out)
 
 	// Test with no available agents (test agent should work)
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "fast")
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "fast", false)
 	if err != nil {
 		t.Fatalf("Expected no error with test agent, got: %v", err)
 	}
@@ -112,7 +112,7 @@ new file mode 100644
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 
-	err := runLocalReview(cmd, tmpDir, "dirty", diffContent, "test", "", "fast")
+	err := runLocalReview(cmd, tmpDir, "dirty", diffContent, "test", "", "fast", false)
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestLocalReviewAgentResolution(t *testing.T) {
 	cmd.SetOut(&out)
 
 	// Empty agent should resolve from config
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "fast")
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "fast", false)
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -159,7 +159,7 @@ model = "test-model"
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "fast")
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "fast", false)
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestLocalReviewReasoningLevels(t *testing.T) {
 			var out bytes.Buffer
 			cmd.SetOut(&out)
 
-			err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", tc.reasoning)
+			err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", tc.reasoning, false)
 			if err != nil {
 				t.Fatalf("Expected no error, got: %v", err)
 			}
@@ -199,6 +199,127 @@ func TestLocalReviewReasoningLevels(t *testing.T) {
 				t.Errorf("Expected '%s' in output, got: %s", tc.expected, output)
 			}
 		})
+	}
+}
+
+func TestLocalReviewInvalidReasoning(t *testing.T) {
+	tmpDir := setupTestRepo(t)
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	// Invalid reasoning should return error (matches daemon behavior)
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "invalid-reasoning", false)
+	if err == nil {
+		t.Fatal("Expected error for invalid reasoning")
+	}
+	if !strings.Contains(err.Error(), "invalid reasoning") {
+		t.Errorf("Expected 'invalid reasoning' in error, got: %v", err)
+	}
+}
+
+func TestLocalReviewWorkflowSpecificAgent(t *testing.T) {
+	tmpDir := setupTestRepo(t)
+
+	// Write a .roborev.toml with workflow-specific agent
+	configPath := filepath.Join(tmpDir, ".roborev.toml")
+	if err := os.WriteFile(configPath, []byte(`
+agent = "codex"
+review_agent_fast = "test"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	// With reasoning=fast, should use review_agent_fast
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "fast", false)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Running test review") {
+		t.Errorf("Expected workflow-specific agent 'test', got output: %s", output)
+	}
+}
+
+func TestLocalReviewWorkflowSpecificModel(t *testing.T) {
+	tmpDir := setupTestRepo(t)
+
+	// Write a .roborev.toml with workflow-specific model
+	configPath := filepath.Join(tmpDir, ".roborev.toml")
+	if err := os.WriteFile(configPath, []byte(`
+agent = "test"
+model = "default-model"
+review_model_thorough = "thorough-model"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	// With reasoning=thorough (default), should use review_model_thorough
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "", false)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "model: thorough-model") {
+		t.Errorf("Expected workflow-specific model 'thorough-model', got output: %s", output)
+	}
+}
+
+func TestLocalReviewReasoningFromConfig(t *testing.T) {
+	tmpDir := setupTestRepo(t)
+
+	// Write a .roborev.toml with review_reasoning
+	configPath := filepath.Join(tmpDir, ".roborev.toml")
+	if err := os.WriteFile(configPath, []byte(`
+agent = "test"
+review_reasoning = "fast"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	// Empty reasoning should resolve from config
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "", false)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "reasoning: fast") {
+		t.Errorf("Expected reasoning to resolve to 'fast' from config, got output: %s", output)
+	}
+}
+
+func TestLocalReviewQuietMode(t *testing.T) {
+	tmpDir := setupTestRepo(t)
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	// Quiet mode should suppress output
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "fast", true)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	output := out.String()
+	if strings.Contains(output, "Running") {
+		t.Errorf("Expected no 'Running' message in quiet mode, got: %s", output)
 	}
 }
 
@@ -219,7 +340,7 @@ func TestLocalReviewSkipsDaemon(t *testing.T) {
 	cmd.SetOut(&out)
 
 	// This should succeed without a daemon
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "fast")
+	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "fast", false)
 	if err != nil {
 		t.Fatalf("Expected --local to work without daemon, got: %v", err)
 	}
