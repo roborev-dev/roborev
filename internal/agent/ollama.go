@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -97,19 +98,24 @@ func (a *OllamaAgent) IsAvailable() bool {
 	if time.Since(a.lastCheck) < ollamaAvailabilityTTL {
 		avail := a.available
 		a.mu.Unlock()
+		log.Printf("Ollama IsAvailable (cached): %v for %s", avail, a.BaseURL)
 		return avail
 	}
+	baseURL := a.BaseURL
 	a.mu.Unlock()
 
+	log.Printf("Ollama IsAvailable: checking %s", baseURL)
 	ctx, cancel := context.WithTimeout(context.Background(), ollamaHealthTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(a.BaseURL, "/")+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(baseURL, "/")+"/api/tags", nil)
 	if err != nil {
+		log.Printf("Ollama IsAvailable: request error: %v", err)
 		a.updateAvailability(false)
 		return false
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		log.Printf("Ollama IsAvailable: http error: %v", err)
 		a.updateAvailability(false)
 		return false
 	}
@@ -120,6 +126,7 @@ func (a *OllamaAgent) IsAvailable() bool {
 		}
 	}()
 	ok := resp.StatusCode == http.StatusOK
+	log.Printf("Ollama IsAvailable: %v (status=%d)", ok, resp.StatusCode)
 	a.updateAvailability(ok)
 	return ok
 }
@@ -363,6 +370,22 @@ func (a *OllamaAgent) parseStreamNDJSON(r io.Reader, output io.Writer) (string, 
 	return acc.String(), nil
 }
 
+// ollamaRegistered holds the registered Ollama agent for base URL updates.
+var ollamaRegistered *OllamaAgent
+
+// SetOllamaBaseURL updates the registered Ollama agent's base URL.
+// This must be called before IsAvailable checks for remote Ollama servers.
+func SetOllamaBaseURL(baseURL string) {
+	if ollamaRegistered != nil && baseURL != "" {
+		ollamaRegistered.mu.Lock()
+		log.Printf("SetOllamaBaseURL: updating from %q to %q", ollamaRegistered.BaseURL, baseURL)
+		ollamaRegistered.BaseURL = baseURL
+		ollamaRegistered.lastCheck = time.Time{} // Reset cache
+		ollamaRegistered.mu.Unlock()
+	}
+}
+
 func init() {
-	Register(NewOllamaAgent(""))
+	ollamaRegistered = NewOllamaAgent("")
+	Register(ollamaRegistered)
 }

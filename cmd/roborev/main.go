@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/skills"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/update"
@@ -576,6 +578,7 @@ func reviewCmd() *cobra.Command {
 		branch     bool
 		baseBranch string
 		since      string
+		local      bool
 	)
 
 	cmd := &cobra.Command{
@@ -627,9 +630,11 @@ Examples:
 				return nil // Intentional skip, exit 0
 			}
 
-			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
-				return err // Return error (quiet mode silences output, not exit code)
+			// Ensure daemon is running (skip for --local mode)
+			if !local {
+				if err := ensureDaemon(); err != nil {
+					return err // Return error (quiet mode silences output, not exit code)
+				}
 			}
 
 			// Validate mutually exclusive options
@@ -752,6 +757,11 @@ Examples:
 			// Get current branch name for tracking
 			branchName := git.GetCurrentBranch(root)
 
+			// Handle --local mode: run agent directly without daemon
+			if local {
+				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning)
+			}
+
 			// Make request - server will validate and resolve refs
 			reqBody, _ := json.Marshal(map[string]interface{}{
 				"repo_path":    root,
@@ -828,8 +838,112 @@ Examples:
 	cmd.Flags().BoolVar(&branch, "branch", false, "review all changes since branch diverged from base")
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
+	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
 
 	return cmd
+}
+
+// runLocalReview runs a review directly without the daemon
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning string) error {
+	// Load config
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	// Configure Ollama base URL before availability check
+	agent.SetOllamaBaseURL(config.ResolveOllamaBaseURL(cfg))
+
+	// Resolve agent
+	if agentName == "" {
+		agentName = config.ResolveAgent("", repoPath, cfg)
+	}
+
+	// Get the agent
+	a, err := agent.GetAvailable(agentName)
+	if err != nil {
+		return fmt.Errorf("get agent: %w", err)
+	}
+
+	// Configure agent with model and reasoning
+	if model == "" {
+		model = config.ResolveModel("", repoPath, cfg)
+	}
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	reasoningLevel := agent.ParseReasoningLevel(reasoning)
+	a = a.WithReasoning(reasoningLevel).WithModel(model)
+
+	// Configure Ollama base URL on the agent instance
+	a = agent.WithOllamaBaseURL(a, config.ResolveOllamaBaseURL(cfg))
+
+	cmd.Printf("Running %s review (model: %s, reasoning: %s)...\n\n", a.Name(), model, reasoning)
+
+	// Build prompt
+	var reviewPrompt string
+	if diffContent != "" {
+		// Dirty review
+		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name())
+	} else {
+		reviewPrompt, err = prompt.NewBuilder(nil).Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name())
+	}
+	if err != nil {
+		return fmt.Errorf("build prompt: %w", err)
+	}
+
+	// For Ollama, use a content-extracting writer that parses NDJSON
+	// Other agents stream plain text
+	var outputWriter io.Writer = os.Stdout
+	if a.Name() == "ollama" {
+		outputWriter = &ollamaNDJSONWriter{w: os.Stdout}
+	}
+
+	// Run review
+	ctx := context.Background()
+	_, err = a.Review(ctx, repoPath, gitRef, reviewPrompt, outputWriter)
+	if err != nil {
+		return fmt.Errorf("review failed: %w", err)
+	}
+
+	fmt.Println() // Final newline
+	return nil
+}
+
+// ollamaNDJSONWriter parses Ollama's NDJSON streaming output and writes only the content
+type ollamaNDJSONWriter struct {
+	w   io.Writer
+	buf []byte
+}
+
+func (w *ollamaNDJSONWriter) Write(p []byte) (n int, err error) {
+	w.buf = append(w.buf, p...)
+
+	// Process complete lines
+	for {
+		idx := bytes.IndexByte(w.buf, '\n')
+		if idx < 0 {
+			break
+		}
+		line := w.buf[:idx]
+		w.buf = w.buf[idx+1:]
+
+		if len(line) == 0 {
+			continue
+		}
+
+		// Parse NDJSON line
+		var resp struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(line, &resp); err == nil && resp.Message.Content != "" {
+			w.w.Write([]byte(resp.Message.Content))
+		}
+	}
+
+	return len(p), nil
 }
 
 // waitForJob polls until a job completes and displays the review

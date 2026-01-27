@@ -204,6 +204,7 @@ func (cw *ConfigWatcher) reloadConfig() {
 	// Update global agent settings
 	agent.SetAllowUnsafeAgents(newCfg.AllowUnsafeAgents != nil && *newCfg.AllowUnsafeAgents)
 	agent.SetAnthropicAPIKey(newCfg.AnthropicAPIKey)
+	agent.SetOllamaBaseURL(config.ResolveOllamaBaseURL(newCfg))
 
 	// Log what changed (for debugging)
 	logConfigChanges(oldCfg, newCfg)

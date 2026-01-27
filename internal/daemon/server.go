@@ -40,6 +40,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	// Always set for deterministic state - default to false (conservative)
 	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents != nil && *cfg.AllowUnsafeAgents)
 	agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
+	agent.SetOllamaBaseURL(config.ResolveOllamaBaseURL(cfg))
 	broadcaster := NewBroadcaster()
 
 	// Initialize error log
