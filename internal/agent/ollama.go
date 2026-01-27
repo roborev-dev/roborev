@@ -113,7 +113,12 @@ func (a *OllamaAgent) IsAvailable() bool {
 		a.updateAvailability(false)
 		return false
 	}
-	_ = resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			// Log if needed, but don't fail availability check
+			// Close errors are typically non-critical for health checks
+		}
+	}()
 	ok := resp.StatusCode == http.StatusOK
 	a.updateAvailability(ok)
 	return ok
@@ -177,7 +182,10 @@ func (a *OllamaAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		slurp, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		slurp, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if err != nil {
+			return "", fmt.Errorf("ollama read error response: %w", err)
+		}
 		bodyStr := strings.TrimSpace(string(slurp))
 
 		// Try to parse Ollama error response
