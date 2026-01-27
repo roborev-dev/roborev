@@ -351,6 +351,21 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 			t.Fatalf("Failed to query schema_version: %v", err)
 		}
 		t.Logf("Schema version: %d", version)
+
+		// Verify branch index exists (created by migration or fresh install)
+		var indexExists bool
+		err = pool.pool.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM pg_indexes
+				WHERE schemaname = 'roborev' AND indexname = 'idx_review_jobs_branch'
+			)
+		`).Scan(&indexExists)
+		if err != nil {
+			t.Fatalf("Failed to check branch index: %v", err)
+		}
+		if !indexExists {
+			t.Errorf("Expected idx_review_jobs_branch to exist after EnsureSchema")
+		}
 	} else {
 		tempPool.Close()
 
@@ -385,6 +400,21 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 		}
 		if tableCount < 5 {
 			t.Errorf("Expected at least 5 tables in roborev schema, got %d", tableCount)
+		}
+
+		// Verify branch index was created for fresh install
+		var indexExists bool
+		err = pool.pool.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM pg_indexes
+				WHERE schemaname = 'roborev' AND indexname = 'idx_review_jobs_branch'
+			)
+		`).Scan(&indexExists)
+		if err != nil {
+			t.Fatalf("Failed to check branch index: %v", err)
+		}
+		if !indexExists {
+			t.Errorf("Expected idx_review_jobs_branch to exist on fresh install")
 		}
 	}
 }
