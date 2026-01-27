@@ -7407,8 +7407,9 @@ func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 	}
 }
 
-func TestTUIBranchBackfillDoneNotSetWhenNullsRemain(t *testing.T) {
-	// Test that branchBackfillDone is NOT set when nullsRemaining > 0
+func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
+	// Test that branchBackfillDone IS set even when nullsRemaining > 0
+	// Backfill is a one-time migration operation - new jobs have branches set at enqueue time
 	m := newTuiModel("http://localhost")
 	m.branchBackfillDone = false
 
@@ -7417,21 +7418,21 @@ func TestTUIBranchBackfillDoneNotSetWhenNullsRemain(t *testing.T) {
 		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 3}},
 		totalCount:     8,
 		backfillCount:  2,
-		nullsRemaining: 3, // Some jobs still have NULL branches
+		nullsRemaining: 3, // Some legacy jobs still have NULL branches
 	})
 	m2 := updated.(tuiModel)
 
-	if m2.branchBackfillDone {
-		t.Error("Expected branchBackfillDone to remain false when nullsRemaining > 0")
+	if !m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to be true after first fetch (one-time operation)")
 	}
 }
 
-func TestTUIBranchBackfillRetryAllowedWhenNullsRemain(t *testing.T) {
-	// Test that backfill can retry on subsequent fetches when NULLs remain
+func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
+	// Test that backfill is a one-time operation - branchBackfillDone stays true once set
 	m := newTuiModel("http://localhost")
 	m.branchBackfillDone = false
 
-	// First fetch: some NULLs remain, backfillDone should stay false
+	// First fetch: some NULLs remain, backfillDone should be set anyway (one-time operation)
 	updated, _ := m.Update(tuiBranchesMsg{
 		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 2}},
 		totalCount:     7,
@@ -7440,40 +7441,42 @@ func TestTUIBranchBackfillRetryAllowedWhenNullsRemain(t *testing.T) {
 	})
 	m2 := updated.(tuiModel)
 
-	if m2.branchBackfillDone {
-		t.Error("Expected branchBackfillDone to remain false after first fetch with NULLs")
+	if !m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to be true after first fetch")
 	}
 
-	// Second fetch: all NULLs resolved
+	// Second fetch: branchBackfillDone stays true
 	updated, _ = m2.Update(tuiBranchesMsg{
 		branches:       []branchFilterItem{{name: "main", count: 7}},
 		totalCount:     7,
-		backfillCount:  2,
+		backfillCount:  0,
 		nullsRemaining: 0,
 	})
 	m3 := updated.(tuiModel)
 
 	if !m3.branchBackfillDone {
-		t.Error("Expected branchBackfillDone to be true after NULLs resolved")
+		t.Error("Expected branchBackfillDone to remain true after subsequent fetches")
 	}
 }
 
-func TestTUIBranchBackfillDoneResetsWhenNullsAppear(t *testing.T) {
-	// Test that branchBackfillDone is reset to false when new NULL branches appear
+func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
+	// Test that branchBackfillDone stays true even if NULLs appear in stats
+	// Backfill is a one-time migration - new jobs should have branches set at enqueue time
+	// Any "(none)" count represents legacy jobs that weren't backfilled, not new work to do
 	m := newTuiModel("http://localhost")
 	m.branchBackfillDone = true // Previously marked as done
 
-	// Receive message with new NULLs (e.g., new jobs added)
+	// Receive message with NULLs (legacy jobs that weren't backfilled)
 	updated, _ := m.Update(tuiBranchesMsg{
 		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 2}},
 		totalCount:     7,
 		backfillCount:  0,
-		nullsRemaining: 2, // New NULL branches appeared
+		nullsRemaining: 2,
 	})
 	m2 := updated.(tuiModel)
 
-	if m2.branchBackfillDone {
-		t.Error("Expected branchBackfillDone to be reset to false when NULLs appear")
+	if !m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to remain true (one-time operation)")
 	}
 }
 
