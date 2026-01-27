@@ -602,8 +602,8 @@ Examples:
 				cmd.SilenceUsage = true
 			}
 
-			// --fast is shorthand for --reasoning fast
-			if fast {
+			// --fast is shorthand for --reasoning fast (explicit --reasoning takes precedence)
+			if fast && !cmd.Flags().Changed("reasoning") {
 				reasoning = "fast"
 			}
 

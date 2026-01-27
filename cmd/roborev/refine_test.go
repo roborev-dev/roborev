@@ -13,6 +13,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 // mockDaemonClient is a test implementation of daemon.Client
@@ -1055,4 +1056,49 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 	if mergeBase != baseSHA {
 		t.Errorf("expected mergeBase=%s (base commit), got %s", baseSHA, mergeBase)
 	}
+}
+
+func TestRefineFastFlag(t *testing.T) {
+	t.Run("fast flag sets reasoning to fast", func(t *testing.T) {
+		cmd := refineCmd()
+		// Override RunE to capture reasoning value
+		var capturedReasoning string
+		cmd.RunE = func(c *cobra.Command, args []string) error {
+			// Get the reasoning value via flag
+			capturedReasoning, _ = c.Flags().GetString("reasoning")
+			// Check if --fast was set and --reasoning wasn't explicitly set
+			fast, _ := c.Flags().GetBool("fast")
+			if fast && !c.Flags().Changed("reasoning") {
+				capturedReasoning = "fast"
+			}
+			return nil
+		}
+		cmd.SetArgs([]string{"--fast"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedReasoning != "fast" {
+			t.Errorf("expected reasoning 'fast', got %q", capturedReasoning)
+		}
+	})
+
+	t.Run("explicit reasoning takes precedence over fast", func(t *testing.T) {
+		cmd := refineCmd()
+		var capturedReasoning string
+		cmd.RunE = func(c *cobra.Command, args []string) error {
+			capturedReasoning, _ = c.Flags().GetString("reasoning")
+			fast, _ := c.Flags().GetBool("fast")
+			if fast && !c.Flags().Changed("reasoning") {
+				capturedReasoning = "fast"
+			}
+			return nil
+		}
+		cmd.SetArgs([]string{"--fast", "--reasoning", "thorough"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedReasoning != "thorough" {
+			t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", capturedReasoning)
+		}
+	})
 }

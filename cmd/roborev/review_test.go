@@ -1130,3 +1130,103 @@ func TestReviewBranchFlag(t *testing.T) {
 		}
 	})
 }
+
+func TestReviewFastFlag(t *testing.T) {
+	t.Run("fast flag sets reasoning to fast", func(t *testing.T) {
+		reasoningChan := make(chan string, 1)
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/enqueue" {
+				var req struct {
+					Reasoning string `json:"reasoning"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("failed to decode request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				reasoningChan <- req.Reasoning
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test"})
+				return
+			}
+		}))
+		defer cleanup()
+
+		tmpDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@test.com")
+		runGit("config", "user.name", "Test")
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit("add", "file.txt")
+		runGit("commit", "-m", "initial")
+
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--fast"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		reasoning := <-reasoningChan
+		if reasoning != "fast" {
+			t.Errorf("expected reasoning 'fast', got %q", reasoning)
+		}
+	})
+
+	t.Run("explicit reasoning takes precedence over fast", func(t *testing.T) {
+		reasoningChan := make(chan string, 1)
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/enqueue" {
+				var req struct {
+					Reasoning string `json:"reasoning"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("failed to decode request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				reasoningChan <- req.Reasoning
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test"})
+				return
+			}
+		}))
+		defer cleanup()
+
+		tmpDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@test.com")
+		runGit("config", "user.name", "Test")
+		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit("add", "file.txt")
+		runGit("commit", "-m", "initial")
+
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--repo", tmpDir, "--fast", "--reasoning", "thorough"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		reasoning := <-reasoningChan
+		if reasoning != "thorough" {
+			t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", reasoning)
+		}
+	})
+}

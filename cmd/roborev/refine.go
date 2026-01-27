@@ -62,8 +62,8 @@ The agent will run tests and verify the build before committing.
 Use --since to specify a starting commit when on the main branch or to
 limit how far back to look for reviews to address.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// --fast is shorthand for --reasoning fast
-			if fast {
+			// --fast is shorthand for --reasoning fast (explicit --reasoning takes precedence)
+			if fast && !cmd.Flags().Changed("reasoning") {
 				reasoning = "fast"
 			}
 			unsafeFlagChanged := cmd.Flags().Changed("allow-unsafe-agents")
