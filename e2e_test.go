@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 // TestE2EEnqueueAndReview tests the full flow of enqueueing and reviewing a commit
@@ -178,20 +178,7 @@ func TestDatabaseIntegration(t *testing.T) {
 
 // TestConfigPersistence tests config save/load
 func TestConfigPersistence(t *testing.T) {
-	// Use ROBOREV_DATA_DIR to isolate test from production ~/.roborev
-	// Note: Setting HOME is insufficient because ROBOREV_DATA_DIR takes precedence
-	// in config.DataDir(), and if ROBOREV_DATA_DIR is already set in the environment,
-	// changing HOME has no effect.
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
+	testenv.SetDataDir(t)
 
 	// Save custom config
 	cfg := config.DefaultConfig()

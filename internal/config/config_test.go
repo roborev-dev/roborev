@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -111,20 +113,7 @@ func TestResolveAgent(t *testing.T) {
 }
 
 func TestSaveAndLoadGlobal(t *testing.T) {
-	// Use ROBOREV_DATA_DIR to isolate test from production ~/.roborev
-	// Note: Setting HOME is insufficient because ROBOREV_DATA_DIR takes precedence
-	// in DataDir(), and if ROBOREV_DATA_DIR is already set in the environment,
-	// changing HOME has no effect.
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
+	testenv.SetDataDir(t)
 
 	cfg := DefaultConfig()
 	cfg.DefaultAgent = "claude-code"

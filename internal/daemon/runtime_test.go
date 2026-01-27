@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
 func TestFindAvailablePort(t *testing.T) {
@@ -28,20 +30,7 @@ func TestFindAvailablePort(t *testing.T) {
 }
 
 func TestRuntimeInfoReadWrite(t *testing.T) {
-	// Use ROBOREV_DATA_DIR to isolate test from production ~/.roborev
-	// Note: Setting HOME is insufficient because ROBOREV_DATA_DIR takes precedence
-	// in config.DataDir(), and if ROBOREV_DATA_DIR is already set in the environment,
-	// changing HOME has no effect.
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
+	testenv.SetDataDir(t)
 
 	// Write runtime info
 	err := WriteRuntime("127.0.0.1:7373", 7373, "test-version")
