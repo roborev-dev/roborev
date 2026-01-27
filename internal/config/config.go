@@ -20,6 +20,24 @@ type Config struct {
 	DefaultAgent       string `toml:"default_agent"`
 	DefaultModel       string `toml:"default_model"` // Default model for agents (format varies by agent)
 	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
+
+	// Workflow-specific agent/model configuration
+	ReviewAgent         string `toml:"review_agent"`
+	ReviewAgentFast     string `toml:"review_agent_fast"`
+	ReviewAgentStandard string `toml:"review_agent_standard"`
+	ReviewAgentThorough string `toml:"review_agent_thorough"`
+	RefineAgent         string `toml:"refine_agent"`
+	RefineAgentFast     string `toml:"refine_agent_fast"`
+	RefineAgentStandard string `toml:"refine_agent_standard"`
+	RefineAgentThorough string `toml:"refine_agent_thorough"`
+	ReviewModel         string `toml:"review_model"`
+	ReviewModelFast     string `toml:"review_model_fast"`
+	ReviewModelStandard string `toml:"review_model_standard"`
+	ReviewModelThorough string `toml:"review_model_thorough"`
+	RefineModel         string `toml:"refine_model"`
+	RefineModelFast     string `toml:"refine_model_fast"`
+	RefineModelStandard string `toml:"refine_model_standard"`
+	RefineModelThorough string `toml:"refine_model_thorough"`
 	AllowUnsafeAgents  *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
@@ -118,6 +136,24 @@ type RepoConfig struct {
 	DisplayName        string   `toml:"display_name"`
 	ReviewReasoning    string   `toml:"review_reasoning"` // Reasoning level for reviews: thorough, standard, fast
 	RefineReasoning    string   `toml:"refine_reasoning"` // Reasoning level for refine: thorough, standard, fast
+
+	// Workflow-specific agent/model configuration
+	ReviewAgent         string `toml:"review_agent"`
+	ReviewAgentFast     string `toml:"review_agent_fast"`
+	ReviewAgentStandard string `toml:"review_agent_standard"`
+	ReviewAgentThorough string `toml:"review_agent_thorough"`
+	RefineAgent         string `toml:"refine_agent"`
+	RefineAgentFast     string `toml:"refine_agent_fast"`
+	RefineAgentStandard string `toml:"refine_agent_standard"`
+	RefineAgentThorough string `toml:"refine_agent_thorough"`
+	ReviewModel         string `toml:"review_model"`
+	ReviewModelFast     string `toml:"review_model_fast"`
+	ReviewModelStandard string `toml:"review_model_standard"`
+	ReviewModelThorough string `toml:"review_model_thorough"`
+	RefineModel         string `toml:"refine_model"`
+	RefineModelFast     string `toml:"refine_model_fast"`
+	RefineModelStandard string `toml:"refine_model_standard"`
+	RefineModelThorough string `toml:"refine_model_thorough"`
 }
 
 // DefaultConfig returns the default configuration
@@ -309,6 +345,166 @@ func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 	}
 
 	return ""
+}
+
+// ResolveAgentForWorkflow determines which agent to use based on workflow and level.
+// Priority (Option A - layer wins first, then specificity):
+// 1. CLI explicit
+// 2. Repo {workflow}_agent_{level}
+// 3. Repo {workflow}_agent
+// 4. Repo agent
+// 5. Global {workflow}_agent_{level}
+// 6. Global {workflow}_agent
+// 7. Global default_agent
+// 8. "codex"
+func ResolveAgentForWorkflow(cli, repoPath string, globalCfg *Config, workflow, level string) string {
+	if s := strings.TrimSpace(cli); s != "" {
+		return s
+	}
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	if s := getWorkflowValue(repoCfg, globalCfg, workflow, level, true); s != "" {
+		return s
+	}
+	return "codex"
+}
+
+// ResolveModelForWorkflow determines which model to use based on workflow and level.
+// Same priority as ResolveAgentForWorkflow, but returns empty string as default.
+func ResolveModelForWorkflow(cli, repoPath string, globalCfg *Config, workflow, level string) string {
+	if s := strings.TrimSpace(cli); s != "" {
+		return s
+	}
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	return getWorkflowValue(repoCfg, globalCfg, workflow, level, false)
+}
+
+// getWorkflowValue looks up agent or model config following Option A priority.
+func getWorkflowValue(repo *RepoConfig, global *Config, workflow, level string, isAgent bool) string {
+	// Repo layer: level-specific > workflow-specific > generic
+	if repo != nil {
+		if s := repoWorkflowField(repo, workflow, level, isAgent); s != "" {
+			return s
+		}
+		if s := repoWorkflowField(repo, workflow, "", isAgent); s != "" {
+			return s
+		}
+		if isAgent && strings.TrimSpace(repo.Agent) != "" {
+			return strings.TrimSpace(repo.Agent)
+		}
+		if !isAgent && strings.TrimSpace(repo.Model) != "" {
+			return strings.TrimSpace(repo.Model)
+		}
+	}
+	// Global layer: level-specific > workflow-specific > generic
+	if global != nil {
+		if s := globalWorkflowField(global, workflow, level, isAgent); s != "" {
+			return s
+		}
+		if s := globalWorkflowField(global, workflow, "", isAgent); s != "" {
+			return s
+		}
+		if isAgent && strings.TrimSpace(global.DefaultAgent) != "" {
+			return strings.TrimSpace(global.DefaultAgent)
+		}
+		if !isAgent && strings.TrimSpace(global.DefaultModel) != "" {
+			return strings.TrimSpace(global.DefaultModel)
+		}
+	}
+	return ""
+}
+
+func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) string {
+	if r == nil {
+		return ""
+	}
+	var v string
+	if isAgent {
+		switch workflow + "_" + level {
+		case "review_fast":
+			v = r.ReviewAgentFast
+		case "review_standard":
+			v = r.ReviewAgentStandard
+		case "review_thorough":
+			v = r.ReviewAgentThorough
+		case "review_":
+			v = r.ReviewAgent
+		case "refine_fast":
+			v = r.RefineAgentFast
+		case "refine_standard":
+			v = r.RefineAgentStandard
+		case "refine_thorough":
+			v = r.RefineAgentThorough
+		case "refine_":
+			v = r.RefineAgent
+		}
+	} else {
+		switch workflow + "_" + level {
+		case "review_fast":
+			v = r.ReviewModelFast
+		case "review_standard":
+			v = r.ReviewModelStandard
+		case "review_thorough":
+			v = r.ReviewModelThorough
+		case "review_":
+			v = r.ReviewModel
+		case "refine_fast":
+			v = r.RefineModelFast
+		case "refine_standard":
+			v = r.RefineModelStandard
+		case "refine_thorough":
+			v = r.RefineModelThorough
+		case "refine_":
+			v = r.RefineModel
+		}
+	}
+	return strings.TrimSpace(v)
+}
+
+func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string {
+	if g == nil {
+		return ""
+	}
+	var v string
+	if isAgent {
+		switch workflow + "_" + level {
+		case "review_fast":
+			v = g.ReviewAgentFast
+		case "review_standard":
+			v = g.ReviewAgentStandard
+		case "review_thorough":
+			v = g.ReviewAgentThorough
+		case "review_":
+			v = g.ReviewAgent
+		case "refine_fast":
+			v = g.RefineAgentFast
+		case "refine_standard":
+			v = g.RefineAgentStandard
+		case "refine_thorough":
+			v = g.RefineAgentThorough
+		case "refine_":
+			v = g.RefineAgent
+		}
+	} else {
+		switch workflow + "_" + level {
+		case "review_fast":
+			v = g.ReviewModelFast
+		case "review_standard":
+			v = g.ReviewModelStandard
+		case "review_thorough":
+			v = g.ReviewModelThorough
+		case "review_":
+			v = g.ReviewModel
+		case "refine_fast":
+			v = g.RefineModelFast
+		case "refine_standard":
+			v = g.RefineModelStandard
+		case "refine_thorough":
+			v = g.RefineModelThorough
+		case "refine_":
+			v = g.RefineModel
+		}
+	}
+	return strings.TrimSpace(v)
 }
 
 // SaveGlobal saves the global configuration

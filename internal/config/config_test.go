@@ -1120,6 +1120,178 @@ func TestResolveModel(t *testing.T) {
 	})
 }
 
+func TestResolveAgentForWorkflow(t *testing.T) {
+	tests := []struct {
+		name     string
+		cli      string
+		repo     map[string]string
+		global   map[string]string
+		workflow string
+		level    string
+		expect   string
+	}{
+		// Defaults
+		{"empty config", "", nil, nil, "review", "fast", "codex"},
+		{"global default only", "", nil, M{"default_agent": "claude"}, "review", "fast", "claude"},
+
+		// Global specificity ladder
+		{"global workflow > global default", "", nil, M{"default_agent": "codex", "review_agent": "claude"}, "review", "fast", "claude"},
+		{"global level > global workflow", "", nil, M{"review_agent": "codex", "review_agent_fast": "claude"}, "review", "fast", "claude"},
+		{"global level ignored for wrong level", "", nil, M{"review_agent": "codex", "review_agent_fast": "claude"}, "review", "thorough", "codex"},
+
+		// Repo specificity ladder
+		{"repo generic only", "", M{"agent": "claude"}, nil, "review", "fast", "claude"},
+		{"repo workflow > repo generic", "", M{"agent": "codex", "review_agent": "claude"}, nil, "review", "fast", "claude"},
+		{"repo level > repo workflow", "", M{"review_agent": "codex", "review_agent_fast": "claude"}, nil, "review", "fast", "claude"},
+
+		// Layer beats specificity (Option A)
+		{"repo generic > global level-specific", "", M{"agent": "claude"}, M{"review_agent_fast": "gemini"}, "review", "fast", "claude"},
+		{"repo generic > global workflow-specific", "", M{"agent": "claude"}, M{"review_agent": "gemini"}, "review", "fast", "claude"},
+		{"repo workflow > global level-specific", "", M{"review_agent": "claude"}, M{"review_agent_fast": "gemini"}, "review", "fast", "claude"},
+
+		// CLI wins all
+		{"cli > repo level-specific", "droid", M{"review_agent_fast": "claude"}, nil, "review", "fast", "droid"},
+		{"cli > everything", "droid", M{"review_agent_fast": "claude"}, M{"review_agent_fast": "gemini"}, "review", "fast", "droid"},
+
+		// Refine workflow isolation
+		{"refine uses refine_agent not review_agent", "", M{"review_agent": "claude", "refine_agent": "gemini"}, nil, "refine", "fast", "gemini"},
+		{"refine level-specific", "", M{"refine_agent": "codex", "refine_agent_fast": "claude"}, nil, "refine", "fast", "claude"},
+		{"review config ignored for refine", "", M{"review_agent_fast": "claude"}, M{"default_agent": "codex"}, "refine", "fast", "codex"},
+
+		// Level isolation
+		{"fast config ignored for standard", "", M{"review_agent_fast": "claude", "review_agent": "codex"}, nil, "review", "standard", "codex"},
+		{"standard config used for standard", "", M{"review_agent_standard": "claude"}, nil, "review", "standard", "claude"},
+		{"thorough config used for thorough", "", M{"review_agent_thorough": "claude"}, nil, "review", "thorough", "claude"},
+
+		// Mixed layers
+		{"repo workflow + global level (repo wins)", "", M{"review_agent": "claude"}, M{"review_agent_fast": "gemini", "review_agent_thorough": "droid"}, "review", "fast", "claude"},
+		{"global fills gaps repo doesn't set", "", M{"agent": "codex"}, M{"review_agent_fast": "claude"}, "review", "standard", "codex"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			writeRepoConfig(t, tmpDir, tt.repo)
+			global := buildGlobalConfig(tt.global)
+			got := ResolveAgentForWorkflow(tt.cli, tmpDir, global, tt.workflow, tt.level)
+			if got != tt.expect {
+				t.Errorf("got %q, want %q", got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestResolveModelForWorkflow(t *testing.T) {
+	tests := []struct {
+		name     string
+		cli      string
+		repo     map[string]string
+		global   map[string]string
+		workflow string
+		level    string
+		expect   string
+	}{
+		// Defaults (model defaults to empty, not "codex")
+		{"empty config", "", nil, nil, "review", "fast", ""},
+		{"global default only", "", nil, M{"default_model": "gpt-4"}, "review", "fast", "gpt-4"},
+
+		// Global specificity ladder
+		{"global workflow > global default", "", nil, M{"default_model": "gpt-4", "review_model": "claude-3"}, "review", "fast", "claude-3"},
+		{"global level > global workflow", "", nil, M{"review_model": "gpt-4", "review_model_fast": "claude-3"}, "review", "fast", "claude-3"},
+
+		// Repo specificity ladder
+		{"repo generic only", "", M{"model": "gpt-4"}, nil, "review", "fast", "gpt-4"},
+		{"repo workflow > repo generic", "", M{"model": "gpt-4", "review_model": "claude-3"}, nil, "review", "fast", "claude-3"},
+		{"repo level > repo workflow", "", M{"review_model": "gpt-4", "review_model_fast": "claude-3"}, nil, "review", "fast", "claude-3"},
+
+		// Layer beats specificity (Option A)
+		{"repo generic > global level-specific", "", M{"model": "gpt-4"}, M{"review_model_fast": "claude-3"}, "review", "fast", "gpt-4"},
+
+		// CLI wins all
+		{"cli > everything", "o1", M{"review_model_fast": "gpt-4"}, M{"review_model_fast": "claude-3"}, "review", "fast", "o1"},
+
+		// Refine workflow isolation
+		{"refine uses refine_model", "", M{"review_model": "gpt-4", "refine_model": "claude-3"}, nil, "refine", "fast", "claude-3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			writeRepoConfig(t, tmpDir, tt.repo)
+			global := buildGlobalConfig(tt.global)
+			got := ResolveModelForWorkflow(tt.cli, tmpDir, global, tt.workflow, tt.level)
+			if got != tt.expect {
+				t.Errorf("got %q, want %q", got, tt.expect)
+			}
+		})
+	}
+}
+
+// M is a shorthand type for map[string]string to keep test tables compact
+type M = map[string]string
+
+func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
+	t.Helper()
+	if cfg == nil {
+		return
+	}
+	var sb strings.Builder
+	for k, v := range cfg {
+		sb.WriteString(k + " = \"" + v + "\"\n")
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(sb.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func buildGlobalConfig(cfg map[string]string) *Config {
+	if cfg == nil {
+		return nil
+	}
+	c := &Config{}
+	for k, v := range cfg {
+		switch k {
+		case "default_agent":
+			c.DefaultAgent = v
+		case "default_model":
+			c.DefaultModel = v
+		case "review_agent":
+			c.ReviewAgent = v
+		case "review_agent_fast":
+			c.ReviewAgentFast = v
+		case "review_agent_standard":
+			c.ReviewAgentStandard = v
+		case "review_agent_thorough":
+			c.ReviewAgentThorough = v
+		case "refine_agent":
+			c.RefineAgent = v
+		case "refine_agent_fast":
+			c.RefineAgentFast = v
+		case "refine_agent_standard":
+			c.RefineAgentStandard = v
+		case "refine_agent_thorough":
+			c.RefineAgentThorough = v
+		case "review_model":
+			c.ReviewModel = v
+		case "review_model_fast":
+			c.ReviewModelFast = v
+		case "review_model_standard":
+			c.ReviewModelStandard = v
+		case "review_model_thorough":
+			c.ReviewModelThorough = v
+		case "refine_model":
+			c.RefineModel = v
+		case "refine_model_fast":
+			c.RefineModelFast = v
+		case "refine_model_standard":
+			c.RefineModelStandard = v
+		case "refine_model_thorough":
+			c.RefineModelThorough = v
+		}
+	}
+	return c
+}
+
 func TestStripURLCredentials(t *testing.T) {
 	tests := []struct {
 		name     string

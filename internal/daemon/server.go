@@ -398,18 +398,18 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve agent (uses main repo root for config lookup)
-	agentName := config.ResolveAgent(req.Agent, repoRoot, s.configWatcher.Config())
-
-	// Resolve model (uses main repo root for config lookup)
-	model := config.ResolveModel(req.Model, repoRoot, s.configWatcher.Config())
-
-	// Resolve reasoning level (uses main repo root for config lookup)
+	// Resolve reasoning level first (needed for agent/model resolution)
 	reasoning, err := config.ResolveReviewReasoning(req.Reasoning, repoRoot)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// Resolve agent for review workflow at this reasoning level
+	agentName := config.ResolveAgentForWorkflow(req.Agent, repoRoot, s.configWatcher.Config(), "review", reasoning)
+
+	// Resolve model for review workflow at this reasoning level
+	model := config.ResolveModelForWorkflow(req.Model, repoRoot, s.configWatcher.Config(), "review", reasoning)
 
 	// Check if this is a custom prompt, dirty review, range, or single commit
 	// Note: isPrompt is determined by whether custom_prompt is provided, not git_ref value

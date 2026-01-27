@@ -211,24 +211,24 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, mergeBase[:7])
 	}
 
-	// Resolve agent
+	// Resolve reasoning level from CLI or config (default: standard for refine)
 	cfg, _ := config.LoadGlobal()
-	resolvedAgent := config.ResolveAgent(agentName, repoPath, cfg)
-	allowUnsafeAgents = resolveAllowUnsafeAgents(allowUnsafeAgents, unsafeFlagChanged, cfg)
-	agent.SetAllowUnsafeAgents(allowUnsafeAgents)
-	if cfg != nil {
-		agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
-	}
-
-	// Resolve reasoning level from CLI or config (default: fast)
 	resolvedReasoning, err := config.ResolveRefineReasoning(reasoningStr, repoPath)
 	if err != nil {
 		return err
 	}
 	reasoningLevel := agent.ParseReasoningLevel(resolvedReasoning)
 
-	// Resolve model from CLI or config
-	resolvedModel := config.ResolveModel(modelStr, repoPath, cfg)
+	// Resolve agent for refine workflow at this reasoning level
+	resolvedAgent := config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "refine", resolvedReasoning)
+	allowUnsafeAgents = resolveAllowUnsafeAgents(allowUnsafeAgents, unsafeFlagChanged, cfg)
+	agent.SetAllowUnsafeAgents(allowUnsafeAgents)
+	if cfg != nil {
+		agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
+	}
+
+	// Resolve model for refine workflow at this reasoning level
+	resolvedModel := config.ResolveModelForWorkflow(modelStr, repoPath, cfg, "refine", resolvedReasoning)
 
 	// Get the agent with configured reasoning level and model
 	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel)
