@@ -1,4 +1,35 @@
+# RoboRev Configuration for roborev project
+# This is a Go project using OpenCode agent with Ollama
+
+agent = "opencode"
+review_reasoning = "thorough"
+
+[agent_settings.opencode]
+# Ollama model: custom roborev-coder (num_ctx 32768, temperature 0.05)
+# Create via: ollama run qwen2.5-coder:32b, /set, /save roborev-coder
+model = "ollama/roborev-coder"
+
+# Maximum depth for recursive review analysis (how many levels of dependencies/calls to analyze)
+# Default: 3 (balanced between thoroughness and performance)
+# Higher values (5+) may be slow for large codebases
+# Lower values (1-2) may miss deeper issues
+max_review_depth = 3
+
+# Review checklist and address/refine rules
+# See AGENTS.md and .cursor/rules for full guidance
 review_guidelines = """
-TUI overflow on very narrow terminals (e.g. 60 characters wide or less) is acceptable
-and so please omit pedantic comments on these extreme scenarios.
+Follow AGENTS.md (especially "Review/Refine Guidance") and .cursor/rules. When reviewing: focus on safety and circuit breakers, exception hierarchy and retries, concurrency safety (goroutines, channels, context propagation), error handling (wrap with %w), and .cursor/rules anti-patterns. Always flag: ghost layers, I/O in loops, silent failures, NotImplementedError/TODO/FIXME in production paths, hardcoded secrets, missing error handling, fire-and-forget goroutines.
+
+When addressing review feedback (refine): you must use the edit or write tool to modify files; describing changes in a "Changes:" summary or in text alone is not enough—edits must be applied via the tool. Edit only the source files (e.g. .go under cmd/ or internal/) that the review findings and the commit diff refer to; do not edit .roborev.toml, AGENTS.md, or other config/docs unless the review explicitly asks. This is a Go-only project: IGNORE any instruction to run npm, pip, or other non-Go build/test commands. For build/test you MUST run `go build ./...` and `go test ./...`—never npm test, pytest, or other language-specific commands. See AGENTS.md "Review/Refine Guidance" and "Build/Lint/Test Commands".
 """
+
+# Exclude generated, deps, and caches (Go project patterns)
+ignore_patterns = [
+  # Go
+  "*.pb.go",
+  "vendor/",
+  # General
+  "node_modules/",
+  ".git/",
+  ".roborev/",
+]
