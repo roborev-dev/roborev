@@ -2376,7 +2376,8 @@ func TestListBranchesWithCounts(t *testing.T) {
 	})
 
 	t.Run("filter by single repo", func(t *testing.T) {
-		result, err := db.ListBranchesWithCounts([]string{"/tmp/repo1"})
+		// Use repo1.RootPath which is the normalized path stored in the DB
+		result, err := db.ListBranchesWithCounts([]string{repo1.RootPath})
 		if err != nil {
 			t.Fatalf("ListBranchesWithCounts failed: %v", err)
 		}
@@ -2389,7 +2390,8 @@ func TestListBranchesWithCounts(t *testing.T) {
 	})
 
 	t.Run("filter by multiple repos", func(t *testing.T) {
-		result, err := db.ListBranchesWithCounts([]string{"/tmp/repo1", "/tmp/repo2"})
+		// Use repo RootPath values which are the normalized paths stored in the DB
+		result, err := db.ListBranchesWithCounts([]string{repo1.RootPath, repo2.RootPath})
 		if err != nil {
 			t.Fatalf("ListBranchesWithCounts failed: %v", err)
 		}
