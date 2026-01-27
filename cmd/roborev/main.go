@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/skills"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/update"
@@ -576,6 +578,7 @@ func reviewCmd() *cobra.Command {
 		branch     bool
 		baseBranch string
 		since      string
+		local      bool
 	)
 
 	cmd := &cobra.Command{
@@ -627,9 +630,11 @@ Examples:
 				return nil // Intentional skip, exit 0
 			}
 
-			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
-				return err // Return error (quiet mode silences output, not exit code)
+			// Ensure daemon is running (skip for --local mode)
+			if !local {
+				if err := ensureDaemon(); err != nil {
+					return err // Return error (quiet mode silences output, not exit code)
+				}
 			}
 
 			// Validate mutually exclusive options
@@ -752,6 +757,11 @@ Examples:
 			// Get current branch name for tracking
 			branchName := git.GetCurrentBranch(root)
 
+			// Handle --local mode: run agent directly without daemon
+			if local {
+				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning, quiet)
+			}
+
 			// Make request - server will validate and resolve refs
 			reqBody, _ := json.Marshal(map[string]interface{}{
 				"repo_path":    root,
@@ -828,8 +838,74 @@ Examples:
 	cmd.Flags().BoolVar(&branch, "branch", false, "review all changes since branch diverged from base")
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
+	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
 
 	return cmd
+}
+
+// runLocalReview runs a review directly without the daemon
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning string, quiet bool) error {
+	// Load config
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	// Resolve and validate reasoning (matches daemon behavior)
+	reasoning, err = config.ResolveReviewReasoning(reasoning, repoPath)
+	if err != nil {
+		return fmt.Errorf("invalid reasoning: %w", err)
+	}
+
+	// Resolve agent using workflow-specific resolution (matches daemon behavior)
+	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "review", reasoning)
+
+	// Get the agent
+	a, err := agent.GetAvailable(agentName)
+	if err != nil {
+		return fmt.Errorf("get agent: %w", err)
+	}
+
+	// Resolve model using workflow-specific resolution (matches daemon behavior)
+	model = config.ResolveModelForWorkflow(model, repoPath, cfg, "review", reasoning)
+
+	// Configure agent with model and reasoning
+	reasoningLevel := agent.ParseReasoningLevel(reasoning)
+	a = a.WithReasoning(reasoningLevel).WithModel(model)
+
+	// Use consistent output writer, respecting --quiet
+	var out io.Writer = cmd.OutOrStdout()
+	if quiet {
+		out = io.Discard
+	}
+
+	if !quiet {
+		fmt.Fprintf(out, "Running %s review (model: %s, reasoning: %s)...\n\n", a.Name(), model, reasoning)
+	}
+
+	// Build prompt
+	var reviewPrompt string
+	if diffContent != "" {
+		// Dirty review
+		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name())
+	} else {
+		reviewPrompt, err = prompt.NewBuilder(nil).Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name())
+	}
+	if err != nil {
+		return fmt.Errorf("build prompt: %w", err)
+	}
+
+	// Run review with output writer
+	ctx := context.Background()
+	_, err = a.Review(ctx, repoPath, gitRef, reviewPrompt, out)
+	if err != nil {
+		return fmt.Errorf("review failed: %w", err)
+	}
+
+	if !quiet {
+		fmt.Fprintln(out) // Final newline
+	}
+	return nil
 }
 
 // waitForJob polls until a job completes and displays the review
