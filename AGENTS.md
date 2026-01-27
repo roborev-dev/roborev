@@ -140,3 +140,62 @@ The project uses **OpenCode** agent with **Ollama** backend:
 - **Model setup**: Created from `qwen2.5-coder:32b` with `num_ctx 32768` and `temperature 0.05`
 
 To use a different model, update `model` in `.roborev.toml` under `[agent_settings.opencode]`.
+
+## Ollama Agent Configuration
+
+The **Ollama** agent is RoboRev's first HTTP-based agent, connecting directly to an Ollama server via HTTP API.
+
+### Setup Requirements
+
+1. **Install Ollama**: Download from [ollama.ai](https://ollama.ai)
+2. **Start Ollama server**: Run `ollama serve` (defaults to `http://localhost:11434`)
+3. **Pull a model**: Run `ollama pull <model-name>` (e.g., `ollama pull qwen2.5-coder:32b`)
+
+### Configuration
+
+**Per-repo config** (`.roborev.toml`):
+```toml
+agent = "ollama"
+model = "qwen2.5-coder:32b"
+```
+
+**Global config** (`~/.roborev/config.toml`):
+```toml
+default_agent = "ollama"
+default_model = "qwen2.5-coder:32b"
+ollama_base_url = "http://localhost:11434"  # Optional, defaults to localhost:11434
+```
+
+**Remote server**:
+```toml
+ollama_base_url = "http://remote-server:11434"
+```
+
+### Model Selection
+
+- **Format**: `model-name:tag` (e.g., `qwen2.5-coder:32b`, `llama3.1`)
+- **Requirement**: Model must be pulled locally before use (`ollama pull <model>`)
+- **No default**: Model must be explicitly configured (fails fast with clear error if missing)
+
+### Limitations
+
+- **Reasoning levels**: Currently no-op (Phase 1). `WithReasoning()` is accepted but doesn't affect behavior.
+- **Agentic mode**: Not supported. Ollama doesn't support tool calling like Claude/Gemini. `WithAgentic()` is accepted but always operates in read-only mode.
+- **Availability checking**: Uses HTTP health check to `/api/tags` with 30-second TTL cache.
+
+### Troubleshooting
+
+**"ollama server not reachable"**:
+- Ensure Ollama server is running: `ollama serve`
+- Check base URL configuration if using remote server
+- Verify network connectivity
+
+**"model not found"**:
+- Pull the model: `ollama pull <model-name>`
+- Verify model name format: `model:tag` (e.g., `qwen2.5-coder:32b`)
+- List available models: `ollama list`
+
+**Connection timeout**:
+- Check if Ollama server is responding: `curl http://localhost:11434/api/tags`
+- Increase timeout if using slow network connection
+- Verify firewall settings for remote servers
