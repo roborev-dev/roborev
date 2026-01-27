@@ -66,6 +66,13 @@ type CommandAgent interface {
 	CommandName() string
 }
 
+// AvailabilityChecker is optionally implemented by agents that determine
+// availability by means other than CLI presence (e.g. HTTP health check).
+type AvailabilityChecker interface {
+	Agent
+	IsAvailable() bool
+}
+
 // Registry holds available agents
 var registry = make(map[string]Agent)
 var allowUnsafeAgents atomic.Bool
@@ -129,8 +136,9 @@ func Available() []string {
 	return names
 }
 
-// IsAvailable checks if an agent's command is installed on the system
-// Supports aliases like "claude" for "claude-code"
+// IsAvailable checks if an agent's command is installed on the system.
+// Supports aliases like "claude" for "claude-code".
+// Agents implementing AvailabilityChecker use their IsAvailable() (e.g. HTTP health check).
 func IsAvailable(name string) bool {
 	name = resolveAlias(name)
 	a, ok := registry[name]
@@ -138,7 +146,10 @@ func IsAvailable(name string) bool {
 		return false
 	}
 
-	// Check if agent implements CommandAgent interface
+	if ac, ok := a.(AvailabilityChecker); ok {
+		return ac.IsAvailable()
+	}
+
 	if ca, ok := a.(CommandAgent); ok {
 		_, err := exec.LookPath(ca.CommandName())
 		return err == nil
@@ -160,8 +171,8 @@ func GetAvailable(preferred string) (Agent, error) {
 		return Get(preferred)
 	}
 
-	// Fallback order: codex, claude-code, gemini, copilot, opencode, droid
-	fallbacks := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "droid"}
+	// Fallback order: codex, claude-code, gemini, copilot, opencode, droid, ollama
+	fallbacks := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "droid", "ollama"}
 	for _, name := range fallbacks {
 		if name != preferred && IsAvailable(name) {
 			return Get(name)
@@ -177,7 +188,7 @@ func GetAvailable(preferred string) (Agent, error) {
 	}
 
 	if len(available) == 0 {
-		return nil, fmt.Errorf("no agents available (install one of: codex, claude-code, gemini, copilot, opencode, droid)")
+		return nil, fmt.Errorf("no agents available (install one of: codex, claude-code, gemini, copilot, opencode, droid, ollama)")
 	}
 
 	return Get(available[0])

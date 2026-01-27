@@ -29,6 +29,10 @@ type Config struct {
 	// API keys (optional - agents use subscription auth by default)
 	AnthropicAPIKey string `toml:"anthropic_api_key"`
 
+	// Ollama configuration
+	OllamaBaseURL string `toml:"ollama_base_url"` // Default: "http://localhost:11434"
+	OllamaModel   string `toml:"ollama_model"`   // Default: "" (require explicit)
+
 	// Sync configuration for PostgreSQL
 	Sync SyncConfig `toml:"sync"`
 }
@@ -130,6 +134,8 @@ func DefaultConfig() *Config {
 		JobTimeoutMinutes:  30,
 		CodexCmd:           "codex",
 		ClaudeCodeCmd:      "claude",
+		OllamaBaseURL:      "http://localhost:11434",
+		OllamaModel:        "",
 	}
 }
 

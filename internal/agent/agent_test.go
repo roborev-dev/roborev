@@ -12,7 +12,7 @@ import (
 
 func TestAgentRegistry(t *testing.T) {
 	// Check that all agents are registered
-	agents := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "test"}
+	agents := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "droid", "ollama", "test"}
 	for _, name := range agents {
 		a, err := Get(name)
 		if err != nil {
@@ -32,9 +32,9 @@ func TestAgentRegistry(t *testing.T) {
 
 func TestAvailableAgents(t *testing.T) {
 	agents := Available()
-	// We have 6 agents: codex, claude-code, gemini, copilot, opencode, test
-	if len(agents) < 6 {
-		t.Errorf("Expected at least 6 agents, got %d: %v", len(agents), agents)
+	// We have codex, claude-code, gemini, copilot, opencode, droid, ollama, test
+	if len(agents) < 8 {
+		t.Errorf("Expected at least 8 agents, got %d: %v", len(agents), agents)
 	}
 
 	expected := map[string]bool{
@@ -43,6 +43,8 @@ func TestAvailableAgents(t *testing.T) {
 		"gemini":      false,
 		"copilot":     false,
 		"opencode":    false,
+		"droid":       false,
+		"ollama":      false,
 		"test":        false,
 	}
 
@@ -222,6 +224,8 @@ func getAgentModel(a Agent) string {
 		return v.Model
 	case *OpenCodeAgent:
 		return v.Model
+	case *OllamaAgent:
+		return v.Model
 	default:
 		return ""
 	}
@@ -239,6 +243,7 @@ func TestAgentWithModelPersistence(t *testing.T) {
 		{"gemini", func() Agent { return NewGeminiAgent("") }, "gemini-2.5-pro", "gemini-2.5-pro"},
 		{"copilot", func() Agent { return NewCopilotAgent("") }, "gpt-4o", "gpt-4o"},
 		{"opencode", func() Agent { return NewOpenCodeAgent("") }, "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4"},
+		{"ollama", func() Agent { return NewOllamaAgent("") }, "qwen2.5-coder:32b", "qwen2.5-coder:32b"},
 	}
 
 	for _, tt := range tests {
