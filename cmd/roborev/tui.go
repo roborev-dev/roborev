@@ -489,7 +489,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 
 	return func() tea.Msg {
 		// Determine limit:
-		// - No limit (limit=0) when filtering to show full repo/addressed history
+		// - No limit (limit=0) when filtering to show full repo/branch/addressed history
 		// - If we've paginated beyond visible area, maintain current view size
 		// - Otherwise fetch enough to fill visible area
 		var url string
@@ -498,6 +498,9 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 			url = fmt.Sprintf("%s/api/jobs?limit=0&repo=%s", m.serverAddr, neturl.QueryEscape(m.activeRepoFilter[0]))
 		} else if len(m.activeRepoFilter) > 1 {
 			// Multiple repos (shared display name) - fetch all, filter client-side
+			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
+		} else if m.activeBranchFilter != "" {
+			// Fetch all jobs when filtering by branch - client-side filtering needs full dataset
 			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
 		} else if m.hideAddressed {
 			// Fetch all jobs when hiding addressed - client-side filtering needs full dataset
@@ -533,7 +536,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 func (m tuiModel) fetchMoreJobs() tea.Cmd {
 	return func() tea.Msg {
 		// Only fetch more when not filtering (filtered view loads all)
-		if len(m.activeRepoFilter) > 0 {
+		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 			return nil
 		}
 		offset := len(m.jobs)
@@ -1759,8 +1762,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.currentView = tuiViewQueue
 					m.branchFilterSearch = ""
-					// Selection stays valid - client-side filtering
-					return m, nil
+					// Branch filter changes fetch behavior (limited vs unlimited),
+					// so we need to refetch
+					m.jobs = nil
+					m.hasMore = false
+					m.selectedIdx = -1
+					m.selectedJobID = 0
+					if m.loadingJobs || m.loadingMore {
+						m.pendingRefetch = true
+						return m, nil
+					}
+					m.loadingJobs = true
+					return m, m.fetchJobs()
 				}
 				return m, nil
 			case "backspace":
@@ -2404,8 +2417,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentView == tuiViewQueue && len(m.filterStack) > 0 {
 				// Pop the most recent filter from the stack
 				popped := m.popFilter()
-				if popped == "repo" {
-					// Repo filter is server-side, need to refetch
+				if popped == "repo" || popped == "branch" {
+					// Repo/branch filter changes fetch behavior, need to refetch
 					m.jobs = nil
 					m.hasMore = false
 					m.selectedIdx = -1
@@ -2417,7 +2430,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingJobs = true
 					return m, m.fetchJobs()
 				}
-				// Branch filter is client-side, no refetch needed
 				return m, nil
 			} else if m.currentView == tuiViewQueue && m.hideAddressed {
 				// Clear hide-addressed filter (no project/branch filter active)

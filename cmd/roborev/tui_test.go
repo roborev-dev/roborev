@@ -7386,6 +7386,89 @@ func TestTUIRemoveFilterFromStack(t *testing.T) {
 	}
 }
 
+func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
+	// Test that pagination is disabled when branch filter is active
+	// (since branch filtering fetches all jobs upfront)
+	m := newTuiModel("http://localhost")
+
+	// Set up at last job with branch filter active
+	m.jobs = []storage.ReviewJob{{ID: 1, Branch: "feature"}}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.hasMore = true
+	m.loadingMore = false
+	m.activeBranchFilter = "feature" // Branch filter active
+	m.currentView = tuiViewQueue
+
+	// Press down at bottom - should NOT trigger load more (filtered view loads all)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m2 := updated.(tuiModel)
+
+	if m2.loadingMore {
+		t.Error("loadingMore should not be set when branch filter is active")
+	}
+	if cmd != nil {
+		t.Error("Should not return command when branch filter is active")
+	}
+}
+
+func TestTUIBranchFilterTriggersRefetch(t *testing.T) {
+	// Test that applying a branch filter triggers a refetch
+	// (needed because branch filter changes fetch from limited to unlimited)
+	m := newTuiModel("http://localhost")
+
+	m.currentView = tuiViewBranchFilter
+	m.filterBranches = []branchFilterItem{
+		{name: "main", count: 5},
+		{name: "feature", count: 3},
+	}
+	m.branchFilterSelectedIdx = 1 // Select "feature"
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Branch: "main"},
+		{ID: 2, Branch: "feature"},
+	}
+	m.loadingJobs = false
+
+	// Press Enter to select
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := updated.(tuiModel)
+
+	if !m2.loadingJobs {
+		t.Error("loadingJobs should be true after applying branch filter")
+	}
+	if m2.jobs != nil {
+		t.Error("jobs should be cleared when applying branch filter")
+	}
+	if cmd == nil {
+		t.Error("Should return fetchJobs command when applying branch filter")
+	}
+}
+
+func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
+	// Test that clearing a branch filter triggers a refetch
+	m := newTuiModel("http://localhost")
+
+	m.currentView = tuiViewQueue
+	m.activeBranchFilter = "feature"
+	m.filterStack = []string{"branch"}
+	m.jobs = []storage.ReviewJob{{ID: 1, Branch: "feature"}}
+	m.loadingJobs = false
+
+	// Press Escape to clear filter
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m2 := updated.(tuiModel)
+
+	if m2.activeBranchFilter != "" {
+		t.Errorf("Expected activeBranchFilter to be cleared, got '%s'", m2.activeBranchFilter)
+	}
+	if !m2.loadingJobs {
+		t.Error("loadingJobs should be true after clearing branch filter")
+	}
+	if cmd == nil {
+		t.Error("Should return fetchJobs command when clearing branch filter")
+	}
+}
+
 // Backfill gating tests
 
 func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
