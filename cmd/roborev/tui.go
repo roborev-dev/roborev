@@ -3157,18 +3157,15 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
 	// Status line: flash message (temporary)
-	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewQueue {
+	// Version mismatch takes priority over flash messages (it's persistent and important)
+	if m.versionMismatch {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
+		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
+	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewQueue {
 		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
-
-	// Version mismatch error (persistent, red)
-	if m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
-		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-		b.WriteString("\x1b[K\n")
-	}
 
 	// Help (two lines)
 	helpLine1 := "↑/↓: navigate | enter: review | y: copy | m: commit msg | q: quit | ?: help"
@@ -3534,8 +3531,11 @@ func (m tuiModel) renderReviewView() string {
 		linesWritten++
 	}
 
-	// Status line: flash message (temporary) takes priority over scroll indicator
-	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewReview {
+	// Status line: version mismatch (persistent) takes priority, then flash message, then scroll indicator
+	if m.versionMismatch {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
+		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
+	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewReview {
 		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	} else if len(lines) > visibleLines {
@@ -3543,13 +3543,6 @@ func (m tuiModel) renderReviewView() string {
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n") // Clear status line
-
-	// Version mismatch error (persistent, red)
-	if m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true)
-		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-		b.WriteString("\x1b[K\n")
-	}
 
 	b.WriteString(tuiHelpStyle.Render(helpText))
 	b.WriteString("\x1b[K") // Clear help line

@@ -178,10 +178,20 @@ func TestDatabaseIntegration(t *testing.T) {
 
 // TestConfigPersistence tests config save/load
 func TestConfigPersistence(t *testing.T) {
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	// Use ROBOREV_DATA_DIR to isolate test from production ~/.roborev
+	// Note: Setting HOME is insufficient because ROBOREV_DATA_DIR takes precedence
+	// in config.DataDir(), and if ROBOREV_DATA_DIR is already set in the environment,
+	// changing HOME has no effect.
+	tmpDir := t.TempDir()
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
 
 	// Save custom config
 	cfg := config.DefaultConfig()
