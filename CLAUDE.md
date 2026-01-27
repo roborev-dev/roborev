@@ -41,7 +41,7 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 ```bash
 go build ./...           # Build
 go test ./...            # Test
-go install ./cmd/...     # Install locally
+make install             # Install to ~/.local/bin
 roborev init             # Initialize in a repo
 roborev status           # Check daemon/queue
 ```
