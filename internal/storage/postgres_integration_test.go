@@ -382,7 +382,7 @@ func TestIntegration_FinalPush(t *testing.T) {
 	// Create many jobs to test batch pushing (only terminal jobs are synced)
 	// Use EnqueueRangeJob since we don't have actual commits in this test
 	for i := 0; i < 150; i++ {
-		job, err := db.EnqueueRangeJob(repo.ID, "HEAD", "test", "", "")
+		job, err := db.EnqueueRangeJob(repo.ID, "HEAD", "", "test", "", "")
 		if err != nil {
 			t.Fatalf("EnqueueRangeJob %d failed: %v", i, err)
 		}
