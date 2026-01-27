@@ -19,25 +19,23 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
-// TestOllamaE2E_ReviewWithMockServer tests the full review flow with a mocked Ollama server
-func TestOllamaE2E_ReviewWithMockServer(t *testing.T) {
-	// Skip if not in a git repo (CI might not have one)
-	if _, err := exec.Command("git", "rev-parse", "--git-dir").Output(); err != nil {
-		t.Skip("Not in a git repo, skipping e2e test")
-	}
+// setupGitRepo initializes a git repository in the given directory and returns the commit SHA.
+// It creates an initial commit with a test file.
+// Additional environment variables can be provided via extraEnv (e.g., "HOME=/path").
+func setupGitRepo(t *testing.T, tmpDir string, extraEnv ...string) string {
+	t.Helper()
 
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-
-	// Initialize git repo in tmpDir
 	runGit := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
+		env := append(os.Environ(),
 			"GIT_AUTHOR_NAME=Test",
 			"GIT_AUTHOR_EMAIL=test@test.com",
 			"GIT_COMMITTER_NAME=Test",
 			"GIT_COMMITTER_EMAIL=test@test.com",
 		)
+		env = append(env, extraEnv...)
+		cmd.Env = env
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v failed: %v\n%s", args, err, out)
 		}
@@ -59,7 +57,20 @@ func TestOllamaE2E_ReviewWithMockServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get commit SHA: %v", err)
 	}
-	commitSHA := strings.TrimSpace(string(shaBytes))
+	return strings.TrimSpace(string(shaBytes))
+}
+
+// TestOllamaE2E_ReviewWithMockServer tests the full review flow with a mocked Ollama server
+func TestOllamaE2E_ReviewWithMockServer(t *testing.T) {
+	// Skip if not in a git repo (CI might not have one)
+	if _, err := exec.Command("git", "rev-parse", "--git-dir").Output(); err != nil {
+		t.Skip("Not in a git repo, skipping e2e test")
+	}
+
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+
+	// Initialize git repo and get commit SHA
+	commitSHA := setupGitRepo(t, tmpDir)
 
 	// Create mock Ollama server
 	var receivedRequest []byte
@@ -182,38 +193,8 @@ func TestOllamaE2E_ConfigResolution(t *testing.T) {
 
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
-	// Initialize git repo
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
-
-	// Get the commit SHA
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = tmpDir
-	shaBytes, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Failed to get commit SHA: %v", err)
-	}
-	commitSHA := strings.TrimSpace(string(shaBytes))
+	// Initialize git repo and get commit SHA
+	commitSHA := setupGitRepo(t, tmpDir)
 
 	// Create mock Ollama server
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -299,38 +280,8 @@ func TestOllamaE2E_ModelRequired(t *testing.T) {
 
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
-	// Initialize git repo
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
-
-	// Get the commit SHA
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = tmpDir
-	shaBytes, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Failed to get commit SHA: %v", err)
-	}
-	commitSHA := strings.TrimSpace(string(shaBytes))
+	// Initialize git repo and get commit SHA
+	commitSHA := setupGitRepo(t, tmpDir)
 
 	// Create mock Ollama server (should not be called)
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -401,38 +352,8 @@ func TestOllamaE2E_BaseURLOverride(t *testing.T) {
 
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
-	// Initialize git repo
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
-
-	// Get the commit SHA
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = tmpDir
-	shaBytes, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Failed to get commit SHA: %v", err)
-	}
-	commitSHA := strings.TrimSpace(string(shaBytes))
+	// Initialize git repo and get commit SHA
+	commitSHA := setupGitRepo(t, tmpDir)
 
 	// Create mock Ollama server
 	// Note: We can't actually test a different URL with httptest, but we can verify
@@ -512,38 +433,8 @@ func TestOllamaE2E_StreamingOutput(t *testing.T) {
 
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
-	// Initialize git repo
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
-
-	// Get the commit SHA
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = tmpDir
-	shaBytes, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Failed to get commit SHA: %v", err)
-	}
-	commitSHA := strings.TrimSpace(string(shaBytes))
+	// Initialize git repo and get commit SHA
+	commitSHA := setupGitRepo(t, tmpDir)
 
 	// Create mock Ollama server with streaming response
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -641,38 +532,8 @@ func TestOllamaE2E_ErrorHandling(t *testing.T) {
 
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
-	// Initialize git repo
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
-
-	// Get the commit SHA
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = tmpDir
-	shaBytes, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Failed to get commit SHA: %v", err)
-	}
-	commitSHA := strings.TrimSpace(string(shaBytes))
+	// Initialize git repo and get commit SHA
+	commitSHA := setupGitRepo(t, tmpDir)
 
 	// Create mock Ollama server that returns errors
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -825,31 +686,9 @@ func TestOllamaE2E_CLIEnqueue(t *testing.T) {
 	os.Setenv("HOME", tmpHome)
 	defer os.Setenv("HOME", origHome)
 
-	// Create a temp git repo
+	// Create a temp git repo with custom HOME
 	tmpDir := t.TempDir()
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"HOME="+tmpHome,
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
+	setupGitRepo(t, tmpDir, "HOME="+tmpHome)
 
 	// Create mock daemon server
 	var receivedAgent string

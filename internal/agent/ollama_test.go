@@ -1117,6 +1117,87 @@ func TestOllamaParseStreamNDJSON_ExtraFields(t *testing.T) {
 	}
 }
 
+func TestOllamaParseStreamNDJSON_MissingDoneField(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Missing "done" field - stream will be incomplete (no done=true)
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":false}
+{"model":"x","message":{"role":"assistant","content":" more"},"done":false}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for missing done=true")
+	}
+	if !strings.Contains(err.Error(), "incomplete") || !strings.Contains(err.Error(), "done=true") {
+		t.Errorf("expected incomplete/done error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_EmptyRootObject(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Empty root object - no message or done fields
+	input := `{}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Empty object has no content and no done=true, so returns empty string without error
+	// (Error only occurs if !seenDone && acc.Len() > 0)
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_OnlyModelField(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Root object with only "model" field, missing "message" and "done"
+	input := `{"model":"x"}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No message content, no done=true, so returns empty string without error
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_OnlyDoneField(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Root object with only "done" field, missing "message"
+	input := `{"done":true}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No message content, but done=true, so returns empty string without error
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_MissingMessageWithContent(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Missing "message" field but has content in a different field (should be ignored)
+	input := `{"model":"x","content":"ignored","done":true}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Content outside message field is ignored, so returns empty string
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
 // Additional tests for unexpected/malformed NDJSON schema violations
 func TestOllamaParseStreamNDJSON_MessageAsString(t *testing.T) {
 	t.Parallel()
