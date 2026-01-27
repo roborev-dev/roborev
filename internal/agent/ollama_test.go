@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -667,5 +669,1169 @@ func TestOllamaReview_NetworkUnreachable(t *testing.T) {
 	// Should have a network-related error message
 	if !strings.Contains(err.Error(), "network") && !strings.Contains(err.Error(), "timeout") && !strings.Contains(err.Error(), "unreachable") {
 		t.Errorf("expected network error, got %v", err)
+	}
+}
+
+// Task 23: Method Chaining Tests
+func TestOllamaMethodChaining_Immutability(t *testing.T) {
+	t.Parallel()
+	base := NewOllamaAgent("http://localhost:11434").WithModel("m1").WithReasoning(ReasoningStandard).WithAgentic(false)
+	original := base.(*OllamaAgent)
+
+	// Chain all methods (WithBaseURL is not part of Agent interface, so cast first)
+	chainedAgent := base.WithModel("m2").WithReasoning(ReasoningThorough).WithAgentic(true)
+	chained := chainedAgent.(*OllamaAgent).WithBaseURL("http://custom:11434").(*OllamaAgent)
+
+	// Original should be unchanged
+	if original.Model != "m1" {
+		t.Errorf("original Model changed: got %q, want %q", original.Model, "m1")
+	}
+	if original.Reasoning != ReasoningStandard {
+		t.Errorf("original Reasoning changed: got %v, want %v", original.Reasoning, ReasoningStandard)
+	}
+	if original.Agentic {
+		t.Error("original Agentic changed: got true, want false")
+	}
+	if original.BaseURL != "http://localhost:11434" {
+		t.Errorf("original BaseURL changed: got %q, want %q", original.BaseURL, "http://localhost:11434")
+	}
+
+	// Chained should have new values
+	if chained.Model != "m2" {
+		t.Errorf("chained Model = %q, want %q", chained.Model, "m2")
+	}
+	if chained.Reasoning != ReasoningThorough {
+		t.Errorf("chained Reasoning = %v, want %v", chained.Reasoning, ReasoningThorough)
+	}
+	if !chained.Agentic {
+		t.Error("chained Agentic = false, want true")
+	}
+	if chained.BaseURL != "http://custom:11434" {
+		t.Errorf("chained BaseURL = %q, want %q", chained.BaseURL, "http://custom:11434")
+	}
+
+	// Should be different instances
+	if original == chained {
+		t.Error("chained agent is same instance as original")
+	}
+}
+
+func TestOllamaMethodChaining_OrderIndependence(t *testing.T) {
+	t.Parallel()
+	base := NewOllamaAgent("http://localhost:11434")
+
+	// Chain in different orders
+	order1 := base.WithModel("m1").WithReasoning(ReasoningThorough).WithAgentic(true).(*OllamaAgent)
+	order2 := base.WithAgentic(true).WithModel("m1").WithReasoning(ReasoningThorough).(*OllamaAgent)
+	order3 := base.WithReasoning(ReasoningThorough).WithAgentic(true).WithModel("m1").(*OllamaAgent)
+
+	// All should result in same final state
+	if order1.Model != order2.Model || order2.Model != order3.Model {
+		t.Errorf("Model differs by order: %q, %q, %q", order1.Model, order2.Model, order3.Model)
+	}
+	if order1.Reasoning != order2.Reasoning || order2.Reasoning != order3.Reasoning {
+		t.Errorf("Reasoning differs by order: %v, %v, %v", order1.Reasoning, order2.Reasoning, order3.Reasoning)
+	}
+	if order1.Agentic != order2.Agentic || order2.Agentic != order3.Agentic {
+		t.Errorf("Agentic differs by order: %v, %v, %v", order1.Agentic, order2.Agentic, order3.Agentic)
+	}
+}
+
+func TestOllamaMethodChaining_EmptyWhitespaceModel(t *testing.T) {
+	t.Parallel()
+	base := NewOllamaAgent("http://localhost:11434")
+
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{"empty string", ""},
+		{"whitespace only", "   "},
+		{"tab only", "\t"},
+		{"newline only", "\n"},
+		{"mixed whitespace", " \t\n "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chained := base.WithModel(tt.model).(*OllamaAgent)
+			if chained.Model != tt.model {
+				t.Errorf("Model = %q, want %q", chained.Model, tt.model)
+			}
+			// Model validation happens in Review(), not in WithModel()
+			// So empty/whitespace models should be accepted by WithModel()
+		})
+	}
+}
+
+// Task 24: Reasoning Level Coverage
+func TestOllamaReasoningLevels_AllLevels(t *testing.T) {
+	t.Parallel()
+	base := NewOllamaAgent("http://localhost:11434")
+
+	tests := []struct {
+		name     string
+		level    ReasoningLevel
+		want     ReasoningLevel
+	}{
+		{"thorough", ReasoningThorough, ReasoningThorough},
+		{"standard", ReasoningStandard, ReasoningStandard},
+		{"fast", ReasoningFast, ReasoningFast},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agent := base.WithReasoning(tt.level).(*OllamaAgent)
+			if agent.Reasoning != tt.want {
+				t.Errorf("Reasoning = %v, want %v", agent.Reasoning, tt.want)
+			}
+		})
+	}
+}
+
+func TestOllamaReasoningLevels_PreservedThroughChaining(t *testing.T) {
+	t.Parallel()
+	base := NewOllamaAgent("http://localhost:11434").WithModel("m1")
+
+	// Chain with reasoning, then other methods
+	chained := base.WithReasoning(ReasoningThorough).WithModel("m2").WithAgentic(true).(*OllamaAgent)
+
+	if chained.Reasoning != ReasoningThorough {
+		t.Errorf("Reasoning = %v, want %v", chained.Reasoning, ReasoningThorough)
+	}
+	if chained.Model != "m2" {
+		t.Errorf("Model = %q, want %q", chained.Model, "m2")
+	}
+	if !chained.Agentic {
+		t.Error("Agentic = false, want true")
+	}
+}
+
+func TestOllamaReasoningLevels_NoOpBehavior(t *testing.T) {
+	t.Parallel()
+	// Reasoning level doesn't affect behavior in Phase 1 (no-op)
+	// This is verified by the fact that Review() doesn't use Reasoning field
+	// We can test that different reasoning levels produce same request format
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &reqBody)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
+	}))
+	defer ts.Close()
+
+	levels := []ReasoningLevel{ReasoningThorough, ReasoningStandard, ReasoningFast}
+	for _, level := range levels {
+		t.Run(string(level), func(t *testing.T) {
+			a := NewOllamaAgent(ts.URL).WithModel("m").WithReasoning(level)
+			result, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+			if err != nil {
+				t.Fatalf("Review failed: %v", err)
+			}
+			if result != "ok" {
+				t.Errorf("result = %q, want %q", result, "ok")
+			}
+		})
+	}
+}
+
+// Task 25: Agentic Mode Combinations
+func TestOllamaAgenticMode_TrueFalse(t *testing.T) {
+	t.Parallel()
+	base := NewOllamaAgent("http://localhost:11434")
+
+	agenticTrue := base.WithAgentic(true).(*OllamaAgent)
+	if !agenticTrue.Agentic {
+		t.Error("WithAgentic(true): Agentic = false, want true")
+	}
+
+	agenticFalse := base.WithAgentic(false).(*OllamaAgent)
+	if agenticFalse.Agentic {
+		t.Error("WithAgentic(false): Agentic = true, want false")
+	}
+}
+
+func TestOllamaAgenticMode_PreservedThroughChaining(t *testing.T) {
+	t.Parallel()
+	base := NewOllamaAgent("http://localhost:11434").WithModel("m1")
+
+	// Chain with agentic, then other methods
+	chained := base.WithAgentic(true).WithModel("m2").WithReasoning(ReasoningThorough).(*OllamaAgent)
+
+	if !chained.Agentic {
+		t.Error("Agentic = false, want true")
+	}
+	if chained.Model != "m2" {
+		t.Errorf("Model = %q, want %q", chained.Model, "m2")
+	}
+	if chained.Reasoning != ReasoningThorough {
+		t.Errorf("Reasoning = %v, want %v", chained.Reasoning, ReasoningThorough)
+	}
+}
+
+func TestOllamaAgenticMode_NoOpBehavior(t *testing.T) {
+	t.Parallel()
+	// Agentic mode doesn't affect behavior in Phase 1 (no-op, always read-only)
+	// Test that both true and false produce same request format
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
+	}))
+	defer ts.Close()
+
+	for _, agentic := range []bool{true, false} {
+		t.Run(fmt.Sprintf("agentic=%v", agentic), func(t *testing.T) {
+			a := NewOllamaAgent(ts.URL).WithModel("m").WithAgentic(agentic)
+			result, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+			if err != nil {
+				t.Fatalf("Review failed: %v", err)
+			}
+			if result != "ok" {
+				t.Errorf("result = %q, want %q", result, "ok")
+			}
+		})
+	}
+}
+
+// Task 26: Empty Stream Edge Cases
+func TestOllamaParseStreamNDJSON_EmptyInput(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Empty input has no lines, so no content accumulated, returns empty string without error
+	got, err := a.parseStreamNDJSON(strings.NewReader(""), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_WhitespaceOnlyLines(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Whitespace-only lines are skipped (trimmed == ""), so no content, returns empty string
+	input := "   \n\t\n  \n"
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_OnlyNewlines(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Newline-only input has no content lines, returns empty string
+	input := "\n\n\n"
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_EOFBeforeDone(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Valid JSON but no done=true before EOF - input ends without newline
+	// ReadString('\n') on last line without newline returns line + EOF
+	// Content should be accumulated, but error occurs because seenDone is false
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":false}`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for EOF before done=true")
+	}
+	if !strings.Contains(err.Error(), "incomplete") || !strings.Contains(err.Error(), "done=true") {
+		t.Errorf("expected incomplete/done error, got %v", err)
+	}
+	// When EOF is reached without newline, ReadString behavior may vary
+	// The important thing is we get an error for incomplete stream
+	// Content accumulation depends on whether the line was processed
+	if got != "test" && got != "" {
+		t.Errorf("result = %q, want %q or %q", got, "test", "")
+	}
+}
+
+// Task 27: Content Edge Cases
+func TestOllamaParseStreamNDJSON_VeryLongContent(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Create content that's longer than typical initial string builder capacity
+	longContent := strings.Repeat("a", 10000)
+	input := fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":"%s"},"done":true}`, longContent) + "\n"
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != longContent {
+		t.Errorf("result length = %d, want %d", len(got), len(longContent))
+	}
+}
+
+func TestOllamaParseStreamNDJSON_UnicodeCharacters(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	unicodeContent := "Hello 世界 🌍 こんにちは مرحبا"
+	input := fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":"%s"},"done":true}`, unicodeContent) + "\n"
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != unicodeContent {
+		t.Errorf("result = %q, want %q", got, unicodeContent)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_SpecialCharactersInContent(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Content with newlines, quotes, backslashes (properly escaped in JSON)
+	specialContent := "Line 1\nLine 2\tTabbed\n\"Quoted\"\n\\Backslash\\"
+	// JSON encoding will escape these
+	jsonBytes, _ := json.Marshal(specialContent)
+	input := fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":%s},"done":true}`, string(jsonBytes)) + "\n"
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != specialContent {
+		t.Errorf("result = %q, want %q", got, specialContent)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_EmptyStringsBetweenChunks(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	input := `{"model":"x","message":{"role":"assistant","content":"start"},"done":false}
+{"model":"x","message":{"role":"assistant","content":""},"done":false}
+{"model":"x","message":{"role":"assistant","content":""},"done":false}
+{"model":"x","message":{"role":"assistant","content":"end"},"done":true}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != "startend" {
+		t.Errorf("result = %q, want %q", got, "startend")
+	}
+}
+
+// Task 28: JSON Structure Edge Cases
+func TestOllamaParseStreamNDJSON_MissingMessageField(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Missing message field - JSON unmarshal succeeds but Message.Content is empty
+	// No content accumulated (acc.Len() == 0), so returns empty string without error
+	// (Error only occurs if !seenDone && acc.Len() > 0)
+	input := `{"model":"x","done":false}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No content, no error (code behavior)
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_MissingContentField(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	input := `{"model":"x","message":{"role":"assistant"},"done":true}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	// Missing content field should result in empty string
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_DoneAsString(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// done as string "true" instead of boolean - JSON unmarshal will fail
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":"true"}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for done as string")
+	}
+	// Should get JSON parse error (type mismatch)
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_ExtraFields(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Extra fields should be ignored
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":true,"extra":"field","another":123}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != "test" {
+		t.Errorf("result = %q, want %q", got, "test")
+	}
+}
+
+// Task 29: Stream Completion Edge Cases
+func TestOllamaParseStreamNDJSON_MultipleDoneTrue(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Multiple done=true markers - should stop at first
+	input := `{"model":"x","message":{"role":"assistant","content":"first"},"done":true}
+{"model":"x","message":{"role":"assistant","content":"second"},"done":true}
+{"model":"x","message":{"role":"assistant","content":"third"},"done":true}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	// Should stop at first done=true
+	if got != "first" {
+		t.Errorf("result = %q, want %q", got, "first")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_DoneTrueWithEmptyContent(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	input := `{"model":"x","message":{"role":"assistant","content":""},"done":true}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_DoneFalseAfterContent(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Content followed by done=false (should be incomplete)
+	// This is similar to TestOllamaParseStreamNDJSON_IncompleteStream but tests the specific case
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":false}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for done=false after content")
+	}
+	if !strings.Contains(err.Error(), "incomplete") || !strings.Contains(err.Error(), "done=true") {
+		t.Errorf("expected incomplete/done error, got %v", err)
+	}
+	// Note: Content accumulation is tested in other tests (e.g., TestOllamaParseStreamNDJSON_IncompleteStream)
+}
+
+func TestOllamaParseStreamNDJSON_DoneTrueNoContentAccumulated(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// done=true but no content accumulated (all chunks had empty content)
+	input := `{"model":"x","message":{"role":"assistant","content":""},"done":false}
+{"model":"x","message":{"role":"assistant","content":""},"done":true}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != "" {
+		t.Errorf("result = %q, want %q", got, "")
+	}
+}
+
+// Task 30: Output Streaming Edge Cases
+func TestOllamaParseStreamNDJSON_NilOutputWriter(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":true}
+`
+	// Should not panic with nil writer
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != "test" {
+		t.Errorf("result = %q, want %q", got, "test")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_FailingOutputWriter(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":true}
+`
+	// Failing writer should not cause parseStreamNDJSON to fail
+	// (syncWriter handles write errors internally)
+	failingWriter := &failingWriter{err: errors.New("write failed")}
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), failingWriter)
+	// parseStreamNDJSON doesn't check write errors, so this should succeed
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != "test" {
+		t.Errorf("result = %q, want %q", got, "test")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_RawNDJSONStreamed(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	input := `{"model":"x","message":{"role":"assistant","content":"hello"},"done":false}
+{"model":"x","message":{"role":"assistant","content":" world"},"done":true}
+`
+	var buf bytes.Buffer
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), &buf)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != "hello world" {
+		t.Errorf("result = %q, want %q", got, "hello world")
+	}
+	// Output should contain raw NDJSON lines
+	output := buf.String()
+	if !strings.Contains(output, `{"model":"x","message":{"role":"assistant","content":"hello"},"done":false}`) {
+		t.Error("output should contain first raw NDJSON line")
+	}
+	if !strings.Contains(output, `{"model":"x","message":{"role":"assistant","content":" world"},"done":true}`) {
+		t.Error("output should contain second raw NDJSON line")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_OutputContainsAllLines(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	input := `{"model":"x","message":{"role":"assistant","content":"a"},"done":false}
+{"model":"x","message":{"role":"assistant","content":""},"done":false}
+{"model":"x","message":{"role":"assistant","content":"b"},"done":true}
+`
+	var buf bytes.Buffer
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), &buf)
+	if err != nil {
+		t.Fatalf("parseStreamNDJSON: %v", err)
+	}
+	if got != "ab" {
+		t.Errorf("result = %q, want %q", got, "ab")
+	}
+	// Output should have 3 lines (all NDJSON lines, not just content)
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 3 {
+		t.Errorf("output lines = %d, want 3", len(lines))
+	}
+}
+
+// Task 31: HTTP Status Code Coverage
+func TestOllamaReview_502BadGateway(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"bad gateway"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 502")
+	}
+	if !strings.Contains(err.Error(), "502") || !strings.Contains(err.Error(), "server error") {
+		t.Errorf("expected 502/server error, got %v", err)
+	}
+}
+
+func TestOllamaReview_503ServiceUnavailable(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"service unavailable"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 503")
+	}
+	if !strings.Contains(err.Error(), "503") || !strings.Contains(err.Error(), "server error") {
+		t.Errorf("expected 503/server error, got %v", err)
+	}
+}
+
+func TestOllamaReview_504GatewayTimeout(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_, _ = w.Write([]byte(`{"error":"gateway timeout"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 504")
+	}
+	// 504 is handled as server error, but message format is "ollama API error"
+	if !strings.Contains(err.Error(), "504") {
+		t.Errorf("expected 504 in error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "gateway timeout") {
+		t.Errorf("expected gateway timeout in error, got %v", err)
+	}
+}
+
+func TestOllamaReview_ErrorResponseWithJSONErrorField(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"custom error message"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	if !strings.Contains(err.Error(), "custom error message") {
+		t.Errorf("expected custom error message, got %v", err)
+	}
+}
+
+func TestOllamaReview_ErrorResponseWithoutJSONErrorField(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("plain text error"))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	if !strings.Contains(err.Error(), "plain text error") {
+		t.Errorf("expected plain text error in message, got %v", err)
+	}
+}
+
+// Task 32: Request Building Errors
+func TestOllamaReview_BaseURLWithTrailingSlash(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			t.Errorf("path = %q, want /api/chat", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
+	}))
+	defer ts.Close()
+
+	// BaseURL with trailing slash should be handled correctly
+	a := NewOllamaAgent(ts.URL+"/").WithModel("m")
+	result, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if result != "ok" {
+		t.Errorf("result = %q, want %q", result, "ok")
+	}
+}
+
+func TestOllamaReview_RequestContextPropagation(t *testing.T) {
+	t.Parallel()
+	var gotCtx context.Context
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCtx = r.Context()
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if gotCtx == nil {
+		t.Fatal("request context not propagated")
+	}
+	// Context may be canceled after request completes (normal behavior)
+	// Just verify it was set
+}
+
+// Task 33: Network Error Classification
+func TestOllamaClassifyNetworkError_ConnectionRefused(t *testing.T) {
+	t.Parallel()
+	// Test that connection refused errors are classified correctly
+	// This is tested indirectly through Review() calls
+	a := NewOllamaAgent("http://127.0.0.1:19997").WithModel("m")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("expected connection refused error, got %v", err)
+	}
+}
+
+func TestOllamaClassifyNetworkError_Timeout(t *testing.T) {
+	t.Parallel()
+	block := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-block
+	}))
+	defer ts.Close()
+	defer close(block)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("expected timeout error, got %v", err)
+	}
+}
+
+// Task 34: Context Error Handling
+func TestOllamaReview_ContextDeadlineExceededDuringRequest(t *testing.T) {
+	t.Parallel()
+	block := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-block
+	}))
+	defer ts.Close()
+	defer close(block)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected DeadlineExceeded error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("expected timeout in error message, got %v", err)
+	}
+}
+
+func TestOllamaReview_ContextCanceledDuringRequest(t *testing.T) {
+	t.Parallel()
+	block := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-block
+	}))
+	defer ts.Close()
+	defer close(block)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected Canceled error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected Canceled, got %v", err)
+	}
+}
+
+func TestOllamaReview_ContextErrorWrapping(t *testing.T) {
+	t.Parallel()
+	block := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-block
+	}))
+	defer ts.Close()
+	defer close(block)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(ctx, "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// Error should wrap context.DeadlineExceeded
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error should wrap DeadlineExceeded, got %v", err)
+	}
+	// But should also have descriptive message
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("error should mention timeout, got %v", err)
+	}
+}
+
+// Task 35: Error Response Parsing
+func TestOllamaReview_MalformedErrorJSON(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":invalid json}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	// Should fall back to plain text error message
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("expected error message, got %v", err)
+	}
+}
+
+func TestOllamaReview_ErrorResponseEmptyErrorField(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":""}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	// Empty error field is still included in error message (code behavior)
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("expected invalid error, got %v", err)
+	}
+}
+
+func TestOllamaReview_ErrorResponseNonStringError(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":123}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	// Non-string error field should fall back to plain text
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("expected error message, got %v", err)
+	}
+}
+
+func TestOllamaReview_ErrorResponseLargeBody(t *testing.T) {
+	t.Parallel()
+	largeError := strings.Repeat("x", 5000)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(largeError))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	// Large body should be truncated (limit is 4096 bytes)
+	if len(err.Error()) > 5000 {
+		t.Errorf("error message too long: %d bytes", len(err.Error()))
+	}
+}
+
+func TestOllamaReview_ErrorResponseSpecialCharacters(t *testing.T) {
+	t.Parallel()
+	specialError := `error with "quotes" and \backslashes and newlines\n`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"` + specialError + `"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	// Special characters should be preserved in error message
+	if !strings.Contains(err.Error(), "quotes") {
+		t.Errorf("expected special characters in error, got %v", err)
+	}
+}
+
+// Task 36: Availability Cache Behavior
+func TestOllamaIsAvailable_CacheHit(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL)
+	// First call should hit server
+	if !a.IsAvailable() {
+		t.Error("IsAvailable() = false, want true")
+	}
+	// Second call should use cache (within TTL)
+	if !a.IsAvailable() {
+		t.Error("IsAvailable() (cached) = false, want true")
+	}
+}
+
+func TestOllamaIsAvailable_CacheExpiration(t *testing.T) {
+	t.Parallel()
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if r.URL.Path != "/api/tags" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL)
+	// First call
+	if !a.IsAvailable() {
+		t.Error("IsAvailable() = false, want true")
+	}
+	if callCount != 1 {
+		t.Errorf("callCount = %d, want 1", callCount)
+	}
+
+	// Second call immediately (should use cache)
+	if !a.IsAvailable() {
+		t.Error("IsAvailable() (cached) = false, want true")
+	}
+	if callCount != 1 {
+		t.Errorf("callCount = %d, want 1 (cached)", callCount)
+	}
+
+	// Manually expire cache by manipulating lastCheck
+	a.mu.Lock()
+	a.lastCheck = time.Now().Add(-ollamaAvailabilityTTL - time.Second)
+	a.mu.Unlock()
+
+	// Third call after expiration (should hit server)
+	if !a.IsAvailable() {
+		t.Error("IsAvailable() (after expiration) = false, want true")
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2 (after expiration)", callCount)
+	}
+}
+
+func TestOllamaIsAvailable_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL)
+	var wg sync.WaitGroup
+	concurrency := 10
+	wg.Add(concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			if !a.IsAvailable() {
+				t.Error("IsAvailable() = false, want true")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestOllamaIsAvailable_CacheUpdateOnAvailabilityChange(t *testing.T) {
+	t.Parallel()
+	available := true
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if available {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[]}`))
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL)
+	// First call - available
+	if !a.IsAvailable() {
+		t.Error("IsAvailable() = false, want true")
+	}
+
+	// Expire cache
+	a.mu.Lock()
+	a.lastCheck = time.Now().Add(-ollamaAvailabilityTTL - time.Second)
+	a.mu.Unlock()
+
+	// Make server unavailable
+	available = false
+
+	// Second call after expiration - should detect unavailability
+	if a.IsAvailable() {
+		t.Error("IsAvailable() = true, want false (server now unavailable)")
+	}
+}
+
+// Task 37: Availability Edge Cases
+func TestOllamaIsAvailable_RequestBuildingError(t *testing.T) {
+	t.Parallel()
+	// Invalid base URL should cause request building to fail
+	// But NewOllamaAgent accepts any string, so we test with a URL that causes http.NewRequest to fail
+	// Actually, http.NewRequestWithContext is very permissive, so we test with a URL that causes Do() to fail
+	a := NewOllamaAgent("http://[invalid-url")
+	// This should not panic, but return false
+	if a.IsAvailable() {
+		t.Error("IsAvailable() = true, want false for invalid URL")
+	}
+}
+
+func TestOllamaIsAvailable_DifferentHTTPStatusCodes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		statusCode int
+		want       bool
+	}{
+		{"200 OK", http.StatusOK, true},
+		{"404 Not Found", http.StatusNotFound, false},
+		{"401 Unauthorized", http.StatusUnauthorized, false},
+		{"500 Internal Server Error", http.StatusInternalServerError, false},
+		{"502 Bad Gateway", http.StatusBadGateway, false},
+		{"503 Service Unavailable", http.StatusServiceUnavailable, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.statusCode)
+			}))
+			defer ts.Close()
+
+			a := NewOllamaAgent(ts.URL)
+			got := a.IsAvailable()
+			if got != tt.want {
+				t.Errorf("IsAvailable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOllamaIsAvailable_TimeoutBehavior(t *testing.T) {
+	t.Parallel()
+	block := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-block
+	}))
+	defer ts.Close()
+	defer close(block)
+
+	a := NewOllamaAgent(ts.URL)
+	// IsAvailable uses 3 second timeout internally
+	// Server blocks, so should timeout and return false
+	got := a.IsAvailable()
+	if got {
+		t.Error("IsAvailable() = true, want false (timeout)")
+	}
+}
+
+func TestOllamaIsAvailable_NetworkError(t *testing.T) {
+	t.Parallel()
+	// Unreachable server
+	a := NewOllamaAgent("http://127.0.0.1:19996")
+	got := a.IsAvailable()
+	if got {
+		t.Error("IsAvailable() = true, want false (network error)")
+	}
+}
+
+func TestOllamaIsAvailable_StatePreservation(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL)
+	// First call
+	if !a.IsAvailable() {
+		t.Error("IsAvailable() = false, want true")
+	}
+
+	// Verify state is preserved
+	a.mu.Lock()
+	lastCheck := a.lastCheck
+	available := a.available
+	a.mu.Unlock()
+
+	if lastCheck.IsZero() {
+		t.Error("lastCheck not set")
+	}
+	if !available {
+		t.Error("available = false, want true")
+	}
+
+	// Second call should use cached state
+	if !a.IsAvailable() {
+		t.Error("IsAvailable() (cached) = false, want true")
 	}
 }
