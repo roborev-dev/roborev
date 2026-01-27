@@ -238,6 +238,40 @@ func TestOllamaReview_5xx(t *testing.T) {
 	}
 }
 
+func TestOllamaReview_401Unauthorized(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error for 401")
+	}
+	if !strings.Contains(err.Error(), "401") && !strings.Contains(err.Error(), "Unauthorized") {
+		t.Errorf("expected 401 or Unauthorized in error, got %v", err)
+	}
+}
+
+func TestOllamaReview_200UnexpectedJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("plain text response"))
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL).WithModel("m")
+	_, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error when response is not valid NDJSON")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
 func TestOllamaReview_ContextCanceled(t *testing.T) {
 	block := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -310,6 +344,30 @@ func TestOllamaIsAvailable_5xx(t *testing.T) {
 	a := NewOllamaAgent(ts.URL)
 	if a.IsAvailable() {
 		t.Error("IsAvailable() = true, want false when /api/tags returns 5xx")
+	}
+}
+
+func TestOllamaIsAvailable_404(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL)
+	if a.IsAvailable() {
+		t.Error("IsAvailable() = true, want false when /api/tags returns 404")
+	}
+}
+
+func TestOllamaIsAvailable_401(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	a := NewOllamaAgent(ts.URL)
+	if a.IsAvailable() {
+		t.Error("IsAvailable() = true, want false when /api/tags returns 401")
 	}
 }
 

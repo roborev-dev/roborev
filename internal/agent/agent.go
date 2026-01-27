@@ -66,8 +66,9 @@ type CommandAgent interface {
 	CommandName() string
 }
 
-// AvailabilityChecker is optionally implemented by agents that determine
-// availability by means other than CLI presence (e.g. HTTP health check).
+// AvailabilityChecker is optionally implemented by agents to determine
+// availability using HTTP health checks (e.g. GET /api/tags for Ollama),
+// rather than CLI presence.
 type AvailabilityChecker interface {
 	Agent
 	IsAvailable() bool
