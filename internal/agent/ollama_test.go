@@ -38,7 +38,12 @@ func TestOllamaName(t *testing.T) {
 }
 
 func TestOllamaWithModelReasoningAgentic(t *testing.T) {
-	a := NewOllamaAgent("http://localhost:11434").WithModel("m1").WithReasoning(ReasoningThorough).WithAgentic(true).(*OllamaAgent)
+	// Use intermediate variables for clarity and readability
+	base := NewOllamaAgent("http://localhost:11434")
+	withModel := base.WithModel("m1")
+	withReasoning := withModel.WithReasoning(ReasoningThorough)
+	withAgentic := withReasoning.WithAgentic(true)
+	a := withAgentic.(*OllamaAgent)
 	if a.Model != "m1" {
 		t.Errorf("Model = %q, want \"m1\"", a.Model)
 	}
@@ -78,7 +83,12 @@ func TestOllamaWithBaseURL(t *testing.T) {
 	})
 
 	t.Run("preserves Model, Reasoning, and Agentic", func(t *testing.T) {
-		a := NewOllamaAgent("http://localhost:11434").WithModel("m1").WithReasoning(ReasoningThorough).WithAgentic(true).(*OllamaAgent)
+		// Use intermediate variables for clarity and readability
+		base := NewOllamaAgent("http://localhost:11434")
+		withModel := base.WithModel("m1")
+		withReasoning := withModel.WithReasoning(ReasoningThorough)
+		withAgentic := withReasoning.WithAgentic(true)
+		a := withAgentic.(*OllamaAgent)
 		a2 := a.WithBaseURL("http://custom:11434").(*OllamaAgent)
 		if a2.Model != "m1" {
 			t.Errorf("Model = %q, want \"m1\"", a2.Model)
@@ -679,7 +689,10 @@ func TestOllamaMethodChaining_Immutability(t *testing.T) {
 	original := base.(*OllamaAgent)
 
 	// Chain all methods (WithBaseURL is not part of Agent interface, so cast first)
-	chainedAgent := base.WithModel("m2").WithReasoning(ReasoningThorough).WithAgentic(true)
+	// Use intermediate variables for clarity and readability
+	chainedAgent := base.WithModel("m2")
+	chainedAgent = chainedAgent.WithReasoning(ReasoningThorough)
+	chainedAgent = chainedAgent.WithAgentic(true)
 	chained := chainedAgent.(*OllamaAgent).WithBaseURL("http://custom:11434").(*OllamaAgent)
 
 	// Original should be unchanged
@@ -720,10 +733,21 @@ func TestOllamaMethodChaining_OrderIndependence(t *testing.T) {
 	t.Parallel()
 	base := NewOllamaAgent("http://localhost:11434")
 
-	// Chain in different orders
-	order1 := base.WithModel("m1").WithReasoning(ReasoningThorough).WithAgentic(true).(*OllamaAgent)
-	order2 := base.WithAgentic(true).WithModel("m1").WithReasoning(ReasoningThorough).(*OllamaAgent)
-	order3 := base.WithReasoning(ReasoningThorough).WithAgentic(true).WithModel("m1").(*OllamaAgent)
+	// Chain in different orders - use intermediate variables for clarity
+	order1Agent := base.WithModel("m1")
+	order1Agent = order1Agent.WithReasoning(ReasoningThorough)
+	order1Agent = order1Agent.WithAgentic(true)
+	order1 := order1Agent.(*OllamaAgent)
+
+	order2Agent := base.WithAgentic(true)
+	order2Agent = order2Agent.WithModel("m1")
+	order2Agent = order2Agent.WithReasoning(ReasoningThorough)
+	order2 := order2Agent.(*OllamaAgent)
+
+	order3Agent := base.WithReasoning(ReasoningThorough)
+	order3Agent = order3Agent.WithAgentic(true)
+	order3Agent = order3Agent.WithModel("m1")
+	order3 := order3Agent.(*OllamaAgent)
 
 	// All should result in same final state
 	if order1.Model != order2.Model || order2.Model != order3.Model {
@@ -770,9 +794,9 @@ func TestOllamaReasoningLevels_AllLevels(t *testing.T) {
 	base := NewOllamaAgent("http://localhost:11434")
 
 	tests := []struct {
-		name     string
-		level    ReasoningLevel
-		want     ReasoningLevel
+		name  string
+		level ReasoningLevel
+		want  ReasoningLevel
 	}{
 		{"thorough", ReasoningThorough, ReasoningThorough},
 		{"standard", ReasoningStandard, ReasoningStandard},
@@ -1093,6 +1117,259 @@ func TestOllamaParseStreamNDJSON_ExtraFields(t *testing.T) {
 	}
 }
 
+// Additional tests for unexpected/malformed NDJSON schema violations
+func TestOllamaParseStreamNDJSON_MessageAsString(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message field as string instead of object - violates schema
+	input := `{"model":"x","message":"not an object","done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for message as string")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_MessageContentAsNumber(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message.content as number instead of string - violates schema
+	input := `{"model":"x","message":{"role":"assistant","content":12345},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for content as number")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_DoneAsNumber(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// done field as number instead of boolean - violates schema
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":1}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for done as number")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_MessageRoleAsNumber(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message.role as number instead of string - violates schema
+	input := `{"model":"x","message":{"role":123,"content":"test"},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for role as number")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_NullMessage(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message field as null - JSON unmarshal sets to zero value (empty struct)
+	// This is handled gracefully, returning empty content
+	input := `{"model":"x","message":null,"done":true}
+`
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Null message unmarshals to zero value struct, so content is empty
+	if got != "" {
+		t.Errorf("result = %q, want %q (null message should result in empty content)", got, "")
+	}
+}
+
+func TestOllamaParseStreamNDJSON_ArrayInsteadOfObject(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Root object is actually an array - violates schema
+	input := `[{"model":"x","message":{"role":"assistant","content":"test"},"done":true}]
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for array instead of object")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_NestedArraysInMessage(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message.content as array instead of string - violates schema
+	input := `{"model":"x","message":{"role":"assistant","content":["part1","part2"]},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for content as array")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+// Additional schema violation tests for unexpected/malformed NDJSON responses
+func TestOllamaParseStreamNDJSON_MessageAsArray(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message field as array instead of object - violates schema
+	input := `{"model":"x","message":[{"role":"assistant","content":"test"}],"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for message as array")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_ContentAsBoolean(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message.content as boolean instead of string - violates schema
+	input := `{"model":"x","message":{"role":"assistant","content":true},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for content as boolean")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_ContentAsObject(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message.content as object instead of string - violates schema
+	input := `{"model":"x","message":{"role":"assistant","content":{"text":"test"}},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for content as object")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_MessageRoleAsBoolean(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message.role as boolean instead of string - violates schema
+	input := `{"model":"x","message":{"role":true,"content":"test"},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for role as boolean")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_MessageRoleAsArray(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// message.role as array instead of string - violates schema
+	input := `{"model":"x","message":{"role":["assistant"],"content":"test"},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for role as array")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_DoneAsArray(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// done field as array instead of boolean - violates schema
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":[true]}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for done as array")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_DoneAsObject(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// done field as object instead of boolean - violates schema
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"done":{"value":true}}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err == nil {
+		t.Fatal("expected error for done as object")
+	}
+	if !strings.Contains(err.Error(), "NDJSON parse") {
+		t.Errorf("expected NDJSON parse error, got %v", err)
+	}
+}
+
+func TestOllamaParseStreamNDJSON_MultipleMessageFields(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// Multiple message fields (invalid JSON, but tests parser robustness)
+	// This is actually invalid JSON syntax, so it should fail at parse time
+	input := `{"model":"x","message":{"role":"assistant","content":"test"},"message":{"role":"user","content":"test2"},"done":true}
+`
+	_, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	// JSON with duplicate keys - behavior depends on JSON parser
+	// Most parsers will use the last value, but this is still a schema violation
+	if err == nil {
+		// If it parses, verify it handles gracefully
+		t.Log("duplicate message fields parsed (using last value)")
+	}
+	// Either way, this tests edge case handling
+}
+
+func TestOllamaParseStreamNDJSON_ModelAsArray(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+	// model field as array instead of string - violates schema (but model is not used in parsing)
+	input := `{"model":["x"],"message":{"role":"assistant","content":"test"},"done":true}
+`
+	// This might parse successfully since model field is not used in parseStreamNDJSON
+	// But it's still a schema violation worth testing
+	got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+	if err != nil {
+		// If it errors, that's fine - schema violation detected
+		if !strings.Contains(err.Error(), "NDJSON parse") {
+			t.Errorf("expected NDJSON parse error, got %v", err)
+		}
+	} else {
+		// If it succeeds, content should still be extracted
+		if got != "test" {
+			t.Errorf("result = %q, want %q", got, "test")
+		}
+	}
+}
+
 // Task 29: Stream Completion Edge Cases
 func TestOllamaParseStreamNDJSON_MultipleDoneTrue(t *testing.T) {
 	t.Parallel()
@@ -1347,7 +1624,7 @@ func TestOllamaReview_BaseURLWithTrailingSlash(t *testing.T) {
 	defer ts.Close()
 
 	// BaseURL with trailing slash should be handled correctly
-	a := NewOllamaAgent(ts.URL+"/").WithModel("m")
+	a := NewOllamaAgent(ts.URL + "/").WithModel("m")
 	result, err := a.Review(context.Background(), "/repo", "abc", "prompt", nil)
 	if err != nil {
 		t.Fatalf("Review: %v", err)

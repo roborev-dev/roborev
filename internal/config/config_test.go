@@ -20,6 +20,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.DefaultAgent != "codex" {
 		t.Errorf("Expected DefaultAgent 'codex', got '%s'", cfg.DefaultAgent)
 	}
+	if cfg.OllamaBaseURL != "http://localhost:11434" {
+		t.Errorf("Expected OllamaBaseURL 'http://localhost:11434', got '%s'", cfg.OllamaBaseURL)
+	}
+	if cfg.OllamaModel != "" {
+		t.Errorf("Expected OllamaModel '', got '%s'", cfg.OllamaModel)
+	}
 }
 
 func TestDataDir(t *testing.T) {
@@ -120,6 +126,8 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DefaultAgent = "claude-code"
 	cfg.MaxWorkers = 8
+	cfg.OllamaBaseURL = "http://custom:11434"
+	cfg.OllamaModel = "qwen2.5-coder:32b"
 
 	err := SaveGlobal(cfg)
 	if err != nil {
@@ -136,6 +144,12 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	}
 	if loaded.MaxWorkers != 8 {
 		t.Errorf("Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
+	}
+	if loaded.OllamaBaseURL != "http://custom:11434" {
+		t.Errorf("Expected OllamaBaseURL 'http://custom:11434', got '%s'", loaded.OllamaBaseURL)
+	}
+	if loaded.OllamaModel != "qwen2.5-coder:32b" {
+		t.Errorf("Expected OllamaModel 'qwen2.5-coder:32b', got '%s'", loaded.OllamaModel)
 	}
 }
 
@@ -1223,6 +1237,49 @@ func TestResolveOllamaBaseURL(t *testing.T) {
 		baseURL := ResolveOllamaBaseURL(cfg)
 		if baseURL != "http://192.168.1.100:11434" {
 			t.Errorf("Expected 'http://192.168.1.100:11434', got '%s'", baseURL)
+		}
+	})
+}
+
+func TestOllamaModelResolution(t *testing.T) {
+	t.Run("explicit model takes precedence for Ollama", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("explicit-ollama-model", tmpDir, cfg)
+		if model != "explicit-ollama-model" {
+			t.Errorf("Expected 'explicit-ollama-model', got '%s'", model)
+		}
+	})
+
+	t.Run("repo config model works for Ollama", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`model = "qwen2.5-coder:32b"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "qwen2.5-coder:32b" {
+			t.Errorf("Expected 'qwen2.5-coder:32b' from repo config, got '%s'", model)
+		}
+	})
+
+	t.Run("global config model works for Ollama", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "llama3.1"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "llama3.1" {
+			t.Errorf("Expected 'llama3.1' from global config, got '%s'", model)
+		}
+	})
+
+	t.Run("Ollama model format with tag preserved", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "qwen2.5-coder:32b"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "qwen2.5-coder:32b" {
+			t.Errorf("Expected 'qwen2.5-coder:32b', got '%s'", model)
 		}
 	})
 }
