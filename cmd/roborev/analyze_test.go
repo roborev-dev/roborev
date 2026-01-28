@@ -637,3 +637,111 @@ func TestListAnalysisTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestPerFileAnalysis(t *testing.T) {
+	// Test that per-file mode creates multiple jobs
+	var jobCount int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost {
+			atomic.AddInt32(&jobCount, 1)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(storage.ReviewJob{
+				ID:     int64(atomic.LoadInt32(&jobCount)),
+				Agent:  "test",
+				Status: storage.JobStatusQueued,
+			})
+		}
+	}))
+	defer ts.Close()
+
+	// Save and restore serverAddr
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	// Create test files
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "a.go"), []byte("package a\n"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "b.go"), []byte("package b\n"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "c.go"), []byte("package c\n"), 0644)
+
+	files, err := expandAndReadFiles(tmpDir, []string{"*.go"})
+	if err != nil {
+		t.Fatalf("expandAndReadFiles: %v", err)
+	}
+
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&output)
+
+	analysisType := analyze.GetType("refactor")
+	err = runPerFileAnalysis(cmd, tmpDir, analysisType, files, analyzeOptions{quiet: false})
+	if err != nil {
+		t.Fatalf("runPerFileAnalysis: %v", err)
+	}
+
+	// Should have created 3 jobs (one per file)
+	if atomic.LoadInt32(&jobCount) != 3 {
+		t.Errorf("expected 3 jobs, got %d", atomic.LoadInt32(&jobCount))
+	}
+
+	// Output should mention all job IDs
+	outputStr := output.String()
+	if !strings.Contains(outputStr, "Created 3 jobs") {
+		t.Error("output should mention 3 jobs created")
+	}
+}
+
+func TestSortStrings(t *testing.T) {
+	s := []string{"c", "a", "b", "d"}
+	sortStrings(s)
+
+	expected := []string{"a", "b", "c", "d"}
+	for i, v := range expected {
+		if s[i] != v {
+			t.Errorf("s[%d] = %q, want %q", i, s[i], v)
+		}
+	}
+}
+
+func TestEnqueueAnalysisJob(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/enqueue" || r.Method != http.MethodPost {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			return
+		}
+
+		var req map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&req)
+
+		// Verify request
+		if req["agentic"] != false {
+			t.Error("agentic should be false for analysis")
+		}
+		if req["custom_prompt"] == nil {
+			t.Error("custom_prompt should be set")
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(storage.ReviewJob{
+			ID:     42,
+			Agent:  "test",
+			Status: storage.JobStatusQueued,
+		})
+	}))
+	defer ts.Close()
+
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	job, err := enqueueAnalysisJob("/repo", "test prompt", analyzeOptions{agentName: "test"})
+	if err != nil {
+		t.Fatalf("enqueueAnalysisJob: %v", err)
+	}
+
+	if job.ID != 42 {
+		t.Errorf("job.ID = %d, want 42", job.ID)
+	}
+}

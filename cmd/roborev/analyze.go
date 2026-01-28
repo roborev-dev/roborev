@@ -34,6 +34,7 @@ func analyzeCmd() *cobra.Command {
 		fix        bool
 		fixAgent   string
 		fixModel   string
+		perFile    bool
 	)
 
 	cmd := &cobra.Command{
@@ -65,12 +66,21 @@ Examples:
   roborev analyze architecture internal/storage/    # analyze a directory
   roborev analyze --list
 
+Per-file mode (--per-file):
+  Creates one analysis job per file instead of bundling all files together.
+  Useful for parallel analysis or when total content would be too large.
+
+  roborev analyze refactor --per-file internal/storage/*.go
+  roborev analyze complexity --per-file --wait *.go
+
 Fix mode (--fix):
   Runs analysis, then invokes an agentic agent to apply the suggested changes.
   The analysis is saved to the database and marked as addressed when complete.
 
   roborev analyze refactor --fix ./...
   roborev analyze duplication --fix --fix-agent claude-code *.go
+
+To fix an existing analysis job, use: roborev fix <job_id>
 `,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if listTypes {
@@ -94,6 +104,7 @@ Fix mode (--fix):
 				fix:        fix,
 				fixAgent:   fixAgent,
 				fixModel:   fixModel,
+				perFile:    perFile,
 			}
 			return runAnalysis(cmd, args[0], args[1:], opts)
 		},
@@ -108,6 +119,7 @@ Fix mode (--fix):
 	cmd.Flags().BoolVar(&fix, "fix", false, "after analysis, run an agentic agent to apply fixes")
 	cmd.Flags().StringVar(&fixAgent, "fix-agent", "", "agent to use for fixes (default: same as --agent)")
 	cmd.Flags().StringVar(&fixModel, "fix-model", "", "model for fix agent (default: same as --model)")
+	cmd.Flags().BoolVar(&perFile, "per-file", false, "create one analysis job per file")
 
 	return cmd
 }
@@ -121,6 +133,7 @@ type analyzeOptions struct {
 	fix        bool
 	fixAgent   string
 	fixModel   string
+	perFile    bool
 }
 
 func listAnalysisTypes(cmd *cobra.Command) error {
@@ -160,8 +173,24 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 		return fmt.Errorf("no files matched the provided patterns")
 	}
 
+	// Ensure daemon is running
+	if err := ensureDaemon(); err != nil {
+		return err
+	}
+
+	// Per-file mode: create one job per file
+	if opts.perFile {
+		return runPerFileAnalysis(cmd, repoRoot, analysisType, files, opts)
+	}
+
+	// Standard mode: all files in one job
+	return runSingleAnalysis(cmd, repoRoot, analysisType, files, opts)
+}
+
+// runSingleAnalysis creates a single analysis job for all files
+func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions) error {
 	if !opts.quiet {
-		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), typeName)
+		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), analysisType.Name)
 	}
 
 	// Build the full prompt
@@ -170,40 +199,10 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 		return fmt.Errorf("build prompt: %w", err)
 	}
 
-	// Ensure daemon is running
-	if err := ensureDaemon(); err != nil {
+	// Enqueue the job
+	job, err := enqueueAnalysisJob(repoRoot, fullPrompt, opts)
+	if err != nil {
 		return err
-	}
-
-	// Build the request
-	reqBody, _ := json.Marshal(map[string]interface{}{
-		"repo_path":     repoRoot,
-		"git_ref":       "analyze",
-		"agent":         opts.agentName,
-		"model":         opts.model,
-		"reasoning":     opts.reasoning,
-		"custom_prompt": fullPrompt,
-		"agentic":       false, // Analysis is read-only
-	})
-
-	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		return fmt.Errorf("failed to connect to daemon: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("enqueue failed: %s", body)
-	}
-
-	var job storage.ReviewJob
-	if err := json.Unmarshal(body, &job); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if !opts.quiet {
@@ -221,6 +220,130 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	return nil
+}
+
+// runPerFileAnalysis creates one analysis job per file
+func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions) error {
+	// Sort files for deterministic order
+	fileNames := make([]string, 0, len(files))
+	for name := range files {
+		fileNames = append(fileNames, name)
+	}
+	sortStrings(fileNames)
+
+	if !opts.quiet {
+		cmd.Printf("Creating %d analysis jobs (%q, one per file)...\n", len(files), analysisType.Name)
+	}
+
+	var jobIDs []int64
+	for i, fileName := range fileNames {
+		singleFile := map[string]string{fileName: files[fileName]}
+
+		fullPrompt, err := analysisType.BuildPrompt(singleFile)
+		if err != nil {
+			return fmt.Errorf("build prompt for %s: %w", fileName, err)
+		}
+
+		job, err := enqueueAnalysisJob(repoRoot, fullPrompt, opts)
+		if err != nil {
+			return fmt.Errorf("enqueue job for %s: %w", fileName, err)
+		}
+
+		jobIDs = append(jobIDs, job.ID)
+
+		if !opts.quiet {
+			cmd.Printf("  [%d/%d] Job %d: %s (agent: %s)\n", i+1, len(files), job.ID, fileName, job.Agent)
+		}
+	}
+
+	if !opts.quiet {
+		cmd.Printf("\nCreated %d jobs: %v\n", len(jobIDs), jobIDs)
+		cmd.Println("Use 'roborev fix <job_id>' to apply fixes for individual jobs.")
+	}
+
+	// If --fix with per-file, run fixes sequentially
+	if opts.fix {
+		if !opts.quiet {
+			cmd.Println("\nRunning fixes for each job...")
+		}
+		for i, jobID := range jobIDs {
+			if !opts.quiet {
+				cmd.Printf("\n=== Fixing job %d (%d/%d) ===\n", jobID, i+1, len(jobIDs))
+			}
+			if err := runAnalyzeAndFix(cmd, serverAddr, repoRoot, jobID, analysisType, opts); err != nil {
+				if !opts.quiet {
+					cmd.Printf("Warning: fix for job %d failed: %v\n", jobID, err)
+				}
+				// Continue with other jobs
+			}
+		}
+		return nil
+	}
+
+	// If --wait with per-file, wait for all jobs
+	if opts.wait {
+		if !opts.quiet {
+			cmd.Println("\nWaiting for all jobs to complete...")
+		}
+		for i, jobID := range jobIDs {
+			if !opts.quiet {
+				cmd.Printf("\n=== Job %d (%d/%d) ===\n", jobID, i+1, len(jobIDs))
+			}
+			if err := waitForPromptJob(cmd, serverAddr, jobID, opts.quiet); err != nil {
+				if !opts.quiet {
+					cmd.Printf("Warning: job %d failed: %v\n", jobID, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// enqueueAnalysisJob sends a job to the daemon
+func enqueueAnalysisJob(repoRoot, prompt string, opts analyzeOptions) (*storage.ReviewJob, error) {
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"repo_path":     repoRoot,
+		"git_ref":       "analyze",
+		"agent":         opts.agentName,
+		"model":         opts.model,
+		"reasoning":     opts.reasoning,
+		"custom_prompt": prompt,
+		"agentic":       false, // Analysis is read-only
+	})
+
+	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("enqueue failed: %s", body)
+	}
+
+	var job storage.ReviewJob
+	if err := json.Unmarshal(body, &job); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &job, nil
+}
+
+// sortStrings sorts a slice of strings in place
+func sortStrings(s []string) {
+	for i := 0; i < len(s); i++ {
+		for j := i + 1; j < len(s); j++ {
+			if s[i] > s[j] {
+				s[i], s[j] = s[j], s[i]
+			}
+		}
+	}
 }
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks addressed
