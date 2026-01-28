@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
@@ -740,7 +741,7 @@ func TestPerFileAnalysis(t *testing.T) {
 	cmd.SetOut(&output)
 
 	analysisType := analyze.GetType("refactor")
-	err = runPerFileAnalysis(cmd, tmpDir, analysisType, files, analyzeOptions{quiet: false})
+	err = runPerFileAnalysis(cmd, tmpDir, analysisType, files, analyzeOptions{quiet: false}, config.DefaultMaxPromptSize)
 	if err != nil {
 		t.Fatalf("runPerFileAnalysis: %v", err)
 	}

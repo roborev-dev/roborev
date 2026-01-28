@@ -213,20 +213,21 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 		return err
 	}
 
+	// Load config and resolve max prompt size once for all analysis modes
+	cfg, _ := config.LoadGlobal()
+	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
+
 	// Per-file mode: create one job per file
 	if opts.perFile {
-		return runPerFileAnalysis(cmd, repoRoot, analysisType, files, opts)
+		return runPerFileAnalysis(cmd, repoRoot, analysisType, files, opts, maxPromptSize)
 	}
 
 	// Standard mode: all files in one job
-	return runSingleAnalysis(cmd, repoRoot, analysisType, files, opts)
+	return runSingleAnalysis(cmd, repoRoot, analysisType, files, opts, maxPromptSize)
 }
 
 // runSingleAnalysis creates a single analysis job for all files
-func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions) error {
-	// Load config and resolve max prompt size
-	cfg, _ := config.LoadGlobal()
-	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
+func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
 	if !opts.quiet {
 		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), analysisType.Name)
 	}
@@ -237,12 +238,12 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 		return fmt.Errorf("build prompt: %w", err)
 	}
 
-	// Build file paths for output prefix
-	filePaths := make([]string, 0, len(files))
+	// Build relative file paths for output prefix
+	relPaths := make([]string, 0, len(files))
 	for name := range files {
-		filePaths = append(filePaths, name)
+		relPaths = append(relPaths, name)
 	}
-	outputPrefix := buildOutputPrefix(analysisType.Name, filePaths)
+	outputPrefix := buildOutputPrefix(analysisType.Name, relPaths)
 
 	// If prompt is too large, fall back to file paths only
 	if len(fullPrompt) > maxPromptSize {
@@ -283,11 +284,7 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 }
 
 // runPerFileAnalysis creates one analysis job per file
-func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions) error {
-	// Load config and resolve max prompt size
-	cfg, _ := config.LoadGlobal()
-	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
-
+func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
 	// Sort files for deterministic order
 	fileNames := make([]string, 0, len(files))
 	for name := range files {

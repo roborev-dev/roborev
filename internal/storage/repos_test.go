@@ -184,6 +184,92 @@ func TestEnqueuePromptJob(t *testing.T) {
 			t.Error("Expected Agentic to be false on claimed job")
 		}
 	})
+
+	t.Run("output_prefix is prepended to review output", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/output-prefix-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		outputPrefix := "## Test Analysis\n\n**Files:**\n- file1.go\n- file2.go\n\n---\n\n"
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:       repo.ID,
+			Agent:        "test",
+			Prompt:       "Test prompt",
+			OutputPrefix: outputPrefix,
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		// Claim and complete the job
+		_, err = db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+
+		agentOutput := "No issues found."
+		err = db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
+		if err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
+		// Fetch the review and verify prefix was prepended
+		review, err := db.GetReviewByJobID(job.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed: %v", err)
+		}
+
+		expectedOutput := outputPrefix + agentOutput
+		if review.Output != expectedOutput {
+			t.Errorf("Expected output to have prefix prepended.\nExpected:\n%s\n\nGot:\n%s", expectedOutput, review.Output)
+		}
+	})
+
+	t.Run("empty output_prefix leaves output unchanged", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/empty-prefix-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:       repo.ID,
+			Agent:        "test",
+			Prompt:       "Test prompt",
+			OutputPrefix: "", // Empty prefix
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		// Claim and complete the job
+		_, err = db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+
+		agentOutput := "Analysis complete."
+		err = db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
+		if err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
+		// Fetch the review and verify output is unchanged
+		review, err := db.GetReviewByJobID(job.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed: %v", err)
+		}
+
+		if review.Output != agentOutput {
+			t.Errorf("Expected output unchanged.\nExpected:\n%s\n\nGot:\n%s", agentOutput, review.Output)
+		}
+	})
 }
 
 func TestRenameRepo(t *testing.T) {
