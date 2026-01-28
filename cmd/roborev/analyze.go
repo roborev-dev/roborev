@@ -46,12 +46,14 @@ Available analysis types:
   complexity     Analyze complexity and suggest simplifications
   api-design     Review API consistency and design patterns
   dead-code      Find unused exports and unreachable code
+  architecture   Review architectural patterns and structure
 
 Examples:
   roborev analyze test-fixtures internal/storage/*_test.go
   roborev analyze duplication cmd/roborev/*.go
   roborev analyze refactor --wait main.go utils.go
   roborev analyze complexity --agent gemini ./...
+  roborev analyze architecture internal/storage/    # analyze a directory
   roborev analyze --list
 `,
 		Args: func(cmd *cobra.Command, args []string) error {

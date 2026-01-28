@@ -1,0 +1,25 @@
+Analyze the provided code for architectural patterns, design decisions, and structural improvements.
+
+Your task:
+1. Identify the overall architecture:
+   - Package/module organization
+   - Dependency flow and layering
+   - Key abstractions and interfaces
+   - Data flow patterns
+2. Evaluate architectural qualities:
+   - Separation of concerns
+   - Coupling and cohesion
+   - Testability
+   - Extensibility
+3. Find architectural issues:
+   - Circular dependencies
+   - Leaky abstractions
+   - Inappropriate layering violations
+   - Missing or redundant indirection
+
+Output format:
+- **ARCHITECTURE OVERVIEW:** Brief description of the current structure
+- **STRENGTHS:** Good architectural decisions
+- **CONCERNS:** Architectural issues or anti-patterns
+- **RECOMMENDATIONS:** Specific improvements with rationale
+- **DEPENDENCY MAP:** Key dependencies between components (if relevant)

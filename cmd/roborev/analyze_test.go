@@ -66,6 +66,11 @@ func TestExpandAndReadFiles(t *testing.T) {
 			wantKeys: []string{"data.json"},
 		},
 		{
+			name:     "directory as pattern",
+			patterns: []string{"sub"},
+			wantKeys: []string{"sub/helper.go", "sub/helper_test.go"},
+		},
+		{
 			name:     "no match",
 			patterns: []string{"nonexistent.go"},
 			wantErr:  true,

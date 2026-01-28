@@ -17,6 +17,7 @@ func TestGetType(t *testing.T) {
 		{"complexity", "complexity", false},
 		{"api-design", "api-design", false},
 		{"dead-code", "dead-code", false},
+		{"architecture", "architecture", false},
 		{"invalid", "", true},
 		{"", "", true},
 	}

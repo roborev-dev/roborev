@@ -50,6 +50,11 @@ var (
 		Description: "Find unused exports and unreachable code",
 		promptFile:  "dead_code.txt",
 	}
+	Architecture = AnalysisType{
+		Name:        "architecture",
+		Description: "Review architectural patterns and structure",
+		promptFile:  "architecture.txt",
+	}
 )
 
 // AllTypes returns all available analysis types
@@ -60,6 +65,7 @@ var AllTypes = []AnalysisType{
 	Complexity,
 	APIDesign,
 	DeadCode,
+	Architecture,
 }
 
 // GetType returns an analysis type by name, or nil if not found
