@@ -1972,7 +1972,12 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 	}
 
 	// Enqueue a prompt job with agentic=true
-	job, err := db.EnqueuePromptJob(repo.ID, "", "test-agent", "", "thorough", "Review this code", true)
+	job, err := db.EnqueuePromptJob(PromptJobOptions{
+		RepoID:  repo.ID,
+		Agent:   "test-agent",
+		Prompt:  "Review this code",
+		Agentic: true,
+	})
 	if err != nil {
 		t.Fatalf("EnqueuePromptJob failed: %v", err)
 	}
@@ -2019,7 +2024,11 @@ func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
 
 	// Also test with agentic=false to ensure we're not just always returning true
 	t.Run("non-agentic job returns Agentic=false", func(t *testing.T) {
-		nonAgenticJob, err := db.EnqueuePromptJob(repo.ID, "", "test-agent", "", "thorough", "Another review", false)
+		nonAgenticJob, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test-agent",
+			Prompt: "Another review",
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}

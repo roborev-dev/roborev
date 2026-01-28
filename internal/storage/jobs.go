@@ -724,15 +724,27 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, branch, agent, model, reason
 	}, nil
 }
 
+// PromptJobOptions contains options for creating a prompt-based job.
+type PromptJobOptions struct {
+	RepoID       int64
+	Branch       string
+	Agent        string
+	Model        string
+	Reasoning    string
+	Prompt       string
+	OutputPrefix string // Prefix to prepend to review output (e.g., file paths)
+	Agentic      bool   // Allow file edits and command execution
+}
+
 // EnqueuePromptJob creates a new job with a custom prompt (not a git review).
 // The prompt is stored at enqueue time and used directly by the worker.
-// If agentic is true, the agent will be allowed to edit files and run commands.
-func (db *DB) EnqueuePromptJob(repoID int64, branch, agent, model, reasoning, customPrompt string, agentic bool) (*ReviewJob, error) {
+func (db *DB) EnqueuePromptJob(opts PromptJobOptions) (*ReviewJob, error) {
+	reasoning := opts.Reasoning
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
 	agenticInt := 0
-	if agentic {
+	if opts.Agentic {
 		agenticInt = 1
 	}
 	uuid := GenerateUUID()
@@ -740,8 +752,8 @@ func (db *DB) EnqueuePromptJob(repoID int64, branch, agent, model, reasoning, cu
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, prompt, agentic, uuid, source_machine_id, updated_at) VALUES (?, NULL, 'prompt', ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
-		repoID, nullString(branch), agent, nullString(model), reasoning, customPrompt, agenticInt, uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, prompt, agentic, output_prefix, uuid, source_machine_id, updated_at) VALUES (?, NULL, 'prompt', ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
+		opts.RepoID, nullString(opts.Branch), opts.Agent, nullString(opts.Model), reasoning, opts.Prompt, agenticInt, nullString(opts.OutputPrefix), uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -749,17 +761,18 @@ func (db *DB) EnqueuePromptJob(repoID int64, branch, agent, model, reasoning, cu
 	id, _ := result.LastInsertId()
 	return &ReviewJob{
 		ID:              id,
-		RepoID:          repoID,
+		RepoID:          opts.RepoID,
 		CommitID:        nil,
 		GitRef:          "prompt",
-		Branch:          branch,
-		Agent:           agent,
-		Model:           model,
+		Branch:          opts.Branch,
+		Agent:           opts.Agent,
+		Model:           opts.Model,
 		Reasoning:       reasoning,
 		Status:          JobStatusQueued,
 		EnqueuedAt:      now,
-		Prompt:          customPrompt,
-		Agentic:         agentic,
+		Prompt:          opts.Prompt,
+		Agentic:         opts.Agentic,
+		OutputPrefix:    opts.OutputPrefix,
 		UUID:            uuid,
 		SourceMachineID: machineID,
 		UpdatedAt:       &now,
@@ -854,16 +867,32 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 
 // CompleteJob marks a job as done and stores the review.
 // Only updates if job is still in 'running' state (respects cancellation).
+// If the job has an output_prefix, it will be prepended to the output.
 func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
+	// Get machine ID and generate UUIDs before starting transaction
+	// to avoid potential lock conflicts with GetMachineID's writes
+	now := time.Now().Format(time.RFC3339)
+	machineID, _ := db.GetMachineID()
+	reviewUUID := GenerateUUID()
+
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	now := time.Now().Format(time.RFC3339)
-	machineID, _ := db.GetMachineID()
-	reviewUUID := GenerateUUID()
+	// Fetch output_prefix from job (if any)
+	var outputPrefix sql.NullString
+	err = tx.QueryRow(`SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// Prepend output_prefix if present
+	finalOutput := output
+	if outputPrefix.Valid && outputPrefix.String != "" {
+		finalOutput = outputPrefix.String + output
+	}
 
 	// Update job status only if still running (not canceled)
 	result, err := tx.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
@@ -883,7 +912,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 
 	// Insert review with sync columns
 	_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, output, reviewUUID, machineID, now)
+		jobID, agent, prompt, finalOutput, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}

@@ -18,7 +18,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("creates job with custom prompt", func(t *testing.T) {
 		customPrompt := "Explain the architecture of this codebase"
-		job, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "thorough", customPrompt, false)
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "claude-code",
+			Reasoning: "thorough",
+			Prompt:    customPrompt,
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -41,7 +46,11 @@ func TestEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("defaults reasoning to thorough", func(t *testing.T) {
-		job, err := db.EnqueuePromptJob(repo.ID, "", "codex", "", "", "test prompt", false)
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "codex",
+			Prompt: "test prompt",
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -63,7 +72,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		customPrompt := "Find security issues in the codebase"
-		_, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "standard", customPrompt, false)
+		_, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "claude-code",
+			Reasoning: "standard",
+			Prompt:    customPrompt,
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -95,7 +109,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		// Enqueue with agentic=true
-		job, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "thorough", "Test agentic prompt", true)
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:  repo.ID,
+			Agent:   "claude-code",
+			Prompt:  "Test agentic prompt",
+			Agentic: true,
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -138,7 +157,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		// Enqueue with agentic=false
-		job, err := db.EnqueuePromptJob(repo.ID, "", "codex", "", "standard", "Non-agentic prompt", false)
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "codex",
+			Reasoning: "standard",
+			Prompt:    "Non-agentic prompt",
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -441,7 +465,7 @@ func TestGetRepoStats(t *testing.T) {
 		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
 
 		// Create a prompt job with output that contains verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "", "codex", "", "thorough", "Test prompt", false)
+		promptJob, _ := db.EnqueuePromptJob(PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		db.ClaimJob("worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
@@ -754,7 +778,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		repo, _ := db.GetOrCreateRepo("/tmp/verdict-prompt-test")
 
 		// Create a prompt job and complete it with output containing verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "", "codex", "", "thorough", "Test prompt", false)
+		promptJob, _ := db.EnqueuePromptJob(PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		db.ClaimJob("worker-1")
 		// Output that would normally be parsed as FAIL
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")

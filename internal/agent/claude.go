@@ -134,6 +134,8 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		// Clear env var so Claude uses subscription auth
 		cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_API_KEY")
 	}
+	// Suppress sounds from Claude Code (notification/completion sounds)
+	cmd.Env = append(cmd.Env, "CLAUDE_NO_SOUND=1")
 
 	var stderr bytes.Buffer
 	stdoutPipe, err := cmd.StdoutPipe()

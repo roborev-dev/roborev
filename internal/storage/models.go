@@ -47,8 +47,9 @@ type ReviewJob struct {
 	Error      string     `json:"error,omitempty"`
 	Prompt      string     `json:"prompt,omitempty"`
 	RetryCount  int        `json:"retry_count"`
-	DiffContent *string    `json:"diff_content,omitempty"` // For dirty reviews (uncommitted changes)
-	Agentic     bool       `json:"agentic"`                // Enable agentic mode (allow file edits)
+	DiffContent  *string `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
+	Agentic      bool    `json:"agentic"`                 // Enable agentic mode (allow file edits)
+	OutputPrefix string  `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 
 	// Sync fields
 	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync

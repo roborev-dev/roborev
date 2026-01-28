@@ -303,6 +303,7 @@ type EnqueueRequest struct {
 	Reasoning    string `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
 	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
 	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
+	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 }
 
 type ErrorResponse struct {
@@ -434,7 +435,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var job *storage.ReviewJob
 	if isPrompt {
 		// Custom prompt job - use provided prompt directly
-		job, err = s.db.EnqueuePromptJob(repo.ID, req.Branch, agentName, model, reasoning, req.CustomPrompt, req.Agentic)
+		job, err = s.db.EnqueuePromptJob(storage.PromptJobOptions{
+			RepoID:       repo.ID,
+			Branch:       req.Branch,
+			Agent:        agentName,
+			Model:        model,
+			Reasoning:    reasoning,
+			Prompt:       req.CustomPrompt,
+			OutputPrefix: req.OutputPrefix,
+			Agentic:      req.Agentic,
+		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
 			return

@@ -788,7 +788,7 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 	serverAddr = ts.URL
 	defer func() { serverAddr = oldAddr }()
 
-	job, err := enqueueAnalysisJob("/repo", "test prompt", analyzeOptions{agentName: "test"})
+	job, err := enqueueAnalysisJob("/repo", "test prompt", "", analyzeOptions{agentName: "test"})
 	if err != nil {
 		t.Fatalf("enqueueAnalysisJob: %v", err)
 	}

@@ -233,23 +233,30 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 		return fmt.Errorf("build prompt: %w", err)
 	}
 
+	// Build file paths for output prefix
+	filePaths := make([]string, 0, len(files))
+	for name := range files {
+		filePaths = append(filePaths, name)
+	}
+	outputPrefix := buildOutputPrefix(analysisType.Name, filePaths)
+
 	// If prompt is too large, fall back to file paths only
 	if len(fullPrompt) > maxPromptSize {
 		if !opts.quiet {
 			cmd.Printf("Files too large to embed (%dKB), using file paths...\n", len(fullPrompt)/1024)
 		}
-		filePaths := make([]string, 0, len(files))
+		absPaths := make([]string, 0, len(files))
 		for name := range files {
-			filePaths = append(filePaths, filepath.Join(repoRoot, name))
+			absPaths = append(absPaths, filepath.Join(repoRoot, name))
 		}
-		fullPrompt, err = analysisType.BuildPromptWithPaths(repoRoot, filePaths)
+		fullPrompt, err = analysisType.BuildPromptWithPaths(repoRoot, absPaths)
 		if err != nil {
 			return fmt.Errorf("build prompt with paths: %w", err)
 		}
 	}
 
 	// Enqueue the job
-	job, err := enqueueAnalysisJob(repoRoot, fullPrompt, opts)
+	job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, opts)
 	if err != nil {
 		return err
 	}
@@ -293,6 +300,9 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 			return fmt.Errorf("build prompt for %s: %w", fileName, err)
 		}
 
+		// Build output prefix for this file
+		outputPrefix := buildOutputPrefix(analysisType.Name, []string{fileName})
+
 		// If single file is too large, fall back to file path only
 		if len(fullPrompt) > maxPromptSize {
 			if !opts.quiet {
@@ -305,7 +315,7 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 			}
 		}
 
-		job, err := enqueueAnalysisJob(repoRoot, fullPrompt, opts)
+		job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, opts)
 		if err != nil {
 			return fmt.Errorf("enqueue job for %s: %w", fileName, err)
 		}
@@ -361,8 +371,22 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 	return nil
 }
 
+// buildOutputPrefix creates a prefix showing which files were analyzed.
+// This is prepended to the agent's output for reliable file identification.
+func buildOutputPrefix(analysisType string, filePaths []string) string {
+	sort.Strings(filePaths)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## %s Analysis\n\n", analysisType))
+	sb.WriteString("**Files:**\n")
+	for _, path := range filePaths {
+		sb.WriteString(fmt.Sprintf("- %s\n", path))
+	}
+	sb.WriteString("\n---\n\n")
+	return sb.String()
+}
+
 // enqueueAnalysisJob sends a job to the daemon
-func enqueueAnalysisJob(repoRoot, prompt string, opts analyzeOptions) (*storage.ReviewJob, error) {
+func enqueueAnalysisJob(repoRoot, prompt, outputPrefix string, opts analyzeOptions) (*storage.ReviewJob, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"repo_path":     repoRoot,
 		"git_ref":       "analyze",
@@ -370,6 +394,7 @@ func enqueueAnalysisJob(repoRoot, prompt string, opts analyzeOptions) (*storage.
 		"model":         opts.model,
 		"reasoning":     opts.reasoning,
 		"custom_prompt": prompt,
+		"output_prefix": outputPrefix,
 		"agentic":       false, // Analysis is read-only
 	})
 
