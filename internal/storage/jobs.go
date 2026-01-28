@@ -87,8 +87,8 @@ func stripListMarker(s string) string {
 }
 
 // hasSeverityLabel checks if the output contains severity labels indicating findings.
-// Matches patterns like "- Medium —", "* Low:", "Critical - issue", etc.
-// Only checks lines that look like findings (start with bullets or numbers).
+// Matches patterns like "- Medium —", "* Low:", "Critical — issue", etc.
+// Checks lines that start with bullets/numbers OR directly with severity words.
 // Requires separators to be followed by space to avoid "High-level overview".
 func hasSeverityLabel(output string) bool {
 	lc := strings.ToLower(output)
@@ -96,47 +96,46 @@ func hasSeverityLabel(output string) bool {
 
 	for _, line := range strings.Split(lc, "\n") {
 		trimmed := strings.TrimSpace(line)
-
-		// Only check lines that look like findings (start with bullet or number)
-		// This avoids matching rubric text like "Severity levels: High - ..."
-		isFindingLine := false
-		if len(trimmed) > 0 {
-			first := trimmed[0]
-			if first == '-' || first == '*' || (first >= '0' && first <= '9') {
-				isFindingLine = true
-			}
-			// Check for bullet point (multi-byte character)
-			if strings.HasPrefix(trimmed, "•") {
-				isFindingLine = true
-			}
-		}
-		if !isFindingLine {
+		if len(trimmed) == 0 {
 			continue
 		}
 
-		// Strip leading bullets/asterisks/numbers
-		trimmed = strings.TrimLeft(trimmed, "-*•0123456789.) ")
-		trimmed = strings.TrimSpace(trimmed)
+		// Check if line starts with bullet/number - if so, strip it
+		first := trimmed[0]
+		hasBullet := first == '-' || first == '*' || (first >= '0' && first <= '9') ||
+			strings.HasPrefix(trimmed, "•")
 
+		checkText := trimmed
+		if hasBullet {
+			// Strip leading bullets/asterisks/numbers
+			checkText = strings.TrimLeft(trimmed, "-*•0123456789.) ")
+			checkText = strings.TrimSpace(checkText)
+		}
+
+		// Check if text starts with a severity word
 		for _, sev := range severities {
-			if strings.HasPrefix(trimmed, sev) {
-				// Check if followed by separator (dash, em-dash, colon, pipe)
-				rest := trimmed[len(sev):]
-				rest = strings.TrimSpace(rest)
-				if len(rest) > 0 {
-					// Check for em-dash or en-dash (these are unambiguous)
-					if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
-						return true
-					}
-					// Check for colon or pipe (unambiguous separators)
-					if rest[0] == ':' || rest[0] == '|' {
-						return true
-					}
-					// For hyphen, require space after to avoid "High-level"
-					if rest[0] == '-' && len(rest) > 1 && rest[1] == ' ' {
-						return true
-					}
-				}
+			if !strings.HasPrefix(checkText, sev) {
+				continue
+			}
+
+			// Check if followed by separator (dash, em-dash, colon, pipe)
+			rest := checkText[len(sev):]
+			rest = strings.TrimSpace(rest)
+			if len(rest) == 0 {
+				continue
+			}
+
+			// Check for em-dash or en-dash (these are unambiguous)
+			if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
+				return true
+			}
+			// Check for colon or pipe (unambiguous separators)
+			if rest[0] == ':' || rest[0] == '|' {
+				return true
+			}
+			// For hyphen, require space after to avoid "High-level"
+			if rest[0] == '-' && len(rest) > 1 && rest[1] == ' ' {
+				return true
 			}
 		}
 	}

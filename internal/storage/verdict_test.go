@@ -720,8 +720,18 @@ func TestParseVerdict(t *testing.T) {
 			want:   "F",
 		},
 		{
-			name:   "severity label critical",
+			name:   "severity label critical with bullet",
 			output: "- Critical — Data loss possible.\nNo issues otherwise.",
+			want:   "F",
+		},
+		{
+			name:   "severity label critical without bullet",
+			output: "Critical — Data loss possible.\nNo issues otherwise.",
+			want:   "F",
+		},
+		{
+			name:   "severity label high without bullet",
+			output: "High: Security vulnerability in auth module.\nNo issues found.",
 			want:   "F",
 		},
 		{
