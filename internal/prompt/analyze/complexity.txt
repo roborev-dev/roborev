@@ -1,0 +1,17 @@
+Analyze the provided code for complexity issues and suggest simplifications.
+
+Your task:
+1. Identify complexity hotspots:
+   - Functions with high cyclomatic complexity
+   - Deeply nested control flow
+   - Complex boolean expressions
+   - Functions with too many parameters
+   - Large switch statements or if-else chains
+2. Assess cognitive load for each complex area
+3. Suggest specific simplifications
+
+Output format:
+- **COMPLEXITY HOTSPOTS:** List functions/areas with complexity indicators
+- **COGNITIVE LOAD ISSUES:** Parts that are hard to understand at a glance
+- **SIMPLIFICATION SUGGESTIONS:** Concrete ways to reduce complexity
+- **TRADE-OFFS:** Any trade-offs to consider (performance, flexibility, etc.)

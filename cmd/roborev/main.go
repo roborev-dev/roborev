@@ -66,6 +66,7 @@ func main() {
 	rootCmd.AddCommand(tuiCmd())
 	rootCmd.AddCommand(refineCmd())
 	rootCmd.AddCommand(runCmd())
+	rootCmd.AddCommand(analyzeCmd())
 	rootCmd.AddCommand(promptCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(repoCmd())
 	rootCmd.AddCommand(skillsCmd())
