@@ -9,7 +9,14 @@ import (
 // ParseVerdict extracts P (pass) or F (fail) from review output.
 // Returns "P" only if a clear pass indicator appears at the start of a line.
 // Rejects lines containing caveats like "but", "however", "except".
+// Also fails if severity labels (Critical/High/Medium/Low) indicate findings.
 func ParseVerdict(output string) string {
+	// First check for severity labels which indicate actual findings
+	// These appear as "- Medium —", "* Low:", "Critical -", etc.
+	if hasSeverityLabel(output) {
+		return "F"
+	}
+
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(strings.ToLower(line))
 		// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
@@ -77,6 +84,38 @@ func stripListMarker(s string) string {
 		break
 	}
 	return s
+}
+
+// hasSeverityLabel checks if the output contains severity labels indicating findings.
+// Matches patterns like "- Medium —", "* Low:", "Critical -", "High:", etc.
+// These indicate actual issues were found regardless of any "no issues" text.
+func hasSeverityLabel(output string) bool {
+	lc := strings.ToLower(output)
+	severities := []string{"critical", "high", "medium", "low"}
+
+	for _, line := range strings.Split(lc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Strip leading bullets/asterisks
+		trimmed = strings.TrimLeft(trimmed, "-*• ")
+		trimmed = strings.TrimSpace(trimmed)
+
+		for _, sev := range severities {
+			if strings.HasPrefix(trimmed, sev) {
+				// Check if followed by separator (dash, em-dash, colon, pipe)
+				rest := trimmed[len(sev):]
+				rest = strings.TrimSpace(rest)
+				if len(rest) > 0 {
+					first := rest[0]
+					// Check for various separators: —, –, -, :, |
+					if first == '-' || first == ':' || first == '|' ||
+						strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 // hasCaveat checks if the line contains contrastive words or additional sentences with issues
@@ -333,7 +372,7 @@ func checkClauseForCaveat(clause string) bool {
 		// Strip punctuation from both sides for word matching
 		w = strings.Trim(w, ".,;:!?()[]\"'")
 		// Contrastive words
-		if w == "but" || w == "however" || w == "except" {
+		if w == "but" || w == "however" || w == "except" || w == "beyond" {
 			return true
 		}
 		// Negative indicators that suggest problems (unless negated)

@@ -700,6 +700,31 @@ func TestParseVerdict(t *testing.T) {
 			want:   "F",
 		},
 		{
+			name:   "no issues found beyond caveat",
+			output: "No issues found beyond the two notes above.",
+			want:   "F",
+		},
+		{
+			name:   "severity label medium em dash",
+			output: "**Findings**\n- Medium — Possible regression in deploy.\nNo issues found beyond the notes above.",
+			want:   "F",
+		},
+		{
+			name:   "severity label low with colon",
+			output: "- Low: Minor style issue.\nOtherwise no issues.",
+			want:   "F",
+		},
+		{
+			name:   "severity label high with dash",
+			output: "* High - Security vulnerability found.\nNo issues found.",
+			want:   "F",
+		},
+		{
+			name:   "severity label critical",
+			output: "Critical — Data loss possible.\nNo issues otherwise.",
+			want:   "F",
+		},
+		{
 			name:   "no issues found but with period",
 			output: "No issues found but.",
 			want:   "F",
