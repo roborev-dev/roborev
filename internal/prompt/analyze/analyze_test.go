@@ -141,3 +141,55 @@ func TestBuildPromptEmptyFiles(t *testing.T) {
 		t.Error("prompt should have empty files list")
 	}
 }
+
+func TestBuildPromptWithPaths(t *testing.T) {
+	repoRoot := "/home/user/myrepo"
+	filePaths := []string{
+		"/home/user/myrepo/b.go",
+		"/home/user/myrepo/a.go",
+	}
+
+	prompt, err := TestFixtures.BuildPromptWithPaths(repoRoot, filePaths)
+	if err != nil {
+		t.Fatalf("BuildPromptWithPaths() error = %v", err)
+	}
+
+	// Check header
+	if !strings.Contains(prompt, "## Analysis Request") {
+		t.Error("prompt missing '## Analysis Request' header")
+	}
+	if !strings.Contains(prompt, "**Type:** test-fixtures") {
+		t.Error("prompt missing type")
+	}
+	if !strings.Contains(prompt, "**Repository:** /home/user/myrepo") {
+		t.Error("prompt missing repository path")
+	}
+	if !strings.Contains(prompt, "**Files:** 2 file(s)") {
+		t.Error("prompt missing file count")
+	}
+
+	// Check file paths are listed (should be sorted)
+	if !strings.Contains(prompt, "- `/home/user/myrepo/a.go`") {
+		t.Error("prompt missing a.go path")
+	}
+	if !strings.Contains(prompt, "- `/home/user/myrepo/b.go`") {
+		t.Error("prompt missing b.go path")
+	}
+
+	// Check paths are in sorted order
+	aIdx := strings.Index(prompt, "a.go")
+	bIdx := strings.Index(prompt, "b.go")
+	if aIdx > bIdx {
+		t.Error("paths should be in sorted order (a.go before b.go)")
+	}
+
+	// Check for the "too large" message
+	if !strings.Contains(prompt, "too large to embed") {
+		t.Error("prompt missing 'too large' explanation")
+	}
+
+	// Check instructions section
+	if !strings.Contains(prompt, "## Instructions") {
+		t.Error("prompt missing '## Instructions' header")
+	}
+}

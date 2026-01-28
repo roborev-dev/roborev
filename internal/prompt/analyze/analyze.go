@@ -128,3 +128,38 @@ func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 
 	return sb.String(), nil
 }
+
+// BuildPromptWithPaths constructs a prompt with file paths only (no contents).
+// The agent is expected to read the files itself. Used when files are too large
+// to embed in the prompt.
+func (t AnalysisType) BuildPromptWithPaths(repoRoot string, filePaths []string) (string, error) {
+	template, err := t.GetPrompt()
+	if err != nil {
+		return "", err
+	}
+
+	sort.Strings(filePaths)
+
+	var sb strings.Builder
+
+	// Write metadata header
+	sb.WriteString("## Analysis Request\n\n")
+	sb.WriteString(fmt.Sprintf("**Type:** %s\n", t.Name))
+	sb.WriteString(fmt.Sprintf("**Description:** %s\n", t.Description))
+	sb.WriteString(fmt.Sprintf("**Repository:** %s\n", repoRoot))
+	sb.WriteString(fmt.Sprintf("**Files:** %d file(s)\n\n", len(filePaths)))
+
+	// List file paths for the agent to read
+	sb.WriteString("## Files to Analyze\n\n")
+	sb.WriteString("The following files are too large to embed. Please read them directly:\n\n")
+	for _, path := range filePaths {
+		sb.WriteString(fmt.Sprintf("- `%s`\n", path))
+	}
+	sb.WriteString("\n")
+
+	// Write the analysis prompt
+	sb.WriteString("## Instructions\n\n")
+	sb.WriteString(template)
+
+	return sb.String(), nil
+}

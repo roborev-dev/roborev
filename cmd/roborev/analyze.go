@@ -218,16 +218,34 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	return runSingleAnalysis(cmd, repoRoot, analysisType, files, opts)
 }
 
+// Maximum prompt size before falling back to file paths only (200KB, leaving room for overhead)
+const maxPromptSize = 200 * 1024
+
 // runSingleAnalysis creates a single analysis job for all files
 func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions) error {
 	if !opts.quiet {
 		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), analysisType.Name)
 	}
 
-	// Build the full prompt
+	// Build the full prompt with file contents
 	fullPrompt, err := analysisType.BuildPrompt(files)
 	if err != nil {
 		return fmt.Errorf("build prompt: %w", err)
+	}
+
+	// If prompt is too large, fall back to file paths only
+	if len(fullPrompt) > maxPromptSize {
+		if !opts.quiet {
+			cmd.Printf("Files too large to embed (%dKB), using file paths...\n", len(fullPrompt)/1024)
+		}
+		filePaths := make([]string, 0, len(files))
+		for name := range files {
+			filePaths = append(filePaths, filepath.Join(repoRoot, name))
+		}
+		fullPrompt, err = analysisType.BuildPromptWithPaths(repoRoot, filePaths)
+		if err != nil {
+			return fmt.Errorf("build prompt with paths: %w", err)
+		}
 	}
 
 	// Enqueue the job
@@ -273,6 +291,18 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 		fullPrompt, err := analysisType.BuildPrompt(singleFile)
 		if err != nil {
 			return fmt.Errorf("build prompt for %s: %w", fileName, err)
+		}
+
+		// If single file is too large, fall back to file path only
+		if len(fullPrompt) > maxPromptSize {
+			if !opts.quiet {
+				cmd.Printf("  %s too large (%dKB), using file path...\n", fileName, len(fullPrompt)/1024)
+			}
+			filePath := filepath.Join(repoRoot, fileName)
+			fullPrompt, err = analysisType.BuildPromptWithPaths(repoRoot, []string{filePath})
+			if err != nil {
+				return fmt.Errorf("build prompt with path for %s: %w", fileName, err)
+			}
 		}
 
 		job, err := enqueueAnalysisJob(repoRoot, fullPrompt, opts)
