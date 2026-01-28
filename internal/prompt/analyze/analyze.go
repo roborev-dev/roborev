@@ -148,7 +148,7 @@ func (t AnalysisType) BuildPromptWithPaths(repoRoot string, filePaths []string) 
 	sb.WriteString(fmt.Sprintf("**Type:** %s\n", t.Name))
 	sb.WriteString(fmt.Sprintf("**Description:** %s\n", t.Description))
 	sb.WriteString(fmt.Sprintf("**Repository:** %s\n", repoRoot))
-	sb.WriteString(fmt.Sprintf("**Files:** %d file(s)\n\n", len(filePaths)))
+	sb.WriteString(fmt.Sprintf("**Files:** %s\n\n", strings.Join(filePaths, ", ")))
 
 	// List file paths for the agent to read
 	sb.WriteString("## Files to Analyze\n\n")

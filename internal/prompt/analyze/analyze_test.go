@@ -165,8 +165,10 @@ func TestBuildPromptWithPaths(t *testing.T) {
 	if !strings.Contains(prompt, "**Repository:** "+repoRoot) {
 		t.Error("prompt missing repository path")
 	}
-	if !strings.Contains(prompt, "**Files:** 2 file(s)") {
-		t.Error("prompt missing file count")
+	// Files header should list paths (sorted)
+	expectedFilesHeader := "**Files:** " + filepath.Join(repoRoot, "a.go") + ", " + filepath.Join(repoRoot, "b.go")
+	if !strings.Contains(prompt, expectedFilesHeader) {
+		t.Errorf("prompt missing expected files header, want %q", expectedFilesHeader)
 	}
 
 	// Check file paths are listed (should be sorted)
