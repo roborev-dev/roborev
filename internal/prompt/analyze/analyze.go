@@ -131,7 +131,8 @@ func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 
 // BuildPromptWithPaths constructs a prompt with file paths only (no contents).
 // The agent is expected to read the files itself. Used when files are too large
-// to embed in the prompt.
+// to embed in the prompt. The repoRoot is displayed in the header for context;
+// filePaths should be absolute paths that the agent can read directly.
 func (t AnalysisType) BuildPromptWithPaths(repoRoot string, filePaths []string) (string, error) {
 	template, err := t.GetPrompt()
 	if err != nil {

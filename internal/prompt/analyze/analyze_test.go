@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -143,10 +144,10 @@ func TestBuildPromptEmptyFiles(t *testing.T) {
 }
 
 func TestBuildPromptWithPaths(t *testing.T) {
-	repoRoot := "/home/user/myrepo"
+	repoRoot := t.TempDir()
 	filePaths := []string{
-		"/home/user/myrepo/b.go",
-		"/home/user/myrepo/a.go",
+		filepath.Join(repoRoot, "b.go"),
+		filepath.Join(repoRoot, "a.go"),
 	}
 
 	prompt, err := TestFixtures.BuildPromptWithPaths(repoRoot, filePaths)
@@ -161,7 +162,7 @@ func TestBuildPromptWithPaths(t *testing.T) {
 	if !strings.Contains(prompt, "**Type:** test-fixtures") {
 		t.Error("prompt missing type")
 	}
-	if !strings.Contains(prompt, "**Repository:** /home/user/myrepo") {
+	if !strings.Contains(prompt, "**Repository:** "+repoRoot) {
 		t.Error("prompt missing repository path")
 	}
 	if !strings.Contains(prompt, "**Files:** 2 file(s)") {
@@ -169,10 +170,10 @@ func TestBuildPromptWithPaths(t *testing.T) {
 	}
 
 	// Check file paths are listed (should be sorted)
-	if !strings.Contains(prompt, "- `/home/user/myrepo/a.go`") {
+	if !strings.Contains(prompt, "- `"+filepath.Join(repoRoot, "a.go")+"`") {
 		t.Error("prompt missing a.go path")
 	}
-	if !strings.Contains(prompt, "- `/home/user/myrepo/b.go`") {
+	if !strings.Contains(prompt, "- `"+filepath.Join(repoRoot, "b.go")+"`") {
 		t.Error("prompt missing b.go path")
 	}
 
