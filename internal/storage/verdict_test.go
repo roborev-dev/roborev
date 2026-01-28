@@ -765,6 +765,11 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "severity legend with descriptions not a finding",
+			output: "No issues found.\n\nSeverity levels:\nHigh - immediate action required.\n  These issues block release.\nMedium - should be addressed.",
+			want:   "P",
+		},
+		{
 			name:   "no issues found but with period",
 			output: "No issues found but.",
 			want:   "F",

@@ -159,41 +159,24 @@ func hasSeverityLabel(output string) bool {
 }
 
 // isLegendEntry checks if a line at index i appears to be part of a severity legend/rubric
-// by looking at preceding lines for legend indicators.
+// by looking at preceding lines for legend indicators. Scans up to 10 lines back,
+// skipping empty lines, severity lines, and description lines that may appear
+// between legend entries.
 func isLegendEntry(lines []string, i int) bool {
-	severities := []string{"critical", "high", "medium", "low"}
-
-	// Check previous lines for legend indicators
-	// Skip other severity lines (they might be part of the same legend)
 	for j := i - 1; j >= 0 && j >= i-10; j-- {
-		prev := strings.TrimSpace(strings.ToLower(lines[j]))
+		prev := strings.TrimSpace(lines[j])
 		if len(prev) == 0 {
 			continue
 		}
 
-		// Check for legend header patterns
-		if strings.HasSuffix(prev, ":") {
+		// Check for legend header patterns (ends with ":" and contains indicator word)
+		if strings.HasSuffix(prev, ":") || strings.HasSuffix(prev, "：") {
 			if strings.Contains(prev, "severity") || strings.Contains(prev, "level") ||
 				strings.Contains(prev, "legend") || strings.Contains(prev, "scale") ||
 				strings.Contains(prev, "rating") || strings.Contains(prev, "priority") {
 				return true
 			}
 		}
-
-		// Check if this line is also a severity label - if so, keep looking
-		isSeverityLine := false
-		for _, sev := range severities {
-			if strings.HasPrefix(prev, sev) {
-				isSeverityLine = true
-				break
-			}
-		}
-		if isSeverityLine {
-			continue
-		}
-
-		// Stop checking after first non-empty, non-severity line that isn't a header
-		break
 	}
 	return false
 }
