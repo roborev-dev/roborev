@@ -109,8 +109,10 @@ func TestExpandAndReadFiles(t *testing.T) {
 			}
 
 			for _, key := range tt.wantKeys {
-				if _, ok := files[key]; !ok {
-					t.Errorf("missing expected file %q, got keys: %v", key, mapKeys(files))
+				// Convert to native path separator for cross-platform compatibility
+				nativeKey := filepath.FromSlash(key)
+				if _, ok := files[nativeKey]; !ok {
+					t.Errorf("missing expected file %q, got keys: %v", nativeKey, mapKeys(files))
 				}
 			}
 		})
@@ -148,15 +150,17 @@ func TestExpandAndReadFilesRecursive(t *testing.T) {
 	// Should NOT include vendor/dep/dep.go or .git/config
 	want := []string{"main.go", "cmd/app/app.go", "internal/util.go"}
 	for _, w := range want {
-		if _, ok := result[w]; !ok {
-			t.Errorf("missing expected file %q", w)
+		nativeW := filepath.FromSlash(w)
+		if _, ok := result[nativeW]; !ok {
+			t.Errorf("missing expected file %q", nativeW)
 		}
 	}
 
 	noWant := []string{"vendor/dep/dep.go", ".git/config"}
 	for _, nw := range noWant {
-		if _, ok := result[nw]; ok {
-			t.Errorf("should not include %q", nw)
+		nativeNW := filepath.FromSlash(nw)
+		if _, ok := result[nativeNW]; ok {
+			t.Errorf("should not include %q", nativeNW)
 		}
 	}
 }
