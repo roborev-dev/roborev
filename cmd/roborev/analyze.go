@@ -32,6 +32,7 @@ func analyzeCmd() *cobra.Command {
 		wait       bool
 		quiet      bool
 		listTypes  bool
+		showPrompt bool
 		fix        bool
 		fixAgent   string
 		fixModel   string
@@ -87,6 +88,12 @@ To fix an existing analysis job, use: roborev fix <job_id>
 			if listTypes {
 				return nil
 			}
+			if showPrompt {
+				if len(args) < 1 {
+					return fmt.Errorf("--show-prompt requires an analysis type")
+				}
+				return nil
+			}
 			if len(args) < 2 {
 				return fmt.Errorf("requires analysis type and at least one file")
 			}
@@ -95,6 +102,9 @@ To fix an existing analysis job, use: roborev fix <job_id>
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if listTypes {
 				return listAnalysisTypes(cmd)
+			}
+			if showPrompt {
+				return showAnalysisPrompt(cmd, args[0])
 			}
 			opts := analyzeOptions{
 				agentName:  agentName,
@@ -117,6 +127,7 @@ To fix an existing analysis job, use: roborev fix <job_id>
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for job to complete and show result")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (just enqueue)")
 	cmd.Flags().BoolVar(&listTypes, "list", false, "list available analysis types")
+	cmd.Flags().BoolVar(&showPrompt, "show-prompt", false, "show the prompt template for an analysis type")
 	cmd.Flags().BoolVar(&fix, "fix", false, "after analysis, run an agentic agent to apply fixes")
 	cmd.Flags().StringVar(&fixAgent, "fix-agent", "", "agent to use for fixes (default: same as --agent)")
 	cmd.Flags().StringVar(&fixModel, "fix-model", "", "model for fix agent (default: same as --model)")
@@ -143,6 +154,25 @@ func listAnalysisTypes(cmd *cobra.Command) error {
 	for _, t := range analyze.AllTypes {
 		cmd.Printf("  %-14s %s\n", t.Name, t.Description)
 	}
+	return nil
+}
+
+func showAnalysisPrompt(cmd *cobra.Command, typeName string) error {
+	analysisType := analyze.GetType(typeName)
+	if analysisType == nil {
+		return fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName)
+	}
+
+	prompt, err := analysisType.GetPrompt()
+	if err != nil {
+		return err
+	}
+
+	cmd.Printf("# %s\n\n", analysisType.Name)
+	cmd.Printf("Description: %s\n\n", analysisType.Description)
+	cmd.Println("## Prompt Template")
+	cmd.Println()
+	cmd.Println(prompt)
 	return nil
 }
 

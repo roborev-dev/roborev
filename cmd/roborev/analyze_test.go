@@ -638,6 +638,53 @@ func TestListAnalysisTypes(t *testing.T) {
 	}
 }
 
+func TestShowAnalysisPrompt(t *testing.T) {
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&output)
+
+	err := showAnalysisPrompt(cmd, "test-fixtures")
+	if err != nil {
+		t.Fatalf("showAnalysisPrompt failed: %v", err)
+	}
+
+	outputStr := output.String()
+
+	// Should have type name as header
+	if !strings.Contains(outputStr, "# test-fixtures") {
+		t.Error("output should contain type name header")
+	}
+
+	// Should have description
+	if !strings.Contains(outputStr, "Description:") {
+		t.Error("output should contain description")
+	}
+
+	// Should have prompt template section
+	if !strings.Contains(outputStr, "## Prompt Template") {
+		t.Error("output should contain prompt template section")
+	}
+
+	// Should contain actual prompt content
+	if !strings.Contains(outputStr, "test file") {
+		t.Error("output should contain prompt content")
+	}
+}
+
+func TestShowAnalysisPromptUnknown(t *testing.T) {
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&output)
+
+	err := showAnalysisPrompt(cmd, "unknown-type")
+	if err == nil {
+		t.Error("expected error for unknown type")
+	}
+	if !strings.Contains(err.Error(), "unknown analysis type") {
+		t.Errorf("error should mention 'unknown analysis type': %v", err)
+	}
+}
+
 func TestPerFileAnalysis(t *testing.T) {
 	// Test that per-file mode creates multiple jobs
 	var jobCount int32
