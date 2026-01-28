@@ -1,12 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
+	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 func TestExpandAndReadFiles(t *testing.T) {
@@ -264,5 +272,311 @@ func TestAnalyzeOptionsDefaults(t *testing.T) {
 	opts.fixAgent = "claude-code"
 	if opts.fixAgent != "claude-code" {
 		t.Errorf("fixAgent should be 'claude-code', got %q", opts.fixAgent)
+	}
+}
+
+func TestWaitForAnalysisJob(t *testing.T) {
+	tests := []struct {
+		name       string
+		responses  []jobResponse // sequence of responses
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name: "immediate success",
+			responses: []jobResponse{
+				{status: "done", review: "Analysis complete: found 3 issues"},
+			},
+		},
+		{
+			name: "queued then done",
+			responses: []jobResponse{
+				{status: "queued"},
+				{status: "running"},
+				{status: "done", review: "All good"},
+			},
+		},
+		{
+			name: "job failed",
+			responses: []jobResponse{
+				{status: "failed", errMsg: "agent crashed"},
+			},
+			wantErr:    true,
+			wantErrMsg: "agent crashed",
+		},
+		{
+			name: "job canceled",
+			responses: []jobResponse{
+				{status: "canceled"},
+			},
+			wantErr:    true,
+			wantErrMsg: "canceled",
+		},
+		{
+			name: "job not found",
+			responses: []jobResponse{
+				{notFound: true},
+			},
+			wantErr:    true,
+			wantErrMsg: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var callCount int32
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				idx := int(atomic.AddInt32(&callCount, 1)) - 1
+				if idx >= len(tt.responses) {
+					idx = len(tt.responses) - 1
+				}
+				resp := tt.responses[idx]
+
+				switch {
+				case strings.HasPrefix(r.URL.Path, "/api/jobs"):
+					if resp.notFound {
+						json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []interface{}{}})
+						return
+					}
+					job := storage.ReviewJob{
+						ID:     42,
+						Status: storage.JobStatus(resp.status),
+						Error:  resp.errMsg,
+					}
+					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
+
+				case strings.HasPrefix(r.URL.Path, "/api/review"):
+					json.NewEncoder(w).Encode(storage.Review{
+						JobID:  42,
+						Output: resp.review,
+					})
+				}
+			}))
+			defer ts.Close()
+
+			review, err := waitForAnalysisJob(ts.URL, 42)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.wantErrMsg) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.wantErrMsg)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if review == nil {
+				t.Fatal("expected review, got nil")
+			}
+			if review.Output != tt.responses[len(tt.responses)-1].review {
+				t.Errorf("got review %q, want %q", review.Output, tt.responses[len(tt.responses)-1].review)
+			}
+		})
+	}
+}
+
+type jobResponse struct {
+	status   string
+	review   string
+	errMsg   string
+	notFound bool
+}
+
+func TestMarkJobAddressed(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantErr    bool
+	}{
+		{"success", http.StatusOK, false},
+		{"server error", http.StatusInternalServerError, true},
+		{"not found", http.StatusNotFound, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotJobID int64
+			var gotAddressed bool
+
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/review/address" {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				if r.Method != http.MethodPost {
+					t.Errorf("unexpected method: %s", r.Method)
+				}
+
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				gotJobID = int64(req["job_id"].(float64))
+				gotAddressed = req["addressed"].(bool)
+
+				w.WriteHeader(tt.statusCode)
+			}))
+			defer ts.Close()
+
+			err := markJobAddressed(ts.URL, 123)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if gotJobID != 123 {
+				t.Errorf("job_id = %d, want 123", gotJobID)
+			}
+			if !gotAddressed {
+				t.Error("addressed should be true")
+			}
+		})
+	}
+}
+
+func TestRunFixAgent(t *testing.T) {
+	// Create a minimal repo for the test agent
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755)
+
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&output)
+
+	// Use the built-in test agent
+	err := runFixAgent(cmd, tmpDir, "test", "", "fast", "Fix the issues", false)
+	if err != nil {
+		t.Fatalf("runFixAgent failed: %v", err)
+	}
+
+	// Test agent should produce output
+	if output.Len() == 0 {
+		t.Error("expected output from test agent")
+	}
+}
+
+func TestRunAnalyzeAndFix_Integration(t *testing.T) {
+	// This tests the full workflow with mocked daemon and test agent
+
+	// Create a real git repo (needed for commit verification)
+	tmpDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Run()
+	}
+	runGit("init")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+	os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644)
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	var jobsCount, reviewCount, addressCount int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(storage.ReviewJob{
+				ID:     99,
+				Agent:  "test",
+				Status: storage.JobStatusQueued,
+			})
+
+		case r.URL.Path == "/api/jobs":
+			count := atomic.AddInt32(&jobsCount, 1)
+			status := storage.JobStatusQueued
+			if count >= 2 {
+				status = storage.JobStatusDone
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs": []storage.ReviewJob{{
+					ID:     99,
+					Status: status,
+				}},
+			})
+
+		case r.URL.Path == "/api/review":
+			atomic.AddInt32(&reviewCount, 1)
+			json.NewEncoder(w).Encode(storage.Review{
+				JobID:  99,
+				Agent:  "test",
+				Output: "## CODE SMELLS\n- Found duplicated code in main.go",
+			})
+
+		case r.URL.Path == "/api/review/address":
+			atomic.AddInt32(&addressCount, 1)
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer ts.Close()
+
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&output)
+
+	analysisType := analyze.GetType("refactor")
+	opts := analyzeOptions{
+		agentName: "test",
+		fix:       true,
+		fixAgent:  "test",
+		reasoning: "fast",
+	}
+
+	err := runAnalyzeAndFix(cmd, ts.URL, tmpDir, 99, analysisType, opts)
+	if err != nil {
+		t.Fatalf("runAnalyzeAndFix failed: %v", err)
+	}
+
+	// Verify the workflow was executed
+	if atomic.LoadInt32(&jobsCount) < 2 {
+		t.Error("should have polled for job status")
+	}
+	if atomic.LoadInt32(&reviewCount) == 0 {
+		t.Error("should have fetched the review")
+	}
+	if atomic.LoadInt32(&addressCount) == 0 {
+		t.Error("should have marked job as addressed")
+	}
+
+	// Verify output contains analysis result
+	outputStr := output.String()
+	if !strings.Contains(outputStr, "CODE SMELLS") {
+		t.Error("output should contain analysis result")
+	}
+	if !strings.Contains(outputStr, "marked as addressed") {
+		t.Error("output should confirm job was addressed")
+	}
+}
+
+func TestBuildCommitPrompt(t *testing.T) {
+	analysisType := &analyze.AnalysisType{
+		Name:        "duplication",
+		Description: "Find code duplication",
+	}
+
+	prompt := buildCommitPrompt(analysisType)
+
+	// Should mention the analysis type
+	if !strings.Contains(prompt, "duplication") {
+		t.Error("prompt should reference the analysis type")
+	}
+
+	// Should have instructions for committing
+	if !strings.Contains(prompt, "git commit") {
+		t.Error("prompt should mention git commit")
+	}
+
+	// Should ask for a descriptive message
+	if !strings.Contains(prompt, "descriptive") {
+		t.Error("prompt should request a descriptive message")
 	}
 }

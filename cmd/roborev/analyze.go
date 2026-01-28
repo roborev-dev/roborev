@@ -259,9 +259,53 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 		cmd.Printf("Running fix agent (%s) to apply changes...\n\n", fixAgentName)
 	}
 
+	// Get HEAD before running fix agent
+	headBefore, _ := git.ResolveSHA(repoRoot, "HEAD")
+
 	// Run the fix agent locally in agentic mode
 	if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, fixPrompt, opts.quiet); err != nil {
 		return fmt.Errorf("fix agent failed: %w", err)
+	}
+
+	// Check if a commit was created
+	headAfter, _ := git.ResolveSHA(repoRoot, "HEAD")
+	commitCreated := headBefore != "" && headAfter != "" && headBefore != headAfter
+
+	// If no commit was created, check for uncommitted changes and retry with commit instructions
+	if !commitCreated {
+		hasChanges, _ := git.HasUncommittedChanges(repoRoot)
+		if hasChanges {
+			if !opts.quiet {
+				cmd.Println("\nNo commit was created. Re-running agent with commit instructions...")
+				cmd.Println()
+			}
+
+			commitPrompt := buildCommitPrompt(analysisType)
+			if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet); err != nil {
+				if !opts.quiet {
+					cmd.Printf("\nWarning: commit agent failed: %v\n", err)
+				}
+			}
+
+			// Check again if commit was created
+			headFinal, _ := git.ResolveSHA(repoRoot, "HEAD")
+			if headFinal != "" && headFinal != headAfter {
+				commitCreated = true
+			}
+		}
+	}
+
+	if !opts.quiet {
+		if commitCreated {
+			cmd.Println("\nChanges committed successfully.")
+		} else {
+			hasChanges, _ := git.HasUncommittedChanges(repoRoot)
+			if hasChanges {
+				cmd.Println("\nWarning: Changes were made but not committed. Please review and commit manually.")
+			} else {
+				cmd.Println("\nNo changes were made by the fix agent.")
+			}
+		}
 	}
 
 	// Mark the analysis as addressed
@@ -271,7 +315,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 			cmd.Printf("\nWarning: could not mark job as addressed: %v\n", err)
 		}
 	} else if !opts.quiet {
-		cmd.Printf("\nAnalysis job %d marked as addressed\n", jobID)
+		cmd.Printf("Analysis job %d marked as addressed\n", jobID)
 	}
 
 	return nil
@@ -360,7 +404,23 @@ func buildFixPrompt(analysisType *analyze.AnalysisType, analysisOutput string) s
 	sb.WriteString("After making changes:\n")
 	sb.WriteString("1. Verify the code still compiles/passes linting\n")
 	sb.WriteString("2. Run any relevant tests to ensure nothing is broken\n")
-	sb.WriteString("3. Summarize what changes were made\n")
+	sb.WriteString("3. Create a git commit with a descriptive message summarizing the changes\n")
+	return sb.String()
+}
+
+// buildCommitPrompt constructs a prompt to commit uncommitted changes
+func buildCommitPrompt(analysisType *analyze.AnalysisType) string {
+	var sb strings.Builder
+	sb.WriteString("# Commit Request\n\n")
+	sb.WriteString("There are uncommitted changes from a previous fix operation.\n\n")
+	sb.WriteString("## Instructions\n\n")
+	sb.WriteString("1. Review the current uncommitted changes using `git status` and `git diff`\n")
+	sb.WriteString("2. Stage the appropriate files\n")
+	sb.WriteString("3. Create a git commit with a descriptive message\n\n")
+	sb.WriteString("The commit message should:\n")
+	sb.WriteString(fmt.Sprintf("- Reference the '%s' analysis that prompted the changes\n", analysisType.Name))
+	sb.WriteString("- Summarize what was changed and why\n")
+	sb.WriteString("- Be concise but informative\n")
 	return sb.String()
 }
 
