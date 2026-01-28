@@ -87,16 +87,35 @@ func stripListMarker(s string) string {
 }
 
 // hasSeverityLabel checks if the output contains severity labels indicating findings.
-// Matches patterns like "- Medium —", "* Low:", "Critical -", "High:", etc.
-// These indicate actual issues were found regardless of any "no issues" text.
+// Matches patterns like "- Medium —", "* Low:", "Critical - issue", etc.
+// Only checks lines that look like findings (start with bullets or numbers).
+// Requires separators to be followed by space to avoid "High-level overview".
 func hasSeverityLabel(output string) bool {
 	lc := strings.ToLower(output)
 	severities := []string{"critical", "high", "medium", "low"}
 
 	for _, line := range strings.Split(lc, "\n") {
 		trimmed := strings.TrimSpace(line)
-		// Strip leading bullets/asterisks
-		trimmed = strings.TrimLeft(trimmed, "-*• ")
+
+		// Only check lines that look like findings (start with bullet or number)
+		// This avoids matching rubric text like "Severity levels: High - ..."
+		isFindingLine := false
+		if len(trimmed) > 0 {
+			first := trimmed[0]
+			if first == '-' || first == '*' || (first >= '0' && first <= '9') {
+				isFindingLine = true
+			}
+			// Check for bullet point (multi-byte character)
+			if strings.HasPrefix(trimmed, "•") {
+				isFindingLine = true
+			}
+		}
+		if !isFindingLine {
+			continue
+		}
+
+		// Strip leading bullets/asterisks/numbers
+		trimmed = strings.TrimLeft(trimmed, "-*•0123456789.) ")
 		trimmed = strings.TrimSpace(trimmed)
 
 		for _, sev := range severities {
@@ -105,10 +124,16 @@ func hasSeverityLabel(output string) bool {
 				rest := trimmed[len(sev):]
 				rest = strings.TrimSpace(rest)
 				if len(rest) > 0 {
-					first := rest[0]
-					// Check for various separators: —, –, -, :, |
-					if first == '-' || first == ':' || first == '|' ||
-						strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
+					// Check for em-dash or en-dash (these are unambiguous)
+					if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
+						return true
+					}
+					// Check for colon or pipe (unambiguous separators)
+					if rest[0] == ':' || rest[0] == '|' {
+						return true
+					}
+					// For hyphen, require space after to avoid "High-level"
+					if rest[0] == '-' && len(rest) > 1 && rest[1] == ' ' {
 						return true
 					}
 				}

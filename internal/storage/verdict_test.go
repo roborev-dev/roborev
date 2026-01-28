@@ -721,8 +721,28 @@ func TestParseVerdict(t *testing.T) {
 		},
 		{
 			name:   "severity label critical",
-			output: "Critical — Data loss possible.\nNo issues otherwise.",
+			output: "- Critical — Data loss possible.\nNo issues otherwise.",
 			want:   "F",
+		},
+		{
+			name:   "high-level overview not a finding",
+			output: "No issues found. This is a high-level overview of the changes.",
+			want:   "P",
+		},
+		{
+			name:   "low-level details not a finding",
+			output: "No issues found. The commit adds low-level optimizations.",
+			want:   "P",
+		},
+		{
+			name:   "severity in prose not a finding",
+			output: "No issues found. I rate this as Medium importance for the project.",
+			want:   "P",
+		},
+		{
+			name:   "medium without separator not a finding",
+			output: "No issues found. The medium was oil on canvas.",
+			want:   "P",
 		},
 		{
 			name:   "no issues found but with period",
