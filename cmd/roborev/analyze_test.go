@@ -693,18 +693,6 @@ func TestPerFileAnalysis(t *testing.T) {
 	}
 }
 
-func TestSortStrings(t *testing.T) {
-	s := []string{"c", "a", "b", "d"}
-	sortStrings(s)
-
-	expected := []string{"a", "b", "c", "d"}
-	for i, v := range expected {
-		if s[i] != v {
-			t.Errorf("s[%d] = %q, want %q", i, s[i], v)
-		}
-	}
-}
-
 func TestEnqueueAnalysisJob(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/enqueue" || r.Method != http.MethodPost {

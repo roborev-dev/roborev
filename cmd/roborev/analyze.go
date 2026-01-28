@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -229,7 +230,7 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 	for name := range files {
 		fileNames = append(fileNames, name)
 	}
-	sortStrings(fileNames)
+	sort.Strings(fileNames)
 
 	if !opts.quiet {
 		cmd.Printf("Creating %d analysis jobs (%q, one per file)...\n", len(files), analysisType.Name)
@@ -333,17 +334,6 @@ func enqueueAnalysisJob(repoRoot, prompt string, opts analyzeOptions) (*storage.
 	}
 
 	return &job, nil
-}
-
-// sortStrings sorts a slice of strings in place
-func sortStrings(s []string) {
-	for i := 0; i < len(s); i++ {
-		for j := i + 1; j < len(s); j++ {
-			if s[i] > s[j] {
-				s[i], s[j] = s[j], s[i]
-			}
-		}
-	}
 }
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks addressed

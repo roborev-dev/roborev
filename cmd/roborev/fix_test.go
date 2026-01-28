@@ -156,7 +156,10 @@ func TestAddJobResponse(t *testing.T) {
 		}
 
 		var req map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request body: %v", err)
+			return
+		}
 		gotJobID = int64(req["job_id"].(float64))
 		gotContent = req["content"].(string)
 
@@ -274,7 +277,7 @@ func TestFixJobNotComplete(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&output)
 
-	err := fixSingleJob(cmd, "/tmp", 99, fixOptions{agentName: "test"})
+	err := fixSingleJob(cmd, t.TempDir(), 99, fixOptions{agentName: "test"})
 
 	if err == nil {
 		t.Error("expected error for incomplete job")
