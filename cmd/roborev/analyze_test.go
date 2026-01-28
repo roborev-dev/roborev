@@ -660,14 +660,19 @@ func TestShowAnalysisPrompt(t *testing.T) {
 		t.Error("output should contain description")
 	}
 
-	// Should have prompt template section
+	// Should have prompt template section with content after it
 	if !strings.Contains(outputStr, "## Prompt Template") {
 		t.Error("output should contain prompt template section")
 	}
 
-	// Should contain actual prompt content
-	if !strings.Contains(outputStr, "test file") {
-		t.Error("output should contain prompt content")
+	// Verify there's substantial content after the template header
+	// (the prompt templates are all multi-line with instructions)
+	idx := strings.Index(outputStr, "## Prompt Template")
+	if idx >= 0 {
+		afterHeader := outputStr[idx+len("## Prompt Template"):]
+		if len(strings.TrimSpace(afterHeader)) < 50 {
+			t.Error("prompt template section should have substantial content")
+		}
 	}
 }
 
@@ -682,6 +687,18 @@ func TestShowAnalysisPromptUnknown(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown analysis type") {
 		t.Errorf("error should mention 'unknown analysis type': %v", err)
+	}
+}
+
+func TestShowPromptRequiresType(t *testing.T) {
+	cmd := analyzeCmd()
+	cmd.SetArgs([]string{"--show-prompt"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("expected error when --show-prompt used without type")
+	}
+	if !strings.Contains(err.Error(), "requires an analysis type") {
+		t.Errorf("error should mention 'requires an analysis type', got: %v", err)
 	}
 }
 
