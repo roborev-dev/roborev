@@ -90,11 +90,13 @@ func stripListMarker(s string) string {
 // Matches patterns like "- Medium —", "* Low:", "Critical — issue", etc.
 // Checks lines that start with bullets/numbers OR directly with severity words.
 // Requires separators to be followed by space to avoid "High-level overview".
+// Skips lines that appear to be part of a severity legend/rubric.
 func hasSeverityLabel(output string) bool {
 	lc := strings.ToLower(output)
 	severities := []string{"critical", "high", "medium", "low"}
+	lines := strings.Split(lc, "\n")
 
-	for _, line := range strings.Split(lc, "\n") {
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if len(trimmed) == 0 {
 			continue
@@ -125,19 +127,73 @@ func hasSeverityLabel(output string) bool {
 				continue
 			}
 
+			// Check for valid separator
+			hasValidSep := false
 			// Check for em-dash or en-dash (these are unambiguous)
 			if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
-				return true
+				hasValidSep = true
 			}
 			// Check for colon or pipe (unambiguous separators)
 			if rest[0] == ':' || rest[0] == '|' {
-				return true
+				hasValidSep = true
 			}
 			// For hyphen, require space after to avoid "High-level"
 			if rest[0] == '-' && len(rest) > 1 && rest[1] == ' ' {
+				hasValidSep = true
+			}
+
+			if !hasValidSep {
+				continue
+			}
+
+			// Skip if this looks like a legend/rubric entry
+			// Check if previous non-empty line is a legend header
+			if isLegendEntry(lines, i) {
+				continue
+			}
+
+			return true
+		}
+	}
+	return false
+}
+
+// isLegendEntry checks if a line at index i appears to be part of a severity legend/rubric
+// by looking at preceding lines for legend indicators.
+func isLegendEntry(lines []string, i int) bool {
+	severities := []string{"critical", "high", "medium", "low"}
+
+	// Check previous lines for legend indicators
+	// Skip other severity lines (they might be part of the same legend)
+	for j := i - 1; j >= 0 && j >= i-10; j-- {
+		prev := strings.TrimSpace(strings.ToLower(lines[j]))
+		if len(prev) == 0 {
+			continue
+		}
+
+		// Check for legend header patterns
+		if strings.HasSuffix(prev, ":") {
+			if strings.Contains(prev, "severity") || strings.Contains(prev, "level") ||
+				strings.Contains(prev, "legend") || strings.Contains(prev, "scale") ||
+				strings.Contains(prev, "rating") || strings.Contains(prev, "priority") {
 				return true
 			}
 		}
+
+		// Check if this line is also a severity label - if so, keep looking
+		isSeverityLine := false
+		for _, sev := range severities {
+			if strings.HasPrefix(prev, sev) {
+				isSeverityLine = true
+				break
+			}
+		}
+		if isSeverityLine {
+			continue
+		}
+
+		// Stop checking after first non-empty, non-severity line that isn't a header
+		break
 	}
 	return false
 }
