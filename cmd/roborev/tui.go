@@ -2991,7 +2991,7 @@ func (m tuiModel) renderQueueView() string {
 	for _, filterType := range m.filterStack {
 		switch filterType {
 		case "repo":
-			if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
+			if len(m.activeRepoFilter) > 0 {
 				filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
 				title += fmt.Sprintf(" [f: %s]", filterName)
 			}

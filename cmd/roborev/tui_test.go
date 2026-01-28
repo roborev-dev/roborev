@@ -4260,6 +4260,33 @@ func TestTUIRenderFailedJobNoBranchShown(t *testing.T) {
 	}
 }
 
+func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
+	// Test that renderQueueView doesn't panic when branch filter is active
+	// but repo filter is empty (regression test for index out of range)
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewQueue
+	m.activeBranchFilter = "feature"
+	m.activeRepoFilter = nil // Empty repo filter
+	m.filterStack = []string{"branch"}
+	m.jobs = []storage.ReviewJob{
+		{ID: 1, Branch: "feature", RepoName: "test"},
+	}
+
+	// This should not panic
+	output := m.View()
+
+	// Should show branch filter indicator
+	if !strings.Contains(output, "[b: feature]") {
+		t.Error("Expected branch filter indicator in output")
+	}
+	// Should NOT show repo filter indicator (since no repo filter)
+	if strings.Contains(output, "[f:") {
+		t.Error("Should not show repo filter indicator when activeRepoFilter is empty")
+	}
+}
+
 func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 	// Test that visibleLines = height - 4 when no verdict (title + location + status + help)
 	// Help text is ~106 chars, so use width >= 110 to avoid wrapping
