@@ -798,3 +798,118 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 		t.Errorf("job.ID = %d, want 42", job.ID)
 	}
 }
+
+func TestAnalyzeJSONOutput(t *testing.T) {
+	// Set up mock server
+	var jobCounter int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost {
+			jobCounter++
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(storage.ReviewJob{
+				ID:     jobCounter,
+				Agent:  "test-agent",
+				Status: storage.JobStatusQueued,
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	t.Run("single analysis JSON output", func(t *testing.T) {
+		jobCounter = 0
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, "test.go"), []byte("package main"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		files := map[string]string{"test.go": "package main"}
+		analysisType := analyze.GetType("refactor")
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		err := runSingleAnalysis(cmd, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
+		if err != nil {
+			t.Fatalf("runSingleAnalysis: %v", err)
+		}
+
+		var result AnalyzeResult
+		if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+			t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, output.String())
+		}
+
+		if len(result.Jobs) != 1 {
+			t.Errorf("expected 1 job, got %d", len(result.Jobs))
+		}
+		if result.Jobs[0].ID != 1 {
+			t.Errorf("expected job ID 1, got %d", result.Jobs[0].ID)
+		}
+		if result.Jobs[0].Agent != "test-agent" {
+			t.Errorf("expected agent 'test-agent', got %q", result.Jobs[0].Agent)
+		}
+		if result.AnalysisType != "refactor" {
+			t.Errorf("expected analysis type 'refactor', got %q", result.AnalysisType)
+		}
+		if len(result.Files) != 1 || result.Files[0] != "test.go" {
+			t.Errorf("expected files ['test.go'], got %v", result.Files)
+		}
+	})
+
+	t.Run("per-file analysis JSON output", func(t *testing.T) {
+		jobCounter = 0
+		tmpDir := t.TempDir()
+		files := map[string]string{
+			"a.go": "package a",
+			"b.go": "package b",
+			"c.go": "package c",
+		}
+		for name, content := range files {
+			if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		analysisType := analyze.GetType("complexity")
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		err := runPerFileAnalysis(cmd, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
+		if err != nil {
+			t.Fatalf("runPerFileAnalysis: %v", err)
+		}
+
+		var result AnalyzeResult
+		if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+			t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, output.String())
+		}
+
+		if len(result.Jobs) != 3 {
+			t.Errorf("expected 3 jobs, got %d", len(result.Jobs))
+		}
+		// Jobs should be in sorted file order
+		expectedFiles := []string{"a.go", "b.go", "c.go"}
+		for i, info := range result.Jobs {
+			if info.File != expectedFiles[i] {
+				t.Errorf("job %d: expected file %q, got %q", i, expectedFiles[i], info.File)
+			}
+			if info.ID != int64(i+1) {
+				t.Errorf("job %d: expected ID %d, got %d", i, i+1, info.ID)
+			}
+		}
+		if result.AnalysisType != "complexity" {
+			t.Errorf("expected analysis type 'complexity', got %q", result.AnalysisType)
+		}
+		if len(result.Files) != 3 {
+			t.Errorf("expected 3 files, got %d", len(result.Files))
+		}
+	})
+}

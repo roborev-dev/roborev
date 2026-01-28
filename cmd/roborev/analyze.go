@@ -37,6 +37,7 @@ func analyzeCmd() *cobra.Command {
 		fixAgent   string
 		fixModel   string
 		perFile    bool
+		jsonOutput bool
 	)
 
 	cmd := &cobra.Command{
@@ -120,6 +121,7 @@ To fix an existing analysis job, use: roborev fix <job_id>
 				fixAgent:   fixAgent,
 				fixModel:   fixModel,
 				perFile:    perFile,
+				jsonOutput: jsonOutput,
 			}
 			return runAnalysis(cmd, args[0], args[1:], opts)
 		},
@@ -136,6 +138,7 @@ To fix an existing analysis job, use: roborev fix <job_id>
 	cmd.Flags().StringVar(&fixAgent, "fix-agent", "", "agent to use for fixes (default: same as --agent)")
 	cmd.Flags().StringVar(&fixModel, "fix-model", "", "model for fix agent (default: same as --model)")
 	cmd.Flags().BoolVar(&perFile, "per-file", false, "create one analysis job per file")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output job info as JSON for programmatic use")
 
 	return cmd
 }
@@ -150,6 +153,21 @@ type analyzeOptions struct {
 	fixAgent   string
 	fixModel   string
 	perFile    bool
+	jsonOutput bool
+}
+
+// AnalyzeResult is the JSON output format for analyze command
+type AnalyzeResult struct {
+	Jobs         []AnalyzeJobInfo `json:"jobs"`
+	AnalysisType string           `json:"analysis_type"`
+	Files        []string         `json:"files"`
+}
+
+// AnalyzeJobInfo contains job details for JSON output
+type AnalyzeJobInfo struct {
+	ID    int64  `json:"id"`
+	Agent string `json:"agent"`
+	File  string `json:"file,omitempty"` // Only set in per-file mode
 }
 
 func listAnalysisTypes(cmd *cobra.Command) error {
@@ -228,7 +246,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 
 // runSingleAnalysis creates a single analysis job for all files
 func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
-	if !opts.quiet {
+	if !opts.quiet && !opts.jsonOutput {
 		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), analysisType.Name)
 	}
 
@@ -247,7 +265,7 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 
 	// If prompt is too large, fall back to file paths only
 	if len(fullPrompt) > maxPromptSize {
-		if !opts.quiet {
+		if !opts.quiet && !opts.jsonOutput {
 			cmd.Printf("Files too large to embed (%dKB), using file paths...\n", len(fullPrompt)/1024)
 		}
 		absPaths := make([]string, 0, len(files))
@@ -264,6 +282,18 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 	job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, opts)
 	if err != nil {
 		return err
+	}
+
+	// JSON output mode
+	if opts.jsonOutput {
+		sort.Strings(relPaths)
+		result := AnalyzeResult{
+			Jobs:         []AnalyzeJobInfo{{ID: job.ID, Agent: job.Agent}},
+			AnalysisType: analysisType.Name,
+			Files:        relPaths,
+		}
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		return enc.Encode(result)
 	}
 
 	if !opts.quiet {
@@ -292,11 +322,11 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 	}
 	sort.Strings(fileNames)
 
-	if !opts.quiet {
+	if !opts.quiet && !opts.jsonOutput {
 		cmd.Printf("Creating %d analysis jobs (%q, one per file)...\n", len(files), analysisType.Name)
 	}
 
-	var jobIDs []int64
+	var jobInfos []AnalyzeJobInfo
 	for i, fileName := range fileNames {
 		singleFile := map[string]string{fileName: files[fileName]}
 
@@ -310,7 +340,7 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 
 		// If single file is too large, fall back to file path only
 		if len(fullPrompt) > maxPromptSize {
-			if !opts.quiet {
+			if !opts.quiet && !opts.jsonOutput {
 				cmd.Printf("  %s too large (%dKB), using file path...\n", fileName, len(fullPrompt)/1024)
 			}
 			filePath := filepath.Join(repoRoot, fileName)
@@ -325,14 +355,29 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 			return fmt.Errorf("enqueue job for %s: %w", fileName, err)
 		}
 
-		jobIDs = append(jobIDs, job.ID)
+		jobInfos = append(jobInfos, AnalyzeJobInfo{ID: job.ID, Agent: job.Agent, File: fileName})
 
-		if !opts.quiet {
+		if !opts.quiet && !opts.jsonOutput {
 			cmd.Printf("  [%d/%d] Job %d: %s (agent: %s)\n", i+1, len(files), job.ID, fileName, job.Agent)
 		}
 	}
 
+	// JSON output mode
+	if opts.jsonOutput {
+		result := AnalyzeResult{
+			Jobs:         jobInfos,
+			AnalysisType: analysisType.Name,
+			Files:        fileNames,
+		}
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		return enc.Encode(result)
+	}
+
 	if !opts.quiet {
+		jobIDs := make([]int64, len(jobInfos))
+		for i, info := range jobInfos {
+			jobIDs[i] = info.ID
+		}
 		cmd.Printf("\nCreated %d jobs: %v\n", len(jobIDs), jobIDs)
 		cmd.Println("Use 'roborev fix <job_id>' to apply fixes for individual jobs.")
 	}
@@ -342,13 +387,13 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 		if !opts.quiet {
 			cmd.Println("\nRunning fixes for each job...")
 		}
-		for i, jobID := range jobIDs {
+		for i, info := range jobInfos {
 			if !opts.quiet {
-				cmd.Printf("\n=== Fixing job %d (%d/%d) ===\n", jobID, i+1, len(jobIDs))
+				cmd.Printf("\n=== Fixing job %d (%d/%d) ===\n", info.ID, i+1, len(jobInfos))
 			}
-			if err := runAnalyzeAndFix(cmd, serverAddr, repoRoot, jobID, analysisType, opts); err != nil {
+			if err := runAnalyzeAndFix(cmd, serverAddr, repoRoot, info.ID, analysisType, opts); err != nil {
 				if !opts.quiet {
-					cmd.Printf("Warning: fix for job %d failed: %v\n", jobID, err)
+					cmd.Printf("Warning: fix for job %d failed: %v\n", info.ID, err)
 				}
 				// Continue with other jobs
 			}
@@ -361,13 +406,13 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 		if !opts.quiet {
 			cmd.Println("\nWaiting for all jobs to complete...")
 		}
-		for i, jobID := range jobIDs {
+		for i, info := range jobInfos {
 			if !opts.quiet {
-				cmd.Printf("\n=== Job %d (%d/%d) ===\n", jobID, i+1, len(jobIDs))
+				cmd.Printf("\n=== Job %d (%d/%d) ===\n", info.ID, i+1, len(jobInfos))
 			}
-			if err := waitForPromptJob(cmd, serverAddr, jobID, opts.quiet); err != nil {
+			if err := waitForPromptJob(cmd, serverAddr, info.ID, opts.quiet); err != nil {
 				if !opts.quiet {
-					cmd.Printf("Warning: job %d failed: %v\n", jobID, err)
+					cmd.Printf("Warning: job %d failed: %v\n", info.ID, err)
 				}
 			}
 		}
