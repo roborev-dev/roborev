@@ -48,6 +48,10 @@ This command provides predefined analysis prompts for common code review
 tasks like finding duplication, suggesting refactorings, or identifying
 test fixture opportunities.
 
+Analysis runs in agentic mode, allowing the agent to read files when the
+prompt content exceeds the configured size limit (max_prompt_size in config,
+default 200KB).
+
 The output is formatted for easy copy-paste into agent sessions, with
 a header showing the analysis type and files analyzed.
 
@@ -218,11 +222,11 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	return runSingleAnalysis(cmd, repoRoot, analysisType, files, opts)
 }
 
-// Maximum prompt size before falling back to file paths only (200KB, leaving room for overhead)
-const maxPromptSize = 200 * 1024
-
 // runSingleAnalysis creates a single analysis job for all files
 func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions) error {
+	// Load config and resolve max prompt size
+	cfg, _ := config.LoadGlobal()
+	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
 	if !opts.quiet {
 		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), analysisType.Name)
 	}
@@ -280,6 +284,10 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 
 // runPerFileAnalysis creates one analysis job per file
 func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions) error {
+	// Load config and resolve max prompt size
+	cfg, _ := config.LoadGlobal()
+	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
+
 	// Sort files for deterministic order
 	fileNames := make([]string, 0, len(files))
 	for name := range files {
@@ -395,7 +403,7 @@ func enqueueAnalysisJob(repoRoot, prompt, outputPrefix string, opts analyzeOptio
 		"reasoning":     opts.reasoning,
 		"custom_prompt": prompt,
 		"output_prefix": outputPrefix,
-		"agentic":       false, // Analysis is read-only
+		"agentic":       true, // Agentic mode needed for reading files when prompt exceeds size limit
 	})
 
 	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))

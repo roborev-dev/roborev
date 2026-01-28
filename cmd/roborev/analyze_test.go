@@ -767,9 +767,9 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 		var req map[string]interface{}
 		json.NewDecoder(r.Body).Decode(&req)
 
-		// Verify request
-		if req["agentic"] != false {
-			t.Error("agentic should be false for analysis")
+		// Verify request - agentic is true so agent can read files when prompt is too large
+		if req["agentic"] != true {
+			t.Error("agentic should be true for analysis")
 		}
 		if req["custom_prompt"] == nil {
 			t.Error("custom_prompt should be set")
