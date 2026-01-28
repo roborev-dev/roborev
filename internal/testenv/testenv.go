@@ -4,28 +4,21 @@
 package testenv
 
 import (
-	"os"
 	"testing"
 )
 
 // SetDataDir sets ROBOREV_DATA_DIR to a temp directory to isolate tests
 // from production ~/.roborev. This is preferred over setting HOME because
 // ROBOREV_DATA_DIR takes precedence in config.DataDir(). Returns the temp
-// directory path. Cleanup is automatic via t.Cleanup.
+// directory path. Cleanup is automatic via t.Setenv.
+//
+// Note: t.Setenv marks the test as incompatible with t.Parallel(), which is
+// appropriate since environment variables are process-global state.
 func SetDataDir(t *testing.T) string {
 	t.Helper()
 
 	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-
-	t.Cleanup(func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	})
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
 	return tmpDir
 }

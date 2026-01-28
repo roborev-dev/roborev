@@ -1996,11 +1996,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
-				} else if !m.hasMore || len(m.activeRepoFilter) > 0 {
+				} else if !m.hasMore || len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 					// Truly at the bottom - no more to load or filter prevents auto-load
 					m.flashMessage = "No older review"
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
@@ -2021,7 +2021,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -2088,7 +2088,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.updateSelectedJobID()
 				// If we hit the end, try to load more
-				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
+				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
 				}
@@ -2485,7 +2485,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// If terminal can show more jobs than we have, re-fetch to fill screen
 		// Gate on !loadingMore and !loadingJobs to avoid race conditions
-		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) == 0 {
+		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 			newVisibleRows := m.height - 9 + 10
 			if newVisibleRows > len(m.jobs) {
 				m.loadingJobs = true
@@ -2794,7 +2794,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filterRepos = []repoFilterItem{{name: "", count: msg.totalCount}}
 		m.filterRepos = append(m.filterRepos, msg.repos...)
 		// Pre-select current filter if active
-		if len(m.activeRepoFilter) > 0 {
+		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 			for i, r := range m.filterRepos {
 				if len(r.rootPaths) == len(m.activeRepoFilter) && len(r.rootPaths) > 0 {
 					// Check if all paths match
@@ -2991,7 +2991,7 @@ func (m tuiModel) renderQueueView() string {
 	for _, filterType := range m.filterStack {
 		switch filterType {
 		case "repo":
-			if len(m.activeRepoFilter) > 0 {
+			if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 				filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
 				title += fmt.Sprintf(" [f: %s]", filterName)
 			}
@@ -3009,7 +3009,7 @@ func (m tuiModel) renderQueueView() string {
 
 	// Status line - show filtered counts when filter is active
 	var statusLine string
-	if len(m.activeRepoFilter) > 0 {
+	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 		// Calculate counts from visible jobs (handles multi-path client-side filtering)
 		var done, failed, canceled int
 		for _, job := range m.jobs {
@@ -3159,7 +3159,7 @@ func (m tuiModel) renderQueueView() string {
 		if len(visibleJobList) > visibleRows || m.hasMore || m.loadingMore {
 			if m.loadingMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(visibleJobList))
-			} else if m.hasMore && len(m.activeRepoFilter) == 0 {
+			} else if m.hasMore && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d+] scroll down to load more", start+1, end, len(visibleJobList))
 			} else if len(visibleJobList) > visibleRows {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visibleJobList))

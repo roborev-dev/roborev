@@ -11,6 +11,7 @@ build:
 
 install:
 	@# Install to ~/.local/bin for development (creates directory if needed)
+	@if [ -z "$(HOME)" ]; then echo "error: HOME is not set" >&2; exit 1; fi
 	@mkdir -p "$(HOME)/.local/bin"
 	go build -ldflags="$(LDFLAGS)" -o "$(HOME)/.local/bin/roborev" ./cmd/roborev
 	@echo "Installed to ~/.local/bin/roborev"
