@@ -679,7 +679,10 @@ func expandAndReadFiles(repoRoot string, patterns []string) (map[string]string, 
 				}
 				// Only include source files
 				if isSourceFile(path) {
-					relPath, _ := filepath.Rel(repoRoot, path)
+					relPath, err := filepath.Rel(repoRoot, path)
+					if err != nil {
+						relPath = path // Use absolute path as fallback
+					}
 					if !seen[relPath] {
 						seen[relPath] = true
 						content, err := os.ReadFile(path)
@@ -733,7 +736,10 @@ func expandAndReadFiles(repoRoot string, patterns []string) (map[string]string, 
 						return nil
 					}
 					if isSourceFile(path) {
-						relPath, _ := filepath.Rel(repoRoot, path)
+						relPath, err := filepath.Rel(repoRoot, path)
+						if err != nil {
+							relPath = path // Use absolute path as fallback
+						}
 						if !seen[relPath] {
 							seen[relPath] = true
 							content, err := os.ReadFile(path)
@@ -748,7 +754,10 @@ func expandAndReadFiles(repoRoot string, patterns []string) (map[string]string, 
 					return nil, err
 				}
 			} else {
-				relPath, _ := filepath.Rel(repoRoot, match)
+				relPath, err := filepath.Rel(repoRoot, match)
+				if err != nil {
+					relPath = match // Use absolute path as fallback
+				}
 				if !seen[relPath] {
 					seen[relPath] = true
 					content, err := os.ReadFile(match)
