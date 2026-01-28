@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
@@ -190,23 +192,6 @@ func TestIsSourceFile(t *testing.T) {
 	}
 }
 
-func TestSortedKeys(t *testing.T) {
-	m := map[string]string{
-		"c": "3",
-		"a": "1",
-		"b": "2",
-	}
-
-	keys := sortedKeys(m)
-
-	if len(keys) != 3 {
-		t.Fatalf("got %d keys, want 3", len(keys))
-	}
-	if keys[0] != "a" || keys[1] != "b" || keys[2] != "c" {
-		t.Errorf("keys not sorted: %v", keys)
-	}
-}
-
 func mapKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -354,7 +339,10 @@ func TestWaitForAnalysisJob(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			review, err := waitForAnalysisJob(ts.URL, 42)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			review, err := waitForAnalysisJob(ctx, ts.URL, 42)
 
 			if tt.wantErr {
 				if err == nil {
@@ -376,6 +364,30 @@ func TestWaitForAnalysisJob(t *testing.T) {
 				t.Errorf("got review %q, want %q", review.Output, tt.responses[len(tt.responses)-1].review)
 			}
 		})
+	}
+}
+
+func TestWaitForAnalysisJob_Timeout(t *testing.T) {
+	// Test that context timeout is respected
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Always return "queued" to force polling
+		job := storage.ReviewJob{
+			ID:     42,
+			Status: storage.JobStatusQueued,
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := waitForAnalysisJob(ctx, ts.URL, 42)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("expected context deadline error, got: %v", err)
 	}
 }
 
@@ -465,19 +477,29 @@ func TestRunFixAgent(t *testing.T) {
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	// This tests the full workflow with mocked daemon and test agent
 
+	// Check if git is available
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available, skipping integration test")
+	}
+
 	// Create a real git repo (needed for commit verification)
 	tmpDir := t.TempDir()
-	runGit := func(args ...string) {
+	runGit := func(args ...string) error {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = tmpDir
-		cmd.Run()
+		return cmd.Run()
 	}
-	runGit("init")
+
+	if err := runGit("init"); err != nil {
+		t.Fatalf("git init failed: %v", err)
+	}
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
 	os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644)
 	runGit("add", ".")
-	runGit("commit", "-m", "initial")
+	if err := runGit("commit", "-m", "initial"); err != nil {
+		t.Fatalf("git commit failed: %v", err)
+	}
 
 	var jobsCount, reviewCount, addressCount int32
 
@@ -578,5 +600,40 @@ func TestBuildCommitPrompt(t *testing.T) {
 	// Should ask for a descriptive message
 	if !strings.Contains(prompt, "descriptive") {
 		t.Error("prompt should request a descriptive message")
+	}
+}
+
+func TestListAnalysisTypes(t *testing.T) {
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&output)
+
+	err := listAnalysisTypes(cmd)
+	if err != nil {
+		t.Fatalf("listAnalysisTypes failed: %v", err)
+	}
+
+	outputStr := output.String()
+
+	// Should have header
+	if !strings.Contains(outputStr, "Available analysis types") {
+		t.Error("output should contain header")
+	}
+
+	// Should list all types
+	expectedTypes := []string{
+		"test-fixtures",
+		"duplication",
+		"refactor",
+		"complexity",
+		"api-design",
+		"dead-code",
+		"architecture",
+	}
+
+	for _, typ := range expectedTypes {
+		if !strings.Contains(outputStr, typ) {
+			t.Errorf("output should contain %q", typ)
+		}
 	}
 }

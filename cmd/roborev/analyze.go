@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +19,9 @@ import (
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
+
+// Maximum time to wait for an analysis job to complete
+const analyzeJobTimeout = 30 * time.Minute
 
 func analyzeCmd() *cobra.Command {
 	var (
@@ -223,12 +225,20 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks addressed
 func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) error {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if !opts.quiet {
 		cmd.Printf("Waiting for analysis to complete...")
 	}
 
-	// Wait for analysis job to complete
-	review, err := waitForAnalysisJob(serverAddr, jobID)
+	// Wait for analysis job to complete (with timeout)
+	ctx, cancel := context.WithTimeout(ctx, analyzeJobTimeout)
+	defer cancel()
+
+	review, err := waitForAnalysisJob(ctx, serverAddr, jobID)
 	if err != nil {
 		return fmt.Errorf("analysis failed: %w", err)
 	}
@@ -259,50 +269,58 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 		cmd.Printf("Running fix agent (%s) to apply changes...\n\n", fixAgentName)
 	}
 
-	// Get HEAD before running fix agent
-	headBefore, _ := git.ResolveSHA(repoRoot, "HEAD")
+	// Get HEAD before running fix agent (errors are non-fatal, just skip verification)
+	headBefore, headErr := git.ResolveSHA(repoRoot, "HEAD")
+	canVerifyCommits := headErr == nil
 
 	// Run the fix agent locally in agentic mode
 	if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, fixPrompt, opts.quiet); err != nil {
 		return fmt.Errorf("fix agent failed: %w", err)
 	}
 
-	// Check if a commit was created
-	headAfter, _ := git.ResolveSHA(repoRoot, "HEAD")
-	commitCreated := headBefore != "" && headAfter != "" && headBefore != headAfter
+	// Check if a commit was created (only if we could get HEAD before)
+	var commitCreated bool
+	if canVerifyCommits {
+		headAfter, err := git.ResolveSHA(repoRoot, "HEAD")
+		if err == nil && headBefore != headAfter {
+			commitCreated = true
+		}
 
-	// If no commit was created, check for uncommitted changes and retry with commit instructions
-	if !commitCreated {
-		hasChanges, _ := git.HasUncommittedChanges(repoRoot)
-		if hasChanges {
-			if !opts.quiet {
-				cmd.Println("\nNo commit was created. Re-running agent with commit instructions...")
-				cmd.Println()
-			}
-
-			commitPrompt := buildCommitPrompt(analysisType)
-			if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet); err != nil {
+		// If no commit was created, check for uncommitted changes and retry with commit instructions
+		if !commitCreated {
+			hasChanges, err := git.HasUncommittedChanges(repoRoot)
+			if err == nil && hasChanges {
 				if !opts.quiet {
-					cmd.Printf("\nWarning: commit agent failed: %v\n", err)
+					cmd.Println("\nNo commit was created. Re-running agent with commit instructions...")
+					cmd.Println()
 				}
-			}
 
-			// Check again if commit was created
-			headFinal, _ := git.ResolveSHA(repoRoot, "HEAD")
-			if headFinal != "" && headFinal != headAfter {
-				commitCreated = true
+				commitPrompt := buildCommitPrompt(analysisType)
+				if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet); err != nil {
+					if !opts.quiet {
+						cmd.Printf("\nWarning: commit agent failed: %v\n", err)
+					}
+				}
+
+				// Check again if commit was created
+				headFinal, err := git.ResolveSHA(repoRoot, "HEAD")
+				if err == nil && headFinal != headAfter {
+					commitCreated = true
+				}
 			}
 		}
 	}
 
 	if !opts.quiet {
-		if commitCreated {
+		if !canVerifyCommits {
+			// Couldn't verify commits, don't report on commit status
+		} else if commitCreated {
 			cmd.Println("\nChanges committed successfully.")
 		} else {
-			hasChanges, _ := git.HasUncommittedChanges(repoRoot)
-			if hasChanges {
+			hasChanges, err := git.HasUncommittedChanges(repoRoot)
+			if err == nil && hasChanges {
 				cmd.Println("\nWarning: Changes were made but not committed. Please review and commit manually.")
-			} else {
+			} else if err == nil {
 				cmd.Println("\nNo changes were made by the fix agent.")
 			}
 		}
@@ -321,14 +339,27 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 	return nil
 }
 
-// waitForAnalysisJob polls until the job completes and returns the review
-func waitForAnalysisJob(serverAddr string, jobID int64) (*storage.Review, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
+// waitForAnalysisJob polls until the job completes and returns the review.
+// The context controls the maximum wait time.
+func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Review, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 
 	for {
-		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
+		// Check for cancellation/timeout
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("waiting for job: %w", ctx.Err())
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID), nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("check job status: %w", err)
 		}
@@ -356,7 +387,12 @@ func waitForAnalysisJob(serverAddr string, jobID int64) (*storage.Review, error)
 		switch job.Status {
 		case storage.JobStatusDone:
 			// Fetch the review
-			reviewResp, err := client.Get(fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID))
+			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
+			if err != nil {
+				return nil, fmt.Errorf("create review request: %w", err)
+			}
+
+			reviewResp, err := client.Do(reviewReq)
 			if err != nil {
 				return nil, fmt.Errorf("fetch review: %w", err)
 			}
@@ -380,7 +416,12 @@ func waitForAnalysisJob(serverAddr string, jobID int64) (*storage.Review, error)
 			return nil, fmt.Errorf("job was canceled")
 		}
 
-		time.Sleep(pollInterval)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("waiting for job: %w", ctx.Err())
+		case <-time.After(pollInterval):
+		}
+
 		if pollInterval < maxInterval {
 			pollInterval = pollInterval * 3 / 2
 			if pollInterval > maxInterval {
@@ -455,8 +496,12 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 		out = io.Discard
 	}
 
-	// Run the agent
-	ctx := context.Background()
+	// Use command context for cancellation support
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	_, err = a.Review(ctx, repoPath, "fix", prompt, out)
 	if err != nil {
 		return err
@@ -557,9 +602,12 @@ func expandAndReadFiles(repoRoot string, patterns []string) (map[string]string, 
 
 			if info.IsDir() {
 				// If directory, include all source files in it
-				filepath.Walk(match, func(path string, info os.FileInfo, err error) error {
-					if err != nil || info.IsDir() {
+				if err := filepath.Walk(match, func(path string, info os.FileInfo, err error) error {
+					if err != nil {
 						return err
+					}
+					if info.IsDir() {
+						return nil
 					}
 					if isSourceFile(path) {
 						relPath, _ := filepath.Rel(repoRoot, path)
@@ -567,13 +615,15 @@ func expandAndReadFiles(repoRoot string, patterns []string) (map[string]string, 
 							seen[relPath] = true
 							content, err := os.ReadFile(path)
 							if err != nil {
-								return nil // Skip files we can't read
+								return fmt.Errorf("read %s: %w", relPath, err)
 							}
 							files[relPath] = string(content)
 						}
 					}
 					return nil
-				})
+				}); err != nil {
+					return nil, err
+				}
 			} else {
 				relPath, _ := filepath.Rel(repoRoot, match)
 				if !seen[relPath] {
@@ -605,14 +655,4 @@ func isSourceFile(path string) bool {
 		".md": true, ".txt": true, ".html": true, ".css": true, ".scss": true,
 	}
 	return sourceExts[ext]
-}
-
-// sortedKeys returns sorted keys from a map for deterministic output
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
