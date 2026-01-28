@@ -49,8 +49,8 @@ tasks like finding duplication, suggesting refactorings, or identifying
 test fixture opportunities.
 
 Analysis runs in agentic mode, allowing the agent to read files when the
-prompt content exceeds the configured size limit (max_prompt_size in config,
-default 200KB).
+prompt content exceeds the configured size limit (default_max_prompt_size
+in config.toml or max_prompt_size in .roborev.toml, default 200KB).
 
 The output is formatted for easy copy-paste into agent sessions, with
 a header showing the analysis type and files analyzed.

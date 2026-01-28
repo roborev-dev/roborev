@@ -51,7 +51,7 @@ type Config struct {
 	Sync SyncConfig `toml:"sync"`
 
 	// Analysis settings
-	MaxPromptSize int `toml:"max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
+	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
 }
 
 // SyncConfig holds configuration for PostgreSQL sync
@@ -159,7 +159,7 @@ type RepoConfig struct {
 	RefineModelThorough string `toml:"refine_model_thorough"`
 
 	// Analysis settings
-	MaxPromptSize int `toml:"max_prompt_size"` // Max prompt size in bytes before falling back to paths
+	MaxPromptSize int `toml:"max_prompt_size"` // Max prompt size in bytes before falling back to paths (overrides global default)
 }
 
 // DefaultConfig returns the default configuration
@@ -358,15 +358,15 @@ const DefaultMaxPromptSize = 200 * 1024
 
 // ResolveMaxPromptSize determines the maximum prompt size based on config priority:
 // 1. Per-repo config (max_prompt_size in .roborev.toml)
-// 2. Global config (max_prompt_size in config.toml)
+// 2. Global config (default_max_prompt_size in config.toml)
 // 3. Default (200KB)
 func ResolveMaxPromptSize(repoPath string, globalCfg *Config) int {
 	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.MaxPromptSize > 0 {
 		return repoCfg.MaxPromptSize
 	}
 
-	if globalCfg != nil && globalCfg.MaxPromptSize > 0 {
-		return globalCfg.MaxPromptSize
+	if globalCfg != nil && globalCfg.DefaultMaxPromptSize > 0 {
+		return globalCfg.DefaultMaxPromptSize
 	}
 
 	return DefaultMaxPromptSize
