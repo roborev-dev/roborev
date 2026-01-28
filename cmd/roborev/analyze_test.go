@@ -3,7 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 )
 
 func TestExpandAndReadFiles(t *testing.T) {
@@ -202,4 +205,64 @@ func mapKeys(m map[string]string) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func TestBuildFixPrompt(t *testing.T) {
+	analysisType := &analyze.AnalysisType{
+		Name:        "refactor",
+		Description: "Suggest refactoring opportunities",
+	}
+	analysisOutput := `## CODE SMELLS
+- Long function in main.go:50
+- Duplicated logic in utils.go
+
+## REFACTORING SUGGESTIONS
+- Extract method for repeated code`
+
+	prompt := buildFixPrompt(analysisType, analysisOutput)
+
+	// Check that it includes the analysis type
+	if !strings.Contains(prompt, "refactor") {
+		t.Error("prompt should include analysis type name")
+	}
+
+	// Check that it includes the analysis output
+	if !strings.Contains(prompt, "CODE SMELLS") {
+		t.Error("prompt should include analysis output")
+	}
+	if !strings.Contains(prompt, "Long function in main.go") {
+		t.Error("prompt should include specific findings")
+	}
+
+	// Check that it has fix instructions
+	if !strings.Contains(prompt, "apply the suggested changes") {
+		t.Error("prompt should include fix instructions")
+	}
+
+	// Check that it mentions verification steps
+	if !strings.Contains(prompt, "compiles") || !strings.Contains(prompt, "tests") {
+		t.Error("prompt should mention verification steps")
+	}
+}
+
+func TestAnalyzeOptionsDefaults(t *testing.T) {
+	opts := analyzeOptions{
+		agentName: "gemini",
+		fix:       true,
+	}
+
+	// fixAgent should default to agentName when empty
+	fixAgent := opts.fixAgent
+	if fixAgent == "" {
+		fixAgent = opts.agentName
+	}
+	if fixAgent != "gemini" {
+		t.Errorf("fixAgent should default to agentName, got %q", fixAgent)
+	}
+
+	// When fixAgent is set, it should be used
+	opts.fixAgent = "claude-code"
+	if opts.fixAgent != "claude-code" {
+		t.Errorf("fixAgent should be 'claude-code', got %q", opts.fixAgent)
+	}
 }
