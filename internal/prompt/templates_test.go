@@ -6,14 +6,32 @@ import (
 	"time"
 )
 
+// mockNow sets nowFunc to return fixedTime and restores it when the test ends.
+func mockNow(t *testing.T, fixedTime time.Time) {
+	t.Helper()
+	orig := nowFunc
+	nowFunc = func() time.Time { return fixedTime }
+	t.Cleanup(func() { nowFunc = orig })
+}
+
+// assertPromptContains checks that prompt contains expected, with truncated output on failure.
+func assertPromptContains(t *testing.T, prompt, expected string) {
+	t.Helper()
+	if !strings.Contains(prompt, expected) {
+		snippet := prompt
+		if len(prompt) > 100 {
+			snippet = prompt[:100] + "..."
+		}
+		t.Errorf("Expected prompt to contain %q, got start: %s", expected, snippet)
+	}
+}
+
 func TestGeminiTemplateLoads(t *testing.T) {
 	result := GetSystemPrompt("gemini", "review")
 	if result == SystemPromptSingle {
 		t.Error("Expected Gemini-specific template, got default SystemPromptSingle")
 	}
-	if !strings.Contains(result, "Do NOT explain your process") {
-		t.Errorf("Expected Gemini template content, got: %s", result[:min(100, len(result))])
-	}
+	assertPromptContains(t, result, "Do NOT explain your process")
 }
 
 func TestAgentTemplatesFallbackToReview(t *testing.T) {
@@ -35,29 +53,18 @@ func TestGeminiRunTemplateLoads(t *testing.T) {
 	if result == "" {
 		t.Error("Expected Gemini run template to load")
 	}
-	if !strings.Contains(result, "Do NOT explain your process") {
-		t.Errorf("Expected Gemini run template content, got: %s", result[:min(100, len(result))])
-	}
+	assertPromptContains(t, result, "Do NOT explain your process")
 }
 
 func TestSystemPromptIncludesDate(t *testing.T) {
-	orig := nowFunc
-	defer func() { nowFunc = orig }()
-
-	nowFunc = func() time.Time {
-		return time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
-	}
+	mockNow(t, time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC))
 
 	result := GetSystemPrompt("claude-code", "review")
-	if !strings.Contains(result, "Current date: 2030-06-15 (UTC)") {
-		t.Errorf("Expected date suffix with 2030-06-15, got: %s", result[max(0, len(result)-60):])
-	}
+	assertPromptContains(t, result, "Current date: 2030-06-15 (UTC)")
 
 	// Gemini template should also get the date
 	gemini := GetSystemPrompt("gemini", "review")
-	if !strings.Contains(gemini, "Current date: 2030-06-15 (UTC)") {
-		t.Errorf("Expected date suffix in Gemini template, got: %s", gemini[max(0, len(gemini)-60):])
-	}
+	assertPromptContains(t, gemini, "Current date: 2030-06-15 (UTC)")
 
 	// Run prompt for non-Gemini should remain empty (no date appended)
 	run := GetSystemPrompt("claude-code", "run")
@@ -70,11 +77,14 @@ func TestNonGeminiRunReturnsEmpty(t *testing.T) {
 	// Non-Gemini agents without a run template should return empty string,
 	// NOT the review prompt. This ensures roborev run uses raw prompts
 	// without review-style preambles for agents that don't have one.
-	agents := []string{"claude-code", "claude", "unknown-agent"}
-	for _, agent := range agents {
+	for _, agent := range []string{"claude-code", "claude", "unknown-agent"} {
 		result := GetSystemPrompt(agent, "run")
 		if result != "" {
-			t.Errorf("GetSystemPrompt(%q, \"run\") = %q, want empty string", agent, result[:min(50, len(result))])
+			snippet := result
+			if len(result) > 50 {
+				snippet = result[:50] + "..."
+			}
+			t.Errorf("GetSystemPrompt(%q, \"run\") = %q, want empty string", agent, snippet)
 		}
 	}
 }
