@@ -3007,32 +3007,34 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString(tuiTitleStyle.Render(title))
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Status line - show filtered counts when filter is active
+	// Status line - count addressed/unaddressed from jobs
 	var statusLine string
-	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-		// Calculate counts from visible jobs (handles multi-path client-side filtering)
-		var done, failed, canceled int
-		for _, job := range m.jobs {
+	var done, addressed, unaddressed int
+	for _, job := range m.jobs {
+		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 			if !m.repoMatchesFilter(job.RepoPath) {
 				continue
 			}
-			switch job.Status {
-			case storage.JobStatusDone:
-				done++
-			case storage.JobStatusFailed:
-				failed++
-			case storage.JobStatusCanceled:
-				canceled++
+		}
+		if job.Status == storage.JobStatusDone {
+			done++
+			if job.Addressed != nil {
+				if *job.Addressed {
+					addressed++
+				} else {
+					unaddressed++
+				}
 			}
 		}
-		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Failed: %d | Canceled: %d",
-			m.daemonVersion, done, failed, canceled)
+	}
+	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
+		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addr'd: %d | Unaddr'd: %d",
+			m.daemonVersion, done, addressed, unaddressed)
 	} else {
-		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Failed: %d | Canceled: %d",
+		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Addr'd: %d | Unaddr'd: %d",
 			m.daemonVersion,
 			m.status.ActiveWorkers, m.status.MaxWorkers,
-			m.status.CompletedJobs, m.status.FailedJobs,
-			m.status.CanceledJobs)
+			done, addressed, unaddressed)
 	}
 	b.WriteString(tuiStatusStyle.Render(statusLine))
 	b.WriteString("\x1b[K\n") // Clear status line
