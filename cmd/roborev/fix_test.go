@@ -294,6 +294,196 @@ func TestFixJobNotComplete(t *testing.T) {
 	}
 }
 
+func TestFixCmdFlagValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "no args and no --unaddressed",
+			args:    []string{},
+			wantErr: "requires at least 1 arg",
+		},
+		{
+			name:    "--branch without --unaddressed",
+			args:    []string{"--branch", "main"},
+			wantErr: "--branch requires --unaddressed",
+		},
+		{
+			name:    "--all-branches without --unaddressed",
+			args:    []string{"--all-branches"},
+			wantErr: "--all-branches requires --unaddressed",
+		},
+		{
+			name:    "--unaddressed with positional args",
+			args:    []string{"--unaddressed", "123"},
+			wantErr: "--unaddressed cannot be used with positional job IDs",
+		},
+		{
+			name:    "--all-branches with --branch",
+			args:    []string{"--unaddressed", "--all-branches", "--branch", "main"},
+			wantErr: "--all-branches and --branch are mutually exclusive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := fixCmd()
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRunFixUnaddressed(t *testing.T) {
+	tmpDir := initTestGitRepo(t)
+
+	t.Run("no unaddressed jobs", func(t *testing.T) {
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if q.Get("status") != "done" {
+				t.Errorf("expected status=done, got %q", q.Get("status"))
+			}
+			if q.Get("addressed") != "false" {
+				t.Errorf("expected addressed=false, got %q", q.Get("addressed"))
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs":     []storage.ReviewJob{},
+				"has_more": false,
+			})
+		}))
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		err := runFixUnaddressed(cmd, "", fixOptions{agentName: "test"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(output.String(), "No unaddressed jobs found") {
+			t.Errorf("expected 'No unaddressed jobs found' message, got %q", output.String())
+		}
+	})
+
+	t.Run("finds and processes unaddressed jobs", func(t *testing.T) {
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				q := r.URL.Query()
+				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"jobs": []storage.ReviewJob{
+							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+				} else {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"jobs": []storage.ReviewJob{
+							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+				}
+			case "/api/review":
+				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
+			case "/api/comment":
+				w.WriteHeader(http.StatusCreated)
+			case "/api/review/address":
+				w.WriteHeader(http.StatusOK)
+			case "/api/enqueue":
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		err := runFixUnaddressed(cmd, "", fixOptions{agentName: "test", reasoning: "fast"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(output.String(), "Found 2 unaddressed job(s)") {
+			t.Errorf("expected count message, got %q", output.String())
+		}
+	})
+
+	t.Run("passes branch filter to API", func(t *testing.T) {
+		var gotBranch string
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" && r.URL.Query().Get("addressed") == "false" {
+				gotBranch = r.URL.Query().Get("branch")
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs":     []storage.ReviewJob{},
+				"has_more": false,
+			})
+		}))
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		runFixUnaddressed(cmd, "feature-branch", fixOptions{agentName: "test"})
+		if gotBranch != "feature-branch" {
+			t.Errorf("expected branch=feature-branch, got %q", gotBranch)
+		}
+	})
+
+	t.Run("server error", func(t *testing.T) {
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte("db error"))
+			}
+		}))
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		err := runFixUnaddressed(cmd, "", fixOptions{agentName: "test"})
+		if err == nil {
+			t.Fatal("expected error on server failure")
+		}
+		if !strings.Contains(err.Error(), "server error") {
+			t.Errorf("error %q should mention server error", err.Error())
+		}
+	})
+}
+
 func initTestGitRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
