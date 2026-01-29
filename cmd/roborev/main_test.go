@@ -189,10 +189,10 @@ type functionalMockAgent struct {
 func (f *functionalMockAgent) Name() string { return f.nameVal }
 
 func (f *functionalMockAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	if f.reviewFunc != nil {
-		return f.reviewFunc(ctx, repoPath, commitSHA, prompt, output)
+	if f.reviewFunc == nil {
+		panic("functionalMockAgent.Review called with nil reviewFunc — set reviewFunc before use")
 	}
-	return "", nil
+	return f.reviewFunc(ctx, repoPath, commitSHA, prompt, output)
 }
 
 func (f *functionalMockAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return f }
