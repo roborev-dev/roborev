@@ -344,7 +344,7 @@ func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 		makeJob(2, withAddressed(boolPtr(false))),
@@ -389,7 +389,7 @@ func TestTUIAddressFromReviewViewFallbackToPrev(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 		makeJob(2, withAddressed(boolPtr(false))),
@@ -417,7 +417,7 @@ func TestTUIAddressFromReviewViewExitWithQ(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 		makeJob(2, withAddressed(boolPtr(false))),
@@ -449,7 +449,7 @@ func TestTUIAddressFromReviewViewExitWithCtrlC(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 		makeJob(2, withAddressed(boolPtr(false))),
@@ -2888,14 +2888,12 @@ func TestTUIRenderJobLineTruncation(t *testing.T) {
 	m := tuiModel{width: 80}
 	// Use a git range - shortRef truncates ranges to 17 chars max, then renderJobLine
 	// truncates further based on colWidths.ref. Use a range longer than 17 chars.
-	job := storage.ReviewJob{
-		ID:         1,
-		GitRef:     "abcdef1234567..ghijkl7890123", // 28 char range, shortRef -> 17 chars
-		RepoName:   "very-long-repository-name-that-exceeds-width",
-		Agent:      "super-long-agent-name",
-		Status:     storage.JobStatusDone,
-		EnqueuedAt: time.Now(),
-	}
+	job := makeJob(1,
+		withRef("abcdef1234567..ghijkl7890123"), // 28 char range, shortRef -> 17 chars
+		withRepoName("very-long-repository-name-that-exceeds-width"),
+		withAgent("super-long-agent-name"),
+		withEnqueuedAt(time.Now()),
+	)
 
 	// Use narrow column widths to force truncation
 	// ref=10 will truncate the 17-char shortRef output
@@ -2929,14 +2927,12 @@ func TestTUIRenderJobLineTruncation(t *testing.T) {
 func TestTUIRenderJobLineLength(t *testing.T) {
 	// Test that rendered line length respects column widths
 	m := tuiModel{width: 100}
-	job := storage.ReviewJob{
-		ID:         123,
-		GitRef:     "abc1234..def5678901234567890", // Long range
-		RepoName:   "my-very-long-repository-name-here",
-		Agent:      "claude-code-agent",
-		Status:     storage.JobStatusDone,
-		EnqueuedAt: time.Now(),
-	}
+	job := makeJob(123,
+		withRef("abc1234..def5678901234567890"), // Long range
+		withRepoName("my-very-long-repository-name-here"),
+		withAgent("claude-code-agent"),
+		withEnqueuedAt(time.Now()),
+	)
 
 	idWidth := 4
 	colWidths := columnWidths{
@@ -2967,14 +2963,12 @@ func TestTUIRenderJobLineLength(t *testing.T) {
 
 func TestTUIRenderJobLineNoTruncation(t *testing.T) {
 	m := tuiModel{width: 200}
-	job := storage.ReviewJob{
-		ID:         1,
-		GitRef:     "abc1234",
-		RepoName:   "myrepo",
-		Agent:      "test",
-		Status:     storage.JobStatusDone,
-		EnqueuedAt: time.Now(),
-	}
+	job := makeJob(1,
+		withRef("abc1234"),
+		withRepoName("myrepo"),
+		withAgent("test"),
+		withEnqueuedAt(time.Now()),
+	)
 
 	// Use wide column widths - no truncation needed
 	colWidths := columnWidths{
@@ -3440,8 +3434,6 @@ func TestTUIHideAddressedFiltersJobs(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-	
-	
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(true))),  // hidden: addressed
 		makeJob(2, withAddressed(boolPtr(false))), // visible
@@ -3481,8 +3473,6 @@ func TestTUIHideAddressedSelectionMovesToVisible(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 
-	
-	
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(true))),  // will be hidden
 		makeJob(2, withAddressed(boolPtr(false))), // will be visible
@@ -3510,7 +3500,7 @@ func TestTUIHideAddressedRefreshRevalidatesSelection(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 		makeJob(2, withAddressed(boolPtr(false))),
@@ -3519,7 +3509,7 @@ func TestTUIHideAddressedRefreshRevalidatesSelection(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Simulate jobs refresh where job 1 is now addressed
-	
+
 	m2, _ := updateModel(t, m, tuiJobsMsg{
 		jobs: []storage.ReviewJob{
 			makeJob(1, withAddressed(boolPtr(true))),  // now addressed (hidden)
@@ -3542,8 +3532,6 @@ func TestTUIHideAddressedNavigationSkipsHidden(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-	
-	
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))), // visible
 		makeJob(2, withAddressed(boolPtr(true))),  // hidden
@@ -3570,8 +3558,6 @@ func TestTUIHideAddressedWithRepoFilter(t *testing.T) {
 	m.hideAddressed = true
 	m.activeRepoFilter = []string{"/repo/a"}
 
-	
-	
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))), // visible: matches repo, not addressed
 		makeJob(2, withRepoPath("/repo/b"), withAddressed(boolPtr(false))), // hidden: wrong repo
@@ -3594,7 +3580,7 @@ func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 		makeJob(2, withAddressed(boolPtr(false))),
@@ -3604,7 +3590,7 @@ func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
 	m.selectedJobID = 2
 
 	// Simulate marking job 2 as addressed
-	
+
 	m.jobs[1].Addressed = boolPtr(true)
 
 	// Verify job 2 is now hidden
@@ -3721,7 +3707,7 @@ func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = false
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -3747,7 +3733,7 @@ func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true // Already enabled
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4606,9 +4592,6 @@ func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.hideAddressed = true
 
-	
-	
-
 	// Job with Addressed=false but pendingAddressed=true should be hidden
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
@@ -4646,7 +4629,7 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
 	m.hideAddressed = true
 	m.loadingJobs = false
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4672,7 +4655,7 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 	m.hideAddressed = false
 	m.loadingJobs = false
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4695,7 +4678,7 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4727,7 +4710,7 @@ func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4757,7 +4740,7 @@ func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
 func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4766,7 +4749,7 @@ func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
 	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
 
 	// Jobs refresh arrives with server data confirming the update
-	
+
 	jobsMsg := tuiJobsMsg{
 		jobs: []storage.ReviewJob{
 			makeJob(1, withAddressed(boolPtr(true))),
@@ -4784,7 +4767,7 @@ func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
 func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4815,7 +4798,7 @@ func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
 func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(true))),
 	}
@@ -4853,7 +4836,7 @@ func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 func TestTUIStaleErrorResponseIgnored(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(true))),
 	}
@@ -4898,7 +4881,7 @@ func TestTUIQueueViewSameStateLateError(t *testing.T) {
 	// Same as TestTUIReviewViewSameStateLateError but for queue view using pendingAddressed
 	m := newTuiModel("http://localhost")
 
-	
+
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -5963,13 +5946,9 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 	})
 
 	// Pass a job parameter - this should be injected when review.Job is nil
-	job := &storage.ReviewJob{
-		ID:       123,
-		RepoPath: "/path/to/repo",
-		GitRef:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", // 40 hex chars
-	}
+	j := makeJob(123, withRepoPath("/path/to/repo"), withRef("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"))
 
-	cmd := m.fetchReviewAndCopy(123, job)
+	cmd := m.fetchReviewAndCopy(123, &j)
 	msg := cmd()
 
 	result, ok := msg.(tuiClipboardResultMsg)
@@ -6556,9 +6535,9 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
 	// Test that pressing escape in commit message view returns to the originating view (review)
 	m := newTuiModel("http://localhost")
-	job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}
-	m.jobs = []storage.ReviewJob{*job}
-	m.currentReview = makeReview(1, job)
+	j := makeJob(1, withRef("abc123"))
+	m.jobs = []storage.ReviewJob{j}
+	m.currentReview = makeReview(1, &j)
 	m.currentView = tuiViewReview
 	m.commitMsgFromView = tuiViewReview
 	m.commitMsgContent = "test message"
@@ -6750,8 +6729,8 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 func TestTUIHelpViewToggleFromReview(t *testing.T) {
 	// Test that '?' opens help from review and escape returns to review
 	m := newTuiModel("http://localhost")
-	job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}
-	m.currentReview = makeReview(1, job)
+	j := makeJob(1, withRef("abc123"))
+	m.currentReview = makeReview(1, &j)
 	m.currentView = tuiViewReview
 
 	// Press '?' to open help
