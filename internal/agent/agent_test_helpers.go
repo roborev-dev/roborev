@@ -89,6 +89,58 @@ type MockCLIResult struct {
 	StdinFile string // Non-empty when CaptureStdin was set
 }
 
+// newMockDroidAgent creates a DroidAgent backed by a temporary shell script.
+// Returns the agent and the temp directory used by writeTempCommand.
+func newMockDroidAgent(t *testing.T, scriptContent string) *DroidAgent {
+	t.Helper()
+	cmdPath := writeTempCommand(t, scriptContent)
+	return NewDroidAgent(cmdPath)
+}
+
+// runReviewScenario creates a mock DroidAgent from a shell script, runs Review,
+// and returns the result and error.
+func runReviewScenario(t *testing.T, script, prompt string) (string, error) {
+	t.Helper()
+	a := newMockDroidAgent(t, script)
+	return a.Review(context.Background(), t.TempDir(), "deadbeef", prompt, nil)
+}
+
+// assertArgsOrder verifies that each element in sequence appears in args
+// in strictly increasing index order.
+func assertArgsOrder(t *testing.T, args []string, sequence ...string) {
+	t.Helper()
+	lastIdx := -1
+	for _, want := range sequence {
+		found := false
+		for i := lastIdx + 1; i < len(args); i++ {
+			if args[i] == want {
+				lastIdx = i
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected %q after index %d in args %v", want, lastIdx, args)
+		}
+	}
+}
+
+// assertContainsArg checks that args contains target, failing with a descriptive message.
+func assertContainsArg(t *testing.T, args []string, target string) {
+	t.Helper()
+	if !containsString(args, target) {
+		t.Fatalf("expected %q in args, got %v", target, args)
+	}
+}
+
+// assertNotContainsArg checks that args does not contain target.
+func assertNotContainsArg(t *testing.T, args []string, target string) {
+	t.Helper()
+	if containsString(args, target) {
+		t.Fatalf("unexpected %q in args %v", target, args)
+	}
+}
+
 // mockAgentCLI creates a temporary shell script that simulates an agent CLI.
 // It handles --help output, argument/stdin capture, and exit codes.
 func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {

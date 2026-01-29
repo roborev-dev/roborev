@@ -13,41 +13,31 @@ func TestDroidBuildArgsAgenticMode(t *testing.T) {
 
 	// Test non-agentic mode (--auto low)
 	args := a.buildArgs("prompt", false)
-	if !containsString(args, "low") {
-		t.Fatalf("expected --auto low in non-agentic mode, got %v", args)
-	}
-	if containsString(args, "medium") {
-		t.Fatalf("expected no --auto medium in non-agentic mode, got %v", args)
-	}
+	assertContainsArg(t, args, "low")
+	assertNotContainsArg(t, args, "medium")
 
 	// Test agentic mode (--auto medium)
 	args = a.buildArgs("prompt", true)
-	if !containsString(args, "medium") {
-		t.Fatalf("expected --auto medium in agentic mode, got %v", args)
-	}
+	assertContainsArg(t, args, "medium")
 }
 
 func TestDroidBuildArgsReasoningEffort(t *testing.T) {
 	// Test thorough reasoning
 	a := NewDroidAgent("droid").WithReasoning(ReasoningThorough).(*DroidAgent)
 	args := a.buildArgs("prompt", false)
-	if !containsString(args, "--reasoning-effort") || !containsString(args, "high") {
-		t.Fatalf("expected --reasoning-effort high for thorough, got %v", args)
-	}
+	assertContainsArg(t, args, "--reasoning-effort")
+	assertContainsArg(t, args, "high")
 
 	// Test fast reasoning
 	a = NewDroidAgent("droid").WithReasoning(ReasoningFast).(*DroidAgent)
 	args = a.buildArgs("prompt", false)
-	if !containsString(args, "--reasoning-effort") || !containsString(args, "low") {
-		t.Fatalf("expected --reasoning-effort low for fast, got %v", args)
-	}
+	assertContainsArg(t, args, "--reasoning-effort")
+	assertContainsArg(t, args, "low")
 
 	// Test standard reasoning (no flag)
 	a = NewDroidAgent("droid").WithReasoning(ReasoningStandard).(*DroidAgent)
 	args = a.buildArgs("prompt", false)
-	if containsString(args, "--reasoning-effort") {
-		t.Fatalf("expected no --reasoning-effort for standard, got %v", args)
-	}
+	assertNotContainsArg(t, args, "--reasoning-effort")
 }
 
 func TestDroidName(t *testing.T) {
@@ -76,16 +66,8 @@ func TestDroidWithAgentic(t *testing.T) {
 }
 
 func TestDroidReviewSuccess(t *testing.T) {
-	tmpDir := t.TempDir()
 	outputContent := "Review feedback from Droid"
-
-	// Create a mock droid command that outputs to stdout
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-echo "`+outputContent+`"
-`)
-
-	a := NewDroidAgent(cmdPath)
-	result, err := a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", nil)
+	result, err := runReviewScenario(t, "#!/bin/sh\necho \""+outputContent+"\"\n", "review this commit")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -95,15 +77,7 @@ echo "`+outputContent+`"
 }
 
 func TestDroidReviewFailure(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-echo "error: something went wrong" >&2
-exit 1
-`)
-
-	a := NewDroidAgent(cmdPath)
-	_, err := a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", nil)
+	_, err := runReviewScenario(t, "#!/bin/sh\necho \"error: something went wrong\" >&2\nexit 1\n", "review this commit")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -113,15 +87,7 @@ exit 1
 }
 
 func TestDroidReviewEmptyOutput(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create a mock that outputs nothing to stdout
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-exit 0
-`)
-
-	a := NewDroidAgent(cmdPath)
-	result, err := a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", nil)
+	result, err := runReviewScenario(t, "#!/bin/sh\nexit 0\n", "review this commit")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -134,19 +100,14 @@ func TestDroidReviewWithProgress(t *testing.T) {
 	tmpDir := t.TempDir()
 	progressFile := filepath.Join(tmpDir, "progress.txt")
 
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-echo "Processing..." >&2
-echo "Done"
-`)
+	a := newMockDroidAgent(t, "#!/bin/sh\necho \"Processing...\" >&2\necho \"Done\"\n")
 
-	// Create a writer to capture progress (stderr)
 	f, err := os.Create(progressFile)
 	if err != nil {
 		t.Fatalf("create progress file: %v", err)
 	}
 	defer f.Close()
 
-	a := NewDroidAgent(cmdPath)
 	_, err = a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", f)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -161,34 +122,13 @@ echo "Done"
 func TestDroidBuildArgsPromptWithDash(t *testing.T) {
 	a := NewDroidAgent("droid")
 
-	// Test that prompts starting with "-" are passed as data, not flags
-	// The "--" terminator must appear before the prompt
 	prompt := "-o /tmp/malicious --auto high"
 	args := a.buildArgs(prompt, false)
 
-	// Find the position of "--" and the prompt
-	dashDashIdx := -1
-	promptIdx := -1
-	for i, arg := range args {
-		if arg == "--" {
-			dashDashIdx = i
-		}
-		if arg == prompt {
-			promptIdx = i
-		}
-	}
+	// Verify "--" appears before the prompt
+	assertArgsOrder(t, args, "--", prompt)
 
-	if dashDashIdx == -1 {
-		t.Fatalf("expected '--' terminator in args, got %v", args)
-	}
-	if promptIdx == -1 {
-		t.Fatalf("expected prompt in args, got %v", args)
-	}
-	if dashDashIdx >= promptIdx {
-		t.Fatalf("expected '--' before prompt, got %v", args)
-	}
-
-	// Verify the prompt is passed exactly as-is (not split or interpreted)
+	// Verify the prompt is passed exactly as last arg
 	if args[len(args)-1] != prompt {
 		t.Fatalf("expected prompt as last arg, got %v", args)
 	}
@@ -201,12 +141,7 @@ func TestDroidReviewAgenticModeFromGlobal(t *testing.T) {
 	argsFile := filepath.Join(tmpDir, "args.txt")
 	t.Setenv("ARGS_FILE", argsFile)
 
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-echo "$@" > "$ARGS_FILE"
-echo "result"
-`)
-
-	a := NewDroidAgent(cmdPath)
+	a := newMockDroidAgent(t, "#!/bin/sh\necho \"$@\" > \"$ARGS_FILE\"\necho \"result\"\n")
 	if _, err := a.Review(context.Background(), tmpDir, "deadbeef", "prompt", nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -215,7 +150,6 @@ echo "result"
 	if err != nil {
 		t.Fatalf("read args: %v", err)
 	}
-	// Should use --auto medium when global unsafe agents is enabled
 	if !strings.Contains(string(args), "medium") {
 		t.Fatalf("expected '--auto medium' in args when global unsafe enabled, got %s", strings.TrimSpace(string(args)))
 	}
