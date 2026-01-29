@@ -2,77 +2,37 @@ package storage
 
 import (
 	"database/sql"
-	"path/filepath"
 	"testing"
-	"time"
 )
 
 // TestAddCommentToJobAllStates verifies that comments can be added to jobs
 // in any state: queued, running, done, failed, and canceled.
 func TestAddCommentToJobAllStates(t *testing.T) {
-	db := openReviewsTestDB(t)
+	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/test-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
 
 	testCases := []struct {
-		name       string
-		status     JobStatus
-		setupQuery string // SQL to set the job to a specific state
+		name   string
+		status JobStatus
 	}{
-		{
-			name:       "queued job",
-			status:     JobStatusQueued,
-			setupQuery: "", // Default status is queued
-		},
-		{
-			name:       "running job",
-			status:     JobStatusRunning,
-			setupQuery: `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`,
-		},
-		{
-			name:       "completed job",
-			status:     JobStatusDone,
-			setupQuery: `UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`,
-		},
-		{
-			name:       "failed job",
-			status:     JobStatusFailed,
-			setupQuery: `UPDATE review_jobs SET status = 'failed', started_at = datetime('now'), finished_at = datetime('now'), error = 'test error' WHERE id = ?`,
-		},
-		{
-			name:       "canceled job",
-			status:     JobStatusCanceled,
-			setupQuery: `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`,
-		},
+		{"queued job", JobStatusQueued},
+		{"running job", JobStatusRunning},
+		{"completed job", JobStatusDone},
+		{"failed job", JobStatusFailed},
+		{"canceled job", JobStatusCanceled},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create a job for this test case
-			job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "claude-code", "", "thorough")
-			if err != nil {
-				t.Fatalf("EnqueueJob failed: %v", err)
-			}
-
-			// Set job to the desired state
-			if tc.setupQuery != "" {
-				_, err = db.Exec(tc.setupQuery, job.ID)
-				if err != nil {
-					t.Fatalf("Failed to set job status to %s: %v", tc.status, err)
-				}
-			}
+			job := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+			setJobStatus(t, db, job.ID, tc.status)
 
 			// Verify job is in expected state
 			var actualStatus string
-			err = db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, job.ID).Scan(&actualStatus)
+			err := db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, job.ID).Scan(&actualStatus)
 			if err != nil {
 				t.Fatalf("Failed to verify job status: %v", err)
 			}
@@ -119,7 +79,7 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 // TestAddCommentToJobNonExistent verifies that adding a comment to a
 // non-existent job returns an appropriate error.
 func TestAddCommentToJobNonExistent(t *testing.T) {
-	db := openReviewsTestDB(t)
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Try to add a comment to a job that doesn't exist
@@ -135,27 +95,11 @@ func TestAddCommentToJobNonExistent(t *testing.T) {
 // TestAddCommentToJobMultipleComments verifies that multiple comments
 // can be added to the same job.
 func TestAddCommentToJobMultipleComments(t *testing.T) {
-	db := openReviewsTestDB(t)
+	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-
-	// Create a job and set it to running (in-progress)
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "claude-code", "", "thorough")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID)
-	if err != nil {
-		t.Fatalf("Failed to set job to running: %v", err)
-	}
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
+	setJobStatus(t, db, job.ID, JobStatusRunning)
 
 	// Add multiple comments from different users
 	comments := []struct {
@@ -197,26 +141,13 @@ func TestAddCommentToJobMultipleComments(t *testing.T) {
 // TestAddCommentToJobWithNoReview verifies that comments can be added
 // to jobs that have no review (i.e., job exists but has no review record yet).
 func TestAddCommentToJobWithNoReview(t *testing.T) {
-	db := openReviewsTestDB(t)
+	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-
-	// Create a job (no review is created yet - job is just queued)
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "claude-code", "", "thorough")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
 
 	// Verify no review exists for this job
-	_, err = db.GetReviewByJobID(job.ID)
+	_, err := db.GetReviewByJobID(job.ID)
 	if err == nil {
 		t.Fatal("Expected error getting review for job with no review")
 	}
@@ -235,13 +166,10 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 }
 
 func TestGetReviewByJobIDIncludesModel(t *testing.T) {
-	db := openReviewsTestDB(t)
+	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/test-repo")
 
 	tests := []struct {
 		name          string
@@ -280,16 +208,4 @@ func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 			}
 		})
 	}
-}
-
-func openReviewsTestDB(t *testing.T) *DB {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-
-	return db
 }

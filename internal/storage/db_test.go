@@ -2449,6 +2449,30 @@ func mustEnqueuePromptJob(t *testing.T, db *DB, opts PromptJobOptions) *ReviewJo
 	return job
 }
 
+// setJobStatus forces a job into a specific state via raw SQL, replacing
+// manual UPDATE statements scattered across tests.
+func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
+	t.Helper()
+	var query string
+	switch status {
+	case JobStatusQueued:
+		return // default state
+	case JobStatusRunning:
+		query = `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`
+	case JobStatusDone:
+		query = `UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
+	case JobStatusFailed:
+		query = `UPDATE review_jobs SET status = 'failed', started_at = datetime('now'), finished_at = datetime('now'), error = 'test error' WHERE id = ?`
+	case JobStatusCanceled:
+		query = `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
+	default:
+		t.Fatalf("Unknown job status: %s", status)
+	}
+	if _, err := db.Exec(query, jobID); err != nil {
+		t.Fatalf("Failed to set job status to %s: %v", status, err)
+	}
+}
+
 // createJobChain creates a repo, commit, and enqueued job, returning all three.
 func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit, *ReviewJob) {
 	t.Helper()
