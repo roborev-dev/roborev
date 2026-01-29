@@ -5,11 +5,12 @@ import (
 )
 
 type normalizeTestCase struct {
-	name     string
-	input    string
-	wantNil  bool
-	wantText string
-	wantType string
+	name        string
+	input       string
+	wantNil     bool
+	wantText    string
+	wantType    string
+	notWantType string
 }
 
 func runNormalizeTests(t *testing.T, fn func(string) *OutputLine, cases []normalizeTestCase) {
@@ -32,6 +33,9 @@ func runNormalizeTests(t *testing.T, fn func(string) *OutputLine, cases []normal
 			if tc.wantType != "" && result.Type != tc.wantType {
 				t.Errorf("type = %q, want %q", result.Type, tc.wantType)
 			}
+			if tc.notWantType != "" && result.Type == tc.notWantType {
+				t.Errorf("type = %q, should not be %q", result.Type, tc.notWantType)
+			}
 		})
 	}
 }
@@ -48,6 +52,7 @@ func TestNormalizeClaudeOutput(t *testing.T) {
 			name:     "Result",
 			input:    `{"type":"result","result":"Review complete: PASS"}`,
 			wantText: "Review complete: PASS",
+			wantType: "text",
 		},
 		{
 			name:     "ToolUse",
@@ -59,6 +64,7 @@ func TestNormalizeClaudeOutput(t *testing.T) {
 			name:     "ToolResult",
 			input:    `{"type":"tool_result","content":"file contents here"}`,
 			wantText: "[Tool completed]",
+			wantType: "tool",
 		},
 		{
 			name:     "SystemInit",
@@ -127,9 +133,10 @@ func TestNormalizeOpenCodeOutput(t *testing.T) {
 			wantType: "tool",
 		},
 		{
-			name:     "PreservesJSONWithExtraKeys",
-			input:    `{"name":"test","arguments":{},"extra":"key"}`,
-			wantText: `{"name":"test","arguments":{},"extra":"key"}`,
+			name:        "PreservesJSONWithExtraKeys",
+			input:       `{"name":"test","arguments":{},"extra":"key"}`,
+			wantText:    `{"name":"test","arguments":{},"extra":"key"}`,
+			notWantType: "tool",
 		},
 		{
 			name:    "EmptyLine",
@@ -155,9 +162,42 @@ func TestNormalizeGenericOutput(t *testing.T) {
 }
 
 func TestGetNormalizer(t *testing.T) {
-	for _, agent := range []string{"claude-code", "opencode", "codex", "gemini", "unknown"} {
-		if GetNormalizer(agent) == nil {
-			t.Errorf("GetNormalizer(%q) returned nil", agent)
+	cases := []struct {
+		agent    string
+		wantName string
+	}{
+		{"claude-code", "NormalizeClaudeOutput"},
+		{"opencode", "NormalizeOpenCodeOutput"},
+		{"codex", "NormalizeGenericOutput"},
+		{"gemini", "NormalizeGenericOutput"},
+		{"unknown", "NormalizeGenericOutput"},
+	}
+	for _, tc := range cases {
+		fn := GetNormalizer(tc.agent)
+		if fn == nil {
+			t.Errorf("GetNormalizer(%q) returned nil", tc.agent)
+			continue
+		}
+		// Verify correct normalizer by testing characteristic behavior.
+		// NormalizeClaudeOutput parses Claude JSON; NormalizeOpenCodeOutput
+		// detects tool-call JSON; NormalizeGenericOutput passes through text.
+		switch tc.wantName {
+		case "NormalizeClaudeOutput":
+			result := fn(`{"type":"assistant","message":{"content":"hi"}}`)
+			if result == nil || result.Text != "hi" {
+				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeClaudeOutput", tc.agent)
+			}
+		case "NormalizeOpenCodeOutput":
+			result := fn(`{"name":"read","arguments":{}}`)
+			if result == nil || result.Text != "[Tool call]" {
+				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeOpenCodeOutput", tc.agent)
+			}
+		case "NormalizeGenericOutput":
+			// Generic normalizer treats Claude JSON as plain text, not parsed messages.
+			result := fn(`{"type":"assistant","message":{"content":"hi"}}`)
+			if result == nil || result.Text == "hi" {
+				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeGenericOutput", tc.agent)
+			}
 		}
 	}
 }
