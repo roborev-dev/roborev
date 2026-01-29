@@ -6753,7 +6753,7 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 	// Test that fetchCommitMsg correctly identifies job types and returns appropriate errors
 	// This is critical: Prompt field is populated for ALL jobs (stores review prompt),
-	// so we must check GitRef == "prompt" to identify run tasks, not Prompt != ""
+	// so we must use IsTaskJob() to identify task jobs, not Prompt != ""
 
 	m := newTuiModel("http://localhost")
 
@@ -6765,11 +6765,12 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 		{
 			name: "regular commit with Prompt populated should not error early",
 			job: storage.ReviewJob{
-				ID:     1,
-				GitRef: "abc123def456",                      // valid commit SHA
-				Prompt: "You are a code reviewer...",        // review prompt is stored for all jobs
+				ID:       1,
+				GitRef:   "abc123def456",               // valid commit SHA
+				Prompt:   "You are a code reviewer...", // review prompt is stored for all jobs
+				CommitID: func() *int64 { id := int64(123); return &id }(),
 			},
-			expectError: "", // should attempt git lookup, not return "run tasks" error
+			expectError: "", // should attempt git lookup, not return "task jobs" error
 		},
 		{
 			name: "run task (GitRef=prompt) should error",
@@ -6778,7 +6779,34 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 				GitRef: "prompt",
 				Prompt: "Explain this codebase",
 			},
-			expectError: "no commit message for run tasks",
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "run task (GitRef=run) should error",
+			job: storage.ReviewJob{
+				ID:     8,
+				GitRef: "run",
+				Prompt: "Do something",
+			},
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "analyze task should error",
+			job: storage.ReviewJob{
+				ID:     9,
+				GitRef: "analyze",
+				Prompt: "Analyze these files",
+			},
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "custom label task should error",
+			job: storage.ReviewJob{
+				ID:     10,
+				GitRef: "my-custom-task",
+				Prompt: "Do my custom task",
+			},
+			expectError: "no commit message for task jobs",
 		},
 		{
 			name: "dirty job (GitRef=dirty) should error",
@@ -6843,11 +6871,11 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 				}
 			} else {
 				// For valid commits, we expect a git error (repo doesn't exist in test)
-				// but NOT the "run tasks" or "uncommitted changes" error
+				// but NOT the "task jobs" or "uncommitted changes" error
 				if result.err != nil {
 					errMsg := result.err.Error()
-					if errMsg == "no commit message for run tasks" {
-						t.Errorf("Regular commit with Prompt should not be detected as run task")
+					if errMsg == "no commit message for task jobs" {
+						t.Errorf("Regular commit with Prompt should not be detected as task job")
 					}
 					if errMsg == "no commit message for uncommitted changes" {
 						t.Errorf("Regular commit should not be detected as uncommitted changes")

@@ -423,8 +423,8 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 		}
 	}
 
-	// For dirty or prompt jobs, no branch makes sense
-	if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
+	// For task jobs (run, analyze, custom) or dirty jobs, no branch makes sense
+	if job.IsTaskJob() || job.GitRef == "dirty" {
 		return ""
 	}
 
@@ -731,8 +731,8 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 					if job.Branch != "" {
 						continue // Already has branch (including "(none)" sentinel)
 					}
-					// Mark dirty/prompt jobs with "(none)" sentinel
-					if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
+					// Mark task jobs (run, analyze, custom) or dirty jobs with "(none)" sentinel
+					if job.IsTaskJob() || job.GitRef == "dirty" {
 						toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: "(none)"})
 						continue
 					}
@@ -1057,12 +1057,12 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 	jobID := job.ID
 	return func() tea.Msg {
-		// Handle prompt/run jobs first (GitRef == "prompt" indicates a run task, not a commit review)
+		// Handle task jobs first (run, analyze, custom labels)
 		// Check this before dirty to handle backward compatibility with older run jobs
-		if job.GitRef == "prompt" {
+		if job.IsTaskJob() {
 			return tuiCommitMsgMsg{
 				jobID: jobID,
-				err:   fmt.Errorf("no commit message for run tasks"),
+				err:   fmt.Errorf("no commit message for task jobs"),
 			}
 		}
 
@@ -3216,18 +3216,18 @@ func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
 	availableWidth := max(4, m.width-fixedWidth) // At least 4 chars total for columns
 
-	// Distribute available width: ref (15%), branch (35%), repo (35%), agent (15%)
-	refWidth := max(1, availableWidth*15/100)
-	branchWidth := max(1, availableWidth*35/100)
-	repoWidth := max(1, availableWidth*35/100)
+	// Distribute available width: ref (20%), branch (32%), repo (33%), agent (15%)
+	refWidth := max(1, availableWidth*20/100)
+	branchWidth := max(1, availableWidth*32/100)
+	repoWidth := max(1, availableWidth*33/100)
 	agentWidth := max(1, availableWidth*15/100)
 
 	// Scale down if total exceeds available (can happen due to rounding with small values)
 	total := refWidth + branchWidth + repoWidth + agentWidth
 	if total > availableWidth && availableWidth > 0 {
-		refWidth = max(1, availableWidth*15/100)
-		branchWidth = max(1, availableWidth*35/100)
-		repoWidth = max(1, availableWidth*35/100)
+		refWidth = max(1, availableWidth*20/100)
+		branchWidth = max(1, availableWidth*32/100)
+		repoWidth = max(1, availableWidth*33/100)
 		agentWidth = availableWidth - refWidth - branchWidth - repoWidth // Give remainder to agent
 		if agentWidth < 1 {
 			agentWidth = 1

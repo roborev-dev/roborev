@@ -1746,7 +1746,17 @@ func TestShortJobRef(t *testing.T) {
 		{
 			name:     "legacy prompt job",
 			job:      storage.ReviewJob{GitRef: "prompt", CommitID: nil, DiffContent: nil},
-			expected: "run",
+			expected: "prompt",
+		},
+		{
+			name:     "analyze job",
+			job:      storage.ReviewJob{GitRef: "analyze", CommitID: nil, DiffContent: nil},
+			expected: "analyze",
+		},
+		{
+			name:     "custom label job",
+			job:      storage.ReviewJob{GitRef: "my-task", CommitID: nil, DiffContent: nil},
+			expected: "my-task",
 		},
 		{
 			name:     "branch literally named prompt (has CommitID)",

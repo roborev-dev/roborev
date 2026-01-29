@@ -279,7 +279,7 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 	}
 
 	// Enqueue the job
-	job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, opts)
+	job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
 	if err != nil {
 		return err
 	}
@@ -350,7 +350,7 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 			}
 		}
 
-		job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, opts)
+		job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
 		if err != nil {
 			return fmt.Errorf("enqueue job for %s: %w", fileName, err)
 		}
@@ -436,10 +436,10 @@ func buildOutputPrefix(analysisType string, filePaths []string) string {
 }
 
 // enqueueAnalysisJob sends a job to the daemon
-func enqueueAnalysisJob(repoRoot, prompt, outputPrefix string, opts analyzeOptions) (*storage.ReviewJob, error) {
+func enqueueAnalysisJob(repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"repo_path":     repoRoot,
-		"git_ref":       "analyze",
+		"git_ref":       label, // Use analysis type name as the TUI label
 		"agent":         opts.agentName,
 		"model":         opts.model,
 		"reasoning":     opts.reasoning,

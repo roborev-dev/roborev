@@ -65,6 +65,24 @@ type ReviewJob struct {
 	Verdict       *string `json:"verdict,omitempty"`        // P/F parsed from review output
 }
 
+// IsTaskJob returns true if this is a task job (run, analyze, custom label) rather than
+// a commit review or dirty review. Task jobs have pre-stored prompts and no verdicts.
+func (j ReviewJob) IsTaskJob() bool {
+	if j.CommitID != nil {
+		return false // Has commit reference - it's a commit review
+	}
+	if j.DiffContent != nil {
+		return false // Has diff content - it's a dirty review
+	}
+	if j.GitRef == "dirty" {
+		return false // It's a dirty review (even if DiffContent not loaded)
+	}
+	if j.GitRef == "" {
+		return false // Invalid job state - not a valid task job
+	}
+	return true
+}
+
 type Review struct {
 	ID        int64     `json:"id"`
 	JobID     int64     `json:"job_id"`
