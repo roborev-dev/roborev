@@ -574,6 +574,15 @@ func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int
 		}
 	}
 
+	// Ensure the fix commit gets a review enqueued
+	if commitCreated {
+		if head, err := git.ResolveSHA(repoRoot, "HEAD"); err == nil {
+			if err := enqueueIfNeeded(serverAddr, repoRoot, head); err != nil && !opts.quiet {
+				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
+			}
+		}
+	}
+
 	// Mark the analysis as addressed
 	if err := markJobAddressed(serverAddr, jobID); err != nil {
 		// Non-fatal - the fixes were applied, just couldn't update status

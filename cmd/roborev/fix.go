@@ -215,6 +215,16 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		}
 	}
 
+	// Ensure the fix commit gets a review enqueued
+	// (post-commit hooks may not fire reliably from agent subprocesses)
+	if commitCreated {
+		if head, err := git.ResolveSHA(repoRoot, "HEAD"); err == nil {
+			if err := enqueueIfNeeded(serverAddr, repoRoot, head); err != nil && !opts.quiet {
+				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
+			}
+		}
+	}
+
 	// Add response to job and mark as addressed
 	responseText := "Fix applied via `roborev fix` command"
 	if commitCreated {
@@ -408,6 +418,32 @@ func addJobResponse(serverAddr string, jobID int64, response string) error {
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("add response failed: %s", body)
+	}
+	return nil
+}
+
+// enqueueIfNeeded enqueues a review for a commit via the daemon API.
+// This ensures fix commits get reviewed even if the post-commit hook
+// didn't fire (e.g., agent subprocesses may not trigger hooks reliably).
+func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
+	branchName := git.GetCurrentBranch(repoPath)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"repo_path": repoPath,
+		"git_ref":   sha,
+		"branch":    branchName,
+	})
+
+	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// 200 (skipped) and 201 (enqueued) are both fine
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("enqueue failed: %s", body)
 	}
 	return nil
 }
