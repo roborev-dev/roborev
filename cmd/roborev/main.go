@@ -2435,6 +2435,10 @@ func shortJobRef(job storage.ReviewJob) string {
 	// Task jobs are identified by: no CommitID, no DiffContent
 	// (Note: Prompt field is set for ALL jobs after worker starts, so can't use that)
 	if job.CommitID == nil && job.DiffContent == nil {
+		// Map legacy "prompt" to "run" for display consistency
+		if job.GitRef == "prompt" {
+			return "run"
+		}
 		// Return GitRef directly as the display label (run, analyze, or custom)
 		return job.GitRef
 	}

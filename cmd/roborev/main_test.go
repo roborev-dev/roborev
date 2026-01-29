@@ -1744,9 +1744,9 @@ func TestShortJobRef(t *testing.T) {
 			expected: "run",
 		},
 		{
-			name:     "legacy prompt job",
+			name:     "legacy prompt job shows as run",
 			job:      storage.ReviewJob{GitRef: "prompt", CommitID: nil, DiffContent: nil},
-			expected: "prompt",
+			expected: "run",
 		},
 		{
 			name:     "analyze job",
