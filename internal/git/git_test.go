@@ -18,12 +18,7 @@ type TestRepo struct {
 // NewTestRepo creates a temp dir, initializes git, and configures user identity.
 func NewTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
-	dir := t.TempDir()
-	r := &TestRepo{T: t, Dir: dir}
-	r.Run("init")
-	r.Run("config", "user.email", "test@test.com")
-	r.Run("config", "user.name", "Test")
-	return r
+	return NewTestRepoWithAuthor(t, "Test")
 }
 
 // NewTestRepoWithAuthor creates a test repo with a custom author name.
@@ -97,7 +92,7 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 	wtDir := r.T.TempDir()
 	r.Run("worktree", "add", wtDir, "-b", branchName)
 	r.T.Cleanup(func() {
-		exec.Command("git", "-C", r.Dir, "worktree", "remove", wtDir).Run()
+		runGit(r.T, r.Dir, "worktree", "remove", wtDir)
 	})
 	return &TestRepo{T: r.T, Dir: wtDir}
 }
@@ -174,9 +169,9 @@ func TestNormalizeMSYSPath(t *testing.T) {
 }
 
 func TestGetHooksPath(t *testing.T) {
-	repo := NewTestRepo(t)
-
 	t.Run("default hooks path", func(t *testing.T) {
+		repo := NewTestRepo(t)
+
 		hooksPath, err := GetHooksPath(repo.Dir)
 		if err != nil {
 			t.Fatalf("GetHooksPath failed: %v", err)
@@ -199,6 +194,7 @@ func TestGetHooksPath(t *testing.T) {
 	})
 
 	t.Run("custom core.hooksPath absolute", func(t *testing.T) {
+		repo := NewTestRepo(t)
 		customHooksDir := filepath.Join(repo.Dir, "my-hooks")
 		if err := os.MkdirAll(customHooksDir, 0755); err != nil {
 			t.Fatal(err)
@@ -214,12 +210,10 @@ func TestGetHooksPath(t *testing.T) {
 		if hooksPath != customHooksDir {
 			t.Errorf("expected %s, got %s", customHooksDir, hooksPath)
 		}
-
-		// Reset for other tests
-		repo.Run("config", "--unset", "core.hooksPath")
 	})
 
 	t.Run("custom core.hooksPath relative", func(t *testing.T) {
+		repo := NewTestRepo(t)
 		repo.Run("config", "core.hooksPath", "custom-hooks")
 
 		hooksPath, err := GetHooksPath(repo.Dir)
