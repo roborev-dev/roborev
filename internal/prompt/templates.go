@@ -54,7 +54,10 @@ func GetSystemPrompt(agentName string, promptType string) string {
 	return appendDateLine(base)
 }
 
+// nowFunc is the time source for date lines in prompts. Override in tests.
+var nowFunc = time.Now
+
 // appendDateLine adds the current UTC date to a system prompt.
 func appendDateLine(prompt string) string {
-	return prompt + "\n\nCurrent date: " + time.Now().UTC().Format("2006-01-02") + " (UTC)"
+	return prompt + "\n\nCurrent date: " + nowFunc().UTC().Format("2006-01-02") + " (UTC)"
 }
