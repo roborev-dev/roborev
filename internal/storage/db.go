@@ -93,8 +93,10 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 
-	// Open with WAL mode and busy timeout
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	// Open with WAL mode and busy timeout.
+	// 30s busy_timeout gives enough headroom for concurrent writers
+	// (worker pool + sync worker) to wait for locks rather than failing.
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
