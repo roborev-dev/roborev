@@ -207,6 +207,45 @@ func TestExpandAndReadFiles_ShellExpanded(t *testing.T) {
 	}
 }
 
+func TestExpandAndReadFiles_RecursiveFromSubdir(t *testing.T) {
+	// ./... should walk from repoRoot and return all source files,
+	// even when workDir is a subdirectory.
+	tmpDir := t.TempDir()
+
+	writeFile := func(path, content string) {
+		fullPath := filepath.Join(tmpDir, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	writeFile("main.go", "package main\n")
+	writeFile("sub/helper.go", "package sub\n")
+
+	repoRoot := tmpDir
+	workDir := filepath.Join(tmpDir, "sub")
+
+	files, err := expandAndReadFiles(workDir, repoRoot, []string{"./..."})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should find files across the entire repo, not just the subdirectory
+	wantKeys := []string{"main.go", "sub/helper.go"}
+	if len(files) != len(wantKeys) {
+		t.Fatalf("got %d files, want %d: %v", len(files), len(wantKeys), mapKeys(files))
+	}
+	for _, key := range wantKeys {
+		nativeKey := filepath.FromSlash(key)
+		if _, ok := files[nativeKey]; !ok {
+			t.Errorf("missing expected file %q, got keys: %v", nativeKey, mapKeys(files))
+		}
+	}
+}
+
 func TestIsSourceFile(t *testing.T) {
 	tests := []struct {
 		path string
