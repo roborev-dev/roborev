@@ -381,6 +381,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 	})
 
 	t.Run("finds and processes unaddressed jobs", func(t *testing.T) {
+		var reviewCalls, addressCalls atomic.Int32
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/jobs":
@@ -402,10 +403,12 @@ func TestRunFixUnaddressed(t *testing.T) {
 					})
 				}
 			case "/api/review":
+				reviewCalls.Add(1)
 				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
 			case "/api/comment":
 				w.WriteHeader(http.StatusCreated)
 			case "/api/review/address":
+				addressCalls.Add(1)
 				w.WriteHeader(http.StatusOK)
 			case "/api/enqueue":
 				w.WriteHeader(http.StatusOK)
@@ -427,6 +430,12 @@ func TestRunFixUnaddressed(t *testing.T) {
 		}
 		if !strings.Contains(output.String(), "Found 2 unaddressed job(s)") {
 			t.Errorf("expected count message, got %q", output.String())
+		}
+		if rc := reviewCalls.Load(); rc != 2 {
+			t.Errorf("expected 2 review fetches, got %d", rc)
+		}
+		if ac := addressCalls.Load(); ac != 2 {
+			t.Errorf("expected 2 address calls, got %d", ac)
 		}
 	})
 

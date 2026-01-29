@@ -84,13 +84,14 @@ Examples:
 				effectiveBranch := branch
 				if !allBranches && effectiveBranch == "" {
 					workDir, err := os.Getwd()
-					if err == nil {
-						repoRoot := workDir
-						if root, err := git.GetRepoRoot(workDir); err == nil {
-							repoRoot = root
-						}
-						effectiveBranch = git.GetCurrentBranch(repoRoot)
+					if err != nil {
+						return fmt.Errorf("get working directory: %w", err)
 					}
+					repoRoot := workDir
+					if root, err := git.GetRepoRoot(workDir); err == nil {
+						repoRoot = root
+					}
+					effectiveBranch = git.GetCurrentBranch(repoRoot)
 				}
 				return runFixUnaddressed(cmd, effectiveBranch, opts)
 			}
