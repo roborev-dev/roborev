@@ -54,10 +54,9 @@ func TestClaudeSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 }
 
 func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
-	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
+	withUnsafeAgents(t, true)
 
 	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage\"; exit 0; fi\nexit 0\n")
-	SetAllowUnsafeAgents(true)
 
 	a := NewClaudeAgent(cmdPath)
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)

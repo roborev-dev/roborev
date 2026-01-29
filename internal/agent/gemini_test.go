@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -192,21 +191,14 @@ func TestGeminiReview_PlainTextError(t *testing.T) {
 	skipIfWindows(t)
 	// End-to-end test: create a temp script that emits plain text (no stream-json)
 	// should return an error since we require stream-json
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "fake-gemini")
-
-	// Create a script that outputs plain text
-	script := `#!/bin/sh
+	scriptPath := writeTempCommand(t, `#!/bin/sh
 echo "Plain text review output"
 echo "No issues found."
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("failed to write script: %v", err)
-	}
+`)
 
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
-	_, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	_, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
 	if err == nil {
 		t.Fatal("expected error for plain text output, got nil")
 	}
@@ -221,23 +213,14 @@ echo "No issues found."
 }
 
 func TestGeminiReview_PlainTextErrorWithStderr(t *testing.T) {
-	skipIfWindows(t)
-	// End-to-end test: verify stderr is included in the error and truncated when large
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "fake-gemini")
-
-	// Create a script that outputs plain text and stderr
-	script := `#!/bin/sh
+	scriptPath := writeTempCommand(t, `#!/bin/sh
 echo "Plain text review output"
 echo "Some stderr message" >&2
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("failed to write script: %v", err)
-	}
+`)
 
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
-	_, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	_, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
 	if err == nil {
 		t.Fatal("expected error for plain text output, got nil")
 	}
@@ -248,25 +231,16 @@ echo "Some stderr message" >&2
 }
 
 func TestGeminiReview_LargeStderrTruncation(t *testing.T) {
-	skipIfWindows(t)
-	// End-to-end test: verify large stderr is truncated
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "fake-gemini")
-
-	// Create a script that outputs a lot of stderr
-	script := `#!/bin/sh
+	scriptPath := writeTempCommand(t, `#!/bin/sh
 echo "Plain text"
 for i in $(seq 1 200); do
 	echo "This is a long stderr line number $i that will contribute to the total size" >&2
 done
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("failed to write script: %v", err)
-	}
+`)
 
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
-	_, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	_, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -277,24 +251,14 @@ done
 }
 
 func TestGeminiReview_StreamJSON(t *testing.T) {
-	skipIfWindows(t)
-	// End-to-end test: create a temp script that emits valid stream-json
-	// and verify Review() parses it correctly
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "fake-gemini")
-
-	// Create a script that outputs stream-json
-	script := `#!/bin/sh
+	scriptPath := writeTempCommand(t, `#!/bin/sh
 echo '{"type":"system","subtype":"init"}'
 echo '{"type":"result","result":"Review complete. All good!"}'
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("failed to write script: %v", err)
-	}
+`)
 
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
-	result, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	result, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
@@ -306,25 +270,15 @@ echo '{"type":"result","result":"Review complete. All good!"}'
 }
 
 func TestGeminiReview_StreamJSONNoResult(t *testing.T) {
-	skipIfWindows(t)
-	// End-to-end test: stream-json with only tool events (no result/assistant)
-	// should return "No review output generated" (no raw output fallback)
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "fake-gemini")
-
-	// Create a script that outputs stream-json with only tool events
-	script := `#!/bin/sh
+	scriptPath := writeTempCommand(t, `#!/bin/sh
 echo '{"type":"system","subtype":"init"}'
 echo '{"type":"tool","name":"Read","input":{"path":"foo.go"}}'
 echo '{"type":"tool_result","content":"file contents here"}'
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("failed to write script: %v", err)
-	}
+`)
 
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
-	result, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	result, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
@@ -336,23 +290,14 @@ echo '{"type":"tool_result","content":"file contents here"}'
 }
 
 func TestGeminiReview_IOError(t *testing.T) {
-	skipIfWindows(t)
-	// End-to-end test: verify that non-sentinel errors (like command failure) are propagated
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "fake-gemini")
-
-	// Create a script that fails
-	script := `#!/bin/sh
+	scriptPath := writeTempCommand(t, `#!/bin/sh
 echo "Error message" >&2
 exit 1
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("failed to write script: %v", err)
-	}
+`)
 
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
-	_, err := a.Review(context.Background(), tmpDir, "abc123", "Review this code", &output)
+	_, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
 	if err == nil {
 		t.Fatal("expected error for failed command, got nil")
 	}
@@ -363,31 +308,28 @@ exit 1
 }
 
 func TestGeminiReview_PromptDeliveredViaStdin(t *testing.T) {
-	skipIfWindows(t)
-	// End-to-end test: verify the prompt is actually delivered via stdin
-	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "fake-gemini")
-	promptFile := filepath.Join(tmpDir, "received-prompt.txt")
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureStdin: true,
+	})
 
-	// Create a script that reads stdin and writes it to a file
-	script := `#!/bin/sh
-cat > "` + promptFile + `"
+	// We need the script to also output stream-json, so use a custom script
+	// that captures stdin via the env var set by mockAgentCLI
+	stdinFile := mock.StdinFile
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+cat > "$MOCK_STDIN_FILE"
 echo '{"type":"result","result":"Done"}'
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		t.Fatalf("failed to write script: %v", err)
-	}
+`)
 
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
 	expectedPrompt := "Please review this code for security issues"
-	_, err := a.Review(context.Background(), tmpDir, "abc123", expectedPrompt, &output)
+	_, err := a.Review(context.Background(), t.TempDir(), "abc123", expectedPrompt, &output)
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
 
 	// Verify the prompt was received
-	receivedPrompt, err := os.ReadFile(promptFile)
+	receivedPrompt, err := os.ReadFile(stdinFile)
 	if err != nil {
 		t.Fatalf("failed to read prompt file: %v", err)
 	}

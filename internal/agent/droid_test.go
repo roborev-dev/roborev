@@ -195,9 +195,7 @@ func TestDroidBuildArgsPromptWithDash(t *testing.T) {
 }
 
 func TestDroidReviewAgenticModeFromGlobal(t *testing.T) {
-	prevAllowUnsafe := AllowUnsafeAgents()
-	SetAllowUnsafeAgents(true)
-	t.Cleanup(func() { SetAllowUnsafeAgents(prevAllowUnsafe) })
+	withUnsafeAgents(t, true)
 
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "args.txt")
