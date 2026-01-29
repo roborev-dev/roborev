@@ -15,6 +15,36 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+// createMockExecutable creates a platform-appropriate executable script in dir
+// that exits with the given exit code.
+func createMockExecutable(t *testing.T, dir, name string, exitCode int) string {
+	t.Helper()
+	var path string
+	if runtime.GOOS == "windows" {
+		path = filepath.Join(dir, name+".bat")
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("@exit /b %d\r\n", exitCode)), 0755); err != nil {
+			t.Fatalf("write %s stub: %v", name, err)
+		}
+	} else {
+		path = filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)), 0755); err != nil {
+			t.Fatalf("write %s stub: %v", name, err)
+		}
+	}
+	return path
+}
+
+// gitCommitFile writes a file, stages it, commits, and returns the new HEAD SHA.
+func gitCommitFile(t *testing.T, repoDir string, runGit func(...string) string, filename, content, msg string) string {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repoDir, filename), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", filename)
+	runGit("commit", "-m", msg)
+	return runGit("rev-parse", "HEAD")
+}
+
 // mockDaemonClient is a test implementation of daemon.Client
 type mockDaemonClient struct {
 	reviews   map[string]*storage.Review // keyed by SHA
@@ -120,6 +150,27 @@ func (m *mockDaemonClient) GetCommentsForJob(jobID int64) ([]storage.Response, e
 	return m.responses[jobID], nil
 }
 
+// WithReview adds a review to the mock client, returning the client for chaining.
+func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, addressed bool) *mockDaemonClient {
+	m.reviews[sha] = &storage.Review{
+		ID:        int64(len(m.reviews) + 1),
+		JobID:     jobID,
+		Output:    output,
+		Addressed: addressed,
+	}
+	return m
+}
+
+// WithJob adds a job to the mock client, returning the client for chaining.
+func (m *mockDaemonClient) WithJob(id int64, gitRef string, status storage.JobStatus) *mockDaemonClient {
+	m.jobs[id] = &storage.ReviewJob{
+		ID:     id,
+		GitRef: gitRef,
+		Status: status,
+	}
+	return m
+}
+
 // Verify mockDaemonClient implements daemon.Client
 var _ daemon.Client = (*mockDaemonClient)(nil)
 
@@ -218,19 +269,7 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 
 func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 	tmpDir := t.TempDir()
-	var codexPath string
-	if runtime.GOOS == "windows" {
-		// On Windows, create a batch file that exits successfully
-		codexPath = filepath.Join(tmpDir, "codex.bat")
-		if err := os.WriteFile(codexPath, []byte("@exit /b 0\r\n"), 0755); err != nil {
-			t.Fatalf("write codex stub: %v", err)
-		}
-	} else {
-		codexPath = filepath.Join(tmpDir, "codex")
-		if err := os.WriteFile(codexPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-			t.Fatalf("write codex stub: %v", err)
-		}
-	}
+	createMockExecutable(t, tmpDir, "codex", 0)
 
 	t.Setenv("PATH", tmpDir)
 
@@ -250,19 +289,7 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	tmpDir := t.TempDir()
-	var codexPath string
-	if runtime.GOOS == "windows" {
-		// On Windows, create a batch file that exits successfully
-		codexPath = filepath.Join(tmpDir, "codex.bat")
-		if err := os.WriteFile(codexPath, []byte("@exit /b 0\r\n"), 0755); err != nil {
-			t.Fatalf("write codex stub: %v", err)
-		}
-	} else {
-		codexPath = filepath.Join(tmpDir, "codex")
-		if err := os.WriteFile(codexPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-			t.Fatalf("write codex stub: %v", err)
-		}
-	}
+	createMockExecutable(t, tmpDir, "codex", 0)
 
 	t.Setenv("PATH", tmpDir)
 
@@ -285,11 +312,10 @@ func TestFindFailedReviewForBranch_OldestFirst(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// Mock reviews: oldest commit passes, middle fails, newest fails
-	client.reviews = map[string]*storage.Review{
-		"oldest123": {ID: 1, JobID: 100, Output: "No issues found."},                           // Pass
-		"middle456": {ID: 2, JobID: 200, Output: "Found a bug in the code.", Addressed: false}, // Fail (oldest failure)
-		"newest789": {ID: 3, JobID: 300, Output: "Security vulnerability detected."},           // Fail (newest)
-	}
+	client.
+		WithReview("oldest123", 100, "No issues found.", false).
+		WithReview("middle456", 200, "Found a bug in the code.", false).
+		WithReview("newest789", 300, "Security vulnerability detected.", false)
 
 	// Commits in chronological order (oldest first, as returned by git log --reverse)
 	commits := []string{"oldest123", "middle456", "newest789"}
@@ -312,11 +338,10 @@ func TestFindFailedReviewForBranch_OldestFirst(t *testing.T) {
 func TestFindFailedReviewForBranch_SkipsAddressed(t *testing.T) {
 	client := newMockDaemonClient()
 
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "Bug found."},                    // Fail, not addressed (oldest)
-		"commit2": {ID: 2, JobID: 200, Output: "Another bug.", Addressed: true}, // Fail, but addressed
-		"commit3": {ID: 3, JobID: 300, Output: "More issues."},                  // Fail, not addressed (newest)
-	}
+	client.
+		WithReview("commit1", 100, "Bug found.", false).
+		WithReview("commit2", 200, "Another bug.", true).
+		WithReview("commit3", 300, "More issues.", false)
 
 	commits := []string{"commit1", "commit2", "commit3"}
 
@@ -334,11 +359,10 @@ func TestFindFailedReviewForBranch_SkipsAddressed(t *testing.T) {
 func TestFindFailedReviewForBranch_SkipsGivenUpReviews(t *testing.T) {
 	client := newMockDaemonClient()
 
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "Bug found."},       // Fail (oldest, but in skip set)
-		"commit2": {ID: 2, JobID: 200, Output: "Another bug."},     // Fail (should be returned)
-		"commit3": {ID: 3, JobID: 300, Output: "No issues found."}, // Pass
-	}
+	client.
+		WithReview("commit1", 100, "Bug found.", false).
+		WithReview("commit2", 200, "Another bug.", false).
+		WithReview("commit3", 300, "No issues found.", false)
 
 	commits := []string{"commit1", "commit2", "commit3"}
 
@@ -359,10 +383,9 @@ func TestFindFailedReviewForBranch_SkipsGivenUpReviews(t *testing.T) {
 func TestFindFailedReviewForBranch_AllSkippedReturnsNil(t *testing.T) {
 	client := newMockDaemonClient()
 
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "Bug found."}, // Fail (in skip set)
-		"commit2": {ID: 2, JobID: 200, Output: "Another."},   // Fail (in skip set)
-	}
+	client.
+		WithReview("commit1", 100, "Bug found.", false).
+		WithReview("commit2", 200, "Another.", false)
 
 	commits := []string{"commit1", "commit2"}
 
@@ -383,10 +406,9 @@ func TestFindFailedReviewForBranch_AllSkippedReturnsNil(t *testing.T) {
 func TestFindFailedReviewForBranch_AllPass(t *testing.T) {
 	client := newMockDaemonClient()
 
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "No issues found."},
-		"commit2": {ID: 2, JobID: 200, Output: "No findings."},
-	}
+	client.
+		WithReview("commit1", 100, "No issues found.", false).
+		WithReview("commit2", 200, "No findings.", false)
 
 	commits := []string{"commit1", "commit2"}
 
@@ -480,10 +502,9 @@ func TestFindFailedReviewForBranch_MarksPassingAsAddressed(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// Two passing reviews that are NOT yet addressed
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "No issues found.", Addressed: false},
-		"commit2": {ID: 2, JobID: 200, Output: "No findings.", Addressed: false},
-	}
+	client.
+		WithReview("commit1", 100, "No issues found.", false).
+		WithReview("commit2", 200, "No findings.", false)
 
 	commits := []string{"commit1", "commit2"}
 
@@ -516,10 +537,9 @@ func TestFindFailedReviewForBranch_MarksPassingBeforeFailure(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// First commit passes (unaddressed), second fails
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "No issues found.", Addressed: false}, // Pass
-		"commit2": {ID: 2, JobID: 200, Output: "Bug found."},                          // Fail
-	}
+	client.
+		WithReview("commit1", 100, "No issues found.", false).
+		WithReview("commit2", 200, "Bug found.", false)
 
 	commits := []string{"commit1", "commit2"}
 
@@ -546,10 +566,9 @@ func TestFindFailedReviewForBranch_DoesNotMarkAlreadyAddressed(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// Passing review already addressed - should not be marked again
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "No issues found.", Addressed: true},
-		"commit2": {ID: 2, JobID: 200, Output: "Bug found."},
-	}
+	client.
+		WithReview("commit1", 100, "No issues found.", true).
+		WithReview("commit2", 200, "Bug found.", false)
 
 	commits := []string{"commit1", "commit2"}
 
@@ -577,13 +596,12 @@ func TestFindFailedReviewForBranch_MixedScenario(t *testing.T) {
 	// commit3: fail (addressed) - should be skipped
 	// commit4: pass (unaddressed) - should be marked
 	// commit5: fail (unaddressed) - should be returned
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "No issues found.", Addressed: false},
-		"commit2": {ID: 2, JobID: 200, Output: "No issues.", Addressed: true},
-		"commit3": {ID: 3, JobID: 300, Output: "Bug found.", Addressed: true},
-		"commit4": {ID: 4, JobID: 400, Output: "No findings detected.", Addressed: false},
-		"commit5": {ID: 5, JobID: 500, Output: "Critical error."},
-	}
+	client.
+		WithReview("commit1", 100, "No issues found.", false).
+		WithReview("commit2", 200, "No issues.", true).
+		WithReview("commit3", 300, "Bug found.", true).
+		WithReview("commit4", 400, "No findings detected.", false).
+		WithReview("commit5", 500, "Critical error.", false)
 
 	commits := []string{"commit1", "commit2", "commit3", "commit4", "commit5"}
 
@@ -616,11 +634,10 @@ func TestFindFailedReviewForBranch_StopsAtFirstFailure(t *testing.T) {
 
 	// Multiple failures - should stop at the first (oldest) one
 	// and not process subsequent commits
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "Bug found."},       // Fail - should be returned
-		"commit2": {ID: 2, JobID: 200, Output: "No issues found."}, // Pass - should NOT be marked (not reached)
-		"commit3": {ID: 3, JobID: 300, Output: "Another bug."},     // Fail - should NOT be processed
-	}
+	client.
+		WithReview("commit1", 100, "Bug found.", false).
+		WithReview("commit2", 200, "No issues found.", false).
+		WithReview("commit3", 300, "Another bug.", false)
 
 	commits := []string{"commit1", "commit2", "commit3"}
 
@@ -644,9 +661,7 @@ func TestFindFailedReviewForBranch_MarkAddressedError(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// A passing review that will trigger MarkReviewAddressed
-	client.reviews = map[string]*storage.Review{
-		"commit1": {ID: 1, JobID: 100, Output: "No issues found.", Addressed: false},
-	}
+	client.WithReview("commit1", 100, "No issues found.", false)
 
 	// Configure the mock to return an error when marking as addressed
 	client.markAddressedErr = fmt.Errorf("daemon connection failed")
@@ -701,10 +716,9 @@ func TestFindPendingJobForBranch_FindsRunningJob(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// Jobs: first is done, second is running
-	client.jobs = map[int64]*storage.ReviewJob{
-		100: {ID: 100, GitRef: "commit1", Status: storage.JobStatusDone},
-		200: {ID: 200, GitRef: "commit2", Status: storage.JobStatusRunning},
-	}
+	client.
+		WithJob(100, "commit1", storage.JobStatusDone).
+		WithJob(200, "commit2", storage.JobStatusRunning)
 
 	commits := []string{"commit1", "commit2"}
 
@@ -725,9 +739,7 @@ func TestFindPendingJobForBranch_FindsQueuedJob(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// Jobs: first is queued
-	client.jobs = map[int64]*storage.ReviewJob{
-		100: {ID: 100, GitRef: "commit1", Status: storage.JobStatusQueued},
-	}
+	client.WithJob(100, "commit1", storage.JobStatusQueued)
 
 	commits := []string{"commit1"}
 
@@ -748,10 +760,9 @@ func TestFindPendingJobForBranch_NoPendingJobs(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// All jobs are done
-	client.jobs = map[int64]*storage.ReviewJob{
-		100: {ID: 100, GitRef: "commit1", Status: storage.JobStatusDone},
-		200: {ID: 200, GitRef: "commit2", Status: storage.JobStatusDone},
-	}
+	client.
+		WithJob(100, "commit1", storage.JobStatusDone).
+		WithJob(200, "commit2", storage.JobStatusDone)
 
 	commits := []string{"commit1", "commit2"}
 
@@ -785,10 +796,9 @@ func TestFindPendingJobForBranch_OldestFirst(t *testing.T) {
 	client := newMockDaemonClient()
 
 	// Two running jobs - should return oldest (commit1)
-	client.jobs = map[int64]*storage.ReviewJob{
-		100: {ID: 100, GitRef: "commit1", Status: storage.JobStatusRunning},
-		200: {ID: 200, GitRef: "commit2", Status: storage.JobStatusRunning},
-	}
+	client.
+		WithJob(100, "commit1", storage.JobStatusRunning).
+		WithJob(200, "commit2", storage.JobStatusRunning)
 
 	commits := []string{"commit1", "commit2"}
 
@@ -828,12 +838,7 @@ func setupTestGitRepo(t *testing.T) (repoDir string, baseSHA string, runGit func
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
 
-	if err := os.WriteFile(filepath.Join(repoDir, "base.txt"), []byte("base"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "base.txt")
-	runGit("commit", "-m", "base commit")
-	baseSHA = runGit("rev-parse", "HEAD")
+	baseSHA = gitCommitFile(t, repoDir, runGit, "base.txt", "base", "base commit")
 
 	return repoDir, baseSHA, runGit
 }
@@ -876,11 +881,7 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 	repoDir, baseSHA, runGit := setupTestGitRepo(t)
 
 	// Add another commit on main
-	if err := os.WriteFile(filepath.Join(repoDir, "second.txt"), []byte("second"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "second.txt")
-	runGit("commit", "-m", "second commit")
+	gitCommitFile(t, repoDir, runGit, "second.txt", "second", "second commit")
 
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -916,11 +917,7 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 
 	// Create feature branch with commits
 	runGit("checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "feature.txt")
-	runGit("commit", "-m", "feature commit")
+	gitCommitFile(t, repoDir, runGit, "feature.txt", "feature", "feature commit")
 
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -982,20 +979,11 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 
 	// Create a commit on a separate branch that diverges from main
 	runGit("checkout", "-b", "other-branch")
-	if err := os.WriteFile(filepath.Join(repoDir, "other.txt"), []byte("other"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "other.txt")
-	runGit("commit", "-m", "commit on other branch")
-	otherBranchSHA := runGit("rev-parse", "HEAD")
+	otherBranchSHA := gitCommitFile(t, repoDir, runGit, "other.txt", "other", "commit on other branch")
 
 	// Go back to main and create a different commit
 	runGit("checkout", "main")
-	if err := os.WriteFile(filepath.Join(repoDir, "main2.txt"), []byte("main2"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "main2.txt")
-	runGit("commit", "-m", "second commit on main")
+	gitCommitFile(t, repoDir, runGit, "main2.txt", "main2", "second commit on main")
 
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -1025,11 +1013,7 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 
 	// Create feature branch
 	runGit("checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "feature.txt")
-	runGit("commit", "-m", "feature commit")
+	gitCommitFile(t, repoDir, runGit, "feature.txt", "feature", "feature commit")
 
 	origDir, err := os.Getwd()
 	if err != nil {
