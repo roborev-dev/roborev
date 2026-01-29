@@ -428,18 +428,14 @@ func addJobResponse(serverAddr string, jobID int64, response string) error {
 func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 	// Check if a review job already exists for this commit (e.g., from the
 	// post-commit hook). If so, skip enqueuing to avoid duplicates.
-	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, sha)
-	checkResp, err := http.Get(checkURL)
-	if err == nil {
-		defer checkResp.Body.Close()
-		if checkResp.StatusCode == http.StatusOK {
-			var result struct {
-				Jobs []struct{ ID int64 } `json:"jobs"`
-			}
-			if json.NewDecoder(checkResp.Body).Decode(&result) == nil && len(result.Jobs) > 0 {
-				return nil // already enqueued
-			}
-		}
+	// We check twice with a 1-second delay to give the post-commit hook
+	// time to fire before we enqueue ourselves.
+	if hasJobForSHA(serverAddr, sha) {
+		return nil
+	}
+	time.Sleep(1 * time.Second)
+	if hasJobForSHA(serverAddr, sha) {
+		return nil
 	}
 
 	branchName := git.GetCurrentBranch(repoPath)
@@ -462,4 +458,24 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 		return fmt.Errorf("enqueue failed: %s", body)
 	}
 	return nil
+}
+
+// hasJobForSHA checks if a review job already exists for the given commit SHA.
+func hasJobForSHA(serverAddr, sha string) bool {
+	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, sha)
+	resp, err := http.Get(checkURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var result struct {
+		Jobs []struct{ ID int64 } `json:"jobs"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return false
+	}
+	return len(result.Jobs) > 0
 }
