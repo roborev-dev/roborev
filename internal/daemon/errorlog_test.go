@@ -28,7 +28,11 @@ func seedErrorLog(el *ErrorLog, count int) {
 }
 
 func TestNewErrorLog(t *testing.T) {
-	_, path := createTestErrorLog(t)
+	el, path := createTestErrorLog(t)
+
+	if el == nil {
+		t.Fatal("NewErrorLog returned nil")
+	}
 
 	// Verify file was created
 	if _, err := os.Stat(path); os.IsNotExist(err) {
