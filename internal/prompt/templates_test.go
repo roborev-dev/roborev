@@ -3,6 +3,7 @@ package prompt
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGeminiTemplateLoads(t *testing.T) {
@@ -36,6 +37,32 @@ func TestGeminiRunTemplateLoads(t *testing.T) {
 	}
 	if !strings.Contains(result, "Do NOT explain your process") {
 		t.Errorf("Expected Gemini run template content, got: %s", result[:min(100, len(result))])
+	}
+}
+
+func TestSystemPromptIncludesDate(t *testing.T) {
+	orig := nowFunc
+	defer func() { nowFunc = orig }()
+
+	nowFunc = func() time.Time {
+		return time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
+	}
+
+	result := GetSystemPrompt("claude-code", "review")
+	if !strings.Contains(result, "Current date: 2030-06-15 (UTC)") {
+		t.Errorf("Expected date suffix with 2030-06-15, got: %s", result[max(0, len(result)-60):])
+	}
+
+	// Gemini template should also get the date
+	gemini := GetSystemPrompt("gemini", "review")
+	if !strings.Contains(gemini, "Current date: 2030-06-15 (UTC)") {
+		t.Errorf("Expected date suffix in Gemini template, got: %s", gemini[max(0, len(gemini)-60):])
+	}
+
+	// Run prompt for non-Gemini should remain empty (no date appended)
+	run := GetSystemPrompt("claude-code", "run")
+	if run != "" {
+		t.Errorf("Expected empty run prompt, got: %q", run)
 	}
 }
 

@@ -110,7 +110,7 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Commands Reference](https://roborev.io/commands/)
 - [Configuration](https://roborev.io/configuration/)
 - [Auto-Fixing with Refine](https://roborev.io/guides/auto-fixing/)
-- [Code Analysis and Assisted Refactoring](https://www.roborev.io/guides/assisted-refactoring/)
+- [Code Analysis and Assisted Refactoring](https://roborev.io/guides/assisted-refactoring/)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
 - [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
 
