@@ -348,9 +348,9 @@ type RepoStats struct {
 	RunningJobs   int
 	CompletedJobs int
 	FailedJobs    int
-	PassedReviews     int
-	FailedReviews     int
-	AddressedReviews  int
+	PassedReviews      int
+	FailedReviews      int
+	AddressedReviews   int
 	UnaddressedReviews int
 }
 

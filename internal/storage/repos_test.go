@@ -637,6 +637,35 @@ func TestGetRepoStats(t *testing.T) {
 		if stats.FailedReviews != 1 {
 			t.Errorf("Expected 1 failed review, got %d", stats.FailedReviews)
 		}
+		// Both reviews should be unaddressed by default
+		if stats.AddressedReviews != 0 {
+			t.Errorf("Expected 0 addressed reviews, got %d", stats.AddressedReviews)
+		}
+		if stats.UnaddressedReviews != 2 {
+			t.Errorf("Expected 2 unaddressed reviews, got %d", stats.UnaddressedReviews)
+		}
+	})
+
+	t.Run("addressed reviews counted", func(t *testing.T) {
+		// Mark job1's review as addressed
+		review, err := db.GetReviewByJobID(job1.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed: %v", err)
+		}
+		if err := db.MarkReviewAddressed(review.ID, true); err != nil {
+			t.Fatalf("MarkReviewAddressed failed: %v", err)
+		}
+
+		stats, err := db.GetRepoStats(repo.ID)
+		if err != nil {
+			t.Fatalf("GetRepoStats failed: %v", err)
+		}
+		if stats.AddressedReviews != 1 {
+			t.Errorf("Expected 1 addressed review, got %d", stats.AddressedReviews)
+		}
+		if stats.UnaddressedReviews != 1 {
+			t.Errorf("Expected 1 unaddressed review, got %d", stats.UnaddressedReviews)
+		}
 	})
 
 	t.Run("nonexistent repo", func(t *testing.T) {
