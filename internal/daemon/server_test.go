@@ -165,9 +165,7 @@ func TestHandleListRepos(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// repos can be nil when empty
 		var reposLen int
@@ -229,9 +227,7 @@ func TestHandleListRepos(t *testing.T) {
 		}
 
 		var response map[string]interface{}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		repos := response["repos"].([]interface{})
 		totalCount := int(response["total_count"].(float64))
@@ -302,7 +298,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &response)
+		testutil.DecodeJSON(t, w, &response)
 
 		repos := response["repos"].([]interface{})
 		totalCount := int(response["total_count"].(float64))
@@ -324,7 +320,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &response)
+		testutil.DecodeJSON(t, w, &response)
 
 		repos := response["repos"].([]interface{})
 		totalCount := int(response["total_count"].(float64))
@@ -346,7 +342,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &response)
+		testutil.DecodeJSON(t, w, &response)
 
 		totalCount := int(response["total_count"].(float64))
 		if totalCount != 0 {
@@ -387,7 +383,7 @@ func TestHandleListBranches(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &response)
+		testutil.DecodeJSON(t, w, &response)
 
 		branches := response["branches"].([]interface{})
 		totalCount := int(response["total_count"].(float64))
@@ -414,7 +410,7 @@ func TestHandleListBranches(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &response)
+		testutil.DecodeJSON(t, w, &response)
 
 		branches := response["branches"].([]interface{})
 		totalCount := int(response["total_count"].(float64))
@@ -438,7 +434,7 @@ func TestHandleListBranches(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &response)
+		testutil.DecodeJSON(t, w, &response)
 
 		branches := response["branches"].([]interface{})
 		totalCount := int(response["total_count"].(float64))
@@ -461,7 +457,7 @@ func TestHandleListBranches(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &response)
+		testutil.DecodeJSON(t, w, &response)
 
 		branches := response["branches"].([]interface{})
 		totalCount := int(response["total_count"].(float64))
@@ -537,9 +533,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 5 {
 			t.Errorf("Expected 5 jobs, got %d", len(response.Jobs))
@@ -560,9 +554,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 3 {
 			t.Errorf("Expected 3 jobs for repo1, got %d", len(response.Jobs))
@@ -589,9 +581,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 2 {
 			t.Errorf("Expected 2 jobs with limit=2, got %d", len(response.Jobs))
@@ -611,9 +601,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 5 {
 			t.Errorf("Expected 5 jobs with limit=0 (no limit), got %d", len(response.Jobs))
@@ -633,9 +621,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 2 {
 			t.Errorf("Expected 2 jobs with repo filter and limit=2, got %d", len(response.Jobs))
@@ -662,9 +648,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// Negative clamped to 0 (unlimited), should return all 5 jobs
 		if len(response.Jobs) != 5 {
@@ -685,9 +669,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// Large limit capped to 10000, but we only have 5 jobs
 		if len(response.Jobs) != 5 {
@@ -708,9 +690,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// Invalid limit uses default (50), we have 5 jobs
 		if len(response.Jobs) != 5 {
@@ -733,9 +713,7 @@ func TestHandleStatus(t *testing.T) {
 		}
 
 		var status storage.DaemonStatus
-		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &status)
 
 		// Version should be set (non-empty)
 		if status.Version == "" {
@@ -761,9 +739,7 @@ func TestHandleStatus(t *testing.T) {
 		server.handleStatus(w, req)
 
 		var status storage.DaemonStatus
-		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &status)
 
 		// MaxWorkers should match the pool size (config default), not a potentially reloaded config value
 		expectedWorkers := config.DefaultConfig().MaxWorkers
@@ -779,9 +755,7 @@ func TestHandleStatus(t *testing.T) {
 		server.handleStatus(w, req)
 
 		var status storage.DaemonStatus
-		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &status)
 
 		// ConfigReloadedAt should be empty when no reload has occurred
 		if status.ConfigReloadedAt != "" {
@@ -2335,9 +2309,7 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 
 			// Verify response contains the comment
 			var resp storage.Response
-			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-				t.Fatalf("Failed to unmarshal response: %v", err)
-			}
+			testutil.DecodeJSON(t, w, &resp)
 			if resp.Responder != "test-user" {
 				t.Errorf("Expected responder 'test-user', got %q", resp.Responder)
 			}
@@ -2497,9 +2469,7 @@ func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
 		} `json:"lines"`
 		HasMore bool `json:"has_more"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
+	testutil.DecodeJSON(t, w, &resp)
 
 	if resp.JobID != job.ID {
 		t.Errorf("Expected job_id %d, got %d", job.ID, resp.JobID)
@@ -2551,9 +2521,7 @@ func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
 		Status  string `json:"status"`
 		HasMore bool   `json:"has_more"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
+	testutil.DecodeJSON(t, w, &resp)
 
 	if resp.Status != "done" {
 		t.Errorf("Expected status 'done', got %q", resp.Status)
@@ -2603,9 +2571,7 @@ func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
 		Type   string `json:"type"`
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
+	testutil.DecodeJSON(t, w, &resp)
 
 	if resp.Type != "complete" {
 		t.Errorf("Expected type 'complete', got %q", resp.Type)
