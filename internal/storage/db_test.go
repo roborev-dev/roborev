@@ -2440,6 +2440,15 @@ func claimJob(t *testing.T, db *DB, workerID string) *ReviewJob {
 	return job
 }
 
+func mustEnqueuePromptJob(t *testing.T, db *DB, opts PromptJobOptions) *ReviewJob {
+	t.Helper()
+	job, err := db.EnqueuePromptJob(opts)
+	if err != nil {
+		t.Fatalf("Failed to enqueue prompt job: %v", err)
+	}
+	return job
+}
+
 // createJobChain creates a repo, commit, and enqueued job, returning all three.
 func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit, *ReviewJob) {
 	t.Helper()
