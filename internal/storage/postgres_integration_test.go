@@ -78,9 +78,23 @@ func (e *integrationEnv) openDB(name string) *DB {
 	return db
 }
 
+// validPgTables is the allowlist of tables that may be queried by test helpers.
+var validPgTables = map[string]bool{
+	"machines":    true,
+	"repos":       true,
+	"commits":     true,
+	"review_jobs": true,
+	"reviews":     true,
+	"responses":   true,
+}
+
 // assertPgCount asserts the row count of a table in Postgres.
+// The table parameter is validated against an allowlist to prevent SQL injection.
 func (e *integrationEnv) assertPgCount(table string, expected int) {
 	e.T.Helper()
+	if !validPgTables[table] {
+		e.T.Fatalf("assertPgCount: invalid table name %q", table)
+	}
 	var count int
 	err := e.Pool.pool.QueryRow(e.Ctx, fmt.Sprintf("SELECT COUNT(*) FROM roborev.%s", table)).Scan(&count)
 	if err != nil {
@@ -92,8 +106,12 @@ func (e *integrationEnv) assertPgCount(table string, expected int) {
 }
 
 // assertPgCountWhere asserts the row count with a WHERE clause.
+// The table parameter is validated against an allowlist to prevent SQL injection.
 func (e *integrationEnv) assertPgCountWhere(table, where string, args []interface{}, expected int) {
 	e.T.Helper()
+	if !validPgTables[table] {
+		e.T.Fatalf("assertPgCountWhere: invalid table name %q", table)
+	}
 	var count int
 	query := fmt.Sprintf("SELECT COUNT(*) FROM roborev.%s WHERE %s", table, where)
 	err := e.Pool.pool.QueryRow(e.Ctx, query, args...).Scan(&count)
@@ -115,38 +133,48 @@ func (e *integrationEnv) pgQueryString(query string, args ...interface{}) string
 	return val
 }
 
-// createCompletedReview creates a repo, commit, enqueues a job, marks it running, and completes it.
-// Returns the job and review.
-func createCompletedReview(t *testing.T, db *DB, repoID int64, sha, author, subject, prompt, output string) (*ReviewJob, *Review) {
-	t.Helper()
+// tryCreateCompletedReview creates a repo, commit, enqueues a job, marks it running, and completes it.
+// Returns the job, review, and any error. Safe to call from goroutines (does not call t.Fatalf).
+func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt, output string) (*ReviewJob, *Review, error) {
 	commit, err := db.GetOrCreateCommit(repoID, sha, author, subject, time.Now())
 	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
+		return nil, nil, fmt.Errorf("GetOrCreateCommit failed: %w", err)
 	}
 	job, err := db.EnqueueJob(repoID, commit.ID, sha, "", "test", "", "")
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
+		return nil, nil, fmt.Errorf("EnqueueJob failed: %w", err)
 	}
 	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
-		t.Fatalf("Failed to set job running: %v", err)
+		return nil, nil, fmt.Errorf("failed to set job running: %w", err)
 	}
 	if err := db.CompleteJob(job.ID, "test", prompt, output); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		return nil, nil, fmt.Errorf("CompleteJob failed: %w", err)
 	}
 	review, err := db.GetReviewByJobID(job.ID)
 	if err != nil {
-		t.Fatalf("GetReviewByJobID failed: %v", err)
+		return nil, nil, fmt.Errorf("GetReviewByJobID failed: %w", err)
 	}
 	// Re-fetch job to get UUID
 	jobs, err := db.ListJobs("", "", 1000, 0)
 	if err != nil {
-		t.Fatalf("ListJobs failed: %v", err)
+		return nil, nil, fmt.Errorf("ListJobs failed: %w", err)
 	}
 	for _, j := range jobs {
 		if j.ID == job.ID {
 			job = &j
 			break
 		}
+	}
+	return job, review, nil
+}
+
+// createCompletedReview creates a repo, commit, enqueues a job, marks it running, and completes it.
+// Returns the job and review. Must NOT be called from a goroutine (uses t.Fatalf).
+func createCompletedReview(t *testing.T, db *DB, repoID int64, sha, author, subject, prompt, output string) (*ReviewJob, *Review) {
+	t.Helper()
+	job, review, err := tryCreateCompletedReview(db, repoID, sha, author, subject, prompt, output)
+	if err != nil {
+		t.Fatalf("createCompletedReview failed: %v", err)
 	}
 	return job, review
 }
@@ -735,7 +763,11 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 
 	go func() {
 		for i := 0; i < 10; i++ {
-			job, _ := createCompletedReview(t, dbA, repoA.ID, fmt.Sprintf("a3_%02d", i), "Alice", fmt.Sprintf("Alice concurrent %d", i), "prompt", fmt.Sprintf("Review A3-%d", i))
+			job, _, err := tryCreateCompletedReview(dbA, repoA.ID, fmt.Sprintf("a3_%02d", i), "Alice", fmt.Sprintf("Alice concurrent %d", i), "prompt", fmt.Sprintf("Review A3-%d", i))
+			if err != nil {
+				jobResultsA <- jobResult{err: err}
+				continue
+			}
 			jobResultsA <- jobResult{uuid: job.UUID}
 			if i%3 == 0 {
 				if _, err := workerA.SyncNow(); err != nil {
@@ -751,7 +783,11 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 
 	go func() {
 		for i := 0; i < 10; i++ {
-			job, _ := createCompletedReview(t, dbB, repoB.ID, fmt.Sprintf("b3_%02d", i), "Bob", fmt.Sprintf("Bob concurrent %d", i), "prompt", fmt.Sprintf("Review B3-%d", i))
+			job, _, err := tryCreateCompletedReview(dbB, repoB.ID, fmt.Sprintf("b3_%02d", i), "Bob", fmt.Sprintf("Bob concurrent %d", i), "prompt", fmt.Sprintf("Review B3-%d", i))
+			if err != nil {
+				jobResultsB <- jobResult{err: err}
+				continue
+			}
 			jobResultsB <- jobResult{uuid: job.UUID}
 			if i%3 == 0 {
 				if _, err := workerB.SyncNow(); err != nil {
@@ -767,7 +803,11 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 
 	go func() {
 		for i := 0; i < 10; i++ {
-			job, _ := createCompletedReview(t, dbC, repoC.ID, fmt.Sprintf("c3_%02d", i), "Carol", fmt.Sprintf("Carol concurrent %d", i), "prompt", fmt.Sprintf("Review C3-%d", i))
+			job, _, err := tryCreateCompletedReview(dbC, repoC.ID, fmt.Sprintf("c3_%02d", i), "Carol", fmt.Sprintf("Carol concurrent %d", i), "prompt", fmt.Sprintf("Review C3-%d", i))
+			if err != nil {
+				jobResultsC <- jobResult{err: err}
+				continue
+			}
 			jobResultsC <- jobResult{uuid: job.UUID}
 			if i%3 == 0 {
 				if _, err := workerC.SyncNow(); err != nil {
@@ -988,14 +1028,6 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 
 func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 	env := newIntegrationEnv(t, 30*time.Second)
-
-	// This test uses row-level cleanup instead of schema wipe since it tests batch behavior
-	_, _ = env.Pool.pool.Exec(env.Ctx, "DELETE FROM roborev.responses")
-	_, _ = env.Pool.pool.Exec(env.Ctx, "DELETE FROM roborev.reviews")
-	_, _ = env.Pool.pool.Exec(env.Ctx, "DELETE FROM roborev.review_jobs")
-	_, _ = env.Pool.pool.Exec(env.Ctx, "DELETE FROM roborev.commits")
-	_, _ = env.Pool.pool.Exec(env.Ctx, "DELETE FROM roborev.repos")
-
 	db := env.openDB("test.db")
 
 	// Start sync worker FIRST, before creating jobs
