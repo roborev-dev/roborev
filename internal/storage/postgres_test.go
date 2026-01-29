@@ -615,7 +615,7 @@ func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
 	ctx := t.Context()
 
 	setupPool := openRawPgxPool(t)
-	cleanupTablesOnFinish(t, "repos")
+	cleanupTablesOnFinish(t, "repos", "schema_version")
 	skipIfTableInSchema(t, setupPool, "roborev", "repos")
 	skipIfTableInSchema(t, setupPool, "public", "repos")
 
@@ -627,6 +627,12 @@ func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
 	_, err = setupPool.Exec(ctx, `CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 	if err != nil {
 		t.Fatalf("Failed to create roborev.repos: %v", err)
+	}
+
+	// Create public.schema_version so migrateLegacyTables detects the legacy schema
+	_, err = setupPool.Exec(ctx, `CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
+	if err != nil {
+		t.Fatalf("Failed to create public.schema_version: %v", err)
 	}
 
 	// Create public.repos table with data
@@ -662,7 +668,7 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	ctx := t.Context()
 
 	setupPool := openRawPgxPool(t)
-	cleanupTablesOnFinish(t, "repos")
+	cleanupTablesOnFinish(t, "repos", "schema_version")
 	skipIfTableInSchema(t, setupPool, "roborev", "repos")
 	skipIfTableInSchema(t, setupPool, "public", "repos")
 
@@ -678,6 +684,12 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	_, err = setupPool.Exec(ctx, `INSERT INTO roborev.repos (identity) VALUES ('new-repo')`)
 	if err != nil {
 		t.Fatalf("Failed to insert into roborev.repos: %v", err)
+	}
+
+	// Create public.schema_version so migrateLegacyTables detects the legacy schema
+	_, err = setupPool.Exec(ctx, `CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
+	if err != nil {
+		t.Fatalf("Failed to create public.schema_version: %v", err)
 	}
 
 	// Create empty public.repos table
@@ -720,7 +732,7 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	ctx := t.Context()
 
 	setupPool := openRawPgxPool(t)
-	cleanupTablesOnFinish(t, "repos")
+	cleanupTablesOnFinish(t, "repos", "schema_version")
 	skipIfTableInSchema(t, setupPool, "roborev", "repos")
 	skipIfTableInSchema(t, setupPool, "public", "repos")
 
@@ -728,6 +740,12 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
 	if err != nil {
 		t.Fatalf("Failed to create roborev schema: %v", err)
+	}
+
+	// Create public.schema_version so migrateLegacyTables detects the legacy schema
+	_, err = setupPool.Exec(ctx, `CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
+	if err != nil {
+		t.Fatalf("Failed to create public.schema_version: %v", err)
 	}
 
 	// Create public.repos table with data
