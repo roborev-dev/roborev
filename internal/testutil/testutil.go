@@ -274,6 +274,41 @@ func MakeJSONRequest(t *testing.T, method, path string, body interface{}) *http.
 	return req
 }
 
+// ReceiveWithTimeout reads a single value from a channel, failing the test
+// if nothing is received within the given timeout.
+func ReceiveWithTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(timeout):
+		t.Fatal("Timed out waiting to receive from channel")
+		var zero T
+		return zero
+	}
+}
+
+// WaitForJobStatus polls until the job reaches one of the expected statuses or
+// the timeout expires. Returns the final job state.
+func WaitForJobStatus(t *testing.T, db *storage.DB, jobID int64, timeout time.Duration, statuses ...storage.JobStatus) *storage.ReviewJob {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		job, err := db.GetJobByID(jobID)
+		if err != nil {
+			t.Fatalf("GetJobByID failed: %v", err)
+		}
+		for _, s := range statuses {
+			if job.Status == s {
+				return job
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("Job %d did not reach any of %v within %v", jobID, statuses, timeout)
+	return nil
+}
+
 // DecodeJSON unmarshals the response body from an httptest.ResponseRecorder into v.
 func DecodeJSON(t *testing.T, w *httptest.ResponseRecorder, v interface{}) {
 	t.Helper()

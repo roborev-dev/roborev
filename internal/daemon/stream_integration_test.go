@@ -3,114 +3,75 @@ package daemon
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
 )
+
+// newTestEvent creates an Event with sensible defaults. Override fields via opts.
+func newTestEvent(jobID int64, opts ...func(*Event)) Event {
+	e := Event{
+		Type:    "review.completed",
+		TS:      time.Now(),
+		JobID:   jobID,
+		Repo:    "/test/repo",
+		SHA:     "abc123",
+		Agent:   "test",
+		Verdict: "P",
+	}
+	for _, o := range opts {
+		o(&e)
+	}
+	return e
+}
 
 func TestStreamEventsEndToEnd(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
-	// Subscribe directly to test
 	_, eventCh := broadcaster.Subscribe("")
 
-	// Broadcast a test event
-	testEvent := Event{
-		Type:    "review.completed",
-		TS:      time.Now(),
-		JobID:   42,
-		Repo:    "/path/to/repo",
-		SHA:     "abc123",
-		Agent:   "test-agent",
-		Verdict: "P",
-	}
+	testEvent := newTestEvent(42, func(e *Event) {
+		e.Repo = "/path/to/repo"
+		e.Agent = "test-agent"
+	})
 	broadcaster.Broadcast(testEvent)
 
-	// Receive the event
-	select {
-	case receivedEvent := <-eventCh:
-		// Verify event fields
-		if receivedEvent.Type != "review.completed" {
-			t.Errorf("Expected type 'review.completed', got %s", receivedEvent.Type)
-		}
-		if receivedEvent.JobID != 42 {
-			t.Errorf("Expected JobID 42, got %d", receivedEvent.JobID)
-		}
-		if receivedEvent.Repo != "/path/to/repo" {
-			t.Errorf("Expected Repo '/path/to/repo', got %s", receivedEvent.Repo)
-		}
-		if receivedEvent.SHA != "abc123" {
-			t.Errorf("Expected SHA 'abc123', got %s", receivedEvent.SHA)
-		}
-		if receivedEvent.Agent != "test-agent" {
-			t.Errorf("Expected Agent 'test-agent', got %s", receivedEvent.Agent)
-		}
-		if receivedEvent.Verdict != "P" {
-			t.Errorf("Expected Verdict 'P', got %s", receivedEvent.Verdict)
-		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("Did not receive event")
+	received := testutil.ReceiveWithTimeout(t, eventCh, 1*time.Second)
+	if received.Type != "review.completed" {
+		t.Errorf("Expected type 'review.completed', got %s", received.Type)
+	}
+	if received.JobID != 42 {
+		t.Errorf("Expected JobID 42, got %d", received.JobID)
+	}
+	if received.Repo != "/path/to/repo" {
+		t.Errorf("Expected Repo '/path/to/repo', got %s", received.Repo)
+	}
+	if received.SHA != "abc123" {
+		t.Errorf("Expected SHA 'abc123', got %s", received.SHA)
+	}
+	if received.Agent != "test-agent" {
+		t.Errorf("Expected Agent 'test-agent', got %s", received.Agent)
+	}
+	if received.Verdict != "P" {
+		t.Errorf("Expected Verdict 'P', got %s", received.Verdict)
 	}
 }
 
 func TestStreamEventsWithRepoFilter(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
-	// Subscribe with repo filter
 	_, eventCh := broadcaster.Subscribe("/path/to/repo1")
 
-	// Broadcast events for different repos
-	broadcaster.Broadcast(Event{
-		Type:    "review.completed",
-		TS:      time.Now(),
-		JobID:   1,
-		Repo:    "/path/to/repo1",
-		SHA:     "sha1",
-		Agent:   "test",
-		Verdict: "P",
-	})
-
-	broadcaster.Broadcast(Event{
-		Type:    "review.completed",
-		TS:      time.Now(),
-		JobID:   2,
-		Repo:    "/path/to/repo2", // Different repo - should be filtered
-		SHA:     "sha2",
-		Agent:   "test",
-		Verdict: "F",
-	})
-
-	broadcaster.Broadcast(Event{
-		Type:    "review.completed",
-		TS:      time.Now(),
-		JobID:   3,
-		Repo:    "/path/to/repo1", // Same as filter
-		SHA:     "sha3",
-		Agent:   "test",
-		Verdict: "P",
-	})
+	broadcaster.Broadcast(newTestEvent(1, func(e *Event) { e.Repo = "/path/to/repo1"; e.SHA = "sha1" }))
+	broadcaster.Broadcast(newTestEvent(2, func(e *Event) { e.Repo = "/path/to/repo2"; e.SHA = "sha2"; e.Verdict = "F" }))
+	broadcaster.Broadcast(newTestEvent(3, func(e *Event) { e.Repo = "/path/to/repo1"; e.SHA = "sha3" }))
 
 	// Should receive only events for repo1 (JobID 1 and 3)
-	var receivedEvents []Event
-
-	// Receive first event
-	select {
-	case e := <-eventCh:
-		receivedEvents = append(receivedEvents, e)
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Did not receive first event")
-	}
-
-	// Receive second event
-	select {
-	case e := <-eventCh:
-		receivedEvents = append(receivedEvents, e)
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Did not receive second event")
-	}
+	e1 := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
+	e2 := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
 
 	// Should not receive third event (different repo)
 	select {
@@ -120,27 +81,16 @@ func TestStreamEventsWithRepoFilter(t *testing.T) {
 		// OK - no event received
 	}
 
-	if len(receivedEvents) != 2 {
-		t.Fatalf("Expected 2 events, got %d", len(receivedEvents))
+	if e1.JobID != 1 {
+		t.Errorf("Expected first event JobID 1, got %d", e1.JobID)
 	}
-
-	if receivedEvents[0].JobID != 1 {
-		t.Errorf("Expected first event JobID 1, got %d", receivedEvents[0].JobID)
-	}
-	if receivedEvents[1].JobID != 3 {
-		t.Errorf("Expected second event JobID 3, got %d", receivedEvents[1].JobID)
+	if e2.JobID != 3 {
+		t.Errorf("Expected second event JobID 3, got %d", e2.JobID)
 	}
 }
 
 func TestStreamEventsMethodNotAllowed(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db := testutil.OpenTestDB(t)
 
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
@@ -156,20 +106,11 @@ func TestStreamEventsMethodNotAllowed(t *testing.T) {
 }
 
 func TestBroadcasterIntegrationWithWorker(t *testing.T) {
-	// Test that worker actually broadcasts events
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-	defer db.Close()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
 
-	// Subscribe to events
 	_, eventCh := broadcaster.Subscribe("")
 
 	// Create repo and job
@@ -177,54 +118,29 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateRepo failed: %v", err)
 	}
-
-	commit, err := db.GetOrCreateCommit(repo.ID, "testsha", "Author", "Test", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha", "", "test", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
+	job := testutil.CreateTestJobWithSHA(t, db, repo, "testsha", "test")
 
 	// Create worker pool with our broadcaster
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
 	pool.Start()
 	defer pool.Stop()
 
-	// Wait for job to complete
-	deadline := time.Now().Add(10 * time.Second)
-	var finalJob *storage.ReviewJob
-	for time.Now().Before(deadline) {
-		finalJob, err = db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if finalJob.Status == storage.JobStatusDone || finalJob.Status == storage.JobStatusFailed {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	// Wait for job to finish (done or failed)
+	finalJob := testutil.WaitForJobStatus(t, db, job.ID, 10*time.Second, storage.JobStatusDone, storage.JobStatusFailed)
 
-	// If job completed successfully, verify we received event
-	if finalJob.Status == storage.JobStatusDone {
-		select {
-		case event := <-eventCh:
-			if event.Type != "review.completed" {
-				t.Errorf("Expected type 'review.completed', got %s", event.Type)
-			}
-			if event.JobID != job.ID {
-				t.Errorf("Expected JobID %d, got %d", job.ID, event.JobID)
-			}
-			if event.Agent != "test" {
-				t.Errorf("Expected agent 'test', got %s", event.Agent)
-			}
-			if event.Verdict == "" {
-				t.Error("Expected verdict to be set")
-			}
-		case <-time.After(1 * time.Second):
-			t.Error("Did not receive completion event from worker")
+	if finalJob != nil && finalJob.Status == storage.JobStatusDone {
+		event := testutil.ReceiveWithTimeout(t, eventCh, 1*time.Second)
+		if event.Type != "review.completed" {
+			t.Errorf("Expected type 'review.completed', got %s", event.Type)
+		}
+		if event.JobID != job.ID {
+			t.Errorf("Expected JobID %d, got %d", job.ID, event.JobID)
+		}
+		if event.Agent != "test" {
+			t.Errorf("Expected agent 'test', got %s", event.Agent)
+		}
+		if event.Verdict == "" {
+			t.Error("Expected verdict to be set")
 		}
 	}
 }
@@ -232,34 +148,14 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 func TestStreamMultipleEvents(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
-	// Subscribe
 	_, eventCh := broadcaster.Subscribe("")
 
-	// Broadcast multiple events
 	for i := 1; i <= 3; i++ {
-		broadcaster.Broadcast(Event{
-			Type:    "review.completed",
-			TS:      time.Now(),
-			JobID:   int64(i),
-			Repo:    "/test/repo",
-			SHA:     "sha",
-			Agent:   "test",
-			Verdict: "P",
-		})
+		broadcaster.Broadcast(newTestEvent(int64(i)))
 	}
 
 	// Receive all 3 events
-	count := 0
 	for i := 0; i < 3; i++ {
-		select {
-		case <-eventCh:
-			count++
-		case <-time.After(500 * time.Millisecond):
-			t.Fatalf("Did not receive event %d", i+1)
-		}
-	}
-
-	if count != 3 {
-		t.Errorf("Expected 3 events, got %d", count)
+		testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
 	}
 }
