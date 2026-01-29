@@ -1864,7 +1864,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 	}
 
 	t.Run("rejects oversized request body", func(t *testing.T) {
-		// Create a request body larger than 250KB
+		// Create a request body larger than the default limit (200KB + 50KB overhead)
 		largeDiff := strings.Repeat("a", 300*1024) // 300KB
 		reqData := map[string]string{
 			"repo_path":    repoDir,

@@ -423,8 +423,8 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 		}
 	}
 
-	// For dirty or prompt jobs, no branch makes sense
-	if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
+	// For task jobs (run, analyze, custom) or dirty jobs, no branch makes sense
+	if job.IsTaskJob() || job.GitRef == "dirty" {
 		return ""
 	}
 
@@ -731,8 +731,8 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 					if job.Branch != "" {
 						continue // Already has branch (including "(none)" sentinel)
 					}
-					// Mark dirty/prompt jobs with "(none)" sentinel
-					if job.GitRef == "dirty" || job.GitRef == "run" || job.GitRef == "prompt" {
+					// Mark task jobs (run, analyze, custom) or dirty jobs with "(none)" sentinel
+					if job.IsTaskJob() || job.GitRef == "dirty" {
 						toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: "(none)"})
 						continue
 					}
@@ -1057,12 +1057,12 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 	jobID := job.ID
 	return func() tea.Msg {
-		// Handle prompt/run jobs first (GitRef == "prompt" indicates a run task, not a commit review)
+		// Handle task jobs first (run, analyze, custom labels)
 		// Check this before dirty to handle backward compatibility with older run jobs
-		if job.GitRef == "prompt" {
+		if job.IsTaskJob() {
 			return tuiCommitMsgMsg{
 				jobID: jobID,
-				err:   fmt.Errorf("no commit message for run tasks"),
+				err:   fmt.Errorf("no commit message for task jobs"),
 			}
 		}
 
@@ -3007,32 +3007,34 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString(tuiTitleStyle.Render(title))
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Status line - show filtered counts when filter is active
+	// Status line - count addressed/unaddressed from jobs
 	var statusLine string
-	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-		// Calculate counts from visible jobs (handles multi-path client-side filtering)
-		var done, failed, canceled int
-		for _, job := range m.jobs {
+	var done, addressed, unaddressed int
+	for _, job := range m.jobs {
+		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 			if !m.repoMatchesFilter(job.RepoPath) {
 				continue
 			}
-			switch job.Status {
-			case storage.JobStatusDone:
-				done++
-			case storage.JobStatusFailed:
-				failed++
-			case storage.JobStatusCanceled:
-				canceled++
+		}
+		if job.Status == storage.JobStatusDone {
+			done++
+			if job.Addressed != nil {
+				if *job.Addressed {
+					addressed++
+				} else {
+					unaddressed++
+				}
 			}
 		}
-		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Failed: %d | Canceled: %d",
-			m.daemonVersion, done, failed, canceled)
+	}
+	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
+		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addressed: %d | Unaddressed: %d",
+			m.daemonVersion, done, addressed, unaddressed)
 	} else {
-		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Failed: %d | Canceled: %d",
+		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Addressed: %d | Unaddressed: %d",
 			m.daemonVersion,
 			m.status.ActiveWorkers, m.status.MaxWorkers,
-			m.status.CompletedJobs, m.status.FailedJobs,
-			m.status.CanceledJobs)
+			done, addressed, unaddressed)
 	}
 	b.WriteString(tuiStatusStyle.Render(statusLine))
 	b.WriteString("\x1b[K\n") // Clear status line
@@ -3104,7 +3106,7 @@ func (m tuiModel) renderQueueView() string {
 			colWidths.branch, "Branch",
 			colWidths.repo, "Repo",
 			colWidths.agent, "Agent",
-			"Status", "P/F", "Queued", "Elapsed", "Addr'd")
+			"Status", "P/F", "Queued", "Elapsed", "Addressed")
 		b.WriteString(tuiStatusStyle.Render(header))
 		b.WriteString("\x1b[K\n") // Clear to end of line
 		b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
@@ -3207,27 +3209,27 @@ type columnWidths struct {
 }
 
 func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
+	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addressed (9)
 	// Status width 8 accommodates "canceled" (longest status)
 	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
-	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 6 + 9
+	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 9 + 9
 
 	// Available width for flexible columns (ref, branch, repo, agent)
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
 	availableWidth := max(4, m.width-fixedWidth) // At least 4 chars total for columns
 
-	// Distribute available width: ref (15%), branch (35%), repo (35%), agent (15%)
-	refWidth := max(1, availableWidth*15/100)
-	branchWidth := max(1, availableWidth*35/100)
-	repoWidth := max(1, availableWidth*35/100)
+	// Distribute available width: ref (20%), branch (32%), repo (33%), agent (15%)
+	refWidth := max(1, availableWidth*20/100)
+	branchWidth := max(1, availableWidth*32/100)
+	repoWidth := max(1, availableWidth*33/100)
 	agentWidth := max(1, availableWidth*15/100)
 
 	// Scale down if total exceeds available (can happen due to rounding with small values)
 	total := refWidth + branchWidth + repoWidth + agentWidth
 	if total > availableWidth && availableWidth > 0 {
-		refWidth = max(1, availableWidth*15/100)
-		branchWidth = max(1, availableWidth*35/100)
-		repoWidth = max(1, availableWidth*35/100)
+		refWidth = max(1, availableWidth*20/100)
+		branchWidth = max(1, availableWidth*32/100)
+		repoWidth = max(1, availableWidth*33/100)
 		agentWidth = availableWidth - refWidth - branchWidth - repoWidth // Give remainder to agent
 		if agentWidth < 1 {
 			agentWidth = 1

@@ -47,8 +47,9 @@ type ReviewJob struct {
 	Error      string     `json:"error,omitempty"`
 	Prompt      string     `json:"prompt,omitempty"`
 	RetryCount  int        `json:"retry_count"`
-	DiffContent *string    `json:"diff_content,omitempty"` // For dirty reviews (uncommitted changes)
-	Agentic     bool       `json:"agentic"`                // Enable agentic mode (allow file edits)
+	DiffContent  *string `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
+	Agentic      bool    `json:"agentic"`                 // Enable agentic mode (allow file edits)
+	OutputPrefix string  `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 
 	// Sync fields
 	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
@@ -62,6 +63,24 @@ type ReviewJob struct {
 	CommitSubject string  `json:"commit_subject,omitempty"` // empty for ranges
 	Addressed     *bool   `json:"addressed,omitempty"`      // nil if no review yet
 	Verdict       *string `json:"verdict,omitempty"`        // P/F parsed from review output
+}
+
+// IsTaskJob returns true if this is a task job (run, analyze, custom label) rather than
+// a commit review or dirty review. Task jobs have pre-stored prompts and no verdicts.
+func (j ReviewJob) IsTaskJob() bool {
+	if j.CommitID != nil {
+		return false // Has commit reference - it's a commit review
+	}
+	if j.DiffContent != nil {
+		return false // Has diff content - it's a dirty review
+	}
+	if j.GitRef == "dirty" {
+		return false // It's a dirty review (even if DiffContent not loaded)
+	}
+	if j.GitRef == "" {
+		return false // Invalid job state - not a valid task job
+	}
+	return true
 }
 
 type Review struct {

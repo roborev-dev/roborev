@@ -18,7 +18,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("creates job with custom prompt", func(t *testing.T) {
 		customPrompt := "Explain the architecture of this codebase"
-		job, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "thorough", customPrompt, false)
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "claude-code",
+			Reasoning: "thorough",
+			Prompt:    customPrompt,
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -41,7 +46,11 @@ func TestEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("defaults reasoning to thorough", func(t *testing.T) {
-		job, err := db.EnqueuePromptJob(repo.ID, "", "codex", "", "", "test prompt", false)
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "codex",
+			Prompt: "test prompt",
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -63,7 +72,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		customPrompt := "Find security issues in the codebase"
-		_, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "standard", customPrompt, false)
+		_, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "claude-code",
+			Reasoning: "standard",
+			Prompt:    customPrompt,
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -95,7 +109,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		// Enqueue with agentic=true
-		job, err := db.EnqueuePromptJob(repo.ID, "", "claude-code", "", "thorough", "Test agentic prompt", true)
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:  repo.ID,
+			Agent:   "claude-code",
+			Prompt:  "Test agentic prompt",
+			Agentic: true,
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -138,7 +157,12 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		// Enqueue with agentic=false
-		job, err := db.EnqueuePromptJob(repo.ID, "", "codex", "", "standard", "Non-agentic prompt", false)
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "codex",
+			Reasoning: "standard",
+			Prompt:    "Non-agentic prompt",
+		})
 		if err != nil {
 			t.Fatalf("EnqueuePromptJob failed: %v", err)
 		}
@@ -158,6 +182,186 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 		if claimed.Agentic {
 			t.Error("Expected Agentic to be false on claimed job")
+		}
+	})
+
+	t.Run("output_prefix is prepended to review output", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/output-prefix-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		outputPrefix := "## Test Analysis\n\n**Files:**\n- file1.go\n- file2.go\n\n---\n\n"
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:       repo.ID,
+			Agent:        "test",
+			Prompt:       "Test prompt",
+			OutputPrefix: outputPrefix,
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		// Claim and complete the job
+		_, err = db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+
+		agentOutput := "No issues found."
+		err = db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
+		if err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
+		// Fetch the review and verify prefix was prepended
+		review, err := db.GetReviewByJobID(job.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed: %v", err)
+		}
+
+		expectedOutput := outputPrefix + agentOutput
+		if review.Output != expectedOutput {
+			t.Errorf("Expected output to have prefix prepended.\nExpected:\n%s\n\nGot:\n%s", expectedOutput, review.Output)
+		}
+	})
+
+	t.Run("empty output_prefix leaves output unchanged", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/empty-prefix-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID:       repo.ID,
+			Agent:        "test",
+			Prompt:       "Test prompt",
+			OutputPrefix: "", // Empty prefix
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		// Claim and complete the job
+		_, err = db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+
+		agentOutput := "Analysis complete."
+		err = db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
+		if err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
+		// Fetch the review and verify output is unchanged
+		review, err := db.GetReviewByJobID(job.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed: %v", err)
+		}
+
+		if review.Output != agentOutput {
+			t.Errorf("Expected output unchanged.\nExpected:\n%s\n\nGot:\n%s", agentOutput, review.Output)
+		}
+	})
+
+	t.Run("custom label sets git_ref", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/label-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			Label:  "test-fixtures",
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		if job.GitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref 'test-fixtures', got '%s'", job.GitRef)
+		}
+
+		// Verify it's stored in the database
+		var gitRef string
+		err = db.QueryRow(`SELECT git_ref FROM review_jobs WHERE id = ?`, job.ID).Scan(&gitRef)
+		if err != nil {
+			t.Fatalf("Failed to query git_ref: %v", err)
+		}
+		if gitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref='test-fixtures' in database, got '%s'", gitRef)
+		}
+
+		// Claim and verify label persists
+		claimed, err := db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+		if claimed == nil {
+			t.Fatal("Expected to claim a job")
+		}
+		if claimed.GitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref 'test-fixtures' on claimed job, got '%s'", claimed.GitRef)
+		}
+	})
+
+	t.Run("empty label defaults to prompt", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/empty-label-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			// Label not set - should default to "prompt"
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		if job.GitRef != "prompt" {
+			t.Errorf("Expected git_ref 'prompt' when label empty, got '%s'", job.GitRef)
+		}
+	})
+
+	t.Run("run label", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/run-label-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			Label:  "run",
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		if job.GitRef != "run" {
+			t.Errorf("Expected git_ref 'run', got '%s'", job.GitRef)
 		}
 	})
 }
@@ -441,7 +645,7 @@ func TestGetRepoStats(t *testing.T) {
 		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
 
 		// Create a prompt job with output that contains verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "", "codex", "", "thorough", "Test prompt", false)
+		promptJob, _ := db.EnqueuePromptJob(PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		db.ClaimJob("worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
@@ -754,7 +958,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		repo, _ := db.GetOrCreateRepo("/tmp/verdict-prompt-test")
 
 		// Create a prompt job and complete it with output containing verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "", "codex", "", "thorough", "Test prompt", false)
+		promptJob, _ := db.EnqueuePromptJob(PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		db.ClaimJob("worker-1")
 		// Output that would normally be parsed as FAIL
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")

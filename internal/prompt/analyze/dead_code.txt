@@ -1,0 +1,18 @@
+Analyze the provided code for dead code, unused exports, and unreachable code paths.
+
+Your task:
+1. Identify potentially dead code:
+   - Unused exported functions, types, or variables
+   - Unreachable code after return/panic/os.Exit
+   - Commented-out code that should be removed
+   - Debug/test code left in production
+2. Check for unused imports and dependencies
+3. Find code that exists but appears to never be called
+
+Output format:
+- **UNUSED EXPORTS:** Exported symbols that appear to have no callers
+- **UNREACHABLE CODE:** Code paths that can never execute
+- **STALE CODE:** Old code that should likely be removed
+- **CONFIDENCE LEVEL:** High/Medium/Low for each finding (some may have external callers)
+
+Note: Some exports may be used by external packages or via reflection. Flag these as lower confidence.

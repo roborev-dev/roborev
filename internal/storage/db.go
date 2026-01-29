@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   error TEXT,
   prompt TEXT,
   retry_count INTEGER NOT NULL DEFAULT 0,
-  diff_content TEXT
+  diff_content TEXT,
+  output_prefix TEXT
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -92,8 +93,10 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 
-	// Open with WAL mode and busy timeout
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	// Open with WAL mode and busy timeout.
+	// 30s busy_timeout gives enough headroom for concurrent writers
+	// (worker pool + sync worker) to wait for locks rather than failing.
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -211,6 +214,18 @@ func (db *DB) migrate() error {
 		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN branch TEXT`)
 		if err != nil {
 			return fmt.Errorf("add branch column: %w", err)
+		}
+	}
+
+	// Migration: add output_prefix column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'output_prefix'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check output_prefix column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN output_prefix TEXT`)
+		if err != nil {
+			return fmt.Errorf("add output_prefix column: %w", err)
 		}
 	}
 

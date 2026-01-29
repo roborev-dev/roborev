@@ -26,6 +26,7 @@ func runCmd() *cobra.Command {
 		quiet     bool
 		noContext bool
 		agentic   bool
+		label     string
 	)
 
 	cmd := &cobra.Command{
@@ -56,10 +57,11 @@ Examples:
   roborev run --wait "What does the main function do?"
   roborev run --no-context "What is 2+2?"
   roborev run --agentic "Create a new test file for main.go"
+  roborev run --label refactor "Refactor the config module"
   cat instructions.txt | roborev run --wait
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPrompt(cmd, args, agentName, model, reasoning, wait, quiet, !noContext, agentic)
+			return runPrompt(cmd, args, agentName, model, reasoning, wait, quiet, !noContext, agentic, label)
 		},
 	}
 
@@ -71,6 +73,7 @@ Examples:
 	cmd.Flags().BoolVar(&noContext, "no-context", false, "don't include repository context in prompt")
 	cmd.Flags().BoolVar(&agentic, "agentic", false, "enable agentic mode (allow file edits and commands)")
 	cmd.Flags().BoolVar(&agentic, "yolo", false, "alias for --agentic")
+	cmd.Flags().StringVar(&label, "label", "", "custom label to display in TUI (default: run)")
 
 	return cmd
 }
@@ -83,7 +86,7 @@ func promptCmd() *cobra.Command {
 	return cmd
 }
 
-func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoningStr string, wait, quiet, includeContext, agentic bool) error {
+func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoningStr string, wait, quiet, includeContext, agentic bool, label string) error {
 	// Get prompt from args or stdin
 	var promptText string
 	if len(args) > 0 {
@@ -134,9 +137,13 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 	}
 
 	// Build the request
+	gitRef := "run"
+	if label != "" {
+		gitRef = label
+	}
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"repo_path":     repoRoot,
-		"git_ref":       "run",
+		"git_ref":       gitRef,
 		"agent":         agentName,
 		"model":         modelStr,
 		"reasoning":     reasoningStr,

@@ -66,6 +66,8 @@ func main() {
 	rootCmd.AddCommand(tuiCmd())
 	rootCmd.AddCommand(refineCmd())
 	rootCmd.AddCommand(runCmd())
+	rootCmd.AddCommand(analyzeCmd())
+	rootCmd.AddCommand(fixCmd())
 	rootCmd.AddCommand(promptCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(repoCmd())
 	rootCmd.AddCommand(skillsCmd())
@@ -2426,14 +2428,19 @@ func shortRef(ref string) string {
 	return shortSHA(ref)
 }
 
-// shortJobRef returns a display-friendly ref for a job, handling run jobs specially.
-// Run jobs display as "run" regardless of GitRef value.
-// Regular review jobs display their GitRef normally.
+// shortJobRef returns a display-friendly ref for a job, handling special job types.
+// Task jobs (no CommitID, no DiffContent) display their GitRef directly (run, analyze, or custom label).
+// Regular review jobs display their GitRef shortened.
 func shortJobRef(job storage.ReviewJob) string {
-	// Run jobs are identified by: no CommitID, no DiffContent, and GitRef is "run" or "prompt"
+	// Task jobs are identified by: no CommitID, no DiffContent
 	// (Note: Prompt field is set for ALL jobs after worker starts, so can't use that)
-	if job.CommitID == nil && job.DiffContent == nil && (job.GitRef == "run" || job.GitRef == "prompt") {
-		return "run"
+	if job.CommitID == nil && job.DiffContent == nil {
+		// Map legacy "prompt" to "run" for display consistency
+		if job.GitRef == "prompt" {
+			return "run"
+		}
+		// Return GitRef directly as the display label (run, analyze, or custom)
+		return job.GitRef
 	}
 	return shortRef(job.GitRef)
 }

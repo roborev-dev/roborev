@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"time"
@@ -762,24 +763,41 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, branch, agent, model, reason
 	}, nil
 }
 
+// PromptJobOptions contains options for creating a prompt-based job.
+type PromptJobOptions struct {
+	RepoID       int64
+	Branch       string
+	Agent        string
+	Model        string
+	Reasoning    string
+	Prompt       string
+	OutputPrefix string // Prefix to prepend to review output (e.g., file paths)
+	Agentic      bool   // Allow file edits and command execution
+	Label        string // Display label in TUI (default: "prompt")
+}
+
 // EnqueuePromptJob creates a new job with a custom prompt (not a git review).
 // The prompt is stored at enqueue time and used directly by the worker.
-// If agentic is true, the agent will be allowed to edit files and run commands.
-func (db *DB) EnqueuePromptJob(repoID int64, branch, agent, model, reasoning, customPrompt string, agentic bool) (*ReviewJob, error) {
+func (db *DB) EnqueuePromptJob(opts PromptJobOptions) (*ReviewJob, error) {
+	reasoning := opts.Reasoning
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
 	agenticInt := 0
-	if agentic {
+	if opts.Agentic {
 		agenticInt = 1
+	}
+	label := opts.Label
+	if label == "" {
+		label = "prompt" // Default for backward compatibility
 	}
 	uuid := GenerateUUID()
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, prompt, agentic, uuid, source_machine_id, updated_at) VALUES (?, NULL, 'prompt', ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
-		repoID, nullString(branch), agent, nullString(model), reasoning, customPrompt, agenticInt, uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, prompt, agentic, output_prefix, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
+		opts.RepoID, label, nullString(opts.Branch), opts.Agent, nullString(opts.Model), reasoning, opts.Prompt, agenticInt, nullString(opts.OutputPrefix), uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -787,17 +805,18 @@ func (db *DB) EnqueuePromptJob(repoID int64, branch, agent, model, reasoning, cu
 	id, _ := result.LastInsertId()
 	return &ReviewJob{
 		ID:              id,
-		RepoID:          repoID,
+		RepoID:          opts.RepoID,
 		CommitID:        nil,
-		GitRef:          "prompt",
-		Branch:          branch,
-		Agent:           agent,
-		Model:           model,
+		GitRef:          label,
+		Branch:          opts.Branch,
+		Agent:           opts.Agent,
+		Model:           opts.Model,
 		Reasoning:       reasoning,
 		Status:          JobStatusQueued,
 		EnqueuedAt:      now,
-		Prompt:          customPrompt,
-		Agentic:         agentic,
+		Prompt:          opts.Prompt,
+		Agentic:         opts.Agentic,
+		OutputPrefix:    opts.OutputPrefix,
 		UUID:            uuid,
 		SourceMachineID: machineID,
 		UpdatedAt:       &now,
@@ -892,19 +911,48 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 
 // CompleteJob marks a job as done and stores the review.
 // Only updates if job is still in 'running' state (respects cancellation).
+// If the job has an output_prefix, it will be prepended to the output.
 func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
+	// Get machine ID and generate UUIDs before starting transaction
+	// to avoid potential lock conflicts with GetMachineID's writes
 	now := time.Now().Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
+	// Use BEGIN IMMEDIATE to acquire write lock upfront, avoiding deadlocks
+	// when concurrent goroutines (workers, sync) try to upgrade from read to write.
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+
+	// Fetch output_prefix from job (if any)
+	var outputPrefix sql.NullString
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// Prepend output_prefix if present
+	finalOutput := output
+	if outputPrefix.Valid && outputPrefix.String != "" {
+		finalOutput = outputPrefix.String + output
+	}
+
 	// Update job status only if still running (not canceled)
-	result, err := tx.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
+	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
 	if err != nil {
 		return err
 	}
@@ -920,13 +968,18 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	}
 
 	// Insert review with sync columns
-	_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, output, reviewUUID, machineID, now)
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	if err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // FailJob marks a job as failed with an error message.
@@ -963,20 +1016,31 @@ func (db *DB) CancelJob(jobID int64) error {
 // This allows manual re-running of jobs to get a fresh review.
 // For done jobs, the existing review is deleted to avoid unique constraint violations.
 func (db *DB) ReenqueueJob(jobID int64) error {
-	tx, err := db.Begin()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
 
 	// Delete any existing review for this job (for done jobs being rerun)
-	_, err = tx.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
 	if err != nil {
 		return err
 	}
 
 	// Reset job status
-	result, err := tx.Exec(`
+	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
@@ -992,7 +1056,12 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 		return sql.ErrNoRows
 	}
 
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	if err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // RetryJob atomically resets a running job to queued for retry.
@@ -1134,11 +1203,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			val := addressed.Int64 != 0
 			j.Addressed = &val
 		}
-		// Compute verdict only for non-prompt jobs (prompt jobs don't have PASS/FAIL verdicts)
-		// Prompt jobs are identified by having no commit_id (NULL) - this distinguishes them from
-		// regular reviews of branches/commits that might be named "prompt"
-		isPromptJob := j.CommitID == nil && j.GitRef == "prompt"
-		if output.Valid && !isPromptJob {
+		// Compute verdict only for non-task jobs (task jobs don't have PASS/FAIL verdicts)
+		// Task jobs (run, analyze, custom) are identified by having no commit_id and not being dirty
+		if output.Valid && !j.IsTaskJob() {
 			verdict := ParseVerdict(output.String)
 			j.Verdict = &verdict
 		}

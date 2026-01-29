@@ -303,6 +303,7 @@ type EnqueueRequest struct {
 	Reasoning    string `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
 	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
 	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
+	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 }
 
 type ErrorResponse struct {
@@ -333,9 +334,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Limit request body size to prevent DoS via large payloads
-	// 250KB allows for 200KB diff content plus JSON overhead
-	const maxBodySize = 250 * 1024
+	// Limit request body size to prevent DoS via large payloads.
+	// Derive from configured max prompt size + 50KB overhead for JSON envelope.
+	maxPromptSize := config.DefaultMaxPromptSize
+	if cfg := s.configWatcher.Config(); cfg != nil && cfg.DefaultMaxPromptSize > 0 {
+		maxPromptSize = cfg.DefaultMaxPromptSize
+	}
+	maxBodySize := int64(maxPromptSize) + 50*1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
 	var req EnqueueRequest
@@ -343,7 +348,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		// Use errors.As for reliable detection of MaxBytesReader errors
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large (max 250KB)")
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body too large (max %dKB)", maxBodySize/1024))
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -434,7 +439,17 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var job *storage.ReviewJob
 	if isPrompt {
 		// Custom prompt job - use provided prompt directly
-		job, err = s.db.EnqueuePromptJob(repo.ID, req.Branch, agentName, model, reasoning, req.CustomPrompt, req.Agentic)
+		job, err = s.db.EnqueuePromptJob(storage.PromptJobOptions{
+			RepoID:       repo.ID,
+			Branch:       req.Branch,
+			Agent:        agentName,
+			Model:        model,
+			Reasoning:    reasoning,
+			Prompt:       req.CustomPrompt,
+			OutputPrefix: req.OutputPrefix,
+			Agentic:      req.Agentic,
+			Label:        gitRef, // Use git_ref as TUI label (run, analyze type, custom)
+		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
 			return

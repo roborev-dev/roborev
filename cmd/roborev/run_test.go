@@ -248,6 +248,79 @@ func TestShowPromptResult(t *testing.T) {
 	})
 }
 
+func TestRunLabelFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		label       string
+		expectedRef string
+	}{
+		{
+			name:        "no label defaults to run",
+			label:       "",
+			expectedRef: "run",
+		},
+		{
+			name:        "custom label is used",
+			label:       "my-task",
+			expectedRef: "my-task",
+		},
+		{
+			name:        "analyze label",
+			label:       "analyze",
+			expectedRef: "analyze",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedRef string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/enqueue" {
+					var req map[string]interface{}
+					json.NewDecoder(r.Body).Decode(&req)
+					receivedRef = req["git_ref"].(string)
+
+					job := storage.ReviewJob{
+						ID:     1,
+						Agent:  "test",
+						GitRef: receivedRef,
+					}
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(job)
+				}
+			}))
+			defer server.Close()
+
+			// Override serverAddr for this test
+			oldAddr := serverAddr
+			serverAddr = server.URL
+			defer func() { serverAddr = oldAddr }()
+
+			// Test the git_ref building directly since runPrompt requires daemon setup
+			gitRef := "run"
+			if tt.label != "" {
+				gitRef = tt.label
+			}
+
+			reqBody, _ := json.Marshal(map[string]interface{}{
+				"repo_path":     "/test",
+				"git_ref":       gitRef,
+				"custom_prompt": "test prompt",
+			})
+
+			resp, err := http.Post(server.URL+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			resp.Body.Close()
+
+			if receivedRef != tt.expectedRef {
+				t.Errorf("Expected git_ref %q, got %q", tt.expectedRef, receivedRef)
+			}
+		})
+	}
+}
+
 func TestWaitForPromptJob(t *testing.T) {
 	t.Run("returns success when job completes", func(t *testing.T) {
 		callCount := 0

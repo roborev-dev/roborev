@@ -1118,6 +1118,90 @@ func TestResolveModel(t *testing.T) {
 	})
 }
 
+func TestResolveMaxPromptSize(t *testing.T) {
+	t.Run("default when no config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		size := ResolveMaxPromptSize(tmpDir, nil)
+		if size != DefaultMaxPromptSize {
+			t.Errorf("Expected default %d, got %d", DefaultMaxPromptSize, size)
+		}
+	})
+
+	t.Run("default when global config has zero", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultMaxPromptSize: 0}
+		size := ResolveMaxPromptSize(tmpDir, cfg)
+		if size != DefaultMaxPromptSize {
+			t.Errorf("Expected default %d when global is 0, got %d", DefaultMaxPromptSize, size)
+		}
+	})
+
+	t.Run("global config takes precedence over default", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
+		size := ResolveMaxPromptSize(tmpDir, cfg)
+		if size != 500*1024 {
+			t.Errorf("Expected 500KB from global config, got %d", size)
+		}
+	})
+
+	t.Run("repo config takes precedence over global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`max_prompt_size = 300000`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
+		size := ResolveMaxPromptSize(tmpDir, cfg)
+		if size != 300000 {
+			t.Errorf("Expected 300000 from repo config, got %d", size)
+		}
+	})
+
+	t.Run("repo config zero falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`max_prompt_size = 0`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
+		size := ResolveMaxPromptSize(tmpDir, cfg)
+		if size != 500*1024 {
+			t.Errorf("Expected 500KB from global (repo is 0), got %d", size)
+		}
+	})
+
+	t.Run("repo config without max_prompt_size falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`agent = "codex"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultMaxPromptSize: 600 * 1024}
+		size := ResolveMaxPromptSize(tmpDir, cfg)
+		if size != 600*1024 {
+			t.Errorf("Expected 600KB from global (repo has no max_prompt_size), got %d", size)
+		}
+	})
+
+	t.Run("malformed repo config falls through to global", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`this is not valid toml {{{`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
+		size := ResolveMaxPromptSize(tmpDir, cfg)
+		if size != 500*1024 {
+			t.Errorf("Expected 500KB from global (repo config malformed), got %d", size)
+		}
+	})
+}
+
 func TestResolveAgentForWorkflow(t *testing.T) {
 	tests := []struct {
 		name     string

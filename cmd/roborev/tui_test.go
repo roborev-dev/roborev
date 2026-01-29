@@ -1979,13 +1979,16 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 	m.height = 20
 	m.daemonVersion = "test"
 
+	addrTrue := true
+	addrFalse := false
+
 	// Jobs from multiple repos
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone},
-		{ID: 2, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone},
-		{ID: 3, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusFailed},
-		{ID: 4, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone},
-		{ID: 5, RepoPath: "/path/to/frontend", Status: storage.JobStatusCanceled},
+		{ID: 1, RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone, Addressed: &addrTrue},
+		{ID: 2, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Addressed: &addrFalse},
+		{ID: 3, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Addressed: &addrFalse},
+		{ID: 4, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Addressed: &addrTrue},
+		{ID: 5, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Addressed: &addrTrue},
 	}
 
 	// Multi-path filter (backend group)
@@ -1993,16 +1996,16 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 
 	output := m.renderQueueView()
 
-	// Status line should show counts only for backend repos (2 done, 1 failed, 0 canceled)
-	// Not frontend (1 done, 1 canceled)
-	if !strings.Contains(output, "Done: 2") {
-		t.Errorf("Expected status to show 'Done: 2' for filtered repos, got: %s", output)
+	// Status line should show counts only for backend repos (3 done, 1 addressed, 2 unaddressed)
+	// Not frontend (2 done, 2 addressed)
+	if !strings.Contains(output, "Done: 3") {
+		t.Errorf("Expected status to show 'Done: 3' for filtered repos, got: %s", output)
 	}
-	if !strings.Contains(output, "Failed: 1") {
-		t.Errorf("Expected status to show 'Failed: 1' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Addressed: 1") {
+		t.Errorf("Expected status to show 'Addressed: 1' for filtered repos, got: %s", output)
 	}
-	if !strings.Contains(output, "Canceled: 0") {
-		t.Errorf("Expected status to show 'Canceled: 0' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Unaddressed: 2") {
+		t.Errorf("Expected status to show 'Unaddressed: 2' for filtered repos, got: %s", output)
 	}
 }
 
@@ -2866,9 +2869,9 @@ func TestTUICalculateColumnWidths(t *testing.T) {
 				t.Errorf("agent width %d < 1", widths.agent)
 			}
 
-			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addr'd (6)
+			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addressed (9)
 			// Plus spacing: 2 (prefix) + 7 spaces between columns
-			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 6 + 7
+			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 9 + 7
 			flexibleTotal := widths.ref + widths.repo + widths.agent
 			totalWidth := fixedWidth + flexibleTotal
 
@@ -2963,7 +2966,7 @@ func TestTUIRenderJobLineLength(t *testing.T) {
 
 	line := m.renderJobLine(job, false, idWidth, colWidths)
 
-	// Fixed widths: ID (idWidth=4), Status (10), Queued (12), Elapsed (8), Addr'd (varies)
+	// Fixed widths: ID (idWidth=4), Status (10), Queued (12), Elapsed (8), Addressed (varies)
 	// Plus spacing between columns
 	// The line should not be excessively long
 	// Note: line includes ANSI codes for status styling, so we check a reasonable max
@@ -6753,7 +6756,7 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 	// Test that fetchCommitMsg correctly identifies job types and returns appropriate errors
 	// This is critical: Prompt field is populated for ALL jobs (stores review prompt),
-	// so we must check GitRef == "prompt" to identify run tasks, not Prompt != ""
+	// so we must use IsTaskJob() to identify task jobs, not Prompt != ""
 
 	m := newTuiModel("http://localhost")
 
@@ -6765,11 +6768,12 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 		{
 			name: "regular commit with Prompt populated should not error early",
 			job: storage.ReviewJob{
-				ID:     1,
-				GitRef: "abc123def456",                      // valid commit SHA
-				Prompt: "You are a code reviewer...",        // review prompt is stored for all jobs
+				ID:       1,
+				GitRef:   "abc123def456",               // valid commit SHA
+				Prompt:   "You are a code reviewer...", // review prompt is stored for all jobs
+				CommitID: func() *int64 { id := int64(123); return &id }(),
 			},
-			expectError: "", // should attempt git lookup, not return "run tasks" error
+			expectError: "", // should attempt git lookup, not return "task jobs" error
 		},
 		{
 			name: "run task (GitRef=prompt) should error",
@@ -6778,7 +6782,34 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 				GitRef: "prompt",
 				Prompt: "Explain this codebase",
 			},
-			expectError: "no commit message for run tasks",
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "run task (GitRef=run) should error",
+			job: storage.ReviewJob{
+				ID:     8,
+				GitRef: "run",
+				Prompt: "Do something",
+			},
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "analyze task should error",
+			job: storage.ReviewJob{
+				ID:     9,
+				GitRef: "analyze",
+				Prompt: "Analyze these files",
+			},
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "custom label task should error",
+			job: storage.ReviewJob{
+				ID:     10,
+				GitRef: "my-custom-task",
+				Prompt: "Do my custom task",
+			},
+			expectError: "no commit message for task jobs",
 		},
 		{
 			name: "dirty job (GitRef=dirty) should error",
@@ -6843,11 +6874,11 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 				}
 			} else {
 				// For valid commits, we expect a git error (repo doesn't exist in test)
-				// but NOT the "run tasks" or "uncommitted changes" error
+				// but NOT the "task jobs" or "uncommitted changes" error
 				if result.err != nil {
 					errMsg := result.err.Error()
-					if errMsg == "no commit message for run tasks" {
-						t.Errorf("Regular commit with Prompt should not be detected as run task")
+					if errMsg == "no commit message for task jobs" {
+						t.Errorf("Regular commit with Prompt should not be detected as task job")
 					}
 					if errMsg == "no commit message for uncommitted changes" {
 						t.Errorf("Regular commit should not be detected as uncommitted changes")
