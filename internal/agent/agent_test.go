@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +11,7 @@ import (
 
 func TestAgentRegistry(t *testing.T) {
 	// Check that all agents are registered
-	agents := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "test"}
+	agents := expectedAgents
 	for _, name := range agents {
 		a, err := Get(name)
 		if err != nil {
@@ -32,28 +31,12 @@ func TestAgentRegistry(t *testing.T) {
 
 func TestAvailableAgents(t *testing.T) {
 	agents := Available()
-	// We have 6 agents: codex, claude-code, gemini, copilot, opencode, test
-	if len(agents) < 6 {
-		t.Errorf("Expected at least 6 agents, got %d: %v", len(agents), agents)
+	if len(agents) < len(expectedAgents) {
+		t.Errorf("Expected at least %d agents, got %d: %v", len(expectedAgents), len(agents), agents)
 	}
 
-	expected := map[string]bool{
-		"codex":       false,
-		"claude-code": false,
-		"gemini":      false,
-		"copilot":     false,
-		"opencode":    false,
-		"test":        false,
-	}
-
-	for _, a := range agents {
-		if _, ok := expected[a]; ok {
-			expected[a] = true
-		}
-	}
-
-	for name, found := range expected {
-		if !found {
+	for _, name := range expectedAgents {
+		if !containsString(agents, name) {
 			t.Errorf("Expected %s in available agents", name)
 		}
 	}
@@ -282,16 +265,6 @@ func containsSequence(args []string, needle1, needle2 string) bool {
 	return false
 }
 
-// containsArg checks if args contains the given argument
-func containsArg(args []string, needle string) bool {
-	for _, arg := range args {
-		if arg == needle {
-			return true
-		}
-	}
-	return false
-}
-
 func TestAgentBuildArgsWithModel(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -347,7 +320,7 @@ func TestAgentBuildArgsWithModel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			args := tt.buildFn(tt.model)
-			hasFlag := containsArg(args, tt.flag)
+			hasFlag := containsString(args, tt.flag)
 			if tt.wantFlag {
 				if !hasFlag {
 					t.Errorf("expected flag %q in args %v", tt.flag, args)
@@ -376,42 +349,20 @@ func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
 	}
 }
 
-func TestOpenCodeReviewPassesModelFlag(t *testing.T) {
-	skipIfWindows(t)
-	// Script that echoes its arguments so we can verify --model was passed
-	script := `#!/bin/sh
-echo "args: $@"
-`
-	cmdPath := writeTempCommand(t, script)
-	a := NewOpenCodeAgent(cmdPath).WithModel("anthropic/claude-sonnet-4")
-	result, err := a.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
-	if err != nil {
-		t.Fatalf("Review: %v", err)
+func TestAgentReviewPassesModelFlag(t *testing.T) {
+	tests := []struct {
+		name       string
+		createFunc func(cmdPath string) Agent
+		flag       string
+		value      string
+	}{
+		{"opencode", func(p string) Agent { return NewOpenCodeAgent(p).WithModel("anthropic/claude-sonnet-4") }, "--model", "anthropic/claude-sonnet-4"},
+		{"copilot", func(p string) Agent { return NewCopilotAgent(p).WithModel("gpt-4o") }, "--model", "gpt-4o"},
 	}
-	if !strings.Contains(result, "--model") {
-		t.Errorf("expected --model in args, got: %q", result)
-	}
-	if !strings.Contains(result, "anthropic/claude-sonnet-4") {
-		t.Errorf("expected model value in args, got: %q", result)
-	}
-}
 
-func TestCopilotReviewPassesModelFlag(t *testing.T) {
-	skipIfWindows(t)
-	// Script that echoes its arguments so we can verify --model was passed
-	script := `#!/bin/sh
-echo "args: $@"
-`
-	cmdPath := writeTempCommand(t, script)
-	a := NewCopilotAgent(cmdPath).WithModel("gpt-4o")
-	result, err := a.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
-	if err != nil {
-		t.Fatalf("Review: %v", err)
-	}
-	if !strings.Contains(result, "--model") {
-		t.Errorf("expected --model in args, got: %q", result)
-	}
-	if !strings.Contains(result, "gpt-4o") {
-		t.Errorf("expected model value in args, got: %q", result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verifyAgentPassesFlag(t, tt.createFunc, tt.flag, tt.value)
+		})
 	}
 }
