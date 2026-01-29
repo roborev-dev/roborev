@@ -2,7 +2,10 @@
 package testutil
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -219,4 +222,63 @@ func CreateTestJobWithSHA(t *testing.T, db *storage.DB, repo *storage.Repo, sha,
 	}
 
 	return job
+}
+
+// InitTestGitRepo initializes a git repository with a commit in the given directory.
+// Creates the directory if it doesn't exist, runs git init, configures user, creates
+// a test file, and makes an initial commit.
+func InitTestGitRepo(t *testing.T, dir string) {
+	t.Helper()
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	testFile := filepath.Join(dir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	addCmd := exec.Command("git", "-C", dir, "add", ".")
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v\n%s", err, out)
+	}
+	commitCmd := exec.Command("git", "-C", dir, "commit", "-m", "initial commit")
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
+	}
+}
+
+// MakeJSONRequest creates an HTTP request with the given body marshaled as JSON.
+func MakeJSONRequest(t *testing.T, method, path string, body interface{}) *http.Request {
+	t.Helper()
+
+	reqBody, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("Failed to marshal request body: %v", err)
+	}
+	req := httptest.NewRequest(method, path, bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+// DecodeJSON unmarshals the response body from an httptest.ResponseRecorder into v.
+func DecodeJSON(t *testing.T, w *httptest.ResponseRecorder, v interface{}) {
+	t.Helper()
+
+	if err := json.Unmarshal(w.Body.Bytes(), v); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
 }
