@@ -20,10 +20,16 @@ func setupGitRepo(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("Failed to resolve symlinks: %v", err)
 	}
-	cmd := exec.Command("git", "init")
-	cmd.Dir = resolved
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("Failed to git init: %v", err)
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = resolved
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("Failed to run git %v: %v", args, err)
+		}
 	}
 	return resolved
 }
