@@ -7,45 +7,38 @@ import (
 	"testing"
 )
 
+// assertArgs checks that args contains all required substrings and none of the forbidden ones.
+func assertArgs(t *testing.T, args []string, required, forbidden []string) {
+	t.Helper()
+	argsStr := strings.Join(args, " ")
+	for _, req := range required {
+		if !strings.Contains(argsStr, req) {
+			t.Errorf("missing required arg: %s\nargs: %v", req, args)
+		}
+	}
+	for _, forb := range forbidden {
+		if strings.Contains(argsStr, forb) {
+			t.Errorf("forbidden arg found: %s\nargs: %v", forb, args)
+		}
+	}
+}
+
 func TestClaudeBuildArgs(t *testing.T) {
 	a := NewClaudeAgent("claude")
 
 	// Non-agentic mode (review only): read-only tools, no dangerous flag
 	args := a.buildArgs(false)
-	argsStr := strings.Join(args, " ")
-	if containsString(args, claudeDangerousFlag) {
-		t.Fatalf("expected no unsafe flag in review mode, got %v", args)
-	}
-	if !containsString(args, "--output-format") || !containsString(args, "stream-json") {
-		t.Fatalf("expected --output-format stream-json, got %v", args)
-	}
-	if !containsString(args, "--verbose") {
-		t.Fatalf("expected --verbose (required for stream-json), got %v", args)
-	}
-	if !containsString(args, "-p") {
-		t.Fatalf("expected -p flag (for stdin piping), got %v", args)
-	}
-	if !containsString(args, "--allowedTools") {
-		t.Fatalf("expected --allowedTools, got %v", args)
-	}
-	// Review mode should have read-only tools (no Edit, Write, or Bash)
-	if strings.Contains(argsStr, "Edit") || strings.Contains(argsStr, "Write") || strings.Contains(argsStr, "Bash") {
-		t.Fatalf("expected read-only tools in review mode (no Edit/Write/Bash), got %v", args)
-	}
+	assertArgs(t, args,
+		[]string{"--output-format", "stream-json", "--verbose", "-p", "--allowedTools"},
+		[]string{claudeDangerousFlag, "Edit", "Write", "Bash"},
+	)
 
 	// Agentic mode: write tools + dangerous flag
 	args = a.buildArgs(true)
-	argsStr = strings.Join(args, " ")
-	if !containsString(args, claudeDangerousFlag) {
-		t.Fatalf("expected unsafe flag in agentic mode, got %v", args)
-	}
-	if !containsString(args, "--allowedTools") {
-		t.Fatalf("expected --allowedTools in agentic mode, got %v", args)
-	}
-	// Agentic mode should have write tools
-	if !strings.Contains(argsStr, "Edit") || !strings.Contains(argsStr, "Write") {
-		t.Fatalf("expected write tools in agentic mode, got %v", args)
-	}
+	assertArgs(t, args,
+		[]string{claudeDangerousFlag, "--allowedTools", "Edit", "Write"},
+		nil,
+	)
 }
 
 func TestClaudeSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
@@ -76,96 +69,95 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	}
 }
 
-
-func TestParseStreamJSON_ResultEvent(t *testing.T) {
-	a := NewClaudeAgent("claude")
-	input := `{"type":"system","subtype":"init"}
+func TestParseStreamJSON(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedResult string
+		expectedErr    string // substring match
+		expectOutput   bool   // verify output buffer was written to
+	}{
+		{
+			name: "ResultEvent",
+			input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"Working on it..."}}
 {"type":"result","result":"Done! Created the file."}
-`
-	result, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "Done! Created the file." {
-		t.Fatalf("expected result from result event, got %q", result)
-	}
-}
-
-func TestParseStreamJSON_AssistantFallback(t *testing.T) {
-	a := NewClaudeAgent("claude")
-	// No result event, should fall back to assistant messages
-	input := `{"type":"system","subtype":"init"}
+`,
+			expectedResult: "Done! Created the file.",
+		},
+		{
+			name: "AssistantFallback",
+			input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"First message"}}
 {"type":"assistant","message":{"content":"Second message"}}
-`
-	result, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "First message\nSecond message" {
-		t.Fatalf("expected joined assistant messages, got %q", result)
-	}
-}
-
-func TestParseStreamJSON_MalformedLines(t *testing.T) {
-	a := NewClaudeAgent("claude")
-	// Mix of valid JSON and malformed lines
-	input := `{"type":"system","subtype":"init"}
+`,
+			expectedResult: "First message\nSecond message",
+		},
+		{
+			name: "MalformedLines",
+			input: `{"type":"system","subtype":"init"}
 not valid json
 {"type":"result","result":"Success"}
 also not json
-`
-	result, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "Success" {
-		t.Fatalf("expected result despite malformed lines, got %q", result)
-	}
-}
-
-func TestParseStreamJSON_NoValidEvents(t *testing.T) {
-	a := NewClaudeAgent("claude")
-	input := `not json at all
+`,
+			expectedResult: "Success",
+		},
+		{
+			name: "NoValidEvents",
+			input: `not json at all
 still not json
-`
-	_, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err == nil {
-		t.Fatal("expected error for no valid events, got nil")
-	}
-	if !strings.Contains(err.Error(), "no valid stream-json events") {
-		t.Fatalf("expected 'no valid events' error, got %v", err)
-	}
-}
-
-func TestParseStreamJSON_EmptyInput(t *testing.T) {
-	a := NewClaudeAgent("claude")
-	_, err := a.parseStreamJSON(strings.NewReader(""), nil)
-	if err == nil {
-		t.Fatal("expected error for empty input, got nil")
-	}
-	if !strings.Contains(err.Error(), "no valid stream-json events") {
-		t.Fatalf("expected 'no valid events' error, got %v", err)
-	}
-}
-
-func TestParseStreamJSON_StreamsToOutput(t *testing.T) {
-	a := NewClaudeAgent("claude")
-	input := `{"type":"system","subtype":"init"}
+`,
+			expectedErr: "no valid stream-json events",
+		},
+		{
+			name:        "EmptyInput",
+			input:       "",
+			expectedErr: "no valid stream-json events",
+		},
+		{
+			name: "StreamsToOutput",
+			input: `{"type":"system","subtype":"init"}
 {"type":"result","result":"Done"}
-`
-	var output bytes.Buffer
-	result, err := a.parseStreamJSON(strings.NewReader(input), &output)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+`,
+			expectedResult: "Done",
+			expectOutput:   true,
+		},
 	}
-	if result != "Done" {
-		t.Fatalf("expected 'Done', got %q", result)
-	}
-	// Output should contain streamed JSON
-	if output.Len() == 0 {
-		t.Fatal("expected output to be written")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewClaudeAgent("claude")
+
+			if tt.expectOutput {
+				var out bytes.Buffer
+				res, err := a.parseStreamJSON(strings.NewReader(tt.input), &out)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if res != tt.expectedResult {
+					t.Errorf("expected result %q, got %q", tt.expectedResult, res)
+				}
+				if out.Len() == 0 {
+					t.Error("expected output to be written")
+				}
+				return
+			}
+
+			res, err := a.parseStreamJSON(strings.NewReader(tt.input), nil)
+
+			if tt.expectedErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.expectedErr) {
+					t.Errorf("expected error containing %q, got %v", tt.expectedErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res != tt.expectedResult {
+				t.Errorf("expected result %q, got %q", tt.expectedResult, res)
+			}
+		})
 	}
 }
 
