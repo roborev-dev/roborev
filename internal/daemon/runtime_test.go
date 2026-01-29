@@ -38,7 +38,7 @@ func startMockDaemon(t *testing.T, handler http.HandlerFunc) string {
 }
 
 // mockIdentifyProcess replaces the global identifyProcess function with mock
-// for the duration of the test.
+// for the duration of the test. Not safe for use with t.Parallel().
 func mockIdentifyProcess(t *testing.T, mock func(int) processIdentity) {
 	t.Helper()
 	orig := identifyProcess
