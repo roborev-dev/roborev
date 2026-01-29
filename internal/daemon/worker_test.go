@@ -36,7 +36,7 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	}
 
 	b := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), max(workers, 1), b, nil)
+	pool := NewWorkerPool(db, NewStaticConfig(cfg), cfg.MaxWorkers, b, nil)
 
 	return &workerTestContext{
 		DB:          db,
@@ -304,8 +304,7 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 
 func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createJob(t, "concurrent-register")
-	tc.DB.ClaimJob("test-worker")
+	job := tc.createAndClaimJob(t, "concurrent-register", "test-worker")
 
 	var canceled int32
 	cancelFunc := func() { atomic.AddInt32(&canceled, 1) }
@@ -328,8 +327,7 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createJob(t, "deadlock-test")
-	tc.DB.ClaimJob("test-worker")
+	job := tc.createAndClaimJob(t, "deadlock-test", "test-worker")
 
 	canceled := false
 	cancelFunc := func() {
