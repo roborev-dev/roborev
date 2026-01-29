@@ -6,10 +6,11 @@ import (
 	"testing"
 )
 
-// setTestHome sets all home directory environment variables for cross-platform compatibility.
-// On Windows, os.UserHomeDir uses USERPROFILE (or HOMEDRIVE+HOMEPATH), not HOME.
-func setTestHome(t *testing.T, tmpHome string) func() {
+// setupTestEnv sets all home directory environment variables for cross-platform
+// compatibility and returns the temp home directory path. Cleanup is automatic.
+func setupTestEnv(t *testing.T) string {
 	t.Helper()
+	tmpHome := t.TempDir()
 
 	origHome := os.Getenv("HOME")
 	origUserProfile := os.Getenv("USERPROFILE")
@@ -21,34 +22,47 @@ func setTestHome(t *testing.T, tmpHome string) func() {
 	os.Setenv("HOMEDRIVE", "")
 	os.Setenv("HOMEPATH", "")
 
-	return func() {
+	t.Cleanup(func() {
 		os.Setenv("HOME", origHome)
 		os.Setenv("USERPROFILE", origUserProfile)
 		os.Setenv("HOMEDRIVE", origHomeDrive)
 		os.Setenv("HOMEPATH", origHomePath)
+	})
+
+	return tmpHome
+}
+
+// createMockSkill creates an installed skill file at ~/.<agent>/skills/<skill>/SKILL.md.
+func createMockSkill(t *testing.T, homeDir, agent, skill string) {
+	t.Helper()
+	dir := filepath.Join(homeDir, "."+agent, "skills", skill)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
+// getResultForAgent finds the InstallResult for the given agent, or returns nil.
+func getResultForAgent(results []InstallResult, agent Agent) *InstallResult {
+	for i := range results {
+		if results[i].Agent == agent {
+			return &results[i]
+		}
+	}
+	return nil
+}
+
 func TestInstallClaudeSkipsWhenDirMissing(t *testing.T) {
-	// Use temp HOME without .claude directory
-	tmpHome := t.TempDir()
-	cleanup := setTestHome(t, tmpHome)
-	defer cleanup()
+	setupTestEnv(t)
 
 	results, err := Install()
 	if err != nil {
 		t.Fatalf("Install failed: %v", err)
 	}
 
-	// Find Claude result
-	var claudeResult *InstallResult
-	for i := range results {
-		if results[i].Agent == AgentClaude {
-			claudeResult = &results[i]
-			break
-		}
-	}
-
+	claudeResult := getResultForAgent(results, AgentClaude)
 	if claudeResult == nil {
 		t.Fatal("expected Claude result")
 	}
@@ -61,9 +75,7 @@ func TestInstallClaudeSkipsWhenDirMissing(t *testing.T) {
 }
 
 func TestInstallClaudeWhenDirExists(t *testing.T) {
-	tmpHome := t.TempDir()
-	cleanup := setTestHome(t, tmpHome)
-	defer cleanup()
+	tmpHome := setupTestEnv(t)
 
 	// Create .claude directory
 	claudeDir := filepath.Join(tmpHome, ".claude")
@@ -76,14 +88,7 @@ func TestInstallClaudeWhenDirExists(t *testing.T) {
 		t.Fatalf("Install failed: %v", err)
 	}
 
-	var claudeResult *InstallResult
-	for i := range results {
-		if results[i].Agent == AgentClaude {
-			claudeResult = &results[i]
-			break
-		}
-	}
-
+	claudeResult := getResultForAgent(results, AgentClaude)
 	if claudeResult == nil {
 		t.Fatal("expected Claude result")
 	}
@@ -105,9 +110,7 @@ func TestInstallClaudeWhenDirExists(t *testing.T) {
 }
 
 func TestInstallCodexWhenDirExists(t *testing.T) {
-	tmpHome := t.TempDir()
-	cleanup := setTestHome(t, tmpHome)
-	defer cleanup()
+	tmpHome := setupTestEnv(t)
 
 	// Create .codex directory
 	codexDir := filepath.Join(tmpHome, ".codex")
@@ -120,14 +123,7 @@ func TestInstallCodexWhenDirExists(t *testing.T) {
 		t.Fatalf("Install failed: %v", err)
 	}
 
-	var codexResult *InstallResult
-	for i := range results {
-		if results[i].Agent == AgentCodex {
-			codexResult = &results[i]
-			break
-		}
-	}
-
+	codexResult := getResultForAgent(results, AgentCodex)
 	if codexResult == nil {
 		t.Fatal("expected Codex result")
 	}
@@ -149,9 +145,7 @@ func TestInstallCodexWhenDirExists(t *testing.T) {
 }
 
 func TestInstallIdempotent(t *testing.T) {
-	tmpHome := t.TempDir()
-	cleanup := setTestHome(t, tmpHome)
-	defer cleanup()
+	tmpHome := setupTestEnv(t)
 
 	// Create .claude directory
 	if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755); err != nil {
@@ -164,13 +158,7 @@ func TestInstallIdempotent(t *testing.T) {
 		t.Fatalf("First install failed: %v", err)
 	}
 
-	var claude1 *InstallResult
-	for i := range results1 {
-		if results1[i].Agent == AgentClaude {
-			claude1 = &results1[i]
-			break
-		}
-	}
+	claude1 := getResultForAgent(results1, AgentClaude)
 	if len(claude1.Installed) != 2 {
 		t.Errorf("first install: expected 2 installed, got %d", len(claude1.Installed))
 	}
@@ -184,13 +172,7 @@ func TestInstallIdempotent(t *testing.T) {
 		t.Fatalf("Second install failed: %v", err)
 	}
 
-	var claude2 *InstallResult
-	for i := range results2 {
-		if results2[i].Agent == AgentClaude {
-			claude2 = &results2[i]
-			break
-		}
-	}
+	claude2 := getResultForAgent(results2, AgentClaude)
 	if len(claude2.Installed) != 0 {
 		t.Errorf("second install: expected 0 installed, got %d", len(claude2.Installed))
 	}
@@ -200,9 +182,7 @@ func TestInstallIdempotent(t *testing.T) {
 }
 
 func TestIsInstalledClaude(t *testing.T) {
-	tmpHome := t.TempDir()
-	cleanup := setTestHome(t, tmpHome)
-	defer cleanup()
+	tmpHome := setupTestEnv(t)
 
 	// No .claude dir - not installed
 	if IsInstalled(AgentClaude) {
@@ -210,8 +190,7 @@ func TestIsInstalledClaude(t *testing.T) {
 	}
 
 	// Create .claude but no skills
-	claudeDir := filepath.Join(tmpHome, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if IsInstalled(AgentClaude) {
@@ -219,36 +198,21 @@ func TestIsInstalledClaude(t *testing.T) {
 	}
 
 	// Create only respond skill (not address)
-	skillsDir := filepath.Join(claudeDir, "skills")
-	respondDir := filepath.Join(skillsDir, "roborev-respond")
-	if err := os.MkdirAll(respondDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(respondDir, "SKILL.md"), []byte("test"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	createMockSkill(t, tmpHome, "claude", "roborev-respond")
 	if !IsInstalled(AgentClaude) {
 		t.Error("expected IsInstalled=true when roborev-respond/SKILL.md exists")
 	}
 
 	// Remove respond, add address
-	os.RemoveAll(respondDir)
-	addressDir := filepath.Join(skillsDir, "roborev-address")
-	if err := os.MkdirAll(addressDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(addressDir, "SKILL.md"), []byte("test"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	os.RemoveAll(filepath.Join(tmpHome, ".claude", "skills", "roborev-respond"))
+	createMockSkill(t, tmpHome, "claude", "roborev-address")
 	if !IsInstalled(AgentClaude) {
 		t.Error("expected IsInstalled=true when roborev-address/SKILL.md exists")
 	}
 }
 
 func TestIsInstalledCodex(t *testing.T) {
-	tmpHome := t.TempDir()
-	cleanup := setTestHome(t, tmpHome)
-	defer cleanup()
+	tmpHome := setupTestEnv(t)
 
 	// No .codex dir - not installed
 	if IsInstalled(AgentCodex) {
@@ -256,8 +220,7 @@ func TestIsInstalledCodex(t *testing.T) {
 	}
 
 	// Create .codex but no skills
-	codexDir := filepath.Join(tmpHome, ".codex")
-	if err := os.MkdirAll(codexDir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".codex"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if IsInstalled(AgentCodex) {
@@ -265,13 +228,7 @@ func TestIsInstalledCodex(t *testing.T) {
 	}
 
 	// Create only respond skill
-	respondDir := filepath.Join(codexDir, "skills", "roborev-respond")
-	if err := os.MkdirAll(respondDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(respondDir, "SKILL.md"), []byte("test"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	createMockSkill(t, tmpHome, "codex", "roborev-respond")
 	if !IsInstalled(AgentCodex) {
 		t.Error("expected IsInstalled=true when roborev-respond/SKILL.md exists")
 	}
@@ -279,22 +236,12 @@ func TestIsInstalledCodex(t *testing.T) {
 
 func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 	t.Run("updates Claude with address skill only", func(t *testing.T) {
-		tmpHome := t.TempDir()
-		cleanup := setTestHome(t, tmpHome)
-		defer cleanup()
+		tmpHome := setupTestEnv(t)
 
-		// Create .claude with only address skill installed
-		claudeSkillsDir := filepath.Join(tmpHome, ".claude", "skills", "roborev-address")
-		if err := os.MkdirAll(claudeSkillsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(claudeSkillsDir, "SKILL.md"), []byte("old"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		createMockSkill(t, tmpHome, "claude", "roborev-address")
 
 		// Create .codex but NO skills installed
-		codexDir := filepath.Join(tmpHome, ".codex")
-		if err := os.MkdirAll(codexDir, 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(tmpHome, ".codex"), 0755); err != nil {
 			t.Fatal(err)
 		}
 
@@ -313,18 +260,9 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 	})
 
 	t.Run("updates Claude with respond skill only", func(t *testing.T) {
-		tmpHome := t.TempDir()
-		cleanup := setTestHome(t, tmpHome)
-		defer cleanup()
+		tmpHome := setupTestEnv(t)
 
-		// Create .claude with only respond skill installed
-		claudeSkillsDir := filepath.Join(tmpHome, ".claude", "skills", "roborev-respond")
-		if err := os.MkdirAll(claudeSkillsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(claudeSkillsDir, "SKILL.md"), []byte("old"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		createMockSkill(t, tmpHome, "claude", "roborev-respond")
 
 		results, err := Update()
 		if err != nil {
@@ -349,18 +287,9 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 	})
 
 	t.Run("updates Codex with skills installed", func(t *testing.T) {
-		tmpHome := t.TempDir()
-		cleanup := setTestHome(t, tmpHome)
-		defer cleanup()
+		tmpHome := setupTestEnv(t)
 
-		// Create .codex with skills installed
-		codexSkillsDir := filepath.Join(tmpHome, ".codex", "skills", "roborev-address")
-		if err := os.MkdirAll(codexSkillsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(codexSkillsDir, "SKILL.md"), []byte("old"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		createMockSkill(t, tmpHome, "codex", "roborev-address")
 
 		results, err := Update()
 		if err != nil {
@@ -376,18 +305,9 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 	})
 
 	t.Run("updates Codex with respond skill only", func(t *testing.T) {
-		tmpHome := t.TempDir()
-		cleanup := setTestHome(t, tmpHome)
-		defer cleanup()
+		tmpHome := setupTestEnv(t)
 
-		// Create .codex with only respond skill installed
-		codexSkillsDir := filepath.Join(tmpHome, ".codex", "skills", "roborev-respond")
-		if err := os.MkdirAll(codexSkillsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(codexSkillsDir, "SKILL.md"), []byte("old"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		createMockSkill(t, tmpHome, "codex", "roborev-respond")
 
 		results, err := Update()
 		if err != nil {
@@ -403,27 +323,10 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 	})
 
 	t.Run("updates both agents when both have skills", func(t *testing.T) {
-		tmpHome := t.TempDir()
-		cleanup := setTestHome(t, tmpHome)
-		defer cleanup()
+		tmpHome := setupTestEnv(t)
 
-		// Create .claude with skills
-		claudeSkillsDir := filepath.Join(tmpHome, ".claude", "skills", "roborev-address")
-		if err := os.MkdirAll(claudeSkillsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(claudeSkillsDir, "SKILL.md"), []byte("old"), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		// Create .codex with skills
-		codexSkillsDir := filepath.Join(tmpHome, ".codex", "skills", "roborev-respond")
-		if err := os.MkdirAll(codexSkillsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(codexSkillsDir, "SKILL.md"), []byte("old"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		createMockSkill(t, tmpHome, "claude", "roborev-address")
+		createMockSkill(t, tmpHome, "codex", "roborev-respond")
 
 		results, err := Update()
 		if err != nil {
@@ -453,9 +356,7 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 	})
 
 	t.Run("skips both when neither has skills", func(t *testing.T) {
-		tmpHome := t.TempDir()
-		cleanup := setTestHome(t, tmpHome)
-		defer cleanup()
+		tmpHome := setupTestEnv(t)
 
 		// Create .claude and .codex dirs but no skills
 		if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755); err != nil {
