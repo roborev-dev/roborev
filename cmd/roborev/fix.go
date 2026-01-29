@@ -367,7 +367,7 @@ func runFixAgentWithOpts(cmd *cobra.Command, repoPath string, opts fixOptions, p
 	if opts.quiet {
 		out = io.Discard
 	} else {
-		fmtr = newStreamFormatter(cmd.OutOrStdout(), isTerminal(os.Stdout.Fd()))
+		fmtr = newStreamFormatter(cmd.OutOrStdout(), writerIsTerminal(cmd.OutOrStdout()))
 		out = fmtr
 	}
 

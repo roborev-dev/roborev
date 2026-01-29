@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
@@ -127,6 +128,23 @@ func TestStreamFormatter_MultipleContentBlocks(t *testing.T) {
 	}
 	if !strings.Contains(got, "Read   main.go") {
 		t.Errorf("expected Read tool use, got:\n%s", got)
+	}
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestStreamFormatter_WriteError(t *testing.T) {
+	f := newStreamFormatter(errWriter{}, true)
+
+	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}` + "\n"
+	_, err := f.Write([]byte(line))
+	if err == nil {
+		t.Fatal("expected write error to propagate")
+	}
+	if err != io.ErrClosedPipe {
+		t.Fatalf("expected ErrClosedPipe, got %v", err)
 	}
 }
 
