@@ -361,10 +361,14 @@ func runFixAgentWithOpts(cmd *cobra.Command, repoPath string, opts fixOptions, p
 		a = a.WithModel(opts.model)
 	}
 
-	// Use stdout for streaming output
-	var out io.Writer = cmd.OutOrStdout()
+	// Use stdout for streaming output, with stream formatting for TTY
+	var out io.Writer
+	var fmtr *streamFormatter
 	if opts.quiet {
 		out = io.Discard
+	} else {
+		fmtr = newStreamFormatter(cmd.OutOrStdout(), isTerminal(os.Stdout.Fd()))
+		out = fmtr
 	}
 
 	// Use command context
@@ -374,12 +378,15 @@ func runFixAgentWithOpts(cmd *cobra.Command, repoPath string, opts fixOptions, p
 	}
 
 	_, err = a.Review(ctx, repoPath, "fix", prompt, out)
+	if fmtr != nil {
+		fmtr.Flush()
+	}
 	if err != nil {
 		return err
 	}
 
 	if !opts.quiet {
-		fmt.Fprintln(out)
+		fmt.Fprintln(cmd.OutOrStdout())
 	}
 	return nil
 }

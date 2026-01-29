@@ -738,10 +738,14 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 		a = a.WithModel(model)
 	}
 
-	// Use stdout for streaming output
-	var out io.Writer = cmd.OutOrStdout()
+	// Use stdout for streaming output, with stream formatting for TTY
+	var out io.Writer
+	var fmtr *streamFormatter
 	if quiet {
 		out = io.Discard
+	} else {
+		fmtr = newStreamFormatter(cmd.OutOrStdout(), isTerminal(os.Stdout.Fd()))
+		out = fmtr
 	}
 
 	// Use command context for cancellation support
@@ -751,12 +755,15 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	}
 
 	_, err = a.Review(ctx, repoPath, "fix", prompt, out)
+	if fmtr != nil {
+		fmtr.Flush()
+	}
 	if err != nil {
 		return err
 	}
 
 	if !quiet {
-		fmt.Fprintln(out) // Final newline
+		fmt.Fprintln(cmd.OutOrStdout()) // Final newline
 	}
 	return nil
 }
