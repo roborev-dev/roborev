@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,9 +65,11 @@ func newMockJobsServer(t *testing.T, jobs []storage.ReviewJob, review *storage.R
 }
 
 // stubReview creates a storage.Review with common defaults.
+var nextStubReviewID atomic.Int64
+
 func stubReview(jobID int64, agent, output string) storage.Review {
 	return storage.Review{
-		ID:    1,
+		ID:    nextStubReviewID.Add(1),
 		JobID: jobID,
 		Agent: agent,
 		Output: output,
@@ -325,9 +328,8 @@ func TestRunLabelFlag(t *testing.T) {
 }
 
 func TestWaitForPromptJob(t *testing.T) {
-	review := stubReview(123, "test-agent", "Test result")
-
 	t.Run("returns success when job completes", func(t *testing.T) {
+		review := stubReview(123, "test-agent", "Test result")
 		doneJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusDone}
 		server := newMockJobsServer(t, []storage.ReviewJob{doneJob}, &review)
 
@@ -402,6 +404,7 @@ func TestWaitForPromptJob(t *testing.T) {
 	})
 
 	t.Run("quiet mode suppresses waiting message", func(t *testing.T) {
+		review := stubReview(123, "test-agent", "Test result")
 		doneJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusDone}
 		server := newMockJobsServer(t, []storage.ReviewJob{doneJob}, &review)
 
