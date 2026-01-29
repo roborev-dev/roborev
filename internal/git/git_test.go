@@ -92,7 +92,9 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 	wtDir := r.T.TempDir()
 	r.Run("worktree", "add", wtDir, "-b", branchName)
 	r.T.Cleanup(func() {
-		runGit(r.T, r.Dir, "worktree", "remove", wtDir)
+		cmd := exec.Command("git", "worktree", "remove", wtDir)
+		cmd.Dir = r.Dir
+		_ = cmd.Run() // best-effort cleanup; not worth failing the test
 	})
 	return &TestRepo{T: r.T, Dir: wtDir}
 }
