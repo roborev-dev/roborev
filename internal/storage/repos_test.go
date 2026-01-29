@@ -501,15 +501,21 @@ func TestGetRepoStats(t *testing.T) {
 
 	// Complete job1 with PASS verdict
 	claimJob(t, db, "worker-1")
-	db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
+	if err := db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!"); err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
 
 	// Complete job2 with FAIL verdict
 	claimJob(t, db, "worker-1")
-	db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: FAIL**\nIssues found.")
+	if err := db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: FAIL**\nIssues found."); err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
 
 	// Fail job3
 	claimJob(t, db, "worker-1")
-	db.FailJob(job3.ID, "agent error")
+	if err := db.FailJob(job3.ID, "agent error"); err != nil {
+		t.Fatalf("FailJob failed: %v", err)
+	}
 
 	t.Run("stats with jobs", func(t *testing.T) {
 		stats, err := db.GetRepoStats(repo.ID)
@@ -959,11 +965,11 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		repo := createRepo(t, db, "/tmp/verdict-branch-prompt")
 		// Create a commit for a branch literally named "prompt"
-		createCommit(t, db, repo.ID, "branch-prompt-sha")
+		commit := createCommit(t, db, repo.ID, "branch-prompt-sha")
 
 		// Enqueue with git_ref = "prompt" but WITH a commit_id (simulating review of branch "prompt")
 		result, _ := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, ?, 'prompt', 'codex', 'thorough', 'queued')`,
-			repo.ID, 1)
+			repo.ID, commit.ID)
 		jobID, _ := result.LastInsertId()
 
 		claimJob(t, db, "worker-1")
