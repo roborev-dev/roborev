@@ -52,40 +52,62 @@ func TestSanitizeTarPath(t *testing.T) {
 	}
 }
 
+type archiveEntry struct {
+	Name     string
+	Content  string
+	TypeFlag byte
+	LinkName string
+	Mode     int64
+}
+
+func createTestArchive(t *testing.T, path string, entries []archiveEntry) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	gzw := gzip.NewWriter(f)
+	defer gzw.Close()
+	tw := tar.NewWriter(gzw)
+	defer tw.Close()
+
+	for _, e := range entries {
+		mode := e.Mode
+		if mode == 0 {
+			mode = 0644
+		}
+		h := &tar.Header{
+			Name:     e.Name,
+			Mode:     mode,
+			Size:     int64(len(e.Content)),
+			Typeflag: e.TypeFlag,
+			Linkname: e.LinkName,
+		}
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Content) > 0 {
+			if _, err := tw.Write([]byte(e.Content)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 func TestExtractTarGzPathTraversal(t *testing.T) {
-	// Create a malicious tar.gz with path traversal
 	tmpDir := t.TempDir()
 	archivePath := filepath.Join(tmpDir, "malicious.tar.gz")
 	extractDir := filepath.Join(tmpDir, "extract")
 	outsideFile := filepath.Join(tmpDir, "pwned")
 
-	// Create archive with path traversal attempt
-	f, err := os.Create(archivePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gzw := gzip.NewWriter(f)
-	tw := tar.NewWriter(gzw)
-
-	// Add a malicious entry that tries to escape
-	header := &tar.Header{
-		Name: "../pwned",
-		Mode: 0644,
-		Size: 5,
-	}
-	if err := tw.WriteHeader(header); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write([]byte("owned")); err != nil {
-		t.Fatal(err)
-	}
-
-	tw.Close()
-	gzw.Close()
-	f.Close()
+	createTestArchive(t, archivePath, []archiveEntry{
+		{Name: "../pwned", Content: "owned"},
+	})
 
 	// Extract should fail
-	err = extractTarGz(archivePath, extractDir)
+	err := extractTarGz(archivePath, extractDir)
 	if err == nil {
 		t.Error("extractTarGz should fail with path traversal attempt")
 	}
@@ -97,44 +119,14 @@ func TestExtractTarGzPathTraversal(t *testing.T) {
 }
 
 func TestExtractTarGzSymlinkSkipped(t *testing.T) {
-	// Create a tar.gz with a symlink
 	tmpDir := t.TempDir()
 	archivePath := filepath.Join(tmpDir, "symlink.tar.gz")
 	extractDir := filepath.Join(tmpDir, "extract")
 
-	f, err := os.Create(archivePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gzw := gzip.NewWriter(f)
-	tw := tar.NewWriter(gzw)
-
-	// Add a symlink entry
-	header := &tar.Header{
-		Name:     "evil-link",
-		Typeflag: tar.TypeSymlink,
-		Linkname: "/etc/passwd",
-	}
-	if err := tw.WriteHeader(header); err != nil {
-		t.Fatal(err)
-	}
-
-	// Add a normal file
-	header = &tar.Header{
-		Name: "normal.txt",
-		Mode: 0644,
-		Size: 4,
-	}
-	if err := tw.WriteHeader(header); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write([]byte("test")); err != nil {
-		t.Fatal(err)
-	}
-
-	tw.Close()
-	gzw.Close()
-	f.Close()
+	createTestArchive(t, archivePath, []archiveEntry{
+		{Name: "evil-link", TypeFlag: tar.TypeSymlink, LinkName: "/etc/passwd"},
+		{Name: "normal.txt", Content: "test"},
+	})
 
 	// Extract should succeed (symlinks are skipped)
 	if err := extractTarGz(archivePath, extractDir); err != nil {
