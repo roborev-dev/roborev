@@ -34,10 +34,19 @@ func newTestGitRepo(t *testing.T) *TestGitRepo {
 }
 
 // Run executes a git command in the repo directory and returns trimmed output.
+// It isolates git from the user's global config to prevent flaky tests.
 func (r *TestGitRepo) Run(args ...string) string {
 	r.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
+	cmd.Env = append(os.Environ(),
+		"HOME="+r.Dir,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=test@test.com",
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
