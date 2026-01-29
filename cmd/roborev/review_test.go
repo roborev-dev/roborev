@@ -670,11 +670,6 @@ func TestReviewSinceFlag(t *testing.T) {
 		gitRefChan := make(chan string, 1)
 		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
 			if r.URL.Path == "/api/enqueue" {
 				var req struct {
 					GitRef string `json:"git_ref"`
@@ -1063,11 +1058,6 @@ func TestReviewBranchFlag(t *testing.T) {
 		var receivedGitRef string
 		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
 			if r.URL.Path == "/api/enqueue" {
 				var req struct {
 					GitRef string `json:"git_ref"`

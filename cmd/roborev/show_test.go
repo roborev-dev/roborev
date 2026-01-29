@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/version"
 )
 
 func TestShowCommandSHADisambiguation(t *testing.T) {
@@ -46,11 +45,7 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 
 		var receivedQuery string
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
-			if r.URL.Path == "/api/review" && r.Method == "GET" {
+if r.URL.Path == "/api/review" && r.Method == "GET" {
 				receivedQuery = r.URL.RawQuery
 				json.NewEncoder(w).Encode(storage.Review{
 					ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
@@ -111,11 +106,7 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 
 		var receivedQuery string
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
-			if r.URL.Path == "/api/review" && r.Method == "GET" {
+if r.URL.Path == "/api/review" && r.Method == "GET" {
 				receivedQuery = r.URL.RawQuery
 				json.NewEncoder(w).Encode(storage.Review{
 					ID: 1, JobID: 99999, Output: "LGTM", Agent: "test",
@@ -170,11 +161,7 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 
 		var receivedQuery string
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
-			if r.URL.Path == "/api/review" && r.Method == "GET" {
+if r.URL.Path == "/api/review" && r.Method == "GET" {
 				receivedQuery = r.URL.RawQuery
 				json.NewEncoder(w).Encode(storage.Review{
 					ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
@@ -234,11 +221,7 @@ func TestShowJobFlag(t *testing.T) {
 
 		var receivedQuery string
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
-			if r.URL.Path == "/api/review" && r.Method == "GET" {
+if r.URL.Path == "/api/review" && r.Method == "GET" {
 				receivedQuery = r.URL.RawQuery
 				json.NewEncoder(w).Encode(storage.Review{
 					ID: 1, JobID: 12345, Output: "LGTM", Agent: "test",
@@ -294,11 +277,7 @@ func TestShowOutputFormat(t *testing.T) {
 		runGit("commit", "-m", "initial commit")
 
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
-			if r.URL.Path == "/api/review" && r.Method == "GET" {
+if r.URL.Path == "/api/review" && r.Method == "GET" {
 				json.NewEncoder(w).Encode(storage.Review{
 					ID: 1, JobID: 42, Output: "Test review output", Agent: "codex",
 				})
@@ -357,11 +336,7 @@ func TestShowOutputFormat(t *testing.T) {
 		shortSHA := commitSHA[:7]
 
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
-			if r.URL.Path == "/api/review" && r.Method == "GET" {
+if r.URL.Path == "/api/review" && r.Method == "GET" {
 				json.NewEncoder(w).Encode(storage.Review{
 					ID: 1, JobID: 42, Output: "Test review output", Agent: "codex",
 				})
