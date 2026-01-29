@@ -11,9 +11,75 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
+
+// createRepoWithConfig creates a temp directory with a .roborev.toml file.
+// If configContent is empty, no config file is written.
+func createRepoWithConfig(t *testing.T, configContent string) string {
+	t.Helper()
+	repoPath := t.TempDir()
+	if configContent != "" {
+		if err := os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(configContent), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return repoPath
+}
+
+// newMockReviewServer creates a test server that returns the given review on /api/review.
+func newMockReviewServer(t *testing.T, review storage.Review) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/review" {
+			writeJSON(w, review)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+// newMockJobsServer creates a test server that returns the given jobs on /api/jobs
+// and optionally serves /api/review with the provided review.
+func newMockJobsServer(t *testing.T, jobs []storage.ReviewJob, review *storage.Review) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			writeJSON(w, map[string][]storage.ReviewJob{"jobs": jobs})
+		case "/api/review":
+			if review != nil {
+				writeJSON(w, *review)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+// stubReview creates a storage.Review with common defaults.
+func stubReview(jobID int64, agent, output string) storage.Review {
+	return storage.Review{
+		ID:    1,
+		JobID: jobID,
+		Agent: agent,
+		Output: output,
+	}
+}
+
+// patchPromptPollInterval sets promptPollInterval to a fast value and restores it on cleanup.
+func patchPromptPollInterval(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := promptPollInterval
+	promptPollInterval = d
+	t.Cleanup(func() { promptPollInterval = old })
+}
 
 func TestBuildPromptWithContext(t *testing.T) {
 	t.Run("includes repo name and path", func(t *testing.T) {
@@ -40,13 +106,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 	})
 
 	t.Run("includes project guidelines when present", func(t *testing.T) {
-		// Create temp repo with .roborev.toml
-		repoPath := t.TempDir()
-		configContent := `review_guidelines = "Always use tabs for indentation"`
-		configPath := filepath.Join(repoPath, ".roborev.toml")
-		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-			t.Fatalf("Failed to write config: %v", err)
-		}
+		repoPath := createRepoWithConfig(t, `review_guidelines = "Always use tabs for indentation"`)
 
 		result := buildPromptWithContext(repoPath, "test prompt")
 
@@ -59,8 +119,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 	})
 
 	t.Run("omits guidelines section when not configured", func(t *testing.T) {
-		// Create temp repo without .roborev.toml
-		repoPath := t.TempDir()
+		repoPath := createRepoWithConfig(t, "")
 
 		result := buildPromptWithContext(repoPath, "test prompt")
 
@@ -70,13 +129,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 	})
 
 	t.Run("omits guidelines when config has no guidelines", func(t *testing.T) {
-		// Create temp repo with .roborev.toml but no guidelines
-		repoPath := t.TempDir()
-		configContent := `agent = "claude-code"`
-		configPath := filepath.Join(repoPath, ".roborev.toml")
-		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-			t.Fatalf("Failed to write config: %v", err)
-		}
+		repoPath := createRepoWithConfig(t, `agent = "claude-code"`)
 
 		result := buildPromptWithContext(repoPath, "test prompt")
 
@@ -97,10 +150,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 	})
 
 	t.Run("correct section order", func(t *testing.T) {
-		repoPath := t.TempDir()
-		configContent := `review_guidelines = "Test guideline"`
-		configPath := filepath.Join(repoPath, ".roborev.toml")
-		os.WriteFile(configPath, []byte(configContent), 0644)
+		repoPath := createRepoWithConfig(t, `review_guidelines = "Test guideline"`)
 
 		result := buildPromptWithContext(repoPath, "test prompt")
 
@@ -121,32 +171,12 @@ func TestBuildPromptWithContext(t *testing.T) {
 	})
 }
 
-// mockCmd creates a cobra command with captured output for testing
-func mockCmd() (*cobra.Command, *bytes.Buffer) {
-	cmd := &cobra.Command{}
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(out)
-	return cmd, out
-}
-
 func TestShowPromptResult(t *testing.T) {
 	t.Run("displays result without verdict exit code", func(t *testing.T) {
-		// Mock server that returns a review
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/review" {
-				review := storage.Review{
-					ID:     1,
-					JobID:  123,
-					Agent:  "test-agent",
-					Output: "Paris", // Simple answer with no verdict
-				}
-				json.NewEncoder(w).Encode(review)
-			}
-		}))
-		defer server.Close()
+		review := stubReview(123, "test-agent", "Paris")
+		server := newMockReviewServer(t, review)
 
-		cmd, out := mockCmd()
+		cmd, out := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		if err != nil {
@@ -163,44 +193,22 @@ func TestShowPromptResult(t *testing.T) {
 	})
 
 	t.Run("returns nil for output that would be FAIL verdict in review", func(t *testing.T) {
-		// Even output that ParseVerdict would interpret as FAIL should return nil
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/review" {
-				review := storage.Review{
-					ID:     1,
-					JobID:  123,
-					Agent:  "test-agent",
-					Output: "Found several issues:\n1. Bug in line 5\n2. Missing error handling",
-				}
-				json.NewEncoder(w).Encode(review)
-			}
-		}))
-		defer server.Close()
+		review := stubReview(123, "test-agent", "Found several issues:\n1. Bug in line 5\n2. Missing error handling")
+		server := newMockReviewServer(t, review)
 
-		cmd, _ := mockCmd()
+		cmd, _ := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
-		// Prompt jobs don't use verdict-based exit codes
 		if err != nil {
 			t.Errorf("Prompt jobs should not return error based on verdict, got: %v", err)
 		}
 	})
 
 	t.Run("quiet mode suppresses output", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/review" {
-				review := storage.Review{
-					ID:     1,
-					JobID:  123,
-					Agent:  "test-agent",
-					Output: "Some output",
-				}
-				json.NewEncoder(w).Encode(review)
-			}
-		}))
-		defer server.Close()
+		review := stubReview(123, "test-agent", "Some output")
+		server := newMockReviewServer(t, review)
 
-		cmd, out := mockCmd()
+		cmd, out := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, true, "") // quiet=true
 
 		if err != nil {
@@ -216,9 +224,9 @@ func TestShowPromptResult(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 		}))
-		defer server.Close()
+		t.Cleanup(server.Close)
 
-		cmd, _ := mockCmd()
+		cmd, _ := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 999, false, "")
 
 		if err == nil {
@@ -234,9 +242,9 @@ func TestShowPromptResult(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("internal error"))
 		}))
-		defer server.Close()
+		t.Cleanup(server.Close)
 
-		cmd, _ := mockCmd()
+		cmd, _ := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
 		if err == nil {
@@ -280,23 +288,18 @@ func TestRunLabelFlag(t *testing.T) {
 					json.NewDecoder(r.Body).Decode(&req)
 					receivedRef = req["git_ref"].(string)
 
-					job := storage.ReviewJob{
+					w.WriteHeader(http.StatusCreated)
+					writeJSON(w, storage.ReviewJob{
 						ID:     1,
 						Agent:  "test",
 						GitRef: receivedRef,
-					}
-					w.WriteHeader(http.StatusCreated)
-					json.NewEncoder(w).Encode(job)
+					})
 				}
 			}))
-			defer server.Close()
+			t.Cleanup(server.Close)
 
-			// Override serverAddr for this test
-			oldAddr := serverAddr
-			serverAddr = server.URL
-			defer func() { serverAddr = oldAddr }()
+			patchServerAddr(t, server.URL)
 
-			// Test the git_ref building directly since runPrompt requires daemon setup
 			gitRef := "run"
 			if tt.label != "" {
 				gitRef = tt.label
@@ -322,29 +325,13 @@ func TestRunLabelFlag(t *testing.T) {
 }
 
 func TestWaitForPromptJob(t *testing.T) {
-	t.Run("returns success when job completes", func(t *testing.T) {
-		callCount := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
-				callCount++
-				job := storage.ReviewJob{
-					ID:     123,
-					Status: storage.JobStatusDone,
-				}
-				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
-			} else if r.URL.Path == "/api/review" {
-				review := storage.Review{
-					ID:     1,
-					JobID:  123,
-					Agent:  "test-agent",
-					Output: "Test result",
-				}
-				json.NewEncoder(w).Encode(review)
-			}
-		}))
-		defer server.Close()
+	review := stubReview(123, "test-agent", "Test result")
 
-		cmd, out := mockCmd()
+	t.Run("returns success when job completes", func(t *testing.T) {
+		doneJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusDone}
+		server := newMockJobsServer(t, []storage.ReviewJob{doneJob}, &review)
+
+		cmd, out := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, false)
 
 		if err != nil {
@@ -361,19 +348,10 @@ func TestWaitForPromptJob(t *testing.T) {
 	})
 
 	t.Run("returns error when job fails", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
-				job := storage.ReviewJob{
-					ID:     123,
-					Status: storage.JobStatusFailed,
-					Error:  "agent crashed",
-				}
-				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
-			}
-		}))
-		defer server.Close()
+		failedJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusFailed, Error: "agent crashed"}
+		server := newMockJobsServer(t, []storage.ReviewJob{failedJob}, nil)
 
-		cmd, out := mockCmd()
+		cmd, out := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, false)
 
 		if err == nil {
@@ -390,18 +368,10 @@ func TestWaitForPromptJob(t *testing.T) {
 	})
 
 	t.Run("returns error when job canceled", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
-				job := storage.ReviewJob{
-					ID:     123,
-					Status: storage.JobStatusCanceled,
-				}
-				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
-			}
-		}))
-		defer server.Close()
+		canceledJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusCanceled}
+		server := newMockJobsServer(t, []storage.ReviewJob{canceledJob}, nil)
 
-		cmd, out := mockCmd()
+		cmd, out := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, false)
 
 		if err == nil {
@@ -418,14 +388,9 @@ func TestWaitForPromptJob(t *testing.T) {
 	})
 
 	t.Run("returns error when job not found", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
-				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {}})
-			}
-		}))
-		defer server.Close()
+		server := newMockJobsServer(t, []storage.ReviewJob{}, nil)
 
-		cmd, _ := mockCmd()
+		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 999, false)
 
 		if err == nil {
@@ -437,72 +402,43 @@ func TestWaitForPromptJob(t *testing.T) {
 	})
 
 	t.Run("quiet mode suppresses waiting message", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
-				job := storage.ReviewJob{
-					ID:     123,
-					Status: storage.JobStatusDone,
-				}
-				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
-			} else if r.URL.Path == "/api/review" {
-				review := storage.Review{
-					ID:     1,
-					JobID:  123,
-					Agent:  "test-agent",
-					Output: "Test result",
-				}
-				json.NewEncoder(w).Encode(review)
-			}
-		}))
-		defer server.Close()
+		doneJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusDone}
+		server := newMockJobsServer(t, []storage.ReviewJob{doneJob}, &review)
 
-		cmd, out := mockCmd()
+		cmd, out := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true) // quiet=true
 
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
 		}
 
-		// In quiet mode, no output at all
 		if out.Len() > 0 {
 			t.Errorf("Expected no output in quiet mode, got: %s", out.String())
 		}
 	})
 
 	t.Run("polls while job is running", func(t *testing.T) {
-		// Use fast poll interval for test
-		oldInterval := promptPollInterval
-		promptPollInterval = 1 * time.Millisecond
-		defer func() { promptPollInterval = oldInterval }()
+		patchPromptPollInterval(t, 1*time.Millisecond)
 
 		pollCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
+			switch r.URL.Path {
+			case "/api/jobs":
 				pollCount++
-				var status storage.JobStatus
-				if pollCount < 3 {
-					status = storage.JobStatusRunning
-				} else {
+				status := storage.JobStatusRunning
+				if pollCount >= 3 {
 					status = storage.JobStatusDone
 				}
-				job := storage.ReviewJob{
-					ID:     123,
-					Status: status,
-				}
-				json.NewEncoder(w).Encode(map[string][]storage.ReviewJob{"jobs": {job}})
-			} else if r.URL.Path == "/api/review" {
-				review := storage.Review{
-					ID:     1,
-					JobID:  123,
-					Agent:  "test-agent",
-					Output: "Final result",
-				}
-				json.NewEncoder(w).Encode(review)
+				writeJSON(w, map[string][]storage.ReviewJob{
+					"jobs": {{ID: 123, Status: status}},
+				})
+			case "/api/review":
+				writeJSON(w, stubReview(123, "test-agent", "Final result"))
 			}
 		}))
-		defer server.Close()
+		t.Cleanup(server.Close)
 
-		cmd, _ := mockCmd()
+		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true)
 
 		if err != nil {
