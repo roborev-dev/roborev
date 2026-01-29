@@ -12,22 +12,10 @@ func setupTestEnv(t *testing.T) string {
 	t.Helper()
 	tmpHome := t.TempDir()
 
-	origHome := os.Getenv("HOME")
-	origUserProfile := os.Getenv("USERPROFILE")
-	origHomeDrive := os.Getenv("HOMEDRIVE")
-	origHomePath := os.Getenv("HOMEPATH")
-
-	os.Setenv("HOME", tmpHome)
-	os.Setenv("USERPROFILE", tmpHome)
-	os.Setenv("HOMEDRIVE", "")
-	os.Setenv("HOMEPATH", "")
-
-	t.Cleanup(func() {
-		os.Setenv("HOME", origHome)
-		os.Setenv("USERPROFILE", origUserProfile)
-		os.Setenv("HOMEDRIVE", origHomeDrive)
-		os.Setenv("HOMEPATH", origHomePath)
-	})
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
 
 	return tmpHome
 }
@@ -44,13 +32,15 @@ func createMockSkill(t *testing.T, homeDir, agent, skill string) {
 	}
 }
 
-// getResultForAgent finds the InstallResult for the given agent, or returns nil.
-func getResultForAgent(results []InstallResult, agent Agent) *InstallResult {
+// getResultForAgent finds the InstallResult for the given agent, or fails the test.
+func getResultForAgent(t *testing.T, results []InstallResult, agent Agent) *InstallResult {
+	t.Helper()
 	for i := range results {
 		if results[i].Agent == agent {
 			return &results[i]
 		}
 	}
+	t.Fatalf("no result found for agent %s", agent)
 	return nil
 }
 
@@ -62,10 +52,7 @@ func TestInstallClaudeSkipsWhenDirMissing(t *testing.T) {
 		t.Fatalf("Install failed: %v", err)
 	}
 
-	claudeResult := getResultForAgent(results, AgentClaude)
-	if claudeResult == nil {
-		t.Fatal("expected Claude result")
-	}
+	claudeResult := getResultForAgent(t, results, AgentClaude)
 	if !claudeResult.Skipped {
 		t.Error("expected Claude to be skipped when ~/.claude doesn't exist")
 	}
@@ -88,10 +75,7 @@ func TestInstallClaudeWhenDirExists(t *testing.T) {
 		t.Fatalf("Install failed: %v", err)
 	}
 
-	claudeResult := getResultForAgent(results, AgentClaude)
-	if claudeResult == nil {
-		t.Fatal("expected Claude result")
-	}
+	claudeResult := getResultForAgent(t, results, AgentClaude)
 	if claudeResult.Skipped {
 		t.Error("expected Claude NOT to be skipped when ~/.claude exists")
 	}
@@ -123,10 +107,7 @@ func TestInstallCodexWhenDirExists(t *testing.T) {
 		t.Fatalf("Install failed: %v", err)
 	}
 
-	codexResult := getResultForAgent(results, AgentCodex)
-	if codexResult == nil {
-		t.Fatal("expected Codex result")
-	}
+	codexResult := getResultForAgent(t, results, AgentCodex)
 	if codexResult.Skipped {
 		t.Error("expected Codex NOT to be skipped when ~/.codex exists")
 	}
@@ -158,7 +139,7 @@ func TestInstallIdempotent(t *testing.T) {
 		t.Fatalf("First install failed: %v", err)
 	}
 
-	claude1 := getResultForAgent(results1, AgentClaude)
+	claude1 := getResultForAgent(t, results1, AgentClaude)
 	if len(claude1.Installed) != 2 {
 		t.Errorf("first install: expected 2 installed, got %d", len(claude1.Installed))
 	}
@@ -172,7 +153,7 @@ func TestInstallIdempotent(t *testing.T) {
 		t.Fatalf("Second install failed: %v", err)
 	}
 
-	claude2 := getResultForAgent(results2, AgentClaude)
+	claude2 := getResultForAgent(t, results2, AgentClaude)
 	if len(claude2.Installed) != 0 {
 		t.Errorf("second install: expected 0 installed, got %d", len(claude2.Installed))
 	}
