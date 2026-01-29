@@ -15,11 +15,7 @@ import (
 )
 
 func TestSyncState(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	t.Run("get nonexistent key returns empty", func(t *testing.T) {
@@ -69,11 +65,7 @@ func TestSyncState(t *testing.T) {
 }
 
 func TestGetMachineID(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// UUID pattern
@@ -107,11 +99,7 @@ func TestGetMachineID(t *testing.T) {
 }
 
 func TestBackfillSourceMachineID(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create test data
@@ -164,11 +152,7 @@ func TestBackfillSourceMachineID(t *testing.T) {
 }
 
 func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create a git repo without a remote configured
@@ -217,11 +201,7 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 }
 
 func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create a repo pointing to a directory that is NOT a git repository
@@ -258,11 +238,7 @@ func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
 }
 
 func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create a repo and set its identity
@@ -297,16 +273,12 @@ func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
 }
 
 func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create a repo pointing to a non-existent path (subpath of temp dir that doesn't exist)
 	nonExistentPath := filepath.Join(t.TempDir(), "this-subdir-does-not-exist", "nested")
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, NULL)`,
+	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, NULL)`,
 		nonExistentPath, "missing-repo")
 	if err != nil {
 		t.Fatalf("Insert repo failed: %v", err)
@@ -341,11 +313,7 @@ func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
 }
 
 func TestGetOrCreateRepoByIdentity(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	t.Run("creates placeholder repo for local identity", func(t *testing.T) {
@@ -579,11 +547,7 @@ func TestExtractRepoNameFromIdentity(t *testing.T) {
 }
 
 func TestSetRepoIdentity(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create test repo
@@ -615,11 +579,7 @@ func TestSetRepoIdentity(t *testing.T) {
 }
 
 func TestGetRepoByIdentity_NotFound(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	found, err := db.GetRepoByIdentity("nonexistent")
@@ -632,11 +592,7 @@ func TestGetRepoByIdentity_NotFound(t *testing.T) {
 }
 
 func TestGetKnownJobUUIDs(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	t.Run("returns empty when no jobs exist", func(t *testing.T) {
@@ -1033,15 +989,11 @@ func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
 	// This test verifies GetRepoByIdentity returns an error if duplicates exist.
 	// Multiple repos can share the same identity (e.g., multiple clones of the same remote),
 	// but GetRepoByIdentity should return an error when asked to find a unique repo.
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create two repos with same identity (simulates two clones of the same remote)
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/path1', 'repo1', 'same-id')`)
+	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/path1', 'repo1', 'same-id')`)
 	if err != nil {
 		t.Fatalf("Failed to insert repo1: %v", err)
 	}
@@ -1061,15 +1013,11 @@ func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
 }
 
 func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Insert an empty machine ID (simulating manual edit or past bug)
-	_, err = db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, '')`, SyncStateMachineID)
+	_, err := db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, '')`, SyncStateMachineID)
 	if err != nil {
 		t.Fatalf("Failed to insert empty machine ID: %v", err)
 	}
@@ -1097,11 +1045,7 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 func TestSyncWorker_StartStopStart(t *testing.T) {
 	// This test verifies that SyncWorker can be started, stopped, and restarted
 	// without issues (channel reinitialization on restart).
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Note: Sync is disabled by default, so Start() will fail with "sync is not enabled"
@@ -1240,11 +1184,7 @@ func TestParseSQLiteTime(t *testing.T) {
 }
 
 func TestGetJobsToSync_TimestampComparison(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Get machine ID for this test
@@ -1482,11 +1422,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 }
 
 func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Get machine ID for this test
@@ -1728,11 +1664,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	// This test verifies that legacy responses with job_id IS NULL (tied only to commit_id)
 	// are excluded from sync since they cannot be synced via job_uuid.
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	machineID, err := db.GetMachineID()
@@ -1813,11 +1745,7 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 func TestUpsertPulledResponse_MissingParentJob(t *testing.T) {
 	// This test verifies that UpsertPulledResponse gracefully handles responses
 	// for jobs that don't exist locally (returns nil, doesn't error)
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Try to upsert a response for a job that doesn't exist
@@ -1832,7 +1760,7 @@ func TestUpsertPulledResponse_MissingParentJob(t *testing.T) {
 	}
 
 	// Should return nil (not error) for missing parent job
-	err = db.UpsertPulledResponse(response)
+	err := db.UpsertPulledResponse(response)
 	if err != nil {
 		t.Errorf("Expected nil error for missing parent job, got: %v", err)
 	}
@@ -1850,11 +1778,7 @@ func TestUpsertPulledResponse_MissingParentJob(t *testing.T) {
 
 func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 	// This test verifies UpsertPulledResponse works when the parent job exists
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create a repo and job
@@ -2136,11 +2060,7 @@ type syncTestHelper struct {
 }
 
 func newSyncTestHelper(t *testing.T) *syncTestHelper {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
 	machineID, err := db.GetMachineID()
@@ -2410,11 +2330,7 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 	// This test verifies that upserting a pulled job with a model value backfills
 	// an existing job that has NULL model (COALESCE behavior in SQLite)
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	// Create a repo
