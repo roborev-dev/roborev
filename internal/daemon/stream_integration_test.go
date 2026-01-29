@@ -3,6 +3,7 @@ package daemon
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func TestStreamEventsWithRepoFilter(t *testing.T) {
 	e1 := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
 	e2 := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
 
-	// Should not receive third event (different repo)
+	// Should not receive more events (repo2 event was filtered out)
 	select {
 	case <-eventCh:
 		t.Error("Received unexpected event for filtered repo")
@@ -113,12 +114,17 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 
 	_, eventCh := broadcaster.Subscribe("")
 
+	// Create a real git repo so the worker can read the commit
+	repoDir := filepath.Join(tmpDir, "repo")
+	testutil.InitTestGitRepo(t, repoDir)
+	sha := testutil.GetHeadSHA(t, repoDir)
+
 	// Create repo and job
-	repo, err := db.GetOrCreateRepo(tmpDir)
+	repo, err := db.GetOrCreateRepo(repoDir)
 	if err != nil {
 		t.Fatalf("GetOrCreateRepo failed: %v", err)
 	}
-	job := testutil.CreateTestJobWithSHA(t, db, repo, "testsha", "test")
+	job := testutil.CreateTestJobWithSHA(t, db, repo, sha, "test")
 
 	// Create worker pool with our broadcaster
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
@@ -128,20 +134,26 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 	// Wait for job to finish (done or failed)
 	finalJob := testutil.WaitForJobStatus(t, db, job.ID, 10*time.Second, storage.JobStatusDone, storage.JobStatusFailed)
 
-	if finalJob != nil && finalJob.Status == storage.JobStatusDone {
-		event := testutil.ReceiveWithTimeout(t, eventCh, 1*time.Second)
-		if event.Type != "review.completed" {
-			t.Errorf("Expected type 'review.completed', got %s", event.Type)
+	if finalJob.Status != storage.JobStatusDone {
+		t.Fatalf("Expected job to succeed, got status %s", finalJob.Status)
+	}
+
+	// Drain events until we find the review.completed event
+	var event Event
+	for {
+		event = testutil.ReceiveWithTimeout(t, eventCh, 1*time.Second)
+		if event.Type == "review.completed" {
+			break
 		}
-		if event.JobID != job.ID {
-			t.Errorf("Expected JobID %d, got %d", job.ID, event.JobID)
-		}
-		if event.Agent != "test" {
-			t.Errorf("Expected agent 'test', got %s", event.Agent)
-		}
-		if event.Verdict == "" {
-			t.Error("Expected verdict to be set")
-		}
+	}
+	if event.JobID != job.ID {
+		t.Errorf("Expected JobID %d, got %d", job.ID, event.JobID)
+	}
+	if event.Agent != "test" {
+		t.Errorf("Expected agent 'test', got %s", event.Agent)
+	}
+	if event.Verdict == "" {
+		t.Error("Expected verdict to be set")
 	}
 }
 

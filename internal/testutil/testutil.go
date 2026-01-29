@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,6 +262,17 @@ func InitTestGitRepo(t *testing.T, dir string) {
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit failed: %v\n%s", err, out)
 	}
+}
+
+// GetHeadSHA returns the HEAD commit SHA for the git repo at dir.
+func GetHeadSHA(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD failed: %v", err)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // MakeJSONRequest creates an HTTP request with the given body marshaled as JSON.
