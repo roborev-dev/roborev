@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"time"
@@ -880,15 +881,28 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
-	tx, err := db.Begin()
+	// Use BEGIN IMMEDIATE to acquire write lock upfront, avoiding deadlocks
+	// when concurrent goroutines (workers, sync) try to upgrade from read to write.
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
 
 	// Fetch output_prefix from job (if any)
 	var outputPrefix sql.NullString
-	err = tx.QueryRow(`SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -900,7 +914,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	}
 
 	// Update job status only if still running (not canceled)
-	result, err := tx.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
+	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
 	if err != nil {
 		return err
 	}
@@ -916,13 +930,18 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	}
 
 	// Insert review with sync columns
-	_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		jobID, agent, prompt, finalOutput, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	if err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // FailJob marks a job as failed with an error message.
@@ -959,20 +978,31 @@ func (db *DB) CancelJob(jobID int64) error {
 // This allows manual re-running of jobs to get a fresh review.
 // For done jobs, the existing review is deleted to avoid unique constraint violations.
 func (db *DB) ReenqueueJob(jobID int64) error {
-	tx, err := db.Begin()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
 
 	// Delete any existing review for this job (for done jobs being rerun)
-	_, err = tx.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
 	if err != nil {
 		return err
 	}
 
 	// Reset job status
-	result, err := tx.Exec(`
+	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
@@ -988,7 +1018,12 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 		return sql.ErrNoRows
 	}
 
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	if err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // RetryJob atomically resets a running job to queued for retry.
