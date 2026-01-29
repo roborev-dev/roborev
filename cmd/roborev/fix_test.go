@@ -1,19 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -92,7 +87,7 @@ func TestFetchJob(t *testing.T) {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.statusCode)
 				if tt.statusCode == http.StatusOK {
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": tt.jobs})
+					writeJSON(w, map[string]interface{}{"jobs": tt.jobs})
 				}
 			}))
 			defer ts.Close()
@@ -127,7 +122,7 @@ func TestFetchReview(t *testing.T) {
 			t.Errorf("unexpected job_id: %s", r.URL.Query().Get("job_id"))
 		}
 
-		json.NewEncoder(w).Encode(storage.Review{
+		writeJSON(w, storage.Review{
 			JobID:  42,
 			Output: "Analysis output here",
 		})
@@ -150,7 +145,6 @@ func TestFetchReview(t *testing.T) {
 func TestAddJobResponse(t *testing.T) {
 	var gotJobID int64
 	var gotContent string
-
 	var gotCommenter string
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,68 +182,34 @@ func TestAddJobResponse(t *testing.T) {
 }
 
 func TestFixSingleJob(t *testing.T) {
-	// Check if git is available
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available, skipping test")
-	}
+	repoDir := createTestRepo(t, map[string]string{
+		"main.go": "package main\n",
+	})
 
-	// Create a real git repo
-	tmpDir := t.TempDir()
-	runGit := func(args ...string) error {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		return cmd.Run()
-	}
-
-	if err := runGit("init"); err != nil {
-		t.Fatalf("git init: %v", err)
-	}
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644)
-	runGit("add", ".")
-	if err := runGit("commit", "-m", "initial"); err != nil {
-		t.Fatalf("git commit: %v", err)
-	}
-
-	// Mock daemon
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/jobs":
-			json.NewEncoder(w).Encode(map[string]interface{}{
+	ts, _ := newMockServer(t, MockServerOpts{
+		JobIDStart:     99,
+		DoneAfterPolls: 1,
+		ReviewOutput:   "## Issues\n- Found minor issue",
+		OnJobs: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{
 				"jobs": []storage.ReviewJob{{
 					ID:     99,
 					Status: storage.JobStatusDone,
 					Agent:  "test",
 				}},
 			})
-		case r.URL.Path == "/api/review":
-			json.NewEncoder(w).Encode(storage.Review{
-				JobID:  99,
-				Output: "## Issues\n- Found minor issue",
-			})
-		case r.URL.Path == "/api/comment":
-			w.WriteHeader(http.StatusCreated)
-		case r.URL.Path == "/api/review/address":
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer ts.Close()
+		},
+	})
+	patchServerAddr(t, ts.URL)
 
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
+	cmd, output := newTestCmd(t)
 
 	opts := fixOptions{
 		agentName: "test",
 		reasoning: "fast",
 	}
 
-	err := fixSingleJob(cmd, tmpDir, 99, opts)
+	err := fixSingleJob(cmd, repoDir, 99, opts)
 	if err != nil {
 		t.Fatalf("fixSingleJob: %v", err)
 	}
@@ -265,24 +225,22 @@ func TestFixSingleJob(t *testing.T) {
 }
 
 func TestFixJobNotComplete(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"jobs": []storage.ReviewJob{{
-				ID:     99,
-				Status: storage.JobStatusRunning, // Not complete
-				Agent:  "test",
-			}},
-		})
-	}))
-	defer ts.Close()
+	ts, _ := newMockServer(t, MockServerOpts{
+		JobIDStart:     99,
+		DoneAfterPolls: 1,
+		OnJobs: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{
+				"jobs": []storage.ReviewJob{{
+					ID:     99,
+					Status: storage.JobStatusRunning, // Not complete
+					Agent:  "test",
+				}},
+			})
+		},
+	})
+	patchServerAddr(t, ts.URL)
 
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
+	cmd, _ := newTestCmd(t)
 
 	err := fixSingleJob(cmd, t.TempDir(), 99, fixOptions{agentName: "test"})
 
