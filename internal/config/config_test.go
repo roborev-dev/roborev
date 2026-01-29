@@ -26,8 +26,7 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestDataDir(t *testing.T) {
 	t.Run("default uses home directory", func(t *testing.T) {
-		t.Setenv("ROBOREV_DATA_DIR", "")
-		os.Unsetenv("ROBOREV_DATA_DIR")
+		t.Setenv("ROBOREV_DATA_DIR", "") // DataDir() treats empty the same as unset
 
 		dir := DataDir()
 		home, _ := os.UserHomeDir()
