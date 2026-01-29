@@ -24,7 +24,7 @@ func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherH
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 
-	writeFile(t, path, initialConfig)
+	writeTestFile(t, path, initialConfig)
 
 	cfg, err := config.LoadGlobalFrom(path)
 	if err != nil {
@@ -54,7 +54,7 @@ func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherH
 
 func (h *configWatcherHarness) updateConfig(t *testing.T, content string) {
 	t.Helper()
-	writeFile(t, h.ConfigPath, content)
+	writeTestFile(t, h.ConfigPath, content)
 }
 
 func (h *configWatcherHarness) waitForReload(t *testing.T) {
@@ -72,7 +72,7 @@ func (h *configWatcherHarness) waitForReload(t *testing.T) {
 	}
 }
 
-func writeFile(t *testing.T, path, content string) {
+func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write %s: %v", filepath.Base(path), err)
@@ -266,7 +266,7 @@ func TestConfigWatcher_StartAfterStopErrors(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 
-	writeFile(t, configPath, "default_agent = \"test\"\n")
+	writeTestFile(t, configPath, "default_agent = \"test\"\n")
 
 	cfg, _ := config.LoadGlobalFrom(configPath)
 	broadcaster := NewBroadcaster()
@@ -315,7 +315,7 @@ func TestConfigWatcher_AtomicSaveViaRename(t *testing.T) {
 
 	// Simulate atomic save: write to temp file then rename
 	tmpFile := filepath.Join(h.dir, "config.toml.tmp")
-	writeFile(t, tmpFile, "default_agent = \"atomic-saved\"\n")
+	writeTestFile(t, tmpFile, "default_agent = \"atomic-saved\"\n")
 	if err := os.Rename(tmpFile, h.ConfigPath); err != nil {
 		t.Fatalf("Failed to rename: %v", err)
 	}
