@@ -3,52 +3,59 @@ package main
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
-// setupTestRepo creates a git repo with a commit for testing
-func setupTestRepo(t *testing.T) string {
-	t.Helper()
-	tmpDir := t.TempDir()
-
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-
-	// Create a test file
-	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(`package main
-
-func main() {
-	println("hello")
+// reviewHarness encapsulates a test git repo, cobra command, and output buffer.
+type reviewHarness struct {
+	t   *testing.T
+	Dir string
+	Cmd *cobra.Command
+	Out *bytes.Buffer
 }
-`), 0644); err != nil {
-		t.Fatal(err)
+
+func newReviewHarness(t *testing.T) *reviewHarness {
+	t.Helper()
+	repo := testutil.NewTestRepoWithCommit(t)
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	return &reviewHarness{t: t, Dir: repo.Root, Cmd: cmd, Out: &out}
+}
+
+// writeConfig writes a .roborev.toml in the repo directory.
+func (h *reviewHarness) writeConfig(content string) {
+	h.t.Helper()
+	path := filepath.Join(h.Dir, ".roborev.toml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		h.t.Fatal(err)
 	}
+}
 
-	runGit("add", "main.go")
-	runGit("commit", "-m", "initial commit")
+// runOpts holds optional parameters for runLocalReview, with sensible defaults.
+type runOpts struct {
+	Revision  string
+	Diff      string
+	Agent     string
+	Model     string
+	Reasoning string
+	Quiet     bool
+}
 
-	return tmpDir
+// run calls runLocalReview with defaults applied.
+func (h *reviewHarness) run(opts runOpts) error {
+	h.t.Helper()
+	if opts.Revision == "" {
+		opts.Revision = "HEAD"
+	}
+	return runLocalReview(h.Cmd, h.Dir, opts.Revision, opts.Diff, opts.Agent, opts.Model, opts.Reasoning, opts.Quiet)
 }
 
 func TestLocalReviewFlag(t *testing.T) {
@@ -74,30 +81,22 @@ func TestLocalReviewFlag(t *testing.T) {
 }
 
 func TestLocalReviewRequiresAgent(t *testing.T) {
-	tmpDir := setupTestRepo(t)
+	h := newReviewHarness(t)
 
-	// Create a test command
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	// Test with no available agents (test agent should work)
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "fast", false)
+	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("Expected no error with test agent, got: %v", err)
 	}
 
-	// Verify output contains expected content
-	output := out.String()
+	output := h.Out.String()
 	if !strings.Contains(output, "Running test review") {
 		t.Errorf("Expected 'Running test review' in output, got: %s", output)
 	}
 }
 
 func TestLocalReviewWithDirtyDiff(t *testing.T) {
-	tmpDir := setupTestRepo(t)
+	h := newReviewHarness(t)
 
-	// Create a dirty diff
 	diffContent := `diff --git a/test.go b/test.go
 new file mode 100644
 --- /dev/null
@@ -108,70 +107,47 @@ new file mode 100644
 +func test() {}
 `
 
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	err := runLocalReview(cmd, tmpDir, "dirty", diffContent, "test", "", "fast", false)
+	err := h.run(runOpts{Revision: "dirty", Diff: diffContent, Agent: "test", Reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 }
 
 func TestLocalReviewAgentResolution(t *testing.T) {
-	tmpDir := setupTestRepo(t)
+	h := newReviewHarness(t)
+	h.writeConfig(`agent = "test"`)
 
-	// Write a .roborev.toml with agent config
-	configPath := filepath.Join(tmpDir, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(`agent = "test"`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	// Empty agent should resolve from config
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "fast", false)
+	err := h.run(runOpts{Reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := out.String()
+	output := h.Out.String()
 	if !strings.Contains(output, "Running test review") {
 		t.Errorf("Expected agent to resolve to 'test', got output: %s", output)
 	}
 }
 
 func TestLocalReviewModelResolution(t *testing.T) {
-	tmpDir := setupTestRepo(t)
-
-	// Write a .roborev.toml with model config
-	configPath := filepath.Join(tmpDir, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	h := newReviewHarness(t)
+	h.writeConfig(`
 agent = "test"
 model = "test-model"
-`), 0644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "fast", false)
+	err := h.run(runOpts{Reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := out.String()
+	output := h.Out.String()
 	if !strings.Contains(output, "model: test-model") {
 		t.Errorf("Expected model 'test-model' in output, got: %s", output)
 	}
 }
 
 func TestLocalReviewReasoningLevels(t *testing.T) {
-	tmpDir := setupTestRepo(t)
+	h := newReviewHarness(t)
 
 	tests := []struct {
 		reasoning string
@@ -185,16 +161,13 @@ func TestLocalReviewReasoningLevels(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.reasoning, func(t *testing.T) {
-			cmd := &cobra.Command{}
-			var out bytes.Buffer
-			cmd.SetOut(&out)
-
-			err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", tc.reasoning, false)
+			h.Out.Reset()
+			err := h.run(runOpts{Agent: "test", Reasoning: tc.reasoning})
 			if err != nil {
 				t.Fatalf("Expected no error, got: %v", err)
 			}
 
-			output := out.String()
+			output := h.Out.String()
 			if !strings.Contains(output, tc.expected) {
 				t.Errorf("Expected '%s' in output, got: %s", tc.expected, output)
 			}
@@ -203,14 +176,9 @@ func TestLocalReviewReasoningLevels(t *testing.T) {
 }
 
 func TestLocalReviewInvalidReasoning(t *testing.T) {
-	tmpDir := setupTestRepo(t)
+	h := newReviewHarness(t)
 
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	// Invalid reasoning should return error (matches daemon behavior)
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "invalid-reasoning", false)
+	err := h.run(runOpts{Agent: "test", Reasoning: "invalid-reasoning"})
 	if err == nil {
 		t.Fatal("Expected error for invalid reasoning")
 	}
@@ -220,127 +188,82 @@ func TestLocalReviewInvalidReasoning(t *testing.T) {
 }
 
 func TestLocalReviewWorkflowSpecificAgent(t *testing.T) {
-	tmpDir := setupTestRepo(t)
-
-	// Write a .roborev.toml with workflow-specific agent
-	configPath := filepath.Join(tmpDir, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	h := newReviewHarness(t)
+	h.writeConfig(`
 agent = "codex"
 review_agent_fast = "test"
-`), 0644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	// With reasoning=fast, should use review_agent_fast
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "fast", false)
+	err := h.run(runOpts{Reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := out.String()
+	output := h.Out.String()
 	if !strings.Contains(output, "Running test review") {
 		t.Errorf("Expected workflow-specific agent 'test', got output: %s", output)
 	}
 }
 
 func TestLocalReviewWorkflowSpecificModel(t *testing.T) {
-	tmpDir := setupTestRepo(t)
-
-	// Write a .roborev.toml with workflow-specific model
-	configPath := filepath.Join(tmpDir, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	h := newReviewHarness(t)
+	h.writeConfig(`
 agent = "test"
 model = "default-model"
 review_model_thorough = "thorough-model"
-`), 0644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	// With reasoning=thorough (default), should use review_model_thorough
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "", false)
+	err := h.run(runOpts{})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := out.String()
+	output := h.Out.String()
 	if !strings.Contains(output, "model: thorough-model") {
 		t.Errorf("Expected workflow-specific model 'thorough-model', got output: %s", output)
 	}
 }
 
 func TestLocalReviewReasoningFromConfig(t *testing.T) {
-	tmpDir := setupTestRepo(t)
-
-	// Write a .roborev.toml with review_reasoning
-	configPath := filepath.Join(tmpDir, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(`
+	h := newReviewHarness(t)
+	h.writeConfig(`
 agent = "test"
 review_reasoning = "fast"
-`), 0644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	// Empty reasoning should resolve from config
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "", "", "", false)
+	err := h.run(runOpts{})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := out.String()
+	output := h.Out.String()
 	if !strings.Contains(output, "reasoning: fast") {
 		t.Errorf("Expected reasoning to resolve to 'fast' from config, got output: %s", output)
 	}
 }
 
 func TestLocalReviewQuietMode(t *testing.T) {
-	tmpDir := setupTestRepo(t)
+	h := newReviewHarness(t)
 
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	// Quiet mode should suppress output
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "fast", true)
+	err := h.run(runOpts{Agent: "test", Reasoning: "fast", Quiet: true})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := out.String()
+	output := h.Out.String()
 	if strings.Contains(output, "Running") {
 		t.Errorf("Expected no 'Running' message in quiet mode, got: %s", output)
 	}
 }
 
 func TestLocalReviewSkipsDaemon(t *testing.T) {
-	// This test verifies that --local doesn't try to connect to daemon
-	// We do this by checking the code path - if daemon was required,
-	// this would fail since no daemon is running
+	h := newReviewHarness(t)
 
-	tmpDir := setupTestRepo(t)
-
-	// Override HOME to prevent reading real daemon.json
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", t.TempDir())
 	defer os.Setenv("HOME", origHome)
 
-	cmd := &cobra.Command{}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-
-	// This should succeed without a daemon
-	err := runLocalReview(cmd, tmpDir, "HEAD", "", "test", "", "fast", false)
+	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("Expected --local to work without daemon, got: %v", err)
 	}

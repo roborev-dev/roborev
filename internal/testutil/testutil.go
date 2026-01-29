@@ -42,6 +42,39 @@ func NewTestRepo(t *testing.T) *TestRepo {
 	}
 }
 
+// NewTestRepoWithCommit creates a temporary git repository with a file and
+// initial commit, suitable for tests that need a valid git history.
+func NewTestRepoWithCommit(t *testing.T) *TestRepo {
+	t.Helper()
+	repo := NewTestRepo(t)
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo.Root
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+
+	if err := os.WriteFile(filepath.Join(repo.Root, "main.go"), []byte("package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runGit("add", "main.go")
+	runGit("commit", "-m", "initial commit")
+
+	return repo
+}
+
 // Chdir changes the working directory to the repo root and returns a
 // restore function. The caller should defer the returned function.
 func (r *TestRepo) Chdir() func() {
