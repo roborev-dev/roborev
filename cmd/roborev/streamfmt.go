@@ -61,14 +61,23 @@ func (f *streamFormatter) Flush() {
 	}
 }
 
-// streamMessage is a minimal representation of Claude's stream-json format.
-// The message.content field is an array of content blocks.
-type streamMessage struct {
-	Type    string `json:"type"`
-	Subtype string `json:"subtype,omitempty"`
+// streamEvent is a unified representation of stream-json events from
+// both Claude Code and Gemini CLI.
+//
+// Claude:  {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{...}}]}}
+// Gemini:  {"type":"tool_use","tool_name":"read_file","parameters":{"file_path":"..."}}
+//          {"type":"message","role":"assistant","content":"...","delta":true}
+type streamEvent struct {
+	Type string `json:"type"`
+	// Claude: nested message with content blocks
 	Message *struct {
 		Content json.RawMessage `json:"content,omitempty"`
 	} `json:"message,omitempty"`
+	// Gemini: top-level fields
+	Role       string          `json:"role,omitempty"`
+	Content    json.RawMessage `json:"content,omitempty"`
+	ToolName   string          `json:"tool_name,omitempty"`
+	Parameters json.RawMessage `json:"parameters,omitempty"`
 }
 
 type contentBlock struct {
@@ -78,27 +87,55 @@ type contentBlock struct {
 	Input json.RawMessage `json:"input,omitempty"`
 }
 
+// geminiToolNames maps Gemini tool names to display names.
+var geminiToolNames = map[string]string{
+	"read_file":         "Read",
+	"replace":           "Edit",
+	"write_file":        "Write",
+	"run_shell_command": "Bash",
+	"grep":              "Grep",
+	"glob":              "Glob",
+	"list_dir":          "Glob",
+}
+
 func (f *streamFormatter) processLine(line string) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return
 	}
 
-	var msg streamMessage
-	if err := json.Unmarshal([]byte(line), &msg); err != nil {
+	var ev streamEvent
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
 		return
 	}
 
-	switch msg.Type {
+	switch ev.Type {
 	case "assistant":
-		if msg.Message == nil {
-			return
+		// Claude format
+		if ev.Message != nil {
+			f.processAssistantContent(ev.Message.Content)
 		}
-		f.processAssistantContent(msg.Message.Content)
-	case "result":
-		// Suppress result events (final summary handled elsewhere)
+	case "message":
+		// Gemini format: assistant text
+		if ev.Role == "assistant" {
+			var text string
+			if json.Unmarshal(ev.Content, &text) == nil && strings.TrimSpace(text) != "" {
+				f.writef("%s\n", strings.TrimSpace(text))
+			}
+		}
+	case "tool_use":
+		// Gemini format: top-level tool use
+		if ev.ToolName != "" {
+			displayName := geminiToolNames[ev.ToolName]
+			if displayName == "" {
+				displayName = ev.ToolName
+			}
+			f.formatToolUse(displayName, ev.Parameters)
+		}
+	case "result", "tool_result", "init":
+		// Suppress
 	default:
-		// Suppress system, user (tool_result), and other events
+		// Suppress system, user, and other events
 	}
 }
 

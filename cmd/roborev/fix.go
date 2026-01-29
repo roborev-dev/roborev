@@ -394,11 +394,12 @@ func runFixAgentWithOpts(cmd *cobra.Command, repoPath string, opts fixOptions, p
 // addJobResponse adds a response/comment to a job
 func addJobResponse(serverAddr string, jobID int64, response string) error {
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"job_id":  jobID,
-		"content": response,
+		"job_id":    jobID,
+		"commenter": "roborev-fix",
+		"comment":   response,
 	})
 
-	resp, err := http.Post(serverAddr+"/api/response", "application/json", bytes.NewReader(reqBody))
+	resp, err := http.Post(serverAddr+"/api/comment", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return err
 	}

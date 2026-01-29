@@ -150,8 +150,10 @@ func TestAddJobResponse(t *testing.T) {
 	var gotJobID int64
 	var gotContent string
 
+	var gotCommenter string
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/response" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/comment" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 
@@ -161,7 +163,8 @@ func TestAddJobResponse(t *testing.T) {
 			return
 		}
 		gotJobID = int64(req["job_id"].(float64))
-		gotContent = req["content"].(string)
+		gotContent = req["comment"].(string)
+		gotCommenter = req["commenter"].(string)
 
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -176,7 +179,10 @@ func TestAddJobResponse(t *testing.T) {
 		t.Errorf("job_id = %d, want 123", gotJobID)
 	}
 	if gotContent != "Fix applied" {
-		t.Errorf("content = %q, want %q", gotContent, "Fix applied")
+		t.Errorf("comment = %q, want %q", gotContent, "Fix applied")
+	}
+	if gotCommenter != "roborev-fix" {
+		t.Errorf("commenter = %q, want %q", gotCommenter, "roborev-fix")
 	}
 }
 
@@ -221,7 +227,7 @@ func TestFixSingleJob(t *testing.T) {
 				JobID:  99,
 				Output: "## Issues\n- Found minor issue",
 			})
-		case r.URL.Path == "/api/response":
+		case r.URL.Path == "/api/comment":
 			w.WriteHeader(http.StatusCreated)
 		case r.URL.Path == "/api/review/address":
 			w.WriteHeader(http.StatusOK)

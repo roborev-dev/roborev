@@ -148,6 +148,56 @@ func TestStreamFormatter_WriteError(t *testing.T) {
 	}
 }
 
+func TestStreamFormatter_GeminiToolUse(t *testing.T) {
+	var buf bytes.Buffer
+	f := newStreamFormatter(&buf, true)
+
+	lines := []string{
+		`{"type":"init","session_id":"abc"}`,
+		`{"type":"message","role":"user","content":"fix this"}`,
+		`{"type":"message","role":"assistant","content":"I'll fix this.","delta":true}`,
+		`{"type":"tool_use","tool_name":"read_file","tool_id":"t1","parameters":{"file_path":"main.go"}}`,
+		`{"type":"tool_result","tool_id":"t1","status":"success"}`,
+		`{"type":"tool_use","tool_name":"replace","tool_id":"t2","parameters":{"file_path":"main.go","old_string":"foo","new_string":"bar"}}`,
+		`{"type":"tool_use","tool_name":"run_shell_command","tool_id":"t3","parameters":{"command":"go test ./..."}}`,
+		`{"type":"result","status":"success"}`,
+	}
+
+	for _, line := range lines {
+		f.Write([]byte(line + "\n"))
+	}
+
+	got := buf.String()
+
+	if !strings.Contains(got, "I'll fix this.") {
+		t.Errorf("expected assistant text, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Read   main.go") {
+		t.Errorf("expected Read line, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Edit   main.go") {
+		t.Errorf("expected Edit line for replace tool, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Bash   go test ./...") {
+		t.Errorf("expected Bash line for run_shell_command, got:\n%s", got)
+	}
+	// init, user message, tool_result, and result should be suppressed
+	if strings.Contains(got, "session_id") || strings.Contains(got, "tool_id") || strings.Contains(got, "status") {
+		t.Errorf("should suppress non-assistant events, got:\n%s", got)
+	}
+}
+
+func TestStreamFormatter_GeminiToolResult_Suppressed(t *testing.T) {
+	var buf bytes.Buffer
+	f := newStreamFormatter(&buf, true)
+
+	f.Write([]byte(`{"type":"tool_result","tool_id":"t1","status":"success","output":"file contents here"}` + "\n"))
+
+	if buf.String() != "" {
+		t.Errorf("tool_result should be suppressed, got:\n%s", buf.String())
+	}
+}
+
 func TestStreamFormatter_PartialWrites(t *testing.T) {
 	var buf bytes.Buffer
 	f := newStreamFormatter(&buf, true)
