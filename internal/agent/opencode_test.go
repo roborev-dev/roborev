@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"strings"
 	"testing"
 )
 
@@ -92,7 +91,5 @@ func TestOpenCodeReviewFiltersToolCallLines(t *testing.T) {
 	}
 	assertContains(t, result, "**Review:**")
 	assertContains(t, result, "Done.")
-	if strings.Contains(result, `"name":"read"`) {
-		t.Errorf("result should not contain tool-call JSON: %q", result)
-	}
+	assertNotContains(t, result, `"name":"read"`)
 }

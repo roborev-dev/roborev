@@ -236,7 +236,8 @@ func (b *ScriptBuilder) AddOutput(s string) *ScriptBuilder {
 // AddToolCall adds a line that prints a tool-call JSON object to stdout.
 func (b *ScriptBuilder) AddToolCall(name string, args map[string]interface{}) *ScriptBuilder {
 	j := makeToolCallJSON(name, args)
-	b.lines = append(b.lines, fmt.Sprintf("printf '%%s\\n' '%s'", j))
+	escaped := strings.ReplaceAll(j, "'", "'\\''")
+	b.lines = append(b.lines, fmt.Sprintf("printf '%%s\\n' '%s'", escaped))
 	return b
 }
 
