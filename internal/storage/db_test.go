@@ -2456,7 +2456,7 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	var query string
 	switch status {
 	case JobStatusQueued:
-		return // default state
+		query = `UPDATE review_jobs SET status = 'queued', started_at = NULL, finished_at = NULL, error = NULL WHERE id = ?`
 	case JobStatusRunning:
 		query = `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`
 	case JobStatusDone:
