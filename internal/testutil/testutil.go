@@ -309,6 +309,44 @@ func WaitForJobStatus(t *testing.T, db *storage.DB, jobID int64, timeout time.Du
 	return nil
 }
 
+// CreateCompletedReview creates a commit (if needed) and a completed review job.
+// Returns the created job.
+func CreateCompletedReview(t *testing.T, db *storage.DB, repoID int64, sha, agent, reviewText string) *storage.ReviewJob {
+	t.Helper()
+
+	commit, err := db.GetOrCreateCommit(repoID, sha, "Test", "test commit", time.Now())
+	if err != nil {
+		t.Fatalf("Failed to create commit: %v", err)
+	}
+
+	job, err := db.EnqueueJob(repoID, commit.ID, sha, "", agent, "", "")
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+	if _, err := db.ClaimJob("test-worker"); err != nil {
+		t.Fatalf("ClaimJob failed: %v", err)
+	}
+	if err := db.CompleteJob(job.ID, "test-worker", "prompt", reviewText); err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
+
+	return job
+}
+
+// CreateReviewWithComments creates a completed review and adds comments to it.
+func CreateReviewWithComments(t *testing.T, db *storage.DB, repoID int64, sha, reviewText string, comments map[string]string) *storage.ReviewJob {
+	t.Helper()
+
+	job := CreateCompletedReview(t, db, repoID, sha, "test", reviewText)
+	for user, text := range comments {
+		if _, err := db.AddCommentToJob(job.ID, user, text); err != nil {
+			t.Fatalf("AddCommentToJob failed: %v", err)
+		}
+	}
+
+	return job
+}
+
 // DecodeJSON unmarshals the response body from an httptest.ResponseRecorder into v.
 func DecodeJSON(t *testing.T, w *httptest.ResponseRecorder, v interface{}) {
 	t.Helper()
