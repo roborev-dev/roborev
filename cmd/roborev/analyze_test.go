@@ -93,7 +93,7 @@ func TestExpandAndReadFiles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			files, err := expandAndReadFiles(tmpDir, tt.patterns)
+			files, err := expandAndReadFiles(tmpDir, tmpDir, tt.patterns)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -141,7 +141,7 @@ func TestExpandAndReadFilesRecursive(t *testing.T) {
 		}
 	}
 
-	result, err := expandAndReadFiles(tmpDir, []string{"./..."})
+	result, err := expandAndReadFiles(tmpDir, tmpDir, []string{"./..."})
 	if err != nil {
 		t.Fatalf("expandAndReadFiles error: %v", err)
 	}
@@ -161,6 +161,48 @@ func TestExpandAndReadFilesRecursive(t *testing.T) {
 		nativeNW := filepath.FromSlash(nw)
 		if _, ok := result[nativeNW]; ok {
 			t.Errorf("should not include %q", nativeNW)
+		}
+	}
+}
+
+func TestExpandAndReadFiles_ShellExpanded(t *testing.T) {
+	// Simulate shell-expanded globs: the shell expands *.go in a subdirectory
+	// into individual relative file paths like "helper.go", "helper_test.go".
+	// workDir is the subdirectory where the shell ran; repoRoot is the repo root.
+	tmpDir := t.TempDir()
+
+	writeFile := func(path, content string) {
+		fullPath := filepath.Join(tmpDir, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	writeFile("main.go", "package main\n")
+	writeFile("sub/helper.go", "package sub\n")
+	writeFile("sub/helper_test.go", "package sub\n// test\n")
+
+	repoRoot := tmpDir
+	workDir := filepath.Join(tmpDir, "sub")
+
+	// Shell in sub/ expands *.go → ["helper.go", "helper_test.go"]
+	files, err := expandAndReadFiles(workDir, repoRoot, []string{"helper.go", "helper_test.go"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Keys should be relative to repoRoot
+	wantKeys := []string{"sub/helper.go", "sub/helper_test.go"}
+	if len(files) != len(wantKeys) {
+		t.Fatalf("got %d files, want %d: %v", len(files), len(wantKeys), mapKeys(files))
+	}
+	for _, key := range wantKeys {
+		nativeKey := filepath.FromSlash(key)
+		if _, ok := files[nativeKey]; !ok {
+			t.Errorf("missing expected file %q, got keys: %v", nativeKey, mapKeys(files))
 		}
 	}
 }
@@ -735,7 +777,7 @@ func TestPerFileAnalysis(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "b.go"), []byte("package b\n"), 0644)
 	os.WriteFile(filepath.Join(tmpDir, "c.go"), []byte("package c\n"), 0644)
 
-	files, err := expandAndReadFiles(tmpDir, []string{"*.go"})
+	files, err := expandAndReadFiles(tmpDir, tmpDir, []string{"*.go"})
 	if err != nil {
 		t.Fatalf("expandAndReadFiles: %v", err)
 	}

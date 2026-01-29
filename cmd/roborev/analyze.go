@@ -217,7 +217,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	// Expand file patterns and read contents
-	files, err := expandAndReadFiles(repoRoot, filePatterns)
+	files, err := expandAndReadFiles(workDir, repoRoot, filePatterns)
 	if err != nil {
 		return err
 	}
@@ -799,7 +799,7 @@ func markJobAddressed(serverAddr string, jobID int64) error {
 
 // expandAndReadFiles expands glob patterns and reads file contents.
 // Returns a map of relative path -> content.
-func expandAndReadFiles(repoRoot string, patterns []string) (map[string]string, error) {
+func expandAndReadFiles(workDir, repoRoot string, patterns []string) (map[string]string, error) {
 	files := make(map[string]string)
 	seen := make(map[string]bool)
 
@@ -840,10 +840,10 @@ func expandAndReadFiles(repoRoot string, patterns []string) (map[string]string, 
 			continue
 		}
 
-		// Make pattern absolute if relative
+		// Make pattern absolute if relative (resolve against workDir where shell expansion happens)
 		absPattern := pattern
 		if !filepath.IsAbs(pattern) {
-			absPattern = filepath.Join(repoRoot, pattern)
+			absPattern = filepath.Join(workDir, pattern)
 		}
 
 		// Expand glob pattern
