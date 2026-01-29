@@ -69,121 +69,108 @@ func TestGeminiBuildArgs(t *testing.T) {
 	}
 }
 
-func TestGeminiParseStreamJSON_ResultEvent(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	input := `{"type":"system","subtype":"init"}
+func TestGeminiParseStreamJSON(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantResult   string
+		wantContains []string // if set, check result contains each substring instead of exact match
+		wantErr      error    // if non-nil, expect errors.Is match
+		wantOutput   bool     // if true, pass a writer and check it received data
+	}{
+		{
+			name: "ResultEvent",
+			input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"Working on it..."}}
 {"type":"result","result":"Done! Review complete."}
-`
-	parsed, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if parsed.result != "Done! Review complete." {
-		t.Fatalf("expected result from result event, got %q", parsed.result)
-	}
-}
-
-func TestGeminiParseStreamJSON_GeminiMessageFormat(t *testing.T) {
-	// Test actual Gemini CLI format: type="message", role="assistant", content at top level
-	a := NewGeminiAgent("gemini")
-	input := `{"type":"message","timestamp":"2026-01-19T17:49:13.445Z","role":"assistant","content":"Changes:\n- Created file.ts","delta":true}
+`,
+			wantResult: "Done! Review complete.",
+		},
+		{
+			name: "GeminiMessageFormat",
+			input: `{"type":"message","timestamp":"2026-01-19T17:49:13.445Z","role":"assistant","content":"Changes:\n- Created file.ts","delta":true}
 {"type":"message","timestamp":"2026-01-19T17:49:13.447Z","role":"assistant","content":" with filtering logic.","delta":true}
 {"type":"result","timestamp":"2026-01-19T17:49:13.519Z","status":"success","stats":{"total_tokens":1000}}
-`
-	parsed, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Should concatenate the assistant message contents
-	if !strings.Contains(parsed.result, "Changes:") {
-		t.Errorf("expected result to contain 'Changes:', got %q", parsed.result)
-	}
-	if !strings.Contains(parsed.result, "filtering logic") {
-		t.Errorf("expected result to contain 'filtering logic', got %q", parsed.result)
-	}
-}
-
-func TestGeminiParseStreamJSON_AssistantFallback(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	// No result event, should fall back to assistant messages
-	input := `{"type":"system","subtype":"init"}
+`,
+			wantContains: []string{"Changes:", "filtering logic"},
+		},
+		{
+			name: "AssistantFallback",
+			input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"First message"}}
 {"type":"assistant","message":{"content":"Second message"}}
-`
-	parsed, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if parsed.result != "First message\nSecond message" {
-		t.Fatalf("expected joined assistant messages, got %q", parsed.result)
-	}
-}
-
-func TestGeminiParseStreamJSON_NoValidEvents(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	input := `not json at all
+`,
+			wantResult: "First message\nSecond message",
+		},
+		{
+			name: "NoValidEvents",
+			input: `not json at all
 still not json
-`
-	_, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err == nil {
-		t.Fatal("expected error for no valid events, got nil")
-	}
-	// Should return the sentinel error
-	if !errors.Is(err, errNoStreamJSON) {
-		t.Fatalf("expected errNoStreamJSON, got %v", err)
-	}
-}
-
-func TestGeminiParseStreamJSON_StreamsToOutput(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	input := `{"type":"system","subtype":"init"}
+`,
+			wantErr: errNoStreamJSON,
+		},
+		{
+			name: "StreamsToOutput",
+			input: `{"type":"system","subtype":"init"}
 {"type":"result","result":"Done"}
-`
-	var output bytes.Buffer
-	sw := newSyncWriter(&output)
-	parsed, err := a.parseStreamJSON(strings.NewReader(input), sw)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if parsed.result != "Done" {
-		t.Fatalf("expected 'Done', got %q", parsed.result)
-	}
-	// Output should contain streamed JSON
-	if output.Len() == 0 {
-		t.Fatal("expected output to be written")
-	}
-}
-
-func TestGeminiParseStreamJSON_EmptyResult(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	// Valid JSON but no result or assistant content
-	input := `{"type":"system","subtype":"init"}
+`,
+			wantResult: "Done",
+			wantOutput: true,
+		},
+		{
+			name: "EmptyResult",
+			input: `{"type":"system","subtype":"init"}
 {"type":"tool","name":"Read"}
-`
-	parsed, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Should return empty string (caller returns "No review output generated")
-	if parsed.result != "" {
-		t.Fatalf("expected empty result, got %q", parsed.result)
-	}
-}
-
-func TestGeminiParseStreamJSON_PlainTextError(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	// Simulate older Gemini CLI that outputs plain text - should error
-	input := `This is a plain text review.
+`,
+			wantResult: "",
+		},
+		{
+			name: "PlainTextError",
+			input: `This is a plain text review.
 No issues found in the code.
-`
-	_, err := a.parseStreamJSON(strings.NewReader(input), nil)
-	if err == nil {
-		t.Fatal("expected error for plain text input")
+`,
+			wantErr: errNoStreamJSON,
+		},
 	}
-	// Should be the sentinel error
-	if !errors.Is(err, errNoStreamJSON) {
-		t.Fatalf("expected errNoStreamJSON, got %v", err)
+
+	a := NewGeminiAgent("gemini")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var sw *syncWriter
+			var output bytes.Buffer
+			if tc.wantOutput {
+				sw = newSyncWriter(&output)
+			}
+
+			parsed, err := a.parseStreamJSON(strings.NewReader(tc.input), sw)
+
+			if tc.wantErr != nil {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("expected %v, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tc.wantContains != nil {
+				for _, s := range tc.wantContains {
+					if !strings.Contains(parsed.result, s) {
+						t.Errorf("expected result to contain %q, got %q", s, parsed.result)
+					}
+				}
+			} else if parsed.result != tc.wantResult {
+				t.Fatalf("expected result %q, got %q", tc.wantResult, parsed.result)
+			}
+
+			if tc.wantOutput && output.Len() == 0 {
+				t.Fatal("expected output to be written")
+			}
+		})
 	}
 }
 
