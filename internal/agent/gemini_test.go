@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -295,13 +296,11 @@ exit 1
 }
 
 func TestGeminiReview_PromptDeliveredViaStdin(t *testing.T) {
-	mock := mockAgentCLI(t, MockCLIOpts{
-		CaptureStdin: true,
-	})
+	skipIfWindows(t)
 
-	// We need the script to also output stream-json, so use a custom script
-	// that captures stdin via the env var set by mockAgentCLI
-	stdinFile := mock.StdinFile
+	stdinFile := filepath.Join(t.TempDir(), "stdin.txt")
+	t.Setenv("MOCK_STDIN_FILE", stdinFile)
+
 	scriptPath := writeTempCommand(t, `#!/bin/sh
 cat > "$MOCK_STDIN_FILE"
 echo '{"type":"result","result":"Done"}'

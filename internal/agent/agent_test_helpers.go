@@ -154,9 +154,13 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\n")
 
-	// Handle --help
+	// Handle --help: write output to a file and cat it to avoid shell escaping issues
 	if opts.HelpOutput != "" {
-		script.WriteString(`if [ "$1" = "--help" ]; then echo "` + opts.HelpOutput + `"; exit 0; fi` + "\n")
+		helpFile := filepath.Join(tmpDir, "help_output.txt")
+		if err := os.WriteFile(helpFile, []byte(opts.HelpOutput), 0644); err != nil {
+			t.Fatalf("write help output file: %v", err)
+		}
+		script.WriteString(fmt.Sprintf(`if [ "$1" = "--help" ]; then cat %q; exit 0; fi`, helpFile) + "\n")
 	}
 
 	// Capture args
