@@ -29,9 +29,12 @@ func TestClaudeBuildArgs(t *testing.T) {
 	}
 	assertNotContainsArg(t, args, claudeDangerousFlag)
 	tools := toolsArgValue(t, args)
+	toolList := strings.Split(tools, ",")
 	for _, forb := range []string{"Edit", "Write", "Bash"} {
-		if strings.Contains(tools, forb) {
-			t.Errorf("non-agentic tools should not contain %q, got %q", forb, tools)
+		for _, tool := range toolList {
+			if strings.TrimSpace(tool) == forb {
+				t.Errorf("non-agentic tools should not contain %q, got %q", forb, tools)
+			}
 		}
 	}
 
@@ -40,8 +43,16 @@ func TestClaudeBuildArgs(t *testing.T) {
 	assertContainsArg(t, args, claudeDangerousFlag)
 	assertContainsArg(t, args, "--allowedTools")
 	tools = toolsArgValue(t, args)
+	toolList = strings.Split(tools, ",")
 	for _, req := range []string{"Edit", "Write"} {
-		if !strings.Contains(tools, req) {
+		found := false
+		for _, tool := range toolList {
+			if strings.TrimSpace(tool) == req {
+				found = true
+				break
+			}
+		}
+		if !found {
 			t.Errorf("agentic tools should contain %q, got %q", req, tools)
 		}
 	}
