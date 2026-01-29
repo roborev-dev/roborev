@@ -180,17 +180,62 @@ func setupRefineRepo(t *testing.T) (string, string) {
 	return repoDir, headSHA
 }
 
-type failingAgent struct{}
-
-func (f failingAgent) Name() string { return "test" }
-
-func (f failingAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	return "", fmt.Errorf("test agent failure")
+// functionalMockAgent is a configurable mock agent that accepts behavior as a function.
+type functionalMockAgent struct {
+	nameVal    string
+	reviewFunc func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
 }
 
-func (f failingAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return f }
-func (f failingAgent) WithAgentic(agentic bool) agent.Agent                 { return f }
-func (f failingAgent) WithModel(model string) agent.Agent                   { return f }
+func (f *functionalMockAgent) Name() string { return f.nameVal }
+
+func (f *functionalMockAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if f.reviewFunc != nil {
+		return f.reviewFunc(ctx, repoPath, commitSHA, prompt, output)
+	}
+	return "", nil
+}
+
+func (f *functionalMockAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return f }
+func (f *functionalMockAgent) WithAgentic(agentic bool) agent.Agent                 { return f }
+func (f *functionalMockAgent) WithModel(model string) agent.Agent                   { return f }
+
+// inDir changes to the given directory for the duration of fn, then restores the original directory.
+func inDir(t *testing.T, dir string, fn func()) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(orig)
+	fn()
+}
+
+// MockRefineHooks allows overriding specific endpoints in the mock refine handler.
+type MockRefineHooks struct {
+	OnGetJobs func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool // Return true if handled
+	OnEnqueue func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+}
+
+// createConfigurableMockRefineHandler wraps createMockRefineHandler with hook overrides.
+func createConfigurableMockRefineHandler(state *mockRefineState, hooks MockRefineHooks) http.Handler {
+	base := createMockRefineHandler(state)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" && r.Method == "GET" && hooks.OnGetJobs != nil {
+			if hooks.OnGetJobs(w, r, state) {
+				return
+			}
+		}
+		if r.URL.Path == "/api/enqueue" && r.Method == "POST" && hooks.OnEnqueue != nil {
+			if hooks.OnEnqueue(w, r, state) {
+				return
+			}
+		}
+		base.ServeHTTP(w, r)
+	})
+}
 
 func TestEnqueueReviewRefine(t *testing.T) {
 	t.Run("returns job ID on success", func(t *testing.T) {
@@ -318,30 +363,7 @@ func TestRefineNoChangeRetryLogic(t *testing.T) {
 
 func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	setupFastPolling(t)
-	repoDir := t.TempDir()
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("symbolic-ref", "HEAD", "refs/heads/main")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("base"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "base commit")
-	runGit("checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("change"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "feature.txt")
-	runGit("commit", "-m", "feature commit")
+	repoDir, _ := setupRefineRepo(t)
 
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -359,18 +381,11 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	}))
 	defer cleanup()
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	inDir(t, repoDir, func() {
+		if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
 }
 
 func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
@@ -384,31 +399,24 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
 	defer cleanup()
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
 	origIsTerminal := isTerminal
 	isTerminal = func(fd uintptr) bool { return false }
 	defer func() { isTerminal = origIsTerminal }()
 
-	output := captureStdout(t, func() {
-		if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
-			t.Fatal("expected error, got nil")
+	inDir(t, repoDir, func() {
+		output := captureStdout(t, func() {
+			if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+
+		if strings.Contains(output, "\r") {
+			t.Fatalf("expected no carriage returns in non-tty output, got: %q", output)
+		}
+		if !strings.Contains(output, "Addressing review (job 42)...") {
+			t.Fatalf("expected final timer line in output, got: %q", output)
 		}
 	})
-
-	if strings.Contains(output, "\r") {
-		t.Fatalf("expected no carriage returns in non-tty output, got: %q", output)
-	}
-	if !strings.Contains(output, "Addressing review (job 42)...") {
-		t.Fatalf("expected final timer line in output, got: %q", output)
-	}
 }
 
 func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
@@ -422,35 +430,30 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
 	defer cleanup()
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
 	origIsTerminal := isTerminal
 	isTerminal = func(fd uintptr) bool { return true }
 	defer func() { isTerminal = origIsTerminal }()
 
-	agent.Register(failingAgent{})
+	agent.Register(&functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		return "", fmt.Errorf("test agent failure")
+	}})
 	defer agent.Register(agent.NewTestAgent())
 
-	output := captureStdout(t, func() {
-		if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
-			t.Fatal("expected error, got nil")
+	inDir(t, repoDir, func() {
+		output := captureStdout(t, func() {
+			if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+
+		idx := strings.LastIndex(output, "\rAddressing review (job 7)...")
+		if idx == -1 {
+			t.Fatalf("expected live timer output, got: %q", output)
+		}
+		if !strings.Contains(output[idx:], "\n") {
+			t.Fatalf("expected timer to stop with newline, got: %q", output)
 		}
 	})
-
-	idx := strings.LastIndex(output, "\rAddressing review (job 7)...")
-	if idx == -1 {
-		t.Fatalf("expected live timer output, got: %q", output)
-	}
-	if !strings.Contains(output[idx:], "\n") {
-		t.Fatalf("expected timer to stop with newline, got: %q", output)
-	}
 }
 
 // TestRunRefineAgentErrorRetriesWithoutApplyingChanges verifies that when the agent
@@ -467,54 +470,49 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
 	defer cleanup()
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
 	// Use 2 iterations so we can verify retry behavior
-	agent.Register(failingAgent{})
+	agent.Register(&functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		return "", fmt.Errorf("test agent failure")
+	}})
 	defer agent.Register(agent.NewTestAgent())
 
 	// Capture HEAD before running refine
 	headBefore, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
 
-	output := captureStdout(t, func() {
-		// With 2 iterations and a failing agent, should exhaust iterations
-		err := runRefine("test", "", "", 2, true, false, false, "")
-		if err == nil {
-			t.Fatal("expected error after exhausting iterations, got nil")
+	inDir(t, repoDir, func() {
+		output := captureStdout(t, func() {
+			// With 2 iterations and a failing agent, should exhaust iterations
+			err := runRefine("test", "", "", 2, true, false, false, "")
+			if err == nil {
+				t.Fatal("expected error after exhausting iterations, got nil")
+			}
+		})
+
+		// Verify agent error message is printed (not shadowed by ResolveSHA)
+		if !strings.Contains(output, "Agent error: test agent failure") {
+			t.Errorf("expected 'Agent error: test agent failure' in output, got: %q", output)
+		}
+
+		// Verify "Will retry in next iteration" message
+		if !strings.Contains(output, "Will retry in next iteration") {
+			t.Errorf("expected 'Will retry in next iteration' in output, got: %q", output)
+		}
+
+		// Verify no commit was created (HEAD unchanged)
+		headAfter, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if string(headBefore) != string(headAfter) {
+			t.Errorf("expected HEAD to be unchanged after agent error, was %s now %s",
+				strings.TrimSpace(string(headBefore)), strings.TrimSpace(string(headAfter)))
+		}
+
+		// Verify we attempted 2 iterations (both printed)
+		if !strings.Contains(output, "=== Refinement iteration 1/2 ===") {
+			t.Errorf("expected iteration 1/2 in output, got: %q", output)
+		}
+		if !strings.Contains(output, "=== Refinement iteration 2/2 ===") {
+			t.Errorf("expected iteration 2/2 in output, got: %q", output)
 		}
 	})
-
-	// Verify agent error message is printed (not shadowed by ResolveSHA)
-	if !strings.Contains(output, "Agent error: test agent failure") {
-		t.Errorf("expected 'Agent error: test agent failure' in output, got: %q", output)
-	}
-
-	// Verify "Will retry in next iteration" message
-	if !strings.Contains(output, "Will retry in next iteration") {
-		t.Errorf("expected 'Will retry in next iteration' in output, got: %q", output)
-	}
-
-	// Verify no commit was created (HEAD unchanged)
-	headAfter, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
-	if string(headBefore) != string(headAfter) {
-		t.Errorf("expected HEAD to be unchanged after agent error, was %s now %s",
-			strings.TrimSpace(string(headBefore)), strings.TrimSpace(string(headAfter)))
-	}
-
-	// Verify we attempted 2 iterations (both printed)
-	if !strings.Contains(output, "=== Refinement iteration 1/2 ===") {
-		t.Errorf("expected iteration 1/2 in output, got: %q", output)
-	}
-	if !strings.Contains(output, "=== Refinement iteration 2/2 ===") {
-		t.Errorf("expected iteration 2/2 in output, got: %q", output)
-	}
 }
 
 func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
@@ -977,38 +975,6 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 	})
 }
 
-type changingAgent struct {
-	count int
-}
-
-func (a *changingAgent) Name() string { return "test" }
-
-func (a *changingAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	a.count++
-	change := fmt.Sprintf("fix %d", a.count)
-	if err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte(change), 0644); err != nil {
-		return "", err
-	}
-	if output != nil {
-		if _, err := output.Write([]byte(change)); err != nil {
-			return "", err
-		}
-	}
-	return change, nil
-}
-
-func (a *changingAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent {
-	return a
-}
-
-func (a *changingAgent) WithAgentic(agentic bool) agent.Agent {
-	return a
-}
-
-func (a *changingAgent) WithModel(model string) agent.Agent {
-	return a
-}
-
 func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	setupFastPolling(t)
 	repoDir, _ := setupRefineRepo(t)
@@ -1045,101 +1011,30 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 		ID: 2, JobID: 2, Output: "**Bug**: new failure", Addressed: false,
 	}
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/status":
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-		case r.URL.Path == "/api/review" && r.Method == http.MethodGet:
-			sha := r.URL.Query().Get("sha")
-			jobIDStr := r.URL.Query().Get("job_id")
-
-			var review *storage.Review
-			if sha != "" {
-				review = state.reviews[sha]
-			} else if jobIDStr != "" {
-				var jobID int64
-				fmt.Sscanf(jobIDStr, "%d", &jobID)
-				for _, rev := range state.reviews {
-					if rev.JobID == jobID {
-						review = rev
-						break
-					}
-				}
-			}
-
-			if review == nil {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			json.NewEncoder(w).Encode(review)
-
-		case r.URL.Path == "/api/comments" && r.Method == http.MethodGet:
-			jobIDStr := r.URL.Query().Get("job_id")
-			var jobID int64
-			fmt.Sscanf(jobIDStr, "%d", &jobID)
-			responses := state.responses[jobID]
-			if responses == nil {
-				responses = []storage.Response{}
-			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"responses": responses,
-			})
-
-		case r.URL.Path == "/api/comment" && r.Method == http.MethodPost:
-			var req struct {
-				JobID     int64  `json:"job_id"`
-				Responder string `json:"responder"`
-				Response  string `json:"response"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			state.respondCalled = append(state.respondCalled, struct {
-				jobID     int64
-				responder string
-				response  string
-			}{req.JobID, req.Responder, req.Response})
-
-			resp := storage.Response{
-				ID:        int64(len(state.responses[req.JobID]) + 1),
-				Responder: req.Responder,
-				Response:  req.Response,
-			}
-			state.responses[req.JobID] = append(state.responses[req.JobID], resp)
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(resp)
-
-		case r.URL.Path == "/api/review/address" && r.Method == http.MethodPost:
-			var req struct {
-				ReviewID  int64 `json:"review_id"`
-				Addressed bool  `json:"addressed"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			if req.Addressed {
-				state.addressedIDs = append(state.addressedIDs, req.ReviewID)
-				for _, rev := range state.reviews {
-					if rev.ID == req.ReviewID {
-						rev.Addressed = true
-						break
-					}
-				}
-			}
-			w.WriteHeader(http.StatusOK)
-
-		case r.URL.Path == "/api/jobs" && r.Method == http.MethodGet:
+	// Use configurable handler with custom /api/jobs logic that auto-creates
+	// jobs and failing reviews for unknown git_refs (simulating re-review after fix).
+	handler := createConfigurableMockRefineHandler(state, MockRefineHooks{
+		OnGetJobs: func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
 			q := r.URL.Query()
 			if idStr := q.Get("id"); idStr != "" {
 				var jobID int64
 				fmt.Sscanf(idStr, "%d", &jobID)
-				job, ok := state.jobs[jobID]
+				s.mu.Lock()
+				job, ok := s.jobs[jobID]
 				if !ok {
+					s.mu.Unlock()
 					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
-					return
+					return true
 				}
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{*job}})
-				return
+				jobCopy := *job
+				s.mu.Unlock()
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+				return true
 			}
 			if gitRef := q.Get("git_ref"); gitRef != "" {
+				s.mu.Lock()
 				var job *storage.ReviewJob
-				for _, j := range state.jobs {
+				for _, j := range s.jobs {
 					if j.GitRef == gitRef {
 						job = j
 						break
@@ -1147,59 +1042,53 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 				}
 				if job == nil {
 					job = &storage.ReviewJob{
-						ID:       state.nextJobID,
+						ID:       s.nextJobID,
 						GitRef:   gitRef,
 						Agent:    "test",
 						Status:   storage.JobStatusDone,
 						RepoPath: q.Get("repo"),
 					}
-					state.jobs[job.ID] = job
-					state.nextJobID++
+					s.jobs[job.ID] = job
+					s.nextJobID++
 				}
-				if _, ok := state.reviews[gitRef]; !ok {
-					state.reviews[gitRef] = &storage.Review{
+				if _, ok := s.reviews[gitRef]; !ok {
+					s.reviews[gitRef] = &storage.Review{
 						ID:     job.ID + 1000,
 						JobID:  job.ID,
 						Output: "**Bug**: fix failed",
 					}
 				}
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{*job}})
-				return
+				jobCopy := *job
+				s.mu.Unlock()
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+				return true
 			}
-
-			var jobs []storage.ReviewJob
-			for _, job := range state.jobs {
-				jobs = append(jobs, *job)
-			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs":     jobs,
-				"has_more": false,
-			})
-
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
+			return false // fall through to base handler
+		},
 	})
 
 	_, cleanup := setupMockDaemon(t, handler)
 	defer cleanup()
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	changer := &changingAgent{}
-	agent.Register(changer)
+	var changeCount int
+	agent.Register(&functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		changeCount++
+		change := fmt.Sprintf("fix %d", changeCount)
+		if err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte(change), 0644); err != nil {
+			return "", err
+		}
+		if output != nil {
+			output.Write([]byte(change))
+		}
+		return change, nil
+	}})
 	defer agent.Register(agent.NewTestAgent())
 
-	if err := runRefine("test", "", "", 2, true, false, false, ""); err == nil {
-		t.Fatal("expected error from reaching max iterations")
-	}
+	inDir(t, repoDir, func() {
+		if err := runRefine("test", "", "", 2, true, false, false, ""); err == nil {
+			t.Fatal("expected error from reaching max iterations")
+		}
+	})
 
 	for _, call := range state.respondCalled {
 		if call.jobID == 2 {
@@ -1214,40 +1103,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 // passing review - if iterations were consumed during the wait, the test would fail.
 func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	setupFastPolling(t)
-	repoDir := t.TempDir()
-
-	// Create a git repo with a commit on a feature branch
-	runGit := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		} else if len(out) > 0 {
-			return strings.TrimSpace(string(out))
-		}
-		return ""
-	}
-
-	runGit("init")
-	runGit("symbolic-ref", "HEAD", "refs/heads/main")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-
-	if err := os.WriteFile(filepath.Join(repoDir, "base.txt"), []byte("base"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "base.txt")
-	runGit("commit", "-m", "base commit")
-
-	runGit("checkout", "-b", "feature")
-
-	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "feature.txt")
-	runGit("commit", "-m", "feature commit")
-
-	commitSHA := runGit("rev-parse", "HEAD")
+	repoDir, commitSHA := setupRefineRepo(t)
 
 	// Track how many times the job has been polled
 	var pollCount int32
@@ -1267,75 +1123,20 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	}
 	state.nextJobID = 2
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/status":
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-
-		case r.URL.Path == "/api/review" && r.Method == http.MethodGet:
-			sha := r.URL.Query().Get("sha")
-			jobIDStr := r.URL.Query().Get("job_id")
-
-			state.mu.Lock()
-			var review *storage.Review
-			if sha != "" {
-				review = state.reviews[sha]
-			} else if jobIDStr != "" {
-				var jobID int64
-				fmt.Sscanf(jobIDStr, "%d", &jobID)
-				for _, rev := range state.reviews {
-					if rev.JobID == jobID {
-						review = rev
-						break
-					}
-				}
-			}
-			state.mu.Unlock()
-
-			if review == nil {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			json.NewEncoder(w).Encode(review)
-
-		case r.URL.Path == "/api/review/address" && r.Method == http.MethodPost:
-			w.WriteHeader(http.StatusOK)
-
-		case r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost:
-			// Handle branch review enqueue - create a passing branch review
-			var req struct {
-				GitRef string `json:"git_ref"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			state.mu.Lock()
-			branchJobID := state.nextJobID
-			state.nextJobID++
-			state.jobs[branchJobID] = &storage.ReviewJob{
-				ID:       branchJobID,
-				GitRef:   req.GitRef,
-				Agent:    "test",
-				Status:   storage.JobStatusDone,
-				RepoPath: repoDir,
-			}
-			state.reviews[req.GitRef] = &storage.Review{
-				ID: branchJobID + 1000, JobID: branchJobID, Output: "No issues found. Branch looks good!",
-			}
-			jobCopy := *state.jobs[branchJobID]
-			state.mu.Unlock()
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(jobCopy)
-
-		case r.URL.Path == "/api/jobs" && r.Method == http.MethodGet:
+	// Use configurable handler with custom /api/jobs (job transitions from Running to Done)
+	// and custom /api/enqueue (creates passing branch reviews).
+	handler := createConfigurableMockRefineHandler(state, MockRefineHooks{
+		OnGetJobs: func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
 			q := r.URL.Query()
 			if idStr := q.Get("id"); idStr != "" {
 				var jobID int64
 				fmt.Sscanf(idStr, "%d", &jobID)
-				state.mu.Lock()
-				job, ok := state.jobs[jobID]
+				s.mu.Lock()
+				job, ok := s.jobs[jobID]
 				if !ok {
-					state.mu.Unlock()
+					s.mu.Unlock()
 					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
-					return
+					return true
 				}
 				// On first poll, job is still Running; on subsequent polls, transition to Done
 				count := atomic.AddInt32(&pollCount, 1)
@@ -1343,14 +1144,14 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 					job.Status = storage.JobStatusDone
 				}
 				jobCopy := *job
-				state.mu.Unlock()
+				s.mu.Unlock()
 				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
-				return
+				return true
 			}
 			if gitRef := q.Get("git_ref"); gitRef != "" {
-				state.mu.Lock()
+				s.mu.Lock()
 				var job *storage.ReviewJob
-				for _, j := range state.jobs {
+				for _, j := range s.jobs {
 					if j.GitRef == gitRef {
 						job = j
 						break
@@ -1358,51 +1159,56 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				}
 				if job != nil {
 					jobCopy := *job
-					state.mu.Unlock()
+					s.mu.Unlock()
 					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
-					return
+					return true
 				}
-				state.mu.Unlock()
+				s.mu.Unlock()
 			}
-
-			state.mu.Lock()
-			var jobs []storage.ReviewJob
-			for _, job := range state.jobs {
-				jobs = append(jobs, *job)
+			return false // fall through to base handler
+		},
+		OnEnqueue: func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
+			// Handle branch review enqueue - create a passing branch review
+			var req struct {
+				GitRef string `json:"git_ref"`
 			}
-			state.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs":     jobs,
-				"has_more": false,
-			})
-
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
+			json.NewDecoder(r.Body).Decode(&req)
+			s.mu.Lock()
+			branchJobID := s.nextJobID
+			s.nextJobID++
+			s.jobs[branchJobID] = &storage.ReviewJob{
+				ID:       branchJobID,
+				GitRef:   req.GitRef,
+				Agent:    "test",
+				Status:   storage.JobStatusDone,
+				RepoPath: repoDir,
+			}
+			s.reviews[req.GitRef] = &storage.Review{
+				ID: branchJobID + 1000, JobID: branchJobID, Output: "No issues found. Branch looks good!",
+			}
+			jobCopy := *s.jobs[branchJobID]
+			s.mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(jobCopy)
+			return true
+		},
 	})
 
 	_, cleanup := setupMockDaemon(t, handler)
 	defer cleanup()
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
+	inDir(t, repoDir, func() {
+		// Run refine with maxIterations=1. If waiting on the pending job consumed
+		// an iteration, this would fail with "max iterations reached". Since the
+		// pending job transitions to Done with a passing review (and no failed
+		// reviews exist), refine should succeed.
+		err := runRefine("test", "", "", 1, true, false, false, "")
 
-	// Run refine with maxIterations=1. If waiting on the pending job consumed
-	// an iteration, this would fail with "max iterations reached". Since the
-	// pending job transitions to Done with a passing review (and no failed
-	// reviews exist), refine should succeed.
-	err = runRefine("test", "", "", 1, true, false, false, "")
-
-	// Should succeed - all reviews pass after waiting for the pending one
-	if err != nil {
-		t.Fatalf("expected refine to succeed (pending wait should not consume iteration), got: %v", err)
-	}
+		// Should succeed - all reviews pass after waiting for the pending one
+		if err != nil {
+			t.Fatalf("expected refine to succeed (pending wait should not consume iteration), got: %v", err)
+		}
+	})
 
 	// Verify the job was actually polled multiple times (proving we waited)
 	if atomic.LoadInt32(&pollCount) < 2 {
