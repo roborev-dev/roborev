@@ -186,9 +186,9 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 	parentSHA := commits[2] // commit 3
 	testutil.CreateReviewWithComments(t, db, repo.ID, parentSHA,
 		"Found potential memory leak in connection pool",
-		map[string]string{
-			"alice": "Known issue, will fix in next sprint",
-			"bob":   "Added to tech debt backlog",
+		[]testutil.ReviewComment{
+			{User: "alice", Text: "Known issue, will fix in next sprint"},
+			{User: "bob", Text: "Added to tech debt backlog"},
 		})
 
 	// Also add commits 4 and 5 to DB
@@ -508,8 +508,8 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 	// Create a previous review with a comment
 	testutil.CreateReviewWithComments(t, db, repo.ID, targetSHA,
 		"Found issue: missing null check",
-		map[string]string{
-			"developer": "This is intentional, the value is never null here",
+		[]testutil.ReviewComment{
+			{User: "developer", Text: "This is intentional, the value is never null here"},
 		})
 
 	// Build prompt for a new review of the same commit

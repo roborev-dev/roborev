@@ -325,6 +325,9 @@ func WaitForJobStatus(t *testing.T, db *storage.DB, jobID int64, timeout time.Du
 
 // CreateCompletedReview creates a commit (if needed) and a completed review job.
 // Returns the created job.
+// NOTE: Uses ClaimJob which claims the next available job globally. This is safe
+// when each test uses an isolated DB (via OpenTestDB), but callers must not
+// enqueue multiple jobs before calling this helper.
 func CreateCompletedReview(t *testing.T, db *storage.DB, repoID int64, sha, agent, reviewText string) *storage.ReviewJob {
 	t.Helper()
 
@@ -347,13 +350,20 @@ func CreateCompletedReview(t *testing.T, db *storage.DB, repoID int64, sha, agen
 	return job
 }
 
+// ReviewComment represents a comment on a review with a defined order.
+type ReviewComment struct {
+	User string
+	Text string
+}
+
 // CreateReviewWithComments creates a completed review and adds comments to it.
-func CreateReviewWithComments(t *testing.T, db *storage.DB, repoID int64, sha, reviewText string, comments map[string]string) *storage.ReviewJob {
+// Comments are added in slice order to ensure deterministic behavior.
+func CreateReviewWithComments(t *testing.T, db *storage.DB, repoID int64, sha, reviewText string, comments []ReviewComment) *storage.ReviewJob {
 	t.Helper()
 
 	job := CreateCompletedReview(t, db, repoID, sha, "test", reviewText)
-	for user, text := range comments {
-		if _, err := db.AddCommentToJob(job.ID, user, text); err != nil {
+	for _, c := range comments {
+		if _, err := db.AddCommentToJob(job.ID, c.User, c.Text); err != nil {
 			t.Fatalf("AddCommentToJob failed: %v", err)
 		}
 	}
