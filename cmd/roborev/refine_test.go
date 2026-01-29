@@ -56,6 +56,9 @@ type mockDaemonClient struct {
 	addedComments   []addedComment
 	enqueuedReviews  []enqueuedReview
 
+	// Auto-incrementing review ID counter for WithReview
+	nextReviewID int64
+
 	// Configurable errors for testing error paths
 	markAddressedErr   error
 	getReviewBySHAErr  error
@@ -152,8 +155,9 @@ func (m *mockDaemonClient) GetCommentsForJob(jobID int64) ([]storage.Response, e
 
 // WithReview adds a review to the mock client, returning the client for chaining.
 func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, addressed bool) *mockDaemonClient {
+	m.nextReviewID++
 	m.reviews[sha] = &storage.Review{
-		ID:        int64(len(m.reviews) + 1),
+		ID:        m.nextReviewID,
 		JobID:     jobID,
 		Output:    output,
 		Addressed: addressed,
@@ -311,7 +315,8 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 func TestFindFailedReviewForBranch_OldestFirst(t *testing.T) {
 	client := newMockDaemonClient()
 
-	// Mock reviews: oldest commit passes, middle fails, newest fails
+	// Mock reviews: oldest commit passes (output="No issues found."),
+	// middle and newest fail (output contains actual findings).
 	client.
 		WithReview("oldest123", 100, "No issues found.", false).
 		WithReview("middle456", 200, "Found a bug in the code.", false).
