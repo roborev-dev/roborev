@@ -321,6 +321,11 @@ func TestFixCmdFlagValidation(t *testing.T) {
 			wantErr: "--unaddressed cannot be used with positional job IDs",
 		},
 		{
+			name:    "--newest-first without --unaddressed",
+			args:    []string{"--newest-first", "123"},
+			wantErr: "--newest-first requires --unaddressed",
+		},
+		{
 			name:    "--all-branches with --branch",
 			args:    []string{"--unaddressed", "--all-branches", "--branch", "main"},
 			wantErr: "--all-branches and --branch are mutually exclusive",
@@ -371,7 +376,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		os.Chdir(tmpDir)
 		defer os.Chdir(oldWd)
 
-		err := runFixUnaddressed(cmd, "", fixOptions{agentName: "test"})
+		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -424,7 +429,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		os.Chdir(tmpDir)
 		defer os.Chdir(oldWd)
 
-		err := runFixUnaddressed(cmd, "", fixOptions{agentName: "test", reasoning: "fast"})
+		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -460,7 +465,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		os.Chdir(tmpDir)
 		defer os.Chdir(oldWd)
 
-		runFixUnaddressed(cmd, "feature-branch", fixOptions{agentName: "test"})
+		runFixUnaddressed(cmd, "feature-branch", false, fixOptions{agentName: "test"})
 		if gotBranch != "feature-branch" {
 			t.Errorf("expected branch=feature-branch, got %q", gotBranch)
 		}
@@ -483,12 +488,93 @@ func TestRunFixUnaddressed(t *testing.T) {
 		os.Chdir(tmpDir)
 		defer os.Chdir(oldWd)
 
-		err := runFixUnaddressed(cmd, "", fixOptions{agentName: "test"})
+		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
 		if err == nil {
 			t.Fatal("expected error on server failure")
 		}
 		if !strings.Contains(err.Error(), "server error") {
 			t.Errorf("error %q should mention server error", err.Error())
+		}
+	})
+}
+
+func TestRunFixUnaddressedOrdering(t *testing.T) {
+	tmpDir := initTestGitRepo(t)
+
+	makeHandler := func() http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				q := r.URL.Query()
+				if q.Get("addressed") == "false" {
+					// Return newest first (as the API does)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"jobs": []storage.ReviewJob{
+							{ID: 30, Status: storage.JobStatusDone, Agent: "test"},
+							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
+							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+				} else {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"jobs": []storage.ReviewJob{
+							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+				}
+			case "/api/review":
+				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
+			case "/api/comment":
+				w.WriteHeader(http.StatusCreated)
+			case "/api/review/address":
+				w.WriteHeader(http.StatusOK)
+			case "/api/enqueue":
+				w.WriteHeader(http.StatusOK)
+			}
+		})
+	}
+
+	t.Run("oldest first by default", func(t *testing.T) {
+		_, cleanup := setupMockDaemon(t, makeHandler())
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(output.String(), "[10 20 30]") {
+			t.Errorf("expected oldest-first order [10 20 30], got %q", output.String())
+		}
+	})
+
+	t.Run("newest first with flag", func(t *testing.T) {
+		_, cleanup := setupMockDaemon(t, makeHandler())
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		err := runFixUnaddressed(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(output.String(), "[30 20 10]") {
+			t.Errorf("expected newest-first order [30 20 10], got %q", output.String())
 		}
 	})
 }

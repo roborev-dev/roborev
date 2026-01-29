@@ -27,6 +27,7 @@ func fixCmd() *cobra.Command {
 		quiet       bool
 		unaddressed bool
 		allBranches bool
+		newestFirst bool
 		branch      string
 	)
 
@@ -65,6 +66,9 @@ Examples:
 			if allBranches && branch != "" {
 				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
 			}
+			if newestFirst && !unaddressed {
+				return fmt.Errorf("--newest-first requires --unaddressed")
+			}
 			if unaddressed && len(args) > 0 {
 				return fmt.Errorf("--unaddressed cannot be used with positional job IDs")
 			}
@@ -93,7 +97,7 @@ Examples:
 					}
 					effectiveBranch = git.GetCurrentBranch(repoRoot)
 				}
-				return runFixUnaddressed(cmd, effectiveBranch, opts)
+				return runFixUnaddressed(cmd, effectiveBranch, newestFirst, opts)
 			}
 
 			// Parse job IDs
@@ -117,6 +121,7 @@ Examples:
 	cmd.Flags().BoolVar(&unaddressed, "unaddressed", false, "fix all unaddressed completed jobs for the current repo")
 	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch; requires --unaddressed)")
 	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include unaddressed jobs from all branches (requires --unaddressed)")
+	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first (requires --unaddressed)")
 
 	return cmd
 }
@@ -165,7 +170,7 @@ func runFix(cmd *cobra.Command, jobIDs []int64, opts fixOptions) error {
 	return nil
 }
 
-func runFixUnaddressed(cmd *cobra.Command, branch string, opts fixOptions) error {
+func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts fixOptions) error {
 	// Ensure daemon is running
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -216,6 +221,13 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, opts fixOptions) error
 	var jobIDs []int64
 	for _, j := range jobsResp.Jobs {
 		jobIDs = append(jobIDs, j.ID)
+	}
+
+	// API returns newest first; reverse to process oldest first by default
+	if !newestFirst {
+		for i, j := 0, len(jobIDs)-1; i < j; i, j = i+1, j-1 {
+			jobIDs[i], jobIDs[j] = jobIDs[j], jobIDs[i]
+		}
 	}
 
 	if !opts.quiet {
