@@ -147,8 +147,6 @@ model = "test-model"
 }
 
 func TestLocalReviewReasoningLevels(t *testing.T) {
-	h := newReviewHarness(t)
-
 	tests := []struct {
 		reasoning string
 		expected  string
@@ -161,7 +159,7 @@ func TestLocalReviewReasoningLevels(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.reasoning, func(t *testing.T) {
-			h.Out.Reset()
+			h := newReviewHarness(t)
 			err := h.run(runOpts{Agent: "test", Reasoning: tc.reasoning})
 			if err != nil {
 				t.Fatalf("Expected no error, got: %v", err)
