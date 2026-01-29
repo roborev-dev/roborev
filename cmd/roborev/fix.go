@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -433,7 +434,7 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 	if hasJobForSHA(serverAddr, sha) {
 		return nil
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 	if hasJobForSHA(serverAddr, sha) {
 		return nil
 	}
@@ -462,7 +463,7 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 
 // hasJobForSHA checks if a review job already exists for the given commit SHA.
 func hasJobForSHA(serverAddr, sha string) bool {
-	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, sha)
+	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, url.QueryEscape(sha))
 	resp, err := http.Get(checkURL)
 	if err != nil {
 		return false
