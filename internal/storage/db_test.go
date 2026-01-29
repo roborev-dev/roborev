@@ -678,7 +678,7 @@ func TestRetryJob(t *testing.T) {
 	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry123")
 
 	// Claim the job (makes it running)
-	_, _ = db.ClaimJob("worker-1")
+	claimJob(t, db, "worker-1")
 
 	// Retry should succeed (retry_count: 0 -> 1)
 	retried, err := db.RetryJob(job.ID, 3)
@@ -760,7 +760,7 @@ func TestRetryJobAtomic(t *testing.T) {
 	defer db.Close()
 
 	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-atomic")
-	_, _ = db.ClaimJob("worker-1")
+	claimJob(t, db, "worker-1")
 
 	// Simulate two concurrent retries - only first should succeed
 	// (In practice this tests the atomic update)
