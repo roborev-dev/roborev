@@ -53,17 +53,40 @@ func stripANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
 }
 
+// mockServerModel creates an httptest.Server and a tuiModel pointed at it.
+func mockServerModel(t *testing.T, handler http.HandlerFunc) (*httptest.Server, tuiModel) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts, newTuiModel(ts.URL)
+}
+
+// pressKey simulates pressing a rune key and returns the updated tuiModel.
+func pressKey(m tuiModel, r rune) (tuiModel, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	return updated.(tuiModel), cmd
+}
+
+// pressKeys simulates pressing multiple rune keys.
+func pressKeys(m tuiModel, runes []rune) (tuiModel, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: runes})
+	return updated.(tuiModel), cmd
+}
+
+// pressSpecial simulates pressing a special key (Enter, Escape, etc.).
+func pressSpecial(m tuiModel, key tea.KeyType) (tuiModel, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyMsg{Type: key})
+	return updated.(tuiModel), cmd
+}
+
 func TestTUIFetchJobsSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/jobs" {
 			t.Errorf("Expected /api/jobs, got %s", r.URL.Path)
 		}
 		jobs := []storage.ReviewJob{{ID: 1, GitRef: "abc123", Agent: "test"}}
 		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": jobs})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchJobs()
 	msg := cmd()
 
@@ -77,12 +100,9 @@ func TestTUIFetchJobsSuccess(t *testing.T) {
 }
 
 func TestTUIFetchJobsError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchJobs()
 	msg := cmd()
 
@@ -93,12 +113,9 @@ func TestTUIFetchJobsError(t *testing.T) {
 }
 
 func TestTUIFetchReviewNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchReview(999)
 	msg := cmd()
 
@@ -112,12 +129,9 @@ func TestTUIFetchReviewNotFound(t *testing.T) {
 }
 
 func TestTUIFetchReviewServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchReview(1)
 	msg := cmd()
 
@@ -131,7 +145,7 @@ func TestTUIFetchReviewServerError(t *testing.T) {
 }
 
 func TestTUIAddressReviewSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
@@ -144,10 +158,7 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 			t.Errorf("Expected addressed true, got %v", req["addressed"])
 		}
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReview(42, 100, true, false, 1) // reviewID=42, jobID=100, newState=true, oldState=false
 	msg := cmd()
 
@@ -167,12 +178,9 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 }
 
 func TestTUIAddressReviewNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReview(999, 100, true, false, 1) // reviewID=999, jobID=100, newState=true, oldState=false
 	msg := cmd()
 
@@ -186,7 +194,7 @@ func TestTUIAddressReviewNotFound(t *testing.T) {
 }
 
 func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/review/address" {
 			var req map[string]interface{}
 			json.NewDecoder(r.Body).Decode(&req)
@@ -197,10 +205,7 @@ func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
 		} else {
 			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	currentState := false
 	cmd := m.toggleAddressedForJob(1, &currentState)
 	msg := cmd()
@@ -215,12 +220,9 @@ func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
 }
 
 func TestTUIToggleAddressedNoReview(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.toggleAddressedForJob(999, nil)
 	msg := cmd()
 
@@ -257,8 +259,7 @@ func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 	}
 
 	// Press 'a' to mark as addressed - selection stays at current position
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'a')
 
 	// Selection stays at index 1 so left/right navigation works correctly from current position
 	if m2.selectedIdx != 1 {
@@ -273,8 +274,7 @@ func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 	}
 
 	// Press escape to return to queue - NOW selection moves via normalizeSelectionIfHidden
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated2.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	// Selection moved to next visible job (job 3, index 2)
 	if m3.selectedIdx != 2 {
@@ -309,10 +309,8 @@ func TestTUIAddressFromReviewViewFallbackToPrev(t *testing.T) {
 	}
 
 	// Press 'a' then escape
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated2.(tuiModel)
+	m2, _ := pressKey(m, 'a')
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	// Should fall back to previous visible job (job 2, index 1)
 	if m3.selectedIdx != 1 {
@@ -344,12 +342,10 @@ func TestTUIAddressFromReviewViewExitWithQ(t *testing.T) {
 	}
 
 	// Press 'a' to mark as addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'a')
 
 	// Press 'q' to return to queue - selection should normalize
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	m3 := updated2.(tuiModel)
+	m3, _ := pressKey(m2, 'q')
 
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
@@ -383,12 +379,10 @@ func TestTUIAddressFromReviewViewExitWithCtrlC(t *testing.T) {
 	}
 
 	// Press 'a' to mark as addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'a')
 
 	// Press ctrl+c to return to queue - selection should normalize
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	m3 := updated2.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyCtrlC)
 
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
@@ -408,7 +402,7 @@ type addressRequest struct {
 }
 
 func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -423,10 +417,7 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 			t.Errorf("Expected addressed=true, got %v", req.Addressed)
 		}
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReviewInBackground(42, true, false, 1) // jobID=42, newState=true, oldState=false
 	msg := cmd()
 
@@ -449,15 +440,12 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 }
 
 func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
@@ -477,15 +465,12 @@ func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
 }
 
 func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
@@ -505,14 +490,11 @@ func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
 }
 
 func TestTUIHTTPTimeout(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		// Delay much longer than client timeout to avoid flaky timing on fast machines
 		time.Sleep(500 * time.Millisecond)
 		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	// Override with short timeout for test (10x shorter than server delay)
 	m.client.Timeout = 50 * time.Millisecond
 
@@ -905,7 +887,7 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 }
 
 func TestTUICancelJobSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/job/cancel" {
 			t.Errorf("Expected /api/job/cancel, got %s", r.URL.Path)
 		}
@@ -920,10 +902,7 @@ func TestTUICancelJobSuccess(t *testing.T) {
 			t.Errorf("Expected job_id=42, got %d", req.JobID)
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	oldFinishedAt := time.Now().Add(-1 * time.Hour)
 	cmd := m.cancelJob(42, storage.JobStatusRunning, &oldFinishedAt)
 	msg := cmd()
@@ -947,13 +926,10 @@ func TestTUICancelJobSuccess(t *testing.T) {
 }
 
 func TestTUICancelJobNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.cancelJob(99, storage.JobStatusQueued, nil)
 	msg := cmd()
 
@@ -1067,8 +1043,7 @@ func TestTUICancelOptimisticUpdate(t *testing.T) {
 
 	// Simulate pressing 'x' key
 	beforeUpdate := time.Now()
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'x')
 
 	// Should have optimistically set status to canceled
 	if m2.jobs[0].Status != storage.JobStatusCanceled {
@@ -1107,8 +1082,7 @@ func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
 			m.currentView = tuiViewQueue
 
 			// Simulate pressing 'x' key
-			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-			m2 := updated.(tuiModel)
+			m2, cmd := pressKey(m, 'x')
 
 			// Status should not change
 			if m2.jobs[0].Status != status {
@@ -1143,8 +1117,7 @@ func TestTUIFilterOpenModal(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press 'f' to open filter modal
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'f')
 
 	if m2.currentView != tuiViewFilter {
 		t.Errorf("Expected tuiViewFilter, got %d", m2.currentView)
@@ -1246,29 +1219,25 @@ func TestTUIFilterNavigation(t *testing.T) {
 	m.filterSelectedIdx = 0
 
 	// Navigate down
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 	if m2.filterSelectedIdx != 1 {
 		t.Errorf("j key: expected filterSelectedIdx=1, got %d", m2.filterSelectedIdx)
 	}
 
 	// Navigate down again
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'j')
 	if m3.filterSelectedIdx != 2 {
 		t.Errorf("j key: expected filterSelectedIdx=2, got %d", m3.filterSelectedIdx)
 	}
 
 	// Navigate down at boundary - should stay at 2
-	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m4 := updated.(tuiModel)
+	m4, _ := pressKey(m3, 'j')
 	if m4.filterSelectedIdx != 2 {
 		t.Errorf("j key at boundary: expected filterSelectedIdx=2, got %d", m4.filterSelectedIdx)
 	}
 
 	// Navigate up
-	updated, _ = m4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m5 := updated.(tuiModel)
+	m5, _ := pressKey(m4, 'k')
 	if m5.filterSelectedIdx != 1 {
 		t.Errorf("k key: expected filterSelectedIdx=1, got %d", m5.filterSelectedIdx)
 	}
@@ -1291,8 +1260,7 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 	m.filterSelectedIdx = 1 // repo-a
 
 	// Press enter to select
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	if m2.currentView != tuiViewQueue {
 		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
@@ -1320,8 +1288,7 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
 
 	// Press Esc to clear filter
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -1350,8 +1317,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 	m.hideAddressed = true
 
 	// First Esc: clear project filter, keep hide-addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -1361,8 +1327,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 	}
 
 	// Second Esc: clear hide-addressed
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if m3.hideAddressed {
 		t.Error("Expected hideAddressed to be false after second escape")
@@ -1383,8 +1348,7 @@ func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 	// No project filter active
 
 	// Esc should clear hide-addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if m2.hideAddressed {
 		t.Error("Expected hideAddressed to be false after escape")
@@ -1409,8 +1373,7 @@ func TestTUIFilterEscapeWhileLoadingQueuesPendingRefetch(t *testing.T) {
 	m.loadingJobs = true             // Already loading
 
 	// Press Esc while loading - should set pendingRefetch, not start new fetch
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -1423,8 +1386,8 @@ func TestTUIFilterEscapeWhileLoadingQueuesPendingRefetch(t *testing.T) {
 	}
 
 	// Simulate jobs fetch completing - should trigger another fetch
-	updated, cmd = m2.Update(tuiJobsMsg{jobs: []storage.ReviewJob{{ID: 2}}, hasMore: false})
-	m3 := updated.(tuiModel)
+	updated2, cmd := m2.Update(tuiJobsMsg{jobs: []storage.ReviewJob{{ID: 2}}, hasMore: false})
+	m3 := updated2.(tuiModel)
 
 	if m3.pendingRefetch {
 		t.Error("Expected pendingRefetch to be cleared after jobs message")
@@ -1486,8 +1449,7 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 	m.loadingJobs = false            // Not a full refresh
 
 	// Press Esc while pagination loading - should set pendingRefetch
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -1500,7 +1462,7 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 	}
 
 	// Simulate stale pagination response arriving - should be discarded and trigger fresh fetch
-	updated, cmd = m2.Update(tuiJobsMsg{
+	updated, cmd := m2.Update(tuiJobsMsg{
 		jobs:    []storage.ReviewJob{{ID: 99, RepoName: "stale"}},
 		hasMore: true,
 		append:  true, // This is a pagination append
@@ -1569,8 +1531,7 @@ func TestTUIFilterEscapeCloses(t *testing.T) {
 	m.filterRepos = []repoFilterItem{{name: "", count: 1}}
 
 	// Press 'esc' to close without selecting
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != tuiViewQueue {
 		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
@@ -1590,8 +1551,7 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 	m.filterSelectedIdx = 1
 
 	// Type 'a'
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'a')
 
 	if m2.filterSearch != "a" {
 		t.Errorf("Expected filterSearch='a', got '%s'", m2.filterSearch)
@@ -1601,16 +1561,14 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 	}
 
 	// Type 'b'
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'b')
 
 	if m3.filterSearch != "ab" {
 		t.Errorf("Expected filterSearch='ab', got '%s'", m3.filterSearch)
 	}
 
 	// Backspace
-	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m4 := updated.(tuiModel)
+	m4, _ := pressSpecial(m3, tea.KeyBackspace)
 
 	if m4.filterSearch != "a" {
 		t.Errorf("Expected filterSearch='a' after backspace, got '%s'", m4.filterSearch)
@@ -1634,8 +1592,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 	m.activeRepoFilter = []string{"/path/to/repo-a"} // Filter to only repo-a jobs
 
 	// Navigate down - should skip repo-b jobs
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 
 	// Should jump from ID=1 (idx 0) to ID=3 (idx 2), skipping ID=2 (repo-b)
 	if m2.selectedIdx != 2 {
@@ -1646,8 +1603,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 	}
 
 	// Navigate down again - should go to ID=5
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'j')
 
 	if m3.selectedIdx != 4 {
 		t.Errorf("Expected selectedIdx=4, got %d", m3.selectedIdx)
@@ -1657,8 +1613,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 	}
 
 	// Navigate up - should go back to ID=3
-	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m4 := updated.(tuiModel)
+	m4, _ := pressKey(m3, 'k')
 
 	if m4.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx=2, got %d", m4.selectedIdx)
@@ -1829,8 +1784,7 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 	m.filterSelectedIdx = 2 // Select repo-b
 
 	// Press enter to select repo-b (triggers refetch)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
 	// Filter should be applied and a fetchJobs command should be returned
 	if len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-b" {
@@ -1879,8 +1833,7 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 	m.filterSelectedIdx = 1 // Select "backend" group
 
 	// Press enter to select
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	// Should have both paths in the filter
 	if len(m2.activeRepoFilter) != 2 {
@@ -2050,8 +2003,7 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press enter - should be no-op
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
 	if cmd != nil {
 		t.Error("Expected no command for enter with no visible jobs")
 	}
@@ -2060,13 +2012,13 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 	}
 
 	// Press 'x' (cancel) - should be no-op
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	_, cmd = pressKey(m, 'x')
 	if cmd != nil {
 		t.Error("Expected no command for cancel with no visible jobs")
 	}
 
 	// Press 'a' (address) - should be no-op
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd = pressKey(m, 'a')
 	if cmd != nil {
 		t.Error("Expected no command for address with no visible jobs")
 	}
@@ -2224,8 +2176,7 @@ func TestTUIReviewNavigationJNext(t *testing.T) {
 	m.reviewScroll = 5 // Ensure scroll resets
 
 	// Press 'j' - should skip to job 4 (failed, viewable)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	if m2.selectedIdx != 3 {
 		t.Errorf("Expected selectedIdx=3 (job ID=4), got %d", m2.selectedIdx)
@@ -2263,8 +2214,7 @@ func TestTUIReviewNavigationKPrev(t *testing.T) {
 	m.reviewScroll = 10
 
 	// Press 'k' - should skip to job 4 (failed, viewable)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'k')
 
 	if m2.selectedIdx != 3 {
 		t.Errorf("Expected selectedIdx=3 (job ID=4), got %d", m2.selectedIdx)
@@ -2292,8 +2242,7 @@ func TestTUIReviewNavigationLeftRight(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 20, Job: &storage.ReviewJob{ID: 2}}
 
 	// Press 'left' - should navigate to next (higher index), like 'j'
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyLeft)
 
 	if m2.selectedIdx != 2 {
 		t.Errorf("Left arrow: expected selectedIdx=2, got %d", m2.selectedIdx)
@@ -2311,8 +2260,7 @@ func TestTUIReviewNavigationLeftRight(t *testing.T) {
 	m.selectedJobID = 2
 	m.currentReview = &storage.Review{ID: 20, Job: &storage.ReviewJob{ID: 2}}
 
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m3 := updated.(tuiModel)
+	m3, cmd := pressSpecial(m, tea.KeyRight)
 
 	if m3.selectedIdx != 0 {
 		t.Errorf("Right arrow: expected selectedIdx=0, got %d", m3.selectedIdx)
@@ -2340,8 +2288,7 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 10, Job: &storage.ReviewJob{ID: 1}}
 
 	// Press 'k' (right) at first viewable job - should show flash message
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'k')
 
 	if m2.selectedIdx != 0 {
 		t.Errorf("Expected selectedIdx to remain 0 at boundary, got %d", m2.selectedIdx)
@@ -2368,8 +2315,7 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 30, Job: &storage.ReviewJob{ID: 3}}
 
 	// Press 'j' (left) at last viewable job - should show flash message
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m3 := updated.(tuiModel)
+	m3, cmd := pressKey(m, 'j')
 
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx to remain 2 at boundary, got %d", m3.selectedIdx)
@@ -2405,8 +2351,7 @@ func TestTUIReviewNavigationFailedJobInline(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 10, Job: &storage.ReviewJob{ID: 1}}
 
 	// Press 'j' - should navigate to failed job and display inline
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	if m2.selectedIdx != 1 {
 		t.Errorf("Expected selectedIdx=1, got %d", m2.selectedIdx)
@@ -2537,8 +2482,7 @@ func TestTUIQueueViewNavigationUpDown(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// 'j' in queue view moves down (higher index)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 
 	if m2.selectedIdx != 2 {
 		t.Errorf("j key: expected selectedIdx=2, got %d", m2.selectedIdx)
@@ -2548,8 +2492,7 @@ func TestTUIQueueViewNavigationUpDown(t *testing.T) {
 	}
 
 	// 'k' in queue view moves up (lower index)
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'k')
 
 	if m3.selectedIdx != 1 {
 		t.Errorf("k key: expected selectedIdx=1, got %d", m3.selectedIdx)
@@ -2570,8 +2513,7 @@ func TestTUIQueueViewArrowsMatchUpDown(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// 'left' in queue view should move down (like j)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyLeft)
 
 	if m2.selectedIdx != 2 {
 		t.Errorf("Left arrow: expected selectedIdx=2, got %d", m2.selectedIdx)
@@ -2582,8 +2524,7 @@ func TestTUIQueueViewArrowsMatchUpDown(t *testing.T) {
 	m2.selectedJobID = 2
 
 	// 'right' in queue view should move up (like k)
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyRight)
 
 	if m3.selectedIdx != 0 {
 		t.Errorf("Right arrow: expected selectedIdx=0, got %d", m3.selectedIdx)
@@ -2605,8 +2546,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	m.hasMore = false // No more jobs to load
 
 	// Press 'up' at top of queue - should show flash message
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyUp)
 
 	if m2.selectedIdx != 0 {
 		t.Errorf("Expected selectedIdx to remain 0 at top, got %d", m2.selectedIdx)
@@ -2627,8 +2567,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	m.flashMessage = "" // Clear
 
 	// Press 'down' at bottom of queue - should show flash message
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m, tea.KeyDown)
 
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx to remain 2 at bottom, got %d", m3.selectedIdx)
@@ -2659,8 +2598,7 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	m.activeRepoFilter = []string{"/repo1"} // Filter is active, prevents auto-load
 
 	// Press 'down' - only job 1 matches filter, so we're at bottom
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyDown)
 
 	// Should show flash since filter prevents loading more
 	if m2.flashMessage != "No older review" {
@@ -3154,8 +3092,7 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press down at bottom - should trigger load more
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyDown)
 
 	if !m2.loadingMore {
 		t.Error("loadingMore should be set when navigating past last job")
@@ -3178,8 +3115,7 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press down at bottom - should NOT trigger load more (filtered view loads all)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyDown)
 
 	if m2.loadingMore {
 		t.Error("loadingMore should not be set when filter is active")
@@ -3454,16 +3390,14 @@ func TestTUIHideAddressedToggle(t *testing.T) {
 	}
 
 	// Press 'h' to toggle
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'h')
 
 	if !m2.hideAddressed {
 		t.Error("hideAddressed should be true after pressing 'h'")
 	}
 
 	// Press 'h' again to toggle back
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'h')
 
 	if m3.hideAddressed {
 		t.Error("hideAddressed should be false after pressing 'h' again")
@@ -3529,8 +3463,7 @@ func TestTUIHideAddressedSelectionMovesToVisible(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Toggle hide addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'h')
 
 	// Selection should move to first visible job (ID=2)
 	if m2.selectedIdx != 1 {
@@ -3591,8 +3524,7 @@ func TestTUIHideAddressedNavigationSkipsHidden(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Navigate down - should skip jobs 2 and 3
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 
 	if m2.selectedJobID != 4 {
 		t.Errorf("Expected selectedJobID=4, got %d", m2.selectedJobID)
@@ -3695,8 +3627,7 @@ func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Try to navigate down (would normally trigger pagination)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	// Pagination should NOT be triggered because loadingJobs is true
 	if m2.loadingMore {
@@ -3720,8 +3651,7 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Navigate down - should trigger pagination
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	// Pagination SHOULD be triggered
 	if !m2.loadingMore {
@@ -3746,8 +3676,7 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Try pgdown (would normally trigger pagination at end)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyPgDown)
 
 	// Pagination should NOT be triggered
 	if m2.loadingMore {
@@ -3771,8 +3700,7 @@ func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Toggle hide addressed ON
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'h')
 
 	// hideAddressed should be enabled
 	if !m2.hideAddressed {
@@ -3798,8 +3726,7 @@ func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Toggle hide addressed OFF
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'h')
 
 	// hideAddressed should be disabled
 	if m2.hideAddressed {
@@ -4190,8 +4117,7 @@ func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 	}
 
 	// Navigate down to failed job (j or down key in review view)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 
 	// Branch should be cleared
 	if m2.currentBranch != "" {
@@ -4222,8 +4148,7 @@ func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 	}
 
 	// Press Enter to view the failed job
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	// Branch should be cleared
 	if m2.currentBranch != "" {
@@ -4525,7 +4450,7 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 	// Test that when job_id responses are empty, TUI falls back to SHA-based responses
 	requestedPaths := []string{}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		requestedPaths = append(requestedPaths, r.URL.String())
 
 		if r.URL.Path == "/api/review" {
@@ -4568,10 +4493,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchReview(42)
 	msg := cmd()
 
@@ -4611,7 +4533,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 	// Test that SHA fallback is NOT used for range reviews (abc..def format)
 	requestedPaths := []string{}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		requestedPaths = append(requestedPaths, r.URL.String())
 
 		if r.URL.Path == "/api/review" {
@@ -4640,10 +4562,7 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchReview(42)
 	msg := cmd()
 
@@ -4711,8 +4630,7 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 1, JobID: 1}
 
 	// Press escape to return to queue view
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != tuiViewQueue {
 		t.Error("Expected to return to queue view")
@@ -4738,8 +4656,7 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 1, JobID: 1}
 
 	// Press escape to return to queue view
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != tuiViewQueue {
 		t.Error("Expected to return to queue view")
@@ -5401,8 +5318,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	m.height = 24
 
 	// 1. Open respond for Job 1
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = updated.(tuiModel)
+	m, _ = pressKey(m, 'c')
 
 	if m.currentView != tuiViewComment {
 		t.Fatalf("Expected tuiViewComment, got %v", m.currentView)
@@ -5417,7 +5333,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	// 3. Simulate failed submission - press enter then receive error
 	m.currentView = m.commentFromView // Simulate what happens on enter
 	errMsg := tuiCommentResultMsg{jobID: 1, err: fmt.Errorf("network error")}
-	updated, _ = m.Update(errMsg)
+	updated, _ := m.Update(errMsg)
 	m = updated.(tuiModel)
 
 	// Text should be preserved after error
@@ -5431,8 +5347,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	// 4. Re-open respond for Job 1 (Retry) - text should still be there
 	m.currentView = tuiViewQueue
 	m.selectedIdx = 0
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = updated.(tuiModel)
+	m, _ = pressKey(m, 'c')
 
 	if m.commentText != "My draft response" {
 		t.Errorf("Expected text preserved on retry for same job, got %q", m.commentText)
@@ -5442,8 +5357,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.selectedIdx = 1
 	m.selectedJobID = 2
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = updated.(tuiModel)
+	m, _ = pressKey(m, 'c')
 
 	if m.commentText != "" {
 		t.Errorf("Expected text cleared for different job, got %q", m.commentText)
@@ -5496,27 +5410,22 @@ func TestTUIFilterBackspaceMultiByte(t *testing.T) {
 	m.filterRepos = []repoFilterItem{{name: "", count: 10}}
 
 	// Type an emoji (multi-byte character)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m = updated.(tuiModel)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("😊")})
-	m = updated.(tuiModel)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	m = updated.(tuiModel)
+	m, _ = pressKey(m, 'a')
+	m, _ = pressKeys(m, []rune("😊"))
+	m, _ = pressKey(m, 'b')
 
 	if m.filterSearch != "a😊b" {
 		t.Errorf("Expected filterSearch='a😊b', got %q", m.filterSearch)
 	}
 
 	// Backspace should remove 'b'
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = updated.(tuiModel)
+	m, _ = pressSpecial(m, tea.KeyBackspace)
 	if m.filterSearch != "a😊" {
 		t.Errorf("Expected filterSearch='a😊' after first backspace, got %q", m.filterSearch)
 	}
 
 	// Backspace should remove the entire emoji, not corrupt it
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = updated.(tuiModel)
+	m, _ = pressSpecial(m, tea.KeyBackspace)
 	if m.filterSearch != "a" {
 		t.Errorf("Expected filterSearch='a' after second backspace, got %q", m.filterSearch)
 	}
@@ -5528,23 +5437,20 @@ func TestTUIRespondBackspaceMultiByte(t *testing.T) {
 	m.commentJobID = 1
 
 	// Type text with multi-byte characters
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Hello 世界")})
-	m = updated.(tuiModel)
+	m, _ = pressKeys(m, []rune("Hello 世界"))
 
 	if m.commentText != "Hello 世界" {
 		t.Errorf("Expected commentText='Hello 世界', got %q", m.commentText)
 	}
 
 	// Backspace should remove '界' (one character), not corrupt it
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = updated.(tuiModel)
+	m, _ = pressSpecial(m, tea.KeyBackspace)
 	if m.commentText != "Hello 世" {
 		t.Errorf("Expected commentText='Hello 世' after backspace, got %q", m.commentText)
 	}
 
 	// Backspace should remove '世'
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = updated.(tuiModel)
+	m, _ = pressSpecial(m, tea.KeyBackspace)
 	if m.commentText != "Hello " {
 		t.Errorf("Expected commentText='Hello ' after second backspace, got %q", m.commentText)
 	}
@@ -5672,8 +5578,7 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 	}
 
 	// Press 'y' to yank/copy
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	m = updated.(tuiModel)
+	m, cmd := pressKey(m, 'y')
 
 	// Should return a command to copy to clipboard
 	if cmd == nil {
@@ -5792,14 +5697,14 @@ func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
 	m.selectedIdx = 0
 
 	// Press 'y' on running job - should not copy
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := pressKey(m, 'y')
 	if cmd != nil {
 		t.Error("Expected no command for running job")
 	}
 
 	// Select completed job
 	m.selectedIdx = 1
-	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd = pressKey(m, 'y')
 	if cmd == nil {
 		t.Error("Expected command for completed job")
 	}
@@ -5908,7 +5813,7 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a review
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review" {
 			t.Errorf("Expected /api/review, got %s", r.URL.Path)
 		}
@@ -5923,10 +5828,7 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 			Output: "Review content for clipboard",
 		}
 		json.NewEncoder(w).Encode(review)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	// Execute fetchReviewAndCopy
 	cmd := m.fetchReviewAndCopy(123, nil)
@@ -5950,12 +5852,9 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 
 func TestTUIFetchReviewAndCopy404(t *testing.T) {
 	// Create test server that returns 404
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
@@ -5976,7 +5875,7 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 
 func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 	// Create test server that returns a review with empty output
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		review := storage.Review{
 			ID:     1,
 			JobID:  123,
@@ -5984,10 +5883,7 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 			Output: "", // Empty output
 		}
 		json.NewEncoder(w).Encode(review)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
@@ -6023,7 +5919,7 @@ func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 	}
 
 	// Press 'y' to copy
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := pressKey(m, 'y')
 	if cmd == nil {
 		t.Fatal("Expected command to be returned")
 	}
@@ -6053,7 +5949,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a valid review
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		review := storage.Review{
 			ID:     1,
 			JobID:  123,
@@ -6061,10 +5957,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 			Output: "Review content",
 		}
 		json.NewEncoder(w).Encode(review)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	// Fetch succeeds but clipboard write fails
 	cmd := m.fetchReviewAndCopy(123, nil)
@@ -6092,7 +5985,7 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a review WITHOUT Job populated
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		review := storage.Review{
 			ID:     42,
 			JobID:  123,
@@ -6101,10 +5994,7 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 			// Job is intentionally nil
 		}
 		json.NewEncoder(w).Encode(review)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	// Pass a job parameter - this should be injected when review.Job is nil
 	job := &storage.ReviewJob{
@@ -6706,8 +6596,7 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 	}
 
 	// Press escape to go back
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if m3.currentView != tuiViewQueue {
 		t.Errorf("Expected to return to tuiViewQueue, got %d", m3.currentView)
@@ -6729,8 +6618,7 @@ func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
 	m.currentView = tuiViewCommitMsg
 
 	// Press escape to go back
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != tuiViewReview {
 		t.Errorf("Expected to return to tuiViewReview, got %d", m2.currentView)
@@ -6745,8 +6633,7 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	m.commitMsgContent = "test message"
 
 	// Press 'q' to go back
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'q')
 
 	if m2.currentView != tuiViewReview {
 		t.Errorf("Expected to return to tuiViewReview after 'q', got %d", m2.currentView)
@@ -6896,8 +6783,7 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press '?' to open help
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, '?')
 
 	if m2.currentView != tuiViewHelp {
 		t.Errorf("Expected tuiViewHelp, got %d", m2.currentView)
@@ -6907,8 +6793,7 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 	}
 
 	// Press '?' again to close help
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, '?')
 
 	if m3.currentView != tuiViewQueue {
 		t.Errorf("Expected to return to tuiViewQueue, got %d", m3.currentView)
@@ -6923,8 +6808,7 @@ func TestTUIHelpViewToggleFromReview(t *testing.T) {
 	m.currentView = tuiViewReview
 
 	// Press '?' to open help
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, '?')
 
 	if m2.currentView != tuiViewHelp {
 		t.Errorf("Expected tuiViewHelp, got %d", m2.currentView)
@@ -6934,8 +6818,7 @@ func TestTUIHelpViewToggleFromReview(t *testing.T) {
 	}
 
 	// Press escape to close help
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if m3.currentView != tuiViewReview {
 		t.Errorf("Expected to return to tuiViewReview, got %d", m3.currentView)
@@ -7285,8 +7168,7 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 	m.filterStack = append(m.filterStack, "branch")
 
 	// First escape - should clear branch filter
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if m2.activeBranchFilter != "" {
 		t.Errorf("Expected branch filter to be cleared first, got %s", m2.activeBranchFilter)
@@ -7299,8 +7181,7 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 	}
 
 	// Second escape - should clear repo filter
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if len(m3.activeRepoFilter) != 0 {
 		t.Errorf("Expected repo filter to be cleared, got %v", m3.activeRepoFilter)
@@ -7378,8 +7259,7 @@ func TestTUIBranchFilterModalOpensWithB(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press 'b' to open branch filter
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'b')
 
 	if m2.currentView != tuiViewBranchFilter {
 		t.Errorf("Expected view to be tuiViewBranchFilter, got %v", m2.currentView)
@@ -7405,8 +7285,7 @@ func TestTUIBranchFilterSelectAppliesFilter(t *testing.T) {
 	}
 
 	// Press Enter to select
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	if m2.activeBranchFilter != "feature" {
 		t.Errorf("Expected activeBranchFilter='feature', got '%s'", m2.activeBranchFilter)
@@ -7459,8 +7338,7 @@ func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press down at bottom - should NOT trigger load more (filtered view loads all)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyDown)
 
 	if m2.loadingMore {
 		t.Error("loadingMore should not be set when branch filter is active")
@@ -7483,8 +7361,7 @@ func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press j at bottom - should NOT trigger load more
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	if m2.loadingMore {
 		t.Error("loadingMore should not be set when branch filter is active (j key)")
@@ -7508,8 +7385,7 @@ func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	m.height = 20 // Ensure page size calc works
 
 	// Press pgdown at bottom - should NOT trigger load more
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyPgDown)
 
 	if m2.loadingMore {
 		t.Error("loadingMore should not be set when branch filter is active (pgdown)")
@@ -7563,8 +7439,7 @@ func TestTUIBranchFilterTriggersRefetch(t *testing.T) {
 	m.loadingJobs = false
 
 	// Press Enter to select
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
 	if !m2.loadingJobs {
 		t.Error("loadingJobs should be true after applying branch filter")
@@ -7588,8 +7463,7 @@ func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
 	m.loadingJobs = false
 
 	// Press Escape to clear filter
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if m2.activeBranchFilter != "" {
 		t.Errorf("Expected activeBranchFilter to be cleared, got '%s'", m2.activeBranchFilter)
