@@ -1,47 +1,32 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
 func TestExpandAndReadFiles(t *testing.T) {
-	// Create temp directory with test files
-	tmpDir := t.TempDir()
-
-	// Create some test files
-	writeFile := func(path, content string) {
-		fullPath := filepath.Join(tmpDir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	writeFile("main.go", "package main\n")
-	writeFile("util.go", "package main\n// util\n")
-	writeFile("sub/helper.go", "package sub\n")
-	writeFile("sub/helper_test.go", "package sub\n// test\n")
-	writeFile("data.json", `{"key": "value"}`)
-	writeFile("README.md", "# README\n")
-	writeFile(".hidden/secret.go", "package hidden\n")
+	tmpDir := writeTestFiles(t, map[string]string{
+		"main.go":            "package main\n",
+		"util.go":            "package main\n// util\n",
+		"sub/helper.go":      "package sub\n",
+		"sub/helper_test.go": "package sub\n// test\n",
+		"data.json":          `{"key": "value"}`,
+		"README.md":          "# README\n",
+		".hidden/secret.go":  "package hidden\n",
+	})
 
 	tests := []struct {
 		name     string
@@ -120,26 +105,13 @@ func TestExpandAndReadFiles(t *testing.T) {
 }
 
 func TestExpandAndReadFilesRecursive(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create nested structure
-	files := map[string]string{
+	tmpDir := writeTestFiles(t, map[string]string{
 		"main.go":           "package main",
 		"cmd/app/app.go":    "package app",
 		"internal/util.go":  "package internal",
 		"vendor/dep/dep.go": "package dep", // Should be skipped
 		".git/config":       "[core]",      // Should be skipped
-	}
-
-	for path, content := range files {
-		fullPath := filepath.Join(tmpDir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
+	})
 
 	result, err := expandAndReadFiles(tmpDir, tmpDir, []string{"./..."})
 	if err != nil {
@@ -540,13 +512,10 @@ func TestMarkJobAddressed(t *testing.T) {
 }
 
 func TestRunFixAgent(t *testing.T) {
-	// Create a minimal repo for the test agent
 	tmpDir := t.TempDir()
 	os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755)
 
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
+	cmd, output := newTestCmd(t)
 
 	// Use the built-in test agent
 	err := runFixAgent(cmd, tmpDir, "test", "", "fast", "Fix the issues", false)
@@ -562,74 +531,17 @@ func TestRunFixAgent(t *testing.T) {
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	// This tests the full workflow with mocked daemon and test agent
+	tmpDir := createTestRepo(t, map[string]string{
+		"main.go": "package main\n",
+	})
 
-	// Check if git is available
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available, skipping integration test")
-	}
+	ts, state := newMockServer(t, MockServerOpts{
+		JobIDStart:     99,
+		ReviewOutput:   "## CODE SMELLS\n- Found duplicated code in main.go",
+		DoneAfterPolls: 2,
+	})
 
-	// Create a real git repo (needed for commit verification)
-	tmpDir := t.TempDir()
-	runGit := func(args ...string) error {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		return cmd.Run()
-	}
-
-	if err := runGit("init"); err != nil {
-		t.Fatalf("git init failed: %v", err)
-	}
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644)
-	runGit("add", ".")
-	if err := runGit("commit", "-m", "initial"); err != nil {
-		t.Fatalf("git commit failed: %v", err)
-	}
-
-	var jobsCount, reviewCount, addressCount int32
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost:
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(storage.ReviewJob{
-				ID:     99,
-				Agent:  "test",
-				Status: storage.JobStatusQueued,
-			})
-
-		case r.URL.Path == "/api/jobs":
-			count := atomic.AddInt32(&jobsCount, 1)
-			status := storage.JobStatusQueued
-			if count >= 2 {
-				status = storage.JobStatusDone
-			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs": []storage.ReviewJob{{
-					ID:     99,
-					Status: status,
-				}},
-			})
-
-		case r.URL.Path == "/api/review":
-			atomic.AddInt32(&reviewCount, 1)
-			json.NewEncoder(w).Encode(storage.Review{
-				JobID:  99,
-				Agent:  "test",
-				Output: "## CODE SMELLS\n- Found duplicated code in main.go",
-			})
-
-		case r.URL.Path == "/api/review/address":
-			atomic.AddInt32(&addressCount, 1)
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer ts.Close()
-
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
+	cmd, output := newTestCmd(t)
 
 	analysisType := analyze.GetType("refactor")
 	opts := analyzeOptions{
@@ -645,13 +557,13 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	}
 
 	// Verify the workflow was executed
-	if atomic.LoadInt32(&jobsCount) < 2 {
+	if atomic.LoadInt32(&state.JobsCount) < 2 {
 		t.Error("should have polled for job status")
 	}
-	if atomic.LoadInt32(&reviewCount) == 0 {
+	if atomic.LoadInt32(&state.ReviewCount) == 0 {
 		t.Error("should have fetched the review")
 	}
-	if atomic.LoadInt32(&addressCount) == 0 {
+	if atomic.LoadInt32(&state.AddressCount) == 0 {
 		t.Error("should have marked job as addressed")
 	}
 
@@ -690,9 +602,7 @@ func TestBuildCommitPrompt(t *testing.T) {
 }
 
 func TestListAnalysisTypes(t *testing.T) {
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
+	cmd, output := newTestCmd(t)
 
 	err := listAnalysisTypes(cmd)
 	if err != nil {
@@ -725,9 +635,7 @@ func TestListAnalysisTypes(t *testing.T) {
 }
 
 func TestShowAnalysisPrompt(t *testing.T) {
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
+	cmd, output := newTestCmd(t)
 
 	err := showAnalysisPrompt(cmd, "test-fixtures")
 	if err != nil {
@@ -763,9 +671,7 @@ func TestShowAnalysisPrompt(t *testing.T) {
 }
 
 func TestShowAnalysisPromptUnknown(t *testing.T) {
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
+	cmd, _ := newTestCmd(t)
 
 	err := showAnalysisPrompt(cmd, "unknown-type")
 	if err == nil {
@@ -789,41 +695,21 @@ func TestShowPromptRequiresType(t *testing.T) {
 }
 
 func TestPerFileAnalysis(t *testing.T) {
-	// Test that per-file mode creates multiple jobs
-	var jobCount int32
+	ts, state := newMockServer(t, MockServerOpts{})
+	patchServerAddr(t, ts.URL)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost {
-			atomic.AddInt32(&jobCount, 1)
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(storage.ReviewJob{
-				ID:     int64(atomic.LoadInt32(&jobCount)),
-				Agent:  "test",
-				Status: storage.JobStatusQueued,
-			})
-		}
-	}))
-	defer ts.Close()
-
-	// Save and restore serverAddr
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
-	// Create test files
-	tmpDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmpDir, "a.go"), []byte("package a\n"), 0644)
-	os.WriteFile(filepath.Join(tmpDir, "b.go"), []byte("package b\n"), 0644)
-	os.WriteFile(filepath.Join(tmpDir, "c.go"), []byte("package c\n"), 0644)
+	tmpDir := writeTestFiles(t, map[string]string{
+		"a.go": "package a\n",
+		"b.go": "package b\n",
+		"c.go": "package c\n",
+	})
 
 	files, err := expandAndReadFiles(tmpDir, tmpDir, []string{"*.go"})
 	if err != nil {
 		t.Fatalf("expandAndReadFiles: %v", err)
 	}
 
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
+	cmd, output := newTestCmd(t)
 
 	analysisType := analyze.GetType("refactor")
 	err = runPerFileAnalysis(cmd, tmpDir, analysisType, files, analyzeOptions{quiet: false}, config.DefaultMaxPromptSize)
@@ -832,8 +718,8 @@ func TestPerFileAnalysis(t *testing.T) {
 	}
 
 	// Should have created 3 jobs (one per file)
-	if atomic.LoadInt32(&jobCount) != 3 {
-		t.Errorf("expected 3 jobs, got %d", atomic.LoadInt32(&jobCount))
+	if atomic.LoadInt32(&state.EnqueueCount) != 3 {
+		t.Errorf("expected 3 jobs, got %d", atomic.LoadInt32(&state.EnqueueCount))
 	}
 
 	// Output should mention all job IDs
@@ -844,35 +730,28 @@ func TestPerFileAnalysis(t *testing.T) {
 }
 
 func TestEnqueueAnalysisJob(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/enqueue" || r.Method != http.MethodPost {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			return
-		}
+	ts, _ := newMockServer(t, MockServerOpts{
+		JobIDStart: 42,
+		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+			var req map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&req)
 
-		var req map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&req)
+			if req["agentic"] != true {
+				t.Error("agentic should be true for analysis")
+			}
+			if req["custom_prompt"] == nil {
+				t.Error("custom_prompt should be set")
+			}
 
-		// Verify request - agentic is true so agent can read files when prompt is too large
-		if req["agentic"] != true {
-			t.Error("agentic should be true for analysis")
-		}
-		if req["custom_prompt"] == nil {
-			t.Error("custom_prompt should be set")
-		}
-
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(storage.ReviewJob{
-			ID:     42,
-			Agent:  "test",
-			Status: storage.JobStatusQueued,
-		})
-	}))
-	defer ts.Close()
-
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(storage.ReviewJob{
+				ID:     42,
+				Agent:  "test",
+				Status: storage.JobStatusQueued,
+			})
+		},
+	})
+	patchServerAddr(t, ts.URL)
 
 	job, err := enqueueAnalysisJob("/repo", "test prompt", "", "test-fixtures", analyzeOptions{agentName: "test"})
 	if err != nil {
@@ -885,40 +764,15 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 }
 
 func TestAnalyzeJSONOutput(t *testing.T) {
-	// Set up mock server
-	var jobCounter int64
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost {
-			jobCounter++
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(storage.ReviewJob{
-				ID:     jobCounter,
-				Agent:  "test-agent",
-				Status: storage.JobStatusQueued,
-			})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
 	t.Run("single analysis JSON output", func(t *testing.T) {
-		jobCounter = 0
-		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, "test.go"), []byte("package main"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		ts, _ := newMockServer(t, MockServerOpts{Agent: "test-agent"})
+		patchServerAddr(t, ts.URL)
+		tmpDir := writeTestFiles(t, map[string]string{"test.go": "package main"})
 
 		files := map[string]string{"test.go": "package main"}
 		analysisType := analyze.GetType("refactor")
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
+		cmd, output := newTestCmd(t)
 
 		err := runSingleAnalysis(cmd, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
 		if err != nil {
@@ -948,24 +802,18 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 	})
 
 	t.Run("per-file analysis JSON output", func(t *testing.T) {
-		jobCounter = 0
-		tmpDir := t.TempDir()
+		ts, _ := newMockServer(t, MockServerOpts{Agent: "test-agent"})
+		patchServerAddr(t, ts.URL)
 		files := map[string]string{
 			"a.go": "package a",
 			"b.go": "package b",
 			"c.go": "package c",
 		}
-		for name, content := range files {
-			if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644); err != nil {
-				t.Fatal(err)
-			}
-		}
+		tmpDir := writeTestFiles(t, files)
 
 		analysisType := analyze.GetType("complexity")
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
+		cmd, output := newTestCmd(t)
 
 		err := runPerFileAnalysis(cmd, tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
 		if err != nil {
