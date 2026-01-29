@@ -99,11 +99,14 @@ func newMockDroidAgent(t *testing.T, scriptContent string) *DroidAgent {
 }
 
 // runReviewScenario creates a mock DroidAgent from a shell script, runs Review,
-// and returns the result and error.
-func runReviewScenario(t *testing.T, script, prompt string) (string, error) {
+// and returns the result and error. If repoPath is empty, a new temp directory is used.
+func runReviewScenario(t *testing.T, script, prompt, repoPath string) (string, error) {
 	t.Helper()
 	a := newMockDroidAgent(t, script)
-	return a.Review(context.Background(), t.TempDir(), "deadbeef", prompt, nil)
+	if repoPath == "" {
+		repoPath = t.TempDir()
+	}
+	return a.Review(context.Background(), repoPath, "deadbeef", prompt, nil)
 }
 
 // assertArgsOrder verifies that each element in sequence appears in args
