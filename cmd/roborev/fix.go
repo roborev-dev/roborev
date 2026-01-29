@@ -426,6 +426,22 @@ func addJobResponse(serverAddr string, jobID int64, response string) error {
 // This ensures fix commits get reviewed even if the post-commit hook
 // didn't fire (e.g., agent subprocesses may not trigger hooks reliably).
 func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
+	// Check if a review job already exists for this commit (e.g., from the
+	// post-commit hook). If so, skip enqueuing to avoid duplicates.
+	checkURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", serverAddr, sha)
+	checkResp, err := http.Get(checkURL)
+	if err == nil {
+		defer checkResp.Body.Close()
+		if checkResp.StatusCode == http.StatusOK {
+			var result struct {
+				Jobs []struct{ ID int64 } `json:"jobs"`
+			}
+			if json.NewDecoder(checkResp.Body).Decode(&result) == nil && len(result.Jobs) > 0 {
+				return nil // already enqueued
+			}
+		}
+	}
+
 	branchName := git.GetCurrentBranch(repoPath)
 
 	reqBody, _ := json.Marshal(map[string]interface{}{

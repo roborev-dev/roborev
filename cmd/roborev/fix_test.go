@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -290,5 +291,110 @@ func TestFixJobNotComplete(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not complete") {
 		t.Errorf("error %q should mention 'not complete'", err.Error())
+	}
+}
+
+func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// Create a minimal git repo so GetCurrentBranch works
+	tmpDir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Run()
+	}
+	os.WriteFile(filepath.Join(tmpDir, "f.txt"), []byte("x"), 0644)
+	cmd := exec.Command("git", "add", ".")
+	cmd.Dir = tmpDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "init")
+	cmd.Dir = tmpDir
+	cmd.Run()
+
+	sha := "abc123def456"
+
+	var enqueueCalls atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			// Return an existing job for this SHA — hook already fired
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs": []map[string]interface{}{
+					{"id": 42},
+				},
+			})
+		case "/api/enqueue":
+			enqueueCalls.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+		}
+	}))
+	defer ts.Close()
+
+	err := enqueueIfNeeded(ts.URL, tmpDir, sha)
+	if err != nil {
+		t.Fatalf("enqueueIfNeeded: %v", err)
+	}
+	if enqueueCalls.Load() != 0 {
+		t.Error("enqueueIfNeeded should not have called /api/enqueue when job already exists")
+	}
+}
+
+func TestEnqueueIfNeededEnqueuesWhenNoJobExists(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	tmpDir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Run()
+	}
+	os.WriteFile(filepath.Join(tmpDir, "f.txt"), []byte("x"), 0644)
+	cmd := exec.Command("git", "add", ".")
+	cmd.Dir = tmpDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "init")
+	cmd.Dir = tmpDir
+	cmd.Run()
+
+	sha := "abc123def456"
+
+	var enqueueCalls atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			// No existing jobs — hook didn't fire
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs": []map[string]interface{}{},
+			})
+		case "/api/enqueue":
+			enqueueCalls.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+		}
+	}))
+	defer ts.Close()
+
+	err := enqueueIfNeeded(ts.URL, tmpDir, sha)
+	if err != nil {
+		t.Fatalf("enqueueIfNeeded: %v", err)
+	}
+	if enqueueCalls.Load() != 1 {
+		t.Errorf("enqueueIfNeeded should have called /api/enqueue exactly once, got %d", enqueueCalls.Load())
 	}
 }
