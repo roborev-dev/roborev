@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"context"
+
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -245,6 +248,7 @@ func openRawPgxPool(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("Failed to create pool: %v", err)
 	}
+	t.Cleanup(func() { p.Close() })
 	return p
 }
 
@@ -259,11 +263,9 @@ func skipIfTableInSchema(t *testing.T, p *pgxpool.Pool, schema, table string) {
 		)
 	`, schema, table).Scan(&exists)
 	if err != nil {
-		p.Close()
 		t.Fatalf("Failed to check %s.%s: %v", schema, table, err)
 	}
 	if exists {
-		p.Close()
 		t.Skipf("Skipping: %s.%s already exists", schema, table)
 	}
 }
@@ -310,7 +312,7 @@ func cleanupSchemaOnFinish(t *testing.T) {
 	connString := getTestPostgresURL(t)
 	t.Cleanup(func() {
 		cfg, _ := pgxpool.ParseConfig(connString)
-		ctx := t.Context()
+		ctx := context.Background()
 		p, _ := pgxpool.NewWithConfig(ctx, cfg)
 		if p != nil {
 			p.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
@@ -325,11 +327,11 @@ func cleanupTablesOnFinish(t *testing.T, publicTables ...string) {
 	connString := getTestPostgresURL(t)
 	t.Cleanup(func() {
 		cfg, _ := pgxpool.ParseConfig(connString)
-		ctx := t.Context()
+		ctx := context.Background()
 		p, _ := pgxpool.NewWithConfig(ctx, cfg)
 		if p != nil {
 			for _, table := range publicTables {
-				p.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS public.%s", table))
+				p.Exec(ctx, "DROP TABLE IF EXISTS public."+pgx.Identifier{table}.Sanitize())
 			}
 			p.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
 			p.Close()
@@ -494,15 +496,12 @@ func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 	// Create legacy table in public schema
 	_, err := setupPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create legacy table: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to insert legacy data: %v", err)
 	}
-	setupPool.Close()
 
 	cleanupSchemaOnFinish(t)
 
@@ -545,42 +544,34 @@ func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing
 	// Create roborev schema for mixed state test
 	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create roborev schema: %v", err)
 	}
 
 	// Create legacy tables in public schema (simulating old installation)
 	_, err = setupPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create legacy schema_version: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to insert legacy version: %v", err)
 	}
 
 	// Create repos table in public (second legacy table)
 	_, err = setupPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create legacy repos: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `INSERT INTO public.repos (identity) VALUES ('test-repo-legacy') ON CONFLICT DO NOTHING`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to insert legacy repo: %v", err)
 	}
 
 	// Create machines table directly in roborev (simulating partial migration)
 	_, err = setupPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS roborev.machines (id SERIAL PRIMARY KEY, machine_id UUID UNIQUE NOT NULL, name TEXT)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create machines in roborev: %v", err)
 	}
-
-	setupPool.Close()
 
 	// Now connect with the normal pool and run EnsureSchema
 	connString := getTestPostgresURL(t)
@@ -631,28 +622,22 @@ func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
 	// Create roborev schema with repos table
 	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create roborev schema: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create roborev.repos: %v", err)
 	}
 
 	// Create public.repos table with data
 	_, err = setupPool.Exec(ctx, `CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create public.repos: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `INSERT INTO public.repos (identity) VALUES ('legacy-repo')`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to insert into public.repos: %v", err)
 	}
-
-	setupPool.Close()
 
 	// Now connect and try EnsureSchema - should fail
 	connString := getTestPostgresURL(t)
@@ -684,29 +669,23 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	// Create roborev schema with repos table containing data
 	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create roborev schema: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create roborev.repos: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `INSERT INTO roborev.repos (identity) VALUES ('new-repo')`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to insert into roborev.repos: %v", err)
 	}
 
 	// Create empty public.repos table
 	_, err = setupPool.Exec(ctx, `CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create public.repos: %v", err)
 	}
 	// Note: no data inserted - empty table
-
-	setupPool.Close()
 
 	// Now connect and run EnsureSchema - should succeed and drop empty public.repos
 	connString := getTestPostgresURL(t)
@@ -748,23 +727,18 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	// Create roborev schema but NOT the repos table
 	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create roborev schema: %v", err)
 	}
 
 	// Create public.repos table with data
 	_, err = setupPool.Exec(ctx, `CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to create public.repos: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `INSERT INTO public.repos (identity) VALUES ('migrated-repo-1'), ('migrated-repo-2')`)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to insert into public.repos: %v", err)
 	}
-
-	setupPool.Close()
 
 	// Now connect and run EnsureSchema - should migrate public.repos to roborev.repos
 	connString := getTestPostgresURL(t)
@@ -1234,7 +1208,6 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	// Drop any existing schema to start fresh - this test needs to verify v1→v2 migration
 	_, err := setupPool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to drop existing schema: %v", err)
 	}
 
@@ -1258,7 +1231,6 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 			continue
 		}
 		if _, err := setupPool.Exec(ctx, stmt); err != nil {
-			setupPool.Close()
 			t.Fatalf("Failed to execute v1 schema statement: %v\nStatement: %s", err, stmt)
 		}
 	}
@@ -1270,7 +1242,6 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 		INSERT INTO roborev.repos (identity) VALUES ('test-repo-v1-migration') RETURNING id
 	`).Scan(&repoID)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to insert test repo: %v", err)
 	}
 	_, err = setupPool.Exec(ctx, `
@@ -1278,11 +1249,8 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 		VALUES ($1, $2, 'HEAD', 'test-agent', 'done', '00000000-0000-0000-0000-000000000001', NOW())
 	`, testJobUUID, repoID)
 	if err != nil {
-		setupPool.Close()
 		t.Fatalf("Failed to insert test job: %v", err)
 	}
-
-	setupPool.Close()
 
 	// Now connect with the normal pool and run EnsureSchema - should migrate v1→v2
 	connString := getTestPostgresURL(t)
