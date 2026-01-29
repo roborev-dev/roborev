@@ -334,9 +334,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Limit request body size to prevent DoS via large payloads
-	// 250KB allows for 200KB diff content plus JSON overhead
-	const maxBodySize = 250 * 1024
+	// Limit request body size to prevent DoS via large payloads.
+	// Derive from configured max prompt size + 50KB overhead for JSON envelope.
+	maxPromptSize := config.DefaultMaxPromptSize
+	if cfg := s.configWatcher.Config(); cfg != nil && cfg.DefaultMaxPromptSize > 0 {
+		maxPromptSize = cfg.DefaultMaxPromptSize
+	}
+	maxBodySize := int64(maxPromptSize) + 50*1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
 	var req EnqueueRequest
@@ -344,7 +348,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		// Use errors.As for reliable detection of MaxBytesReader errors
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large (max 250KB)")
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body too large (max %dKB)", maxBodySize/1024))
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
