@@ -43,7 +43,6 @@ func TestCommentJobFlag(t *testing.T) {
 
 	t.Run("--job rejects non-numeric input", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
 		}))
 		defer cleanup()
 
