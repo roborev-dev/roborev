@@ -2,88 +2,138 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
 )
 
+// streamFormatterFixture wraps the buffer and formatter setup common to most tests.
+type streamFormatterFixture struct {
+	buf bytes.Buffer
+	f   *streamFormatter
+}
+
+func newFixture(tty bool) *streamFormatterFixture {
+	fix := &streamFormatterFixture{}
+	fix.f = newStreamFormatter(&fix.buf, tty)
+	return fix
+}
+
+func (fix *streamFormatterFixture) writeLine(s string) {
+	fix.f.Write([]byte(s + "\n"))
+}
+
+func (fix *streamFormatterFixture) output() string {
+	return fix.buf.String()
+}
+
+func (fix *streamFormatterFixture) assertContains(t *testing.T, substr string) {
+	t.Helper()
+	if !strings.Contains(fix.output(), substr) {
+		t.Errorf("expected output to contain %q, got:\n%s", substr, fix.output())
+	}
+}
+
+func (fix *streamFormatterFixture) assertNotContains(t *testing.T, substr string) {
+	t.Helper()
+	if strings.Contains(fix.output(), substr) {
+		t.Errorf("expected output NOT to contain %q, got:\n%s", substr, fix.output())
+	}
+}
+
+func (fix *streamFormatterFixture) assertEmpty(t *testing.T) {
+	t.Helper()
+	if fix.output() != "" {
+		t.Errorf("expected empty output, got:\n%s", fix.output())
+	}
+}
+
+// Event builders for Anthropic-style JSON.
+
+func eventAssistantToolUse(toolName string, input map[string]interface{}) string {
+	inputJSON, _ := json.Marshal(input)
+	return fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":%q,"input":%s}]}}`,
+		toolName, inputJSON)
+}
+
+func eventAssistantText(text string) string {
+	textJSON, _ := json.Marshal(text)
+	return fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"text","text":%s}]}}`, textJSON)
+}
+
+func eventAssistantMulti(blocks ...string) string {
+	return fmt.Sprintf(`{"type":"assistant","message":{"content":[%s]}}`, strings.Join(blocks, ","))
+}
+
+func contentBlockText(text string) string {
+	textJSON, _ := json.Marshal(text)
+	return fmt.Sprintf(`{"type":"text","text":%s}`, textJSON)
+}
+
+func contentBlockToolUse(toolName string, input map[string]interface{}) string {
+	inputJSON, _ := json.Marshal(input)
+	return fmt.Sprintf(`{"type":"tool_use","name":%q,"input":%s}`, toolName, inputJSON)
+}
+
+func eventAssistantLegacy(content string) string {
+	contentJSON, _ := json.Marshal(content)
+	return fmt.Sprintf(`{"type":"assistant","message":{"content":%s}}`, contentJSON)
+}
+
+// Event builders for Gemini-style JSON.
+
+func eventGeminiToolUse(toolName, toolID string, params map[string]interface{}) string {
+	paramsJSON, _ := json.Marshal(params)
+	return fmt.Sprintf(`{"type":"tool_use","tool_name":%q,"tool_id":%q,"parameters":%s}`,
+		toolName, toolID, paramsJSON)
+}
+
 func TestStreamFormatter_ToolUse(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
+	fix := newFixture(true)
 
-	lines := []string{
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"internal/gmail/ratelimit.go"}}]}}`,
-		`{"type":"user","tool_use_result":{"filePath":"internal/gmail/ratelimit.go"}}`,
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"internal/gmail/ratelimit.go","old_string":"foo","new_string":"bar"}}]}}`,
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./internal/gmail/ -run TestRateLimiter"}}]}}`,
-	}
+	fix.writeLine(eventAssistantToolUse("Read", map[string]interface{}{"file_path": "internal/gmail/ratelimit.go"}))
+	fix.writeLine(`{"type":"user","tool_use_result":{"filePath":"internal/gmail/ratelimit.go"}}`)
+	fix.writeLine(eventAssistantToolUse("Edit", map[string]interface{}{"file_path": "internal/gmail/ratelimit.go", "old_string": "foo", "new_string": "bar"}))
+	fix.writeLine(eventAssistantToolUse("Bash", map[string]interface{}{"command": "go test ./internal/gmail/ -run TestRateLimiter"}))
 
-	for _, line := range lines {
-		f.Write([]byte(line + "\n"))
-	}
-
-	got := buf.String()
-
-	// Check expected formatted output
-	if !strings.Contains(got, "Read   internal/gmail/ratelimit.go") {
-		t.Errorf("expected Read line, got:\n%s", got)
-	}
-	if !strings.Contains(got, "Edit   internal/gmail/ratelimit.go") {
-		t.Errorf("expected Edit line, got:\n%s", got)
-	}
-	if !strings.Contains(got, "Bash   go test ./internal/gmail/ -run TestRateLimiter") {
-		t.Errorf("expected Bash line, got:\n%s", got)
-	}
+	fix.assertContains(t, "Read   internal/gmail/ratelimit.go")
+	fix.assertContains(t, "Edit   internal/gmail/ratelimit.go")
+	fix.assertContains(t, "Bash   go test ./internal/gmail/ -run TestRateLimiter")
 	// tool_use_result (user type) should be suppressed
-	if strings.Contains(got, "tool_use_result") || strings.Contains(got, "filePath") {
-		t.Errorf("tool result should be suppressed, got:\n%s", got)
-	}
+	fix.assertNotContains(t, "tool_use_result")
+	fix.assertNotContains(t, "filePath")
 }
 
 func TestStreamFormatter_TextOutput(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
-
-	f.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"I'll fix this now."}]}}` + "\n"))
-
-	got := buf.String()
-	if !strings.Contains(got, "I'll fix this now.") {
-		t.Errorf("expected text output, got:\n%s", got)
-	}
+	fix := newFixture(true)
+	fix.writeLine(eventAssistantText("I'll fix this now."))
+	fix.assertContains(t, "I'll fix this now.")
 }
 
 func TestStreamFormatter_NonTTY(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, false)
-
-	raw := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}` + "\n"
-	f.Write([]byte(raw))
-
+	fix := newFixture(false)
+	raw := eventAssistantText("hello") + "\n"
+	fix.f.Write([]byte(raw))
 	// Non-TTY should pass through raw JSON
-	if buf.String() != raw {
-		t.Errorf("non-TTY should pass through raw, got:\n%s", buf.String())
+	if fix.output() != raw {
+		t.Errorf("non-TTY should pass through raw, got:\n%s", fix.output())
 	}
 }
 
 func TestStreamFormatter_ResultSuppressed(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
-
-	f.Write([]byte(`{"type":"result","result":"final summary text"}` + "\n"))
-
-	if buf.String() != "" {
-		t.Errorf("result events should be suppressed, got:\n%s", buf.String())
-	}
+	fix := newFixture(true)
+	fix.writeLine(`{"type":"result","result":"final summary text"}`)
+	fix.assertEmpty(t)
 }
 
 func TestStreamFormatter_BashTruncation(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
-
+	fix := newFixture(true)
 	longCmd := strings.Repeat("x", 100)
-	f.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"` + longCmd + `"}}]}}` + "\n"))
+	fix.writeLine(eventAssistantToolUse("Bash", map[string]interface{}{"command": longCmd}))
 
-	got := buf.String()
+	got := fix.output()
 	if len(got) > 100 {
 		// Should be truncated to ~80 chars + "Bash   " prefix + "..." + newline
 		if !strings.Contains(got, "...") {
@@ -93,42 +143,25 @@ func TestStreamFormatter_BashTruncation(t *testing.T) {
 }
 
 func TestStreamFormatter_GrepWithPath(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
-
-	f.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Grep","input":{"pattern":"TODO","path":"internal/"}}]}}` + "\n"))
-
-	got := buf.String()
-	if !strings.Contains(got, "Grep   TODO  internal/") {
-		t.Errorf("expected Grep with pattern and path, got:\n%s", got)
-	}
+	fix := newFixture(true)
+	fix.writeLine(eventAssistantToolUse("Grep", map[string]interface{}{"pattern": "TODO", "path": "internal/"}))
+	fix.assertContains(t, "Grep   TODO  internal/")
 }
 
 func TestStreamFormatter_LegacyStringContent(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
-
-	f.Write([]byte(`{"type":"assistant","message":{"content":"legacy string content"}}` + "\n"))
-
-	got := buf.String()
-	if !strings.Contains(got, "legacy string content") {
-		t.Errorf("expected legacy string content, got:\n%s", got)
-	}
+	fix := newFixture(true)
+	fix.writeLine(eventAssistantLegacy("legacy string content"))
+	fix.assertContains(t, "legacy string content")
 }
 
 func TestStreamFormatter_MultipleContentBlocks(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
-
-	f.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"thinking..."},{"type":"tool_use","name":"Read","input":{"file_path":"main.go"}}]}}` + "\n"))
-
-	got := buf.String()
-	if !strings.Contains(got, "thinking...") {
-		t.Errorf("expected text block, got:\n%s", got)
-	}
-	if !strings.Contains(got, "Read   main.go") {
-		t.Errorf("expected Read tool use, got:\n%s", got)
-	}
+	fix := newFixture(true)
+	fix.writeLine(eventAssistantMulti(
+		contentBlockText("thinking..."),
+		contentBlockToolUse("Read", map[string]interface{}{"file_path": "main.go"}),
+	))
+	fix.assertContains(t, "thinking...")
+	fix.assertContains(t, "Read   main.go")
 }
 
 type errWriter struct{}
@@ -138,7 +171,7 @@ func (errWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 func TestStreamFormatter_WriteError(t *testing.T) {
 	f := newStreamFormatter(errWriter{}, true)
 
-	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}` + "\n"
+	line := eventAssistantText("hello") + "\n"
 	_, err := f.Write([]byte(line))
 	if err == nil {
 		t.Fatal("expected write error to propagate")
@@ -149,67 +182,48 @@ func TestStreamFormatter_WriteError(t *testing.T) {
 }
 
 func TestStreamFormatter_GeminiToolUse(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
+	fix := newFixture(true)
 
 	lines := []string{
 		`{"type":"init","session_id":"abc"}`,
 		`{"type":"message","role":"user","content":"fix this"}`,
 		`{"type":"message","role":"assistant","content":"I'll fix this.","delta":true}`,
-		`{"type":"tool_use","tool_name":"read_file","tool_id":"t1","parameters":{"file_path":"main.go"}}`,
+		eventGeminiToolUse("read_file", "t1", map[string]interface{}{"file_path": "main.go"}),
 		`{"type":"tool_result","tool_id":"t1","status":"success"}`,
-		`{"type":"tool_use","tool_name":"replace","tool_id":"t2","parameters":{"file_path":"main.go","old_string":"foo","new_string":"bar"}}`,
-		`{"type":"tool_use","tool_name":"run_shell_command","tool_id":"t3","parameters":{"command":"go test ./..."}}`,
+		eventGeminiToolUse("replace", "t2", map[string]interface{}{"file_path": "main.go", "old_string": "foo", "new_string": "bar"}),
+		eventGeminiToolUse("run_shell_command", "t3", map[string]interface{}{"command": "go test ./..."}),
 		`{"type":"result","status":"success"}`,
 	}
 
 	for _, line := range lines {
-		f.Write([]byte(line + "\n"))
+		fix.writeLine(line)
 	}
 
-	got := buf.String()
-
-	if !strings.Contains(got, "I'll fix this.") {
-		t.Errorf("expected assistant text, got:\n%s", got)
-	}
-	if !strings.Contains(got, "Read   main.go") {
-		t.Errorf("expected Read line, got:\n%s", got)
-	}
-	if !strings.Contains(got, "Edit   main.go") {
-		t.Errorf("expected Edit line for replace tool, got:\n%s", got)
-	}
-	if !strings.Contains(got, "Bash   go test ./...") {
-		t.Errorf("expected Bash line for run_shell_command, got:\n%s", got)
-	}
+	fix.assertContains(t, "I'll fix this.")
+	fix.assertContains(t, "Read   main.go")
+	fix.assertContains(t, "Edit   main.go")
+	fix.assertContains(t, "Bash   go test ./...")
 	// init, user message, tool_result, and result should be suppressed
-	if strings.Contains(got, "session_id") || strings.Contains(got, "tool_id") || strings.Contains(got, "status") {
-		t.Errorf("should suppress non-assistant events, got:\n%s", got)
-	}
+	fix.assertNotContains(t, "session_id")
+	fix.assertNotContains(t, "tool_id")
+	fix.assertNotContains(t, "status")
 }
 
 func TestStreamFormatter_GeminiToolResult_Suppressed(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
-
-	f.Write([]byte(`{"type":"tool_result","tool_id":"t1","status":"success","output":"file contents here"}` + "\n"))
-
-	if buf.String() != "" {
-		t.Errorf("tool_result should be suppressed, got:\n%s", buf.String())
-	}
+	fix := newFixture(true)
+	fix.writeLine(`{"type":"tool_result","tool_id":"t1","status":"success","output":"file contents here"}`)
+	fix.assertEmpty(t)
 }
 
 func TestStreamFormatter_PartialWrites(t *testing.T) {
-	var buf bytes.Buffer
-	f := newStreamFormatter(&buf, true)
+	fix := newFixture(true)
 
-	full := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}` + "\n"
+	full := eventAssistantText("hello") + "\n"
 	// Write in two parts
-	f.Write([]byte(full[:20]))
-	if buf.Len() != 0 {
-		t.Errorf("partial write should buffer, got:\n%s", buf.String())
+	fix.f.Write([]byte(full[:20]))
+	if fix.buf.Len() != 0 {
+		t.Errorf("partial write should buffer, got:\n%s", fix.output())
 	}
-	f.Write([]byte(full[20:]))
-	if !strings.Contains(buf.String(), "hello") {
-		t.Errorf("expected output after complete line, got:\n%s", buf.String())
-	}
+	fix.f.Write([]byte(full[20:]))
+	fix.assertContains(t, "hello")
 }
