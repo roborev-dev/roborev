@@ -1,20 +1,65 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
-
-	"bytes"
 
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
 )
+
+// TestGitRepo wraps a temporary git repository for test use.
+type TestGitRepo struct {
+	Dir string
+	t   *testing.T
+}
+
+// newTestGitRepo creates and initializes a temporary git repository.
+func newTestGitRepo(t *testing.T) *TestGitRepo {
+	t.Helper()
+	dir := t.TempDir()
+	r := &TestGitRepo{Dir: dir, t: t}
+	r.Run("init")
+	r.Run("config", "user.email", "test@test.com")
+	r.Run("config", "user.name", "Test")
+	return r
+}
+
+// Run executes a git command in the repo directory and returns trimmed output.
+func (r *TestGitRepo) Run(args ...string) string {
+	r.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.Dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// CommitFile creates or overwrites a file, stages it, and commits with the
+// given message. Returns the full commit SHA.
+func (r *TestGitRepo) CommitFile(name, content, msg string) string {
+	r.t.Helper()
+	fullPath := filepath.Join(r.Dir, name)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+		r.t.Fatal(err)
+	}
+	r.Run("add", name)
+	r.Run("commit", "-m", msg)
+	return r.Run("rev-parse", "HEAD")
+}
 
 // patchServerAddr safely swaps the global serverAddr variable and restores it
 // when the test completes.

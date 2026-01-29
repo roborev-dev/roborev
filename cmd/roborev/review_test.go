@@ -6,79 +6,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
 func TestEnqueueCmdPositionalArg(t *testing.T) {
-	// Override HOME to prevent reading real daemon.json
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Create a temp git repo with a known commit
-	tmpDir := t.TempDir()
-
-	// Initialize git repo
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"HOME="+tmpHome,
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-
-	// Create two commits so we can distinguish them
-	if err := os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("first"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file1.txt")
-	runGit("commit", "-m", "first commit")
-
-	// Get first commit SHA
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = tmpDir
-	firstSHABytes, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Failed to get first commit SHA: %v", err)
-	}
-	firstSHA := string(firstSHABytes[:len(firstSHABytes)-1]) // trim newline
-
-	// Create second commit (this becomes HEAD)
-	if err := os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("second"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file2.txt")
-	runGit("commit", "-m", "second commit")
-
-	// Second commit is now HEAD (we don't need to track its SHA since CLI sends "HEAD" unresolved)
-
 	// Track what SHA was sent to the server
 	var receivedSHA string
 
-	// Create mock server
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/enqueue" {
 			var req struct {
 				GitRef string `json:"git_ref"`
@@ -91,40 +31,25 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			json.NewEncoder(w).Encode(job)
 			return
 		}
-		// Status endpoint for ensureDaemon check - must include version
-		if r.URL.Path == "/api/status" {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"version": version.Version,
-			})
-			return
-		}
 	}))
-	defer ts.Close()
+	defer cleanup()
 
-	// Write fake daemon.json pointing to our mock server
-	roborevDir := filepath.Join(tmpHome, ".roborev")
-	os.MkdirAll(roborevDir, 0755)
-	// Extract host:port from ts.URL (strip http://)
-	mockAddr := ts.URL[7:] // remove "http://"
-	daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-	data, _ := json.Marshal(daemonInfo)
-	os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+	// Create a temp git repo with two commits
+	repo := newTestGitRepo(t)
+	firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
+	repo.CommitFile("file2.txt", "second", "second commit")
 
 	// Test: positional arg should be used instead of HEAD
 	t.Run("positional arg overrides default HEAD", func(t *testing.T) {
 		receivedSHA = ""
-		serverAddr = ts.URL
-
 		shortFirstSHA := firstSHA[:7]
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, shortFirstSHA}) // Use short SHA as positional arg
+		cmd.SetArgs([]string{"--repo", repo.Dir, shortFirstSHA})
 		err := cmd.Execute()
 		if err != nil {
 			t.Fatalf("enqueue failed: %v", err)
 		}
 
-		// Should have received the first commit SHA (short form as entered), not HEAD
 		if receivedSHA != shortFirstSHA {
 			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, receivedSHA)
 		}
@@ -136,11 +61,9 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 	// Test: --sha flag still works
 	t.Run("sha flag works", func(t *testing.T) {
 		receivedSHA = ""
-		serverAddr = ts.URL
-
 		shortFirstSHA := firstSHA[:7]
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--sha", shortFirstSHA})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--sha", shortFirstSHA})
 		err := cmd.Execute()
 		if err != nil {
 			t.Fatalf("enqueue failed: %v", err)
@@ -154,16 +77,13 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 	// Test: default to HEAD when no arg provided
 	t.Run("defaults to HEAD", func(t *testing.T) {
 		receivedSHA = ""
-		serverAddr = ts.URL
-
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir})
+		cmd.SetArgs([]string{"--repo", repo.Dir})
 		err := cmd.Execute()
 		if err != nil {
 			t.Fatalf("enqueue failed: %v", err)
 		}
 
-		// When no arg provided, CLI sends "HEAD" which gets resolved server-side
 		if receivedSHA != "HEAD" {
 			t.Errorf("Expected HEAD, got %s", receivedSHA)
 		}
@@ -171,44 +91,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 }
 
 func TestEnqueueSkippedBranch(t *testing.T) {
-	// Save and restore serverAddr to avoid leaking state to other tests
-	origServerAddr := serverAddr
-	t.Cleanup(func() { serverAddr = origServerAddr })
-
-	// Override HOME to prevent reading real daemon.json
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Create a temp git repo
-	tmpDir := t.TempDir()
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"HOME="+tmpHome,
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
-
-	// Create mock server that returns skipped response
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/enqueue" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -218,38 +101,17 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 			})
 			return
 		}
-		if r.URL.Path == "/api/status" {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"version": version.Version,
-			})
-			return
-		}
 	}))
-	defer ts.Close()
+	defer cleanup()
 
-	// Write fake daemon.json pointing to our mock server
-	roborevDir := filepath.Join(tmpHome, ".roborev")
-	if err := os.MkdirAll(roborevDir, 0755); err != nil {
-		t.Fatalf("Failed to create roborev dir: %v", err)
-	}
-	mockAddr := ts.URL[7:] // remove "http://"
-	daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-	data, err := json.Marshal(daemonInfo)
-	if err != nil {
-		t.Fatalf("Failed to marshal daemon info: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
-		t.Fatalf("Failed to write daemon.json: %v", err)
-	}
-
-	serverAddr = ts.URL
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
 
 	t.Run("skipped response prints message and exits successfully", func(t *testing.T) {
 		var stdout bytes.Buffer
 		cmd := reviewCmd()
 		cmd.SetOut(&stdout)
-		cmd.SetArgs([]string{"--repo", tmpDir})
+		cmd.SetArgs([]string{"--repo", repo.Dir})
 		err := cmd.Execute()
 		if err != nil {
 			t.Errorf("enqueue should succeed (exit 0) for skipped branch, got error: %v", err)
@@ -265,7 +127,7 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		var stdout bytes.Buffer
 		cmd := reviewCmd()
 		cmd.SetOut(&stdout)
-		cmd.SetArgs([]string{"--repo", tmpDir, "--quiet"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--quiet"})
 		err := cmd.Execute()
 		if err != nil {
 			t.Errorf("enqueue --quiet should succeed for skipped branch, got error: %v", err)
@@ -279,110 +141,43 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 }
 
 func TestWaitQuietVerdictExitCode(t *testing.T) {
-	// Save and restore serverAddr to avoid leaking state to other tests
-	origServerAddr := serverAddr
-	t.Cleanup(func() { serverAddr = origServerAddr })
+	setupFastPolling(t)
 
-	// Speed up polling for tests
-	origPollStart := pollStartInterval
-	origPollMax := pollMaxInterval
-	pollStartInterval = 1 * time.Millisecond
-	pollMaxInterval = 1 * time.Millisecond
-	t.Cleanup(func() {
-		pollStartInterval = origPollStart
-		pollMaxInterval = origPollMax
-	})
-
-	// Override HOME to prevent reading real daemon.json
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Create a temp git repo
-	tmpDir := t.TempDir()
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"HOME="+tmpHome,
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
 
 	t.Run("passing review exits 0 with no output", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/enqueue" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(job)
 				return
 			}
-			if r.URL.Path == "/api/status" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
 			if r.URL.Path == "/api/jobs" {
-				// Return done immediately
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
 				return
 			}
 			if r.URL.Path == "/api/review" {
-				// Passing review - "No issues" triggers pass verdict
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
 				return
 			}
 		}))
-		defer ts.Close()
-
-		// Write fake daemon.json
-		roborevDir := filepath.Join(tmpHome, ".roborev")
-		if err := os.MkdirAll(roborevDir, 0755); err != nil {
-			t.Fatalf("failed to create roborev dir: %v", err)
-		}
-		mockAddr := ts.URL[7:]
-		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-		data, err := json.Marshal(daemonInfo)
-		if err != nil {
-			t.Fatalf("failed to marshal daemon info: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
-			t.Fatalf("failed to write daemon.json: %v", err)
-		}
-
-		serverAddr = ts.URL
+		defer cleanup()
 
 		var stdout, stderr bytes.Buffer
 		cmd := reviewCmd()
 		cmd.SetOut(&stdout)
 		cmd.SetErr(&stderr)
-		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
-		err = cmd.Execute()
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--wait", "--quiet"})
+		err := cmd.Execute()
 
-		// Should succeed with exit 0
 		if err != nil {
 			t.Errorf("expected exit 0 for passing review, got error: %v", err)
 		}
-		// Should have no output in quiet mode (stdout and stderr)
 		if stdout.String() != "" {
 			t.Errorf("expected no stdout in quiet mode, got: %q", stdout.String())
 		}
@@ -392,59 +187,34 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 	})
 
 	t.Run("failing review exits 1 with no output", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/enqueue" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(job)
 				return
 			}
-			if r.URL.Path == "/api/status" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
 			if r.URL.Path == "/api/jobs" {
-				// Return done immediately
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
 				return
 			}
 			if r.URL.Path == "/api/review" {
-				// Failing review - findings present
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling"})
 				return
 			}
 		}))
-		defer ts.Close()
-
-		// Write fake daemon.json
-		roborevDir := filepath.Join(tmpHome, ".roborev")
-		if err := os.MkdirAll(roborevDir, 0755); err != nil {
-			t.Fatalf("failed to create roborev dir: %v", err)
-		}
-		mockAddr := ts.URL[7:]
-		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-		data, err := json.Marshal(daemonInfo)
-		if err != nil {
-			t.Fatalf("failed to marshal daemon info: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
-			t.Fatalf("failed to write daemon.json: %v", err)
-		}
-
-		serverAddr = ts.URL
+		defer cleanup()
 
 		var stdout, stderr bytes.Buffer
 		cmd := reviewCmd()
 		cmd.SetOut(&stdout)
 		cmd.SetErr(&stderr)
-		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
-		err = cmd.Execute()
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--wait", "--quiet"})
+		err := cmd.Execute()
 
-		// Should fail with exit 1
 		if err == nil {
 			t.Error("expected exit 1 for failing review, got success")
 		} else {
@@ -455,7 +225,6 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 				t.Errorf("expected exit code 1, got: %d", exitErr.code)
 			}
 		}
-		// Should have no output in quiet mode (stdout and stderr)
 		if stdout.String() != "" {
 			t.Errorf("expected no stdout in quiet mode, got: %q", stdout.String())
 		}
@@ -466,71 +235,22 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 }
 
 func TestWaitForJobUnknownStatus(t *testing.T) {
-	// Save and restore serverAddr to avoid leaking state to other tests
-	origServerAddr := serverAddr
-	t.Cleanup(func() { serverAddr = origServerAddr })
+	setupFastPolling(t)
 
-	// Speed up polling for tests
-	origPollStart := pollStartInterval
-	origPollMax := pollMaxInterval
-	pollStartInterval = 1 * time.Millisecond
-	pollMaxInterval = 1 * time.Millisecond
-	t.Cleanup(func() {
-		pollStartInterval = origPollStart
-		pollMaxInterval = origPollMax
-	})
-
-	// Override HOME to prevent reading real daemon.json
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Create a temp git repo
-	tmpDir := t.TempDir()
-	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"HOME="+tmpHome,
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
 
 	t.Run("unknown status exceeds max retries", func(t *testing.T) {
 		callCount := 0
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/enqueue" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(job)
 				return
 			}
-			if r.URL.Path == "/api/status" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"version": version.Version,
-				})
-				return
-			}
 			if r.URL.Path == "/api/jobs" {
 				callCount++
-				// Always return unknown status
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "future_status"}
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(map[string]interface{}{
@@ -540,28 +260,11 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 				return
 			}
 		}))
-		defer ts.Close()
-
-		// Write fake daemon.json
-		roborevDir := filepath.Join(tmpHome, ".roborev")
-		if err := os.MkdirAll(roborevDir, 0755); err != nil {
-			t.Fatalf("failed to create roborev dir: %v", err)
-		}
-		mockAddr := ts.URL[7:]
-		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-		data, err := json.Marshal(daemonInfo)
-		if err != nil {
-			t.Fatalf("failed to marshal daemon info: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
-			t.Fatalf("failed to write daemon.json: %v", err)
-		}
-
-		serverAddr = ts.URL
+		defer cleanup()
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
-		err = cmd.Execute()
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--wait", "--quiet"})
+		err := cmd.Execute()
 
 		if err == nil {
 			t.Fatal("expected error for unknown status after max retries")
@@ -572,7 +275,6 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 		if !strings.Contains(err.Error(), "daemon may be newer than CLI") {
 			t.Errorf("error should mention daemon version, got: %v", err)
 		}
-		// Should have tried exactly 10 times
 		if callCount != 10 {
 			t.Errorf("expected 10 retries, got %d", callCount)
 		}
@@ -580,25 +282,16 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 	t.Run("counter resets on known status", func(t *testing.T) {
 		callCount := 0
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/enqueue" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(job)
 				return
 			}
-			if r.URL.Path == "/api/status" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"version": version.Version,
-				})
-				return
-			}
 			if r.URL.Path == "/api/jobs" {
 				callCount++
 				var status string
-				// Unknown 5 times, then "running" to reset counter,
-				// then unknown 5 more times, then "done"
 				switch {
 				case callCount <= 5:
 					status = "future_status"
@@ -618,8 +311,6 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 				return
 			}
 			if r.URL.Path == "/api/review" {
-				// Return a review so showReview succeeds
-				// Output must contain "No issues" or similar for ParseVerdict to return "P"
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(storage.Review{
 					ID:     1,
@@ -630,34 +321,15 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 				return
 			}
 		}))
-		defer ts.Close()
-
-		// Write fake daemon.json
-		roborevDir := filepath.Join(tmpHome, ".roborev")
-		if err := os.MkdirAll(roborevDir, 0755); err != nil {
-			t.Fatalf("failed to create roborev dir: %v", err)
-		}
-		mockAddr := ts.URL[7:]
-		daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-		data, err := json.Marshal(daemonInfo)
-		if err != nil {
-			t.Fatalf("failed to marshal daemon info: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644); err != nil {
-			t.Fatalf("failed to write daemon.json: %v", err)
-		}
-
-		serverAddr = ts.URL
+		defer cleanup()
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--wait", "--quiet"})
-		err = cmd.Execute()
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--wait", "--quiet"})
+		err := cmd.Execute()
 
-		// Should succeed because counter was reset
 		if err != nil {
 			t.Errorf("expected success (counter should reset on known status), got error: %v", err)
 		}
-		// Should have called 12 times total (5 unknown + 1 running + 5 unknown + 1 done)
 		if callCount != 12 {
 			t.Errorf("expected 12 calls, got %d", callCount)
 		}
@@ -666,9 +338,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with valid ref succeeds", func(t *testing.T) {
-		// Use channel to safely pass git_ref from handler goroutine to test
 		gitRefChan := make(chan string, 1)
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/enqueue" {
 				var req struct {
@@ -687,49 +357,17 @@ func TestReviewSinceFlag(t *testing.T) {
 		}))
 		defer cleanup()
 
-		// Create a git repo with two commits
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("first"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file1.txt")
-		runGit("commit", "-m", "first commit")
+		repo := newTestGitRepo(t)
+		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
+		repo.CommitFile("file2.txt", "second", "second commit")
 
-		// Get first commit SHA
-		cmd := exec.Command("git", "rev-parse", "HEAD")
-		cmd.Dir = tmpDir
-		firstSHABytes, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("failed to get first commit SHA: %v", err)
-		}
-		firstSHA := strings.TrimSpace(string(firstSHABytes))
-
-		// Add second commit
-		if err := os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("second"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file2.txt")
-		runGit("commit", "-m", "second commit")
-
-		// Review since first commit
 		reviewCmd := reviewCmd()
-		reviewCmd.SetArgs([]string{"--repo", tmpDir, "--since", firstSHA[:7]}) // Use short SHA
-		err = reviewCmd.Execute()
+		reviewCmd.SetArgs([]string{"--repo", repo.Dir, "--since", firstSHA[:7]})
+		err := reviewCmd.Execute()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// Verify the git_ref is a range from first commit to HEAD
 		receivedGitRef := <-gitRefChan
 		if !strings.Contains(receivedGitRef, firstSHA) {
 			t.Errorf("expected git_ref to contain first SHA %s, got %s", firstSHA, receivedGitRef)
@@ -740,33 +378,17 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since with invalid ref fails", func(t *testing.T) {
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a minimal git repo
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file.txt")
-		runGit("commit", "-m", "initial")
+		repo := newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial")
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "nonexistent123"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--since", "nonexistent123"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error for invalid --since ref")
@@ -777,34 +399,17 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since with no commits ahead fails", func(t *testing.T) {
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a git repo with one commit
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file.txt")
-		runGit("commit", "-m", "initial")
+		repo := newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial")
 
-		// Try to review since HEAD (no commits after HEAD)
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "HEAD"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--since", "HEAD"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error when no commits since ref")
@@ -815,28 +420,16 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since and branch are mutually exclusive", func(t *testing.T) {
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a minimal git repo
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
+		repo := newTestGitRepo(t)
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "abc123", "--branch"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--since", "abc123", "--branch"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error for --since with --branch")
@@ -847,28 +440,16 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since and dirty are mutually exclusive", func(t *testing.T) {
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a minimal git repo
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
+		repo := newTestGitRepo(t)
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "abc123", "--dirty"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--since", "abc123", "--dirty"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error for --since with --dirty")
@@ -879,28 +460,16 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since with positional args fails", func(t *testing.T) {
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a minimal git repo
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
+		repo := newTestGitRepo(t)
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--since", "abc123", "def456"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--since", "abc123", "def456"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error for --since with positional arg")
@@ -913,28 +482,16 @@ func TestReviewSinceFlag(t *testing.T) {
 
 func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch and dirty are mutually exclusive", func(t *testing.T) {
-		// Set up mock server that accepts any request
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a minimal git repo
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
+		repo := newTestGitRepo(t)
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--branch", "--dirty"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--branch", "--dirty"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error for --branch with --dirty")
@@ -945,28 +502,16 @@ func TestReviewBranchFlag(t *testing.T) {
 	})
 
 	t.Run("branch with positional args fails", func(t *testing.T) {
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a minimal git repo
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
+		repo := newTestGitRepo(t)
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--branch", "abc123"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--branch", "abc123"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error for --branch with positional arg")
@@ -977,34 +522,18 @@ func TestReviewBranchFlag(t *testing.T) {
 	})
 
 	t.Run("branch on default branch fails", func(t *testing.T) {
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a git repo on main branch
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("symbolic-ref", "HEAD", "refs/heads/main")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file.txt")
-		runGit("commit", "-m", "initial")
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--branch"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--branch"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error when on default branch")
@@ -1015,36 +544,19 @@ func TestReviewBranchFlag(t *testing.T) {
 	})
 
 	t.Run("branch with no commits fails", func(t *testing.T) {
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
-		// Create a git repo with main and feature branch (no commits on feature)
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("symbolic-ref", "HEAD", "refs/heads/main")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file.txt")
-		runGit("commit", "-m", "initial")
-		runGit("checkout", "-b", "feature")
-		// No new commits on feature branch
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		repo.Run("checkout", "-b", "feature")
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--branch"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--branch"})
 		err := cmd.Execute()
 		if err == nil {
 			t.Fatal("expected error when no commits on branch")
@@ -1056,7 +568,6 @@ func TestReviewBranchFlag(t *testing.T) {
 
 	t.Run("branch review succeeds with commits", func(t *testing.T) {
 		var receivedGitRef string
-		// Set up mock server
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/enqueue" {
 				var req struct {
@@ -1071,47 +582,20 @@ func TestReviewBranchFlag(t *testing.T) {
 		}))
 		defer cleanup()
 
-		// Create a git repo with main and feature branch with commits
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("symbolic-ref", "HEAD", "refs/heads/main")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file.txt")
-		runGit("commit", "-m", "initial")
-
-		// Get main commit SHA for verification
-		cmd := exec.Command("git", "rev-parse", "HEAD")
-		cmd.Dir = tmpDir
-		mainSHABytes, _ := cmd.Output()
-		mainSHA := strings.TrimSpace(string(mainSHABytes))
-
-		// Create feature branch with a commit
-		runGit("checkout", "-b", "feature")
-		if err := os.WriteFile(filepath.Join(tmpDir, "feature.txt"), []byte("feature"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "feature.txt")
-		runGit("commit", "-m", "feature commit")
+		repo := newTestGitRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("file.txt", "content", "initial")
+		mainSHA := repo.Run("rev-parse", "HEAD")
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
 
 		reviewCmd := reviewCmd()
-		reviewCmd.SetArgs([]string{"--repo", tmpDir, "--branch"})
+		reviewCmd.SetArgs([]string{"--repo", repo.Dir, "--branch"})
 		err := reviewCmd.Execute()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// Verify the git_ref is a range from main to HEAD
 		if !strings.Contains(receivedGitRef, mainSHA) {
 			t.Errorf("expected git_ref to contain main SHA %s, got %s", mainSHA, receivedGitRef)
 		}
@@ -1142,25 +626,11 @@ func TestReviewFastFlag(t *testing.T) {
 		}))
 		defer cleanup()
 
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file.txt")
-		runGit("commit", "-m", "initial")
+		repo := newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial")
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--fast"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--fast"})
 		if err := cmd.Execute(); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1195,25 +665,11 @@ func TestReviewFastFlag(t *testing.T) {
 		}))
 		defer cleanup()
 
-		tmpDir := t.TempDir()
-		runGit := func(args ...string) {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = tmpDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v failed: %v\n%s", args, err, out)
-			}
-		}
-		runGit("init")
-		runGit("config", "user.email", "test@test.com")
-		runGit("config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit("add", "file.txt")
-		runGit("commit", "-m", "initial")
+		repo := newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial")
 
 		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--repo", tmpDir, "--fast", "--reasoning", "thorough"})
+		cmd.SetArgs([]string{"--repo", repo.Dir, "--fast", "--reasoning", "thorough"})
 		if err := cmd.Execute(); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
