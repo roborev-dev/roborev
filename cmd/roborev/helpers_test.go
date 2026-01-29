@@ -39,14 +39,30 @@ func (r *TestGitRepo) Run(args ...string) string {
 	r.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
-	cmd.Env = append(os.Environ(),
-		"HOME="+r.Dir,
+	// Build a clean environment with only the variables git needs,
+	// avoiding conflicts from inherited duplicates.
+	gitEnv := []string{
+		"HOME=" + r.Dir,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=Test",
 		"GIT_AUTHOR_EMAIL=test@test.com",
 		"GIT_COMMITTER_NAME=Test",
 		"GIT_COMMITTER_EMAIL=test@test.com",
-	)
+	}
+	overridden := map[string]bool{
+		"HOME":                true,
+		"GIT_CONFIG_NOSYSTEM": true,
+		"GIT_AUTHOR_NAME":     true,
+		"GIT_AUTHOR_EMAIL":    true,
+		"GIT_COMMITTER_NAME":  true,
+		"GIT_COMMITTER_EMAIL": true,
+	}
+	for _, env := range os.Environ() {
+		if key, _, ok := strings.Cut(env, "="); ok && !overridden[key] {
+			gitEnv = append(gitEnv, env)
+		}
+	}
+	cmd.Env = gitEnv
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
