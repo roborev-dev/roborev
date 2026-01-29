@@ -185,7 +185,7 @@ type MockServerState struct {
 
 // MockServerOpts configures the behavior of a mock roborev server.
 type MockServerOpts struct {
-	// JobIDStart is the starting job ID for enqueue responses (default 1).
+	// JobIDStart is the starting job ID for enqueue responses (0 defaults to 1).
 	JobIDStart int64
 	// Agent is the agent name in responses (default "test").
 	Agent string
@@ -211,17 +211,18 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	if opts.DoneAfterPolls == 0 {
 		opts.DoneAfterPolls = 2
 	}
-	var jobID int64
-	if opts.JobIDStart > 0 {
-		jobID = opts.JobIDStart - 1
+	jobIDStart := opts.JobIDStart
+	if jobIDStart == 0 {
+		jobIDStart = 1
 	}
+	jobID := jobIDStart - 1
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost:
 			if opts.OnEnqueue != nil {
-				opts.OnEnqueue(w, r)
 				atomic.AddInt32(&state.EnqueueCount, 1)
+				opts.OnEnqueue(w, r)
 				return
 			}
 			id := atomic.AddInt64(&jobID, 1)
