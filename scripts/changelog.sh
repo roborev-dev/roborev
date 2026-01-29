@@ -1,6 +1,7 @@
 #!/bin/bash
-# Generate a changelog since the last release using codex
+# Generate a changelog since the last release using an AI agent
 # Usage: ./scripts/changelog.sh [version] [start_tag] [extra_instructions]
+# Set CHANGELOG_AGENT=claude to use claude instead of codex (default)
 # If version is not provided, uses "NEXT" as placeholder
 # If start_tag is "-" or empty, auto-detects the previous tag
 
@@ -9,6 +10,7 @@ set -e
 VERSION="${1:-NEXT}"
 START_TAG="$2"
 EXTRA_INSTRUCTIONS="$3"
+AGENT="${CHANGELOG_AGENT:-codex}"
 
 # Determine the starting point
 if [ -n "$START_TAG" ] && [ "$START_TAG" != "-" ]; then
@@ -38,13 +40,13 @@ if [ -z "$COMMITS" ]; then
     exit 0
 fi
 
-# Use codex to generate the changelog
-echo "Using codex to generate changelog..." >&2
+# Use AI agent to generate the changelog
+echo "Using $AGENT to generate changelog..." >&2
 
 TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
-codex exec --skip-git-repo-check --sandbox read-only -c reasoning_effort=high -o "$TMPFILE" - >/dev/null <<EOF
+PROMPT=$(cat <<EOF
 You are generating a changelog for roborev version $VERSION.
 
 IMPORTANT: Do NOT use any tools. Do NOT run any shell commands. Do NOT search or read any files.
@@ -71,5 +73,12 @@ Do NOT search files, read code, or do any analysis outside of the commit log pro
 Do NOT search for .roborev.toml or any other files. .roborev.toml is simply a feature of the project mentioned in commits.}
 Output ONLY the changelog content, no preamble.
 EOF
+)
+
+if [ "$AGENT" = "claude" ]; then
+    echo "$PROMPT" | claude --print > "$TMPFILE"
+else
+    codex exec --skip-git-repo-check --sandbox read-only -c reasoning_effort=high -o "$TMPFILE" - >/dev/null <<< "$PROMPT"
+fi
 
 cat "$TMPFILE"
