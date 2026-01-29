@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -176,4 +177,69 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 
 	result.CmdPath = writeTempCommand(t, script.String())
 	return result
+}
+
+// makeToolCallJSON returns a JSON string representing a tool call with the
+// given name and arguments. It is useful for building test inputs that
+// contain tool-call lines without hardcoding brittle JSON strings.
+func makeToolCallJSON(name string, args map[string]interface{}) string {
+	m := map[string]interface{}{
+		"name":      name,
+		"arguments": args,
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		panic(fmt.Sprintf("makeToolCallJSON: %v", err))
+	}
+	return string(b)
+}
+
+// assertContains fails the test if s does not contain substr.
+func assertContains(t *testing.T, s, substr string) {
+	t.Helper()
+	if !strings.Contains(s, substr) {
+		t.Errorf("expected %q to contain %q", s, substr)
+	}
+}
+
+// assertNotContains fails the test if s contains substr.
+func assertNotContains(t *testing.T, s, substr string) {
+	t.Helper()
+	if strings.Contains(s, substr) {
+		t.Errorf("expected %q to not contain %q", s, substr)
+	}
+}
+
+// ScriptBuilder helps construct shell scripts for mocking CLI output in tests.
+type ScriptBuilder struct {
+	lines []string
+}
+
+// NewScriptBuilder creates a new ScriptBuilder with the shebang line.
+func NewScriptBuilder() *ScriptBuilder {
+	return &ScriptBuilder{lines: []string{"#!/bin/sh"}}
+}
+
+// AddOutput adds a line that echoes the given string to stdout.
+func (b *ScriptBuilder) AddOutput(s string) *ScriptBuilder {
+	b.lines = append(b.lines, fmt.Sprintf("echo %q", s))
+	return b
+}
+
+// AddToolCall adds a line that prints a tool-call JSON object to stdout.
+func (b *ScriptBuilder) AddToolCall(name string, args map[string]interface{}) *ScriptBuilder {
+	j := makeToolCallJSON(name, args)
+	b.lines = append(b.lines, fmt.Sprintf("printf '%%s\\n' '%s'", j))
+	return b
+}
+
+// AddRaw adds a raw shell line to the script.
+func (b *ScriptBuilder) AddRaw(line string) *ScriptBuilder {
+	b.lines = append(b.lines, line)
+	return b
+}
+
+// Build returns the complete shell script as a string.
+func (b *ScriptBuilder) Build() string {
+	return strings.Join(b.lines, "\n") + "\n"
 }
