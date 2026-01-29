@@ -26,14 +26,8 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestDataDir(t *testing.T) {
 	t.Run("default uses home directory", func(t *testing.T) {
-		// Clear env var to test default
-		origEnv := os.Getenv("ROBOREV_DATA_DIR")
+		t.Setenv("ROBOREV_DATA_DIR", "")
 		os.Unsetenv("ROBOREV_DATA_DIR")
-		defer func() {
-			if origEnv != "" {
-				os.Setenv("ROBOREV_DATA_DIR", origEnv)
-			}
-		}()
 
 		dir := DataDir()
 		home, _ := os.UserHomeDir()
@@ -44,15 +38,7 @@ func TestDataDir(t *testing.T) {
 	})
 
 	t.Run("env var overrides default", func(t *testing.T) {
-		origEnv := os.Getenv("ROBOREV_DATA_DIR")
-		os.Setenv("ROBOREV_DATA_DIR", "/custom/data/dir")
-		defer func() {
-			if origEnv != "" {
-				os.Setenv("ROBOREV_DATA_DIR", origEnv)
-			} else {
-				os.Unsetenv("ROBOREV_DATA_DIR")
-			}
-		}()
+		t.Setenv("ROBOREV_DATA_DIR", "/custom/data/dir")
 
 		dir := DataDir()
 		if dir != "/custom/data/dir" {
@@ -61,16 +47,8 @@ func TestDataDir(t *testing.T) {
 	})
 
 	t.Run("GlobalConfigPath uses DataDir", func(t *testing.T) {
-		origEnv := os.Getenv("ROBOREV_DATA_DIR")
 		testDir := filepath.Join(os.TempDir(), "roborev-test")
-		os.Setenv("ROBOREV_DATA_DIR", testDir)
-		defer func() {
-			if origEnv != "" {
-				os.Setenv("ROBOREV_DATA_DIR", origEnv)
-			} else {
-				os.Unsetenv("ROBOREV_DATA_DIR")
-			}
-		}()
+		t.Setenv("ROBOREV_DATA_DIR", testDir)
 
 		path := GlobalConfigPath()
 		expected := filepath.Join(testDir, "config.toml")
@@ -97,8 +75,7 @@ func TestResolveAgent(t *testing.T) {
 	}
 
 	// Test per-repo config
-	repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-	os.WriteFile(repoConfig, []byte(`agent = "claude-code"`), 0644)
+	writeRepoConfigStr(t, tmpDir, `agent = "claude-code"`)
 
 	agent = ResolveAgent("", tmpDir, cfg)
 	if agent != "claude-code" {
@@ -138,21 +115,14 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 }
 
 func TestLoadRepoConfigWithGuidelines(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Test loading config with review guidelines as multi-line string
-	configContent := `
+	tmpDir := newTempRepo(t, `
 agent = "claude-code"
 review_guidelines = """
 We are not doing database migrations because there are no production databases yet.
 Prefer composition over inheritance.
 All public APIs must have documentation comments.
 """
-`
-	repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-	if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write test config: %v", err)
-	}
+`)
 
 	cfg, err := LoadRepoConfig(tmpDir)
 	if err != nil {
@@ -177,14 +147,7 @@ All public APIs must have documentation comments.
 }
 
 func TestLoadRepoConfigNoGuidelines(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Test loading config without review guidelines (backwards compatibility)
-	configContent := `agent = "codex"`
-	repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-	if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write test config: %v", err)
-	}
+	tmpDir := newTempRepo(t, `agent = "codex"`)
 
 	cfg, err := LoadRepoConfig(tmpDir)
 	if err != nil {
@@ -251,12 +214,7 @@ func TestResolveJobTimeout(t *testing.T) {
 	})
 
 	t.Run("repo config takes precedence over global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`job_timeout_minutes = 15`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `job_timeout_minutes = 15`)
 		cfg := &Config{JobTimeoutMinutes: 45}
 		timeout := ResolveJobTimeout(tmpDir, cfg)
 		if timeout != 15 {
@@ -265,12 +223,7 @@ func TestResolveJobTimeout(t *testing.T) {
 	})
 
 	t.Run("repo config zero falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`job_timeout_minutes = 0`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `job_timeout_minutes = 0`)
 		cfg := &Config{JobTimeoutMinutes: 45}
 		timeout := ResolveJobTimeout(tmpDir, cfg)
 		if timeout != 45 {
@@ -279,12 +232,7 @@ func TestResolveJobTimeout(t *testing.T) {
 	})
 
 	t.Run("repo config negative falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`job_timeout_minutes = -5`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `job_timeout_minutes = -5`)
 		cfg := &Config{JobTimeoutMinutes: 45}
 		timeout := ResolveJobTimeout(tmpDir, cfg)
 		if timeout != 45 {
@@ -293,12 +241,7 @@ func TestResolveJobTimeout(t *testing.T) {
 	})
 
 	t.Run("repo config without timeout falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`agent = "codex"`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `agent = "codex"`)
 		cfg := &Config{JobTimeoutMinutes: 60}
 		timeout := ResolveJobTimeout(tmpDir, cfg)
 		if timeout != 60 {
@@ -307,12 +250,7 @@ func TestResolveJobTimeout(t *testing.T) {
 	})
 
 	t.Run("malformed repo config falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`this is not valid toml {{{`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `this is not valid toml {{{`)
 		cfg := &Config{JobTimeoutMinutes: 45}
 		timeout := ResolveJobTimeout(tmpDir, cfg)
 		if timeout != 45 {
@@ -334,12 +272,7 @@ func TestResolveReviewReasoning(t *testing.T) {
 	})
 
 	t.Run("repo config when explicit empty", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`review_reasoning = "standard"`), 0644); err != nil {
-			t.Fatalf("Failed to write test config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `review_reasoning = "standard"`)
 		reasoning, err := ResolveReviewReasoning("", tmpDir)
 		if err != nil {
 			t.Fatalf("ResolveReviewReasoning failed: %v", err)
@@ -350,12 +283,7 @@ func TestResolveReviewReasoning(t *testing.T) {
 	})
 
 	t.Run("explicit overrides repo config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`review_reasoning = "standard"`), 0644); err != nil {
-			t.Fatalf("Failed to write test config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `review_reasoning = "standard"`)
 		reasoning, err := ResolveReviewReasoning("FAST", tmpDir)
 		if err != nil {
 			t.Fatalf("ResolveReviewReasoning failed: %v", err)
@@ -374,12 +302,7 @@ func TestResolveReviewReasoning(t *testing.T) {
 	})
 
 	t.Run("invalid repo config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`review_reasoning = "invalid"`), 0644); err != nil {
-			t.Fatalf("Failed to write test config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `review_reasoning = "invalid"`)
 		_, err := ResolveReviewReasoning("", tmpDir)
 		if err == nil {
 			t.Fatal("Expected error for invalid repo reasoning")
@@ -400,12 +323,7 @@ func TestResolveRefineReasoning(t *testing.T) {
 	})
 
 	t.Run("repo config when explicit empty", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`refine_reasoning = "thorough"`), 0644); err != nil {
-			t.Fatalf("Failed to write test config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `refine_reasoning = "thorough"`)
 		reasoning, err := ResolveRefineReasoning("", tmpDir)
 		if err != nil {
 			t.Fatalf("ResolveRefineReasoning failed: %v", err)
@@ -416,12 +334,7 @@ func TestResolveRefineReasoning(t *testing.T) {
 	})
 
 	t.Run("explicit overrides repo config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`refine_reasoning = "thorough"`), 0644); err != nil {
-			t.Fatalf("Failed to write test config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `refine_reasoning = "thorough"`)
 		reasoning, err := ResolveRefineReasoning("standard", tmpDir)
 		if err != nil {
 			t.Fatalf("ResolveRefineReasoning failed: %v", err)
@@ -440,12 +353,7 @@ func TestResolveRefineReasoning(t *testing.T) {
 	})
 
 	t.Run("invalid repo config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`refine_reasoning = "invalid"`), 0644); err != nil {
-			t.Fatalf("Failed to write test config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `refine_reasoning = "invalid"`)
 		_, err := ResolveRefineReasoning("", tmpDir)
 		if err == nil {
 			t.Fatal("Expected error for invalid repo reasoning")
@@ -462,27 +370,14 @@ func TestIsBranchExcluded(t *testing.T) {
 	})
 
 	t.Run("empty excluded_branches", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`agent = "codex"`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `agent = "codex"`)
 		if IsBranchExcluded(tmpDir, "main") {
 			t.Error("Expected branch not excluded when excluded_branches not set")
 		}
 	})
 
 	t.Run("branch is excluded", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		configContent := `
-excluded_branches = ["wip", "scratch", "test-branch"]
-`
-		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `excluded_branches = ["wip", "scratch", "test-branch"]`)
 		if !IsBranchExcluded(tmpDir, "wip") {
 			t.Error("Expected 'wip' branch to be excluded")
 		}
@@ -495,15 +390,7 @@ excluded_branches = ["wip", "scratch", "test-branch"]
 	})
 
 	t.Run("branch is not excluded", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		configContent := `
-excluded_branches = ["wip", "scratch"]
-`
-		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `excluded_branches = ["wip", "scratch"]`)
 		if IsBranchExcluded(tmpDir, "main") {
 			t.Error("Expected 'main' branch not to be excluded")
 		}
@@ -513,15 +400,7 @@ excluded_branches = ["wip", "scratch"]
 	})
 
 	t.Run("exact match required", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		configContent := `
-excluded_branches = ["wip"]
-`
-		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `excluded_branches = ["wip"]`)
 		// Partial matches should not be excluded
 		if IsBranchExcluded(tmpDir, "wip-feature") {
 			t.Error("Expected 'wip-feature' not to be excluded (not exact match)")
@@ -548,8 +427,7 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 	})
 
 	t.Run("URL with env var is expanded", func(t *testing.T) {
-		os.Setenv("TEST_PG_PASS", "secret123")
-		defer os.Unsetenv("TEST_PG_PASS")
+		t.Setenv("TEST_PG_PASS", "secret123")
 
 		cfg := SyncConfig{PostgresURL: "postgres://user:${TEST_PG_PASS}@localhost:5432/db"}
 		expected := "postgres://user:secret123@localhost:5432/db"
@@ -654,8 +532,7 @@ func TestSyncConfigValidate(t *testing.T) {
 	})
 
 	t.Run("expanded env var no warning", func(t *testing.T) {
-		os.Setenv("TEST_PG_PASS2", "secret")
-		defer os.Unsetenv("TEST_PG_PASS2")
+		t.Setenv("TEST_PG_PASS2", "secret")
 
 		cfg := SyncConfig{
 			Enabled:     true,
@@ -671,8 +548,7 @@ func TestSyncConfigValidate(t *testing.T) {
 func TestLoadGlobalWithSyncConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
-
-	configContent := `
+	if err := os.WriteFile(configPath, []byte(`
 default_agent = "codex"
 
 [sync]
@@ -681,8 +557,7 @@ postgres_url = "postgres://roborev:pass@localhost:5432/roborev"
 interval = "10m"
 machine_name = "test-machine"
 connect_timeout = "10s"
-`
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+`), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
@@ -718,12 +593,7 @@ func TestGetDisplayName(t *testing.T) {
 	})
 
 	t.Run("display_name not set", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`agent = "codex"`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `agent = "codex"`)
 		name := GetDisplayName(tmpDir)
 		if name != "" {
 			t.Errorf("Expected empty display name when not set, got '%s'", name)
@@ -731,15 +601,7 @@ func TestGetDisplayName(t *testing.T) {
 	})
 
 	t.Run("display_name is set", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		configContent := `
-display_name = "My Cool Project"
-`
-		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `display_name = "My Cool Project"`)
 		name := GetDisplayName(tmpDir)
 		if name != "My Cool Project" {
 			t.Errorf("Expected display name 'My Cool Project', got '%s'", name)
@@ -747,17 +609,11 @@ display_name = "My Cool Project"
 	})
 
 	t.Run("display_name with other config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		configContent := `
+		tmpDir := newTempRepo(t, `
 agent = "claude-code"
 display_name = "Backend Service"
 excluded_branches = ["wip"]
-`
-		if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+`)
 		name := GetDisplayName(tmpDir)
 		if name != "Backend Service" {
 			t.Errorf("Expected display name 'Backend Service', got '%s'", name)
@@ -999,12 +855,7 @@ func TestResolveModel(t *testing.T) {
 	})
 
 	t.Run("empty explicit falls back to repo config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`model = "repo-model"`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `model = "repo-model"`)
 		cfg := &Config{DefaultModel: "global-model"}
 		model := ResolveModel("", tmpDir, cfg)
 		if model != "repo-model" {
@@ -1013,12 +864,7 @@ func TestResolveModel(t *testing.T) {
 	})
 
 	t.Run("repo config with whitespace is trimmed", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`model = "  repo-model  "`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `model = "  repo-model  "`)
 		cfg := &Config{}
 		model := ResolveModel("", tmpDir, cfg)
 		if model != "repo-model" {
@@ -1062,12 +908,7 @@ func TestResolveModel(t *testing.T) {
 	})
 
 	t.Run("whitespace-only explicit falls through to repo config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`model = "repo-model"`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `model = "repo-model"`)
 		cfg := &Config{DefaultModel: "global-model"}
 		model := ResolveModel("   ", tmpDir, cfg)
 		if model != "repo-model" {
@@ -1076,12 +917,7 @@ func TestResolveModel(t *testing.T) {
 	})
 
 	t.Run("whitespace-only repo config falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`model = "   "`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `model = "   "`)
 		cfg := &Config{DefaultModel: "global-model"}
 		model := ResolveModel("", tmpDir, cfg)
 		if model != "global-model" {
@@ -1090,12 +926,7 @@ func TestResolveModel(t *testing.T) {
 	})
 
 	t.Run("explicit overrides repo config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`model = "repo-model"`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `model = "repo-model"`)
 		cfg := &Config{DefaultModel: "global-model"}
 		model := ResolveModel("explicit-model", tmpDir, cfg)
 		if model != "explicit-model" {
@@ -1104,12 +935,7 @@ func TestResolveModel(t *testing.T) {
 	})
 
 	t.Run("malformed repo config falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`this is not valid toml {{{`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `this is not valid toml {{{`)
 		cfg := &Config{DefaultModel: "global-model"}
 		model := ResolveModel("", tmpDir, cfg)
 		if model != "global-model" {
@@ -1146,12 +972,7 @@ func TestResolveMaxPromptSize(t *testing.T) {
 	})
 
 	t.Run("repo config takes precedence over global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`max_prompt_size = 300000`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `max_prompt_size = 300000`)
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 300000 {
@@ -1160,12 +981,7 @@ func TestResolveMaxPromptSize(t *testing.T) {
 	})
 
 	t.Run("repo config zero falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`max_prompt_size = 0`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `max_prompt_size = 0`)
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 500*1024 {
@@ -1174,12 +990,7 @@ func TestResolveMaxPromptSize(t *testing.T) {
 	})
 
 	t.Run("repo config without max_prompt_size falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`agent = "codex"`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `agent = "codex"`)
 		cfg := &Config{DefaultMaxPromptSize: 600 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 600*1024 {
@@ -1188,12 +999,7 @@ func TestResolveMaxPromptSize(t *testing.T) {
 	})
 
 	t.Run("malformed repo config falls through to global", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
-		if err := os.WriteFile(repoConfig, []byte(`this is not valid toml {{{`), 0644); err != nil {
-			t.Fatalf("Failed to write repo config: %v", err)
-		}
-
+		tmpDir := newTempRepo(t, `this is not valid toml {{{`)
 		cfg := &Config{DefaultMaxPromptSize: 500 * 1024}
 		size := ResolveMaxPromptSize(tmpDir, cfg)
 		if size != 500*1024 {
@@ -1312,6 +1118,22 @@ func TestResolveModelForWorkflow(t *testing.T) {
 // M is a shorthand type for map[string]string to keep test tables compact
 type M = map[string]string
 
+// newTempRepo creates a temp directory and writes content to .roborev.toml.
+func newTempRepo(t *testing.T, configContent string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeRepoConfigStr(t, dir, configContent)
+	return dir
+}
+
+// writeRepoConfigStr writes a TOML string to .roborev.toml in the given directory.
+func writeRepoConfigStr(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
 	t.Helper()
 	if cfg == nil {
@@ -1321,9 +1143,7 @@ func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
 	for k, v := range cfg {
 		sb.WriteString(k + " = \"" + v + "\"\n")
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(sb.String()), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeRepoConfigStr(t, dir, sb.String())
 }
 
 func buildGlobalConfig(cfg map[string]string) *Config {
