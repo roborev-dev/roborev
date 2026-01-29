@@ -2001,11 +2001,11 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 	if !strings.Contains(output, "Done: 3") {
 		t.Errorf("Expected status to show 'Done: 3' for filtered repos, got: %s", output)
 	}
-	if !strings.Contains(output, "Addr'd: 1") {
-		t.Errorf("Expected status to show 'Addr'd: 1' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Addressed: 1") {
+		t.Errorf("Expected status to show 'Addressed: 1' for filtered repos, got: %s", output)
 	}
-	if !strings.Contains(output, "Unaddr'd: 2") {
-		t.Errorf("Expected status to show 'Unaddr'd: 2' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Unaddressed: 2") {
+		t.Errorf("Expected status to show 'Unaddressed: 2' for filtered repos, got: %s", output)
 	}
 }
 
@@ -2869,9 +2869,9 @@ func TestTUICalculateColumnWidths(t *testing.T) {
 				t.Errorf("agent width %d < 1", widths.agent)
 			}
 
-			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addr'd (6)
+			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addressed (9)
 			// Plus spacing: 2 (prefix) + 7 spaces between columns
-			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 6 + 7
+			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 9 + 7
 			flexibleTotal := widths.ref + widths.repo + widths.agent
 			totalWidth := fixedWidth + flexibleTotal
 
@@ -2966,7 +2966,7 @@ func TestTUIRenderJobLineLength(t *testing.T) {
 
 	line := m.renderJobLine(job, false, idWidth, colWidths)
 
-	// Fixed widths: ID (idWidth=4), Status (10), Queued (12), Elapsed (8), Addr'd (varies)
+	// Fixed widths: ID (idWidth=4), Status (10), Queued (12), Elapsed (8), Addressed (varies)
 	// Plus spacing between columns
 	// The line should not be excessively long
 	// Note: line includes ANSI codes for status styling, so we check a reasonable max

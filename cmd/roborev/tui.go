@@ -3028,10 +3028,10 @@ func (m tuiModel) renderQueueView() string {
 		}
 	}
 	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addr'd: %d | Unaddr'd: %d",
+		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addressed: %d | Unaddressed: %d",
 			m.daemonVersion, done, addressed, unaddressed)
 	} else {
-		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Addr'd: %d | Unaddr'd: %d",
+		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Addressed: %d | Unaddressed: %d",
 			m.daemonVersion,
 			m.status.ActiveWorkers, m.status.MaxWorkers,
 			done, addressed, unaddressed)
@@ -3106,7 +3106,7 @@ func (m tuiModel) renderQueueView() string {
 			colWidths.branch, "Branch",
 			colWidths.repo, "Repo",
 			colWidths.agent, "Agent",
-			"Status", "P/F", "Queued", "Elapsed", "Addr'd")
+			"Status", "P/F", "Queued", "Elapsed", "Addressed")
 		b.WriteString(tuiStatusStyle.Render(header))
 		b.WriteString("\x1b[K\n") // Clear to end of line
 		b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
@@ -3209,10 +3209,10 @@ type columnWidths struct {
 }
 
 func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
+	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addressed (9)
 	// Status width 8 accommodates "canceled" (longest status)
 	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
-	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 6 + 9
+	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 9 + 9
 
 	// Available width for flexible columns (ref, branch, repo, agent)
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
