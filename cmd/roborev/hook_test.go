@@ -200,8 +200,7 @@ func TestInstallHookCmdCreatesHooksDirectory(t *testing.T) {
 	}
 
 	// Verify hook file was created
-	hookPath := filepath.Join(repo.HooksDir, "post-commit")
-	if _, err := os.Stat(hookPath); os.IsNotExist(err) {
+	if _, err := os.Stat(repo.HookPath); os.IsNotExist(err) {
 		t.Error("post-commit hook was not created")
 	}
 }

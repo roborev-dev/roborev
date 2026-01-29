@@ -82,7 +82,10 @@ func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 // restore function. The caller should defer the returned function.
 func (r *TestRepo) Chdir() func() {
 	r.t.Helper()
-	orig, _ := os.Getwd()
+	orig, err := os.Getwd()
+	if err != nil {
+		r.t.Fatal(err)
+	}
 	if err := os.Chdir(r.Root); err != nil {
 		r.t.Fatal(err)
 	}
