@@ -4,12 +4,91 @@ package testutil
 import (
 	"fmt"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
 )
+
+// TestRepo encapsulates a temporary git repository for tests.
+type TestRepo struct {
+	Root     string
+	GitDir   string
+	HooksDir string
+	HookPath string
+	t        *testing.T
+}
+
+// NewTestRepo creates a temporary git repository.
+func NewTestRepo(t *testing.T) *TestRepo {
+	t.Helper()
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	return &TestRepo{
+		Root:     tmpDir,
+		GitDir:   filepath.Join(tmpDir, ".git"),
+		HooksDir: filepath.Join(tmpDir, ".git", "hooks"),
+		HookPath: filepath.Join(tmpDir, ".git", "hooks", "post-commit"),
+		t:        t,
+	}
+}
+
+// Chdir changes the working directory to the repo root and returns a
+// restore function. The caller should defer the returned function.
+func (r *TestRepo) Chdir() func() {
+	r.t.Helper()
+	orig, _ := os.Getwd()
+	if err := os.Chdir(r.Root); err != nil {
+		r.t.Fatal(err)
+	}
+	return func() { os.Chdir(orig) }
+}
+
+// WriteHook writes a post-commit hook with the given content.
+func (r *TestRepo) WriteHook(content string) {
+	r.t.Helper()
+	if err := os.MkdirAll(r.HooksDir, 0755); err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(r.HookPath, []byte(content), 0755); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// RemoveHooksDir removes the .git/hooks directory.
+func (r *TestRepo) RemoveHooksDir() {
+	r.t.Helper()
+	if err := os.RemoveAll(r.HooksDir); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// MockBinaryInPath creates a fake executable in PATH and returns a cleanup function.
+func MockBinaryInPath(t *testing.T, binName, scriptContent string) func() {
+	t.Helper()
+	tmpBin := t.TempDir()
+
+	path := filepath.Join(tmpBin, binName)
+	if err := os.WriteFile(path, []byte(scriptContent), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origPath := os.Getenv("PATH")
+	os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
+
+	return func() {
+		os.Setenv("PATH", origPath)
+	}
+}
 
 // OpenTestDB creates a test database in a temporary directory.
 // The database is automatically closed when the test completes.
