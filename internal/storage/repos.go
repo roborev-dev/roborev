@@ -33,7 +33,7 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 		Scan(&repo.ID, &repo.RootPath, &repo.Name, &identityNullable, &createdAt)
 	if err == nil {
 		repo.Identity = identityNullable.String
-		repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		repo.CreatedAt = parseSQLiteTime(createdAt)
 
 		// Update identity if provided and not already set
 		if repoIdentity != "" && repo.Identity == "" {
@@ -85,7 +85,7 @@ func (db *DB) GetRepoByPath(rootPath string) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	repo.CreatedAt = parseSQLiteTime(createdAt)
 	return &repo, nil
 }
 
@@ -288,7 +288,7 @@ func (db *DB) ListRepos() ([]Repo, error) {
 		if err := rows.Scan(&r.ID, &r.RootPath, &r.Name, &createdAt); err != nil {
 			return nil, err
 		}
-		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		r.CreatedAt = parseSQLiteTime(createdAt)
 		repos = append(repos, r)
 	}
 	return repos, rows.Err()
@@ -303,7 +303,7 @@ func (db *DB) GetRepoByID(id int64) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	repo.CreatedAt = parseSQLiteTime(createdAt)
 	return &repo, nil
 }
 
@@ -316,7 +316,7 @@ func (db *DB) GetRepoByName(name string) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	repo.CreatedAt = parseSQLiteTime(createdAt)
 	return &repo, nil
 }
 

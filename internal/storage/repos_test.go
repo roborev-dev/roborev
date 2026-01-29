@@ -551,6 +551,20 @@ func TestFindRepo(t *testing.T) {
 		}
 	})
 
+	t.Run("created_at is populated", func(t *testing.T) {
+		found, err := db.FindRepo("/tmp/findrepo-test")
+		if err != nil {
+			t.Fatalf("FindRepo failed: %v", err)
+		}
+		if found.CreatedAt.IsZero() {
+			t.Error("CreatedAt should not be zero (SQLite CURRENT_TIMESTAMP must be parsed)")
+		}
+		// Should be recent (within the last minute)
+		if time.Since(found.CreatedAt) > time.Minute {
+			t.Errorf("CreatedAt too old: %v", found.CreatedAt)
+		}
+	})
+
 	t.Run("not found", func(t *testing.T) {
 		_, err := db.FindRepo("nonexistent")
 		if err == nil {

@@ -1174,11 +1174,11 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		j.Agentic = agentic != 0
 		j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 		if startedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, startedAt.String)
+			t := parseSQLiteTime(startedAt.String)
 			j.StartedAt = &t
 		}
 		if finishedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, finishedAt.String)
+			t := parseSQLiteTime(finishedAt.String)
 			j.FinishedAt = &t
 		}
 		if workerID.Valid {
@@ -1250,11 +1250,11 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	j.Agentic = agentic != 0
 	j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	if startedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, startedAt.String)
+		t := parseSQLiteTime(startedAt.String)
 		j.StartedAt = &t
 	}
 	if finishedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, finishedAt.String)
+		t := parseSQLiteTime(finishedAt.String)
 		j.FinishedAt = &t
 	}
 	if workerID.Valid {
