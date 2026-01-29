@@ -67,31 +67,25 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 }
 
 func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
-	// Test with non-loopback address - should not make HTTP request.
-	// We start a local server and give KillDaemon an address that maps to it
-	// but with a non-loopback host. If HTTP is attempted, the server records it.
-
-	var httpAttempted atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpAttempted.Store(true)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	// Verify the address is correctly identified as non-loopback
+	// Verify that isLoopbackAddr correctly rejects non-loopback addresses,
+	// which prevents KillDaemon from making HTTP requests to them.
 	if isLoopbackAddr("192.168.1.100:7373") {
-		t.Error("192.168.1.100:7373 should not be identified as loopback")
+		t.Fatal("192.168.1.100:7373 should not be identified as loopback")
 	}
 
+	// KillDaemon with a non-loopback address should skip HTTP and fall
+	// through to killProcess (which fails for a non-existent PID).
+	// This must complete promptly without attempting network connections.
 	info := &RuntimeInfo{
 		PID:  999999,               // Non-existent PID
 		Addr: "192.168.1.100:7373", // Non-loopback address
 	}
 
-	KillDaemon(info)
+	result := KillDaemon(info)
 
-	if httpAttempted.Load() {
-		t.Error("KillDaemon should not make HTTP requests to non-loopback addresses")
+	// killProcess confirms a non-existent PID is dead, so KillDaemon returns true
+	if !result {
+		t.Error("KillDaemon should return true for non-existent PID (process confirmed dead)")
 	}
 }
 
