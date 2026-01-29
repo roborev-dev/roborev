@@ -21,14 +21,17 @@ import (
 
 func fixCmd() *cobra.Command {
 	var (
-		agentName string
-		model     string
-		reasoning string
-		quiet     bool
+		agentName   string
+		model       string
+		reasoning   string
+		quiet       bool
+		unaddressed bool
+		allBranches bool
+		branch      string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "fix <job_id> [job_id...]",
+		Use:   "fix [job_id...]",
 		Short: "Apply fixes for an analysis job",
 		Long: `Apply fixes for one or more analysis jobs.
 
@@ -40,13 +43,58 @@ The fix runs synchronously in your terminal, streaming output as the
 agent works. This allows you to review the analysis results before
 deciding which jobs to fix.
 
+Use --unaddressed to automatically discover and fix all unaddressed
+completed jobs for the current repo.
+
 Examples:
   roborev fix 123                    # Fix a single job
   roborev fix 123 124 125            # Fix multiple jobs
   roborev fix --agent claude-code 123
+  roborev fix --unaddressed              # Fix unaddressed jobs on current branch
+  roborev fix --unaddressed --branch main  # Only unaddressed jobs on main
+  roborev fix --unaddressed --all-branches # Fix unaddressed jobs across all branches
 `,
-		Args: cobra.MinimumNArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if branch != "" && !unaddressed {
+				return fmt.Errorf("--branch requires --unaddressed")
+			}
+			if allBranches && !unaddressed {
+				return fmt.Errorf("--all-branches requires --unaddressed")
+			}
+			if allBranches && branch != "" {
+				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
+			}
+			if unaddressed && len(args) > 0 {
+				return fmt.Errorf("--unaddressed cannot be used with positional job IDs")
+			}
+			if !unaddressed && len(args) == 0 {
+				return fmt.Errorf("requires at least 1 arg(s), only received 0 (use --unaddressed to fix all unaddressed jobs)")
+			}
+
+			opts := fixOptions{
+				agentName: agentName,
+				model:     model,
+				reasoning: reasoning,
+				quiet:     quiet,
+			}
+
+			if unaddressed {
+				// Default to current branch unless --branch or --all-branches is set
+				effectiveBranch := branch
+				if !allBranches && effectiveBranch == "" {
+					workDir, err := os.Getwd()
+					if err == nil {
+						repoRoot := workDir
+						if root, err := git.GetRepoRoot(workDir); err == nil {
+							repoRoot = root
+						}
+						effectiveBranch = git.GetCurrentBranch(repoRoot)
+					}
+				}
+				return runFixUnaddressed(cmd, effectiveBranch, opts)
+			}
+
 			// Parse job IDs
 			var jobIDs []int64
 			for _, arg := range args {
@@ -57,13 +105,6 @@ Examples:
 				jobIDs = append(jobIDs, id)
 			}
 
-			opts := fixOptions{
-				agentName: agentName,
-				model:     model,
-				reasoning: reasoning,
-				quiet:     quiet,
-			}
-
 			return runFix(cmd, jobIDs, opts)
 		},
 	}
@@ -72,6 +113,9 @@ Examples:
 	cmd.Flags().StringVar(&model, "model", "", "model for agent")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, or thorough")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress progress output")
+	cmd.Flags().BoolVar(&unaddressed, "unaddressed", false, "fix all unaddressed completed jobs for the current repo")
+	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch; requires --unaddressed)")
+	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include unaddressed jobs from all branches (requires --unaddressed)")
 
 	return cmd
 }
@@ -118,6 +162,66 @@ func runFix(cmd *cobra.Command, jobIDs []int64, opts fixOptions) error {
 	}
 
 	return nil
+}
+
+func runFixUnaddressed(cmd *cobra.Command, branch string, opts fixOptions) error {
+	// Ensure daemon is running
+	if err := ensureDaemon(); err != nil {
+		return err
+	}
+
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+
+	repoRoot := workDir
+	if root, err := git.GetRepoRoot(workDir); err == nil {
+		repoRoot = root
+	}
+
+	// Query for unaddressed done jobs in this repo
+	queryURL := fmt.Sprintf("%s/api/jobs?status=done&repo=%s&addressed=false&limit=0",
+		serverAddr, url.QueryEscape(repoRoot))
+	if branch != "" {
+		queryURL += "&branch=" + url.QueryEscape(branch)
+	}
+
+	resp, err := http.Get(queryURL)
+	if err != nil {
+		return fmt.Errorf("query jobs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
+	}
+
+	var jobsResp struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	if len(jobsResp.Jobs) == 0 {
+		if !opts.quiet {
+			cmd.Println("No unaddressed jobs found.")
+		}
+		return nil
+	}
+
+	var jobIDs []int64
+	for _, j := range jobsResp.Jobs {
+		jobIDs = append(jobIDs, j.ID)
+	}
+
+	if !opts.quiet {
+		cmd.Printf("Found %d unaddressed job(s): %v\n", len(jobIDs), jobIDs)
+	}
+
+	return runFix(cmd, jobIDs, opts)
 }
 
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions) error {

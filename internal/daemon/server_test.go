@@ -1109,6 +1109,52 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 }
 
+func TestHandleListJobsAddressedFilter(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	repo, _ := db.GetOrCreateRepo("/tmp/repo-addr-filter")
+	commit, _ := db.GetOrCreateCommit(repo.ID, "aaa", "A", "S", time.Now())
+	job1, _ := db.EnqueueJob(repo.ID, commit.ID, "aaa", "main", "codex", "", "")
+	db.ClaimJob("w")
+	db.CompleteJob(job1.ID, "codex", "", "output1")
+
+	commit2, _ := db.GetOrCreateCommit(repo.ID, "bbb", "A", "S2", time.Now())
+	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "bbb", "main", "codex", "", "")
+	db.ClaimJob("w")
+	db.CompleteJob(job2.ID, "codex", "", "output2")
+	db.MarkReviewAddressedByJobID(job2.ID, true)
+
+	t.Run("addressed=false", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs?addressed=false", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&result)
+		if len(result.Jobs) != 1 {
+			t.Errorf("Expected 1 unaddressed job, got %d", len(result.Jobs))
+		}
+	})
+
+	t.Run("branch filter", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs?branch=main", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&result)
+		if len(result.Jobs) != 2 {
+			t.Errorf("Expected 2 jobs on main, got %d", len(result.Jobs))
+		}
+	})
+}
+
 func TestHandleStreamEvents(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()

@@ -1738,7 +1738,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	}
 
 	t.Run("git_ref filter returns matching job", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, "abc123")
+		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("abc123"))
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
@@ -1751,7 +1751,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 
 	t.Run("git_ref filter with range ref", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, "abc123..def456")
+		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("abc123..def456"))
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
@@ -1764,7 +1764,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 
 	t.Run("git_ref filter with no match returns empty", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, "nonexistent")
+		jobs, err := db.ListJobs("", "", 50, 0, WithGitRef("nonexistent"))
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
@@ -1774,7 +1774,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 
 	t.Run("empty git_ref filter returns all jobs", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, "")
+		jobs, err := db.ListJobs("", "", 50, 0)
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
@@ -1784,12 +1784,84 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 
 	t.Run("git_ref filter combined with repo filter", func(t *testing.T) {
-		jobs, err := db.ListJobs("", repo.RootPath, 50, 0, "def456")
+		jobs, err := db.ListJobs("", repo.RootPath, 50, 0, WithGitRef("def456"))
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
 		if len(jobs) != 1 {
 			t.Errorf("Expected 1 job with git_ref and repo filter, got %d", len(jobs))
+		}
+	})
+}
+
+func TestListJobsWithBranchAndAddressedFilters(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/repo-branch-addr")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	// Create jobs on different branches
+	branches := []string{"main", "main", "feature"}
+	for i, br := range branches {
+		sha := fmt.Sprintf("sha%d", i)
+		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit failed: %v", err)
+		}
+		job, err := db.EnqueueJob(repo.ID, commit.ID, sha, br, "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
+		// Complete the job so it has a review
+		db.ClaimJob("w")
+		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
+
+		// Mark first job as addressed
+		if i == 0 {
+			db.MarkReviewAddressedByJobID(job.ID, true)
+		}
+	}
+
+	t.Run("branch filter", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 2 {
+			t.Errorf("Expected 2 jobs on main, got %d", len(jobs))
+		}
+	})
+
+	t.Run("addressed=false filter", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithAddressed(false))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 2 {
+			t.Errorf("Expected 2 unaddressed jobs, got %d", len(jobs))
+		}
+	})
+
+	t.Run("addressed=true filter", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithAddressed(true))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Errorf("Expected 1 addressed job, got %d", len(jobs))
+		}
+	})
+
+	t.Run("branch + addressed combined", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"), WithAddressed(false))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Errorf("Expected 1 unaddressed job on main, got %d", len(jobs))
 		}
 	})
 }

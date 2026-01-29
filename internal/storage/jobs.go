@@ -1094,8 +1094,33 @@ func (db *DB) GetJobRetryCount(jobID int64) (int, error) {
 	return count, err
 }
 
-// ListJobs returns jobs with optional status and repo filters
-func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, gitRefFilter ...string) ([]ReviewJob, error) {
+// ListJobsOption configures optional filters for ListJobs.
+type ListJobsOption func(*listJobsOptions)
+
+type listJobsOptions struct {
+	gitRef    string
+	branch    string
+	addressed *bool
+}
+
+// WithGitRef filters jobs by git ref.
+func WithGitRef(ref string) ListJobsOption {
+	return func(o *listJobsOptions) { o.gitRef = ref }
+}
+
+// WithBranch filters jobs by branch name.
+func WithBranch(branch string) ListJobsOption {
+	return func(o *listJobsOptions) { o.branch = branch }
+}
+
+// WithAddressed filters jobs by addressed state (true/false).
+func WithAddressed(addressed bool) ListJobsOption {
+	return func(o *listJobsOptions) { o.addressed = &addressed }
+}
+
+// ListJobs returns jobs with optional status, repo, branch, and addressed filters.
+// addressedFilter: nil = no filter, non-nil bool = filter by addressed state.
+func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
@@ -1117,9 +1142,24 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		conditions = append(conditions, "r.root_path = ?")
 		args = append(args, repoFilter)
 	}
-	if len(gitRefFilter) > 0 && gitRefFilter[0] != "" {
+	var o listJobsOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.gitRef != "" {
 		conditions = append(conditions, "j.git_ref = ?")
-		args = append(args, gitRefFilter[0])
+		args = append(args, o.gitRef)
+	}
+	if o.branch != "" {
+		conditions = append(conditions, "j.branch = ?")
+		args = append(args, o.branch)
+	}
+	if o.addressed != nil {
+		if *o.addressed {
+			conditions = append(conditions, "rv.addressed = 1")
+		} else {
+			conditions = append(conditions, "(rv.addressed IS NULL OR rv.addressed = 0)")
+		}
 	}
 
 	if len(conditions) > 0 {

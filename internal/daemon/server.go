@@ -591,7 +591,18 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		fetchLimit = limit + 1
 	}
 
-	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset, gitRef)
+	var listOpts []storage.ListJobsOption
+	if gitRef != "" {
+		listOpts = append(listOpts, storage.WithGitRef(gitRef))
+	}
+	if branch := r.URL.Query().Get("branch"); branch != "" {
+		listOpts = append(listOpts, storage.WithBranch(branch))
+	}
+	if addrStr := r.URL.Query().Get("addressed"); addrStr == "true" || addrStr == "false" {
+		listOpts = append(listOpts, storage.WithAddressed(addrStr == "true"))
+	}
+
+	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset, listOpts...)
 	if err != nil {
 		s.writeInternalError(w, fmt.Sprintf("list jobs: %v", err))
 		return
