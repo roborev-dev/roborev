@@ -208,7 +208,7 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 		opts.DoneAfterPolls = 2
 	}
 	jobIDStart := opts.JobIDStart
-	if jobIDStart == 0 {
+	if jobIDStart <= 0 {
 		jobIDStart = 1
 	}
 	jobID := jobIDStart - 1
@@ -232,8 +232,8 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 
 		case r.URL.Path == "/api/jobs":
 			if opts.OnJobs != nil {
-				opts.OnJobs(w, r)
 				atomic.AddInt32(&state.JobsCount, 1)
+				opts.OnJobs(w, r)
 				return
 			}
 			count := atomic.AddInt32(&state.JobsCount, 1)
