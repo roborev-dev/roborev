@@ -29,10 +29,11 @@ func assertNoEventReceived(t *testing.T, ch <-chan Event) {
 }
 
 // getSubscriberCount safely retrieves the current number of subscribers.
-func getSubscriberCount(b Broadcaster) int {
+func getSubscriberCount(t *testing.T, b Broadcaster) int {
+	t.Helper()
 	eb, ok := b.(*EventBroadcaster)
 	if !ok {
-		return -1
+		t.Fatal("Broadcaster is not *EventBroadcaster")
 	}
 	eb.mu.RLock()
 	defer eb.mu.RUnlock()
@@ -72,7 +73,7 @@ func TestBroadcaster_Subscribe(t *testing.T) {
 		t.Error("subscriber channels should be different")
 	}
 
-	if count := getSubscriberCount(b); count != 2 {
+	if count := getSubscriberCount(t, b); count != 2 {
 		t.Errorf("expected 2 subscribers, got %d", count)
 	}
 }
@@ -91,7 +92,7 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 		t.Error("expected channel to be closed after unsubscribe")
 	}
 
-	if count := getSubscriberCount(b); count != 0 {
+	if count := getSubscriberCount(t, b); count != 0 {
 		t.Errorf("expected 0 subscribers after unsubscribe, got %d", count)
 	}
 }
