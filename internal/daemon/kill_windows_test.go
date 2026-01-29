@@ -3,9 +3,10 @@
 package daemon
 
 import (
-	"strings"
 	"testing"
 )
+
+const testRoborevExe = `C:\Program Files\roborev\roborev.exe`
 
 func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 	tests := []struct {
@@ -25,37 +26,37 @@ func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 		},
 		{
 			name:    "roborev daemon run returns isRoborev",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon run`,
+			cmdLine: testRoborevExe + ` daemon run`,
 			want:    processIsRoborev,
 		},
 		{
 			name:    "roborev daemon run with flags after returns isRoborev",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon run --port 7373`,
+			cmdLine: testRoborevExe + ` daemon run --port 7373`,
 			want:    processIsRoborev,
 		},
 		{
 			name:    "roborev daemon run with flags between returns isRoborev",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon --verbose run`,
+			cmdLine: testRoborevExe + ` daemon --verbose run`,
 			want:    processIsRoborev,
 		},
 		{
 			name:    "roborev daemon run with multiple flags between returns isRoborev",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon -v --config C:\roborev.toml run`,
+			cmdLine: testRoborevExe + ` daemon -v --config C:\roborev.toml run`,
 			want:    processIsRoborev,
 		},
 		{
 			name:    "roborev daemon status returns notRoborev",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon status`,
+			cmdLine: testRoborevExe + ` daemon status`,
 			want:    processNotRoborev,
 		},
 		{
 			name:    "roborev daemon stop returns notRoborev",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon stop`,
+			cmdLine: testRoborevExe + ` daemon stop`,
 			want:    processNotRoborev,
 		},
 		{
 			name:    "roborev without daemon returns notRoborev",
-			cmdLine: `C:\Program Files\roborev\roborev.exe review`,
+			cmdLine: testRoborevExe + ` review`,
 			want:    processNotRoborev,
 		},
 		{
@@ -71,23 +72,23 @@ func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 		// False positive prevention - "run" in flags
 		{
 			name:    "dry-run flag with daemon status",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon status --dry-run`,
+			cmdLine: testRoborevExe + ` daemon status --dry-run`,
 			want:    processNotRoborev,
 		},
 		{
 			name:    "run-once flag with daemon stop",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon stop --run-once`,
+			cmdLine: testRoborevExe + ` daemon stop --run-once`,
 			want:    processNotRoborev,
 		},
 		// False positive prevention - "run" as flag value after another subcommand
 		{
 			name:    "run as flag value after status",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon status --output run`,
+			cmdLine: testRoborevExe + ` daemon status --output run`,
 			want:    processNotRoborev,
 		},
 		{
 			name:    "run as positional arg after status",
-			cmdLine: `C:\Program Files\roborev\roborev.exe daemon status run`,
+			cmdLine: testRoborevExe + ` daemon status run`,
 			want:    processNotRoborev,
 		},
 	}
@@ -149,13 +150,7 @@ func TestWmicHeaderOnlyOutput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate getCommandLineWmic logic
-			result := normalizeCommandLine(tt.wmicOutput)
-			lower := strings.ToLower(result)
-			if strings.HasPrefix(lower, "commandline") {
-				result = strings.TrimSpace(result[11:])
-			}
-
+			result := parseWmicOutput(tt.wmicOutput)
 			gotEmpty := result == ""
 			if gotEmpty != tt.wantEmpty {
 				t.Errorf("header extraction: got empty=%v, want empty=%v (result=%q)",

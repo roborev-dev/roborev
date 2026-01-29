@@ -50,16 +50,7 @@ func getCommandLineWmic(pidStr string) string {
 		return ""
 	}
 	// wmic output has header line "CommandLine" followed by data
-	// Normalize and remove the header
-	result := normalizeCommandLine(string(output))
-	// Remove the "CommandLine" header if present (case-insensitive)
-	lower := strings.ToLower(result)
-	if strings.HasPrefix(lower, "commandline") {
-		result = strings.TrimSpace(result[11:]) // len("commandline") == 11
-	}
-	// If result is empty or just the header was present, return empty
-	// This ensures header-only output is treated as "no data" (unknown)
-	return result
+	return parseWmicOutput(string(output))
 }
 
 // getCommandLinePowerShell tries to get process command line via PowerShell.
@@ -75,6 +66,17 @@ func getCommandLinePowerShell(pidStr string) string {
 		return ""
 	}
 	return normalizeCommandLine(string(output))
+}
+
+// parseWmicOutput normalizes raw WMIC output and strips the "CommandLine" header.
+// Returns the command line value, or empty string if only the header was present.
+func parseWmicOutput(raw string) string {
+	result := normalizeCommandLine(raw)
+	lower := strings.ToLower(result)
+	if strings.HasPrefix(lower, "commandline") {
+		result = strings.TrimSpace(result[11:]) // len("commandline") == 11
+	}
+	return result
 }
 
 // normalizeCommandLine cleans up command line output from system tools.
