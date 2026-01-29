@@ -81,8 +81,8 @@ func TestNonGeminiRunReturnsEmpty(t *testing.T) {
 		result := GetSystemPrompt(agent, "run")
 		if result != "" {
 			snippet := result
-			if len(result) > 50 {
-				snippet = result[:50] + "..."
+			if len(result) > 100 {
+				snippet = result[:100] + "..."
 			}
 			t.Errorf("GetSystemPrompt(%q, \"run\") = %q, want empty string", agent, snippet)
 		}
