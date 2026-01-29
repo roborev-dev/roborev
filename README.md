@@ -68,6 +68,8 @@ https://github.com/user-attachments/assets/c72d7189-9a31-4c1a-a43f-c788cbd97182
 | `roborev refine` | Auto-fix failed reviews using AI |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |
+| `roborev analyze <type>` | Run built-in code analysis and assisted refactoring |
+| `roborev fix <id>` | Apply fixes for completed analysis |
 | `roborev address <id>` | Mark review as addressed |
 | `roborev skills install` | Install agent skills for Claude/Codex |
 
@@ -108,6 +110,7 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Commands Reference](https://roborev.io/commands/)
 - [Configuration](https://roborev.io/configuration/)
 - [Auto-Fixing with Refine](https://roborev.io/guides/auto-fixing/)
+- [Code Analysis and Assisted Refactoring](https://www.roborev.io/guides/assisted-refactoring/)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
 - [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
 
