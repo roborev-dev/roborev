@@ -181,6 +181,7 @@ type MockServerState struct {
 	JobsCount    int32
 	ReviewCount  int32
 	AddressCount int32
+	CommentCount int32
 }
 
 // MockServerOpts configures the behavior of a mock roborev server.
@@ -263,6 +264,10 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 				Agent:  opts.Agent,
 				Output: output,
 			})
+
+		case r.URL.Path == "/api/comment" && r.Method == http.MethodPost:
+			atomic.AddInt32(&state.CommentCount, 1)
+			w.WriteHeader(http.StatusCreated)
 
 		case r.URL.Path == "/api/review/address":
 			atomic.AddInt32(&state.AddressCount, 1)

@@ -148,6 +148,7 @@ func TestFetchReview(t *testing.T) {
 func TestAddJobResponse(t *testing.T) {
 	var gotJobID int64
 	var gotContent string
+
 	var gotCommenter string
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -190,9 +191,7 @@ func TestFixSingleJob(t *testing.T) {
 	})
 
 	ts, _ := newMockServer(t, MockServerOpts{
-		JobIDStart:     99,
-		DoneAfterPolls: 1,
-		ReviewOutput:   "## Issues\n- Found minor issue",
+		ReviewOutput: "## Issues\n- Found minor issue",
 		OnJobs: func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{
 				"jobs": []storage.ReviewJob{{
@@ -229,8 +228,6 @@ func TestFixSingleJob(t *testing.T) {
 
 func TestFixJobNotComplete(t *testing.T) {
 	ts, _ := newMockServer(t, MockServerOpts{
-		JobIDStart:     99,
-		DoneAfterPolls: 1,
 		OnJobs: func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]interface{}{
 				"jobs": []storage.ReviewJob{{
