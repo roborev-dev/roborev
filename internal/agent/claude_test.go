@@ -7,20 +7,16 @@ import (
 	"testing"
 )
 
-// assertArgs checks that args contains all required substrings and none of the forbidden ones.
-func assertArgs(t *testing.T, args []string, required, forbidden []string) {
+// toolsArgValue returns the value of the --allowedTools argument.
+func toolsArgValue(t *testing.T, args []string) string {
 	t.Helper()
-	argsStr := strings.Join(args, " ")
-	for _, req := range required {
-		if !strings.Contains(argsStr, req) {
-			t.Errorf("missing required arg: %s\nargs: %v", req, args)
+	for i, a := range args {
+		if a == "--allowedTools" && i+1 < len(args) {
+			return args[i+1]
 		}
 	}
-	for _, forb := range forbidden {
-		if strings.Contains(argsStr, forb) {
-			t.Errorf("forbidden arg found: %s\nargs: %v", forb, args)
-		}
-	}
+	t.Fatal("--allowedTools not found in args")
+	return ""
 }
 
 func TestClaudeBuildArgs(t *testing.T) {
@@ -28,17 +24,27 @@ func TestClaudeBuildArgs(t *testing.T) {
 
 	// Non-agentic mode (review only): read-only tools, no dangerous flag
 	args := a.buildArgs(false)
-	assertArgs(t, args,
-		[]string{"--output-format", "stream-json", "--verbose", "-p", "--allowedTools"},
-		[]string{claudeDangerousFlag, "Edit", "Write", "Bash"},
-	)
+	for _, req := range []string{"--output-format", "stream-json", "--verbose", "-p", "--allowedTools"} {
+		assertContainsArg(t, args, req)
+	}
+	assertNotContainsArg(t, args, claudeDangerousFlag)
+	tools := toolsArgValue(t, args)
+	for _, forb := range []string{"Edit", "Write", "Bash"} {
+		if strings.Contains(tools, forb) {
+			t.Errorf("non-agentic tools should not contain %q, got %q", forb, tools)
+		}
+	}
 
 	// Agentic mode: write tools + dangerous flag
 	args = a.buildArgs(true)
-	assertArgs(t, args,
-		[]string{claudeDangerousFlag, "--allowedTools", "Edit", "Write"},
-		nil,
-	)
+	assertContainsArg(t, args, claudeDangerousFlag)
+	assertContainsArg(t, args, "--allowedTools")
+	tools = toolsArgValue(t, args)
+	for _, req := range []string{"Edit", "Write"} {
+		if !strings.Contains(tools, req) {
+			t.Errorf("agentic tools should contain %q, got %q", req, tools)
+		}
+	}
 }
 
 func TestClaudeSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
