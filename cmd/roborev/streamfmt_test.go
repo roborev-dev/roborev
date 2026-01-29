@@ -50,17 +50,25 @@ func (fix *streamFormatterFixture) assertEmpty(t *testing.T) {
 	}
 }
 
+// mustMarshal is like json.Marshal but panics on error.
+// Safe to use in tests where inputs are always simple map literals.
+func mustMarshal(v interface{}) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("mustMarshal: %v", err))
+	}
+	return b
+}
+
 // Event builders for Anthropic-style JSON.
 
 func eventAssistantToolUse(toolName string, input map[string]interface{}) string {
-	inputJSON, _ := json.Marshal(input)
 	return fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":%q,"input":%s}]}}`,
-		toolName, inputJSON)
+		toolName, mustMarshal(input))
 }
 
 func eventAssistantText(text string) string {
-	textJSON, _ := json.Marshal(text)
-	return fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"text","text":%s}]}}`, textJSON)
+	return fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"text","text":%s}]}}`, mustMarshal(text))
 }
 
 func eventAssistantMulti(blocks ...string) string {
@@ -68,26 +76,22 @@ func eventAssistantMulti(blocks ...string) string {
 }
 
 func contentBlockText(text string) string {
-	textJSON, _ := json.Marshal(text)
-	return fmt.Sprintf(`{"type":"text","text":%s}`, textJSON)
+	return fmt.Sprintf(`{"type":"text","text":%s}`, mustMarshal(text))
 }
 
 func contentBlockToolUse(toolName string, input map[string]interface{}) string {
-	inputJSON, _ := json.Marshal(input)
-	return fmt.Sprintf(`{"type":"tool_use","name":%q,"input":%s}`, toolName, inputJSON)
+	return fmt.Sprintf(`{"type":"tool_use","name":%q,"input":%s}`, toolName, mustMarshal(input))
 }
 
 func eventAssistantLegacy(content string) string {
-	contentJSON, _ := json.Marshal(content)
-	return fmt.Sprintf(`{"type":"assistant","message":{"content":%s}}`, contentJSON)
+	return fmt.Sprintf(`{"type":"assistant","message":{"content":%s}}`, mustMarshal(content))
 }
 
 // Event builders for Gemini-style JSON.
 
 func eventGeminiToolUse(toolName, toolID string, params map[string]interface{}) string {
-	paramsJSON, _ := json.Marshal(params)
 	return fmt.Sprintf(`{"type":"tool_use","tool_name":%q,"tool_id":%q,"parameters":%s}`,
-		toolName, toolID, paramsJSON)
+		toolName, toolID, mustMarshal(params))
 }
 
 func TestStreamFormatter_ToolUse(t *testing.T) {
@@ -114,10 +118,10 @@ func TestStreamFormatter_TextOutput(t *testing.T) {
 
 func TestStreamFormatter_NonTTY(t *testing.T) {
 	fix := newFixture(false)
-	raw := eventAssistantText("hello") + "\n"
-	fix.f.Write([]byte(raw))
+	raw := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`
+	fix.writeLine(raw)
 	// Non-TTY should pass through raw JSON
-	if fix.output() != raw {
+	if fix.output() != raw+"\n" {
 		t.Errorf("non-TTY should pass through raw, got:\n%s", fix.output())
 	}
 }
