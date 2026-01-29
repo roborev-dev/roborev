@@ -138,13 +138,19 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 		t.Fatalf("Expected job to succeed, got status %s", finalJob.Status)
 	}
 
-	// Drain events until we find the review.completed event
+	// Drain events until we find the review.completed event (bounded to prevent misleading timeout errors)
 	var event Event
-	for {
+	const maxEvents = 20
+	found := false
+	for i := 0; i < maxEvents; i++ {
 		event = testutil.ReceiveWithTimeout(t, eventCh, 1*time.Second)
 		if event.Type == "review.completed" {
+			found = true
 			break
 		}
+	}
+	if !found {
+		t.Fatalf("never received review.completed event after draining %d events", maxEvents)
 	}
 	if event.JobID != job.ID {
 		t.Errorf("Expected JobID %d, got %d", job.ID, event.JobID)
