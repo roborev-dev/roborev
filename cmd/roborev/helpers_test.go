@@ -123,6 +123,49 @@ func writeTestFiles(t *testing.T, files map[string]string) string {
 	return dir
 }
 
+// chdirRepo changes the working directory to the given path and restores it
+// when the test completes.
+func chdirRepo(t *testing.T, dir string) {
+	t.Helper()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+}
+
+// mockReviewDaemon sets up a mock daemon that returns the given review on
+// GET /api/review. It returns a function to retrieve the last received query
+// string.
+func mockReviewDaemon(t *testing.T, review storage.Review) func() string {
+	t.Helper()
+	var receivedQuery string
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/review" && r.Method == "GET" {
+			receivedQuery = r.URL.RawQuery
+			json.NewEncoder(w).Encode(review)
+			return
+		}
+	}))
+	t.Cleanup(cleanup)
+	return func() string { return receivedQuery }
+}
+
+// runShowCmd executes showCmd() with the given args and returns captured stdout.
+func runShowCmd(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := showCmd()
+	cmd.SetArgs(args)
+	return captureStdout(t, func() {
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
 // newTestCmd creates a cobra.Command with output captured to the returned buffer.
 func newTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
