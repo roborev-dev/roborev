@@ -206,6 +206,14 @@ func (wp *WorkerPool) registerRunningJob(jobID int64, cancel context.CancelFunc)
 	wp.runningJobsMu.Unlock()
 }
 
+// IsJobPendingCancel reports whether a job is in the pendingCancels set.
+// This is intended for use in tests.
+func (wp *WorkerPool) IsJobPendingCancel(jobID int64) bool {
+	wp.runningJobsMu.Lock()
+	defer wp.runningJobsMu.Unlock()
+	return wp.pendingCancels[jobID]
+}
+
 // unregisterRunningJob removes a job from the running jobs map
 func (wp *WorkerPool) unregisterRunningJob(jobID int64) {
 	wp.runningJobsMu.Lock()

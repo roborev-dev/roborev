@@ -10,60 +10,91 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
-func TestWorkerPoolE2E(t *testing.T) {
+// workerTestContext encapsulates the common setup for worker pool tests.
+type workerTestContext struct {
+	DB          *storage.DB
+	TmpDir      string
+	Repo        *storage.Repo
+	Pool        *WorkerPool
+	Broadcaster Broadcaster
+}
+
+// newWorkerTestContext creates a DB, repo, broadcaster, and worker pool with
+// the given number of workers. Pass 0 to use the config default.
+func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
+	t.Helper()
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
-	// Setup config with test agent
 	cfg := config.DefaultConfig()
-	cfg.MaxWorkers = 2
+	if workers > 0 {
+		cfg.MaxWorkers = workers
+	}
 
-	// Create a repo and commit
 	repo, err := db.GetOrCreateRepo(tmpDir)
 	if err != nil {
 		t.Fatalf("GetOrCreateRepo failed: %v", err)
 	}
 
-	commit, err := db.GetOrCreateCommit(repo.ID, "testsha123", "Test Author", "Test commit", time.Now())
+	b := NewBroadcaster()
+	pool := NewWorkerPool(db, NewStaticConfig(cfg), max(workers, 1), b, nil)
+
+	return &workerTestContext{
+		DB:          db,
+		TmpDir:      tmpDir,
+		Repo:        repo,
+		Pool:        pool,
+		Broadcaster: b,
+	}
+}
+
+// createJob enqueues a job for the given SHA and returns it.
+func (c *workerTestContext) createJob(t *testing.T, sha string) *storage.ReviewJob {
+	t.Helper()
+	commit, err := c.DB.GetOrCreateCommit(c.Repo.ID, sha, "Author", "Subject", time.Now())
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-
-	// Enqueue a job with test agent
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha123", "", "test", "", "")
+	job, err := c.DB.EnqueueJob(c.Repo.ID, commit.ID, sha, "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
+	return job
+}
 
-	// Create and start worker pool
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
-	pool.Start()
-
-	// Wait for job to complete (with timeout)
-	deadline := time.Now().Add(10 * time.Second)
-	var finalJob *storage.ReviewJob
-	for time.Now().Before(deadline) {
-		finalJob, err = db.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if finalJob.Status == storage.JobStatusDone || finalJob.Status == storage.JobStatusFailed {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+// createAndClaimJob enqueues and claims a job, returning both.
+func (c *workerTestContext) createAndClaimJob(t *testing.T, sha, workerID string) *storage.ReviewJob {
+	t.Helper()
+	job := c.createJob(t, sha)
+	claimed, err := c.DB.ClaimJob(workerID)
+	if err != nil {
+		t.Fatalf("ClaimJob failed: %v", err)
 	}
+	if claimed.ID != job.ID {
+		t.Fatalf("Expected to claim job %d, got %d", job.ID, claimed.ID)
+	}
+	return job
+}
 
-	// Stop worker pool
-	pool.Stop()
+// waitForJobStatus polls until the job reaches one of the given statuses.
+func (c *workerTestContext) waitForJobStatus(t *testing.T, jobID int64, statuses ...storage.JobStatus) *storage.ReviewJob {
+	t.Helper()
+	return testutil.WaitForJobStatus(t, c.DB, jobID, 10*time.Second, statuses...)
+}
 
-	// Verify job completed (might fail if git repo not available, that's ok)
+func TestWorkerPoolE2E(t *testing.T) {
+	tc := newWorkerTestContext(t, 2)
+	job := tc.createJob(t, "testsha123")
+
+	tc.Pool.Start()
+	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusDone, storage.JobStatusFailed)
+	tc.Pool.Stop()
+
 	if finalJob.Status != storage.JobStatusDone && finalJob.Status != storage.JobStatusFailed {
 		t.Errorf("Job should be done or failed, got %s", finalJob.Status)
 	}
 
-	// If done, verify review was stored
 	if finalJob.Status == storage.JobStatusDone {
-		review, err := db.GetReviewByCommitSHA("testsha123")
+		review, err := tc.DB.GetReviewByCommitSHA("testsha123")
 		if err != nil {
 			t.Fatalf("GetReviewByCommitSHA failed: %v", err)
 		}
@@ -84,7 +115,6 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo(tmpDir)
 
-	// Create multiple jobs
 	for i := 0; i < 5; i++ {
 		sha := "concurrentsha" + string(rune('0'+i))
 		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
@@ -95,45 +125,26 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), 4, broadcaster, nil)
 	pool.Start()
 
-	// Wait briefly and check active workers
 	time.Sleep(500 * time.Millisecond)
 	activeWorkers := pool.ActiveWorkers()
 
 	pool.Stop()
 
-	// Should have had some workers active (exact number depends on timing)
 	t.Logf("Peak active workers: %d", activeWorkers)
 }
 
 func TestWorkerPoolCancelRunningJob(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createJob(t, "cancelsha")
 
-	cfg := config.DefaultConfig()
-	cfg.MaxWorkers = 1
+	tc.Pool.Start()
+	defer tc.Pool.Stop()
 
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "cancelsha", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "cancelsha", "", "test", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
-	pool.Start()
-	defer pool.Stop()
-
-	// Wait for job to be claimed (status becomes running)
+	// Wait for job to be claimed (poll quickly since running state may be brief)
 	deadline := time.Now().Add(5 * time.Second)
 	reachedRunning := false
 	for time.Now().Before(deadline) {
-		j, err := db.GetJobByID(job.ID)
+		j, err := tc.DB.GetJobByID(job.ID)
 		if err != nil {
 			t.Fatalf("GetJobByID failed: %v", err)
 		}
@@ -143,22 +154,19 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
 	if !reachedRunning {
 		t.Fatal("Timeout: job never reached 'running' state")
 	}
 
-	// Cancel the job via DB and worker pool
-	if err := db.CancelJob(job.ID); err != nil {
+	// Cancel the job
+	if err := tc.DB.CancelJob(job.ID); err != nil {
 		t.Fatalf("CancelJob failed: %v", err)
 	}
-	pool.CancelJob(job.ID)
+	tc.Pool.CancelJob(job.ID)
 
-	// Wait for worker to react to cancellation
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify job status is canceled
-	finalJob, err := db.GetJobByID(job.ID)
+	finalJob, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
 		t.Fatalf("GetJobByID failed: %v", err)
 	}
@@ -166,109 +174,47 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 		t.Errorf("Expected status 'canceled', got '%s'", finalJob.Status)
 	}
 
-	// Verify no review was stored
-	_, err = db.GetReviewByJobID(job.ID)
+	_, err = tc.DB.GetReviewByJobID(job.ID)
 	if err == nil {
 		t.Error("Expected no review for canceled job, but found one")
 	}
 }
 
 func TestWorkerPoolPendingCancellation(t *testing.T) {
-	// Test the race condition fix: cancel arrives before job is registered
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "pending-cancel", "test-worker")
 
-	cfg := config.DefaultConfig()
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
-
-	// Create a real job in 'running' state (simulating claimed but not yet registered)
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "pending-cancel", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "pending-cancel", "", "test", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	// Manually claim the job to put it in 'running' state
-	_, err = db.ClaimJob("test-worker")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-
-	// Don't start the pool - we want to test pending cancellation manually
-
-	// Mark the job as pending cancellation before it's registered
-	// CancelJob now returns true for pending cancellations of valid jobs
-	if !pool.CancelJob(job.ID) {
+	// Don't start the pool - test pending cancellation manually
+	if !tc.Pool.CancelJob(job.ID) {
 		t.Error("CancelJob should return true for valid running job")
 	}
 
-	// Verify it's in pending cancels
-	pool.runningJobsMu.Lock()
-	if !pool.pendingCancels[job.ID] {
+	if !tc.Pool.IsJobPendingCancel(job.ID) {
 		t.Errorf("Job %d should be in pendingCancels", job.ID)
 	}
-	pool.runningJobsMu.Unlock()
 
-	// Now register the job - should immediately cancel
 	canceled := false
-	pool.registerRunningJob(job.ID, func() { canceled = true })
+	tc.Pool.registerRunningJob(job.ID, func() { canceled = true })
 
 	if !canceled {
 		t.Error("Job should have been canceled immediately on registration")
 	}
 
-	// Verify it's been removed from pending cancels
-	pool.runningJobsMu.Lock()
-	if pool.pendingCancels[job.ID] {
+	if tc.Pool.IsJobPendingCancel(job.ID) {
 		t.Errorf("Job %d should have been removed from pendingCancels", job.ID)
 	}
-	pool.runningJobsMu.Unlock()
 }
 
 func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
-	// Test the real API path: db.CancelJob is called first (sets status to 'canceled'),
-	// then workerPool.CancelJob is called while worker hasn't registered yet.
-	// This simulates the race condition in handleCancelJob.
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "api-cancel-race", "test-worker")
 
-	cfg := config.DefaultConfig()
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
-
-	// Create and claim a job (simulating worker claimed but not yet registered)
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "api-cancel-race", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "api-cancel-race", "", "test", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	claimed, err := db.ClaimJob("test-worker")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-	if claimed.ID != job.ID {
-		t.Fatalf("Expected to claim job %d, got %d", job.ID, claimed.ID)
-	}
-
-	// Simulate the API path: db.CancelJob is called first
-	if err := db.CancelJob(job.ID); err != nil {
+	// Simulate the API path: db.CancelJob first
+	if err := tc.DB.CancelJob(job.ID); err != nil {
 		t.Fatalf("db.CancelJob failed: %v", err)
 	}
 
-	// Verify status is now 'canceled' but WorkerID is still set
-	jobAfterDBCancel, err := db.GetJobByID(job.ID)
+	jobAfterDBCancel, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
 		t.Fatalf("GetJobByID failed: %v", err)
 	}
@@ -279,23 +225,16 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 		t.Fatal("Expected WorkerID to be set after claim")
 	}
 
-	// Now call workerPool.CancelJob (simulating second part of handleCancelJob)
-	// This should still work because job has WorkerID set (was claimed)
-	if !pool.CancelJob(job.ID) {
+	if !tc.Pool.CancelJob(job.ID) {
 		t.Error("CancelJob should return true for canceled-but-claimed job")
 	}
 
-	// Verify it's in pending cancels
-	pool.runningJobsMu.Lock()
-	inPending := pool.pendingCancels[job.ID]
-	pool.runningJobsMu.Unlock()
-	if !inPending {
+	if !tc.Pool.IsJobPendingCancel(job.ID) {
 		t.Errorf("Job %d should be in pendingCancels", job.ID)
 	}
 
-	// Now register the job - should immediately cancel
 	canceled := false
-	pool.registerRunningJob(job.ID, func() { canceled = true })
+	tc.Pool.registerRunningJob(job.ID, func() { canceled = true })
 
 	if !canceled {
 		t.Error("Job should have been canceled immediately on registration")
@@ -303,60 +242,30 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 }
 
 func TestWorkerPoolCancelInvalidJob(t *testing.T) {
-	// Test that CancelJob returns false for non-existent jobs
 	db := testutil.OpenTestDB(t)
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
 
-	// CancelJob for non-existent job should return false
 	if pool.CancelJob(99999) {
 		t.Error("CancelJob should return false for non-existent job")
 	}
 
-	// Verify it's NOT in pending cancels (prevents unbounded growth)
-	pool.runningJobsMu.Lock()
-	if pool.pendingCancels[99999] {
+	if pool.IsJobPendingCancel(99999) {
 		t.Error("Non-existent job should not be added to pendingCancels")
 	}
-	pool.runningJobsMu.Unlock()
 }
 
 func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
-	// Test that CancelJob doesn't add stale pendingCancels when job finishes
-	// during the DB lookup window (simulated by completing job before CancelJob)
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "finish-window", "test-worker")
 
-	cfg := config.DefaultConfig()
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
-
-	// Create and claim a job
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "finish-window", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "finish-window", "", "test", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	_, err = db.ClaimJob("test-worker")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-
-	// Complete the job (simulates job finishing during DB lookup window)
-	if err := db.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
+	if err := tc.DB.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
 
-	// Verify job is now done
-	completedJob, err := db.GetJobByID(job.ID)
+	completedJob, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
 		t.Fatalf("GetJobByID failed: %v", err)
 	}
@@ -364,53 +273,23 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 		t.Fatalf("Expected status 'done', got '%s'", completedJob.Status)
 	}
 
-	// CancelJob should return false because job is done
-	if pool.CancelJob(job.ID) {
+	if tc.Pool.CancelJob(job.ID) {
 		t.Error("CancelJob should return false for completed job")
 	}
 
-	// Verify pendingCancels is empty (no stale entry)
-	pool.runningJobsMu.Lock()
-	if pool.pendingCancels[job.ID] {
+	if tc.Pool.IsJobPendingCancel(job.ID) {
 		t.Error("Completed job should not be added to pendingCancels")
 	}
-	pool.runningJobsMu.Unlock()
 }
 
 func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
-	// Test that a job registered during DB checks gets canceled
-	// This simulates the race where job registers after initial runningJobs check
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "register-during", "test-worker")
 
-	cfg := config.DefaultConfig()
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
-
-	// Create and claim a job
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "register-during", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "register-during", "", "test", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	_, err = db.ClaimJob("test-worker")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-
-	// Pre-register the job with a cancel function
-	// This simulates the job registering between CancelJob's checks
 	canceled := false
-	pool.registerRunningJob(job.ID, func() { canceled = true })
+	tc.Pool.registerRunningJob(job.ID, func() { canceled = true })
 
-	// Now CancelJob should find it in runningJobs and cancel
-	if !pool.CancelJob(job.ID) {
+	if !tc.Pool.CancelJob(job.ID) {
 		t.Error("CancelJob should return true for registered job")
 	}
 
@@ -418,55 +297,24 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 		t.Error("Job should have been canceled")
 	}
 
-	// Verify it's not in pendingCancels (was handled via runningJobs)
-	pool.runningJobsMu.Lock()
-	if pool.pendingCancels[job.ID] {
+	if tc.Pool.IsJobPendingCancel(job.ID) {
 		t.Error("Registered job should not be in pendingCancels")
 	}
-	pool.runningJobsMu.Unlock()
 }
 
 func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
-	// Test concurrent registration during CancelJob
-	// Uses a test hook to deterministically register the job during CancelJob's
-	// DB lookup window, exercising the "registration during cancel" code path
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-
-	cfg := config.DefaultConfig()
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
-
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-
-	sha := "concurrent-register"
-	commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "", "test", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	_, err = db.ClaimJob("test-worker")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createJob(t, "concurrent-register")
+	tc.DB.ClaimJob("test-worker")
 
 	var canceled int32
 	cancelFunc := func() { atomic.AddInt32(&canceled, 1) }
 
-	// Set up hook to register the job at a deterministic point during CancelJob
-	// This happens after the second runningJobs check, ensuring we exercise
-	// the final check code path where registration occurs during DB lookup
-	pool.testHookAfterSecondCheck = func() {
-		pool.registerRunningJob(job.ID, cancelFunc)
+	tc.Pool.testHookAfterSecondCheck = func() {
+		tc.Pool.registerRunningJob(job.ID, cancelFunc)
 	}
 
-	// CancelJob should find the job via the final check and cancel it
-	result := pool.CancelJob(job.ID)
+	result := tc.Pool.CancelJob(job.ID)
 
 	if !result {
 		t.Error("CancelJob should return true")
@@ -475,58 +323,27 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 		t.Error("Job should have been canceled exactly once")
 	}
 
-	// Clean up
-	pool.unregisterRunningJob(job.ID)
+	tc.Pool.unregisterRunningJob(job.ID)
 }
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
-	// Test that cancel() is called without holding the lock (no deadlock)
-	// This verifies the fix for the "final check" path by using a test hook
-	// to deterministically register the job between the second check and final check
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createJob(t, "deadlock-test")
+	tc.DB.ClaimJob("test-worker")
 
-	cfg := config.DefaultConfig()
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
-
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "deadlock-test", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "deadlock-test", "", "test", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	_, err = db.ClaimJob("test-worker")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-
-	// Create a cancel function that tries to call unregisterRunningJob
-	// If cancel() is called while holding the lock, this would deadlock
 	canceled := false
 	cancelFunc := func() {
 		canceled = true
-		// This would deadlock if cancel() was called while holding runningJobsMu
-		pool.unregisterRunningJob(job.ID)
+		tc.Pool.unregisterRunningJob(job.ID)
 	}
 
-	// Set up hook to register the job between second check and final check
-	// This ensures we exercise the "final check" code path
-	pool.testHookAfterSecondCheck = func() {
-		pool.registerRunningJob(job.ID, cancelFunc)
+	tc.Pool.testHookAfterSecondCheck = func() {
+		tc.Pool.registerRunningJob(job.ID, cancelFunc)
 	}
 
-	// CancelJob should complete without deadlock
-	// The job is NOT registered initially, so it passes first and second checks,
-	// then the hook fires and registers it, then the final check finds it
 	done := make(chan bool)
 	go func() {
-		done <- pool.CancelJob(job.ID)
+		done <- tc.Pool.CancelJob(job.ID)
 	}()
 
 	select {
