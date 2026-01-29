@@ -734,6 +734,7 @@ type PromptJobOptions struct {
 	Prompt       string
 	OutputPrefix string // Prefix to prepend to review output (e.g., file paths)
 	Agentic      bool   // Allow file edits and command execution
+	Label        string // Display label in TUI (default: "prompt")
 }
 
 // EnqueuePromptJob creates a new job with a custom prompt (not a git review).
@@ -747,13 +748,17 @@ func (db *DB) EnqueuePromptJob(opts PromptJobOptions) (*ReviewJob, error) {
 	if opts.Agentic {
 		agenticInt = 1
 	}
+	label := opts.Label
+	if label == "" {
+		label = "prompt" // Default for backward compatibility
+	}
 	uuid := GenerateUUID()
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, prompt, agentic, output_prefix, uuid, source_machine_id, updated_at) VALUES (?, NULL, 'prompt', ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
-		opts.RepoID, nullString(opts.Branch), opts.Agent, nullString(opts.Model), reasoning, opts.Prompt, agenticInt, nullString(opts.OutputPrefix), uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, prompt, agentic, output_prefix, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
+		opts.RepoID, label, nullString(opts.Branch), opts.Agent, nullString(opts.Model), reasoning, opts.Prompt, agenticInt, nullString(opts.OutputPrefix), uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -763,7 +768,7 @@ func (db *DB) EnqueuePromptJob(opts PromptJobOptions) (*ReviewJob, error) {
 		ID:              id,
 		RepoID:          opts.RepoID,
 		CommitID:        nil,
-		GitRef:          "prompt",
+		GitRef:          label,
 		Branch:          opts.Branch,
 		Agent:           opts.Agent,
 		Model:           opts.Model,

@@ -444,6 +444,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			Prompt:       req.CustomPrompt,
 			OutputPrefix: req.OutputPrefix,
 			Agentic:      req.Agentic,
+			Label:        gitRef, // Use git_ref as TUI label (run, analyze type, custom)
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))

@@ -270,6 +270,100 @@ func TestEnqueuePromptJob(t *testing.T) {
 			t.Errorf("Expected output unchanged.\nExpected:\n%s\n\nGot:\n%s", agentOutput, review.Output)
 		}
 	})
+
+	t.Run("custom label sets git_ref", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/label-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			Label:  "test-fixtures",
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		if job.GitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref 'test-fixtures', got '%s'", job.GitRef)
+		}
+
+		// Verify it's stored in the database
+		var gitRef string
+		err = db.QueryRow(`SELECT git_ref FROM review_jobs WHERE id = ?`, job.ID).Scan(&gitRef)
+		if err != nil {
+			t.Fatalf("Failed to query git_ref: %v", err)
+		}
+		if gitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref='test-fixtures' in database, got '%s'", gitRef)
+		}
+
+		// Claim and verify label persists
+		claimed, err := db.ClaimJob("test-worker")
+		if err != nil {
+			t.Fatalf("ClaimJob failed: %v", err)
+		}
+		if claimed == nil {
+			t.Fatal("Expected to claim a job")
+		}
+		if claimed.GitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref 'test-fixtures' on claimed job, got '%s'", claimed.GitRef)
+		}
+	})
+
+	t.Run("empty label defaults to prompt", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/empty-label-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			// Label not set - should default to "prompt"
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		if job.GitRef != "prompt" {
+			t.Errorf("Expected git_ref 'prompt' when label empty, got '%s'", job.GitRef)
+		}
+	})
+
+	t.Run("run label", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo, err := db.GetOrCreateRepo("/tmp/run-label-test")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo failed: %v", err)
+		}
+
+		job, err := db.EnqueuePromptJob(PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			Label:  "run",
+		})
+		if err != nil {
+			t.Fatalf("EnqueuePromptJob failed: %v", err)
+		}
+
+		if job.GitRef != "run" {
+			t.Errorf("Expected git_ref 'run', got '%s'", job.GitRef)
+		}
+	})
 }
 
 func TestRenameRepo(t *testing.T) {
