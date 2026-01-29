@@ -58,10 +58,7 @@ func TestCommitOperations(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/test-repo")
 
 	// Create commit
 	commit, err := db.GetOrCreateCommit(repo.ID, "abc123def456", "Test Author", "Test commit", time.Now())
@@ -90,33 +87,14 @@ func TestJobLifecycle(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-
-	// Enqueue job
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "codex", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
 
 	if job.Status != JobStatusQueued {
 		t.Errorf("Expected status 'queued', got '%s'", job.Status)
 	}
 
 	// Claim job
-	claimed, err := db.ClaimJob("worker-1")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-	if claimed == nil {
-		t.Fatal("ClaimJob returned nil")
-	}
+	claimed := claimJob(t, db, "worker-1")
 	if claimed.ID != job.ID {
 		t.Error("ClaimJob returned wrong job")
 	}
@@ -153,14 +131,8 @@ func TestBranchPersistence(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/branch-test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "branch123", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/branch-test-repo")
+	commit := createCommit(t, db, repo.ID, "branch123")
 
 	t.Run("EnqueueJob stores branch", func(t *testing.T) {
 		job, err := db.EnqueueJob(repo.ID, commit.ID, "branch123", "feature/test-branch", "codex", "", "")
@@ -306,25 +278,11 @@ func TestJobFailure(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "def456", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "def456", "", "codex", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	if _, err := db.ClaimJob("worker-1"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "def456")
+	claimJob(t, db, "worker-1")
 
 	// Fail the job
-	err = db.FailJob(job.ID, "test error message")
+	err := db.FailJob(job.ID, "test error message")
 	if err != nil {
 		t.Fatalf("FailJob failed: %v", err)
 	}
@@ -345,21 +303,8 @@ func TestReviewOperations(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/test-repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "rev123", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "rev123", "", "codex", "", "")
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	if _, err := db.ClaimJob("worker-1"); err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "rev123")
+	claimJob(t, db, "worker-1")
 	if err := db.CompleteJob(job.ID, "codex", "the prompt", "the review output"); err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
@@ -730,9 +675,7 @@ func TestRetryJob(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-	commit, _ := db.GetOrCreateCommit(repo.ID, "retry123", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry123", "", "codex", "", "")
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry123")
 
 	// Claim the job (makes it running)
 	_, _ = db.ClaimJob("worker-1")
@@ -788,9 +731,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-	commit, _ := db.GetOrCreateCommit(repo.ID, "retry-status", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry-status", "", "codex", "", "")
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-status")
 
 	// Try to retry a queued job (should fail - not running)
 	retried, err := db.RetryJob(job.ID, 3)
@@ -818,9 +759,7 @@ func TestRetryJobAtomic(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-	commit, _ := db.GetOrCreateCommit(repo.ID, "retry-atomic", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(repo.ID, commit.ID, "retry-atomic", "", "codex", "", "")
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-atomic")
 	_, _ = db.ClaimJob("worker-1")
 
 	// Simulate two concurrent retries - only first should succeed
@@ -1447,45 +1386,23 @@ func TestListReposWithReviewCounts(t *testing.T) {
 	})
 
 	// Create repos and jobs
-	repo1, err := db.GetOrCreateRepo("/tmp/repo1")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	repo2, err := db.GetOrCreateRepo("/tmp/repo2")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	repo3, err := db.GetOrCreateRepo("/tmp/repo3") // will have 0 jobs
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo1 := createRepo(t, db, "/tmp/repo1")
+	repo2 := createRepo(t, db, "/tmp/repo2")
+	_ = createRepo(t, db, "/tmp/repo3") // will have 0 jobs
 
 	// Add jobs to repo1 (3 jobs)
 	for i := 0; i < 3; i++ {
 		sha := fmt.Sprintf("repo1-sha%d", i)
-		commit, err := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "", "codex", "", ""); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		commit := createCommit(t, db, repo1.ID, sha)
+		enqueueJob(t, db, repo1.ID, commit.ID, sha)
 	}
 
 	// Add jobs to repo2 (2 jobs)
 	for i := 0; i < 2; i++ {
 		sha := fmt.Sprintf("repo2-sha%d", i)
-		commit, err := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "", "codex", "", ""); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		commit := createCommit(t, db, repo2.ID, sha)
+		enqueueJob(t, db, repo2.ID, commit.ID, sha)
 	}
-
-	// repo3 has no jobs (to test 0 count)
-	_ = repo3
 
 	t.Run("repos with varying job counts", func(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCounts()
@@ -1559,37 +1476,21 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 	defer db.Close()
 
 	// Create repos and jobs
-	repo1, err := db.GetOrCreateRepo("/tmp/repo1")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	repo2, err := db.GetOrCreateRepo("/tmp/repo2")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo1 := createRepo(t, db, "/tmp/repo1")
+	repo2 := createRepo(t, db, "/tmp/repo2")
 
 	// Add 3 jobs to repo1
 	for i := 0; i < 3; i++ {
 		sha := fmt.Sprintf("repo1-sha%d", i)
-		commit, err := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "", "codex", "", ""); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		commit := createCommit(t, db, repo1.ID, sha)
+		enqueueJob(t, db, repo1.ID, commit.ID, sha)
 	}
 
 	// Add 2 jobs to repo2
 	for i := 0; i < 2; i++ {
 		sha := fmt.Sprintf("repo2-sha%d", i)
-		commit, err := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "", "codex", "", ""); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		commit := createCommit(t, db, repo2.ID, sha)
+		enqueueJob(t, db, repo2.ID, commit.ID, sha)
 	}
 
 	t.Run("no filter returns all jobs", func(t *testing.T) {
@@ -1720,21 +1621,13 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/repo-gitref")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/repo-gitref")
 
 	// Create jobs with different git refs
 	refs := []string{"abc123", "def456", "abc123..def456", "dirty"}
 	for _, ref := range refs {
-		commit, err := db.GetOrCreateCommit(repo.ID, ref, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(repo.ID, commit.ID, ref, "", "codex", "", ""); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		commit := createCommit(t, db, repo.ID, ref)
+		enqueueJob(t, db, repo.ID, commit.ID, ref)
 	}
 
 	t.Run("git_ref filter returns matching job", func(t *testing.T) {
@@ -2506,4 +2399,52 @@ func openTestDB(t *testing.T) *DB {
 	}
 
 	return db
+}
+
+func createRepo(t *testing.T, db *DB, path string) *Repo {
+	t.Helper()
+	repo, err := db.GetOrCreateRepo(path)
+	if err != nil {
+		t.Fatalf("Failed to create repo: %v", err)
+	}
+	return repo
+}
+
+func createCommit(t *testing.T, db *DB, repoID int64, sha string) *Commit {
+	t.Helper()
+	commit, err := db.GetOrCreateCommit(repoID, sha, "Author", "Subject", time.Now())
+	if err != nil {
+		t.Fatalf("Failed to create commit: %v", err)
+	}
+	return commit
+}
+
+func enqueueJob(t *testing.T, db *DB, repoID, commitID int64, sha string) *ReviewJob {
+	t.Helper()
+	job, err := db.EnqueueJob(repoID, commitID, sha, "", "codex", "", "")
+	if err != nil {
+		t.Fatalf("Failed to enqueue job: %v", err)
+	}
+	return job
+}
+
+func claimJob(t *testing.T, db *DB, workerID string) *ReviewJob {
+	t.Helper()
+	job, err := db.ClaimJob(workerID)
+	if err != nil {
+		t.Fatalf("Failed to claim job: %v", err)
+	}
+	if job == nil {
+		t.Fatal("Expected to claim a job, got nil")
+	}
+	return job
+}
+
+// createJobChain creates a repo, commit, and enqueued job, returning all three.
+func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit, *ReviewJob) {
+	t.Helper()
+	repo := createRepo(t, db, repoPath)
+	commit := createCommit(t, db, repo.ID, sha)
+	job := enqueueJob(t, db, repo.ID, commit.ID, sha)
+	return repo, commit, job
 }
