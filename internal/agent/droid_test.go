@@ -68,7 +68,7 @@ func TestDroidWithAgentic(t *testing.T) {
 func TestDroidReviewSuccess(t *testing.T) {
 	outputContent := "Review feedback from Droid"
 	script := NewScriptBuilder().AddOutput(outputContent).Build()
-	result, err := runReviewScenario(t, script, "review this commit", "")
+	result, err := runReviewScenario(t, script, "review this commit")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -79,7 +79,7 @@ func TestDroidReviewSuccess(t *testing.T) {
 
 func TestDroidReviewFailure(t *testing.T) {
 	script := NewScriptBuilder().AddRaw(`echo "error: something went wrong" >&2`).AddRaw("exit 1").Build()
-	_, err := runReviewScenario(t, script, "review this commit", "")
+	_, err := runReviewScenario(t, script, "review this commit")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -89,7 +89,7 @@ func TestDroidReviewFailure(t *testing.T) {
 }
 
 func TestDroidReviewEmptyOutput(t *testing.T) {
-	result, err := runReviewScenario(t, NewScriptBuilder().AddRaw("exit 0").Build(), "review this commit", "")
+	result, err := runReviewScenario(t, NewScriptBuilder().AddRaw("exit 0").Build(), "review this commit")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
