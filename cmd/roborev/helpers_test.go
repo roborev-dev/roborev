@@ -132,20 +132,6 @@ func writeTestFiles(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// chdirRepo changes the working directory to the given path and restores it
-// when the test completes.
-func chdirRepo(t *testing.T, dir string) {
-	t.Helper()
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chdir(origDir) })
-}
-
 // mockReviewDaemon sets up a mock daemon that returns the given review on
 // GET /api/review. It returns a function to retrieve the last received query
 // string.

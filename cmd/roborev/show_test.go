@@ -20,7 +20,7 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
 		})
 
-		chdirRepo(t, repo.Dir)
+		chdir(t, repo.Dir)
 		_ = runShowCmd(t, "12345")
 
 		q := getQuery()
@@ -43,7 +43,7 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 			ID: 1, JobID: 99999, Output: "LGTM", Agent: "test",
 		})
 
-		chdirRepo(t, repo.Dir)
+		chdir(t, repo.Dir)
 		_ = runShowCmd(t, "99999")
 
 		q := getQuery()
@@ -63,7 +63,7 @@ func TestShowCommandSHADisambiguation(t *testing.T) {
 			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
 		})
 
-		chdirRepo(t, repo.Dir)
+		chdir(t, repo.Dir)
 		_ = runShowCmd(t, "abc123def")
 
 		q := getQuery()
@@ -86,7 +86,7 @@ func TestShowJobFlag(t *testing.T) {
 			ID: 1, JobID: 12345, Output: "LGTM", Agent: "test",
 		})
 
-		chdirRepo(t, repo.Dir)
+		chdir(t, repo.Dir)
 		_ = runShowCmd(t, "--job", "12345")
 
 		q := getQuery()
@@ -108,7 +108,7 @@ func TestShowOutputFormat(t *testing.T) {
 			ID: 1, JobID: 42, Output: "Test review output", Agent: "codex",
 		})
 
-		chdirRepo(t, repo.Dir)
+		chdir(t, repo.Dir)
 		output := runShowCmd(t, "--job", "42")
 
 		if !strings.Contains(output, "Review for job 42 (by codex)") {
@@ -128,7 +128,7 @@ func TestShowOutputFormat(t *testing.T) {
 			ID: 1, JobID: 42, Output: "Test review output", Agent: "codex",
 		})
 
-		chdirRepo(t, repo.Dir)
+		chdir(t, repo.Dir)
 		output := runShowCmd(t, commitSHA)
 
 		expectedPattern := "Review for " + shortSHA + " (job 42, by codex)"
