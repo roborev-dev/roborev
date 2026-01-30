@@ -170,12 +170,13 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 
 	headBefore, err := git.ResolveSHA(params.RepoRoot, "HEAD")
 	if err != nil {
-		// Can't track commits - just run agent and return
+		// Can't track commits - run agent and infer outcome from working tree state
 		agentOutput, agentErr := params.Agent.Review(ctx, params.RepoRoot, "HEAD", prompt, out)
 		if agentErr != nil {
 			return nil, fmt.Errorf("fix agent failed: %w", agentErr)
 		}
-		return &fixJobResult{AgentOutput: agentOutput}, nil
+		hasChanges, _ := git.HasUncommittedChanges(params.RepoRoot)
+		return &fixJobResult{NoChanges: !hasChanges, AgentOutput: agentOutput}, nil
 	}
 
 	agentOutput, agentErr := params.Agent.Review(ctx, params.RepoRoot, "HEAD", prompt, out)
