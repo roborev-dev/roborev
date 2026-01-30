@@ -381,9 +381,13 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		branchBefore := git.GetCurrentBranch(repoPath)
 
 		// Determine output writer
-		var agentOutput io.Writer = os.Stdout
+		var agentOutput io.Writer
+		var fmtr *streamFormatter
 		if quiet {
 			agentOutput = io.Discard
+		} else {
+			fmtr = newStreamFormatter(os.Stdout, isTerminal(os.Stdout.Fd()))
+			agentOutput = fmtr
 		}
 
 		// Run fix in isolated worktree
@@ -402,6 +406,9 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 			WasCleanBefore: wasCleanBefore,
 		}, addressPrompt)
 		fixCancel()
+		if fmtr != nil {
+			fmtr.Flush()
+		}
 
 		// Show elapsed time
 		if liveTimer {
