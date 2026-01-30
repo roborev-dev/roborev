@@ -43,6 +43,7 @@ type Config struct {
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
 	ClaudeCodeCmd string `toml:"claude_code_cmd"`
+	CursorCmd     string `toml:"cursor_cmd"`
 
 	// API keys (optional - agents use subscription auth by default)
 	AnthropicAPIKey string `toml:"anthropic_api_key"`
@@ -172,6 +173,7 @@ func DefaultConfig() *Config {
 		JobTimeoutMinutes:  30,
 		CodexCmd:           "codex",
 		ClaudeCodeCmd:      "claude",
+		CursorCmd:          "agent",
 	}
 }
 

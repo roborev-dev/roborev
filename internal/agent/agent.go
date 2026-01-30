@@ -160,8 +160,8 @@ func GetAvailable(preferred string) (Agent, error) {
 		return Get(preferred)
 	}
 
-	// Fallback order: codex, claude-code, gemini, copilot, opencode, droid
-	fallbacks := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "droid"}
+	// Fallback order: codex, claude-code, gemini, copilot, opencode, cursor, droid
+	fallbacks := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "droid"}
 	for _, name := range fallbacks {
 		if name != preferred && IsAvailable(name) {
 			return Get(name)
@@ -177,7 +177,7 @@ func GetAvailable(preferred string) (Agent, error) {
 	}
 
 	if len(available) == 0 {
-		return nil, fmt.Errorf("no agents available (install one of: codex, claude-code, gemini, copilot, opencode, droid)")
+		return nil, fmt.Errorf("no agents available (install one of: codex, claude-code, gemini, copilot, opencode, cursor, droid)")
 	}
 
 	return Get(available[0])

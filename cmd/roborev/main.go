@@ -46,7 +46,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "roborev",
 		Short: "Automatic code review for git commits",
-		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode)",
+		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor)",
 	}
 
 	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "http://127.0.0.1:7373", "daemon server address")
@@ -371,7 +371,7 @@ func initCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&agent, "agent", "", "default agent (codex, claude-code, gemini, copilot, opencode)")
+	cmd.Flags().StringVar(&agent, "agent", "", "default agent (codex, claude-code, gemini, copilot, opencode, cursor)")
 
 	return cmd
 }
@@ -830,7 +830,7 @@ Examples:
 
 	cmd.Flags().StringVar(&repoPath, "repo", "", "path to git repository (default: current directory)")
 	cmd.Flags().StringVar(&sha, "sha", "HEAD", "commit SHA to review (used when no positional args)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode)")
+	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode, cursor)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: thorough (default), standard, or fast")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
