@@ -133,17 +133,11 @@ type fixOptions struct {
 	quiet     bool
 }
 
-// fixJobParams configures a fix operation.
+// fixJobParams configures a fixJobDirect operation.
 type fixJobParams struct {
 	RepoRoot string
-	JobID    int64 // used by fixJobWorktree for commit message
 	Agent    agent.Agent
 	Output   io.Writer // agent streaming output (nil = discard)
-
-	// Worktree safety (fixJobWorktree only): caller records before calling.
-	HeadBefore     string
-	BranchBefore   string
-	WasCleanBefore bool
 }
 
 // fixJobResult contains the outcome of a fix operation.
@@ -152,7 +146,6 @@ type fixJobResult struct {
 	NewCommitSHA  string
 	NoChanges     bool
 	AgentOutput   string
-	AgentErr      error // non-nil if agent failed (retryable, worktree mode only)
 }
 
 // detectNewCommit checks whether HEAD has moved past headBefore.
@@ -211,62 +204,6 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 	// Still no commit - report whether changes remain
 	hasChanges, _ = git.HasUncommittedChanges(params.RepoRoot)
 	return &fixJobResult{NoChanges: !hasChanges, AgentOutput: agentOutput}, nil
-}
-
-// fixJobWorktree runs the agent in an isolated worktree and applies changes back.
-func fixJobWorktree(ctx context.Context, params fixJobParams, prompt string) (*fixJobResult, error) {
-	out := params.Output
-	if out == nil {
-		out = io.Discard
-	}
-
-	worktreePath, cleanup, err := createTempWorktree(params.RepoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("create worktree: %w", err)
-	}
-	defer cleanup()
-
-	agentOutput, agentErr := params.Agent.Review(ctx, worktreePath, "HEAD", prompt, out)
-
-	// Safety checks on main repo (must happen before applying changes)
-	if params.WasCleanBefore && !git.IsWorkingTreeClean(params.RepoRoot) {
-		return nil, fmt.Errorf("working tree changed during fix - aborting to prevent data loss")
-	}
-	if params.HeadBefore != "" {
-		headAfter, err := git.ResolveSHA(params.RepoRoot, "HEAD")
-		if err != nil {
-			return nil, fmt.Errorf("cannot determine HEAD after agent run: %w", err)
-		}
-		branchAfter := git.GetCurrentBranch(params.RepoRoot)
-		if headAfter != params.HeadBefore || branchAfter != params.BranchBefore {
-			return nil, fmt.Errorf("HEAD changed during fix (was %s on %s, now %s on %s) - aborting",
-				params.HeadBefore[:7], params.BranchBefore, headAfter[:7], branchAfter)
-		}
-	}
-
-	if agentErr != nil {
-		return &fixJobResult{AgentOutput: agentOutput, AgentErr: agentErr}, nil
-	}
-
-	if git.IsWorkingTreeClean(worktreePath) {
-		return &fixJobResult{AgentOutput: agentOutput, NoChanges: true}, nil
-	}
-
-	if err := applyWorktreeChanges(params.RepoRoot, worktreePath); err != nil {
-		return nil, fmt.Errorf("apply worktree changes: %w", err)
-	}
-
-	commitMsg := fmt.Sprintf("Address review findings (job %d)\n\n%s", params.JobID, summarizeAgentOutput(agentOutput))
-	newCommit, err := git.CreateCommit(params.RepoRoot, commitMsg)
-	if err != nil {
-		return nil, fmt.Errorf("commit changes: %w", err)
-	}
-
-	return &fixJobResult{
-		CommitCreated: true,
-		NewCommitSHA:  newCommit,
-		AgentOutput:   agentOutput,
-	}, nil
 }
 
 // resolveFixAgent resolves and configures the agent for fix operations.
