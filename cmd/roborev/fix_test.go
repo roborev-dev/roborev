@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -563,6 +565,108 @@ func initTestGitRepo(t *testing.T) string {
 	cmd.Dir = tmpDir
 	cmd.Run()
 	return tmpDir
+}
+
+// fakeAgent implements agent.Agent for testing fixJobDirect.
+type fakeAgent struct {
+	name     string
+	reviewFn func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
+}
+
+func (a *fakeAgent) Name() string { return a.name }
+func (a *fakeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	return a.reviewFn(ctx, repoPath, commitSHA, prompt, output)
+}
+func (a *fakeAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return a }
+func (a *fakeAgent) WithAgentic(agentic bool) agent.Agent                  { return a }
+func (a *fakeAgent) WithModel(model string) agent.Agent                    { return a }
+
+func TestFixJobDirectUnbornHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	t.Run("agent creates first commit", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		// repo has no commits yet — remove the initial commit by re-initing
+		dir := t.TempDir()
+		cmd := exec.Command("git", "init")
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v\n%s", err, out)
+		}
+		for _, args := range [][]string{
+			{"config", "user.email", "test@test.com"},
+			{"config", "user.name", "Test"},
+		} {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = dir
+			cmd.Run()
+		}
+		_ = repo // unused, we use dir directly
+
+		ag := &fakeAgent{
+			name: "test",
+			reviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+				// Simulate agent creating the first commit
+				os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte("fixed"), 0644)
+				c := exec.Command("git", "add", ".")
+				c.Dir = repoPath
+				c.Run()
+				c = exec.Command("git", "commit", "-m", "first commit")
+				c.Dir = repoPath
+				c.Run()
+				return "applied fix", nil
+			},
+		}
+
+		result, err := fixJobDirect(context.Background(), fixJobParams{
+			RepoRoot: dir,
+			Agent:    ag,
+		}, "fix things")
+		if err != nil {
+			t.Fatalf("fixJobDirect: %v", err)
+		}
+		if !result.CommitCreated {
+			t.Error("expected CommitCreated=true")
+		}
+		if result.NoChanges {
+			t.Error("expected NoChanges=false")
+		}
+		if result.NewCommitSHA == "" {
+			t.Error("expected NewCommitSHA to be set")
+		}
+	})
+
+	t.Run("agent makes no changes on unborn head", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := exec.Command("git", "init")
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v\n%s", err, out)
+		}
+
+		ag := &fakeAgent{
+			name: "test",
+			reviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+				return "nothing to do", nil
+			},
+		}
+
+		result, err := fixJobDirect(context.Background(), fixJobParams{
+			RepoRoot: dir,
+			Agent:    ag,
+		}, "fix things")
+		if err != nil {
+			t.Fatalf("fixJobDirect: %v", err)
+		}
+		if result.CommitCreated {
+			t.Error("expected CommitCreated=false")
+		}
+		if !result.NoChanges {
+			t.Error("expected NoChanges=true")
+		}
+	})
 }
 
 func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
