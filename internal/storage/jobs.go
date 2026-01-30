@@ -1151,7 +1151,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		args = append(args, o.gitRef)
 	}
 	if o.branch != "" {
-		conditions = append(conditions, "j.branch = ?")
+		conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
 		args = append(args, o.branch)
 	}
 	if o.addressed != nil {
