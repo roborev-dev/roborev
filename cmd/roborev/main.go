@@ -2474,12 +2474,13 @@ Examples:
 
 				if err != nil {
 					fmt.Printf("FAIL\n")
-					// Show first line of error
-					errMsg := err.Error()
-					if idx := strings.IndexByte(errMsg, '\n'); idx > 0 {
-						errMsg = errMsg[:idx]
+					// Indent each line of the error for readability
+					for _, line := range strings.Split(err.Error(), "\n") {
+						line = strings.TrimSpace(line)
+						if line != "" {
+							fmt.Printf("    %s\n", line)
+						}
 					}
-					fmt.Printf("    error: %s\n", errMsg)
 					failed++
 				} else if strings.TrimSpace(result) == "" {
 					fmt.Printf("FAIL (empty response)\n")
