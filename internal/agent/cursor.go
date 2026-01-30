@@ -25,6 +25,8 @@ func NewCursorAgent(command string) *CursorAgent {
 	return &CursorAgent{Command: command, Reasoning: ReasoningStandard}
 }
 
+// WithReasoning returns a copy with the reasoning level stored.
+// The agent CLI has no reasoning flag; callers can map reasoning to model selection instead.
 func (a *CursorAgent) WithReasoning(level ReasoningLevel) Agent {
 	return &CursorAgent{
 		Command:   a.Command,
@@ -61,6 +63,7 @@ func (a *CursorAgent) CommandName() string {
 }
 
 func (a *CursorAgent) buildArgs(agenticMode bool, prompt string) []string {
+	// -p enables non-interactive print mode (like Claude Code's -p flag)
 	args := []string{"-p", "--output-format", "stream-json"}
 
 	model := a.Model
