@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"sort"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -72,6 +73,7 @@ func main() {
 	rootCmd.AddCommand(repoCmd())
 	rootCmd.AddCommand(skillsCmd())
 	rootCmd.AddCommand(syncCmd())
+	rootCmd.AddCommand(checkAgentsCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())
 
@@ -1181,6 +1183,7 @@ func statusCmd() *cobra.Command {
 
 func showCmd() *cobra.Command {
 	var forceJobID bool
+	var showPrompt bool
 
 	cmd := &cobra.Command{
 		Use:   "show [job_id|sha]",
@@ -1197,7 +1200,8 @@ Examples:
   roborev show              # Show review for HEAD
   roborev show abc123       # Show review for commit
   roborev show 42           # Job ID (if "42" is not a valid git ref)
-  roborev show --job 42     # Force as job ID even if "42" is a valid ref`,
+  roborev show --job 42     # Force as job ID even if "42" is a valid ref
+  roborev show --prompt 42  # Show the prompt sent to the agent`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running (and restart if version mismatch)
@@ -1281,13 +1285,18 @@ Examples:
 				fmt.Printf("Review for %s (job %d, by %s)\n", displayRef, review.JobID, review.Agent)
 			}
 			fmt.Println(strings.Repeat("-", 60))
-			fmt.Println(review.Output)
+			if showPrompt {
+				fmt.Println(review.Prompt)
+			} else {
+				fmt.Println(review.Output)
+			}
 
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
+	cmd.Flags().BoolVar(&showPrompt, "prompt", false, "show the prompt sent to the agent instead of the review output")
 	return cmd
 }
 
@@ -2397,6 +2406,102 @@ func syncNowCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func checkAgentsCmd() *cobra.Command {
+	var (
+		timeoutSecs int
+		agentFilter string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "check-agents",
+		Short: "Check which agents are available and responding",
+		Long: `Check which agents are installed and can produce output.
+
+For each agent found on PATH, runs a short smoke-test prompt with a timeout
+to verify the agent is actually functional.
+
+Examples:
+  roborev check-agents              # Check all agents
+  roborev check-agents --agent codex  # Check only codex
+  roborev check-agents --timeout 30   # 30 second timeout per agent`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			names := agent.Available()
+			sort.Strings(names)
+
+			timeout := time.Duration(timeoutSecs) * time.Second
+			smokePrompt := "Respond with exactly: OK"
+
+			// Use current directory as repo path for the smoke test
+			repoPath, err := os.Getwd()
+			if err != nil {
+				repoPath = "."
+			}
+
+			var passed, failed, skipped int
+
+			for _, name := range names {
+				if name == "test" {
+					continue
+				}
+				if agentFilter != "" && name != agentFilter {
+					continue
+				}
+
+				a, _ := agent.Get(name)
+				if a == nil {
+					continue
+				}
+
+				cmdName := ""
+				if ca, ok := a.(agent.CommandAgent); ok {
+					cmdName = ca.CommandName()
+				}
+
+				if !agent.IsAvailable(name) {
+					fmt.Printf("  - %-14s %s (not found in PATH)\n", name, cmdName)
+					skipped++
+					continue
+				}
+
+				path, _ := exec.LookPath(cmdName)
+				fmt.Printf("  ? %-14s %s (%s) ... ", name, cmdName, path)
+
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+				result, err := a.Review(ctx, repoPath, "HEAD", smokePrompt, nil)
+				cancel()
+
+				if err != nil {
+					fmt.Printf("FAIL\n")
+					// Show first line of error
+					errMsg := err.Error()
+					if idx := strings.IndexByte(errMsg, '\n'); idx > 0 {
+						errMsg = errMsg[:idx]
+					}
+					fmt.Printf("    error: %s\n", errMsg)
+					failed++
+				} else if strings.TrimSpace(result) == "" {
+					fmt.Printf("FAIL (empty response)\n")
+					failed++
+				} else {
+					fmt.Printf("OK (%d bytes)\n", len(result))
+					passed++
+				}
+			}
+
+			fmt.Printf("\n%d passed, %d failed, %d skipped\n", passed, failed, skipped)
+			if failed > 0 {
+				return fmt.Errorf("%d agent(s) failed health check", failed)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&timeoutSecs, "timeout", 60, "timeout in seconds per agent")
+	cmd.Flags().StringVar(&agentFilter, "agent", "", "check only this agent")
+
+	return cmd
 }
 
 func versionCmd() *cobra.Command {
