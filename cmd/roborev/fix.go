@@ -195,12 +195,15 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 	}
 
 	// No commit - retry if there are uncommitted changes
-	hasChanges, _ := git.HasUncommittedChanges(params.RepoRoot)
-	if !hasChanges {
-		return &fixJobResult{NoChanges: true, AgentOutput: agentOutput}, nil
+	hasChanges, err := git.HasUncommittedChanges(params.RepoRoot)
+	if err != nil || !hasChanges {
+		return &fixJobResult{NoChanges: (err == nil && !hasChanges), AgentOutput: agentOutput}, nil
 	}
 
-	params.Agent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPrompt(), out)
+	fmt.Fprint(out, "\nNo commit was created. Re-running agent with commit instructions...\n\n")
+	if _, retryErr := params.Agent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPrompt(), out); retryErr != nil {
+		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
+	}
 	if sha, ok := detectNewCommit(params.RepoRoot, headBefore); ok {
 		return &fixJobResult{CommitCreated: true, NewCommitSHA: sha, AgentOutput: agentOutput}, nil
 	}
