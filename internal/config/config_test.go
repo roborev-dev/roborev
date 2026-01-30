@@ -1053,6 +1053,15 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		// Mixed layers
 		{"repo workflow + global level (repo wins)", "", M{"review_agent": "claude"}, M{"review_agent_fast": "gemini", "review_agent_thorough": "droid"}, "review", "fast", "claude"},
 		{"global fills gaps repo doesn't set", "", M{"agent": "codex"}, M{"review_agent_fast": "claude"}, "review", "standard", "codex"},
+
+		// Fix workflow
+		{"fix uses fix_agent", "", M{"fix_agent": "claude"}, nil, "fix", "fast", "claude"},
+		{"fix level-specific", "", M{"fix_agent": "codex", "fix_agent_fast": "claude"}, nil, "fix", "fast", "claude"},
+		{"fix falls back to generic agent", "", M{"agent": "claude"}, nil, "fix", "fast", "claude"},
+		{"fix falls back to global fix_agent", "", nil, M{"fix_agent": "claude"}, "fix", "fast", "claude"},
+		{"fix global level-specific", "", nil, M{"fix_agent": "codex", "fix_agent_fast": "claude"}, "fix", "fast", "claude"},
+		{"fix isolated from review", "", M{"review_agent": "claude"}, M{"default_agent": "codex"}, "fix", "fast", "codex"},
+		{"fix isolated from refine", "", M{"refine_agent": "claude"}, M{"default_agent": "codex"}, "fix", "fast", "codex"},
 	}
 
 	for _, tt := range tests {
@@ -1099,6 +1108,12 @@ func TestResolveModelForWorkflow(t *testing.T) {
 
 		// Refine workflow isolation
 		{"refine uses refine_model", "", M{"review_model": "gpt-4", "refine_model": "claude-3"}, nil, "refine", "fast", "claude-3"},
+
+		// Fix workflow
+		{"fix uses fix_model", "", M{"fix_model": "gpt-4"}, nil, "fix", "fast", "gpt-4"},
+		{"fix level-specific model", "", M{"fix_model": "gpt-4", "fix_model_fast": "claude-3"}, nil, "fix", "fast", "claude-3"},
+		{"fix falls back to generic model", "", M{"model": "gpt-4"}, nil, "fix", "fast", "gpt-4"},
+		{"fix isolated from review model", "", M{"review_model": "gpt-4"}, nil, "fix", "fast", ""},
 	}
 
 	for _, tt := range tests {
@@ -1188,6 +1203,22 @@ func buildGlobalConfig(cfg map[string]string) *Config {
 			c.RefineModelStandard = v
 		case "refine_model_thorough":
 			c.RefineModelThorough = v
+		case "fix_agent":
+			c.FixAgent = v
+		case "fix_agent_fast":
+			c.FixAgentFast = v
+		case "fix_agent_standard":
+			c.FixAgentStandard = v
+		case "fix_agent_thorough":
+			c.FixAgentThorough = v
+		case "fix_model":
+			c.FixModel = v
+		case "fix_model_fast":
+			c.FixModelFast = v
+		case "fix_model_standard":
+			c.FixModelStandard = v
+		case "fix_model_thorough":
+			c.FixModelThorough = v
 		}
 	}
 	return c

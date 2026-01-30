@@ -216,16 +216,14 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 }
 
 // resolveFixAgent resolves and configures the agent for fix operations.
-func resolveFixAgent(opts fixOptions) (agent.Agent, error) {
+func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	cfg, err := config.LoadGlobal()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	agentName := opts.agentName
-	if agentName == "" {
-		agentName = cfg.DefaultAgent
-	}
+	agentName := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", opts.reasoning)
+	modelStr := config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "fix", opts.reasoning)
 
 	a, err := agent.GetAvailable(agentName)
 	if err != nil {
@@ -234,8 +232,8 @@ func resolveFixAgent(opts fixOptions) (agent.Agent, error) {
 
 	reasoningLevel := agent.ParseReasoningLevel(opts.reasoning)
 	a = a.WithAgentic(true).WithReasoning(reasoningLevel)
-	if opts.model != "" {
-		a = a.WithModel(opts.model)
+	if modelStr != "" {
+		a = a.WithModel(modelStr)
 	}
 	return a, nil
 }
@@ -376,7 +374,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	// Resolve agent
-	fixAgent, err := resolveFixAgent(opts)
+	fixAgent, err := resolveFixAgent(repoRoot, opts)
 	if err != nil {
 		return err
 	}

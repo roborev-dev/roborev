@@ -38,6 +38,14 @@ type Config struct {
 	RefineModelFast     string `toml:"refine_model_fast"`
 	RefineModelStandard string `toml:"refine_model_standard"`
 	RefineModelThorough string `toml:"refine_model_thorough"`
+	FixAgent            string `toml:"fix_agent"`
+	FixAgentFast        string `toml:"fix_agent_fast"`
+	FixAgentStandard    string `toml:"fix_agent_standard"`
+	FixAgentThorough    string `toml:"fix_agent_thorough"`
+	FixModel            string `toml:"fix_model"`
+	FixModelFast        string `toml:"fix_model_fast"`
+	FixModelStandard    string `toml:"fix_model_standard"`
+	FixModelThorough    string `toml:"fix_model_thorough"`
 	AllowUnsafeAgents  *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
@@ -158,6 +166,14 @@ type RepoConfig struct {
 	RefineModelFast     string `toml:"refine_model_fast"`
 	RefineModelStandard string `toml:"refine_model_standard"`
 	RefineModelThorough string `toml:"refine_model_thorough"`
+	FixAgent            string `toml:"fix_agent"`
+	FixAgentFast        string `toml:"fix_agent_fast"`
+	FixAgentStandard    string `toml:"fix_agent_standard"`
+	FixAgentThorough    string `toml:"fix_agent_thorough"`
+	FixModel            string `toml:"fix_model"`
+	FixModelFast        string `toml:"fix_model_fast"`
+	FixModelStandard    string `toml:"fix_model_standard"`
+	FixModelThorough    string `toml:"fix_model_thorough"`
 
 	// Analysis settings
 	MaxPromptSize int `toml:"max_prompt_size"` // Max prompt size in bytes before falling back to paths (overrides global default)
@@ -463,6 +479,14 @@ func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) stri
 			v = r.RefineAgentThorough
 		case "refine_":
 			v = r.RefineAgent
+		case "fix_fast":
+			v = r.FixAgentFast
+		case "fix_standard":
+			v = r.FixAgentStandard
+		case "fix_thorough":
+			v = r.FixAgentThorough
+		case "fix_":
+			v = r.FixAgent
 		}
 	} else {
 		switch workflow + "_" + level {
@@ -482,6 +506,14 @@ func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) stri
 			v = r.RefineModelThorough
 		case "refine_":
 			v = r.RefineModel
+		case "fix_fast":
+			v = r.FixModelFast
+		case "fix_standard":
+			v = r.FixModelStandard
+		case "fix_thorough":
+			v = r.FixModelThorough
+		case "fix_":
+			v = r.FixModel
 		}
 	}
 	return strings.TrimSpace(v)
@@ -510,6 +542,14 @@ func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string
 			v = g.RefineAgentThorough
 		case "refine_":
 			v = g.RefineAgent
+		case "fix_fast":
+			v = g.FixAgentFast
+		case "fix_standard":
+			v = g.FixAgentStandard
+		case "fix_thorough":
+			v = g.FixAgentThorough
+		case "fix_":
+			v = g.FixAgent
 		}
 	} else {
 		switch workflow + "_" + level {
@@ -529,6 +569,14 @@ func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string
 			v = g.RefineModelThorough
 		case "refine_":
 			v = g.RefineModel
+		case "fix_fast":
+			v = g.FixModelFast
+		case "fix_standard":
+			v = g.FixModelStandard
+		case "fix_thorough":
+			v = g.FixModelThorough
+		case "fix_":
+			v = g.FixModel
 		}
 	}
 	return strings.TrimSpace(v)
