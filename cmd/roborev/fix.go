@@ -282,7 +282,7 @@ func runFix(cmd *cobra.Command, jobIDs []int64, opts fixOptions) error {
 					if isConnectionError(err) {
 						return fmt.Errorf("daemon connection lost after recovery: %w", err)
 					}
-					// Non-connection error on retry: log and continue
+					// Non-connection error on retry: fall through to normal error handling
 				}
 			}
 			if err != nil {

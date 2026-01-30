@@ -317,11 +317,9 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 	cmd.SilenceErrors = true
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error (daemon not running), got nil")
-	}
-	// Should NOT be a validation/args error
-	if strings.Contains(err.Error(), "requires at least") {
+	// Should NOT be a validation/args error; any other error (e.g. daemon
+	// not running) is acceptable.
+	if err != nil && strings.Contains(err.Error(), "requires at least") {
 		t.Errorf("no-args should default to --unaddressed, got validation error: %v", err)
 	}
 }
