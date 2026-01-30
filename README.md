@@ -7,7 +7,7 @@
 **[Documentation](https://roborev.io)** | **[Quick Start](https://roborev.io/quickstart/)** | **[Installation](https://roborev.io/installation/)**
 
 Continuous, non-invasive background code review using AI agents
-(Claude Code, Codex, Gemini, Copilot, OpenCode). Work smarter and
+(Claude Code, Codex, Gemini, Copilot, OpenCode, Cursor). Work smarter and
 faster with immediate critical feedback on your agents' work.
 
 https://github.com/user-attachments/assets/0ea4453d-d156-4502-a30a-45ddfe300574
@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/0ea4453d-d156-4502-a30a-45ddfe300574
 
 - **Automatic Reviews** - Reviews happen on every commit via git
   hooks, or request branch or commit range reviews using the CLI
-- **Multi-Agent Support** - Works with Codex, Claude Code, Gemini, Copilot, OpenCode
+- **Multi-Agent Support** - Works with Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor
 - **Local & Private** - Runs entirely on your machine
 - **Auto-Fix with Refine** - AI automatically addresses failed reviews
 - **Interactive TUI** - Real-time review queue with vim-style navigation
@@ -97,6 +97,7 @@ See [configuration guide](https://roborev.io/configuration/) for all options.
 | Gemini | `npm install -g @google/gemini-cli` |
 | Copilot | `npm install -g @github/copilot` |
 | OpenCode | `npm install -g opencode-ai` |
+| Cursor | [cursor.com](https://www.cursor.com/) |
 | Droid | [factory.ai](https://factory.ai/) |
 
 roborev auto-detects installed agents.
