@@ -168,10 +168,10 @@ func GetAvailable(preferred string) (Agent, error) {
 		}
 	}
 
-	// List what's actually available for error message
+	// List what's actually available for error message (exclude test agent)
 	var available []string
 	for name := range registry {
-		if IsAvailable(name) {
+		if name != "test" && IsAvailable(name) {
 			available = append(available, name)
 		}
 	}
