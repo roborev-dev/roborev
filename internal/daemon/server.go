@@ -596,7 +596,11 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		listOpts = append(listOpts, storage.WithGitRef(gitRef))
 	}
 	if branch := r.URL.Query().Get("branch"); branch != "" {
-		listOpts = append(listOpts, storage.WithBranch(branch))
+		if r.URL.Query().Get("branch_include_empty") == "true" {
+			listOpts = append(listOpts, storage.WithBranchOrEmpty(branch))
+		} else {
+			listOpts = append(listOpts, storage.WithBranch(branch))
+		}
 	}
 	if addrStr := r.URL.Query().Get("addressed"); addrStr == "true" || addrStr == "false" {
 		listOpts = append(listOpts, storage.WithAddressed(addrStr == "true"))

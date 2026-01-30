@@ -373,7 +373,7 @@ func queryUnaddressedJobs(repoRoot, branch string) ([]int64, error) {
 	queryURL := fmt.Sprintf("%s/api/jobs?status=done&repo=%s&addressed=false&limit=0",
 		serverAddr, url.QueryEscape(repoRoot))
 	if branch != "" {
-		queryURL += "&branch=" + url.QueryEscape(branch)
+		queryURL += "&branch=" + url.QueryEscape(branch) + "&branch_include_empty=true"
 	}
 
 	resp, err := http.Get(queryURL)

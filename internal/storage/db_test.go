@@ -1759,6 +1759,51 @@ func TestListJobsWithBranchAndAddressedFilters(t *testing.T) {
 	})
 }
 
+func TestWithBranchOrEmpty(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/repo-branch-empty")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	// Create jobs: one on "main", one on "feature", one branchless
+	for i, br := range []string{"main", "feature", ""} {
+		sha := fmt.Sprintf("sha-be-%d", i)
+		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit failed: %v", err)
+		}
+		job, err := db.EnqueueJob(repo.ID, commit.ID, sha, br, "codex", "", "")
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
+		db.ClaimJob("w")
+		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
+	}
+
+	t.Run("WithBranch strict excludes branchless", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Errorf("Expected 1 job, got %d", len(jobs))
+		}
+	})
+
+	t.Run("WithBranchOrEmpty includes branchless", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithBranchOrEmpty("main"))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 2 {
+			t.Errorf("Expected 2 jobs (main + branchless), got %d", len(jobs))
+		}
+	})
+}
+
 func TestReenqueueJob(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

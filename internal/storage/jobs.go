@@ -1098,9 +1098,10 @@ func (db *DB) GetJobRetryCount(jobID int64) (int, error) {
 type ListJobsOption func(*listJobsOptions)
 
 type listJobsOptions struct {
-	gitRef    string
-	branch    string
-	addressed *bool
+	gitRef             string
+	branch             string
+	branchIncludeEmpty bool
+	addressed          *bool
 }
 
 // WithGitRef filters jobs by git ref.
@@ -1108,9 +1109,18 @@ func WithGitRef(ref string) ListJobsOption {
 	return func(o *listJobsOptions) { o.gitRef = ref }
 }
 
-// WithBranch filters jobs by branch name.
+// WithBranch filters jobs by exact branch name.
 func WithBranch(branch string) ListJobsOption {
 	return func(o *listJobsOptions) { o.branch = branch }
+}
+
+// WithBranchOrEmpty filters jobs by branch name, also including jobs
+// with no branch set (empty string or NULL).
+func WithBranchOrEmpty(branch string) ListJobsOption {
+	return func(o *listJobsOptions) {
+		o.branch = branch
+		o.branchIncludeEmpty = true
+	}
 }
 
 // WithAddressed filters jobs by addressed state (true/false).
@@ -1151,7 +1161,11 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		args = append(args, o.gitRef)
 	}
 	if o.branch != "" {
-		conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
+		if o.branchIncludeEmpty {
+			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
+		} else {
+			conditions = append(conditions, "j.branch = ?")
+		}
 		args = append(args, o.branch)
 	}
 	if o.addressed != nil {
