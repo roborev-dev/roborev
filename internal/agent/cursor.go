@@ -66,10 +66,12 @@ func (a *CursorAgent) buildArgs(agenticMode bool, prompt string) []string {
 	// -p enables non-interactive print mode (like Claude Code's -p flag)
 	args := []string{"-p", "--output-format", "stream-json"}
 
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
+	// Default to "auto" which lets the agent CLI pick a model based on the task
+	model := a.Model
+	if model == "" {
+		model = "auto"
 	}
-	// No default model — the agent CLI picks its own default
+	args = append(args, "--model", model)
 
 	if agenticMode {
 		args = append(args, "--force")

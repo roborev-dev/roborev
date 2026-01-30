@@ -9,12 +9,13 @@ import (
 func TestCursorBuildArgs(t *testing.T) {
 	a := NewCursorAgent("agent")
 
-	// Non-agentic mode (review): --mode plan, no --force, no default model
+	// Non-agentic mode (review): --mode plan, no --force, default model "auto"
 	args := a.buildArgs(false, "review this")
 	assertContainsArg(t, args, "-p")
 	assertContainsArg(t, args, "--output-format")
 	assertContainsArg(t, args, "stream-json")
-	assertNotContainsArg(t, args, "--model")
+	assertContainsArg(t, args, "--model")
+	assertContainsArg(t, args, "auto")
 	assertContainsArg(t, args, "--mode")
 	assertContainsArg(t, args, "plan")
 	assertNotContainsArg(t, args, "--force")
