@@ -149,6 +149,22 @@ func GetStat(repoPath, sha string) (string, error) {
 	return string(out), nil
 }
 
+// IsUnbornHead returns true if the repository has an unborn HEAD (no commits yet).
+// Returns false if HEAD points to a valid commit or if the path is not a git repo.
+func IsUnbornHead(repoPath string) bool {
+	// "git rev-parse --verify HEAD" exits non-zero for unborn HEAD.
+	// "git rev-parse --git-dir" confirms it's a git repo.
+	cmd := exec.Command("git", "rev-parse", "--verify", "HEAD")
+	cmd.Dir = repoPath
+	if cmd.Run() == nil {
+		return false // HEAD resolves fine, not unborn
+	}
+	// Confirm it's actually a git repo
+	cmd = exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = repoPath
+	return cmd.Run() == nil
+}
+
 // ResolveSHA resolves a ref (like HEAD) to a full SHA
 func ResolveSHA(repoPath, ref string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", ref)

@@ -170,9 +170,9 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 
 	headBefore, err := git.ResolveSHA(params.RepoRoot, "HEAD")
 	if err != nil {
-		// Verify this is actually a git repo with an unborn HEAD, not some
-		// other error (non-git directory, permissions, etc.)
-		if _, repoErr := git.GetRepoRoot(params.RepoRoot); repoErr != nil {
+		// Only proceed if this is specifically an unborn HEAD (empty repo).
+		// Other errors (corrupt repo, permissions, non-git dir) should surface.
+		if !git.IsUnbornHead(params.RepoRoot) {
 			return nil, fmt.Errorf("resolve HEAD: %w", err)
 		}
 		// Unborn HEAD (empty repo) - run agent and check outcome
