@@ -315,7 +315,55 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 		repoRoot = root
 	}
 
-	// Query for unaddressed done jobs in this repo
+	seen := make(map[int64]bool)
+
+	for {
+		jobIDs, err := queryUnaddressedJobs(repoRoot, branch)
+		if err != nil {
+			return err
+		}
+
+		// Filter out jobs we've already processed
+		var newIDs []int64
+		for _, id := range jobIDs {
+			if !seen[id] {
+				newIDs = append(newIDs, id)
+			}
+		}
+
+		if len(newIDs) == 0 {
+			if len(seen) == 0 && !opts.quiet {
+				cmd.Println("No unaddressed jobs found.")
+			}
+			return nil
+		}
+
+		// API returns newest first; reverse to process oldest first by default
+		if !newestFirst {
+			for i, j := 0, len(newIDs)-1; i < j; i, j = i+1, j-1 {
+				newIDs[i], newIDs[j] = newIDs[j], newIDs[i]
+			}
+		}
+
+		if !opts.quiet {
+			if len(seen) > 0 {
+				cmd.Printf("\nFound %d new unaddressed job(s): %v\n", len(newIDs), newIDs)
+			} else {
+				cmd.Printf("Found %d unaddressed job(s): %v\n", len(newIDs), newIDs)
+			}
+		}
+
+		for _, id := range newIDs {
+			seen[id] = true
+		}
+
+		if err := runFix(cmd, newIDs, opts); err != nil {
+			return err
+		}
+	}
+}
+
+func queryUnaddressedJobs(repoRoot, branch string) ([]int64, error) {
 	queryURL := fmt.Sprintf("%s/api/jobs?status=done&repo=%s&addressed=false&limit=0",
 		serverAddr, url.QueryEscape(repoRoot))
 	if branch != "" {
@@ -324,46 +372,27 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 
 	resp, err := http.Get(queryURL)
 	if err != nil {
-		return fmt.Errorf("query jobs: %w", err)
+		return nil, fmt.Errorf("query jobs: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
 	}
 
 	var jobsResp struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-
-	if len(jobsResp.Jobs) == 0 {
-		if !opts.quiet {
-			cmd.Println("No unaddressed jobs found.")
-		}
-		return nil
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
 	var jobIDs []int64
 	for _, j := range jobsResp.Jobs {
 		jobIDs = append(jobIDs, j.ID)
 	}
-
-	// API returns newest first; reverse to process oldest first by default
-	if !newestFirst {
-		for i, j := 0, len(jobIDs)-1; i < j; i, j = i+1, j-1 {
-			jobIDs[i], jobIDs[j] = jobIDs[j], jobIDs[i]
-		}
-	}
-
-	if !opts.quiet {
-		cmd.Printf("Found %d unaddressed job(s): %v\n", len(jobIDs), jobIDs)
-	}
-
-	return runFix(cmd, jobIDs, opts)
+	return jobIDs, nil
 }
 
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions) error {
