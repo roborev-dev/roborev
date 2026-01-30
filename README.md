@@ -6,21 +6,40 @@
 
 **[Documentation](https://roborev.io)** | **[Quick Start](https://roborev.io/quickstart/)** | **[Installation](https://roborev.io/installation/)**
 
-Continuous, non-invasive background code review using AI agents
-(Claude Code, Codex, Gemini, Copilot, OpenCode, Cursor). Work smarter and
-faster with immediate critical feedback on your agents' work.
+Continuous code review for coding agents. roborev reviews every commit
+as you work, catches issues before they reach a pull request, and can
+automatically fix what it finds.
 
 https://github.com/user-attachments/assets/0ea4453d-d156-4502-a30a-45ddfe300574
 
+## Why roborev?
+
+AI coding agents write code fast, but they make mistakes. Most people
+still operate in a "commit when it's ready" mindset, which means review
+feedback comes too late to be useful. The agent has moved on and
+context is lost. roborev changes this by giving your agents continuous
+review feedback while they are working on your prompts:
+
+1. **Agents commit often** - ideally every turn of work
+2. **roborev reviews** each commit in the background
+3. **Feed findings** into your agent sessions, or fix them autonomously with `roborev fix`
+
+Every commit gets reviewed. Issues surface in seconds, not hours.
+You catch problems while context is fresh instead of waiting for PR review.
+
 ## Features
 
-- **Automatic Reviews** - Reviews happen on every commit via git
-  hooks, or request branch or commit range reviews using the CLI
-- **Multi-Agent Support** - Works with Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor
-- **Local & Private** - Runs entirely on your machine
-- **Auto-Fix with Refine** - AI automatically addresses failed reviews
-- **Interactive TUI** - Real-time review queue with vim-style navigation
-- **Multi-Machine Sync** - Sync reviews across machines via PostgreSQL
+- **Background Reviews** - Every commit is reviewed automatically via
+  git hooks. No workflow changes required.
+- **Auto-Fix** - `roborev fix` feeds review findings to an agent that
+  applies fixes and commits. `roborev refine` iterates until reviews pass.
+- **Code Analysis** - Built-in analysis types (duplication, complexity,
+  refactoring, test fixtures, dead code) that agents can fix automatically.
+- **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
+  OpenCode, Cursor, and Droid.
+- **Local & Private** - Runs entirely on your machine. Nothing leaves
+  your environment.
+- **Interactive TUI** - Real-time review queue with vim-style navigation.
 
 ## Installation
 
@@ -55,6 +74,44 @@ roborev tui           # View reviews in interactive UI
 
 https://github.com/user-attachments/assets/c72d7189-9a31-4c1a-a43f-c788cbd97182
 
+## The Fix Loop
+
+When reviews find issues, fix them with a single command:
+
+```bash
+roborev fix                     # Fix all unaddressed reviews
+roborev fix 123                 # Fix a specific job
+```
+
+`fix` shows the review findings to an agent, which applies changes and
+commits. The new commit gets reviewed automatically, closing the loop.
+
+For fully automated iteration, use `refine`:
+
+```bash
+roborev refine                  # Fix, re-review, repeat until passing
+```
+
+`refine` runs in an isolated worktree and loops: fix findings, wait for
+re-review, fix again, until all reviews pass or `--max-iterations` is hit.
+
+## Code Analysis
+
+Run targeted analysis across your codebase and optionally auto-fix:
+
+```bash
+roborev analyze duplication ./...           # Find duplication
+roborev analyze refactor --fix *.go         # Suggest and apply refactors
+roborev analyze complexity --wait main.go   # Analyze and show results
+roborev analyze test-fixtures *_test.go     # Find test helper opportunities
+```
+
+Available types: `test-fixtures`, `duplication`, `refactor`, `complexity`,
+`api-design`, `dead-code`, `architecture`.
+
+Analysis jobs appear in the review queue. Use `roborev fix <id>` to
+apply findings later, or pass `--fix` to apply immediately.
+
 ## Commands
 
 | Command | Description |
@@ -65,11 +122,11 @@ https://github.com/user-attachments/assets/c72d7189-9a31-4c1a-a43f-c788cbd97182
 | `roborev review <sha>` | Queue a commit for review |
 | `roborev review --branch` | Review all commits on current branch |
 | `roborev review --dirty` | Review uncommitted changes |
-| `roborev refine` | Auto-fix failed reviews using AI |
+| `roborev fix` | Fix unaddressed reviews (or specify job IDs) |
+| `roborev refine` | Auto-fix loop: fix, re-review, repeat |
+| `roborev analyze <type>` | Run code analysis with optional auto-fix |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |
-| `roborev analyze <type>` | Run built-in code analysis and assisted refactoring |
-| `roborev fix <id>` | Apply fixes for completed analysis |
 | `roborev address <id>` | Mark review as addressed |
 | `roborev skills install` | Install agent skills for Claude/Codex |
 
