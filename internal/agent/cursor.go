@@ -63,9 +63,11 @@ func (a *CursorAgent) CommandName() string {
 func (a *CursorAgent) buildArgs(agenticMode bool, prompt string) []string {
 	args := []string{"-p", "--output-format", "stream-json"}
 
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
+	model := a.Model
+	if model == "" {
+		model = "cursor-small"
 	}
+	args = append(args, "--model", model)
 
 	if agenticMode {
 		args = append(args, "--force")
