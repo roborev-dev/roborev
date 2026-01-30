@@ -37,8 +37,9 @@ You catch problems while context is fresh instead of waiting for PR review.
   refactoring, test fixtures, dead code) that agents can fix automatically.
 - **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
   OpenCode, Cursor, and Droid.
-- **Local & Private** - Runs entirely on your machine. Nothing leaves
-  your environment.
+- **Runs Locally** - No hosted service or additional infrastructure.
+  Reviews are orchestrated on your machine using the coding agents
+  you already have configured.
 - **Interactive TUI** - Real-time review queue with vim-style navigation.
 
 ## Installation
