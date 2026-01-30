@@ -407,7 +407,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		fixCtx, fixCancel := context.WithTimeout(context.Background(), 1*time.Hour)
 		output, agentErr := addressAgent.Review(fixCtx, worktreePath, "HEAD", addressPrompt, agentOutput)
 		fixCancel()
-		if fmtr != nil && agentErr == nil {
+		if fmtr != nil {
 			fmtr.Flush()
 		}
 

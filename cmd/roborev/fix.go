@@ -422,7 +422,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	// Add response and mark as addressed
 	responseText := "Fix applied via `roborev fix` command"
 	if result.CommitCreated {
-		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", result.NewCommitSHA[:7])
+		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", shortSHA(result.NewCommitSHA))
 	}
 
 	if err := addJobResponse(serverAddr, jobID, "roborev-fix", responseText); err != nil {
