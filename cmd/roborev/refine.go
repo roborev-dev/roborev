@@ -385,6 +385,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		if err != nil {
 			return fmt.Errorf("create worktree: %w", err)
 		}
+		defer cleanupWorktree()
 
 		// Determine output writer
 		var agentOutput io.Writer
@@ -419,23 +420,19 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 
 		// Safety checks on main repo (before applying any changes)
 		if wasCleanBefore && !git.IsWorkingTreeClean(repoPath) {
-			cleanupWorktree()
 			return fmt.Errorf("working tree changed during refine - aborting to prevent data loss")
 		}
 		headAfterAgent, resolveErr := git.ResolveSHA(repoPath, "HEAD")
 		if resolveErr != nil {
-			cleanupWorktree()
 			return fmt.Errorf("cannot determine HEAD after agent run: %w", resolveErr)
 		}
 		branchAfterAgent := git.GetCurrentBranch(repoPath)
 		if headAfterAgent != headBefore || branchAfterAgent != branchBefore {
-			cleanupWorktree()
 			return fmt.Errorf("HEAD changed during refine (was %s on %s, now %s on %s) - aborting to prevent applying patch to wrong commit",
-				headBefore[:7], branchBefore, headAfterAgent[:7], branchAfterAgent)
+				shortSHA(headBefore), branchBefore, shortSHA(headAfterAgent), branchAfterAgent)
 		}
 
 		if agentErr != nil {
-			cleanupWorktree()
 			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
 			continue
@@ -443,7 +440,6 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 
 		// Check if agent made changes in worktree
 		if git.IsWorkingTreeClean(worktreePath) {
-			cleanupWorktree()
 			fmt.Println("Agent made no changes")
 			// Check how many times we've tried this review (only count our own attempts)
 			attempts, err := client.GetCommentsForJob(currentFailedReview.JobID)
@@ -470,7 +466,6 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 
 		// Apply worktree changes to main repo and commit
 		if err := applyWorktreeChanges(repoPath, worktreePath); err != nil {
-			cleanupWorktree()
 			return fmt.Errorf("apply worktree changes: %w", err)
 		}
 		cleanupWorktree()
@@ -480,10 +475,10 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		if err != nil {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
-		fmt.Printf("Created commit %s\n", newCommit[:7])
+		fmt.Printf("Created commit %s\n", shortSHA(newCommit))
 
 		// Add response recording what was done
-		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", newCommit[:7], output)
+		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", shortSHA(newCommit), output)
 		client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText)
 
 		// Mark old review as addressed
