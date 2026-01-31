@@ -10,6 +10,11 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
+// q wraps a string in platform-appropriate shell quoting (matches shellEscape output).
+func q(s string) string {
+	return shellEscape(s)
+}
+
 // touchCmd returns a platform-appropriate shell command to create a file.
 func touchCmd(path string) string {
 	if runtime.GOOS == "windows" {
@@ -67,15 +72,15 @@ func TestInterpolate(t *testing.T) {
 	}{
 		{
 			"echo {job_id} {sha}",
-			"echo 42 'abc123def456'",
+			"echo 42 " + q("abc123def456"),
 		},
 		{
 			"notify --repo {repo_name} --verdict {verdict}",
-			"notify --repo 'myrepo' --verdict 'F'",
+			"notify --repo " + q("myrepo") + " --verdict " + q("F"),
 		},
 		{
 			"log {error}",
-			"log 'agent timeout'",
+			"log " + q("agent timeout"),
 		},
 		{
 			"",
@@ -99,9 +104,8 @@ func TestInterpolateShellInjection(t *testing.T) {
 	}
 
 	got := interpolate("echo {error}", event)
-	// The value must be wrapped in single quotes with internal quotes escaped.
-	// It should NOT contain an unquoted semicolon that could break out of quoting.
-	want := "echo ''\"'\"'; rm -rf / #'"
+	// The value must be quoted so the semicolon cannot break out and execute commands.
+	want := "echo " + q("'; rm -rf / #")
 	if got != want {
 		t.Errorf("interpolate shell injection:\ngot  %q\nwant %q", got, want)
 	}
@@ -121,33 +125,50 @@ func TestInterpolateQuotedPlaceholders(t *testing.T) {
 
 	// Unquoted placeholder (recommended) -- clean output
 	got := interpolate("echo {error}", event)
-	if got != "echo 'simple error'" {
-		t.Errorf("unquoted placeholder: got %q", got)
+	if want := "echo " + q("simple error"); got != want {
+		t.Errorf("unquoted placeholder: got %q, want %q", got, want)
 	}
 
-	// Double-quoted placeholder -- works but includes literal single quotes
+	// Double-quoted placeholder -- works but includes literal quotes around the value
 	got = interpolate(`echo "{error}"`, event)
-	if got != `echo "'simple error'"` {
-		t.Errorf("double-quoted placeholder: got %q", got)
+	if want := `echo "` + q("simple error") + `"`; got != want {
+		t.Errorf("double-quoted placeholder: got %q, want %q", got, want)
 	}
 
-	// Empty value produces ''
+	// Empty value produces empty quoted string
 	event.Verdict = ""
 	got = interpolate("echo {verdict}", event)
-	if got != "echo ''" {
-		t.Errorf("empty value: got %q", got)
+	if want := "echo " + q(""); got != want {
+		t.Errorf("empty value: got %q, want %q", got, want)
 	}
 }
 
 func TestShellEscape(t *testing.T) {
-	tests := []struct {
+	var tests []struct {
 		in   string
 		want string
-	}{
-		{"hello", "'hello'"},
-		{"", "''"},
-		{"it's", "'it'\"'\"'s'"},
-		{"a;b", "'a;b'"},
+	}
+	if runtime.GOOS == "windows" {
+		tests = []struct {
+			in   string
+			want string
+		}{
+			{"hello", `"hello"`},
+			{"", `""`},
+			{"it's", `"it's"`},
+			{"a;b", `"a;b"`},
+			{`say "hi"`, `"say ""hi"""`},
+		}
+	} else {
+		tests = []struct {
+			in   string
+			want string
+		}{
+			{"hello", "'hello'"},
+			{"", "''"},
+			{"it's", "'it'\"'\"'s'"},
+			{"a;b", "'a;b'"},
+		}
 	}
 	for _, tt := range tests {
 		got := shellEscape(tt.in)
