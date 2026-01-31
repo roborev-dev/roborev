@@ -13,20 +13,23 @@ import (
 
 // HookRunner listens for broadcaster events and runs configured hooks.
 type HookRunner struct {
-	cfgGetter ConfigGetter
-	mu        sync.RWMutex
-	stopCh    chan struct{}
+	cfgGetter   ConfigGetter
+	broadcaster Broadcaster
+	subID       int
+	mu          sync.RWMutex
+	stopCh      chan struct{}
 }
 
 // NewHookRunner creates a new HookRunner that subscribes to events from the broadcaster.
 func NewHookRunner(cfgGetter ConfigGetter, broadcaster Broadcaster) *HookRunner {
-	hr := &HookRunner{
-		cfgGetter: cfgGetter,
-		stopCh:    make(chan struct{}),
-	}
+	subID, eventCh := broadcaster.Subscribe("")
 
-	// Subscribe to all events (no repo filter)
-	_, eventCh := broadcaster.Subscribe("")
+	hr := &HookRunner{
+		cfgGetter:   cfgGetter,
+		broadcaster: broadcaster,
+		subID:       subID,
+		stopCh:      make(chan struct{}),
+	}
 
 	go hr.listen(eventCh)
 
@@ -48,9 +51,10 @@ func (hr *HookRunner) listen(eventCh <-chan Event) {
 	}
 }
 
-// Stop shuts down the hook runner.
+// Stop shuts down the hook runner and unsubscribes from the broadcaster.
 func (hr *HookRunner) Stop() {
 	close(hr.stopCh)
+	hr.broadcaster.Unsubscribe(hr.subID)
 }
 
 // handleEvent checks all configured hooks against the event and fires matches.
@@ -65,8 +69,8 @@ func (hr *HookRunner) handleEvent(event Event) {
 		return
 	}
 
-	// Collect hooks: global + repo-specific
-	hooks := cfg.Hooks
+	// Collect hooks: copy global slice to avoid aliasing, then append repo-specific
+	hooks := append([]config.HookConfig{}, cfg.Hooks...)
 
 	if event.Repo != "" {
 		if repoCfg, err := config.LoadRepoConfig(event.Repo); err == nil && repoCfg != nil {
@@ -140,6 +144,7 @@ func beadsCommand(event Event) string {
 }
 
 // interpolate replaces {var} template variables in a command string.
+// Values are shell-escaped to prevent injection via event fields.
 func interpolate(cmd string, event Event) string {
 	if cmd == "" {
 		return ""
@@ -147,14 +152,23 @@ func interpolate(cmd string, event Event) string {
 
 	r := strings.NewReplacer(
 		"{job_id}", fmt.Sprintf("%d", event.JobID),
-		"{repo}", event.Repo,
-		"{repo_name}", event.RepoName,
-		"{sha}", event.SHA,
-		"{agent}", event.Agent,
-		"{verdict}", event.Verdict,
-		"{error}", event.Error,
+		"{repo}", shellEscape(event.Repo),
+		"{repo_name}", shellEscape(event.RepoName),
+		"{sha}", shellEscape(event.SHA),
+		"{agent}", shellEscape(event.Agent),
+		"{verdict}", shellEscape(event.Verdict),
+		"{error}", shellEscape(event.Error),
 	)
 	return r.Replace(cmd)
+}
+
+// shellEscape wraps a value in single quotes, escaping any embedded single quotes.
+// This prevents shell injection when values are interpolated into sh -c commands.
+func shellEscape(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // runHook executes a shell command in the given working directory.

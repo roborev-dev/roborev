@@ -50,15 +50,15 @@ func TestInterpolate(t *testing.T) {
 	}{
 		{
 			"echo {job_id} {sha}",
-			"echo 42 abc123def456",
+			"echo 42 'abc123def456'",
 		},
 		{
 			"notify --repo {repo_name} --verdict {verdict}",
-			"notify --repo myrepo --verdict F",
+			"notify --repo 'myrepo' --verdict 'F'",
 		},
 		{
 			"log {error}",
-			"log agent timeout",
+			"log 'agent timeout'",
 		},
 		{
 			"",
@@ -70,6 +70,40 @@ func TestInterpolate(t *testing.T) {
 		got := interpolate(tt.cmd, event)
 		if got != tt.want {
 			t.Errorf("interpolate(%q) = %q, want %q", tt.cmd, got, tt.want)
+		}
+	}
+}
+
+func TestInterpolateShellInjection(t *testing.T) {
+	event := Event{
+		JobID: 1,
+		Repo:  "/repo",
+		Error: "'; rm -rf / #",
+	}
+
+	got := interpolate("echo {error}", event)
+	// The value must be wrapped in single quotes with internal quotes escaped.
+	// It should NOT contain an unquoted semicolon that could break out of quoting.
+	want := "echo ''\"'\"'; rm -rf / #'"
+	if got != want {
+		t.Errorf("interpolate shell injection:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestShellEscape(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"hello", "'hello'"},
+		{"", "''"},
+		{"it's", "'it'\"'\"'s'"},
+		{"a;b", "'a;b'"},
+	}
+	for _, tt := range tests {
+		got := shellEscape(tt.in)
+		if got != tt.want {
+			t.Errorf("shellEscape(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
@@ -147,7 +181,7 @@ func TestResolveCommand(t *testing.T) {
 		Command: "echo {job_id}",
 	}
 	cmd := resolveCommand(hook, event)
-	if cmd != "echo 5" {
+	if cmd != "echo 5" { // job_id is numeric, not shell-escaped
 		t.Errorf("expected 'echo 5', got %q", cmd)
 	}
 
@@ -277,6 +311,72 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	if _, err := os.Stat(markerFile); err == nil {
 		t.Fatal("hook should not have fired for non-matching event")
+	}
+}
+
+func TestHooksSliceNotAliased(t *testing.T) {
+	// Verify that repo hooks don't leak into the global config's Hooks slice
+	tmpDir := t.TempDir()
+	markerGlobal := filepath.Join(tmpDir, "global-fired")
+	markerRepo := filepath.Join(tmpDir, "repo-fired")
+
+	globalHooks := []config.HookConfig{
+		{Event: "review.failed", Command: "touch " + markerGlobal},
+	}
+	cfg := &config.Config{
+		Hooks: globalHooks,
+	}
+
+	// Write a repo config with an additional hook
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(`
+[[hooks]]
+event = "review.failed"
+command = "touch `+markerRepo+`"
+`), 0644)
+
+	broadcaster := NewBroadcaster()
+	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
+	defer hr.Stop()
+
+	// Fire event for the repo
+	broadcaster.Broadcast(Event{
+		Type:  "review.failed",
+		TS:    time.Now(),
+		JobID: 1,
+		Repo:  repoDir,
+		SHA:   "abc",
+		Agent: "test",
+		Error: "fail",
+	})
+
+	// Wait for hooks to run
+	time.Sleep(1 * time.Second)
+
+	// The global config's Hooks slice must still have exactly 1 element
+	if len(cfg.Hooks) != 1 {
+		t.Errorf("global Hooks slice was mutated: len=%d, want 1", len(cfg.Hooks))
+	}
+}
+
+func TestHookRunnerStopUnsubscribes(t *testing.T) {
+	broadcaster := NewBroadcaster()
+	cfg := &config.Config{}
+
+	before := broadcaster.SubscriberCount()
+	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
+	afterSub := broadcaster.SubscriberCount()
+	if afterSub != before+1 {
+		t.Errorf("expected subscriber count %d after NewHookRunner, got %d", before+1, afterSub)
+	}
+
+	hr.Stop()
+	// Give the goroutine a moment to exit
+	time.Sleep(100 * time.Millisecond)
+
+	afterStop := broadcaster.SubscriberCount()
+	if afterStop != before {
+		t.Errorf("expected subscriber count %d after Stop, got %d", before, afterStop)
 	}
 }
 
