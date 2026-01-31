@@ -391,6 +391,135 @@ command = "touch `+markerRepo+`"
 	}
 }
 
+func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
+	// Both global and per-repo hooks should fire for the same event
+	globalDir := t.TempDir()
+	repoDir := t.TempDir()
+	globalMarker := filepath.Join(globalDir, "global-fired")
+	repoMarker := filepath.Join(globalDir, "repo-fired")
+
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{
+			{Event: "review.failed", Command: "touch " + globalMarker},
+		},
+	}
+
+	// Write repo config with its own hook
+	os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(`
+[[hooks]]
+event = "review.failed"
+command = "touch `+repoMarker+`"
+`), 0644)
+
+	broadcaster := NewBroadcaster()
+	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
+	defer hr.Stop()
+
+	broadcaster.Broadcast(Event{
+		Type:  "review.failed",
+		TS:    time.Now(),
+		JobID: 1,
+		Repo:  repoDir,
+		SHA:   "abc",
+		Agent: "test",
+		Error: "fail",
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	globalFired, repoFired := false, false
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(globalMarker); err == nil {
+			globalFired = true
+		}
+		if _, err := os.Stat(repoMarker); err == nil {
+			repoFired = true
+		}
+		if globalFired && repoFired {
+			return // success
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !globalFired {
+		t.Error("global hook did not fire")
+	}
+	if !repoFired {
+		t.Error("repo hook did not fire")
+	}
+}
+
+func TestHookRunnerRepoOnlyHooks(t *testing.T) {
+	// Repo hooks fire even when there are no global hooks
+	repoDir := t.TempDir()
+	markerFile := filepath.Join(repoDir, "repo-only")
+
+	cfg := &config.Config{} // no global hooks
+
+	os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(`
+[[hooks]]
+event = "review.completed"
+command = "touch `+markerFile+`"
+`), 0644)
+
+	broadcaster := NewBroadcaster()
+	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
+	defer hr.Stop()
+
+	broadcaster.Broadcast(Event{
+		Type:    "review.completed",
+		TS:      time.Now(),
+		JobID:   1,
+		Repo:    repoDir,
+		SHA:     "abc",
+		Agent:   "test",
+		Verdict: "P",
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(markerFile); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("repo-only hook did not fire")
+}
+
+func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
+	// A repo's hooks should not fire for events from a different repo
+	repoA := t.TempDir()
+	repoB := t.TempDir()
+	markerFile := filepath.Join(repoA, "should-not-exist")
+
+	cfg := &config.Config{} // no global hooks
+
+	// Only repoA has hooks
+	os.WriteFile(filepath.Join(repoA, ".roborev.toml"), []byte(`
+[[hooks]]
+event = "review.failed"
+command = "touch `+markerFile+`"
+`), 0644)
+
+	broadcaster := NewBroadcaster()
+	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
+	defer hr.Stop()
+
+	// Fire event for repoB -- repoA's hooks should NOT fire
+	broadcaster.Broadcast(Event{
+		Type:  "review.failed",
+		TS:    time.Now(),
+		JobID: 1,
+		Repo:  repoB,
+		SHA:   "abc",
+		Agent: "test",
+		Error: "fail",
+	})
+
+	time.Sleep(500 * time.Millisecond)
+	if _, err := os.Stat(markerFile); err == nil {
+		t.Fatal("repo hook fired for a different repo's event")
+	}
+}
+
 func TestHookRunnerStopUnsubscribes(t *testing.T) {
 	broadcaster := NewBroadcaster()
 	cfg := &config.Config{}
