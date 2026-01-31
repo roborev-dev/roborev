@@ -40,7 +40,7 @@ func touchCmd(path string) string {
 // pwdCmd returns a platform-appropriate shell command to write the cwd to a file.
 func pwdCmd(path string) string {
 	if runtime.GOOS == "windows" {
-		return "(Get-Location).Path | Set-Content -NoNewline '" + filepath.ToSlash(path) + "'"
+		return "(Get-Location).Path | Set-Content -NoNewline -Encoding UTF8 '" + filepath.ToSlash(path) + "'"
 	}
 	return "pwd > " + path
 }
@@ -407,7 +407,11 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 					want = w
 				}
 			}
-			if !strings.EqualFold(got, want) {
+			equal := got == want
+			if runtime.GOOS == "windows" {
+				equal = strings.EqualFold(got, want)
+			}
+			if !equal {
 				t.Errorf("hook ran in %q, want %q", got, want)
 			}
 			return
@@ -674,6 +678,7 @@ func TestHandleEventLogsWhenHooksFired(t *testing.T) {
 	var buf bytes.Buffer
 	prevOut := log.Writer()
 	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
@@ -710,6 +715,7 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 	var buf bytes.Buffer
 	prevOut := log.Writer()
 	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
