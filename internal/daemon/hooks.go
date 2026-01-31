@@ -79,6 +79,7 @@ func (hr *HookRunner) handleEvent(event Event) {
 		}
 	}
 
+	fired := 0
 	for _, hook := range hooks {
 		if !matchEvent(hook.Event, event.Type) {
 			continue
@@ -89,8 +90,13 @@ func (hr *HookRunner) handleEvent(event Event) {
 			continue
 		}
 
+		fired++
 		// Run async so hooks don't block workers
 		go runHook(cmd, event.Repo)
+	}
+
+	if fired > 0 {
+		log.Printf("Hooks: fired %d hook(s) for %s (job %d)", fired, event.Type, event.JobID)
 	}
 }
 

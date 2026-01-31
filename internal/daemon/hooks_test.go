@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -642,6 +644,67 @@ func assertFileNotCreated(t *testing.T, path string, duration time.Duration, msg
 			t.Fatal(msg)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestHandleEventLogsWhenHooksFired(t *testing.T) {
+	// Capture log output
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	tmpDir := t.TempDir()
+	markerFile := filepath.Join(tmpDir, "log-test")
+
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{
+			{Event: "review.completed", Command: touchCmd(markerFile)},
+			{Event: "review.completed", Command: touchCmd(markerFile + "2")},
+		},
+	}
+
+	hr := &HookRunner{cfgGetter: NewStaticConfig(cfg)}
+	hr.handleEvent(Event{
+		Type:    "review.completed",
+		JobID:   42,
+		Repo:    tmpDir,
+		SHA:     "abc",
+		Verdict: "P",
+	})
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "fired 2 hook(s)") {
+		t.Errorf("expected log to contain 'fired 2 hook(s)', got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "review.completed") {
+		t.Errorf("expected log to contain event type, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "job 42") {
+		t.Errorf("expected log to contain job ID, got %q", logOutput)
+	}
+}
+
+func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{
+			{Event: "review.completed", Command: "echo test"},
+		},
+	}
+
+	hr := &HookRunner{cfgGetter: NewStaticConfig(cfg)}
+	hr.handleEvent(Event{
+		Type:  "review.failed",
+		JobID: 99,
+		Repo:  t.TempDir(),
+		SHA:   "abc",
+	})
+
+	if strings.Contains(buf.String(), "fired") {
+		t.Errorf("expected no log output when no hooks match, got %q", buf.String())
 	}
 }
 
