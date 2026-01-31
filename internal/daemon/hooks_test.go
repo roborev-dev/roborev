@@ -650,8 +650,9 @@ func assertFileNotCreated(t *testing.T, path string, duration time.Duration, msg
 func TestHandleEventLogsWhenHooksFired(t *testing.T) {
 	// Capture log output
 	var buf bytes.Buffer
+	prevOut := log.Writer()
 	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
 
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "log-test")
@@ -686,8 +687,9 @@ func TestHandleEventLogsWhenHooksFired(t *testing.T) {
 
 func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 	var buf bytes.Buffer
+	prevOut := log.Writer()
 	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{

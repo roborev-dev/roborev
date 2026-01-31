@@ -568,9 +568,9 @@ func TestJobCounts(t *testing.T) {
 	// Create a job, claim it, and complete it
 	commit, _ := db.GetOrCreateCommit(repo.ID, "done1", "A", "S", time.Now())
 	job, _ := db.EnqueueJob(repo.ID, commit.ID, "done1", "", "codex", "", "")
-	_, _ = db.ClaimJob("w1") // Claims oldest queued job (one of queued0-2)
-	_, _ = db.ClaimJob("w1") // Claims next
-	_, _ = db.ClaimJob("w1") // Claims next
+	_, _ = db.ClaimJob("w1")        // Claims oldest queued job (one of queued0-2)
+	_, _ = db.ClaimJob("w1")        // Claims next
+	_, _ = db.ClaimJob("w1")        // Claims next
 	claimed, _ := db.ClaimJob("w1") // Should claim "done1" job now
 	if claimed != nil {
 		db.CompleteJob(claimed.ID, "codex", "p", "o")
@@ -2515,6 +2515,52 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	}
 	if _, err := db.Exec(query, jobID); err != nil {
 		t.Fatalf("Failed to set job status to %s: %v", status, err)
+	}
+}
+
+func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
+	// Regression test: branch range reviews (commit_id NULL, git_ref contains "..")
+	// should have their verdict parsed, not be misclassified as task jobs.
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "range-verdict-repo"))
+
+	job, err := db.EnqueueRangeJob(repo.ID, "abc123..def456", "", "codex", "", "")
+	if err != nil {
+		t.Fatalf("EnqueueRangeJob failed: %v", err)
+	}
+
+	// Claim and complete with findings output
+	_, err = db.ClaimJob("worker-0")
+	if err != nil {
+		t.Fatalf("ClaimJob failed: %v", err)
+	}
+	err = db.CompleteJob(job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.")
+	if err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
+
+	jobs, err := db.ListJobs("", "", 50, 0)
+	if err != nil {
+		t.Fatalf("ListJobs failed: %v", err)
+	}
+
+	var found bool
+	for _, j := range jobs {
+		if j.ID == job.ID {
+			found = true
+			if j.Verdict == nil {
+				t.Fatal("expected verdict to be parsed for branch range review, got nil")
+			}
+			if *j.Verdict != "F" {
+				t.Errorf("expected verdict F for review with findings, got %q", *j.Verdict)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("branch range job not found in ListJobs result")
 	}
 }
 

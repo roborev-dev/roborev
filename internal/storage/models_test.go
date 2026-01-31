@@ -44,6 +44,11 @@ func TestIsTaskJob(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "task job run",
+			job:  ReviewJob{GitRef: "run"},
+			want: true,
+		},
+		{
 			name: "empty git ref",
 			job:  ReviewJob{GitRef: ""},
 			want: false,
