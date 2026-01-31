@@ -189,20 +189,16 @@ func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
-// shellCommand returns the platform-appropriate shell and args for running a command string.
-// On Windows, uses /D to disable AutoRun registry entries.
-func shellCommand(command string) []string {
-	if runtime.GOOS == "windows" {
-		return []string{"cmd", "/D", "/C", command}
-	}
-	return []string{"sh", "-c", command}
-}
-
 // runHook executes a shell command in the given working directory.
 // Errors are logged but never propagated.
 func runHook(command, workDir string) {
-	args := shellCommand(command)
-	cmd := exec.Command(args[0], args[1:]...)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		// Use /D to disable AutoRun registry entries for security.
+		cmd = exec.Command("cmd", "/D", "/C", command)
+	} else {
+		cmd = exec.Command("sh", "-c", command)
+	}
 	if workDir != "" {
 		cmd.Dir = workDir
 	}

@@ -21,7 +21,7 @@ func q(s string) string {
 // touchCmd returns a platform-appropriate shell command to create a file.
 func touchCmd(path string) string {
 	if runtime.GOOS == "windows" {
-		return `type nul > "` + path + `"`
+		return `copy nul "` + path + `"`
 	}
 	return "touch " + path
 }
