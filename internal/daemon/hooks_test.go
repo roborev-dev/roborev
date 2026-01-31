@@ -116,28 +116,28 @@ func TestInterpolateShellInjection(t *testing.T) {
 		event := Event{JobID: 1, Repo: "/repo", Error: payload}
 		got := interpolate("echo {error}", event)
 
-		// The interpolated command must start with "echo " followed by a quoted value.
+		prefix := "echo "
+		if !strings.HasPrefix(got, prefix) || len(got) <= len(prefix)+1 {
+			t.Fatalf("payload %q: unexpected format (too short or wrong prefix): %q", payload, got)
+		}
+		val := got[len(prefix):]
+
 		// The value must be fully enclosed in quotes (single on Unix, double on Windows).
 		if runtime.GOOS == "windows" {
-			// Must be wrapped in double quotes
-			val := got[len("echo "):]
 			if val[0] != '"' || val[len(val)-1] != '"' {
 				t.Errorf("payload %q: not double-quoted: %q", payload, got)
 			}
 		} else {
-			// Must be wrapped in single quotes (possibly with escaped internal quotes)
-			val := got[len("echo "):]
 			if val[0] != '\'' || val[len(val)-1] != '\'' {
 				t.Errorf("payload %q: not single-quoted: %q", payload, got)
 			}
 		}
 
-		// The raw payload must never appear unquoted in the output
-		// (i.e., the dangerous characters must be inside the quoted region)
-		prefix := "echo "
-		if !strings.HasPrefix(got, prefix) {
-			t.Errorf("payload %q: unexpected format: %q", payload, got)
-			continue
+		// The payload content must be present inside the quoted region (not dropped).
+		// Use an unambiguous substring that survives escaping.
+		substr := payload[:4] // first 4 chars are always safe to check
+		if !strings.Contains(val, substr) {
+			t.Errorf("payload %q: escaped value doesn't contain expected substring %q: %q", payload, substr, val)
 		}
 	}
 }
@@ -189,6 +189,7 @@ func TestShellEscape(t *testing.T) {
 			{"it's", `"it's"`},
 			{"a;b", `"a;b"`},
 			{`say "hi"`, `"say ""hi"""`},
+			{"%PATH%", `"%%PATH%%"`},
 		}
 	} else {
 		tests = []struct {
@@ -217,6 +218,9 @@ func TestShellEscape(t *testing.T) {
 	}
 	for _, payload := range injections {
 		got := shellEscape(payload)
+		if len(got) < 2 {
+			t.Fatalf("shellEscape(%q) too short: %q", payload, got)
+		}
 		if runtime.GOOS == "windows" {
 			if got[0] != '"' || got[len(got)-1] != '"' {
 				t.Errorf("shellEscape(%q) not double-quoted: %q", payload, got)

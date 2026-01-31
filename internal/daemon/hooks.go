@@ -177,8 +177,11 @@ func shellEscape(s string) string {
 		if s == "" {
 			return `""`
 		}
-		// cmd.exe uses double quotes; escape embedded double quotes by doubling them
-		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+		// cmd.exe uses double quotes; escape embedded double quotes by doubling them.
+		// Also escape % to prevent environment variable expansion.
+		s = strings.ReplaceAll(s, `"`, `""`)
+		s = strings.ReplaceAll(s, `%`, `%%`)
+		return `"` + s + `"`
 	}
 	if s == "" {
 		return "''"
@@ -186,19 +189,20 @@ func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
-// shellCommand returns the platform-appropriate shell and flag for running a command string.
-func shellCommand() (string, string) {
+// shellCommand returns the platform-appropriate shell and args for running a command string.
+// On Windows, uses /D to disable AutoRun registry entries.
+func shellCommand(command string) []string {
 	if runtime.GOOS == "windows" {
-		return "cmd", "/C"
+		return []string{"cmd", "/D", "/C", command}
 	}
-	return "sh", "-c"
+	return []string{"sh", "-c", command}
 }
 
 // runHook executes a shell command in the given working directory.
 // Errors are logged but never propagated.
 func runHook(command, workDir string) {
-	shell, flag := shellCommand()
-	cmd := exec.Command(shell, flag, command)
+	args := shellCommand(command)
+	cmd := exec.Command(args[0], args[1:]...)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
