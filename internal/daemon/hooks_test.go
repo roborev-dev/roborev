@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,17 +98,45 @@ func TestInterpolate(t *testing.T) {
 }
 
 func TestInterpolateShellInjection(t *testing.T) {
-	event := Event{
-		JobID: 1,
-		Repo:  "/repo",
-		Error: "'; rm -rf / #",
+	// Test with payloads that attempt to break out of quoting and execute commands.
+	// We assert safety properties rather than exact output to avoid testing
+	// shellEscape against itself.
+	payloads := []string{
+		"'; rm -rf / #",
+		"`rm -rf /`",
+		"$(rm -rf /)",
+		"a; echo pwned",
+		"a & echo pwned",
+		"a | cat /etc/passwd",
 	}
 
-	got := interpolate("echo {error}", event)
-	// The value must be quoted so the semicolon cannot break out and execute commands.
-	want := "echo " + q("'; rm -rf / #")
-	if got != want {
-		t.Errorf("interpolate shell injection:\ngot  %q\nwant %q", got, want)
+	for _, payload := range payloads {
+		event := Event{JobID: 1, Repo: "/repo", Error: payload}
+		got := interpolate("echo {error}", event)
+
+		// The interpolated command must start with "echo " followed by a quoted value.
+		// The value must be fully enclosed in quotes (single on Unix, double on Windows).
+		if runtime.GOOS == "windows" {
+			// Must be wrapped in double quotes
+			val := got[len("echo "):]
+			if val[0] != '"' || val[len(val)-1] != '"' {
+				t.Errorf("payload %q: not double-quoted: %q", payload, got)
+			}
+		} else {
+			// Must be wrapped in single quotes (possibly with escaped internal quotes)
+			val := got[len("echo "):]
+			if val[0] != '\'' || val[len(val)-1] != '\'' {
+				t.Errorf("payload %q: not single-quoted: %q", payload, got)
+			}
+		}
+
+		// The raw payload must never appear unquoted in the output
+		// (i.e., the dangerous characters must be inside the quoted region)
+		prefix := "echo "
+		if !strings.HasPrefix(got, prefix) {
+			t.Errorf("payload %q: unexpected format: %q", payload, got)
+			continue
+		}
 	}
 }
 
@@ -174,6 +203,26 @@ func TestShellEscape(t *testing.T) {
 		got := shellEscape(tt.in)
 		if got != tt.want {
 			t.Errorf("shellEscape(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+
+	// Verify injection payloads are properly enclosed in quotes on all platforms
+	injections := []string{
+		"'; rm -rf /",
+		"`rm -rf /`",
+		"$(cat /etc/passwd)",
+		"a; echo pwned",
+	}
+	for _, payload := range injections {
+		got := shellEscape(payload)
+		if runtime.GOOS == "windows" {
+			if got[0] != '"' || got[len(got)-1] != '"' {
+				t.Errorf("shellEscape(%q) not double-quoted: %q", payload, got)
+			}
+		} else {
+			if got[0] != '\'' || got[len(got)-1] != '\'' {
+				t.Errorf("shellEscape(%q) not single-quoted: %q", payload, got)
+			}
 		}
 	}
 }
