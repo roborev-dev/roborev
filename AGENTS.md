@@ -180,7 +180,7 @@ ollama_base_url = "http://remote-server:11434"
 ### Limitations
 
 - **Reasoning levels**: Currently no-op (Phase 1). `WithReasoning()` is accepted but doesn't affect behavior.
-- **Agentic mode**: Not supported. Ollama doesn't support tool calling like Claude/Gemini. `WithAgentic()` is accepted but always operates in read-only mode.
+- **Agentic mode**: Implemented. When agentic is enabled (`WithAgentic(true)` or `allow_unsafe_agents`), the Ollama agent sends tools to `/api/chat` and runs an agent loop: it executes tool_calls in-process (Read, Glob, Grep; and when agentic: Edit, Write, Bash), appends tool results to the conversation, and continues until the model returns no tool_calls. Tools run under the repository path; Bash runs in the repo directory with a 60s timeout and is only enabled when agentic is on.
 - **Availability checking**: Uses HTTP health check to `/api/tags` with 30-second TTL cache.
 
 ### Troubleshooting

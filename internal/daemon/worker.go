@@ -316,7 +316,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reasoning = "thorough"
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
-	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(job.Model)
+	// Resolve model from repo/global config when job has no explicit model (e.g. jobs enqueued directly via DB)
+	model := job.Model
+	if strings.TrimSpace(model) == "" {
+		model = config.ResolveModel("", job.RepoPath, cfg)
+	}
+	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(model)
 
 	// Configure Ollama-specific settings (BaseURL from config)
 	baseURL := config.ResolveOllamaBaseURL(cfg)

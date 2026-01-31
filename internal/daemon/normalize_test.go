@@ -196,6 +196,33 @@ func TestNormalizeOpenCodeOutput_EmptyLine(t *testing.T) {
 	}
 }
 
+func TestNormalizeOllamaOutput_ToolLine(t *testing.T) {
+	line := "[Tool: Read]"
+	result := NormalizeOllamaOutput(line)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Text != "[Tool: Read]" {
+		t.Errorf("expected tool line text, got %q", result.Text)
+	}
+	if result.Type != "tool" {
+		t.Errorf("expected type 'tool', got %q", result.Type)
+	}
+}
+
+func TestNormalizeOllamaOutput_GenericFallback(t *testing.T) {
+	line := `{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}`
+	result := NormalizeOllamaOutput(line)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Type != "text" {
+		t.Errorf("expected type 'text' for NDJSON line, got %q", result.Type)
+	}
+}
+
 func TestNormalizeGenericOutput_PlainText(t *testing.T) {
 	line := "Some agent output"
 	result := NormalizeGenericOutput(line)
@@ -227,6 +254,7 @@ func TestGetNormalizer(t *testing.T) {
 	}{
 		{"claude-code", "claude"},
 		{"opencode", "opencode"},
+		{"ollama", "ollama"},
 		{"codex", "generic"},
 		{"gemini", "generic"},
 		{"unknown", "generic"},
