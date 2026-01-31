@@ -1,6 +1,9 @@
 package storage
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Repo struct {
 	ID        int64     `json:"id"`
@@ -31,25 +34,25 @@ const (
 )
 
 type ReviewJob struct {
-	ID         int64      `json:"id"`
-	RepoID     int64      `json:"repo_id"`
-	CommitID   *int64     `json:"commit_id,omitempty"` // nil for ranges
-	GitRef     string     `json:"git_ref"`             // SHA or "start..end" for ranges
-	Branch     string     `json:"branch,omitempty"`    // Branch name at time of job creation
-	Agent      string     `json:"agent"`
-	Model      string     `json:"model,omitempty"`     // Model to use (for opencode: provider/model format)
-	Reasoning  string     `json:"reasoning,omitempty"` // thorough, standard, fast (default: thorough)
-	Status     JobStatus  `json:"status"`
-	EnqueuedAt time.Time  `json:"enqueued_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	WorkerID   string     `json:"worker_id,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	Prompt      string     `json:"prompt,omitempty"`
-	RetryCount  int        `json:"retry_count"`
-	DiffContent  *string `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
-	Agentic      bool    `json:"agentic"`                 // Enable agentic mode (allow file edits)
-	OutputPrefix string  `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	ID           int64      `json:"id"`
+	RepoID       int64      `json:"repo_id"`
+	CommitID     *int64     `json:"commit_id,omitempty"` // nil for ranges
+	GitRef       string     `json:"git_ref"`             // SHA or "start..end" for ranges
+	Branch       string     `json:"branch,omitempty"`    // Branch name at time of job creation
+	Agent        string     `json:"agent"`
+	Model        string     `json:"model,omitempty"`     // Model to use (for opencode: provider/model format)
+	Reasoning    string     `json:"reasoning,omitempty"` // thorough, standard, fast (default: thorough)
+	Status       JobStatus  `json:"status"`
+	EnqueuedAt   time.Time  `json:"enqueued_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	WorkerID     string     `json:"worker_id,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	Prompt       string     `json:"prompt,omitempty"`
+	RetryCount   int        `json:"retry_count"`
+	DiffContent  *string    `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
+	Agentic      bool       `json:"agentic"`                 // Enable agentic mode (allow file edits)
+	OutputPrefix string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 
 	// Sync fields
 	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
@@ -76,6 +79,9 @@ func (j ReviewJob) IsTaskJob() bool {
 	}
 	if j.GitRef == "dirty" {
 		return false // It's a dirty review (even if DiffContent not loaded)
+	}
+	if strings.Contains(j.GitRef, "..") {
+		return false // It's a branch/range review
 	}
 	if j.GitRef == "" {
 		return false // Invalid job state - not a valid task job
@@ -117,14 +123,14 @@ type Response struct {
 }
 
 type DaemonStatus struct {
-	Version          string `json:"version"`
-	QueuedJobs       int    `json:"queued_jobs"`
-	RunningJobs      int    `json:"running_jobs"`
-	CompletedJobs    int    `json:"completed_jobs"`
-	FailedJobs       int    `json:"failed_jobs"`
-	CanceledJobs     int    `json:"canceled_jobs"`
-	ActiveWorkers    int    `json:"active_workers"`
-	MaxWorkers       int    `json:"max_workers"`
+	Version             string `json:"version"`
+	QueuedJobs          int    `json:"queued_jobs"`
+	RunningJobs         int    `json:"running_jobs"`
+	CompletedJobs       int    `json:"completed_jobs"`
+	FailedJobs          int    `json:"failed_jobs"`
+	CanceledJobs        int    `json:"canceled_jobs"`
+	ActiveWorkers       int    `json:"active_workers"`
+	MaxWorkers          int    `json:"max_workers"`
 	MachineID           string `json:"machine_id,omitempty"`            // Local machine ID for remote job detection
 	ConfigReloadedAt    string `json:"config_reloaded_at,omitempty"`    // Last config reload timestamp (RFC3339Nano)
 	ConfigReloadCounter uint64 `json:"config_reload_counter,omitempty"` // Monotonic reload counter (for sub-second detection)
