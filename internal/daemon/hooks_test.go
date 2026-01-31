@@ -340,10 +340,7 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 		Error:    "fail",
 	})
 
-	time.Sleep(500 * time.Millisecond)
-	if _, err := os.Stat(markerFile); err == nil {
-		t.Fatal("hook should not have fired for non-matching event")
-	}
+	assertFileNotCreated(t, markerFile, 500*time.Millisecond, "hook should not have fired for non-matching event")
 }
 
 func TestHooksSliceNotAliased(t *testing.T) {
@@ -361,11 +358,11 @@ func TestHooksSliceNotAliased(t *testing.T) {
 
 	// Write a repo config with an additional hook
 	repoDir := t.TempDir()
-	os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(`
+	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.failed"
 command = "touch `+markerRepo+`"
-`), 0644)
+`)
 
 	broadcaster := NewBroadcaster()
 	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
@@ -396,7 +393,7 @@ func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
 	globalDir := t.TempDir()
 	repoDir := t.TempDir()
 	globalMarker := filepath.Join(globalDir, "global-fired")
-	repoMarker := filepath.Join(globalDir, "repo-fired")
+	repoMarker := filepath.Join(repoDir, "repo-fired")
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
@@ -405,11 +402,11 @@ func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
 	}
 
 	// Write repo config with its own hook
-	os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(`
+	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.failed"
 command = "touch `+repoMarker+`"
-`), 0644)
+`)
 
 	broadcaster := NewBroadcaster()
 	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
@@ -454,11 +451,11 @@ func TestHookRunnerRepoOnlyHooks(t *testing.T) {
 
 	cfg := &config.Config{} // no global hooks
 
-	os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(`
+	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.completed"
 command = "touch `+markerFile+`"
-`), 0644)
+`)
 
 	broadcaster := NewBroadcaster()
 	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
@@ -493,11 +490,11 @@ func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
 	cfg := &config.Config{} // no global hooks
 
 	// Only repoA has hooks
-	os.WriteFile(filepath.Join(repoA, ".roborev.toml"), []byte(`
+	writeRepoConfig(t, repoA, `
 [[hooks]]
 event = "review.failed"
 command = "touch `+markerFile+`"
-`), 0644)
+`)
 
 	broadcaster := NewBroadcaster()
 	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
@@ -514,10 +511,7 @@ command = "touch `+markerFile+`"
 		Error: "fail",
 	})
 
-	time.Sleep(500 * time.Millisecond)
-	if _, err := os.Stat(markerFile); err == nil {
-		t.Fatal("repo hook fired for a different repo's event")
-	}
+	assertFileNotCreated(t, markerFile, 500*time.Millisecond, "repo hook fired for a different repo's event")
 }
 
 func TestHookRunnerStopUnsubscribes(t *testing.T) {
@@ -538,6 +532,26 @@ func TestHookRunnerStopUnsubscribes(t *testing.T) {
 	afterStop := broadcaster.SubscriberCount()
 	if afterStop != before {
 		t.Errorf("expected subscriber count %d after Stop, got %d", before, afterStop)
+	}
+}
+
+// writeRepoConfig writes a .roborev.toml file into repoDir, failing the test on error.
+func writeRepoConfig(t *testing.T, repoDir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write .roborev.toml: %v", err)
+	}
+}
+
+// assertFileNotCreated polls for the given duration and fails immediately if the file appears.
+func assertFileNotCreated(t *testing.T, path string, duration time.Duration, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			t.Fatal(msg)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
