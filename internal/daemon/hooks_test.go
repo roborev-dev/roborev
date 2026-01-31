@@ -652,19 +652,18 @@ func assertFileNotCreated(t *testing.T, path string, duration time.Duration, msg
 }
 
 func TestHandleEventLogsWhenHooksFired(t *testing.T) {
-	// Capture log output
+	// Capture log output. The "fired N hook(s)" line is written synchronously
+	// by handleEvent before it spawns async goroutines for runHook. We capture
+	// the buffer, immediately restore the logger to avoid races with async
+	// goroutines, then check the captured output.
 	var buf bytes.Buffer
 	prevOut := log.Writer()
 	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(prevOut) })
-
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "log-test")
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
-			{Event: "review.completed", Command: touchCmd(markerFile)},
-			{Event: "review.completed", Command: touchCmd(markerFile + "2")},
+			{Event: "review.completed", Command: "true"},
+			{Event: "review.completed", Command: "true"},
 		},
 	}
 
@@ -672,10 +671,13 @@ func TestHandleEventLogsWhenHooksFired(t *testing.T) {
 	hr.handleEvent(Event{
 		Type:    "review.completed",
 		JobID:   42,
-		Repo:    tmpDir,
+		Repo:    t.TempDir(),
 		SHA:     "abc",
 		Verdict: "P",
 	})
+
+	// Restore immediately — async goroutines may still be running
+	log.SetOutput(prevOut)
 
 	logOutput := buf.String()
 	if !strings.Contains(logOutput, "fired 2 hook(s)") {
@@ -693,7 +695,6 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 	var buf bytes.Buffer
 	prevOut := log.Writer()
 	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(prevOut) })
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
@@ -708,6 +709,9 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 		Repo:  t.TempDir(),
 		SHA:   "abc",
 	})
+
+	// No hooks matched, so no async goroutines were spawned — safe to read
+	log.SetOutput(prevOut)
 
 	if strings.Contains(buf.String(), "fired") {
 		t.Errorf("expected no log output when no hooks match, got %q", buf.String())
