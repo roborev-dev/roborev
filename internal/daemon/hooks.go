@@ -174,14 +174,11 @@ func interpolate(cmd string, event Event) string {
 // On Windows, wraps in double quotes with embedded double quotes escaped.
 func shellEscape(s string) string {
 	if runtime.GOOS == "windows" {
+		// PowerShell single-quoted strings: only escape is '' for literal '.
 		if s == "" {
-			return `""`
+			return "''"
 		}
-		// cmd.exe uses double quotes; escape embedded double quotes by doubling them.
-		// Also escape % to prevent environment variable expansion.
-		s = strings.ReplaceAll(s, `"`, `""`)
-		s = strings.ReplaceAll(s, `%`, `%%`)
-		return `"` + s + `"`
+		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 	}
 	if s == "" {
 		return "''"
@@ -194,8 +191,10 @@ func shellEscape(s string) string {
 func runHook(command, workDir string) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// Use /D to disable AutoRun registry entries for security.
-		cmd = exec.Command("cmd", "/D", "/C", command)
+		// Use PowerShell for reliable path handling and command execution.
+		// -NoProfile avoids loading user profiles that could slow or alter execution.
+		// -Command takes the rest as a PowerShell script string.
+		cmd = exec.Command("powershell", "-NoProfile", "-Command", command)
 	} else {
 		cmd = exec.Command("sh", "-c", command)
 	}

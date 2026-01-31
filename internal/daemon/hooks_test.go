@@ -13,17 +13,6 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
-// skipOnWindows skips tests that exec shell commands via cmd.exe,
-// since cmd.exe's quoting of paths with 8.3 short names is unreliable.
-// The unit tests (matchEvent, interpolate, shellEscape, beadsCommand)
-// cover all hooks logic without spawning shell processes.
-func skipOnWindows(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping shell integration test on Windows")
-	}
-}
-
 // q wraps a string in platform-appropriate shell quoting (matches shellEscape output).
 func q(s string) string {
 	return shellEscape(s)
@@ -32,8 +21,8 @@ func q(s string) string {
 // touchCmd returns a platform-appropriate shell command to create a file.
 func touchCmd(path string) string {
 	if runtime.GOOS == "windows" {
-		// Use PowerShell for reliable path handling on Windows.
-		return `powershell -NoProfile -Command "New-Item -ItemType File -Force -Path '` + path + `'"`
+		// runHook uses PowerShell on Windows, so use PowerShell commands directly.
+		return "New-Item -ItemType File -Force -Path '" + path + "'"
 	}
 	return "touch " + path
 }
@@ -41,7 +30,7 @@ func touchCmd(path string) string {
 // pwdCmd returns a platform-appropriate shell command to write the cwd to a file.
 func pwdCmd(path string) string {
 	if runtime.GOOS == "windows" {
-		return `powershell -NoProfile -Command "(Get-Location).Path | Set-Content '` + path + `'"`
+		return "(Get-Location).Path | Set-Content '" + path + "'"
 	}
 	return "pwd > " + path
 }
@@ -134,15 +123,9 @@ func TestInterpolateShellInjection(t *testing.T) {
 		}
 		val := got[len(prefix):]
 
-		// The value must be fully enclosed in quotes (single on Unix, double on Windows).
-		if runtime.GOOS == "windows" {
-			if val[0] != '"' || val[len(val)-1] != '"' {
-				t.Errorf("payload %q: not double-quoted: %q", payload, got)
-			}
-		} else {
-			if val[0] != '\'' || val[len(val)-1] != '\'' {
-				t.Errorf("payload %q: not single-quoted: %q", payload, got)
-			}
+		// The value must be fully enclosed in single quotes on all platforms.
+		if val[0] != '\'' || val[len(val)-1] != '\'' {
+			t.Errorf("payload %q: not single-quoted: %q", payload, got)
 		}
 
 		// The payload content must be present inside the quoted region (not dropped).
@@ -196,12 +179,12 @@ func TestShellEscape(t *testing.T) {
 			in   string
 			want string
 		}{
-			{"hello", `"hello"`},
-			{"", `""`},
-			{"it's", `"it's"`},
-			{"a;b", `"a;b"`},
-			{`say "hi"`, `"say ""hi"""`},
-			{"%PATH%", `"%%PATH%%"`},
+			{"hello", "'hello'"},
+			{"", "''"},
+			{"it's", "'it''s'"},
+			{"a;b", "'a;b'"},
+			{`say "hi"`, `'say "hi"'`},
+			{"%PATH%", "'%PATH%'"},
 		}
 	} else {
 		tests = []struct {
@@ -233,14 +216,8 @@ func TestShellEscape(t *testing.T) {
 		if len(got) < 2 {
 			t.Fatalf("shellEscape(%q) too short: %q", payload, got)
 		}
-		if runtime.GOOS == "windows" {
-			if got[0] != '"' || got[len(got)-1] != '"' {
-				t.Errorf("shellEscape(%q) not double-quoted: %q", payload, got)
-			}
-		} else {
-			if got[0] != '\'' || got[len(got)-1] != '\'' {
-				t.Errorf("shellEscape(%q) not single-quoted: %q", payload, got)
-			}
+		if got[0] != '\'' || got[len(got)-1] != '\'' {
+			t.Errorf("shellEscape(%q) not single-quoted: %q", payload, got)
 		}
 	}
 }
@@ -337,7 +314,7 @@ func TestResolveCommand(t *testing.T) {
 }
 
 func TestHookRunnerFiresHooks(t *testing.T) {
-	skipOnWindows(t)
+
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "hook-fired")
 
@@ -377,7 +354,7 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 }
 
 func TestHookRunnerWorkingDirectory(t *testing.T) {
-	skipOnWindows(t)
+
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "pwd-test")
 
@@ -422,7 +399,7 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 }
 
 func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
-	skipOnWindows(t)
+
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "should-not-exist")
 
@@ -455,7 +432,7 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 }
 
 func TestHooksSliceNotAliased(t *testing.T) {
-	skipOnWindows(t)
+
 	// Verify that repo hooks don't leak into the global config's Hooks slice
 	tmpDir := t.TempDir()
 	markerGlobal := filepath.Join(tmpDir, "global-fired")
@@ -501,7 +478,7 @@ command = "`+touchCmd(markerRepo)+`"
 }
 
 func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
-	skipOnWindows(t)
+
 	// Both global and per-repo hooks should fire for the same event
 	globalDir := t.TempDir()
 	repoDir := t.TempDir()
@@ -558,7 +535,7 @@ command = "`+touchCmd(repoMarker)+`"
 }
 
 func TestHookRunnerRepoOnlyHooks(t *testing.T) {
-	skipOnWindows(t)
+
 	// Repo hooks fire even when there are no global hooks
 	repoDir := t.TempDir()
 	markerFile := filepath.Join(repoDir, "repo-only")
@@ -596,7 +573,7 @@ command = "`+touchCmd(markerFile)+`"
 }
 
 func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
-	skipOnWindows(t)
+
 	// A repo's hooks should not fire for events from a different repo
 	repoA := t.TempDir()
 	repoB := t.TempDir()
