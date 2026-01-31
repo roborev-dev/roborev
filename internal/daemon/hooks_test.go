@@ -13,6 +13,17 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
+// skipOnWindows skips tests that exec shell commands via cmd.exe,
+// since cmd.exe's quoting of paths with 8.3 short names is unreliable.
+// The unit tests (matchEvent, interpolate, shellEscape, beadsCommand)
+// cover all hooks logic without spawning shell processes.
+func skipOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping shell integration test on Windows")
+	}
+}
+
 // q wraps a string in platform-appropriate shell quoting (matches shellEscape output).
 func q(s string) string {
 	return shellEscape(s)
@@ -326,6 +337,7 @@ func TestResolveCommand(t *testing.T) {
 }
 
 func TestHookRunnerFiresHooks(t *testing.T) {
+	skipOnWindows(t)
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "hook-fired")
 
@@ -365,6 +377,7 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 }
 
 func TestHookRunnerWorkingDirectory(t *testing.T) {
+	skipOnWindows(t)
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "pwd-test")
 
@@ -409,6 +422,7 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 }
 
 func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
+	skipOnWindows(t)
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "should-not-exist")
 
@@ -441,6 +455,7 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 }
 
 func TestHooksSliceNotAliased(t *testing.T) {
+	skipOnWindows(t)
 	// Verify that repo hooks don't leak into the global config's Hooks slice
 	tmpDir := t.TempDir()
 	markerGlobal := filepath.Join(tmpDir, "global-fired")
@@ -486,6 +501,7 @@ command = "`+touchCmd(markerRepo)+`"
 }
 
 func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
+	skipOnWindows(t)
 	// Both global and per-repo hooks should fire for the same event
 	globalDir := t.TempDir()
 	repoDir := t.TempDir()
@@ -542,6 +558,7 @@ command = "`+touchCmd(repoMarker)+`"
 }
 
 func TestHookRunnerRepoOnlyHooks(t *testing.T) {
+	skipOnWindows(t)
 	// Repo hooks fire even when there are no global hooks
 	repoDir := t.TempDir()
 	markerFile := filepath.Join(repoDir, "repo-only")
@@ -579,6 +596,7 @@ command = "`+touchCmd(markerFile)+`"
 }
 
 func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
+	skipOnWindows(t)
 	// A repo's hooks should not fire for events from a different repo
 	repoA := t.TempDir()
 	repoB := t.TempDir()
