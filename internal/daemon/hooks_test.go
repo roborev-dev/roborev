@@ -40,7 +40,7 @@ func touchCmd(path string) string {
 // pwdCmd returns a platform-appropriate shell command to write the cwd to a file.
 func pwdCmd(path string) string {
 	if runtime.GOOS == "windows" {
-		return "(Get-Location).Path | Set-Content -NoNewline -Encoding UTF8 '" + filepath.ToSlash(path) + "'"
+		return "[IO.File]::WriteAllText('" + filepath.ToSlash(path) + "', (Get-Location).Path)"
 	}
 	return "pwd > " + path
 }
