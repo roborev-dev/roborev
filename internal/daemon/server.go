@@ -27,6 +27,7 @@ type Server struct {
 	workerPool    *WorkerPool
 	httpServer    *http.Server
 	syncWorker    *storage.SyncWorker
+	hookRunner    *HookRunner
 	errorLog      *ErrorLog
 	startTime     time.Time
 
@@ -51,11 +52,15 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	// Create config watcher for hot-reloading
 	configWatcher := NewConfigWatcher(configPath, cfg, broadcaster)
 
+	// Create hook runner to fire hooks on review events
+	hookRunner := NewHookRunner(configWatcher, broadcaster)
+
 	s := &Server{
 		db:            db,
 		configWatcher: configWatcher,
 		broadcaster:   broadcaster,
 		workerPool:    NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog),
+		hookRunner:    hookRunner,
 		errorLog:      errorLog,
 		startTime:     time.Now(),
 	}
@@ -155,6 +160,11 @@ func (s *Server) Stop() error {
 
 	// Stop worker pool
 	s.workerPool.Stop()
+
+	// Stop hook runner
+	if s.hookRunner != nil {
+		s.hookRunner.Stop()
+	}
 
 	// Close error log
 	if s.errorLog != nil {

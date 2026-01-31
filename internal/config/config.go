@@ -12,6 +12,13 @@ import (
 	"github.com/roborev-dev/roborev/internal/git"
 )
 
+// HookConfig defines a hook that runs on review events
+type HookConfig struct {
+	Event   string `toml:"event"`   // "review.failed", "review.completed", "review.*"
+	Command string `toml:"command"` // shell command with {var} templates
+	Type    string `toml:"type"`    // "beads" for built-in, empty for command
+}
+
 // Config holds the daemon configuration
 type Config struct {
 	ServerAddr         string `toml:"server_addr"`
@@ -55,6 +62,9 @@ type Config struct {
 
 	// API keys (optional - agents use subscription auth by default)
 	AnthropicAPIKey string `toml:"anthropic_api_key"`
+
+	// Hooks configuration
+	Hooks []HookConfig `toml:"hooks"`
 
 	// Sync configuration for PostgreSQL
 	Sync SyncConfig `toml:"sync"`
@@ -175,6 +185,9 @@ type RepoConfig struct {
 	FixModelFast        string `toml:"fix_model_fast"`
 	FixModelStandard    string `toml:"fix_model_standard"`
 	FixModelThorough    string `toml:"fix_model_thorough"`
+
+	// Hooks configuration (per-repo)
+	Hooks []HookConfig `toml:"hooks"`
 
 	// Analysis settings
 	MaxPromptSize int `toml:"max_prompt_size"` // Max prompt size in bytes before falling back to paths (overrides global default)
