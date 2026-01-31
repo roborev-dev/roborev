@@ -90,6 +90,38 @@ func TestInterpolateShellInjection(t *testing.T) {
 	}
 }
 
+func TestInterpolateQuotedPlaceholders(t *testing.T) {
+	// Placeholders are auto-escaped with single quotes, so users should NOT
+	// wrap them in additional quotes. This test documents the behavior:
+	// double-quoting a placeholder produces nested quotes which is valid shell
+	// but includes the literal single quotes inside the double-quoted string.
+	event := Event{
+		JobID:    1,
+		Repo:     "/repo",
+		RepoName: "myrepo",
+		Error:    "simple error",
+	}
+
+	// Unquoted placeholder (recommended) -- clean output
+	got := interpolate("echo {error}", event)
+	if got != "echo 'simple error'" {
+		t.Errorf("unquoted placeholder: got %q", got)
+	}
+
+	// Double-quoted placeholder -- works but includes literal single quotes
+	got = interpolate(`echo "{error}"`, event)
+	if got != `echo "'simple error'"` {
+		t.Errorf("double-quoted placeholder: got %q", got)
+	}
+
+	// Empty value produces ''
+	event.Verdict = ""
+	got = interpolate("echo {verdict}", event)
+	if got != "echo ''" {
+		t.Errorf("empty value: got %q", got)
+	}
+}
+
 func TestShellEscape(t *testing.T) {
 	tests := []struct {
 		in   string
