@@ -18,11 +18,21 @@ func q(s string) string {
 	return shellEscape(s)
 }
 
+// noopCmd returns a platform-appropriate no-op shell command.
+func noopCmd() string {
+	if runtime.GOOS == "windows" {
+		return "Write-Output ok"
+	}
+	return "true"
+}
+
 // touchCmd returns a platform-appropriate shell command to create a file.
+// Uses forward slashes on Windows to avoid TOML/shell escaping issues.
 func touchCmd(path string) string {
 	if runtime.GOOS == "windows" {
 		// runHook uses PowerShell on Windows, so use PowerShell commands directly.
-		return "New-Item -ItemType File -Force -Path '" + path + "'"
+		// Use forward slashes — PowerShell resolves them correctly.
+		return "New-Item -ItemType File -Force -Path '" + filepath.ToSlash(path) + "'"
 	}
 	return "touch " + path
 }
@@ -30,7 +40,7 @@ func touchCmd(path string) string {
 // pwdCmd returns a platform-appropriate shell command to write the cwd to a file.
 func pwdCmd(path string) string {
 	if runtime.GOOS == "windows" {
-		return "(Get-Location).Path | Set-Content '" + path + "'"
+		return "(Get-Location).Path | Set-Content -NoNewline '" + filepath.ToSlash(path) + "'"
 	}
 	return "pwd > " + path
 }
@@ -386,9 +396,18 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(markerFile)
 		if err == nil {
-			got := filepath.Clean(string(data[:len(data)-1])) // trim newline
+			got := filepath.Clean(strings.TrimSpace(string(data)))
 			want := filepath.Clean(tmpDir)
-			if got != want {
+			// On Windows, resolve 8.3 short paths to long paths for comparison
+			if runtime.GOOS == "windows" {
+				if g, err := filepath.EvalSymlinks(got); err == nil {
+					got = g
+				}
+				if w, err := filepath.EvalSymlinks(want); err == nil {
+					want = w
+				}
+			}
+			if !strings.EqualFold(got, want) {
 				t.Errorf("hook ran in %q, want %q", got, want)
 			}
 			return
@@ -658,8 +677,8 @@ func TestHandleEventLogsWhenHooksFired(t *testing.T) {
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
-			{Event: "review.completed", Command: "true"},
-			{Event: "review.completed", Command: "true"},
+			{Event: "review.completed", Command: noopCmd()},
+			{Event: "review.completed", Command: noopCmd()},
 		},
 	}
 
