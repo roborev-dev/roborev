@@ -266,6 +266,9 @@ func TestBeadsCommand(t *testing.T) {
 	if !contains(cmd, "-p 2") {
 		t.Errorf("expected priority 2 for failing review, got %q", cmd)
 	}
+	if !contains(cmd, "roborev fix 7") {
+		t.Errorf("expected 'roborev fix' hint in failing review command, got %q", cmd)
+	}
 }
 
 func TestBeadsCommandShortSHA(t *testing.T) {

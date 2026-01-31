@@ -1092,12 +1092,15 @@ func statusCmd() *cobra.Command {
 				json.NewDecoder(healthResp.Body).Decode(&health)
 			}
 
-			// Display daemon info with uptime
+			// Display daemon info with uptime and version
+			daemonLine := "Daemon: running"
 			if health.Uptime != "" {
-				fmt.Printf("Daemon: running (uptime: %s)\n", health.Uptime)
-			} else {
-				fmt.Println("Daemon: running")
+				daemonLine += fmt.Sprintf(" (uptime: %s)", health.Uptime)
 			}
+			if status.Version != "" {
+				daemonLine += fmt.Sprintf(" [%s]", status.Version)
+			}
+			fmt.Println(daemonLine)
 			fmt.Printf("Workers: %d/%d active\n", status.ActiveWorkers, status.MaxWorkers)
 			fmt.Printf("Jobs:    %d queued, %d running, %d completed, %d failed\n",
 				status.QueuedJobs, status.RunningJobs, status.CompletedJobs, status.FailedJobs)

@@ -135,7 +135,7 @@ func beadsCommand(event Event) string {
 		return fmt.Sprintf("bd create %q -p 1", title)
 	case "review.completed":
 		if event.Verdict == "F" {
-			title := fmt.Sprintf("Review findings for %s (%s): run roborev show %d", repoName, shortSHA, event.JobID)
+			title := fmt.Sprintf("Review findings for %s (%s): roborev show %d / one-shot fix with roborev fix %d", repoName, shortSHA, event.JobID, event.JobID)
 			return fmt.Sprintf("bd create %q -p 2", title)
 		}
 		return "" // No issue for passing reviews
