@@ -21,7 +21,8 @@ func q(s string) string {
 // touchCmd returns a platform-appropriate shell command to create a file.
 func touchCmd(path string) string {
 	if runtime.GOOS == "windows" {
-		return `copy nul "` + path + `"`
+		// Use PowerShell for reliable path handling on Windows.
+		return `powershell -NoProfile -Command "New-Item -ItemType File -Force -Path '` + path + `'"`
 	}
 	return "touch " + path
 }
@@ -29,7 +30,7 @@ func touchCmd(path string) string {
 // pwdCmd returns a platform-appropriate shell command to write the cwd to a file.
 func pwdCmd(path string) string {
 	if runtime.GOOS == "windows" {
-		return `cd > "` + path + `"`
+		return `powershell -NoProfile -Command "(Get-Location).Path | Set-Content '` + path + `'"`
 	}
 	return "pwd > " + path
 }
