@@ -5,6 +5,7 @@ import (
 	"log"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -162,19 +163,36 @@ func interpolate(cmd string, event Event) string {
 	return r.Replace(cmd)
 }
 
-// shellEscape wraps a value in single quotes, escaping any embedded single quotes.
-// This prevents shell injection when values are interpolated into sh -c commands.
+// shellEscape quotes a value for safe interpolation into a shell command.
+// On Unix, wraps in single quotes with embedded single quotes escaped.
+// On Windows, wraps in double quotes with embedded double quotes escaped.
 func shellEscape(s string) string {
+	if runtime.GOOS == "windows" {
+		if s == "" {
+			return `""`
+		}
+		// cmd.exe uses double quotes; escape embedded double quotes by doubling them
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
 	if s == "" {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
+// shellCommand returns the platform-appropriate shell and flag for running a command string.
+func shellCommand() (string, string) {
+	if runtime.GOOS == "windows" {
+		return "cmd", "/C"
+	}
+	return "sh", "-c"
+}
+
 // runHook executes a shell command in the given working directory.
 // Errors are logged but never propagated.
 func runHook(command, workDir string) {
-	cmd := exec.Command("sh", "-c", command)
+	shell, flag := shellCommand()
+	cmd := exec.Command(shell, flag, command)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}

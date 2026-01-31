@@ -3,11 +3,28 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
 )
+
+// touchCmd returns a platform-appropriate shell command to create a file.
+func touchCmd(path string) string {
+	if runtime.GOOS == "windows" {
+		return `type nul > "` + path + `"`
+	}
+	return "touch " + path
+}
+
+// pwdCmd returns a platform-appropriate shell command to write the cwd to a file.
+func pwdCmd(path string) string {
+	if runtime.GOOS == "windows" {
+		return `cd > "` + path + `"`
+	}
+	return "pwd > " + path
+}
 
 func TestMatchEvent(t *testing.T) {
 	tests := []struct {
@@ -236,7 +253,7 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 		Hooks: []config.HookConfig{
 			{
 				Event:   "review.completed",
-				Command: "touch " + markerFile,
+				Command: touchCmd(markerFile),
 			},
 		},
 	}
@@ -275,7 +292,7 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 		Hooks: []config.HookConfig{
 			{
 				Event:   "review.failed",
-				Command: "pwd > " + markerFile,
+				Command: pwdCmd(markerFile),
 			},
 		},
 	}
@@ -319,7 +336,7 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 		Hooks: []config.HookConfig{
 			{
 				Event:   "review.completed",
-				Command: "touch " + markerFile,
+				Command: touchCmd(markerFile),
 			},
 		},
 	}
@@ -350,7 +367,7 @@ func TestHooksSliceNotAliased(t *testing.T) {
 	markerRepo := filepath.Join(tmpDir, "repo-fired")
 
 	globalHooks := []config.HookConfig{
-		{Event: "review.failed", Command: "touch " + markerGlobal},
+		{Event: "review.failed", Command: touchCmd(markerGlobal)},
 	}
 	cfg := &config.Config{
 		Hooks: globalHooks,
@@ -361,7 +378,7 @@ func TestHooksSliceNotAliased(t *testing.T) {
 	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.failed"
-command = "touch `+markerRepo+`"
+command = "`+touchCmd(markerRepo)+`"
 `)
 
 	broadcaster := NewBroadcaster()
@@ -397,7 +414,7 @@ func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
 
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
-			{Event: "review.failed", Command: "touch " + globalMarker},
+			{Event: "review.failed", Command: touchCmd(globalMarker)},
 		},
 	}
 
@@ -405,7 +422,7 @@ func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
 	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.failed"
-command = "touch `+repoMarker+`"
+command = "`+touchCmd(repoMarker)+`"
 `)
 
 	broadcaster := NewBroadcaster()
@@ -454,7 +471,7 @@ func TestHookRunnerRepoOnlyHooks(t *testing.T) {
 	writeRepoConfig(t, repoDir, `
 [[hooks]]
 event = "review.completed"
-command = "touch `+markerFile+`"
+command = "`+touchCmd(markerFile)+`"
 `)
 
 	broadcaster := NewBroadcaster()
@@ -493,7 +510,7 @@ func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
 	writeRepoConfig(t, repoA, `
 [[hooks]]
 event = "review.failed"
-command = "touch `+markerFile+`"
+command = "`+touchCmd(markerFile)+`"
 `)
 
 	broadcaster := NewBroadcaster()
