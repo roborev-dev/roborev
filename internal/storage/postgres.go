@@ -428,7 +428,7 @@ func (p *PgPool) Tx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := fn(tx); err != nil {
 		return err
@@ -686,7 +686,7 @@ func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, aft
 	defer rows.Close()
 
 	var responses []PulledResponse
-	var lastID int64 = afterID
+	lastID := afterID
 
 	for rows.Next() {
 		var r PulledResponse
@@ -739,7 +739,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 
 	success := make([]bool, len(reviews))
 	var firstErr error
@@ -775,7 +775,7 @@ func (p *PgPool) BatchInsertResponses(ctx context.Context, responses []SyncableR
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 
 	success := make([]bool, len(responses))
 	var firstErr error
@@ -828,7 +828,7 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 
 	success := make([]bool, len(jobs))
 	var firstErr error

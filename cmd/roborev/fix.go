@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 func fixCmd() *cobra.Command {
@@ -241,9 +241,9 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 		return &fixJobResult{NoChanges: (err == nil && !hasChanges), AgentOutput: agentOutput}, nil
 	}
 
-	fmt.Fprint(out, "\nNo commit was created. Re-running agent with commit instructions...\n\n")
+	_, _ = fmt.Fprint(out, "\nNo commit was created. Re-running agent with commit instructions...\n\n")
 	if _, retryErr := params.Agent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPrompt(), out); retryErr != nil {
-		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
+		_, _ = fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
 	}
 	if sha, ok := detectNewCommit(params.RepoRoot, headBefore); ok {
 		return &fixJobResult{CommitCreated: true, NewCommitSHA: sha, AgentOutput: agentOutput}, nil
@@ -418,7 +418,7 @@ func queryUnaddressedJobs(repoRoot, branch string) ([]int64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query jobs: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -502,7 +502,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	if !opts.quiet {
-		fmt.Fprintln(cmd.OutOrStdout())
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	}
 
 	// Report commit status
@@ -797,7 +797,7 @@ func fetchJob(ctx context.Context, serverAddr string, jobID int64) (*storage.Rev
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -831,7 +831,7 @@ func fetchReview(ctx context.Context, serverAddr string, jobID int64) (*storage.
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -891,7 +891,7 @@ func addJobResponse(serverAddr string, jobID int64, commenter, response string) 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -928,7 +928,7 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 200 (skipped) and 201 (enqueued) are both fine
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -945,7 +945,7 @@ func hasJobForSHA(serverAddr, sha string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return false
 	}

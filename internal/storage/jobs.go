@@ -926,7 +926,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
@@ -934,7 +934,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(ctx, "ROLLBACK")
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
 
@@ -1021,7 +1021,7 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
@@ -1029,7 +1029,7 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(ctx, "ROLLBACK")
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
 
@@ -1196,7 +1196,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var jobs []ReviewJob
 	for rows.Next() {
@@ -1336,7 +1336,7 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled int, err e
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var status string

@@ -185,7 +185,7 @@ func TestIsInstalledClaude(t *testing.T) {
 	}
 
 	// Remove respond, add address
-	os.RemoveAll(filepath.Join(tmpHome, ".claude", "skills", "roborev-respond"))
+	_ = os.RemoveAll(filepath.Join(tmpHome, ".claude", "skills", "roborev-respond"))
 	createMockSkill(t, tmpHome, "claude", "roborev-address")
 	if !IsInstalled(AgentClaude) {
 		t.Error("expected IsInstalled=true when roborev-address/SKILL.md exists")

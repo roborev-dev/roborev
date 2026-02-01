@@ -124,8 +124,8 @@ func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 	// Override HOME to prevent reading real daemon.json
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	_ = os.Setenv("HOME", tmpHome)
+	defer func() { _ = os.Setenv("HOME", origHome) }()
 
 	repo := testutil.NewTestRepo(t)
 	repo.RemoveHooksDir()

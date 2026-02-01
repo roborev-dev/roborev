@@ -18,13 +18,13 @@ func setupTestServer(t *testing.T) (*Server, *storage.DB) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
 	t.Cleanup(func() {
 		if server.errorLog != nil {
-			server.errorLog.Close()
+			_ = server.errorLog.Close()
 		}
 	})
 	return server, db

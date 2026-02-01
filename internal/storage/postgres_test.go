@@ -315,7 +315,7 @@ func cleanupSchemaOnFinish(t *testing.T) {
 		ctx := context.Background()
 		p, _ := pgxpool.NewWithConfig(ctx, cfg)
 		if p != nil {
-			p.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+			_, _ = p.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
 			p.Close()
 		}
 	})
@@ -331,9 +331,9 @@ func cleanupTablesOnFinish(t *testing.T, publicTables ...string) {
 		p, _ := pgxpool.NewWithConfig(ctx, cfg)
 		if p != nil {
 			for _, table := range publicTables {
-				p.Exec(ctx, "DROP TABLE IF EXISTS public."+pgx.Identifier{table}.Sanitize())
+				_, _ = p.Exec(ctx, "DROP TABLE IF EXISTS public."+pgx.Identifier{table}.Sanitize())
 			}
-			p.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+			_, _ = p.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
 			p.Close()
 		}
 	})
@@ -345,14 +345,14 @@ func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID strin
 	// Clean up in reverse dependency order using tracked UUIDs
 	// Delete responses and reviews by job_uuid since that's tracked
 	for _, jobUUID := range jobUUIDs {
-		pool.pool.Exec(ctx, `DELETE FROM responses WHERE job_uuid = $1`, jobUUID)
-		pool.pool.Exec(ctx, `DELETE FROM reviews WHERE job_uuid = $1`, jobUUID)
+		_, _ = pool.pool.Exec(ctx, `DELETE FROM responses WHERE job_uuid = $1`, jobUUID)
+		_, _ = pool.pool.Exec(ctx, `DELETE FROM reviews WHERE job_uuid = $1`, jobUUID)
 	}
-	pool.pool.Exec(ctx, `DELETE FROM review_jobs WHERE source_machine_id = $1`, machineID)
-	pool.pool.Exec(ctx, `DELETE FROM commits WHERE repo_id IN (SELECT id FROM repos WHERE identity LIKE 'test-repo-%')`)
-	pool.pool.Exec(ctx, `DELETE FROM repos WHERE identity LIKE 'test-repo-%'`)
-	pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, machineID)
-	pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, otherMachineID)
+	_, _ = pool.pool.Exec(ctx, `DELETE FROM review_jobs WHERE source_machine_id = $1`, machineID)
+	_, _ = pool.pool.Exec(ctx, `DELETE FROM commits WHERE repo_id IN (SELECT id FROM repos WHERE identity LIKE 'test-repo-%')`)
+	_, _ = pool.pool.Exec(ctx, `DELETE FROM repos WHERE identity LIKE 'test-repo-%'`)
+	_, _ = pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, machineID)
+	_, _ = pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, otherMachineID)
 }
 
 func TestIntegration_EnsureSchema_AutoInitializesVersion(t *testing.T) {
@@ -391,7 +391,7 @@ func TestIntegration_EnsureSchema_RejectsNewerVersion(t *testing.T) {
 	}
 	defer func() {
 		// Clean up - remove future version
-		pool.pool.Exec(ctx, `DELETE FROM schema_version WHERE version = $1`, futureVersion)
+		_, _ = pool.pool.Exec(ctx, `DELETE FROM schema_version WHERE version = $1`, futureVersion)
 	}()
 
 	// EnsureSchema should fail with clear error
@@ -412,7 +412,10 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 	// First, check if schema exists
 	tempPool := openRawPgxPool(t)
 	var schemaExists bool
-	tempPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'roborev')`).Scan(&schemaExists)
+	if err := tempPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'roborev')`).Scan(&schemaExists); err != nil {
+		tempPool.Close()
+		t.Fatalf("Failed to check schema: %v", err)
+	}
 	tempPool.Close()
 
 	if schemaExists {
@@ -830,7 +833,7 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open SQLite: %v", err)
 	}
-	defer sqliteDB.Close()
+	defer func() { _ = sqliteDB.Close() }()
 
 	// Create test data with synced_at already set
 	repo, err := sqliteDB.GetOrCreateRepo(t.TempDir())
@@ -1336,9 +1339,9 @@ func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
 
 	defer func() {
 		// Cleanup
-		pool.pool.Exec(ctx, `DELETE FROM review_jobs WHERE uuid = $1`, jobUUID)
-		pool.pool.Exec(ctx, `DELETE FROM repos WHERE identity = $1`, repoIdentity)
-		pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, machineID)
+		_, _ = pool.pool.Exec(ctx, `DELETE FROM review_jobs WHERE uuid = $1`, jobUUID)
+		_, _ = pool.pool.Exec(ctx, `DELETE FROM repos WHERE identity = $1`, repoIdentity)
+		_, _ = pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, machineID)
 	}()
 
 	// Register machine and create repo

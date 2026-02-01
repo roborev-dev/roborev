@@ -74,8 +74,8 @@ func (e *ErrorLog) Log(level, component, message string, jobID int64) {
 	if e.file != nil {
 		data, err := json.Marshal(entry)
 		if err == nil {
-			e.file.Write(data)
-			e.file.Write([]byte("\n"))
+			_, _ = e.file.Write(data)
+			_, _ = e.file.Write([]byte("\n"))
 		}
 	}
 

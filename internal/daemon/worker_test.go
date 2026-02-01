@@ -118,7 +118,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		sha := "concurrentsha" + string(rune('0'+i))
 		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, sha, "", "test", "", "")
+		_, _ = db.EnqueueJob(repo.ID, commit.ID, sha, "", "test", "", "")
 	}
 
 	broadcaster := NewBroadcaster()

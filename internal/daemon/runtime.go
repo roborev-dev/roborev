@@ -70,12 +70,12 @@ func WriteRuntime(addr string, port int, version string) error {
 	success := false
 	defer func() {
 		if !success {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 		}
 	}()
 
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return err
 	}
 	if err := tmpFile.Close(); err != nil {
@@ -120,12 +120,12 @@ func ReadRuntimeForPID(pid int) (*RuntimeInfo, error) {
 
 // RemoveRuntime removes the runtime info file for the current process
 func RemoveRuntime() {
-	os.Remove(RuntimePath())
+	_ = os.Remove(RuntimePath())
 }
 
 // RemoveRuntimeForPID removes the runtime info file for a specific PID
 func RemoveRuntimeForPID(pid int) {
-	os.Remove(RuntimePathForPID(pid))
+	_ = os.Remove(RuntimePathForPID(pid))
 }
 
 // ListAllRuntimes returns info for all daemon runtime files found.
@@ -180,12 +180,12 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 		var info RuntimeInfo
 		if err := json.Unmarshal(data, &info); err != nil {
 			// Corrupted file - remove it
-			os.Remove(path)
+			_ = os.Remove(path)
 			continue
 		}
 		// Validate required fields - remove invalid entries
 		if info.PID <= 0 || info.Addr == "" {
-			os.Remove(path)
+			_ = os.Remove(path)
 			continue
 		}
 		// Track source path for proper cleanup
@@ -240,7 +240,7 @@ func IsDaemonAlive(addr string) bool {
 		if err != nil {
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		// Accept only 2xx (success) or 5xx (server error, daemon having issues).
 		// Reject 3xx/4xx - likely a different service (auth proxy, unrelated API, etc.).
 		// Status code validation for version mismatch happens in ensureDaemon.
@@ -293,7 +293,7 @@ func KillDaemon(info *RuntimeInfo) bool {
 	// Helper to remove the runtime file using SourcePath if available, otherwise by PID
 	removeRuntimeFile := func() {
 		if info.SourcePath != "" {
-			os.Remove(info.SourcePath)
+			_ = os.Remove(info.SourcePath)
 		} else if info.PID > 0 {
 			RemoveRuntimeForPID(info.PID)
 		}
@@ -304,7 +304,7 @@ func KillDaemon(info *RuntimeInfo) bool {
 		client := &http.Client{Timeout: 2 * time.Second}
 		resp, err := client.Post(fmt.Sprintf("http://%s/api/shutdown", info.Addr), "application/json", nil)
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			// Wait for graceful shutdown
 			for i := 0; i < 10; i++ {
 				time.Sleep(200 * time.Millisecond)
@@ -367,11 +367,11 @@ func CleanupZombieDaemons() int {
 			if json.Unmarshal(data, &info) == nil {
 				if !IsDaemonAlive(info.Addr) {
 					// Legacy file points to dead daemon, remove it
-					os.Remove(legacyPath)
+					_ = os.Remove(legacyPath)
 				}
 			} else {
 				// Corrupted, remove it
-				os.Remove(legacyPath)
+				_ = os.Remove(legacyPath)
 			}
 		}
 	}
@@ -402,7 +402,7 @@ func FindAvailablePort(startAddr string) (string, int, error) {
 		addr := fmt.Sprintf("%s:%d", host, port+i)
 		ln, err := net.Listen("tcp", addr)
 		if err == nil {
-			ln.Close()
+			_ = ln.Close()
 			return addr, port + i, nil
 		}
 	}

@@ -22,6 +22,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.DefaultAgent != "codex" {
 		t.Errorf("Expected DefaultAgent 'codex', got '%s'", cfg.DefaultAgent)
 	}
+	if cfg.OllamaBaseURL != "http://localhost:11434" {
+		t.Errorf("Expected OllamaBaseURL 'http://localhost:11434', got '%s'", cfg.OllamaBaseURL)
+	}
+	if cfg.OllamaModel != "" {
+		t.Errorf("Expected OllamaModel '', got '%s'", cfg.OllamaModel)
+	}
 }
 
 func TestDataDir(t *testing.T) {
@@ -94,6 +100,8 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DefaultAgent = "claude-code"
 	cfg.MaxWorkers = 8
+	cfg.OllamaBaseURL = "http://custom:11434"
+	cfg.OllamaModel = "qwen2.5-coder:32b"
 
 	err := SaveGlobal(cfg)
 	if err != nil {
@@ -110,6 +118,12 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	}
 	if loaded.MaxWorkers != 8 {
 		t.Errorf("Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
+	}
+	if loaded.OllamaBaseURL != "http://custom:11434" {
+		t.Errorf("Expected OllamaBaseURL 'http://custom:11434', got '%s'", loaded.OllamaBaseURL)
+	}
+	if loaded.OllamaModel != "qwen2.5-coder:32b" {
+		t.Errorf("Expected OllamaModel 'qwen2.5-coder:32b', got '%s'", loaded.OllamaModel)
 	}
 }
 
@@ -516,7 +530,7 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 	})
 
 	t.Run("missing env var becomes empty", func(t *testing.T) {
-		os.Unsetenv("NONEXISTENT_VAR")
+		_ = os.Unsetenv("NONEXISTENT_VAR")
 		cfg := SyncConfig{PostgresURL: "postgres://user:${NONEXISTENT_VAR}@localhost:5432/db"}
 		expected := "postgres://user:@localhost:5432/db"
 		if got := cfg.PostgresURLExpanded(); got != expected {
@@ -596,7 +610,7 @@ func TestSyncConfigValidate(t *testing.T) {
 	})
 
 	t.Run("unexpanded env var warns", func(t *testing.T) {
-		os.Unsetenv("MISSING_VAR")
+		_ = os.Unsetenv("MISSING_VAR")
 		cfg := SyncConfig{
 			Enabled:     true,
 			PostgresURL: "postgres://user:${MISSING_VAR}@localhost:5432/db",
@@ -1362,4 +1376,149 @@ func TestStripURLCredentials(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveOllamaBaseURL(t *testing.T) {
+	// Clear OLLAMA_HOST so default/empty config tests are deterministic
+	clearOllamaHost := func() {
+		orig, ok := os.LookupEnv("OLLAMA_HOST")
+		t.Cleanup(func() {
+			if ok {
+				_ = os.Setenv("OLLAMA_HOST", orig)
+			} else {
+				_ = os.Unsetenv("OLLAMA_HOST")
+			}
+		})
+		_ = os.Unsetenv("OLLAMA_HOST")
+	}
+
+	t.Run("nil config returns default", func(t *testing.T) {
+		clearOllamaHost()
+		baseURL := ResolveOllamaBaseURL(nil)
+		if baseURL != "http://localhost:11434" {
+			t.Errorf("Expected default 'http://localhost:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("empty config returns default", func(t *testing.T) {
+		clearOllamaHost()
+		cfg := &Config{OllamaBaseURL: ""}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://localhost:11434" {
+			t.Errorf("Expected default 'http://localhost:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("whitespace-only config returns default", func(t *testing.T) {
+		clearOllamaHost()
+		cfg := &Config{OllamaBaseURL: "   "}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://localhost:11434" {
+			t.Errorf("Expected default 'http://localhost:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("configured value is returned", func(t *testing.T) {
+		cfg := &Config{OllamaBaseURL: "http://custom:11434"}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://custom:11434" {
+			t.Errorf("Expected 'http://custom:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("configured value with whitespace is trimmed", func(t *testing.T) {
+		cfg := &Config{OllamaBaseURL: "  http://custom:11434  "}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://custom:11434" {
+			t.Errorf("Expected 'http://custom:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("remote server URL is preserved", func(t *testing.T) {
+		cfg := &Config{OllamaBaseURL: "http://192.168.1.100:11434"}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://192.168.1.100:11434" {
+			t.Errorf("Expected 'http://192.168.1.100:11434', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("OLLAMA_HOST env overrides default when config empty", func(t *testing.T) {
+		const envKey = "OLLAMA_HOST"
+		orig := os.Getenv(envKey)
+		defer func() { _ = os.Setenv(envKey, orig) }()
+
+		_ = os.Setenv(envKey, "http://127.0.0.1:11435")
+		baseURL := ResolveOllamaBaseURL(&Config{OllamaBaseURL: ""})
+		if baseURL != "http://127.0.0.1:11435" {
+			t.Errorf("Expected OLLAMA_HOST value, got '%s'", baseURL)
+		}
+	})
+
+	t.Run("OLLAMA_HOST bare host:port gets http prefix", func(t *testing.T) {
+		const envKey = "OLLAMA_HOST"
+		orig := os.Getenv(envKey)
+		defer func() { _ = os.Setenv(envKey, orig) }()
+
+		_ = os.Setenv(envKey, "127.0.0.1:11435")
+		baseURL := ResolveOllamaBaseURL(nil)
+		if baseURL != "http://127.0.0.1:11435" {
+			t.Errorf("Expected 'http://127.0.0.1:11435', got '%s'", baseURL)
+		}
+	})
+
+	t.Run("config takes precedence over OLLAMA_HOST", func(t *testing.T) {
+		const envKey = "OLLAMA_HOST"
+		orig := os.Getenv(envKey)
+		defer func() { _ = os.Setenv(envKey, orig) }()
+
+		_ = os.Setenv(envKey, "http://env-host:11434")
+		cfg := &Config{OllamaBaseURL: "http://config-host:11434"}
+		baseURL := ResolveOllamaBaseURL(cfg)
+		if baseURL != "http://config-host:11434" {
+			t.Errorf("Expected config value, got '%s'", baseURL)
+		}
+	})
+}
+
+func TestOllamaModelResolution(t *testing.T) {
+	t.Run("explicit model takes precedence for Ollama", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("explicit-ollama-model", tmpDir, cfg)
+		if model != "explicit-ollama-model" {
+			t.Errorf("Expected 'explicit-ollama-model', got '%s'", model)
+		}
+	})
+
+	t.Run("repo config model works for Ollama", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoConfig := filepath.Join(tmpDir, ".roborev.toml")
+		if err := os.WriteFile(repoConfig, []byte(`model = "qwen2.5-coder:32b"`), 0644); err != nil {
+			t.Fatalf("Failed to write repo config: %v", err)
+		}
+
+		cfg := &Config{DefaultModel: "global-model"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "qwen2.5-coder:32b" {
+			t.Errorf("Expected 'qwen2.5-coder:32b' from repo config, got '%s'", model)
+		}
+	})
+
+	t.Run("global config model works for Ollama", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "llama3.1"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "llama3.1" {
+			t.Errorf("Expected 'llama3.1' from global config, got '%s'", model)
+		}
+	})
+
+	t.Run("Ollama model format with tag preserved", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &Config{DefaultModel: "qwen2.5-coder:32b"}
+		model := ResolveModel("", tmpDir, cfg)
+		if model != "qwen2.5-coder:32b" {
+			t.Errorf("Expected 'qwen2.5-coder:32b', got '%s'", model)
+		}
+	})
 }

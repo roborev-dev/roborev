@@ -530,12 +530,6 @@ func (w *SyncWorker) doSync() error {
 	return nil
 }
 
-// pushChanges pushes local changes to PostgreSQL
-func (w *SyncWorker) pushChanges(ctx context.Context, pool *PgPool) error {
-	_, err := w.pushChangesWithStats(ctx, pool)
-	return err
-}
-
 // syncBatchSize controls how many items are pushed per batch.
 // Smaller batches mean more frequent commits and better progress visibility.
 const syncBatchSize = 25
@@ -669,36 +663,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	return stats, nil
 }
 
-// pushJob pushes a single job to PostgreSQL, creating repo/commit as needed
-func (w *SyncWorker) pushJob(ctx context.Context, pool *PgPool, j SyncableJob) error {
-	// Get or create repo in PostgreSQL
-	if j.RepoIdentity == "" {
-		return fmt.Errorf("job %s has no repo identity", j.UUID)
-	}
-
-	pgRepoID, err := pool.GetOrCreateRepo(ctx, j.RepoIdentity)
-	if err != nil {
-		return fmt.Errorf("get or create repo: %w", err)
-	}
-
-	// Get or create commit if we have one
-	var pgCommitID *int64
-	if j.CommitSHA != "" {
-		id, err := pool.GetOrCreateCommit(ctx, pgRepoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
-		if err != nil {
-			return fmt.Errorf("get or create commit: %w", err)
-		}
-		pgCommitID = &id
-	}
-
-	// Upsert the job
-	if err := pool.UpsertJob(ctx, j, pgRepoID, pgCommitID); err != nil {
-		return fmt.Errorf("upsert job: %w", err)
-	}
-
-	return nil
-}
-
 // pullChanges pulls remote changes from PostgreSQL
 func (w *SyncWorker) pullChanges(ctx context.Context, pool *PgPool) error {
 	_, err := w.pullChangesWithStats(ctx, pool)
@@ -805,7 +769,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 	var responseID int64
 	if responseIDStr != "" {
-		fmt.Sscanf(responseIDStr, "%d", &responseID)
+		_, _ = fmt.Sscanf(responseIDStr, "%d", &responseID)
 	}
 
 	for {

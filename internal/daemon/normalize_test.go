@@ -146,6 +146,33 @@ func TestNormalizeOpenCodeOutput(t *testing.T) {
 	})
 }
 
+func TestNormalizeOllamaOutput_ToolLine(t *testing.T) {
+	line := "[Tool: Read]"
+	result := NormalizeOllamaOutput(line)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Text != "[Tool: Read]" {
+		t.Errorf("expected tool line text, got %q", result.Text)
+	}
+	if result.Type != "tool" {
+		t.Errorf("expected type 'tool', got %q", result.Type)
+	}
+}
+
+func TestNormalizeOllamaOutput_GenericFallback(t *testing.T) {
+	line := `{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}`
+	result := NormalizeOllamaOutput(line)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Type != "text" {
+		t.Errorf("expected type 'text' for NDJSON line, got %q", result.Type)
+	}
+}
+
 func TestNormalizeGenericOutput(t *testing.T) {
 	runNormalizeTests(t, NormalizeGenericOutput, []normalizeTestCase{
 		{
@@ -168,6 +195,7 @@ func TestGetNormalizer(t *testing.T) {
 	}{
 		{"claude-code", "NormalizeClaudeOutput"},
 		{"opencode", "NormalizeOpenCodeOutput"},
+		{"ollama", "NormalizeOllamaOutput"},
 		{"codex", "NormalizeGenericOutput"},
 		{"gemini", "NormalizeGenericOutput"},
 		{"unknown", "NormalizeGenericOutput"},
@@ -191,6 +219,11 @@ func TestGetNormalizer(t *testing.T) {
 			result := fn(`{"name":"read","arguments":{}}`)
 			if result == nil || result.Text != "[Tool call]" {
 				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeOpenCodeOutput", tc.agent)
+			}
+		case "NormalizeOllamaOutput":
+			result := fn("[Tool: Read]")
+			if result == nil || result.Text != "[Tool: Read]" || result.Type != "tool" {
+				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeOllamaOutput", tc.agent)
 			}
 		case "NormalizeGenericOutput":
 			// Generic normalizer treats Claude JSON as plain text, not parsed messages.

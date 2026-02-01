@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	githubAPIURL      = "https://api.github.com/repos/roborev-dev/roborev/releases/latest"
-	cacheFileName     = "update_check.json"
-	cacheDuration     = 1 * time.Hour
-	devCacheDuration  = 15 * time.Minute // Shorter cache for dev builds
+	githubAPIURL     = "https://api.github.com/repos/roborev-dev/roborev/releases/latest"
+	cacheFileName    = "update_check.json"
+	cacheDuration    = 1 * time.Hour
+	devCacheDuration = 15 * time.Minute // Shorter cache for dev builds
 )
 
 // Release represents a GitHub release
@@ -164,7 +164,7 @@ func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) e
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	archivePath := filepath.Join(tempDir, info.AssetName)
 	checksum, err := downloadFile(info.DownloadURL, archivePath, info.Size, progressFn)
@@ -217,7 +217,7 @@ func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) e
 		fmt.Printf("Installing %s... ", binary)
 
 		// Clean up any old backup from previous update
-		os.Remove(backupPath)
+		_ = os.Remove(backupPath)
 
 		// Backup existing
 		if _, err := os.Stat(dstPath); err == nil {
@@ -233,7 +233,7 @@ func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) e
 		// Copy new binary
 		if err := copyFile(srcPath, dstPath); err != nil {
 			// Try to restore backup
-			os.Rename(backupPath, dstPath)
+			_ = os.Rename(backupPath, dstPath)
 			return fmt.Errorf("install %s: %w", binary, err)
 		}
 
@@ -246,7 +246,7 @@ func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) e
 
 		// Try to remove backup (may fail on Windows if daemon was running)
 		// The .old file will be cleaned up on next update
-		os.Remove(backupPath)
+		_ = os.Remove(backupPath)
 
 		fmt.Println("OK")
 	}
@@ -279,7 +279,7 @@ func fetchLatestRelease() (*Release, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned %s", resp.Status)
@@ -298,7 +298,7 @@ func downloadFile(url, dest string, totalSize int64, progressFn func(downloaded,
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download failed: %s", resp.Status)
@@ -308,7 +308,7 @@ func downloadFile(url, dest string, totalSize int64, progressFn func(downloaded,
 	if err != nil {
 		return "", err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	// Calculate checksum while downloading
 	hasher := sha256.New()
@@ -355,13 +355,13 @@ func extractTarGz(archivePath, destDir string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	gzr, err := gzip.NewReader(file)
 	if err != nil {
 		return err
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	tr := tar.NewReader(gzr)
 	for {
@@ -399,10 +399,10 @@ func extractTarGz(archivePath, destDir string) error {
 				return err
 			}
 			if _, err := io.Copy(outFile, tr); err != nil {
-				outFile.Close()
+				_ = outFile.Close()
 				return err
 			}
-			outFile.Close()
+			_ = outFile.Close()
 			if err := os.Chmod(target, os.FileMode(header.Mode)); err != nil {
 				return err
 			}
@@ -458,13 +458,13 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	if _, err := io.Copy(out, in); err != nil {
 		return err
@@ -480,7 +480,7 @@ func fetchChecksumFromFile(url, assetName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("failed to fetch checksums: %s", resp.Status)
@@ -534,8 +534,8 @@ func saveCache(version string) {
 		return
 	}
 	cachePath := filepath.Join(GetCacheDir(), cacheFileName)
-	os.MkdirAll(filepath.Dir(cachePath), 0755)
-	os.WriteFile(cachePath, data, 0644)
+	_ = os.MkdirAll(filepath.Dir(cachePath), 0755)
+	_ = os.WriteFile(cachePath, data, 0644)
 }
 
 // extractBaseSemver extracts the base semver from a version string.
@@ -604,10 +604,10 @@ func isNewer(v1, v2 string) bool {
 	for i := 0; i < 3; i++ {
 		var n1, n2 int
 		if i < len(parts1) {
-			fmt.Sscanf(parts1[i], "%d", &n1)
+			_, _ = fmt.Sscanf(parts1[i], "%d", &n1)
 		}
 		if i < len(parts2) {
-			fmt.Sscanf(parts2[i], "%d", &n2)
+			_, _ = fmt.Sscanf(parts2[i], "%d", &n2)
 		}
 		if n1 > n2 {
 			return true

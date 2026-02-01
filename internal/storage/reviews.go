@@ -163,7 +163,7 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var reviews []Review
 	for rows.Next() {
@@ -194,7 +194,7 @@ func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var reviews []Review
 	for rows.Next() {
@@ -348,7 +348,7 @@ func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var responses []Response
 	for rows.Next() {
@@ -382,7 +382,7 @@ func (db *DB) GetCommentsForJob(jobID int64) ([]Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var responses []Response
 	for rows.Next() {

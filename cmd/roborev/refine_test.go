@@ -54,14 +54,14 @@ type mockDaemonClient struct {
 	// Track calls for assertions
 	addressedJobIDs []int64
 	addedComments   []addedComment
-	enqueuedReviews  []enqueuedReview
+	enqueuedReviews []enqueuedReview
 
 	// Auto-incrementing review ID counter for WithReview
 	nextReviewID int64
 
 	// Configurable errors for testing error paths
-	markAddressedErr   error
-	getReviewBySHAErr  error
+	markAddressedErr  error
+	getReviewBySHAErr error
 }
 
 type addedComment struct {
@@ -179,11 +179,14 @@ func (m *mockDaemonClient) WithJob(id int64, gitRef string, status storage.JobSt
 var _ daemon.Client = (*mockDaemonClient)(nil)
 
 func TestSelectRefineAgentCodexFallback(t *testing.T) {
-	// With an empty PATH, no real agents are available and the test agent
-	// is excluded from production fallback, so we expect an error.
+	// With an empty PATH, no command-based agents are available. If ollama
+	// is running, it will be used as fallback; skip when we can't test "no agents".
+	if agent.IsAvailable("ollama") {
+		t.Skip("Ollama is available; cannot test no-agents error")
+	}
 	t.Setenv("PATH", "")
 
-	_, err := selectRefineAgent("codex", agent.ReasoningFast, "")
+	_, err := selectRefineAgent("codex", agent.ReasoningFast, "", nil)
 	if err == nil {
 		t.Fatal("expected error when no agents are available")
 	}
@@ -272,7 +275,8 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 
 	t.Setenv("PATH", tmpDir)
 
-	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "")
+	// nil config is intentional - codex agent doesn't use config parameter
+	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "", nil)
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
@@ -292,8 +296,9 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 
 	t.Setenv("PATH", tmpDir)
 
+	// nil config is intentional - codex/claude agents don't use config parameter
 	// Request an unavailable agent (claude), codex should be used as fallback
-	selected, err := selectRefineAgent("claude", agent.ReasoningThorough, "")
+	selected, err := selectRefineAgent("claude", agent.ReasoningThorough, "", nil)
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
@@ -305,6 +310,91 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	if codexAgent.Reasoning != agent.ReasoningThorough {
 		t.Fatalf("expected codex fallback to use requested reasoning (thorough), got %q", codexAgent.Reasoning)
 	}
+}
+
+func TestSelectRefineAgentOllamaBaseURL(t *testing.T) {
+	t.Run("Ollama agent uses BaseURL from config", func(t *testing.T) {
+		if !agent.IsAvailable("ollama") {
+			t.Skip("Ollama agent not available (server may not be running)")
+		}
+		cfg := &config.Config{OllamaBaseURL: "http://custom:11434"}
+		selected, err := selectRefineAgent("ollama", agent.ReasoningStandard, "test-model", cfg)
+		if err != nil {
+			t.Fatalf("selectRefineAgent failed: %v", err)
+		}
+		ollamaAgent, ok := selected.(*agent.OllamaAgent)
+		if !ok {
+			t.Fatalf("expected *agent.OllamaAgent, got %T", selected)
+		}
+		if ollamaAgent.BaseURL != "http://custom:11434" {
+			t.Errorf("BaseURL = %q, want \"http://custom:11434\"", ollamaAgent.BaseURL)
+		}
+	})
+
+	t.Run("Ollama agent uses default BaseURL when config is nil", func(t *testing.T) {
+		if !agent.IsAvailable("ollama") {
+			t.Skip("Ollama agent not available (server may not be running)")
+		}
+		selected, err := selectRefineAgent("ollama", agent.ReasoningStandard, "test-model", nil)
+		if err != nil {
+			t.Fatalf("selectRefineAgent failed: %v", err)
+		}
+		ollamaAgent, ok := selected.(*agent.OllamaAgent)
+		if !ok {
+			t.Fatalf("expected *agent.OllamaAgent, got %T", selected)
+		}
+		if ollamaAgent.BaseURL != "http://localhost:11434" {
+			t.Errorf("BaseURL = %q, want \"http://localhost:11434\"", ollamaAgent.BaseURL)
+		}
+	})
+
+	t.Run("non-Ollama agent is unaffected", func(t *testing.T) {
+		cfg := &config.Config{OllamaBaseURL: "http://custom:11434"}
+		selected, err := selectRefineAgent("test", agent.ReasoningStandard, "", cfg)
+		if err != nil {
+			t.Fatalf("selectRefineAgent failed: %v", err)
+		}
+		if selected.Name() != "test" {
+			t.Fatalf("expected test agent, got %s", selected.Name())
+		}
+		// Test agent should be unchanged
+	})
+
+	t.Run("BaseURL configuration applied correctly with various formats", func(t *testing.T) {
+		if !agent.IsAvailable("ollama") {
+			t.Skip("Ollama agent not available (server may not be running)")
+		}
+
+		tests := []struct {
+			name    string
+			baseURL string
+		}{
+			{"localhost default port", "http://localhost:11434"},
+			{"localhost custom port", "http://localhost:9999"},
+			{"remote IP address", "http://192.168.1.100:11434"},
+			{"remote hostname", "http://ollama-server.example.com:11434"},
+			{"HTTPS URL", "https://ollama.example.com:11434"},
+			{"custom port", "http://127.0.0.1:8080"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				cfg := &config.Config{OllamaBaseURL: tt.baseURL}
+				selected, err := selectRefineAgent("ollama", agent.ReasoningStandard, "test-model", cfg)
+				if err != nil {
+					t.Fatalf("selectRefineAgent failed: %v", err)
+				}
+				ollamaAgent, ok := selected.(*agent.OllamaAgent)
+				if !ok {
+					t.Fatalf("expected *agent.OllamaAgent, got %T", selected)
+				}
+				// Verify BaseURL is correctly configured (actual connectivity is tested in ollama_test.go)
+				if ollamaAgent.BaseURL != tt.baseURL {
+					t.Errorf("BaseURL = %q, want %q", ollamaAgent.BaseURL, tt.baseURL)
+				}
+			})
+		}
+	})
 }
 
 func TestFindFailedReviewForBranch_OldestFirst(t *testing.T) {
@@ -858,7 +948,7 @@ func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 	if err := os.Chdir(repoDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	// Validating without --since on main should fail
 	_, _, _, _, err = validateRefineContext("")
@@ -890,7 +980,7 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 	if err := os.Chdir(repoDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	// Validating with --since on main should pass
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(baseSHA)
@@ -926,7 +1016,7 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 	if err := os.Chdir(repoDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	// --since should work on feature branch
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(baseSHA)
@@ -958,7 +1048,7 @@ func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 	if err := os.Chdir(repoDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	// Invalid --since ref should fail with clear error
 	_, _, _, _, err = validateRefineContext("nonexistent-ref-abc123")
@@ -992,7 +1082,7 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 	if err := os.Chdir(repoDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	// Using --since with a commit from a different branch (not ancestor of HEAD) should fail
 	_, _, _, _, err = validateRefineContext(otherBranchSHA)
@@ -1022,7 +1112,7 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 	if err := os.Chdir(repoDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	// Feature branch without --since should pass validation (uses merge-base)
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("")
@@ -1082,39 +1172,39 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 
 func TestResolveReasoningWithFast(t *testing.T) {
 	tests := []struct {
-		name                  string
-		reasoning             string
-		fast                  bool
+		name                   string
+		reasoning              string
+		fast                   bool
 		reasoningExplicitlySet bool
-		want                  string
+		want                   string
 	}{
 		{
-			name:                  "fast flag sets reasoning to fast",
-			reasoning:             "",
-			fast:                  true,
+			name:                   "fast flag sets reasoning to fast",
+			reasoning:              "",
+			fast:                   true,
 			reasoningExplicitlySet: false,
-			want:                  "fast",
+			want:                   "fast",
 		},
 		{
-			name:                  "explicit reasoning takes precedence over fast",
-			reasoning:             "thorough",
-			fast:                  true,
+			name:                   "explicit reasoning takes precedence over fast",
+			reasoning:              "thorough",
+			fast:                   true,
 			reasoningExplicitlySet: true,
-			want:                  "thorough",
+			want:                   "thorough",
 		},
 		{
-			name:                  "no fast flag preserves reasoning",
-			reasoning:             "standard",
-			fast:                  false,
+			name:                   "no fast flag preserves reasoning",
+			reasoning:              "standard",
+			fast:                   false,
 			reasoningExplicitlySet: true,
-			want:                  "standard",
+			want:                   "standard",
 		},
 		{
-			name:                  "no flags returns empty",
-			reasoning:             "",
-			fast:                  false,
+			name:                   "no flags returns empty",
+			reasoning:              "",
+			fast:                   false,
 			reasoningExplicitlySet: false,
-			want:                  "",
+			want:                   "",
 		},
 	}
 

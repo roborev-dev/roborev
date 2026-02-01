@@ -360,7 +360,7 @@ func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewCon
 			shortSHA = shortSHA[:7]
 		}
 
-		sb.WriteString(fmt.Sprintf("--- Review for commit %s ---\n", shortSHA))
+		fmt.Fprintf(sb, "--- Review for commit %s ---\n", shortSHA)
 		if ctx.Review != nil {
 			sb.WriteString(ctx.Review.Output)
 		} else {
@@ -372,7 +372,7 @@ func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewCon
 		if len(ctx.Responses) > 0 {
 			sb.WriteString("\nComments on this review:\n")
 			for _, resp := range ctx.Responses {
-				sb.WriteString(fmt.Sprintf("- %s: %q\n", resp.Responder, resp.Response))
+				fmt.Fprintf(sb, "- %s: %q\n", resp.Responder, resp.Response)
 			}
 		}
 		sb.WriteString("\n")
@@ -406,8 +406,8 @@ func (b *Builder) writePreviousAttemptsForGitRef(sb *strings.Builder, gitRef str
 	sb.WriteString("\n")
 
 	for i, review := range reviews {
-		sb.WriteString(fmt.Sprintf("--- Review Attempt %d (%s, %s) ---\n",
-			i+1, review.Agent, review.CreatedAt.Format("2006-01-02 15:04")))
+		fmt.Fprintf(sb, "--- Review Attempt %d (%s, %s) ---\n",
+			i+1, review.Agent, review.CreatedAt.Format("2006-01-02 15:04"))
 		sb.WriteString(review.Output)
 		sb.WriteString("\n")
 
@@ -417,7 +417,7 @@ func (b *Builder) writePreviousAttemptsForGitRef(sb *strings.Builder, gitRef str
 			if err == nil && len(responses) > 0 {
 				sb.WriteString("\nComments on this review:\n")
 				for _, resp := range responses {
-					sb.WriteString(fmt.Sprintf("- %s: %q\n", resp.Responder, resp.Response))
+					fmt.Fprintf(sb, "- %s: %q\n", resp.Responder, resp.Response)
 				}
 			}
 		}

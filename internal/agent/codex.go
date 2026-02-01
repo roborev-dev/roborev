@@ -142,8 +142,8 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		return "", fmt.Errorf("create temp file: %w", err)
 	}
 	outputFile := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(outputFile)
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(outputFile) }()
 
 	if agenticMode {
 		supported, err := codexSupportsDangerousFlag(ctx, a.Command)

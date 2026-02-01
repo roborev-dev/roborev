@@ -277,17 +277,17 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		sha := "repo1sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
+		_, _ = db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
 	}
 	for i := 0; i < 2; i++ {
 		sha := "repo2sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
+		_, _ = db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
 	}
 
 	// Set branches: repo1 jobs 1,2 = main, job 3 = feature; repo2 jobs 4,5 = main
-	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4, 5)")
-	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+	_, _ = db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4, 5)")
+	_, _ = db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
 
 	t.Run("filter by main branch", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=main", nil)
@@ -362,17 +362,17 @@ func TestHandleListBranches(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		sha := "repo1sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
+		_, _ = db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
 	}
 	for i := 0; i < 2; i++ {
 		sha := "repo2sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
+		_, _ = db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
 	}
 
 	// Set branches: jobs 1,2,4 = main, job 3 = feature, job 5 = no branch
-	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4)")
-	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+	_, _ = db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4)")
+	_, _ = db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
 
 	t.Run("list all branches", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/branches", nil)
@@ -960,7 +960,7 @@ func TestListJobsPagination(t *testing.T) {
 		var result1 struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w1.Body).Decode(&result1)
+		_ = json.NewDecoder(w1.Body).Decode(&result1)
 
 		// Second page
 		req2 := httptest.NewRequest("GET", "/api/jobs?limit=3&offset=3", nil)
@@ -970,7 +970,7 @@ func TestListJobsPagination(t *testing.T) {
 		var result2 struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w2.Body).Decode(&result2)
+		_ = json.NewDecoder(w2.Body).Decode(&result2)
 
 		// Ensure no overlap
 		for _, j1 := range result1.Jobs {
@@ -1015,7 +1015,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	refs := []string{"abc123", "def456", "abc123..def456"}
 	for _, ref := range refs {
 		commit, _ := db.GetOrCreateCommit(repo.ID, ref, "A", "S", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, ref, "", "codex", "", "")
+		_, _ = db.EnqueueJob(repo.ID, commit.ID, ref, "", "codex", "", "")
 	}
 
 	t.Run("git_ref filter returns matching job", func(t *testing.T) {
@@ -1050,7 +1050,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&result)
+		_ = json.NewDecoder(w.Body).Decode(&result)
 
 		if len(result.Jobs) != 0 {
 			t.Errorf("Expected 0 jobs, got %d", len(result.Jobs))
@@ -1065,7 +1065,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&result)
+		_ = json.NewDecoder(w.Body).Decode(&result)
 
 		if len(result.Jobs) != 1 {
 			t.Errorf("Expected 1 job with range ref, got %d", len(result.Jobs))
@@ -1081,14 +1081,14 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 	repo, _ := db.GetOrCreateRepo("/tmp/repo-addr-filter")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "aaa", "A", "S", time.Now())
 	job1, _ := db.EnqueueJob(repo.ID, commit.ID, "aaa", "main", "codex", "", "")
-	db.ClaimJob("w")
-	db.CompleteJob(job1.ID, "codex", "", "output1")
+	_, _ = db.ClaimJob("w")
+	_ = db.CompleteJob(job1.ID, "codex", "", "output1")
 
 	commit2, _ := db.GetOrCreateCommit(repo.ID, "bbb", "A", "S2", time.Now())
 	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "bbb", "main", "codex", "", "")
-	db.ClaimJob("w")
-	db.CompleteJob(job2.ID, "codex", "", "output2")
-	db.MarkReviewAddressedByJobID(job2.ID, true)
+	_, _ = db.ClaimJob("w")
+	_ = db.CompleteJob(job2.ID, "codex", "", "output2")
+	_ = db.MarkReviewAddressedByJobID(job2.ID, true)
 
 	t.Run("addressed=false", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/jobs?addressed=false", nil)
@@ -1098,7 +1098,7 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&result)
+		_ = json.NewDecoder(w.Body).Decode(&result)
 		if len(result.Jobs) != 1 {
 			t.Errorf("Expected 1 unaddressed job, got %d", len(result.Jobs))
 		}
@@ -1112,7 +1112,7 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&result)
+		_ = json.NewDecoder(w.Body).Decode(&result)
 		if len(result.Jobs) != 2 {
 			t.Errorf("Expected 2 jobs on main, got %d", len(result.Jobs))
 		}
@@ -1588,8 +1588,8 @@ func TestHandleRerunJob(t *testing.T) {
 	t.Run("rerun failed job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "", "test", "", "")
-		db.ClaimJob("worker-1")
-		db.FailJob(job.ID, "some error")
+		_, _ = db.ClaimJob("worker-1")
+		_ = db.FailJob(job.ID, "some error")
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
@@ -1612,7 +1612,7 @@ func TestHandleRerunJob(t *testing.T) {
 	t.Run("rerun canceled job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "", "test", "", "")
-		db.CancelJob(job.ID)
+		_ = db.CancelJob(job.ID)
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
@@ -1645,9 +1645,9 @@ func TestHandleRerunJob(t *testing.T) {
 			if claimed.ID == job.ID {
 				break
 			}
-			db.CompleteJob(claimed.ID, "test", "prompt", "output")
+			_ = db.CompleteJob(claimed.ID, "test", "prompt", "output")
 		}
-		db.CompleteJob(job.ID, "test", "prompt", "output")
+		_ = db.CompleteJob(job.ID, "test", "prompt", "output")
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
@@ -1890,7 +1890,7 @@ func TestHandleListJobsByID(t *testing.T) {
 		t.Fatalf("Failed to create job 1: %d %s", w.Code, w.Body.String())
 	}
 	var respJob storage.ReviewJob
-	json.NewDecoder(w.Body).Decode(&respJob)
+	_ = json.NewDecoder(w.Body).Decode(&respJob)
 	job1ID = respJob.ID
 
 	// Enqueue job 2
@@ -1900,7 +1900,7 @@ func TestHandleListJobsByID(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("Failed to create job 2: %d %s", w.Code, w.Body.String())
 	}
-	json.NewDecoder(w.Body).Decode(&respJob)
+	_ = json.NewDecoder(w.Body).Decode(&respJob)
 	job2ID = respJob.ID
 
 	// Enqueue job 3
@@ -1910,7 +1910,7 @@ func TestHandleListJobsByID(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("Failed to create job 3: %d %s", w.Code, w.Body.String())
 	}
-	json.NewDecoder(w.Body).Decode(&respJob)
+	_ = json.NewDecoder(w.Body).Decode(&respJob)
 	job3ID = respJob.ID
 
 	t.Run("fetches specific job by ID", func(t *testing.T) {
@@ -2114,7 +2114,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 
 		var job storage.ReviewJob
-		json.NewDecoder(w.Body).Decode(&job)
+		_ = json.NewDecoder(w.Body).Decode(&job)
 
 		if job.Reasoning != "fast" {
 			t.Errorf("Expected reasoning 'fast', got '%s'", job.Reasoning)
@@ -2139,7 +2139,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 
 		var job storage.ReviewJob
-		json.NewDecoder(w.Body).Decode(&job)
+		_ = json.NewDecoder(w.Body).Decode(&job)
 
 		if !job.Agentic {
 			t.Error("Expected Agentic to be true")
@@ -2163,7 +2163,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 
 		var job storage.ReviewJob
-		json.NewDecoder(w.Body).Decode(&job)
+		_ = json.NewDecoder(w.Body).Decode(&job)
 
 		if job.Agentic {
 			t.Error("Expected Agentic to be false by default")
@@ -2205,7 +2205,7 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		server, db, tmpDir := newTestServer(t)
 
 		// Close the DB to simulate error condition
-		db.Close()
+		_ = db.Close()
 
 		// First call should return empty since DB is closed
 		id1 := server.getMachineID()
@@ -2226,7 +2226,7 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to reopen DB: %v", err)
 		}
-		t.Cleanup(func() { newDB.Close() })
+		t.Cleanup(func() { _ = newDB.Close() })
 		server.db = newDB
 
 		// Second call should succeed and cache
@@ -2460,9 +2460,9 @@ func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
 	}
 
 	var resp struct {
-		JobID   int64 `json:"job_id"`
-		Status  string `json:"status"`
-		Lines   []struct {
+		JobID  int64  `json:"job_id"`
+		Status string `json:"status"`
+		Lines  []struct {
 			TS       string `json:"ts"`
 			Text     string `json:"text"`
 			LineType string `json:"line_type"`

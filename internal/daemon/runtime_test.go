@@ -167,12 +167,12 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 
 	// Create an unreadable runtime file
 	unreadablePath := createRuntimeFile(t, dataDir, 99999, `{"pid": 99999, "addr": "127.0.0.1:7374"}`)
-	os.Chmod(unreadablePath, 0000)
-	t.Cleanup(func() { os.Chmod(unreadablePath, 0644) })
+	_ = os.Chmod(unreadablePath, 0000)
+	t.Cleanup(func() { _ = os.Chmod(unreadablePath, 0644) })
 
 	// Probe whether chmod 0000 actually blocks reads on this filesystem
 	if f, probeErr := os.Open(unreadablePath); probeErr == nil {
-		f.Close()
+		_ = f.Close()
 		t.Skip("filesystem does not enforce chmod 0000 read restrictions")
 	}
 
@@ -265,9 +265,9 @@ func TestIsLoopbackAddr(t *testing.T) {
 		{"", false},
 
 		// Bypass attempts
-		{"127.0.0.1.evil.com:80", false},    // Hostname that starts with 127
-		{"127.0.0.1@evil.com:80", false},    // Userinfo bypass
-		{"localhost.evil.com:7373", false},   // Hostname that starts with localhost
+		{"127.0.0.1.evil.com:80", false},   // Hostname that starts with 127
+		{"127.0.0.1@evil.com:80", false},   // Userinfo bypass
+		{"localhost.evil.com:7373", false}, // Hostname that starts with localhost
 		{"evil.com:7373", false},
 	}
 

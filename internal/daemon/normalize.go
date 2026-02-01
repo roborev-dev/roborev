@@ -16,6 +16,8 @@ func GetNormalizer(agentName string) OutputNormalizer {
 		return NormalizeClaudeOutput
 	case "opencode":
 		return NormalizeOpenCodeOutput
+	case "ollama":
+		return NormalizeOllamaOutput
 	default:
 		return NormalizeGenericOutput
 	}
@@ -178,6 +180,23 @@ func NormalizeOpenCodeOutput(line string) *OutputLine {
 	}
 
 	return &OutputLine{Text: text, Type: "text"}
+}
+
+// NormalizeOllamaOutput normalizes Ollama NDJSON stream and "[Tool: name]" lines for consistent TUI display.
+func NormalizeOllamaOutput(line string) *OutputLine {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	text := stripANSI(line)
+	if text == "" {
+		return nil
+	}
+	// Ollama agent streams "[Tool: name]" as plain text when tool_calls occur
+	if strings.HasPrefix(text, "[Tool: ") && strings.HasSuffix(text, "]") {
+		return &OutputLine{Text: text, Type: "tool"}
+	}
+	return NormalizeGenericOutput(line)
 }
 
 // NormalizeGenericOutput is the default normalizer for other agents.

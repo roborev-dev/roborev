@@ -55,9 +55,9 @@ type ConfigWatcher struct {
 	watcher        *fsnotify.Watcher
 	stopCh         chan struct{}
 	stopOnce       sync.Once
-	stopped        bool // True after Stop() is called
+	stopped        bool      // True after Stop() is called
 	lastReloadedAt time.Time // Time of last successful config reload
-	reloadCounter  uint64 // Monotonic counter for reload events (sub-second precision)
+	reloadCounter  uint64    // Monotonic counter for reload events (sub-second precision)
 }
 
 // NewConfigWatcher creates a new config watcher
@@ -98,7 +98,7 @@ func (cw *ConfigWatcher) Start(ctx context.Context) error {
 	configFile := filepath.Base(cw.configPath)
 
 	if err := watcher.Add(configDir); err != nil {
-		watcher.Close()
+		_ = watcher.Close()
 		cw.watcher = nil // Prevent double-close if Stop() is called later
 		return err
 	}
@@ -115,7 +115,7 @@ func (cw *ConfigWatcher) Stop() {
 		cw.cfgMu.Unlock()
 		close(cw.stopCh)
 		if cw.watcher != nil {
-			cw.watcher.Close()
+			_ = cw.watcher.Close()
 		}
 	})
 }

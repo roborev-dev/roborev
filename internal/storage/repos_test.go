@@ -9,7 +9,7 @@ import (
 
 func TestEnqueuePromptJob(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/prompt-test")
 
@@ -82,7 +82,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("agentic flag persists and is claimed correctly", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/agentic-test")
 
@@ -118,7 +118,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("agentic flag defaults to false", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/agentic-default-test")
 
@@ -144,7 +144,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("output_prefix is prepended to review output", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/output-prefix-test")
 
@@ -179,7 +179,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("empty output_prefix leaves output unchanged", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/empty-prefix-test")
 
@@ -212,7 +212,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("custom label sets git_ref", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/label-test")
 
@@ -246,7 +246,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("empty label defaults to prompt", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/empty-label-test")
 
@@ -264,7 +264,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("run label", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/run-label-test")
 
@@ -283,7 +283,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 func TestRenameRepo(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/rename-test")
 
@@ -337,7 +337,7 @@ func TestRenameRepo(t *testing.T) {
 
 func TestListRepos(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	t.Run("empty database", func(t *testing.T) {
 		repos, err := db.ListRepos()
@@ -370,7 +370,7 @@ func TestListRepos(t *testing.T) {
 
 func TestGetRepoByID(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/getbyid-test")
 
@@ -400,7 +400,7 @@ func TestGetRepoByID(t *testing.T) {
 
 func TestGetRepoByName(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/getbyname-test")
 
@@ -424,7 +424,7 @@ func TestGetRepoByName(t *testing.T) {
 
 func TestFindRepo(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/findrepo-test")
 
@@ -472,7 +472,7 @@ func TestFindRepo(t *testing.T) {
 
 func TestGetRepoStats(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/stats-test")
 
@@ -577,7 +577,7 @@ func TestGetRepoStats(t *testing.T) {
 
 	t.Run("prompt jobs excluded from verdict counts", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/stats-prompt-test")
 
@@ -585,13 +585,13 @@ func TestGetRepoStats(t *testing.T) {
 		commit := createCommit(t, db, repo.ID, "stats-prompt-sha1")
 		job1 := enqueueJob(t, db, repo.ID, commit.ID, "stats-prompt-sha1")
 		claimJob(t, db, "worker-1")
-		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
+		_ = db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
 
 		// Create a prompt job with output that contains verdict-like text
 		promptJob := mustEnqueuePromptJob(t, db, PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		claimJob(t, db, "worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
-		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
+		_ = db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
 
 		// Get stats - prompt job should be excluded from verdict counts
 		stats, err := db.GetRepoStats(repo.ID)
@@ -620,7 +620,7 @@ func TestGetRepoStats(t *testing.T) {
 func TestDeleteRepo(t *testing.T) {
 	t.Run("delete empty repo", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/delete-empty")
 
@@ -638,7 +638,7 @@ func TestDeleteRepo(t *testing.T) {
 
 	t.Run("delete repo with jobs without cascade returns error", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/delete-with-jobs")
 		commit := createCommit(t, db, repo.ID, "delete-sha")
@@ -662,16 +662,16 @@ func TestDeleteRepo(t *testing.T) {
 
 	t.Run("delete repo with cascade", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/delete-cascade")
 		commit := createCommit(t, db, repo.ID, "cascade-sha")
 		job := enqueueJob(t, db, repo.ID, commit.ID, "cascade-sha")
 		claimJob(t, db, "worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		_ = db.CompleteJob(job.ID, "codex", "prompt", "output")
 
 		// Add a comment
-		db.AddCommentToJob(job.ID, "user", "comment")
+		_, _ = db.AddCommentToJob(job.ID, "user", "comment")
 
 		err := db.DeleteRepo(repo.ID, true)
 		if err != nil {
@@ -695,7 +695,7 @@ func TestDeleteRepo(t *testing.T) {
 
 	t.Run("delete nonexistent repo", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		err := db.DeleteRepo(99999, false)
 		if err == nil {
@@ -710,7 +710,7 @@ func TestDeleteRepo(t *testing.T) {
 func TestMergeRepos(t *testing.T) {
 	t.Run("merge repos moves jobs", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		source := createRepo(t, db, "/tmp/merge-source")
 		target := createRepo(t, db, "/tmp/merge-target")
@@ -748,7 +748,7 @@ func TestMergeRepos(t *testing.T) {
 
 	t.Run("merge same repo returns 0", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/merge-same")
 
@@ -769,7 +769,7 @@ func TestMergeRepos(t *testing.T) {
 
 	t.Run("merge empty source", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		source := createRepo(t, db, "/tmp/merge-empty-source")
 		target := createRepo(t, db, "/tmp/merge-empty-target")
@@ -791,7 +791,7 @@ func TestMergeRepos(t *testing.T) {
 
 	t.Run("merge moves commits to target", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		source := createRepo(t, db, "/tmp/merge-commits-source")
 		target := createRepo(t, db, "/tmp/merge-commits-target")
@@ -804,7 +804,9 @@ func TestMergeRepos(t *testing.T) {
 
 		// Verify commits belong to source before merge
 		var sourceCommitCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&sourceCommitCount)
+		if err := db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&sourceCommitCount); err != nil {
+			t.Fatalf("QueryRow source count: %v", err)
+		}
 		if sourceCommitCount != 2 {
 			t.Fatalf("Expected 2 commits in source, got %d", sourceCommitCount)
 		}
@@ -816,14 +818,18 @@ func TestMergeRepos(t *testing.T) {
 
 		// Verify commits now belong to target
 		var targetCommitCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, target.ID).Scan(&targetCommitCount)
+		if err := db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, target.ID).Scan(&targetCommitCount); err != nil {
+			t.Fatalf("QueryRow target count: %v", err)
+		}
 		if targetCommitCount != 2 {
 			t.Errorf("Expected 2 commits in target after merge, got %d", targetCommitCount)
 		}
 
 		// Verify no commits remain with source ID (source is deleted)
 		var orphanedCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&orphanedCount)
+		if err := db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&orphanedCount); err != nil {
+			t.Fatalf("QueryRow orphaned count: %v", err)
+		}
 		if orphanedCount != 0 {
 			t.Errorf("Expected 0 orphaned commits, got %d", orphanedCount)
 		}
@@ -832,7 +838,7 @@ func TestMergeRepos(t *testing.T) {
 
 func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/delete-commits-test")
 	commit1 := createCommit(t, db, repo.ID, "del-commit-1")
@@ -842,7 +848,9 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 
 	// Verify commits exist before delete
 	var beforeCount int
-	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount); err != nil {
+		t.Fatalf("QueryRow before count: %v", err)
+	}
 	if beforeCount != 2 {
 		t.Fatalf("Expected 2 commits before delete, got %d", beforeCount)
 	}
@@ -854,7 +862,9 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 
 	// Verify commits are deleted
 	var afterCount int
-	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount); err != nil {
+		t.Fatalf("QueryRow after count: %v", err)
+	}
 	if afterCount != 0 {
 		t.Errorf("Expected 0 commits after cascade delete, got %d", afterCount)
 	}
@@ -862,7 +872,7 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 
 func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/delete-legacy-resp-test")
 	commit := createCommit(t, db, repo.ID, "legacy-resp-commit")
@@ -875,7 +885,9 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 
 	// Verify comment exists
 	var beforeCount int
-	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&beforeCount)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&beforeCount); err != nil {
+		t.Fatalf("QueryRow before count: %v", err)
+	}
 	if beforeCount != 1 {
 		t.Fatalf("Expected 1 legacy response before delete, got %d", beforeCount)
 	}
@@ -887,7 +899,9 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 
 	// Verify legacy responses are deleted (by checking all responses - commit is gone)
 	var afterCount int
-	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&afterCount)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&afterCount); err != nil {
+		t.Fatalf("QueryRow after count: %v", err)
+	}
 	if afterCount != 0 {
 		t.Errorf("Expected 0 legacy responses after cascade delete, got %d", afterCount)
 	}
@@ -896,7 +910,7 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 	t.Run("prompt jobs do not get verdict computed", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/verdict-prompt-test")
 
@@ -904,7 +918,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		promptJob := mustEnqueuePromptJob(t, db, PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		claimJob(t, db, "worker-1")
 		// Output that would normally be parsed as FAIL
-		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")
+		_ = db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")
 
 		// Fetch via ListJobs and check verdict is nil
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
@@ -927,7 +941,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 	t.Run("regular jobs still get verdict computed", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/verdict-regular-test")
 		commit := createCommit(t, db, repo.ID, "verdict-sha")
@@ -936,7 +950,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		job := enqueueJob(t, db, repo.ID, commit.ID, "verdict-sha")
 		claimJob(t, db, "worker-1")
 		// Output that should be parsed as PASS
-		db.CompleteJob(job.ID, "codex", "prompt", "No issues found in this commit.")
+		_ = db.CompleteJob(job.ID, "codex", "prompt", "No issues found in this commit.")
 
 		// Fetch via ListJobs and check verdict is set
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
@@ -961,7 +975,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 	t.Run("branch named prompt with commit_id gets verdict", func(t *testing.T) {
 		db := openTestDB(t)
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		repo := createRepo(t, db, "/tmp/verdict-branch-prompt")
 		// Create a commit for a branch literally named "prompt"
@@ -974,7 +988,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		claimJob(t, db, "worker-1")
 		// Output that should be parsed as FAIL
-		db.CompleteJob(jobID, "codex", "prompt", "Found issues:\n1. Bug found")
+		_ = db.CompleteJob(jobID, "codex", "prompt", "Found issues:\n1. Bug found")
 
 		// Fetch via ListJobs and check verdict IS computed (because commit_id is not NULL)
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)

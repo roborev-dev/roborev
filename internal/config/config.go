@@ -53,7 +53,7 @@ type Config struct {
 	FixModelFast        string `toml:"fix_model_fast"`
 	FixModelStandard    string `toml:"fix_model_standard"`
 	FixModelThorough    string `toml:"fix_model_thorough"`
-	AllowUnsafeAgents  *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
+	AllowUnsafeAgents   *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
@@ -62,6 +62,10 @@ type Config struct {
 
 	// API keys (optional - agents use subscription auth by default)
 	AnthropicAPIKey string `toml:"anthropic_api_key"`
+
+	// Ollama configuration
+	OllamaBaseURL string `toml:"ollama_base_url"` // Default: "http://localhost:11434"
+	OllamaModel   string `toml:"ollama_model"`    // Default: "" (require explicit)
 
 	// Hooks configuration
 	Hooks []HookConfig `toml:"hooks"`
@@ -204,6 +208,8 @@ func DefaultConfig() *Config {
 		CodexCmd:           "codex",
 		ClaudeCodeCmd:      "claude",
 		CursorCmd:          "agent",
+		OllamaBaseURL:      "http://localhost:11434",
+		OllamaModel:        "",
 	}
 }
 
@@ -397,6 +403,25 @@ func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 	}
 
 	return ""
+}
+
+// ResolveOllamaBaseURL determines which Ollama base URL to use based on config priority:
+// 1. Global config (ollama_base_url in config.toml)
+// 2. OLLAMA_HOST environment variable (same as ollama CLI uses)
+// 3. Default ("http://localhost:11434")
+func ResolveOllamaBaseURL(globalCfg *Config) string {
+	if globalCfg != nil && strings.TrimSpace(globalCfg.OllamaBaseURL) != "" {
+		return strings.TrimSpace(globalCfg.OllamaBaseURL)
+	}
+	if s := strings.TrimSpace(os.Getenv("OLLAMA_HOST")); s != "" {
+		s = strings.Trim(s, "'\"")
+		if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+			return strings.TrimSuffix(s, "/")
+		}
+		// Bare "host:port" -> assume http
+		return "http://" + s
+	}
+	return "http://localhost:11434"
 }
 
 // DefaultMaxPromptSize is the default maximum prompt size in bytes (200KB)
@@ -621,7 +646,7 @@ func SaveGlobal(cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	return toml.NewEncoder(f).Encode(cfg)
 }

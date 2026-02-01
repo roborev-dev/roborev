@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 // Maximum time to wait for an analysis job to complete
@@ -454,7 +454,7 @@ func enqueueAnalysisJob(repoRoot, prompt, outputPrefix, label string, opts analy
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -625,7 +625,7 @@ func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*s
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
 		}
 
@@ -633,10 +633,10 @@ func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*s
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("parse job status: %w", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if len(jobsResp.Jobs) == 0 {
 			return nil, fmt.Errorf("job %d not found", jobID)
@@ -655,7 +655,7 @@ func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*s
 			if err != nil {
 				return nil, fmt.Errorf("fetch review: %w", err)
 			}
-			defer reviewResp.Body.Close()
+			defer func() { _ = reviewResp.Body.Close() }()
 
 			if reviewResp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(reviewResp.Body)
@@ -779,7 +779,7 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	}
 
 	if !quiet {
-		fmt.Fprintln(cmd.OutOrStdout()) // Final newline
+		_, _ = fmt.Fprintln(cmd.OutOrStdout()) // Final newline
 	}
 	return nil
 }
@@ -795,7 +795,7 @@ func markJobAddressed(serverAddr string, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

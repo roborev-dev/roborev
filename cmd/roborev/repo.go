@@ -8,9 +8,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 // resolveRepoIdentifier resolves a path-like identifier to its git repo root.
@@ -106,7 +106,7 @@ Shows the display name, path, and number of reviews for each repository.`,
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			repos, total, err := db.ListReposWithReviewCounts()
 			if err != nil {
@@ -119,11 +119,11 @@ Shows the display name, path, and number of reviews for each repository.`,
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "NAME\tPATH\tREVIEWS\n")
+			_, _ = fmt.Fprintf(w, "NAME\tPATH\tREVIEWS\n")
 			for _, r := range repos {
-				fmt.Fprintf(w, "%s\t%s\t%d\n", r.Name, r.RootPath, r.Count)
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%d\n", r.Name, r.RootPath, r.Count)
 			}
-			w.Flush()
+			_ = w.Flush()
 
 			fmt.Printf("\nTotal: %d repositories, %d reviews\n", len(repos), total)
 			return nil
@@ -158,7 +158,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			repo, err := db.FindRepo(identifier)
 			if err != nil {
@@ -247,7 +247,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			affected, err := db.RenameRepo(identifier, newName)
 			if err != nil {
@@ -297,7 +297,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			repo, err := db.FindRepo(identifier)
 			if err != nil {
@@ -322,7 +322,7 @@ Examples:
 				}
 				fmt.Print("\nProceed? [y/N] ")
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if response != "y" && response != "Y" && response != "yes" {
 					fmt.Println("Cancelled")
 					return nil
@@ -405,7 +405,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			source, err := db.FindRepo(sourceIdent)
 			if err != nil {
@@ -435,7 +435,7 @@ Examples:
 					sourceStats.TotalJobs, target.Name, source.Name)
 				fmt.Print("\nProceed? [y/N] ")
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if response != "y" && response != "Y" && response != "yes" {
 					fmt.Println("Cancelled")
 					return nil

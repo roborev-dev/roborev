@@ -13,16 +13,15 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"sort"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
@@ -32,6 +31,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/update"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -104,7 +104,7 @@ func ensureDaemon() error {
 		addr := fmt.Sprintf("http://%s/api/status", info.Addr)
 		resp, err := client.Get(addr)
 		if err == nil {
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			// Parse response to get actual daemon version
 			var status struct {
@@ -128,7 +128,7 @@ func ensureDaemon() error {
 	// Try default address - also check version from response
 	resp, err := client.Get(serverAddr + "/api/status")
 	if err == nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		var status struct {
 			Version string `json:"version"`
 		}
@@ -175,7 +175,7 @@ func startDaemon() error {
 			addr := fmt.Sprintf("http://%s", info.Addr)
 			resp, err := client.Get(addr + "/api/status")
 			if err == nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				serverAddr = addr
 				return nil
 			}
@@ -221,16 +221,16 @@ func killAllDaemons() {
 	if runtime.GOOS == "windows" {
 		// On Windows, use wmic to find daemon processes by command line
 		// and kill only those running "daemon run"
-		exec.Command("wmic", "process", "where",
+		_ = exec.Command("wmic", "process", "where",
 			"commandline like '%roborev%daemon%run%'",
 			"call", "terminate").Run()
 	} else {
 		// On Unix, use pkill to kill all roborev daemon processes
 		// Use -f to match against full command line
-		exec.Command("pkill", "-f", "roborev daemon run").Run()
+		_ = exec.Command("pkill", "-f", "roborev daemon run").Run()
 		time.Sleep(100 * time.Millisecond)
 		// Force kill any remaining
-		exec.Command("pkill", "-9", "-f", "roborev daemon run").Run()
+		_ = exec.Command("pkill", "-9", "-f", "roborev daemon run").Run()
 	}
 	time.Sleep(200 * time.Millisecond)
 }
@@ -254,11 +254,11 @@ func restartDaemon() error {
 			}
 			if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 				lastErr = err
-				db.Close()
+				_ = db.Close()
 				time.Sleep(200 * time.Millisecond)
 				continue
 			}
-			db.Close()
+			_ = db.Close()
 			lastErr = nil
 			break
 		}
@@ -461,7 +461,7 @@ func daemonRunCmd() *cobra.Command {
 				if runtime.GOOS == "windows" {
 					oldDaemonPath += ".exe"
 				}
-				os.Remove(oldDaemonPath) // Ignore errors silently
+				_ = os.Remove(oldDaemonPath) // Ignore errors silently
 			}
 
 			// Load configuration from specified path
@@ -484,7 +484,7 @@ func daemonRunCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			log.Printf("Database: %s", dbPath)
 
 			// Start sync worker if enabled
@@ -781,7 +781,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			body, _ := io.ReadAll(resp.Body)
 
@@ -804,7 +804,7 @@ Examples:
 			}
 
 			var job storage.ReviewJob
-			json.Unmarshal(body, &job)
+			_ = json.Unmarshal(body, &job)
 
 			if !quiet {
 				if dirty {
@@ -878,13 +878,13 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	a = a.WithReasoning(reasoningLevel).WithModel(model)
 
 	// Use consistent output writer, respecting --quiet
-	var out io.Writer = cmd.OutOrStdout()
+	out := cmd.OutOrStdout()
 	if quiet {
 		out = io.Discard
 	}
 
 	if !quiet {
-		fmt.Fprintf(out, "Running %s review (model: %s, reasoning: %s)...\n\n", a.Name(), model, reasoning)
+		_, _ = fmt.Fprintf(out, "Running %s review (model: %s, reasoning: %s)...\n\n", a.Name(), model, reasoning)
 	}
 
 	// Build prompt
@@ -907,7 +907,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	}
 
 	if !quiet {
-		fmt.Fprintln(out) // Final newline
+		_, _ = fmt.Fprintln(out) // Final newline
 	}
 	return nil
 }
@@ -936,7 +936,7 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 		// Handle non-200 responses
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return fmt.Errorf("server error checking job status (%d): %s", resp.StatusCode, body)
 		}
 
@@ -944,10 +944,10 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return fmt.Errorf("failed to parse job status: %w", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if len(jobsResp.Jobs) == 0 {
 			return fmt.Errorf("job %d not found", jobID)
@@ -1015,7 +1015,7 @@ func showReview(cmd *cobra.Command, addr string, jobID int64, quiet bool) error 
 	if err != nil {
 		return fmt.Errorf("failed to fetch review: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("no review found for job %d", jobID)
@@ -1077,7 +1077,7 @@ func statusCmd() *cobra.Command {
 				fmt.Println("Start with: roborev daemon start")
 				return nil
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var status storage.DaemonStatus
 			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
@@ -1088,8 +1088,8 @@ func statusCmd() *cobra.Command {
 			healthResp, err := client.Get(addr + "/api/health")
 			var health storage.HealthStatus
 			if err == nil {
-				defer healthResp.Body.Close()
-				json.NewDecoder(healthResp.Body).Decode(&health)
+				defer func() { _ = healthResp.Body.Close() }()
+				_ = json.NewDecoder(healthResp.Body).Decode(&health)
 			}
 
 			// Display daemon info with uptime and version
@@ -1146,7 +1146,7 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return nil
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var jobsResp struct {
 				Jobs []storage.ReviewJob `json:"jobs"`
@@ -1158,7 +1158,7 @@ func statusCmd() *cobra.Command {
 			if len(jobsResp.Jobs) > 0 {
 				fmt.Println("Recent Jobs:")
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintf(w, "  ID\tSHA\tRepo\tAgent\tStatus\tTime\n")
+				_, _ = fmt.Fprintf(w, "  ID\tSHA\tRepo\tAgent\tStatus\tTime\n")
 				for _, j := range jobsResp.Jobs {
 					elapsed := ""
 					if j.StartedAt != nil {
@@ -1173,10 +1173,10 @@ func statusCmd() *cobra.Command {
 					if status.MachineID != "" && j.SourceMachineID != "" && j.SourceMachineID != status.MachineID {
 						repoDisplay += " [remote]"
 					}
-					fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\n",
+					_, _ = fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\n",
 						j.ID, shortRef(j.GitRef), repoDisplay, j.Agent, j.Status, elapsed)
 				}
-				w.Flush()
+				_ = w.Flush()
 			}
 
 			return nil
@@ -1270,7 +1270,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode == http.StatusNotFound {
 				return fmt.Errorf("no review found for %s", displayRef)
@@ -1380,8 +1380,8 @@ Examples:
 				if err != nil {
 					return fmt.Errorf("create temp file: %w", err)
 				}
-				tmpfile.Close()
-				defer os.Remove(tmpfile.Name())
+				_ = tmpfile.Close()
+				defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 				editorCmd := exec.Command(editor, tmpfile.Name())
 				editorCmd.Stdin = os.Stdin
@@ -1427,7 +1427,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusCreated {
 				body, _ := io.ReadAll(resp.Body)
@@ -1483,7 +1483,7 @@ func addressCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
@@ -1525,7 +1525,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("query for %s: server returned %s", sha, resp.Status)
@@ -1552,7 +1552,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
 	}
-	defer fallbackResp.Body.Close()
+	defer func() { _ = fallbackResp.Body.Close() }()
 
 	if fallbackResp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fallback query for %s: server returned %s", sha, fallbackResp.Status)
@@ -1600,7 +1600,7 @@ func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storag
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("polling job %d: server returned %s", jobID, resp.Status)
 		}
 
@@ -1608,10 +1608,10 @@ func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storag
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("polling job %d: decode error: %w", jobID, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if len(result.Jobs) == 0 {
 			return nil, fmt.Errorf("job %d not found", jobID)
@@ -1625,7 +1625,7 @@ func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storag
 			if err != nil {
 				return nil, err
 			}
-			defer reviewResp.Body.Close()
+			defer func() { _ = reviewResp.Body.Close() }()
 
 			var review storage.Review
 			if err := json.NewDecoder(reviewResp.Body).Decode(&review); err != nil {
@@ -1658,7 +1658,7 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -1682,7 +1682,7 @@ func getCommentsForJob(jobID int64) ([]storage.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch comments: %s", resp.Status)
@@ -1759,7 +1759,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
@@ -1968,10 +1968,11 @@ This command is idempotent - running it multiple times is safe.`,
 				fmt.Println("\nNo agents found. Install Claude Code or Codex first, then run this command.")
 			} else {
 				fmt.Println("\nSkills installed! Try:")
-				for _, agent := range installedAgents {
-					if agent == skills.AgentClaude {
+				for _, ag := range installedAgents {
+					switch ag {
+					case skills.AgentClaude:
 						fmt.Println("  Claude Code: /roborev:address or /roborev:respond")
-					} else if agent == skills.AgentCodex {
+					case skills.AgentCodex:
 						fmt.Println("  Codex: $roborev:address or $roborev:respond")
 					}
 				}
@@ -2088,7 +2089,7 @@ official release over a dev build.`,
 			if !yes {
 				fmt.Print("\nProceed with update? [y/N] ")
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
 					fmt.Println("Update cancelled")
 					return nil
@@ -2239,7 +2240,7 @@ func syncStatusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			machineID, err := db.GetMachineID()
 			if err != nil {
@@ -2316,7 +2317,7 @@ func syncNowCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to trigger sync: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode == http.StatusNotFound {
 				fmt.Println("Sync not enabled on daemon")
@@ -2363,15 +2364,15 @@ func syncNowCmd() *cobra.Command {
 
 				switch getString(msg, "type") {
 				case "progress":
-					phase := getString(msg, "phase")
-					if phase == "push" {
+					switch getString(msg, "phase") {
+					case "push":
 						batch := getInt(msg, "batch")
 						totalJobs := getInt(msg, "total_jobs")
 						totalRevs := getInt(msg, "total_revs")
 						totalResps := getInt(msg, "total_resps")
 						fmt.Printf("\rPushing: batch %d (total: %d jobs, %d reviews, %d comments)     ",
 							batch, totalJobs, totalRevs, totalResps)
-					} else if phase == "pull" {
+					case "pull":
 						totalJobs := getInt(msg, "total_jobs")
 						totalRevs := getInt(msg, "total_revs")
 						totalResps := getInt(msg, "total_resps")

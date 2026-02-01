@@ -109,7 +109,7 @@ func (db *DB) ListReposWithReviewCounts() ([]RepoWithCount, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var repos []RepoWithCount
 	totalCount := 0
@@ -153,7 +153,7 @@ func (db *DB) ListReposWithReviewCountsByBranch(branch string) ([]RepoWithCount,
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var repos []RepoWithCount
 	totalCount := 0
@@ -226,7 +226,7 @@ func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := &BranchListResult{}
 	for rows.Next() {
@@ -279,7 +279,7 @@ func (db *DB) ListRepos() ([]Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var repos []Repo
 	for rows.Next() {
@@ -342,12 +342,12 @@ func (db *DB) FindRepo(identifier string) (*Repo, error) {
 
 // RepoStats contains statistics for a single repo
 type RepoStats struct {
-	Repo          *Repo
-	TotalJobs     int
-	QueuedJobs    int
-	RunningJobs   int
-	CompletedJobs int
-	FailedJobs    int
+	Repo               *Repo
+	TotalJobs          int
+	QueuedJobs         int
+	RunningJobs        int
+	CompletedJobs      int
+	FailedJobs         int
 	PassedReviews      int
 	FailedReviews      int
 	AddressedReviews   int
@@ -370,7 +370,7 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var status string
@@ -425,7 +425,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// BEGIN IMMEDIATE acquires a write lock immediately, preventing races
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
@@ -436,7 +436,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(ctx, "ROLLBACK")
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
 
@@ -525,7 +525,7 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return 0, err
@@ -534,7 +534,7 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(ctx, "ROLLBACK")
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
 

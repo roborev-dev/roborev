@@ -13,6 +13,7 @@ coverage.out
 
 # IDE
 .idea/
+.cursor/
 .vscode/
 *.swp
 *.swo

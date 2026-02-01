@@ -105,13 +105,13 @@ func Open(dbPath string) (*DB, error) {
 
 	// Initialize schema (CREATE IF NOT EXISTS is idempotent)
 	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
 
 	// Run migrations for existing databases
 	if err := wrapped.migrate(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
@@ -245,7 +245,7 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return fmt.Errorf("get connection for migration: %w", err)
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// Disable foreign keys for table rebuild (reviews references review_jobs)
 		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
@@ -253,14 +253,14 @@ func (db *DB) migrate() error {
 		}
 		// Ensure FKs are re-enabled even if we return early due to error
 		// This prevents returning a connection to the pool with FKs disabled
-		defer conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+		defer func() { _, _ = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`) }()
 
 		// Recreate table with updated constraint in a transaction for safety
 		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin migration transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 
 		_, err = tx.Exec(`
 			CREATE TABLE review_jobs_new (
@@ -294,7 +294,7 @@ func (db *DB) migrate() error {
 		if checkErr == nil {
 			for checkRows.Next() {
 				var colName string
-				checkRows.Scan(&colName)
+				_ = checkRows.Scan(&colName)
 				switch colName {
 				case "diff_content":
 					hasDiffContent = true
@@ -308,7 +308,7 @@ func (db *DB) migrate() error {
 					hasBranch = true
 				}
 			}
-			checkRows.Close()
+			_ = checkRows.Close()
 		}
 
 		// Build INSERT statement based on which columns exist
@@ -374,7 +374,7 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return fmt.Errorf("foreign key check failed: %w", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		if rows.Next() {
 			return fmt.Errorf("foreign key violations detected after migration")
 		}
@@ -405,18 +405,18 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return fmt.Errorf("get connection for responses migration: %w", err)
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
 			return fmt.Errorf("disable foreign keys: %w", err)
 		}
-		defer conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+		defer func() { _, _ = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`) }()
 
 		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin responses migration transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 
 		// Check if job_id column already exists in old table
 		var hasJobID bool
@@ -424,10 +424,10 @@ func (db *DB) migrate() error {
 		if checkRows != nil {
 			if checkRows.Next() {
 				var cnt int
-				checkRows.Scan(&cnt)
+				_ = checkRows.Scan(&cnt)
 				hasJobID = cnt > 0
 			}
-			checkRows.Close()
+			_ = checkRows.Close()
 		}
 
 		_, err = tx.Exec(`
@@ -515,7 +515,7 @@ func (db *DB) hasUniqueIndexOnShaOnly() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var seq int
@@ -541,16 +541,16 @@ func (db *DB) hasUniqueIndexOnShaOnly() (bool, error) {
 			var seqno, cid int
 			var colName string
 			if err := infoRows.Scan(&seqno, &cid, &colName); err != nil {
-				infoRows.Close()
+				_ = infoRows.Close()
 				return false, err
 			}
 			cols = append(cols, colName)
 		}
 		if err := infoRows.Err(); err != nil {
-			infoRows.Close()
+			_ = infoRows.Close()
 			return false, err
 		}
-		infoRows.Close()
+		_ = infoRows.Close()
 		// If this unique index only has sha, we need to migrate
 		if len(cols) == 1 && cols[0] == "sha" {
 			return true, nil
@@ -757,20 +757,20 @@ func (db *DB) migrateSyncColumns() error {
 		if err != nil {
 			return fmt.Errorf("get connection for commits migration: %w", err)
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// Disable foreign keys OUTSIDE transaction (SQLite ignores inside tx)
 		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
 			return fmt.Errorf("disable foreign keys for commits: %w", err)
 		}
-		defer conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+		defer func() { _, _ = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`) }()
 
 		// Run rebuild in a transaction for atomicity
 		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin commits migration transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 
 		// Step 1: Create backup
 		_, err = tx.Exec(`CREATE TABLE commits_backup AS SELECT * FROM commits`)
@@ -833,7 +833,7 @@ func (db *DB) migrateSyncColumns() error {
 		if err != nil {
 			return fmt.Errorf("foreign key check failed: %w", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		if rows.Next() {
 			return fmt.Errorf("foreign key violations detected after commits migration")
 		}

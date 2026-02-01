@@ -168,7 +168,7 @@ func (s *Server) Stop() error {
 
 	// Close error log
 	if s.errorLog != nil {
-		s.errorLog.Close()
+		_ = s.errorLog.Close()
 	}
 
 	return nil
@@ -216,8 +216,8 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 				"total_revs":  p.TotalRevs,
 				"total_resps": p.TotalResps,
 			})
-			w.Write(line)
-			w.Write([]byte("\n"))
+			_, _ = w.Write(line)
+			_, _ = w.Write([]byte("\n"))
 			flusher.Flush()
 		})
 
@@ -226,8 +226,8 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 				"type":  "error",
 				"error": err.Error(),
 			})
-			w.Write(line)
-			w.Write([]byte("\n"))
+			_, _ = w.Write(line)
+			_, _ = w.Write([]byte("\n"))
 			return
 		}
 
@@ -246,8 +246,8 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 				"responses": stats.PulledResponses,
 			},
 		})
-		w.Write(line)
-		w.Write([]byte("\n"))
+		_, _ = w.Write(line)
+		_, _ = w.Write([]byte("\n"))
 		return
 	}
 
@@ -259,7 +259,7 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "Sync completed",
 		"pushed": map[string]int{
 			"jobs":      stats.PushedJobs,
@@ -284,7 +284,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if s.syncWorker == nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"enabled":   false,
 			"connected": false,
 			"message":   "sync not enabled",
@@ -293,7 +293,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	healthy, message := s.syncWorker.HealthCheck()
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"enabled":   true,
 		"connected": healthy,
 		"message":   message,
@@ -304,9 +304,9 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 type EnqueueRequest struct {
 	RepoPath     string `json:"repo_path"`
-	CommitSHA    string `json:"commit_sha,omitempty"`    // Single commit (for backwards compat)
-	GitRef       string `json:"git_ref,omitempty"`       // Single commit, range like "abc..def", or "dirty"
-	Branch       string `json:"branch,omitempty"`        // Branch name at time of job creation
+	CommitSHA    string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
+	GitRef       string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
+	Branch       string `json:"branch,omitempty"`     // Branch name at time of job creation
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
 	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
@@ -323,7 +323,7 @@ type ErrorResponse struct {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
@@ -788,7 +788,7 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 	if job.Status != storage.JobStatusRunning {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		encoder := json.NewEncoder(w)
-		encoder.Encode(map[string]interface{}{
+		_ = encoder.Encode(map[string]interface{}{
 			"type":   "complete",
 			"status": string(job.Status),
 		})
@@ -813,7 +813,7 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 
 	// Send initial lines
 	for _, line := range initial {
-		encoder.Encode(map[string]interface{}{
+		_ = encoder.Encode(map[string]interface{}{
 			"type":      "line",
 			"ts":        line.Timestamp.Format(time.RFC3339Nano),
 			"text":      line.Text,
@@ -834,14 +834,14 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 				if finalJob, err := s.db.GetJobByID(jobID); err == nil {
 					finalStatus = string(finalJob.Status)
 				}
-				encoder.Encode(map[string]interface{}{
+				_ = encoder.Encode(map[string]interface{}{
 					"type":   "complete",
 					"status": finalStatus,
 				})
 				flusher.Flush()
 				return
 			}
-			encoder.Encode(map[string]interface{}{
+			_ = encoder.Encode(map[string]interface{}{
 				"type":      "line",
 				"ts":        line.Timestamp.Format(time.RFC3339Nano),
 				"text":      line.Text,

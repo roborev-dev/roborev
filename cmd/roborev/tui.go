@@ -16,17 +16,17 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
-	"github.com/spf13/cobra"
-	"github.com/atotto/clipboard"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/update"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/spf13/cobra"
 )
 
 // Tick intervals for adaptive polling
@@ -113,26 +113,26 @@ type branchFilterItem struct {
 }
 
 type tuiModel struct {
-	serverAddr    string
-	daemonVersion string
-	client        *http.Client
-	jobs            []storage.ReviewJob
-	status          storage.DaemonStatus
-	selectedIdx     int
-	selectedJobID   int64 // Track selected job by ID to maintain position on refresh
-	currentView     tuiView
-	currentReview      *storage.Review
-	currentResponses   []storage.Response // Responses for current review (fetched with review)
-	currentBranch      string             // Cached branch name for current review (computed on load)
-	reviewScroll       int
-	promptScroll    int
-	promptFromQueue bool // true if prompt view was entered from queue (not review)
-	width           int
-	height          int
-	err               error
-	updateAvailable   string // Latest version if update available, empty if up to date
-	updateIsDevBuild  bool   // True if running a dev build
-	versionMismatch   bool   // True if daemon version doesn't match TUI version
+	serverAddr       string
+	daemonVersion    string
+	client           *http.Client
+	jobs             []storage.ReviewJob
+	status           storage.DaemonStatus
+	selectedIdx      int
+	selectedJobID    int64 // Track selected job by ID to maintain position on refresh
+	currentView      tuiView
+	currentReview    *storage.Review
+	currentResponses []storage.Response // Responses for current review (fetched with review)
+	currentBranch    string             // Cached branch name for current review (computed on load)
+	reviewScroll     int
+	promptScroll     int
+	promptFromQueue  bool // true if prompt view was entered from queue (not review)
+	width            int
+	height           int
+	err              error
+	updateAvailable  string // Latest version if update available, empty if up to date
+	updateIsDevBuild bool   // True if running a dev build
+	versionMismatch  bool   // True if daemon version doesn't match TUI version
 
 	// Pagination state
 	hasMore        bool // true if there are more jobs to load
@@ -175,7 +175,7 @@ type tuiModel struct {
 	// Pending addressed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
 	// distinguish between multiple requests for the same state (e.g., true→false→true)
-	pendingAddressed       map[int64]pendingState // job ID -> pending state
+	pendingAddressed map[int64]pendingState // job ID -> pending state
 
 	// Flash message (temporary status message shown briefly)
 	flashMessage   string
@@ -183,10 +183,10 @@ type tuiModel struct {
 	flashView      tuiView // View where flash was triggered (only show in same view)
 
 	// Track config reload notifications
-	lastConfigReloadCounter uint64 // Last known ConfigReloadCounter from daemon status
-	statusFetchedOnce       bool   // True after first successful status fetch (for flash logic)
-	pendingReviewAddressed map[int64]pendingState // review ID -> pending state (for reviews without jobs)
-	addressedSeq           uint64                 // monotonic counter for request sequencing
+	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status
+	statusFetchedOnce       bool                   // True after first successful status fetch (for flash logic)
+	pendingReviewAddressed  map[int64]pendingState // review ID -> pending state (for reviews without jobs)
+	addressedSeq            uint64                 // monotonic counter for request sequencing
 
 	// Daemon reconnection state
 	consecutiveErrors int  // Count of consecutive connection failures
@@ -249,9 +249,9 @@ type tuiReviewMsg struct {
 type tuiPromptMsg *storage.Review
 type tuiAddressedMsg bool
 type tuiAddressedResultMsg struct {
-	jobID      int64  // job ID for queue view rollback
-	reviewID   int64  // review ID for review view rollback
-	reviewView bool   // true if from review view (rollback currentReview)
+	jobID      int64 // job ID for queue view rollback
+	reviewID   int64 // review ID for review view rollback
+	reviewView bool  // true if from review view (rollback currentReview)
 	oldState   bool
 	newState   bool   // the requested state (for pendingAddressed validation)
 	seq        uint64 // request sequence number (for distinguishing same-state rapid toggles)
@@ -336,10 +336,7 @@ func isConnectionError(err error) bool {
 	}
 	// Check for net.Error (timeout, connection refused, etc.)
 	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
-	}
-	return false
+	return errors.As(err, &netErr)
 }
 
 func newTuiModel(serverAddr string) tuiModel {
@@ -356,11 +353,11 @@ func newTuiModel(serverAddr string) tuiModel {
 		currentView:            tuiViewQueue,
 		width:                  80, // sensible defaults until we get WindowSizeMsg
 		height:                 24,
-		loadingJobs:            true,                           // Init() calls fetchJobs, so mark as loading
-		displayNames:           make(map[string]string),        // Cache display names to avoid disk reads on render
-		branchNames:            make(map[int64]string),         // Cache derived branch names to avoid git calls on render
-		pendingAddressed:       make(map[int64]pendingState),   // Track pending addressed changes (by job ID)
-		pendingReviewAddressed: make(map[int64]pendingState),   // Track pending addressed changes (by review ID)
+		loadingJobs:            true,                         // Init() calls fetchJobs, so mark as loading
+		displayNames:           make(map[string]string),      // Cache display names to avoid disk reads on render
+		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
+		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
+		pendingReviewAddressed: make(map[int64]pendingState), // Track pending addressed changes (by review ID)
 	}
 }
 
@@ -516,7 +513,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		if err != nil {
 			return tuiJobsErrMsg{err: err}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return tuiJobsErrMsg{err: fmt.Errorf("fetch jobs: %s", resp.Status)}
@@ -545,7 +542,7 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 		if err != nil {
 			return tuiPaginationErrMsg{err: err}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return tuiPaginationErrMsg{err: fmt.Errorf("fetch more jobs: %s", resp.Status)}
@@ -568,7 +565,7 @@ func (m tuiModel) fetchStatus() tea.Cmd {
 		if err != nil {
 			return tuiErrMsg(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return tuiErrMsg(fmt.Errorf("fetch status: %s", resp.Status))
@@ -624,7 +621,7 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 		if err != nil {
 			return tuiErrMsg(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return tuiErrMsg(fmt.Errorf("fetch repos: %s", resp.Status))
@@ -692,14 +689,14 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				NullsRemaining int `json:"nulls_remaining"`
 			}
 			if resp.StatusCode != http.StatusOK {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return tuiErrMsg(fmt.Errorf("check branches for backfill: %s", resp.Status))
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&checkResult); err != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return tuiErrMsg(fmt.Errorf("decode branches response: %w", err))
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			// If there are NULL branches, fetch all jobs to backfill
 			if checkResult.NullsRemaining > 0 {
@@ -707,7 +704,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				if err != nil {
 					return tuiErrMsg(err)
 				}
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 
 				if resp.StatusCode != http.StatusOK {
 					return tuiErrMsg(fmt.Errorf("fetch jobs for backfill: %s", resp.Status))
@@ -769,7 +766,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 								backfillCount++
 							}
 						}
-						resp.Body.Close()
+						_ = resp.Body.Close()
 					}
 				}
 			}
@@ -793,7 +790,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 		if err != nil {
 			return tuiErrMsg(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return tuiErrMsg(fmt.Errorf("fetch branches: %s", resp.Status))
@@ -835,7 +832,7 @@ func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
 		if err != nil {
 			return tuiErrMsg(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return tuiErrMsg(fmt.Errorf("no review found"))
@@ -853,12 +850,12 @@ func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
 		var responses []storage.Response
 		respResp, err := m.client.Get(fmt.Sprintf("%s/api/comments?job_id=%d", m.serverAddr, jobID))
 		if err == nil {
-			defer respResp.Body.Close()
+			defer func() { _ = respResp.Body.Close() }()
 			if respResp.StatusCode == http.StatusOK {
 				var result struct {
 					Responses []storage.Response `json:"responses"`
 				}
-				json.NewDecoder(respResp.Body).Decode(&result)
+				_ = json.NewDecoder(respResp.Body).Decode(&result)
 				responses = result.Responses
 			}
 		}
@@ -868,12 +865,12 @@ func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
 		if review.Job != nil && !strings.Contains(review.Job.GitRef, "..") && review.Job.GitRef != "dirty" {
 			shaResp, err := m.client.Get(fmt.Sprintf("%s/api/comments?sha=%s", m.serverAddr, review.Job.GitRef))
 			if err == nil {
-				defer shaResp.Body.Close()
+				defer func() { _ = shaResp.Body.Close() }()
 				if shaResp.StatusCode == http.StatusOK {
 					var result struct {
 						Responses []storage.Response `json:"responses"`
 					}
-					json.NewDecoder(shaResp.Body).Decode(&result)
+					_ = json.NewDecoder(shaResp.Body).Decode(&result)
 					// Merge and dedupe by ID
 					seen := make(map[int64]bool)
 					for _, r := range responses {
@@ -909,7 +906,7 @@ func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
 		if err != nil {
 			return tuiErrMsg(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return tuiErrMsg(fmt.Errorf("no review found"))
@@ -932,16 +929,16 @@ func (m tuiModel) fetchTailOutput(jobID int64) tea.Cmd {
 		if err != nil {
 			return tuiTailOutputMsg{err: err}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return tuiTailOutputMsg{err: fmt.Errorf("fetch output: %s", resp.Status)}
 		}
 
 		var result struct {
-			JobID   int64  `json:"job_id"`
-			Status  string `json:"status"`
-			Lines   []struct {
+			JobID  int64  `json:"job_id"`
+			Status string `json:"status"`
+			Lines  []struct {
 				TS       string `json:"ts"`
 				Text     string `json:"text"`
 				LineType string `json:"line_type"`
@@ -1021,7 +1018,7 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 		if err != nil {
 			return tuiClipboardResultMsg{err: err, view: view}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return tuiClipboardResultMsg{err: fmt.Errorf("no review found"), view: view}
@@ -1153,7 +1150,7 @@ func (m tuiModel) addressReview(reviewID, jobID int64, newState, oldState bool, 
 		if err != nil {
 			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, seq: seq, err: err}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, seq: seq, err: fmt.Errorf("review not found")}
@@ -1181,7 +1178,7 @@ func (m tuiModel) addressReviewInBackground(jobID int64, newState, oldState bool
 		if err != nil {
 			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: fmt.Errorf("no review for this job")}
@@ -1196,10 +1193,7 @@ func (m tuiModel) addressReviewInBackground(jobID int64, newState, oldState bool
 func (m tuiModel) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd {
 	return func() tea.Msg {
 		// Toggle the state
-		newState := true
-		if currentState != nil && *currentState {
-			newState = false
-		}
+		newState := currentState == nil || !*currentState
 
 		reqBody, err := json.Marshal(map[string]interface{}{
 			"job_id":    jobID,
@@ -1212,7 +1206,7 @@ func (m tuiModel) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd
 		if err != nil {
 			return tuiErrMsg(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return tuiErrMsg(fmt.Errorf("no review for this job"))
@@ -1343,7 +1337,7 @@ func (m tuiModel) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishe
 		if err != nil {
 			return tuiCancelResultMsg{jobID: jobID, oldState: oldStatus, oldFinishedAt: oldFinishedAt, err: err}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return tuiCancelResultMsg{jobID: jobID, oldState: oldStatus, oldFinishedAt: oldFinishedAt, err: fmt.Errorf("job not cancellable")}
@@ -1368,7 +1362,7 @@ func (m tuiModel) rerunJob(jobID int64, oldStatus storage.JobStatus, oldStartedA
 		if err != nil {
 			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: err}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: fmt.Errorf("job not rerunnable")}
@@ -1621,16 +1615,6 @@ func (m tuiModel) findFirstVisibleJob() int {
 	return -1
 }
 
-// findLastVisibleJob finds the last job index that matches active filters
-func (m tuiModel) findLastVisibleJob() int {
-	for i := len(m.jobs) - 1; i >= 0; i-- {
-		if m.isJobVisible(m.jobs[i]) {
-			return i
-		}
-	}
-	return -1
-}
-
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -1836,7 +1820,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tailScroll++
 				return m, nil
 			case "pgup":
-				m.tailFollow = false // Stop auto-scroll when user scrolls up
+				m.tailFollow = false         // Stop auto-scroll when user scrolls up
 				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
@@ -1858,7 +1842,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tailScroll = 0
 				return m, nil
 			case "end":
-				m.tailFollow = true // Resume auto-scroll when going to bottom
+				m.tailFollow = true          // Resume auto-scroll when going to bottom
 				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
@@ -1927,7 +1911,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "up":
-			if m.currentView == tuiViewQueue {
+			switch m.currentView {
+			case tuiViewQueue:
 				// Navigate to previous visible job (respects filter)
 				prevIdx := m.findPrevVisibleJob(m.selectedIdx)
 				if prevIdx >= 0 {
@@ -1938,29 +1923,30 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
 					m.flashView = tuiViewQueue
 				}
-			} else if m.currentView == tuiViewReview {
+			case tuiViewReview:
 				if m.reviewScroll > 0 {
 					m.reviewScroll--
 				}
-			} else if m.currentView == tuiViewPrompt {
+			case tuiViewPrompt:
 				if m.promptScroll > 0 {
 					m.promptScroll--
 				}
-			} else if m.currentView == tuiViewCommitMsg {
+			case tuiViewCommitMsg:
 				if m.commitMsgScroll > 0 {
 					m.commitMsgScroll--
 				}
 			}
 
 		case "k", "right":
-			if m.currentView == tuiViewQueue {
+			switch m.currentView {
+			case tuiViewQueue:
 				// Navigate to previous visible job (respects filter)
 				prevIdx := m.findPrevVisibleJob(m.selectedIdx)
 				if prevIdx >= 0 {
 					m.selectedIdx = prevIdx
 					m.updateSelectedJobID()
 				}
-			} else if m.currentView == tuiViewReview {
+			case tuiViewReview:
 				// Navigate to previous review (lower index)
 				prevIdx := m.findPrevViewableJob()
 				if prevIdx >= 0 {
@@ -1968,9 +1954,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.updateSelectedJobID()
 					m.reviewScroll = 0
 					job := m.jobs[prevIdx]
-					if job.Status == storage.JobStatusDone {
+					switch job.Status {
+					case storage.JobStatusDone:
 						return m, m.fetchReview(job.ID)
-					} else if job.Status == storage.JobStatusFailed {
+					case storage.JobStatusFailed:
 						m.currentBranch = "" // Clear stale branch from previous review
 						m.currentReview = &storage.Review{
 							Agent:  job.Agent,
@@ -1983,14 +1970,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
 					m.flashView = tuiViewReview
 				}
-			} else if m.currentView == tuiViewPrompt {
+			case tuiViewPrompt:
 				if m.promptScroll > 0 {
 					m.promptScroll--
 				}
 			}
 
 		case "down":
-			if m.currentView == tuiViewQueue {
+			switch m.currentView {
+			case tuiViewQueue:
 				// Navigate to next visible job (respects filter)
 				nextIdx := m.findNextVisibleJob(m.selectedIdx)
 				if nextIdx >= 0 {
@@ -2006,16 +1994,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
 					m.flashView = tuiViewQueue
 				}
-			} else if m.currentView == tuiViewReview {
+			case tuiViewReview:
 				m.reviewScroll++
-			} else if m.currentView == tuiViewPrompt {
+			case tuiViewPrompt:
 				m.promptScroll++
-			} else if m.currentView == tuiViewCommitMsg {
+			case tuiViewCommitMsg:
 				m.commitMsgScroll++
 			}
 
 		case "j", "left":
-			if m.currentView == tuiViewQueue {
+			switch m.currentView {
+			case tuiViewQueue:
 				// Navigate to next visible job (respects filter)
 				nextIdx := m.findNextVisibleJob(m.selectedIdx)
 				if nextIdx >= 0 {
@@ -2026,7 +2015,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
 				}
-			} else if m.currentView == tuiViewReview {
+			case tuiViewReview:
 				// Navigate to next review (higher index)
 				nextIdx := m.findNextViewableJob()
 				if nextIdx >= 0 {
@@ -2034,9 +2023,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.updateSelectedJobID()
 					m.reviewScroll = 0
 					job := m.jobs[nextIdx]
-					if job.Status == storage.JobStatusDone {
+					switch job.Status {
+					case storage.JobStatusDone:
 						return m, m.fetchReview(job.ID)
-					} else if job.Status == storage.JobStatusFailed {
+					case storage.JobStatusFailed:
 						m.currentBranch = "" // Clear stale branch from previous review
 						m.currentReview = &storage.Review{
 							Agent:  job.Agent,
@@ -2049,13 +2039,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
 					m.flashView = tuiViewReview
 				}
-			} else if m.currentView == tuiViewPrompt {
+			case tuiViewPrompt:
 				m.promptScroll++
 			}
 
 		case "pgup":
 			pageSize := max(1, m.height-10)
-			if m.currentView == tuiViewQueue {
+			switch m.currentView {
+			case tuiViewQueue:
 				// Move up by pageSize visible jobs
 				for i := 0; i < pageSize; i++ {
 					prevIdx := m.findPrevVisibleJob(m.selectedIdx)
@@ -2065,17 +2056,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedIdx = prevIdx
 				}
 				m.updateSelectedJobID()
-			} else if m.currentView == tuiViewReview {
+			case tuiViewReview:
 				m.reviewScroll = max(0, m.reviewScroll-pageSize)
 				return m, tea.ClearScreen
-			} else if m.currentView == tuiViewPrompt {
+			case tuiViewPrompt:
 				m.promptScroll = max(0, m.promptScroll-pageSize)
 				return m, tea.ClearScreen
 			}
 
 		case "pgdown":
 			pageSize := max(1, m.height-10)
-			if m.currentView == tuiViewQueue {
+			switch m.currentView {
+			case tuiViewQueue:
 				// Move down by pageSize visible jobs
 				reachedEnd := false
 				for i := 0; i < pageSize; i++ {
@@ -2092,10 +2084,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
 				}
-			} else if m.currentView == tuiViewReview {
+			case tuiViewReview:
 				m.reviewScroll += pageSize
 				return m, tea.ClearScreen
-			} else if m.currentView == tuiViewPrompt {
+			case tuiViewPrompt:
 				m.promptScroll += pageSize
 				return m, tea.ClearScreen
 			}
@@ -2103,9 +2095,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 				job := m.jobs[m.selectedIdx]
-				if job.Status == storage.JobStatusDone {
+				switch job.Status {
+				case storage.JobStatusDone:
 					return m, m.fetchReview(job.ID)
-				} else if job.Status == storage.JobStatusFailed {
+				case storage.JobStatusFailed:
 					// Show error inline for failed jobs
 					m.currentBranch = "" // Clear stale branch from previous review
 					m.currentReview = &storage.Review{
@@ -2116,7 +2109,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.currentView = tuiViewReview
 					m.reviewScroll = 0
 					return m, nil
-				} else {
+				default:
 					// Queued, running, or canceled - show flash notification
 					var status string
 					switch job.Status {
@@ -2227,7 +2220,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				job := &m.jobs[m.selectedIdx]
 				if job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued {
 					oldStatus := job.Status
-					oldFinishedAt := job.FinishedAt // Save for rollback
+					oldFinishedAt := job.FinishedAt        // Save for rollback
 					job.Status = storage.JobStatusCanceled // Optimistic update
 					now := time.Now()
 					job.FinishedAt = &now // Stop elapsed time from ticking
@@ -2256,7 +2249,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Tail running job output
 			if m.currentView == tuiViewQueue && len(m.jobs) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 				job := m.jobs[m.selectedIdx]
-				if job.Status == storage.JobStatusRunning {
+				switch job.Status {
+				case storage.JobStatusRunning:
 					m.tailJobID = job.ID
 					m.tailLines = nil
 					m.tailScroll = 0
@@ -2265,7 +2259,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.tailFromView = tuiViewQueue
 					m.currentView = tuiViewTail
 					return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
-				} else if job.Status == storage.JobStatusQueued {
+				case storage.JobStatusQueued:
 					m.flashMessage = "Job is queued - not yet running"
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
 					m.flashView = tuiViewQueue
@@ -3969,7 +3963,7 @@ func (m tuiModel) submitComment(jobID int64, text string) tea.Cmd {
 		if err != nil {
 			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit comment: %w", err)}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusCreated {
 			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit comment: HTTP %d", resp.StatusCode)}
