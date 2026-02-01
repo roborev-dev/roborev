@@ -1286,6 +1286,65 @@ func TestOllamaParseStreamNDJSON_EdgeCases(t *testing.T) {
 	}
 }
 
+// TestOllamaParseStreamNDJSON_NestedJSONStructures tests edge cases with nested JSON objects in NDJSON
+func TestOllamaParseStreamNDJSON_NestedJSONStructures(t *testing.T) {
+	t.Parallel()
+	a := NewOllamaAgent("")
+
+	// Test nested objects in content
+	t.Run("Nested object in content", func(t *testing.T) {
+		input := `{"model":"x","message":{"role":"assistant","content":"{\"nested\": \"value\"}"},"done":true}
+`
+		got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+		if err != nil {
+			t.Fatalf("parseStreamNDJSON: %v", err)
+		}
+		if got != "{\"nested\": \"value\"}" {
+			t.Errorf("result = %q, want {\"nested\": \"value\"}", got)
+		}
+	})
+
+	// Test nested objects in tool arguments
+	t.Run("Nested object in tool arguments", func(t *testing.T) {
+		input := `{"model":"x","message":{"role":"assistant","content":"","tool_calls":[{"function":{"index":0,"name":"Read","arguments":{"file":{"path":"test.txt","nested":{"key":"value"}}}}}]}},"done":true}
+`
+		content, toolCalls, err := a.parseStreamNDJSONWithToolCalls(strings.NewReader(input), nil)
+		if err != nil {
+			t.Fatalf("parseStreamNDJSONWithToolCalls: %v", err)
+		}
+		if content != "" {
+			t.Errorf("content = %q, want empty", content)
+		}
+		if len(toolCalls) != 1 {
+			t.Fatalf("toolCalls len = %d, want 1", len(toolCalls))
+		}
+		if toolCalls[0].Function.Name != "Read" {
+			t.Errorf("toolCalls[0].Function.Name = %q, want Read", toolCalls[0].Function.Name)
+		}
+		if toolCalls[0].Function.Arguments == nil {
+			t.Error("toolCalls[0].Function.Arguments should not be nil")
+		} else {
+			if toolCalls[0].Function.Arguments["file"] == nil {
+				t.Error("toolCalls[0].Function.Arguments[\"file\"] should not be nil")
+			}
+		}
+	})
+
+	// Test deeply nested structure in content
+	t.Run("Deeply nested structure in content", func(t *testing.T) {
+		deepContent := `{"level1":{"level2":{"level3":{"data":"deep_value"}}}}`
+		input := fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":"%s"},"done":true}
+`, deepContent)
+		got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
+		if err != nil {
+			t.Fatalf("parseStreamNDJSON: %v", err)
+		}
+		if got != deepContent {
+			t.Errorf("result = %q, want %q", got, deepContent)
+		}
+	})
+}
+
 func TestOllamaParseStreamNDJSON_MultipleMessageFields(t *testing.T) {
 	t.Parallel()
 	a := NewOllamaAgent("")

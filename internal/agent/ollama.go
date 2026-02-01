@@ -266,8 +266,11 @@ func (a *OllamaAgent) doChatRequest(ctx context.Context, urlStr string, body []b
 		return nil, fmt.Errorf("ollama server not reachable: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		slurp, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		slurp, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read error response from Ollama: %w", readErr)
+		}
 		bodyStr := strings.TrimSpace(string(slurp))
 		var errResp ollamaErrorResponse
 		_ = json.Unmarshal(slurp, &errResp)
