@@ -94,6 +94,9 @@ Examples:
 					}
 					jobIDs = append(jobIDs, id)
 				}
+				if len(jobIDs) > 0 && (branch != "" || allBranches || newestFirst) {
+					return fmt.Errorf("--branch, --all-branches, and --newest-first cannot be used with explicit job IDs")
+				}
 				// If no args, discover unaddressed jobs
 				if len(jobIDs) == 0 {
 					effectiveBranch := branch
@@ -716,16 +719,27 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 	return nil
 }
 
+// batchPromptOverhead is the fixed size of the batch prompt header + footer.
+var batchPromptOverhead = len(batchPromptHeader + batchPromptFooter)
+
+const batchPromptHeader = "# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n"
+const batchPromptFooter = "## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
+
+// batchEntrySize returns the size of a single entry in the batch prompt.
+// The index parameter is the 1-based position in the batch.
+func batchEntrySize(index int, e batchEntry) int {
+	return len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, shortSHA(e.job.GitRef), e.review.Output))
+}
+
 // splitIntoBatches groups entries into batches respecting maxSize.
 // Greedily packs reviews; a single oversized review gets its own batch.
 func splitIntoBatches(entries []batchEntry, maxSize int) [][]batchEntry {
 	var batches [][]batchEntry
 	var current []batchEntry
 	currentSize := 0
-	overhead := len("# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n\n## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n")
 
 	for _, e := range entries {
-		entrySize := len(fmt.Sprintf("## Review (Job %d — %s)\n\n%s\n\n", e.jobID, shortSHA(e.job.GitRef), e.review.Output))
+		entrySize := batchEntrySize(len(current)+1, e)
 
 		if len(current) > 0 && currentSize+entrySize > maxSize {
 			batches = append(batches, current)
@@ -735,7 +749,7 @@ func splitIntoBatches(entries []batchEntry, maxSize int) [][]batchEntry {
 
 		current = append(current, e)
 		if currentSize == 0 {
-			currentSize = overhead
+			currentSize = batchPromptOverhead
 		}
 		currentSize += entrySize
 	}
@@ -748,9 +762,7 @@ func splitIntoBatches(entries []batchEntry, maxSize int) [][]batchEntry {
 // buildBatchFixPrompt creates a concatenated prompt from multiple reviews.
 func buildBatchFixPrompt(entries []batchEntry) string {
 	var sb strings.Builder
-	sb.WriteString("# Batch Fix Request\n\n")
-	sb.WriteString("The following reviews found issues that need to be fixed.\n")
-	sb.WriteString("Address all findings across all reviews in a single pass.\n\n")
+	sb.WriteString(batchPromptHeader)
 
 	for i, e := range entries {
 		sb.WriteString(fmt.Sprintf("## Review %d (Job %d — %s)\n\n", i+1, e.jobID, shortSHA(e.job.GitRef)))
@@ -758,11 +770,7 @@ func buildBatchFixPrompt(entries []batchEntry) string {
 		sb.WriteString("\n\n")
 	}
 
-	sb.WriteString("## Instructions\n\n")
-	sb.WriteString("Please apply fixes for all the findings above.\n")
-	sb.WriteString("Focus on the highest priority items first.\n")
-	sb.WriteString("After making changes, verify the code compiles/passes linting,\n")
-	sb.WriteString("run relevant tests, and create a git commit summarizing all changes.\n")
+	sb.WriteString(batchPromptFooter)
 	return sb.String()
 }
 

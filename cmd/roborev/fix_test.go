@@ -891,7 +891,8 @@ func TestSplitIntoBatches(t *testing.T) {
 			makeEntry(3, 500),
 		}
 		// Set limit small enough that not all fit (overhead ~300 bytes + entry ~530 each)
-		batches := splitIntoBatches(entries, 1000)
+		maxSize := 1000
+		batches := splitIntoBatches(entries, maxSize)
 		if len(batches) < 2 {
 			t.Errorf("expected at least 2 batches, got %d", len(batches))
 		}
@@ -933,6 +934,26 @@ func TestSplitIntoBatches(t *testing.T) {
 		batches := splitIntoBatches(nil, 100000)
 		if len(batches) != 0 {
 			t.Errorf("expected 0 batches for empty input, got %d", len(batches))
+		}
+	})
+
+	t.Run("built prompt respects size estimate", func(t *testing.T) {
+		// Verify that splitIntoBatches size accounting matches buildBatchFixPrompt output.
+		entries := []batchEntry{
+			makeEntry(1, 200),
+			makeEntry(2, 200),
+			makeEntry(3, 200),
+			makeEntry(4, 200),
+			makeEntry(5, 200),
+		}
+		maxSize := 1000
+		batches := splitIntoBatches(entries, maxSize)
+		for i, batch := range batches {
+			prompt := buildBatchFixPrompt(batch)
+			// Single-entry batches that are inherently oversized are allowed to exceed.
+			if len(batch) > 1 && len(prompt) > maxSize {
+				t.Errorf("batch %d prompt size %d exceeds maxSize %d", i, len(prompt), maxSize)
+			}
 		}
 	})
 
@@ -981,6 +1002,21 @@ func TestFixCmdBatchFlagValidation(t *testing.T) {
 			name:    "--batch with --unaddressed",
 			args:    []string{"--batch", "--unaddressed"},
 			wantErr: "--batch and --unaddressed are mutually exclusive",
+		},
+		{
+			name:    "--batch with explicit IDs and --branch",
+			args:    []string{"--batch", "--branch", "main", "123"},
+			wantErr: "cannot be used with explicit job IDs",
+		},
+		{
+			name:    "--batch with explicit IDs and --all-branches",
+			args:    []string{"--batch", "--all-branches", "123"},
+			wantErr: "cannot be used with explicit job IDs",
+		},
+		{
+			name:    "--batch with explicit IDs and --newest-first",
+			args:    []string{"--batch", "--newest-first", "123"},
+			wantErr: "cannot be used with explicit job IDs",
 		},
 	}
 
