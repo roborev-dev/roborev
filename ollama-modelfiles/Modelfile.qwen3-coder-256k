@@ -1,3 +1,0 @@
-# Qwen3-Coder 30B with 256K context window
-FROM qwen3-coder:30b
-PARAMETER num_ctx 262144
