@@ -745,6 +745,7 @@ func splitIntoBatches(entries []batchEntry, maxSize int) [][]batchEntry {
 			batches = append(batches, current)
 			current = nil
 			currentSize = 0
+			entrySize = batchEntrySize(1, e)
 		}
 
 		current = append(current, e)
