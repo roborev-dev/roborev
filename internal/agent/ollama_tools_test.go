@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,22 +191,413 @@ func TestExecuteTool_UnknownTool(t *testing.T) {
 
 func TestSafePathUnderRoot(t *testing.T) {
 	root := t.TempDir()
-
-	got, err := safePathUnderRoot(root, "a/b")
-	if err != nil {
+	
+	// Create a subdirectory for testing
+	subdir := filepath.Join(root, "subdir")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(got) != "b" {
-		t.Errorf("got %s", got)
+
+	tests := []struct {
+		name      string
+		root      string
+		path      string
+		wantError bool
+		wantBase  string
+	}{
+		{
+			name:      "relative path within root",
+			root:      root,
+			path:      "a/b",
+			wantError: false,
+			wantBase:  "b",
+		},
+		{
+			name:      "absolute path within root",
+			root:      root,
+			path:      filepath.Join(root, "c/d"),
+			wantError: false,
+			wantBase:  "d",
+		},
+		{
+			name:      "path with ..",
+			root:      root,
+			path:      "..",
+			wantError: true,
+		},
+		{
+			name:      "path traversal attempt",
+			root:      root,
+			path:      "../etc/passwd",
+			wantError: true,
+		},
+		{
+			name:      "absolute path outside root",
+			root:      root,
+			path:      "/etc/passwd",
+			wantError: true,
+		},
+		{
+			name:      "path with .. in middle",
+			root:      subdir,
+			path:      "a/../b",
+			wantError: false,
+			wantBase:  "b",
+		},
+		{
+			name:      "path escaping via ..",
+			root:      subdir,
+			path:      "../../outside",
+			wantError: true,
+		},
+		{
+			name:      "dot path",
+			root:      root,
+			path:      ".",
+			wantError: false,
+			wantBase:  filepath.Base(root),
+		},
+		{
+			name:      "empty path",
+			root:      root,
+			path:      "",
+			wantError: false,
+			wantBase:  filepath.Base(root),
+		},
 	}
 
-	_, err = safePathUnderRoot(root, "..")
-	if err == nil {
-		t.Error("expected error for ..")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := safePathUnderRoot(tt.root, tt.path)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("safePathUnderRoot() expected error but got none, result: %s", got)
+				} else if !strings.Contains(err.Error(), "path outside repo") {
+					t.Errorf("expected 'path outside repo' error, got: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("safePathUnderRoot() unexpected error: %v", err)
+				} else if filepath.Base(got) != tt.wantBase {
+					t.Errorf("safePathUnderRoot() = %s, want base %s", got, tt.wantBase)
+				}
+			}
+		})
 	}
+}
 
-	_, err = safePathUnderRoot(root, "../etc/passwd")
-	if err == nil {
-		t.Error("expected error for path traversal")
+func TestExecuteTool_Write_EdgeCases(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	
+	tests := []struct {
+		name      string
+		args      map[string]any
+		wantError bool
+		checkFile string
+		wantContent string
+	}{
+		{
+			name: "write with path traversal attempt",
+			args: map[string]any{
+				"file_path": "../outside.txt",
+				"contents": "Should fail",
+			},
+			wantError: true,
+		},
+		{
+			name: "write with absolute path",
+			args: map[string]any{
+				"file_path": "/etc/passwd",
+				"contents": "Should fail",
+			},
+			wantError: true,
+		},
+		{
+			name: "write empty content",
+			args: map[string]any{
+				"file_path": "empty.txt",
+				"contents": "",
+			},
+			wantError: false,
+			checkFile: "empty.txt",
+			wantContent: "",
+		},
+		{
+			name: "overwrite with different content",
+			args: map[string]any{
+				"file_path": "existing.txt",
+				"contents": "New content",
+			},
+			wantError: false,
+			checkFile: "existing.txt",
+			wantContent: "New content",
+		},
+	}
+	
+	// Create existing file for overwrite test
+	if err := os.WriteFile(filepath.Join(root, "existing.txt"), []byte("Old content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ExecuteTool(ctx, root, "Write", tt.args, true)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ExecuteTool() expected error but got none, result: %s", result)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ExecuteTool() unexpected error: %v", err)
+				} else if tt.checkFile != "" {
+					content, err := os.ReadFile(filepath.Join(root, tt.checkFile))
+					if err != nil {
+						t.Errorf("failed to read file %s: %v", tt.checkFile, err)
+					} else if string(content) != tt.wantContent {
+						t.Errorf("file content = %q, want %q", string(content), tt.wantContent)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestExecuteTool_Edit_EdgeCases(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	
+	// Create test file
+	testFile := filepath.Join(root, "test.txt")
+	originalContent := `Line 1
+Line 2
+Line 3
+Line 4
+Line 5`
+	if err := os.WriteFile(testFile, []byte(originalContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	
+	tests := []struct {
+		name        string
+		args        map[string]any
+		wantError   bool
+		wantContent string
+	}{
+		{
+			name: "edit with path traversal",
+			args: map[string]any{
+				"file_path": "../test.txt",
+				"old_string": "Line 1",
+				"new_string": "Modified",
+			},
+			wantError: true,
+		},
+		{
+			name: "edit non-existent file",
+			args: map[string]any{
+				"file_path": "does-not-exist.txt",
+				"old_string": "something",
+				"new_string": "something else",
+			},
+			wantError: true,
+		},
+		{
+			name: "old string not found",
+			args: map[string]any{
+				"file_path": "test.txt",
+				"old_string": "Not in file",
+				"new_string": "New content",
+			},
+			wantError: true,
+		},
+		{
+			name: "empty old string",
+			args: map[string]any{
+				"file_path": "test.txt",
+				"old_string": "",
+				"new_string": "New",
+			},
+			wantError: true,
+		},
+		{
+			name: "successful multi-line edit",
+			args: map[string]any{
+				"file_path": "test.txt",
+				"old_string": "Line 2\nLine 3",
+				"new_string": "Modified Line 2\nModified Line 3",
+			},
+			wantError: false,
+			wantContent: `Line 1
+Modified Line 2
+Modified Line 3
+Line 4
+Line 5`,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset file content for each test
+			if err := os.WriteFile(testFile, []byte(originalContent), 0644); err != nil {
+				t.Fatal(err)
+			}
+			
+			result, err := ExecuteTool(ctx, root, "Edit", tt.args, true)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ExecuteTool() expected error but got none, result: %s", result)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ExecuteTool() unexpected error: %v", err)
+				} else if tt.wantContent != "" {
+					content, err := os.ReadFile(testFile)
+					if err != nil {
+						t.Errorf("failed to read file: %v", err)
+					} else if string(content) != tt.wantContent {
+						t.Errorf("file content = %q, want %q", string(content), tt.wantContent)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestExecuteTool_Grep_EdgeCases(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	
+	// Create test files
+	file1 := filepath.Join(root, "file1.txt")
+	if err := os.WriteFile(file1, []byte("Hello world\nGoodbye world\nHello again"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	
+	file2 := filepath.Join(root, "file2.go")
+	if err := os.WriteFile(file2, []byte("func Hello() {\n\tprintln(\"Hello\")\n}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Create subdirectory with file
+	subdir := filepath.Join(root, "subdir")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	file3 := filepath.Join(subdir, "file3.txt")
+	if err := os.WriteFile(file3, []byte("Hello from subdir"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Create large file to test line limits
+	var largeContent strings.Builder
+	for i := 0; i < 600; i++ {
+		largeContent.WriteString(fmt.Sprintf("Line %d with pattern\n", i))
+	}
+	largeFile := filepath.Join(root, "large.txt")
+	if err := os.WriteFile(largeFile, []byte(largeContent.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	
+	tests := []struct {
+		name        string
+		args        map[string]any
+		wantError   bool
+		checkResult func(string) bool
+	}{
+		{
+			name: "basic pattern match",
+			args: map[string]any{
+				"pattern": "Hello",
+			},
+			wantError: false,
+			checkResult: func(result string) bool {
+				return strings.Contains(result, "file1.txt") && 
+					   strings.Contains(result, "file3.txt") &&
+					   strings.Contains(result, "file2.go")
+			},
+		},
+		{
+			name: "pattern in specific path", 
+			args: map[string]any{
+				"pattern": "Hello",
+				"path": "file2.go",
+			},
+			wantError: false,
+			checkResult: func(result string) bool {
+				// When searching a specific file, the output may not include the filename
+				return strings.Contains(result, "Hello") &&
+					   !strings.Contains(result, "file1.txt")
+			},
+		},
+		{
+			name: "pattern in subdirectory",
+			args: map[string]any{
+				"pattern": "Hello",
+				"path": "subdir",
+			},
+			wantError: false,
+			checkResult: func(result string) bool {
+				return strings.Contains(result, "file3.txt") &&
+					   !strings.Contains(result, "file1.txt")
+			},
+		},
+		{
+			name: "pattern not found",
+			args: map[string]any{
+				"pattern": "NotInAnyFile",
+			},
+			wantError: false,
+			checkResult: func(result string) bool {
+				return result == ""
+			},
+		},
+		{
+			name: "regex pattern",
+			args: map[string]any{
+				"pattern": "Hello.*world",
+			},
+			wantError: false,
+			checkResult: func(result string) bool {
+				return strings.Contains(result, "Hello world")
+			},
+		},
+		{
+			name: "line limit enforced",
+			args: map[string]any{
+				"pattern": "pattern",
+			},
+			wantError: false,
+			checkResult: func(result string) bool {
+				lines := strings.Count(result, "\n")
+				// Should be truncated to around 500 lines
+				return lines > 0 && lines <= 510 // Some buffer for headers
+			},
+		},
+		{
+			name: "path traversal attempt",
+			args: map[string]any{
+				"pattern": "test",
+				"path": "../etc",
+			},
+			wantError: true,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ExecuteTool(ctx, root, "Grep", tt.args, false)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ExecuteTool() expected error but got none, result: %s", result)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ExecuteTool() unexpected error: %v", err)
+				} else if tt.checkResult != nil && !tt.checkResult(result) {
+					t.Errorf("ExecuteTool() result check failed, got: %s", result)
+				}
+			}
+		})
 	}
 }

@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1306,7 +1308,7 @@ func TestOllamaParseStreamNDJSON_NestedJSONStructures(t *testing.T) {
 
 	// Test nested objects in tool arguments
 	t.Run("Nested object in tool arguments", func(t *testing.T) {
-		input := `{"model":"x","message":{"role":"assistant","content":"","tool_calls":[{"function":{"index":0,"name":"Read","arguments":{"file":{"path":"test.txt","nested":{"key":"value"}}}}}]}},"done":true}
+		input := `{"model":"x","message":{"role":"assistant","content":"","tool_calls":[{"function":{"index":0,"name":"Read","arguments":{"file":{"path":"test.txt","nested":{"key":"value"}}}}}]},"done":true}
 `
 		content, toolCalls, err := a.parseStreamNDJSONWithToolCalls(strings.NewReader(input), nil)
 		if err != nil {
@@ -1333,8 +1335,9 @@ func TestOllamaParseStreamNDJSON_NestedJSONStructures(t *testing.T) {
 	// Test deeply nested structure in content
 	t.Run("Deeply nested structure in content", func(t *testing.T) {
 		deepContent := `{"level1":{"level2":{"level3":{"data":"deep_value"}}}}`
+		escapedContent := strings.ReplaceAll(deepContent, `"`, `\"`)
 		input := fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":"%s"},"done":true}
-`, deepContent)
+`, escapedContent)
 		got, err := a.parseStreamNDJSON(strings.NewReader(input), nil)
 		if err != nil {
 			t.Fatalf("parseStreamNDJSON: %v", err)
@@ -1642,6 +1645,82 @@ func TestOllamaClassifyNetworkError_Timeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timeout") {
 		t.Errorf("expected timeout error, got %v", err)
+	}
+}
+
+func TestClassifyNetworkError(t *testing.T) {
+	t.Parallel()
+	baseURL := "http://localhost:11434"
+	
+	tests := []struct {
+		name     string
+		err      error
+		expected string
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: "",
+		},
+		{
+			name:     "timeout via url.Error",
+			err:      &url.Error{Op: "Get", URL: baseURL, Err: context.DeadlineExceeded},
+			expected: "ollama connection timeout: server at http://localhost:11434 did not respond in time",
+		},
+		{
+			name:     "DNS error via url.Error",
+			err:      &url.Error{Op: "Get", URL: baseURL, Err: &net.DNSError{Name: "invalid.host", Err: "no such host"}},
+			expected: "ollama DNS error: cannot resolve hostname invalid.host (no such host)",
+		},
+		{
+			name:     "connection refused via url.Error", 
+			err:      &url.Error{Op: "Get", URL: baseURL, Err: fmt.Errorf("connection refused")},
+			expected: "ollama connection refused: server not running at http://localhost:11434 (start with: ollama serve)",
+		},
+		{
+			name:     "no such host via url.Error",
+			err:      &url.Error{Op: "Get", URL: baseURL, Err: fmt.Errorf("no such host")},
+			expected: "ollama DNS error: cannot resolve hostname for http://localhost:11434",
+		},
+		{
+			name:     "network unreachable via url.Error",
+			err:      &url.Error{Op: "Get", URL: baseURL, Err: fmt.Errorf("network is unreachable")},
+			expected: "ollama network unreachable: cannot reach http://localhost:11434",
+		},
+		{
+			name:     "generic url.Error",
+			err:      &url.Error{Op: "Get", URL: baseURL, Err: fmt.Errorf("some other error")},
+			expected: "ollama network error: Get \"http://localhost:11434\": some other error",
+		},
+		{
+			name:     "timeout via net.Error",
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{IsTimeout: true}},
+			expected: "ollama connection timeout: server at http://localhost:11434 did not respond in time",
+		},
+		{
+			name:     "generic net.Error",
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("network error")},
+			expected: "ollama network error: dial tcp: network error",
+		},
+		{
+			name:     "direct DNS error",
+			err:      &net.DNSError{Name: "test.example", Err: "no such host"},
+			expected: "ollama network error: lookup test.example: no such host",
+		},
+		{
+			name:     "generic error",
+			err:      fmt.Errorf("some generic error"),
+			expected: "ollama connection error: some generic error",
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyNetworkError(tt.err, baseURL)
+			if got != tt.expected {
+				t.Errorf("classifyNetworkError() = %q, want %q", got, tt.expected)
+			}
+		})
 	}
 }
 
