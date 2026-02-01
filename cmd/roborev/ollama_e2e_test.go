@@ -86,7 +86,7 @@ func TestOllamaE2E_ReviewWithMockServer(t *testing.T) {
 				`{"model":"test-model","message":{"role":"assistant","content":" good."},"done":true}` + "\n",
 			}
 			for _, chunk := range chunks {
-				w.Write([]byte(chunk))
+				_, _ = w.Write([]byte(chunk))
 				if f, ok := w.(http.Flusher); ok {
 					f.Flush()
 				}
@@ -95,7 +95,7 @@ func TestOllamaE2E_ReviewWithMockServer(t *testing.T) {
 		}
 		if r.URL.Path == "/api/tags" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"models":[]}`))
+			_, _ = w.Write([]byte(`{"models":[]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -200,12 +200,12 @@ func TestOllamaE2E_ConfigResolution(t *testing.T) {
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/chat" {
 			w.Header().Set("Content-Type", "application/x-ndjson")
-			w.Write([]byte(`{"model":"repo-model","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
+			_, _ = w.Write([]byte(`{"model":"repo-model","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
 			return
 		}
 		if r.URL.Path == "/api/tags" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"models":[]}`))
+			_, _ = w.Write([]byte(`{"models":[]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -361,12 +361,12 @@ func TestOllamaE2E_BaseURLOverride(t *testing.T) {
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/chat" {
 			w.Header().Set("Content-Type", "application/x-ndjson")
-			w.Write([]byte(`{"model":"test-model","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
+			_, _ = w.Write([]byte(`{"model":"test-model","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
 			return
 		}
 		if r.URL.Path == "/api/tags" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"models":[]}`))
+			_, _ = w.Write([]byte(`{"models":[]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -448,7 +448,7 @@ func TestOllamaE2E_StreamingOutput(t *testing.T) {
 				`{"model":"test-model","message":{"role":"assistant","content":" 2"},"done":true}` + "\n",
 			}
 			for _, chunk := range chunks {
-				w.Write([]byte(chunk))
+				_, _ = w.Write([]byte(chunk))
 				if f, ok := w.(http.Flusher); ok {
 					f.Flush()
 				}
@@ -458,7 +458,7 @@ func TestOllamaE2E_StreamingOutput(t *testing.T) {
 		}
 		if r.URL.Path == "/api/tags" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"models":[]}`))
+			_, _ = w.Write([]byte(`{"models":[]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -539,12 +539,12 @@ func TestOllamaE2E_ErrorHandling(t *testing.T) {
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/chat" {
 			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte(`{"error":"model 'missing-model' not found"}`))
+			_, _ = w.Write([]byte(`{"error":"model 'missing-model' not found"}`))
 			return
 		}
 		if r.URL.Path == "/api/tags" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"models":[]}`))
+			_, _ = w.Write([]byte(`{"models":[]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -687,8 +687,8 @@ func TestOllamaE2E_CLIEnqueue(t *testing.T) {
 	// Override HOME to prevent reading real daemon.json
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	_ = os.Setenv("HOME", tmpHome)
+	defer func() { _ = os.Setenv("HOME", origHome) }()
 
 	// Create a temp git repo with custom HOME
 	tmpDir := t.TempDir()
@@ -703,18 +703,18 @@ func TestOllamaE2E_CLIEnqueue(t *testing.T) {
 				Agent string `json:"agent"`
 				Model string `json:"model"`
 			}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			receivedAgent = req.Agent
 			receivedModel = req.Model
 
 			job := storage.ReviewJob{ID: 1, GitRef: "HEAD", Agent: req.Agent, Status: "queued"}
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(job)
+			_ = json.NewEncoder(w).Encode(job)
 			return
 		}
 		if r.URL.Path == "/api/status" {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"version": version.Version,
 			})
 			return
@@ -724,11 +724,11 @@ func TestOllamaE2E_CLIEnqueue(t *testing.T) {
 
 	// Write fake daemon.json
 	roborevDir := filepath.Join(tmpHome, ".roborev")
-	os.MkdirAll(roborevDir, 0755)
+	_ = os.MkdirAll(roborevDir, 0755)
 	mockAddr := ts.URL[7:] // remove "http://"
 	daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
 	data, _ := json.Marshal(daemonInfo)
-	os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
+	_ = os.WriteFile(filepath.Join(roborevDir, "daemon.json"), data, 0644)
 
 	serverAddr = ts.URL
 

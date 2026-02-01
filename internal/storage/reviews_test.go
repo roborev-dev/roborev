@@ -9,7 +9,7 @@ import (
 // in any state: queued, running, done, failed, and canceled.
 func TestAddCommentToJobAllStates(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/test-repo")
 	commit := createCommit(t, db, repo.ID, "abc123")
@@ -80,7 +80,7 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 // non-existent job returns an appropriate error.
 func TestAddCommentToJobNonExistent(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Try to add a comment to a job that doesn't exist
 	_, err := db.AddCommentToJob(99999, "test-user", "This should fail")
@@ -96,7 +96,7 @@ func TestAddCommentToJobNonExistent(t *testing.T) {
 // can be added to the same job.
 func TestAddCommentToJobMultipleComments(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
 	setJobStatus(t, db, job.ID, JobStatusRunning)
@@ -142,7 +142,7 @@ func TestAddCommentToJobMultipleComments(t *testing.T) {
 // to jobs that have no review (i.e., job exists but has no review record yet).
 func TestAddCommentToJobWithNoReview(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, _, job := createJobChain(t, db, "/tmp/test-repo", "abc123")
 
@@ -167,7 +167,7 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 
 func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := createRepo(t, db, "/tmp/test-repo")
 
@@ -189,7 +189,7 @@ func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 			}
 
 			// Claim job to move to running, then complete it
-			db.ClaimJob("test-worker")
+			_, _ = db.ClaimJob("test-worker")
 			err = db.CompleteJob(job.ID, "codex", "test prompt", "Test review output\n\n## Verdict: PASS")
 			if err != nil {
 				t.Fatalf("CompleteJob failed: %v", err)

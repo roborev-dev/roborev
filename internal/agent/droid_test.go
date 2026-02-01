@@ -108,7 +108,7 @@ func TestDroidReviewWithProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create progress file: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	_, err = a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", f)
 	if err != nil {

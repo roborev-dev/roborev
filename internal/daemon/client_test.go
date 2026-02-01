@@ -117,7 +117,7 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/jobs" && r.Method == http.MethodGet:
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone, GitRef: "commit1"}},
 			})
 			return
@@ -132,7 +132,7 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Output: "Review complete"})
+			_ = json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Output: "Review complete"})
 			return
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -187,7 +187,7 @@ func TestFindJobForCommitWorktree(t *testing.T) {
 			normalizedReceived = resolved
 		}
 		if normalizedReceived == mainRepo {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs": []storage.ReviewJob{
 					{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
 				},
@@ -195,7 +195,7 @@ func TestFindJobForCommitWorktree(t *testing.T) {
 			return
 		}
 
-		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 	})
 
 	t.Run("worktree path normalized to main repo", func(t *testing.T) {
@@ -255,13 +255,13 @@ func TestFindJobForCommitFallback(t *testing.T) {
 		if repo != "" {
 			atomic.StoreInt32(&primaryCalled, 1)
 			// Return empty to trigger fallback
-			json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 			return
 		}
 
 		// Fallback query (no repo filter)
 		atomic.StoreInt32(&fallbackCalled, 1)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"jobs": []storage.ReviewJob{
 				{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
 			},
@@ -307,14 +307,14 @@ func TestFindPendingJobForRef(t *testing.T) {
 
 			// Server-side filtering: only return jobs matching the requested status
 			if status == "running" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jobs": []storage.ReviewJob{
 						{ID: 1, GitRef: gitRef, Status: storage.JobStatusRunning},
 					},
 				})
 			} else {
 				// No queued jobs
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 			}
 		})
 		job, err := client.FindPendingJobForRef("/test/repo", "abc123..def456")
@@ -333,7 +333,7 @@ func TestFindPendingJobForRef(t *testing.T) {
 	t.Run("returns nil when no pending jobs", func(t *testing.T) {
 		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 			// No jobs for any status
-			json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 		})
 		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
 		if err != nil {
@@ -352,13 +352,13 @@ func TestFindPendingJobForRef(t *testing.T) {
 			queriedStatuses = append(queriedStatuses, status)
 
 			if status == "queued" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jobs": []storage.ReviewJob{
 						{ID: 1, GitRef: "abc..def", Status: storage.JobStatusQueued},
 					},
 				})
 			} else {
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 			}
 		})
 		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
@@ -386,13 +386,13 @@ func TestFindPendingJobForRef(t *testing.T) {
 			queriedStatuses = append(queriedStatuses, status)
 
 			if status == "running" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jobs": []storage.ReviewJob{
 						{ID: 2, GitRef: "abc..def", Status: storage.JobStatusRunning},
 					},
 				})
 			} else {
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 			}
 		})
 		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")

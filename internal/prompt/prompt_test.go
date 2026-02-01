@@ -193,7 +193,9 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 
 	// Also add commits 4 and 5 to DB
 	for _, sha := range commits[3:5] {
-		db.GetOrCreateCommit(repo.ID, sha, "Test", "commit", time.Now())
+		if _, err := db.GetOrCreateCommit(repo.ID, sha, "Test", "commit", time.Now()); err != nil {
+			t.Fatalf("GetOrCreateCommit failed: %v", err)
+		}
 	}
 
 	// Build prompt for commit 6 with context from previous 5 commits

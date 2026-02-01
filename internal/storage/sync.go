@@ -132,7 +132,7 @@ func (db *DB) BackfillRepoIdentities() (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("query repos without identity: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type repoInfo struct {
 		id   int64
@@ -189,7 +189,7 @@ func (db *DB) GetRepoByIdentity(identity string) (*Repo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query repo by identity: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var r Repo
 	var count int
@@ -274,7 +274,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 	if err != nil {
 		return nil, fmt.Errorf("query jobs to sync: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var jobs []SyncableJob
 	for rows.Next() {
@@ -392,7 +392,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 	if err != nil {
 		return nil, fmt.Errorf("query reviews to sync: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var reviews []SyncableReview
 	for rows.Next() {
@@ -473,7 +473,7 @@ func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse
 	if err != nil {
 		return nil, fmt.Errorf("query responses to sync: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var responses []SyncableResponse
 	for rows.Next() {
@@ -608,7 +608,7 @@ func (db *DB) GetKnownJobUUIDs() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query job UUIDs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var uuids []string
 	for rows.Next() {
@@ -641,7 +641,7 @@ func (db *DB) GetOrCreateRepoByIdentity(identity string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("find repos by identity: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var repoIDs []int64
 	for rows.Next() {

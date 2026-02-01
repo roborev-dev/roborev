@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 func runCmd() *cobra.Command {
@@ -155,7 +155,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -211,7 +211,7 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return fmt.Errorf("server error checking job status (%d): %s", resp.StatusCode, body)
 		}
 
@@ -219,10 +219,10 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return fmt.Errorf("failed to parse job status: %w", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if len(jobsResp.Jobs) == 0 {
 			return fmt.Errorf("job %d not found", jobID)
@@ -288,7 +288,7 @@ func showPromptResult(cmd *cobra.Command, addr string, jobID int64, quiet bool, 
 	if err != nil {
 		return fmt.Errorf("failed to fetch result: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("no result found for job %d", jobID)

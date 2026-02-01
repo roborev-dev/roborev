@@ -411,7 +411,7 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 	retried, err := wp.db.RetryJob(job.ID, maxRetries)
 	if err != nil {
 		log.Printf("[%s] Error retrying job: %v", workerID, err)
-		wp.db.FailJob(job.ID, errorMsg)
+		_ = wp.db.FailJob(job.ID, errorMsg)
 		wp.broadcastFailed(job, agentName, errorMsg)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
@@ -424,7 +424,7 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 		log.Printf("[%s] Job %d queued for retry (%d/%d)", workerID, job.ID, retryCount, maxRetries)
 	} else {
 		log.Printf("[%s] Job %d failed after %d retries", workerID, job.ID, maxRetries)
-		wp.db.FailJob(job.ID, errorMsg)
+		_ = wp.db.FailJob(job.ID, errorMsg)
 		wp.broadcastFailed(job, agentName, errorMsg)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed after %d retries: %s", job.ID, maxRetries, errorMsg), job.ID)

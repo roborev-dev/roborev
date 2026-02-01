@@ -179,9 +179,9 @@ func TestNormalizeMSYSPath(t *testing.T) {
 		expected string // Expected on Windows; on other platforms we just check FromSlash behavior
 	}{
 		{"forward slash path", "C:/Users/test", "C:" + string(filepath.Separator) + "Users" + string(filepath.Separator) + "test"},
-		{"MSYS lowercase drive", "/c/Users/test", ""},    // Platform-specific expected
-		{"MSYS uppercase drive", "/C/Users/test", ""},    // Platform-specific expected
-		{"Unix absolute path", "/home/user/repo", ""},    // Platform-specific expected
+		{"MSYS lowercase drive", "/c/Users/test", ""}, // Platform-specific expected
+		{"MSYS uppercase drive", "/C/Users/test", ""}, // Platform-specific expected
+		{"Unix absolute path", "/home/user/repo", ""}, // Platform-specific expected
 		{"relative path", "some/path", "some" + string(filepath.Separator) + "path"},
 		{"with trailing newline", "C:/Users/test\n", "C:" + string(filepath.Separator) + "Users" + string(filepath.Separator) + "test"},
 	}
@@ -310,7 +310,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 		if err := os.MkdirAll(rebaseMerge, 0755); err != nil {
 			t.Fatal(err)
 		}
-		defer os.RemoveAll(rebaseMerge)
+		defer func() { _ = os.RemoveAll(rebaseMerge) }()
 
 		if !IsRebaseInProgress(repo.Dir) {
 			t.Error("expected rebase in progress with rebase-merge")
@@ -322,7 +322,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 		if err := os.MkdirAll(rebaseApply, 0755); err != nil {
 			t.Fatal(err)
 		}
-		defer os.RemoveAll(rebaseApply)
+		defer func() { _ = os.RemoveAll(rebaseApply) }()
 
 		if !IsRebaseInProgress(repo.Dir) {
 			t.Error("expected rebase in progress with rebase-apply")
@@ -372,7 +372,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 		if err := os.MkdirAll(rebaseMerge, 0755); err != nil {
 			t.Fatal(err)
 		}
-		defer os.RemoveAll(rebaseMerge)
+		defer func() { _ = os.RemoveAll(rebaseMerge) }()
 
 		if !IsRebaseInProgress(wt.Dir) {
 			t.Error("expected rebase in progress in worktree")
@@ -577,7 +577,7 @@ func TestGetMainRepoRoot(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add from submodule failed: %v\n%s", err, out)
 		}
-		defer exec.Command("git", "-C", submoduleDir, "worktree", "remove", worktreeDir).Run()
+		defer func() { _ = exec.Command("git", "-C", submoduleDir, "worktree", "remove", worktreeDir).Run() }()
 
 		wtRoot, err := GetMainRepoRoot(worktreeDir)
 		if err != nil {
@@ -851,7 +851,7 @@ func TestHasUncommittedChanges(t *testing.T) {
 
 	t.Run("untracked file", func(t *testing.T) {
 		repo.WriteFile("untracked.txt", "new")
-		defer os.Remove(filepath.Join(repo.Dir, "untracked.txt"))
+		defer func() { _ = os.Remove(filepath.Join(repo.Dir, "untracked.txt")) }()
 
 		hasChanges, err := HasUncommittedChanges(repo.Dir)
 		if err != nil {
@@ -887,7 +887,7 @@ func TestGetDirtyDiff(t *testing.T) {
 
 	t.Run("includes untracked files", func(t *testing.T) {
 		repo.WriteFile("newfile.txt", "new content\n")
-		defer os.Remove(filepath.Join(repo.Dir, "newfile.txt"))
+		defer func() { _ = os.Remove(filepath.Join(repo.Dir, "newfile.txt")) }()
 
 		diff, err := GetDirtyDiff(repo.Dir)
 		if err != nil {
@@ -909,7 +909,7 @@ func TestGetDirtyDiff(t *testing.T) {
 		repo.WriteFile("another.txt", "another\n")
 		defer func() {
 			repo.Run("checkout", "file.txt")
-			os.Remove(filepath.Join(repo.Dir, "another.txt"))
+			_ = os.Remove(filepath.Join(repo.Dir, "another.txt"))
 		}()
 
 		diff, err := GetDirtyDiff(repo.Dir)
@@ -928,7 +928,7 @@ func TestGetDirtyDiff(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(repo.Dir, "binary.bin"), []byte("hello\x00world"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		defer os.Remove(filepath.Join(repo.Dir, "binary.bin"))
+		defer func() { _ = os.Remove(filepath.Join(repo.Dir, "binary.bin")) }()
 
 		diff, err := GetDirtyDiff(repo.Dir)
 		if err != nil {

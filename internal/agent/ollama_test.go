@@ -849,7 +849,7 @@ func TestOllamaReasoningLevels_NoOpBehavior(t *testing.T) {
 			} `json:"messages"`
 		}
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &reqBody)
+		_ = json.Unmarshal(body, &reqBody)
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		_, _ = w.Write([]byte(`{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
 	}))
@@ -1204,11 +1204,11 @@ func TestOllamaParseStreamNDJSON_EdgeCases(t *testing.T) {
 	a := NewOllamaAgent("")
 
 	tests := []struct {
-		name       string
-		input      string
+		name        string
+		input       string
 		wantContent string
-		wantErr    bool
-		errSubstrs []string // when wantErr, all must appear in err.Error()
+		wantErr     bool
+		errSubstrs  []string // when wantErr, all must appear in err.Error()
 	}{
 		{"ExtraFields", `{"model":"x","message":{"role":"assistant","content":"test"},"done":true,"extra":"field","another":123}
 `, "test", false, nil},
@@ -1651,7 +1651,7 @@ func TestOllamaClassifyNetworkError_Timeout(t *testing.T) {
 func TestClassifyNetworkError(t *testing.T) {
 	t.Parallel()
 	baseURL := "http://localhost:11434"
-	
+
 	tests := []struct {
 		name     string
 		err      error
@@ -1673,7 +1673,7 @@ func TestClassifyNetworkError(t *testing.T) {
 			expected: "ollama DNS error: cannot resolve hostname invalid.host (no such host)",
 		},
 		{
-			name:     "connection refused via url.Error", 
+			name:     "connection refused via url.Error",
 			err:      &url.Error{Op: "Get", URL: baseURL, Err: fmt.Errorf("connection refused")},
 			expected: "ollama connection refused: server not running at http://localhost:11434 (start with: ollama serve)",
 		},
@@ -1713,7 +1713,7 @@ func TestClassifyNetworkError(t *testing.T) {
 			expected: "ollama connection error: some generic error",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := classifyNetworkError(tt.err, baseURL)

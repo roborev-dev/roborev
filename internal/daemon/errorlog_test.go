@@ -17,7 +17,7 @@ func createTestErrorLog(t *testing.T) (*ErrorLog, string) {
 	if err != nil {
 		t.Fatalf("NewErrorLog failed: %v", err)
 	}
-	t.Cleanup(func() { el.Close() })
+	t.Cleanup(func() { _ = el.Close() })
 	return el, path
 }
 
@@ -45,7 +45,7 @@ func TestErrorLogLog(t *testing.T) {
 
 	// Log an error
 	el.Log("error", "worker", "test error message", 123)
-	el.Close()
+	_ = el.Close()
 
 	// Verify file content
 	content, err := os.ReadFile(path)

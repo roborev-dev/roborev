@@ -78,7 +78,7 @@ func TestSyncWriter(t *testing.T) {
 			wg.Add(1)
 			go func(n int) {
 				defer wg.Done()
-				sw.Write([]byte("x"))
+				_, _ = sw.Write([]byte("x"))
 			}(i)
 		}
 		wg.Wait()

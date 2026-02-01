@@ -66,12 +66,12 @@ func createTestArchive(t *testing.T, path string, entries []archiveEntry) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gzw := gzip.NewWriter(f)
-	defer gzw.Close()
+	defer func() { _ = gzw.Close() }()
 	tw := tar.NewWriter(gzw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	for _, e := range entries {
 		mode := e.Mode
@@ -232,10 +232,10 @@ func TestExtractBaseSemver(t *testing.T) {
 		{"abc1234-dirty", ""},
 		{"", ""},
 		// Edge cases
-		{"0", ""},           // No dots
-		{"v", ""},           // Just v
-		{"vdev", ""},        // v followed by non-digit
-		{"1.0", "1.0"},      // Two-part version
+		{"0", ""},              // No dots
+		{"v", ""},              // Just v
+		{"vdev", ""},           // v followed by non-digit
+		{"1.0", "1.0"},         // Two-part version
 		{"1.0.0.0", "1.0.0.0"}, // Four-part version
 	}
 
@@ -363,13 +363,13 @@ func TestFindAssets(t *testing.T) {
 	}
 
 	tests := []struct {
-		name              string
-		assetName         string
-		wantAssetURL      string
-		wantAssetSize     int64
-		wantChecksumsURL  string
-		wantAssetNil      bool
-		wantChecksumsNil  bool
+		name             string
+		assetName        string
+		wantAssetURL     string
+		wantAssetSize    int64
+		wantChecksumsURL string
+		wantAssetNil     bool
+		wantChecksumsNil bool
 	}{
 		{
 			name:             "find darwin_arm64 (second in list)",
@@ -393,9 +393,9 @@ func TestFindAssets(t *testing.T) {
 			wantChecksumsURL: "https://example.com/checksums",
 		},
 		{
-			name:         "asset not found",
-			assetName:    "roborev_freebsd_amd64.tar.gz",
-			wantAssetNil: true,
+			name:             "asset not found",
+			assetName:        "roborev_freebsd_amd64.tar.gz",
+			wantAssetNil:     true,
 			wantChecksumsURL: "https://example.com/checksums",
 		},
 	}

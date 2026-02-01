@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -116,8 +117,7 @@ func (a *OllamaAgent) IsAvailable() bool {
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			// Log if needed, but don't fail availability check
-			// Close errors are typically non-critical for health checks
+			log.Printf("ollama availability check: close response body: %v", err)
 		}
 	}()
 	ok := resp.StatusCode == http.StatusOK
@@ -171,7 +171,7 @@ func (a *OllamaAgent) reviewSingleRound(ctx context.Context, repoPath, prompt st
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return a.parseStreamNDJSON(resp.Body, output)
 }
 
@@ -209,7 +209,7 @@ func (a *OllamaAgent) reviewAgenticLoop(ctx context.Context, repoPath, prompt st
 			return "", err
 		}
 		content, toolCalls, err := a.parseStreamNDJSONWithToolCalls(resp.Body, sw)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return "", err
 		}
@@ -267,7 +267,7 @@ func (a *OllamaAgent) doChatRequest(ctx context.Context, urlStr string, body []b
 	}
 	if resp.StatusCode != http.StatusOK {
 		slurp, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if readErr != nil {
 			return nil, fmt.Errorf("failed to read error response from Ollama: %w", readErr)
 		}
@@ -535,7 +535,7 @@ func (a *OllamaAgent) parseStreamNDJSONWithToolCalls(r io.Reader, output io.Writ
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" {
 			if sw != nil {
-				sw.Write([]byte(trimmed + "\n"))
+				_, _ = sw.Write([]byte(trimmed + "\n"))
 			}
 			var chunk ollamaStreamChunk
 			if jsonErr := json.Unmarshal([]byte(trimmed), &chunk); jsonErr != nil {
@@ -563,13 +563,13 @@ func (a *OllamaAgent) parseStreamNDJSONWithToolCalls(r io.Reader, output io.Writ
 				if !ok {
 					byIndex[idx] = tc
 					if sw != nil && tc.Function.Name != "" {
-						sw.Write([]byte("[Tool: " + tc.Function.Name + "]\n"))
+						_, _ = sw.Write([]byte("[Tool: " + tc.Function.Name + "]\n"))
 					}
 				} else {
 					if tc.Function.Name != "" {
 						existing.Function.Name = tc.Function.Name
 					}
-					if tc.Function.Arguments != nil && len(tc.Function.Arguments) > 0 {
+					if len(tc.Function.Arguments) > 0 {
 						existing.Function.Arguments = tc.Function.Arguments
 					}
 				}

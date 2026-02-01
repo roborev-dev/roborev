@@ -90,7 +90,7 @@ func (r *TestRepo) Chdir() func() {
 	if err := os.Chdir(r.Root); err != nil {
 		r.t.Fatal(err)
 	}
-	return func() { os.Chdir(orig) }
+	return func() { _ = os.Chdir(orig) }
 }
 
 // WriteHook writes a post-commit hook with the given content.
@@ -123,10 +123,10 @@ func MockBinaryInPath(t *testing.T, binName, scriptContent string) func() {
 	}
 
 	origPath := os.Getenv("PATH")
-	os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
+	_ = os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
 
 	return func() {
-		os.Setenv("PATH", origPath)
+		_ = os.Setenv("PATH", origPath)
 	}
 }
 
@@ -155,7 +155,7 @@ func OpenTestDBWithDir(t *testing.T) (*storage.DB, string) {
 	}
 
 	t.Cleanup(func() {
-		db.Close()
+		_ = db.Close()
 	})
 
 	return db, tmpDir

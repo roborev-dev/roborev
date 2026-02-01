@@ -89,7 +89,7 @@ func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
@@ -112,7 +112,7 @@ func (c *HTTPClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
@@ -140,7 +140,7 @@ func (c *HTTPClient) MarkReviewAddressed(jobID int64) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -161,7 +161,7 @@ func (c *HTTPClient) AddComment(jobID int64, commenter, comment string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -182,7 +182,7 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -206,7 +206,7 @@ func (c *HTTPClient) WaitForReview(jobID int64) (*storage.Review, error) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("polling job %d: server returned %s", jobID, resp.Status)
 		}
 
@@ -214,10 +214,10 @@ func (c *HTTPClient) WaitForReview(jobID int64) (*storage.Review, error) {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("polling job %d: decode error: %w", jobID, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if len(result.Jobs) == 0 {
 			return nil, fmt.Errorf("job %d not found", jobID)
@@ -270,7 +270,7 @@ func (c *HTTPClient) FindJobForCommit(repoPath, sha string) (*storage.ReviewJob,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("query for %s: server returned %s", sha, resp.Status)
@@ -295,7 +295,7 @@ func (c *HTTPClient) FindJobForCommit(repoPath, sha string) (*storage.ReviewJob,
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
 	}
-	defer fallbackResp.Body.Close()
+	defer func() { _ = fallbackResp.Body.Close() }()
 
 	if fallbackResp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fallback query for %s: server returned %s", sha, fallbackResp.Status)
@@ -352,7 +352,7 @@ func (c *HTTPClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.Rev
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("query for %s: server returned %s", gitRef, resp.Status)
 		}
 
@@ -360,10 +360,10 @@ func (c *HTTPClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.Rev
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("query for %s: decode error: %w", gitRef, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if len(result.Jobs) > 0 {
 			return &result.Jobs[0], nil
@@ -378,7 +378,7 @@ func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch responses: %s", resp.Status)

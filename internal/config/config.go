@@ -53,7 +53,7 @@ type Config struct {
 	FixModelFast        string `toml:"fix_model_fast"`
 	FixModelStandard    string `toml:"fix_model_standard"`
 	FixModelThorough    string `toml:"fix_model_thorough"`
-	AllowUnsafeAgents  *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
+	AllowUnsafeAgents   *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
@@ -65,7 +65,7 @@ type Config struct {
 
 	// Ollama configuration
 	OllamaBaseURL string `toml:"ollama_base_url"` // Default: "http://localhost:11434"
-	OllamaModel   string `toml:"ollama_model"`   // Default: "" (require explicit)
+	OllamaModel   string `toml:"ollama_model"`    // Default: "" (require explicit)
 
 	// Hooks configuration
 	Hooks []HookConfig `toml:"hooks"`
@@ -646,7 +646,7 @@ func SaveGlobal(cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	return toml.NewEncoder(f).Encode(cfg)
 }

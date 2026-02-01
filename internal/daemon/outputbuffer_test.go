@@ -268,8 +268,8 @@ func TestOutputWriter_Write(t *testing.T) {
 	w := ob.Writer(1, simpleNormalizer)
 
 	// Write with newline
-	w.Write([]byte("hello\n"))
-	w.Write([]byte("world\n"))
+	_, _ = w.Write([]byte("hello\n"))
+	_, _ = w.Write([]byte("world\n"))
 
 	assertLines(t, ob.GetLines(1), "hello", "world")
 }
@@ -279,9 +279,9 @@ func TestOutputWriter_WritePartialLines(t *testing.T) {
 	w := ob.Writer(1, simpleNormalizer)
 
 	// Write partial line
-	w.Write([]byte("hel"))
-	w.Write([]byte("lo\nwor"))
-	w.Write([]byte("ld\n"))
+	_, _ = w.Write([]byte("hel"))
+	_, _ = w.Write([]byte("lo\nwor"))
+	_, _ = w.Write([]byte("ld\n"))
 
 	assertLines(t, ob.GetLines(1), "hello", "world")
 }
@@ -291,7 +291,7 @@ func TestOutputWriter_Flush(t *testing.T) {
 	w := ob.Writer(1, simpleNormalizer)
 
 	// Write without newline
-	w.Write([]byte("incomplete"))
+	_, _ = w.Write([]byte("incomplete"))
 
 	// Should not appear yet
 	assertLines(t, ob.GetLines(1))
@@ -314,7 +314,7 @@ func TestOutputWriter_NormalizeFilters(t *testing.T) {
 
 	w := ob.Writer(1, normalize)
 
-	w.Write([]byte("keep\n\nskip empty\n"))
+	_, _ = w.Write([]byte("keep\n\nskip empty\n"))
 
 	lines := ob.GetLines(1)
 	if len(lines) != 2 {
@@ -329,7 +329,7 @@ func TestOutputWriter_LongLineWithoutNewline(t *testing.T) {
 
 	// Write a very long line without newline - should be force-flushed with truncation
 	longLine := strings.Repeat("x", 100)
-	w.Write([]byte(longLine))
+	_, _ = w.Write([]byte(longLine))
 
 	lines := ob.GetLines(1)
 	// Should have at least one line from forced flush
@@ -356,9 +356,9 @@ func TestOutputWriter_SmallMaxLine(t *testing.T) {
 		expectLen   int
 		expectNoEll bool // true if no ellipsis expected
 	}{
-		{"maxLine=3", 3, "abcdefgh", 3, true},   // No room for ellipsis
-		{"maxLine=4", 4, "abcdefgh", 4, false},  // Just enough: 1 char + "..."
-		{"maxLine=5", 5, "abcdefgh", 5, false},  // 2 chars + "..."
+		{"maxLine=3", 3, "abcdefgh", 3, true},           // No room for ellipsis
+		{"maxLine=4", 4, "abcdefgh", 4, false},          // Just enough: 1 char + "..."
+		{"maxLine=5", 5, "abcdefgh", 5, false},          // 2 chars + "..."
 		{"maxLine=10", 10, "abcdefghijklmn", 10, false}, // 7 chars + "..."
 	}
 
@@ -366,7 +366,7 @@ func TestOutputWriter_SmallMaxLine(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ob := NewOutputBuffer(tt.maxLine, 10000)
 			w := ob.Writer(1, simpleNormalizer)
-			w.Write([]byte(tt.input)) // No newline, triggers truncation
+			_, _ = w.Write([]byte(tt.input)) // No newline, triggers truncation
 
 			lines := ob.GetLines(1)
 			if len(lines) != 1 {
@@ -398,7 +398,7 @@ func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
 	// Write data exceeding maxLine (100 bytes) multiple times WITHOUT a newline
 	// This simulates a single very long line being written in chunks
 	for i := 0; i < 5; i++ {
-		w.Write([]byte(strings.Repeat("x", 50))) // 5 * 50 = 250 bytes total
+		_, _ = w.Write([]byte(strings.Repeat("x", 50))) // 5 * 50 = 250 bytes total
 	}
 
 	// Should only have 1 line (the truncated one), not 5 fragments

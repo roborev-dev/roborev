@@ -15,13 +15,13 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 // postCommitWaitDelay is the delay after creating a commit before checking
@@ -452,7 +452,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		if git.IsWorkingTreeClean(worktreePath) {
 			cleanupWorktree()
 			fmt.Println("Agent made no changes - skipping this review")
-			client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings")
+			_ = client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings")
 			skippedReviews[currentFailedReview.ID] = true
 			currentFailedReview = nil
 			continue
@@ -474,7 +474,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", shortSHA(newCommit), output)
-		client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText)
+		_ = client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText)
 
 		// Mark old review as addressed
 		if err := client.MarkReviewAddressed(currentFailedReview.JobID); err != nil {
@@ -621,7 +621,7 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	// Create the worktree (without --recurse-submodules for compatibility with older git)
 	cmd := exec.Command("git", "-C", repoPath, "worktree", "add", "--detach", worktreeDir, "HEAD")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		os.RemoveAll(worktreeDir)
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git worktree add: %w: %s", err, out)
 	}
 
@@ -633,8 +633,8 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	initArgs = append(initArgs, "submodule", "update", "--init")
 	cmd = exec.Command("git", initArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git submodule update: %w: %s", err, out)
 	}
 
@@ -645,20 +645,20 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	updateArgs = append(updateArgs, "submodule", "update", "--init", "--recursive")
 	cmd = exec.Command("git", updateArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git submodule update: %w: %s", err, out)
 	}
 
 	lfsCmd := exec.Command("git", "-C", worktreeDir, "lfs", "env")
 	if err := lfsCmd.Run(); err == nil {
 		cmd = exec.Command("git", "-C", worktreeDir, "lfs", "pull")
-		cmd.Run()
+		_ = cmd.Run()
 	}
 
 	cleanup := func() {
-		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
+		_ = os.RemoveAll(worktreeDir)
 	}
 
 	return worktreeDir, cleanup, nil
@@ -692,11 +692,11 @@ func submoduleRequiresFileProtocol(repoPath string) bool {
 				url = unquoted
 			}
 			if isFileProtocolURL(url) {
-				file.Close()
+				_ = file.Close()
 				return true
 			}
 		}
-		file.Close()
+		_ = file.Close()
 	}
 	return false
 }

@@ -530,7 +530,7 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 	})
 
 	t.Run("missing env var becomes empty", func(t *testing.T) {
-		os.Unsetenv("NONEXISTENT_VAR")
+		_ = os.Unsetenv("NONEXISTENT_VAR")
 		cfg := SyncConfig{PostgresURL: "postgres://user:${NONEXISTENT_VAR}@localhost:5432/db"}
 		expected := "postgres://user:@localhost:5432/db"
 		if got := cfg.PostgresURLExpanded(); got != expected {
@@ -610,7 +610,7 @@ func TestSyncConfigValidate(t *testing.T) {
 	})
 
 	t.Run("unexpanded env var warns", func(t *testing.T) {
-		os.Unsetenv("MISSING_VAR")
+		_ = os.Unsetenv("MISSING_VAR")
 		cfg := SyncConfig{
 			Enabled:     true,
 			PostgresURL: "postgres://user:${MISSING_VAR}@localhost:5432/db",
@@ -1384,12 +1384,12 @@ func TestResolveOllamaBaseURL(t *testing.T) {
 		orig, ok := os.LookupEnv("OLLAMA_HOST")
 		t.Cleanup(func() {
 			if ok {
-				os.Setenv("OLLAMA_HOST", orig)
+				_ = os.Setenv("OLLAMA_HOST", orig)
 			} else {
-				os.Unsetenv("OLLAMA_HOST")
+				_ = os.Unsetenv("OLLAMA_HOST")
 			}
 		})
-		os.Unsetenv("OLLAMA_HOST")
+		_ = os.Unsetenv("OLLAMA_HOST")
 	}
 
 	t.Run("nil config returns default", func(t *testing.T) {
@@ -1445,9 +1445,9 @@ func TestResolveOllamaBaseURL(t *testing.T) {
 	t.Run("OLLAMA_HOST env overrides default when config empty", func(t *testing.T) {
 		const envKey = "OLLAMA_HOST"
 		orig := os.Getenv(envKey)
-		defer func() { os.Setenv(envKey, orig) }()
+		defer func() { _ = os.Setenv(envKey, orig) }()
 
-		os.Setenv(envKey, "http://127.0.0.1:11435")
+		_ = os.Setenv(envKey, "http://127.0.0.1:11435")
 		baseURL := ResolveOllamaBaseURL(&Config{OllamaBaseURL: ""})
 		if baseURL != "http://127.0.0.1:11435" {
 			t.Errorf("Expected OLLAMA_HOST value, got '%s'", baseURL)
@@ -1457,9 +1457,9 @@ func TestResolveOllamaBaseURL(t *testing.T) {
 	t.Run("OLLAMA_HOST bare host:port gets http prefix", func(t *testing.T) {
 		const envKey = "OLLAMA_HOST"
 		orig := os.Getenv(envKey)
-		defer func() { os.Setenv(envKey, orig) }()
+		defer func() { _ = os.Setenv(envKey, orig) }()
 
-		os.Setenv(envKey, "127.0.0.1:11435")
+		_ = os.Setenv(envKey, "127.0.0.1:11435")
 		baseURL := ResolveOllamaBaseURL(nil)
 		if baseURL != "http://127.0.0.1:11435" {
 			t.Errorf("Expected 'http://127.0.0.1:11435', got '%s'", baseURL)
@@ -1469,9 +1469,9 @@ func TestResolveOllamaBaseURL(t *testing.T) {
 	t.Run("config takes precedence over OLLAMA_HOST", func(t *testing.T) {
 		const envKey = "OLLAMA_HOST"
 		orig := os.Getenv(envKey)
-		defer func() { os.Setenv(envKey, orig) }()
+		defer func() { _ = os.Setenv(envKey, orig) }()
 
-		os.Setenv(envKey, "http://env-host:11434")
+		_ = os.Setenv(envKey, "http://env-host:11434")
 		cfg := &Config{OllamaBaseURL: "http://config-host:11434"}
 		baseURL := ResolveOllamaBaseURL(cfg)
 		if baseURL != "http://config-host:11434" {

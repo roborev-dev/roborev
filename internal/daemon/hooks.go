@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 
 	"github.com/roborev-dev/roborev/internal/config"
 )
@@ -17,7 +16,6 @@ type HookRunner struct {
 	cfgGetter   ConfigGetter
 	broadcaster Broadcaster
 	subID       int
-	mu          sync.RWMutex
 	stopCh      chan struct{}
 }
 
@@ -171,7 +169,7 @@ func interpolate(cmd string, event Event) string {
 
 // shellEscape quotes a value for safe interpolation into a shell command.
 // Wraps in single quotes on all platforms, with embedded single quotes escaped.
-// On Windows (PowerShell), '' escapes a literal '. On Unix, uses '"'"'.
+// On Windows (PowerShell), ” escapes a literal '. On Unix, uses '"'"'.
 func shellEscape(s string) string {
 	if runtime.GOOS == "windows" {
 		// PowerShell single-quoted strings: only escape is '' for literal '.

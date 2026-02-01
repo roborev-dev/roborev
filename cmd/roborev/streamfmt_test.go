@@ -22,7 +22,7 @@ func newFixture(tty bool) *streamFormatterFixture {
 }
 
 func (fix *streamFormatterFixture) writeLine(s string) {
-	fix.f.Write([]byte(s + "\n"))
+	_, _ = fix.f.Write([]byte(s + "\n"))
 }
 
 func (fix *streamFormatterFixture) output() string {
@@ -240,11 +240,11 @@ func TestStreamFormatter_PartialWrites(t *testing.T) {
 
 	full := eventAssistantText("hello") + "\n"
 	// Write in two parts
-	fix.f.Write([]byte(full[:20]))
+	_, _ = fix.f.Write([]byte(full[:20]))
 	if fix.buf.Len() != 0 {
 		t.Errorf("partial write should buffer, got:\n%s", fix.output())
 	}
-	fix.f.Write([]byte(full[20:]))
+	_, _ = fix.f.Write([]byte(full[20:]))
 	fix.assertContains(t, "hello")
 }
 
