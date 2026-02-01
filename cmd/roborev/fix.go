@@ -29,6 +29,7 @@ func fixCmd() *cobra.Command {
 		allBranches bool
 		newestFirst bool
 		branch      string
+		batch       bool
 	)
 
 	cmd := &cobra.Command{
@@ -54,29 +55,62 @@ Examples:
   roborev fix --unaddressed              # Fix all unaddressed on current branch
   roborev fix --unaddressed --branch main
   roborev fix --unaddressed --all-branches
+  roborev fix --batch 123 124 125        # Batch multiple jobs into one prompt
+  roborev fix --batch                    # Batch all unaddressed on current branch
 `,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if branch != "" && !unaddressed {
-				return fmt.Errorf("--branch requires --unaddressed")
+			if branch != "" && !unaddressed && !batch {
+				return fmt.Errorf("--branch requires --unaddressed or --batch")
 			}
-			if allBranches && !unaddressed {
-				return fmt.Errorf("--all-branches requires --unaddressed")
+			if allBranches && !unaddressed && !batch {
+				return fmt.Errorf("--all-branches requires --unaddressed or --batch")
 			}
 			if allBranches && branch != "" {
 				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
 			}
-			if newestFirst && !unaddressed {
-				return fmt.Errorf("--newest-first requires --unaddressed")
+			if newestFirst && !unaddressed && !batch {
+				return fmt.Errorf("--newest-first requires --unaddressed or --batch")
 			}
 			if unaddressed && len(args) > 0 {
 				return fmt.Errorf("--unaddressed cannot be used with positional job IDs")
+			}
+			if batch && unaddressed {
+				return fmt.Errorf("--batch and --unaddressed are mutually exclusive (--batch without args already discovers unaddressed jobs)")
 			}
 			opts := fixOptions{
 				agentName: agentName,
 				model:     model,
 				reasoning: reasoning,
 				quiet:     quiet,
+			}
+
+			if batch {
+				var jobIDs []int64
+				for _, arg := range args {
+					var id int64
+					if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
+						return fmt.Errorf("invalid job ID %q: must be a number", arg)
+					}
+					jobIDs = append(jobIDs, id)
+				}
+				// If no args, discover unaddressed jobs
+				if len(jobIDs) == 0 {
+					effectiveBranch := branch
+					if !allBranches && effectiveBranch == "" {
+						workDir, err := os.Getwd()
+						if err != nil {
+							return fmt.Errorf("get working directory: %w", err)
+						}
+						repoRoot := workDir
+						if root, err := git.GetRepoRoot(workDir); err == nil {
+							repoRoot = root
+						}
+						effectiveBranch = git.GetCurrentBranch(repoRoot)
+					}
+					return runFixBatch(cmd, nil, effectiveBranch, newestFirst, opts)
+				}
+				return runFixBatch(cmd, jobIDs, "", false, opts)
 			}
 
 			if unaddressed || len(args) == 0 {
@@ -118,6 +152,7 @@ Examples:
 	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch; requires --unaddressed)")
 	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include unaddressed jobs from all branches (requires --unaddressed)")
 	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first (requires --unaddressed)")
+	cmd.Flags().BoolVar(&batch, "batch", false, "concatenate reviews into a single prompt for the agent")
 
 	return cmd
 }
@@ -509,6 +544,235 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	return nil
+}
+
+// batchEntry holds a fetched job and its review for batch processing.
+type batchEntry struct {
+	jobID  int64
+	job    *storage.ReviewJob
+	review *storage.Review
+}
+
+// runFixBatch discovers jobs (or uses provided IDs), splits them into batches
+// respecting max prompt size, and runs each batch as a single agent invocation.
+func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst bool, opts fixOptions) error {
+	if err := ensureDaemon(); err != nil {
+		return err
+	}
+
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	repoRoot := workDir
+	if root, err := git.GetRepoRoot(workDir); err == nil {
+		repoRoot = root
+	}
+
+	// Discover jobs if none provided
+	if len(jobIDs) == 0 {
+		jobIDs, err = queryUnaddressedJobs(repoRoot, branch)
+		if err != nil {
+			return err
+		}
+		if !newestFirst {
+			for i, j := 0, len(jobIDs)-1; i < j; i, j = i+1, j-1 {
+				jobIDs[i], jobIDs[j] = jobIDs[j], jobIDs[i]
+			}
+		}
+	}
+
+	if len(jobIDs) == 0 {
+		if !opts.quiet {
+			cmd.Println("No unaddressed jobs found.")
+		}
+		return nil
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Fetch all jobs and reviews
+	var entries []batchEntry
+	for _, id := range jobIDs {
+		job, err := fetchJob(ctx, serverAddr, id)
+		if err != nil {
+			if !opts.quiet {
+				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
+			}
+			continue
+		}
+		if job.Status != storage.JobStatusDone {
+			if !opts.quiet {
+				cmd.Printf("Warning: skipping job %d (status: %s)\n", id, job.Status)
+			}
+			continue
+		}
+		review, err := fetchReview(ctx, serverAddr, id)
+		if err != nil {
+			if !opts.quiet {
+				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
+			}
+			continue
+		}
+		entries = append(entries, batchEntry{jobID: id, job: job, review: review})
+	}
+
+	if len(entries) == 0 {
+		if !opts.quiet {
+			cmd.Println("No eligible jobs to batch.")
+		}
+		return nil
+	}
+
+	// Split into batches by prompt size
+	cfg, _ := config.LoadGlobal()
+	maxSize := config.ResolveMaxPromptSize(repoRoot, cfg)
+	batches := splitIntoBatches(entries, maxSize)
+
+	// Resolve agent once
+	fixAgent, err := resolveFixAgent(repoRoot, opts)
+	if err != nil {
+		return err
+	}
+
+	for i, batch := range batches {
+		batchJobIDs := make([]int64, len(batch))
+		for j, e := range batch {
+			batchJobIDs[j] = e.jobID
+		}
+
+		if !opts.quiet {
+			cmd.Printf("\n=== Batch %d/%d (jobs %s) ===\n", i+1, len(batches), formatJobIDs(batchJobIDs))
+		}
+
+		prompt := buildBatchFixPrompt(batch)
+
+		var out io.Writer
+		var fmtr *streamFormatter
+		if opts.quiet {
+			out = io.Discard
+		} else {
+			fmtr = newStreamFormatter(cmd.OutOrStdout(), writerIsTerminal(cmd.OutOrStdout()))
+			out = fmtr
+		}
+
+		result, err := fixJobDirect(ctx, fixJobParams{
+			RepoRoot: repoRoot,
+			Agent:    fixAgent,
+			Output:   out,
+		}, prompt)
+		if fmtr != nil {
+			fmtr.Flush()
+		}
+		if err != nil {
+			if !opts.quiet {
+				cmd.Printf("Error in batch %d: %v\n", i+1, err)
+			}
+			continue
+		}
+
+		if !opts.quiet {
+			fmt.Fprintln(cmd.OutOrStdout())
+			if result.CommitCreated {
+				cmd.Println("Changes committed successfully.")
+			} else if result.NoChanges {
+				cmd.Println("No changes were made by the fix agent.")
+			} else {
+				if hasChanges, hcErr := git.HasUncommittedChanges(repoRoot); hcErr == nil && hasChanges {
+					cmd.Println("Warning: Changes were made but not committed. Please review and commit manually.")
+				}
+			}
+		}
+
+		// Enqueue review for fix commit
+		if result.CommitCreated {
+			if enqErr := enqueueIfNeeded(serverAddr, repoRoot, result.NewCommitSHA); enqErr != nil && !opts.quiet {
+				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", enqErr)
+			}
+		}
+
+		// Mark all jobs in this batch as addressed
+		responseText := "Fix applied via `roborev fix --batch`"
+		if result.CommitCreated {
+			responseText = fmt.Sprintf("Fix applied via `roborev fix --batch` (commit: %s)", shortSHA(result.NewCommitSHA))
+		}
+		for _, e := range batch {
+			if addErr := addJobResponse(serverAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
+				cmd.Printf("Warning: could not add response to job %d: %v\n", e.jobID, addErr)
+			}
+			if markErr := markJobAddressed(serverAddr, e.jobID); markErr != nil {
+				if !opts.quiet {
+					cmd.Printf("Warning: could not mark job %d as addressed: %v\n", e.jobID, markErr)
+				}
+			} else if !opts.quiet {
+				cmd.Printf("Job %d marked as addressed\n", e.jobID)
+			}
+		}
+	}
+
+	return nil
+}
+
+// splitIntoBatches groups entries into batches respecting maxSize.
+// Greedily packs reviews; a single oversized review gets its own batch.
+func splitIntoBatches(entries []batchEntry, maxSize int) [][]batchEntry {
+	var batches [][]batchEntry
+	var current []batchEntry
+	currentSize := 0
+	overhead := len("# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n\n## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n")
+
+	for _, e := range entries {
+		entrySize := len(fmt.Sprintf("## Review (Job %d — %s)\n\n%s\n\n", e.jobID, shortSHA(e.job.GitRef), e.review.Output))
+
+		if len(current) > 0 && currentSize+entrySize > maxSize {
+			batches = append(batches, current)
+			current = nil
+			currentSize = 0
+		}
+
+		current = append(current, e)
+		if currentSize == 0 {
+			currentSize = overhead
+		}
+		currentSize += entrySize
+	}
+	if len(current) > 0 {
+		batches = append(batches, current)
+	}
+	return batches
+}
+
+// buildBatchFixPrompt creates a concatenated prompt from multiple reviews.
+func buildBatchFixPrompt(entries []batchEntry) string {
+	var sb strings.Builder
+	sb.WriteString("# Batch Fix Request\n\n")
+	sb.WriteString("The following reviews found issues that need to be fixed.\n")
+	sb.WriteString("Address all findings across all reviews in a single pass.\n\n")
+
+	for i, e := range entries {
+		sb.WriteString(fmt.Sprintf("## Review %d (Job %d — %s)\n\n", i+1, e.jobID, shortSHA(e.job.GitRef)))
+		sb.WriteString(e.review.Output)
+		sb.WriteString("\n\n")
+	}
+
+	sb.WriteString("## Instructions\n\n")
+	sb.WriteString("Please apply fixes for all the findings above.\n")
+	sb.WriteString("Focus on the highest priority items first.\n")
+	sb.WriteString("After making changes, verify the code compiles/passes linting,\n")
+	sb.WriteString("run relevant tests, and create a git commit summarizing all changes.\n")
+	return sb.String()
+}
+
+// formatJobIDs formats a slice of job IDs as a comma-separated string.
+func formatJobIDs(ids []int64) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = fmt.Sprintf("%d", id)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // fetchJob retrieves a job from the daemon
