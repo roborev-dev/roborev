@@ -798,6 +798,209 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 	})
 }
 
+func TestBuildBatchFixPrompt(t *testing.T) {
+	entries := []batchEntry{
+		{
+			jobID:  123,
+			job:    &storage.ReviewJob{GitRef: "abc123def456"},
+			review: &storage.Review{Output: "Found bug in foo.go"},
+		},
+		{
+			jobID:  456,
+			job:    &storage.ReviewJob{GitRef: "deadbeef1234"},
+			review: &storage.Review{Output: "Missing error check in bar.go"},
+		},
+	}
+
+	prompt := buildBatchFixPrompt(entries)
+
+	// Header
+	if !strings.Contains(prompt, "# Batch Fix Request") {
+		t.Error("prompt should have batch header")
+	}
+	if !strings.Contains(prompt, "Address all findings across all reviews in a single pass") {
+		t.Error("prompt should instruct single-pass fix")
+	}
+
+	// Per-review sections with numbered headers
+	if !strings.Contains(prompt, "## Review 1 (Job 123 — abc123d)") {
+		t.Errorf("prompt missing review 1 header, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Found bug in foo.go") {
+		t.Error("prompt should include first review output")
+	}
+	if !strings.Contains(prompt, "## Review 2 (Job 456 — deadbee)") {
+		t.Errorf("prompt missing review 2 header, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Missing error check in bar.go") {
+		t.Error("prompt should include second review output")
+	}
+
+	// Instructions footer
+	if !strings.Contains(prompt, "## Instructions") {
+		t.Error("prompt should have instructions section")
+	}
+	if !strings.Contains(prompt, "git commit") {
+		t.Error("prompt should request a commit")
+	}
+}
+
+func TestBuildBatchFixPromptSingleEntry(t *testing.T) {
+	entries := []batchEntry{
+		{
+			jobID:  7,
+			job:    &storage.ReviewJob{GitRef: "aaa"},
+			review: &storage.Review{Output: "one issue"},
+		},
+	}
+
+	prompt := buildBatchFixPrompt(entries)
+	if !strings.Contains(prompt, "## Review 1 (Job 7") {
+		t.Error("single-entry batch should still have numbered header")
+	}
+}
+
+func TestSplitIntoBatches(t *testing.T) {
+	makeEntry := func(id int64, outputSize int) batchEntry {
+		return batchEntry{
+			jobID:  id,
+			job:    &storage.ReviewJob{GitRef: fmt.Sprintf("sha%d", id)},
+			review: &storage.Review{Output: strings.Repeat("x", outputSize)},
+		}
+	}
+
+	t.Run("all fit in one batch", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(1, 100),
+			makeEntry(2, 100),
+			makeEntry(3, 100),
+		}
+		batches := splitIntoBatches(entries, 100000)
+		if len(batches) != 1 {
+			t.Errorf("expected 1 batch, got %d", len(batches))
+		}
+		if len(batches[0]) != 3 {
+			t.Errorf("expected 3 entries in batch, got %d", len(batches[0]))
+		}
+	})
+
+	t.Run("splits when exceeding limit", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(1, 500),
+			makeEntry(2, 500),
+			makeEntry(3, 500),
+		}
+		// Set limit small enough that not all fit (overhead ~300 bytes + entry ~530 each)
+		batches := splitIntoBatches(entries, 1000)
+		if len(batches) < 2 {
+			t.Errorf("expected at least 2 batches, got %d", len(batches))
+		}
+		// All entries should be present across batches
+		total := 0
+		for _, b := range batches {
+			total += len(b)
+		}
+		if total != 3 {
+			t.Errorf("expected 3 total entries, got %d", total)
+		}
+	})
+
+	t.Run("oversized single review gets own batch", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(1, 100),
+			makeEntry(2, 5000), // oversized
+			makeEntry(3, 100),
+		}
+		batches := splitIntoBatches(entries, 1000)
+		if len(batches) < 2 {
+			t.Errorf("expected at least 2 batches, got %d", len(batches))
+		}
+		// The oversized entry should be alone in its batch
+		found := false
+		for _, b := range batches {
+			for _, e := range b {
+				if e.jobID == 2 && len(b) == 1 {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Error("oversized entry (job 2) should be alone in its batch")
+		}
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		batches := splitIntoBatches(nil, 100000)
+		if len(batches) != 0 {
+			t.Errorf("expected 0 batches for empty input, got %d", len(batches))
+		}
+	})
+
+	t.Run("preserves order", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(10, 100),
+			makeEntry(20, 100),
+			makeEntry(30, 100),
+		}
+		batches := splitIntoBatches(entries, 100000)
+		if len(batches) != 1 {
+			t.Fatalf("expected 1 batch, got %d", len(batches))
+		}
+		for i, want := range []int64{10, 20, 30} {
+			if batches[0][i].jobID != want {
+				t.Errorf("batch[0][%d].jobID = %d, want %d", i, batches[0][i].jobID, want)
+			}
+		}
+	})
+}
+
+func TestFormatJobIDs(t *testing.T) {
+	tests := []struct {
+		ids  []int64
+		want string
+	}{
+		{[]int64{1}, "1"},
+		{[]int64{1, 2, 3}, "1, 2, 3"},
+		{[]int64{100, 200}, "100, 200"},
+	}
+	for _, tt := range tests {
+		got := formatJobIDs(tt.ids)
+		if got != tt.want {
+			t.Errorf("formatJobIDs(%v) = %q, want %q", tt.ids, got, tt.want)
+		}
+	}
+}
+
+func TestFixCmdBatchFlagValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "--batch with --unaddressed",
+			args:    []string{"--batch", "--unaddressed"},
+			wantErr: "--batch and --unaddressed are mutually exclusive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := fixCmd()
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 	tmpDir := initTestGitRepo(t)
 	sha := "abc123def456"
