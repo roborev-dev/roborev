@@ -5,9 +5,10 @@ agent = "ollama"
 model = "qwen3-coder:256k"
 review_model = "qwen2.5-coder:128k"
 refine_model = "qwen3-coder:256k"
+fix_model    = "qwen3-coder:256k"
 review_reasoning = "thorough"
 
-# Ollama models: reviews use qwen2.5-coder:128k (128K context), refine uses qwen3-coder:256k (256K context)
+# Ollama models: reviews use qwen2.5-coder:128k (128K context), refine/fix use qwen3-coder:256k (256K context)
 
 # Review checklist and address/refine rules
 # See AGENTS.md and .cursor/rules for full guidance
