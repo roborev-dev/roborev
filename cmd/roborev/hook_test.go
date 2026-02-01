@@ -2,46 +2,18 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 func TestUninstallHookCmd(t *testing.T) {
-	// Helper to create a git repo with an optional hook
-	setupRepo := func(t *testing.T, hookContent string) (repoPath string, hookPath string) {
-		tmpDir := t.TempDir()
-
-		// Initialize git repo
-		cmd := exec.Command("git", "init")
-		cmd.Dir = tmpDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init failed: %v\n%s", err, out)
-		}
-
-		hookPath = filepath.Join(tmpDir, ".git", "hooks", "post-commit")
-
-		if hookContent != "" {
-			if err := os.MkdirAll(filepath.Dir(hookPath), 0755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
-				t.Fatal(err)
-			}
-		}
-
-		return tmpDir, hookPath
-	}
-
 	t.Run("hook missing", func(t *testing.T) {
-		repoPath, hookPath := setupRepo(t, "")
-
-		// Change to repo dir for the command
-		origDir, _ := os.Getwd()
-		os.Chdir(repoPath)
-		defer os.Chdir(origDir)
+		repo := testutil.NewTestRepo(t)
+		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
 		err := cmd.Execute()
@@ -50,18 +22,16 @@ func TestUninstallHookCmd(t *testing.T) {
 		}
 
 		// Hook should still not exist
-		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+		if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
 			t.Error("Hook file should not exist")
 		}
 	})
 
 	t.Run("hook without roborev", func(t *testing.T) {
 		hookContent := "#!/bin/bash\necho 'other hook'\n"
-		repoPath, hookPath := setupRepo(t, hookContent)
-
-		origDir, _ := os.Getwd()
-		os.Chdir(repoPath)
-		defer os.Chdir(origDir)
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook(hookContent)
+		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
 		err := cmd.Execute()
@@ -70,7 +40,7 @@ func TestUninstallHookCmd(t *testing.T) {
 		}
 
 		// Hook should be unchanged
-		content, err := os.ReadFile(hookPath)
+		content, err := os.ReadFile(repo.HookPath)
 		if err != nil {
 			t.Fatalf("Failed to read hook: %v", err)
 		}
@@ -81,11 +51,9 @@ func TestUninstallHookCmd(t *testing.T) {
 
 	t.Run("hook with roborev only - removes file", func(t *testing.T) {
 		hookContent := "#!/bin/bash\n# roborev auto-commit hook\nroborev enqueue\n"
-		repoPath, hookPath := setupRepo(t, hookContent)
-
-		origDir, _ := os.Getwd()
-		os.Chdir(repoPath)
-		defer os.Chdir(origDir)
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook(hookContent)
+		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
 		err := cmd.Execute()
@@ -94,18 +62,16 @@ func TestUninstallHookCmd(t *testing.T) {
 		}
 
 		// Hook should be removed entirely
-		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+		if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
 			t.Error("Hook file should have been removed")
 		}
 	})
 
 	t.Run("hook with roborev and other commands - preserves others", func(t *testing.T) {
 		hookContent := "#!/bin/bash\necho 'before'\nroborev enqueue\necho 'after'\n"
-		repoPath, hookPath := setupRepo(t, hookContent)
-
-		origDir, _ := os.Getwd()
-		os.Chdir(repoPath)
-		defer os.Chdir(origDir)
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook(hookContent)
+		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
 		err := cmd.Execute()
@@ -114,7 +80,7 @@ func TestUninstallHookCmd(t *testing.T) {
 		}
 
 		// Hook should exist with roborev line removed
-		content, err := os.ReadFile(hookPath)
+		content, err := os.ReadFile(repo.HookPath)
 		if err != nil {
 			t.Fatalf("Failed to read hook: %v", err)
 		}
@@ -133,11 +99,9 @@ func TestUninstallHookCmd(t *testing.T) {
 
 	t.Run("hook with capitalized RoboRev", func(t *testing.T) {
 		hookContent := "#!/bin/bash\n# RoboRev hook\nRoboRev enqueue\n"
-		repoPath, hookPath := setupRepo(t, hookContent)
-
-		origDir, _ := os.Getwd()
-		os.Chdir(repoPath)
-		defer os.Chdir(origDir)
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook(hookContent)
+		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
 		err := cmd.Execute()
@@ -146,7 +110,7 @@ func TestUninstallHookCmd(t *testing.T) {
 		}
 
 		// Hook should be removed (only had RoboRev content)
-		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+		if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
 			t.Error("Hook file should have been removed")
 		}
 	})
@@ -163,55 +127,18 @@ func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 	os.Setenv("HOME", tmpHome)
 	defer os.Setenv("HOME", origHome)
 
-	// Create a temp git repo WITHOUT a hooks directory
-	tmpDir := t.TempDir()
-
-	// Initialize git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(),
-		"HOME="+tmpHome,
-		"GIT_AUTHOR_NAME=Test",
-		"GIT_AUTHOR_EMAIL=test@test.com",
-		"GIT_COMMITTER_NAME=Test",
-		"GIT_COMMITTER_EMAIL=test@test.com",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
-	}
-
-	// Remove .git/hooks directory to simulate the problematic scenario
-	hooksDir := filepath.Join(tmpDir, ".git", "hooks")
-	if err := os.RemoveAll(hooksDir); err != nil {
-		t.Fatalf("Failed to remove hooks directory: %v", err)
-	}
+	repo := testutil.NewTestRepo(t)
+	repo.RemoveHooksDir()
 
 	// Verify hooks directory doesn't exist
-	if _, err := os.Stat(hooksDir); !os.IsNotExist(err) {
+	if _, err := os.Stat(repo.HooksDir); !os.IsNotExist(err) {
 		t.Fatal("hooks directory should not exist before test")
 	}
 
-	// Create a roborev binary in PATH for the test (init tries to start daemon)
-	// We'll use a fake one that does nothing
-	binDir := filepath.Join(tmpHome, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	fakeDaemon := filepath.Join(binDir, "roborev")
-	fakeScript := "#!/bin/sh\nexit 0\n"
-	if err := os.WriteFile(fakeDaemon, []byte(fakeScript), 0755); err != nil {
-		t.Fatal(err)
-	}
-	origPath := os.Getenv("PATH")
-	os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath)
-	defer os.Setenv("PATH", origPath)
+	// Create a fake roborev binary in PATH
+	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
 
-	// Change to the test repo directory before running
-	origWd, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
+	defer repo.Chdir()()
 
 	// Build init command
 	initCommand := initCmd()
@@ -224,18 +151,17 @@ func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 	}
 
 	// Verify hooks directory was created
-	if _, err := os.Stat(hooksDir); os.IsNotExist(err) {
+	if _, err := os.Stat(repo.HooksDir); os.IsNotExist(err) {
 		t.Error("hooks directory was not created")
 	}
 
 	// Verify hook file was created
-	hookPath := filepath.Join(hooksDir, "post-commit")
-	if _, err := os.Stat(hookPath); os.IsNotExist(err) {
+	if _, err := os.Stat(repo.HookPath); os.IsNotExist(err) {
 		t.Error("post-commit hook was not created")
 	}
 
 	// Verify hook is executable
-	info, err := os.Stat(hookPath)
+	info, err := os.Stat(repo.HookPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,33 +175,15 @@ func TestInstallHookCmdCreatesHooksDirectory(t *testing.T) {
 		t.Skip("test checks Unix exec bits, skipping on Windows")
 	}
 
-	// Test that install-hook creates .git/hooks directory if missing
-	tmpDir := t.TempDir()
-
-	// Initialize git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
-	}
-
-	// Remove .git/hooks directory
-	hooksDir := filepath.Join(tmpDir, ".git", "hooks")
-	if err := os.RemoveAll(hooksDir); err != nil {
-		t.Fatalf("Failed to remove hooks directory: %v", err)
-	}
+	repo := testutil.NewTestRepo(t)
+	repo.RemoveHooksDir()
 
 	// Verify hooks directory doesn't exist
-	if _, err := os.Stat(hooksDir); !os.IsNotExist(err) {
+	if _, err := os.Stat(repo.HooksDir); !os.IsNotExist(err) {
 		t.Fatal("hooks directory should not exist before test")
 	}
 
-	// Change to the test repo directory
-	origWd, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
+	defer repo.Chdir()()
 
 	// Run install-hook command
 	installCmd := installHookCmd()
@@ -287,13 +195,12 @@ func TestInstallHookCmdCreatesHooksDirectory(t *testing.T) {
 	}
 
 	// Verify hooks directory was created
-	if _, err := os.Stat(hooksDir); os.IsNotExist(err) {
+	if _, err := os.Stat(repo.HooksDir); os.IsNotExist(err) {
 		t.Error("hooks directory was not created")
 	}
 
 	// Verify hook file was created
-	hookPath := filepath.Join(hooksDir, "post-commit")
-	if _, err := os.Stat(hookPath); os.IsNotExist(err) {
+	if _, err := os.Stat(repo.HookPath); os.IsNotExist(err) {
 		t.Error("post-commit hook was not created")
 	}
 }

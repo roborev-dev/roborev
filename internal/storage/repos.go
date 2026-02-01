@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -32,7 +33,7 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 		Scan(&repo.ID, &repo.RootPath, &repo.Name, &identityNullable, &createdAt)
 	if err == nil {
 		repo.Identity = identityNullable.String
-		repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		repo.CreatedAt = parseSQLiteTime(createdAt)
 
 		// Update identity if provided and not already set
 		if repoIdentity != "" && repo.Identity == "" {
@@ -84,7 +85,7 @@ func (db *DB) GetRepoByPath(rootPath string) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	repo.CreatedAt = parseSQLiteTime(createdAt)
 	return &repo, nil
 }
 
@@ -121,6 +122,131 @@ func (db *DB) ListReposWithReviewCounts() ([]RepoWithCount, int, error) {
 		totalCount += rc.Count
 	}
 	return repos, totalCount, rows.Err()
+}
+
+// ListReposWithReviewCountsByBranch returns repos filtered by branch with their job counts
+// If branch is empty, returns all repos. Use "(none)" to filter for jobs without a branch.
+func (db *DB) ListReposWithReviewCountsByBranch(branch string) ([]RepoWithCount, int, error) {
+	var rows *sql.Rows
+	var err error
+
+	if branch == "" {
+		// No filter - return all repos
+		return db.ListReposWithReviewCounts()
+	}
+
+	// Filter by branch (handle "(none)" as NULL/empty branch)
+	branchFilter := branch
+	if branch == "(none)" {
+		branchFilter = ""
+	}
+
+	rows, err = db.Query(`
+		SELECT r.name, r.root_path, COUNT(rj.id) as job_count
+		FROM repos r
+		INNER JOIN review_jobs rj ON rj.repo_id = r.id
+		WHERE COALESCE(rj.branch, '') = ?
+		GROUP BY r.id, r.name, r.root_path
+		HAVING job_count > 0
+		ORDER BY r.name
+	`, branchFilter)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var repos []RepoWithCount
+	totalCount := 0
+	for rows.Next() {
+		var rc RepoWithCount
+		if err := rows.Scan(&rc.Name, &rc.RootPath, &rc.Count); err != nil {
+			return nil, 0, err
+		}
+		repos = append(repos, rc)
+		totalCount += rc.Count
+	}
+	return repos, totalCount, rows.Err()
+}
+
+// BranchWithCount represents a branch with its total job count
+type BranchWithCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// BranchListResult contains branches with counts and metadata
+type BranchListResult struct {
+	Branches       []BranchWithCount
+	TotalCount     int
+	NullsRemaining int // Number of jobs with NULL/empty branch (for backfill tracking)
+}
+
+// ListBranchesWithCounts returns all branches with their job counts
+// If repoPaths is non-empty, filters to jobs in those repos only
+func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, error) {
+	var rows *sql.Rows
+	var err error
+
+	if len(repoPaths) == 0 {
+		// No repo filter - count branches across all repos
+		rows, err = db.Query(`
+			SELECT COALESCE(NULLIF(branch, ''), '(none)') as branch_name, COUNT(*) as job_count
+			FROM review_jobs
+			GROUP BY branch_name
+			ORDER BY job_count DESC, branch_name
+		`)
+	} else if len(repoPaths) == 1 {
+		// Single repo filter
+		rows, err = db.Query(`
+			SELECT COALESCE(NULLIF(rj.branch, ''), '(none)') as branch_name, COUNT(*) as job_count
+			FROM review_jobs rj
+			INNER JOIN repos r ON rj.repo_id = r.id
+			WHERE r.root_path = ?
+			GROUP BY branch_name
+			ORDER BY job_count DESC, branch_name
+		`, repoPaths[0])
+	} else {
+		// Multiple repo paths - build IN clause with placeholders
+		placeholders := make([]string, len(repoPaths))
+		args := make([]interface{}, len(repoPaths))
+		for i, p := range repoPaths {
+			placeholders[i] = "?"
+			args[i] = p
+		}
+		query := fmt.Sprintf(`
+			SELECT COALESCE(NULLIF(rj.branch, ''), '(none)') as branch_name, COUNT(*) as job_count
+			FROM review_jobs rj
+			INNER JOIN repos r ON rj.repo_id = r.id
+			WHERE r.root_path IN (%s)
+			GROUP BY branch_name
+			ORDER BY job_count DESC, branch_name
+		`, strings.Join(placeholders, ","))
+		rows, err = db.Query(query, args...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := &BranchListResult{}
+	for rows.Next() {
+		var bc BranchWithCount
+		if err := rows.Scan(&bc.Name, &bc.Count); err != nil {
+			return nil, err
+		}
+		result.Branches = append(result.Branches, bc)
+		result.TotalCount += bc.Count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Count actual NULL branches (not empty string or "(none)" sentinel)
+	if err := db.QueryRow("SELECT COUNT(*) FROM review_jobs WHERE branch IS NULL").Scan(&result.NullsRemaining); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // RenameRepo updates the display name of a repo identified by its path or current name
@@ -162,7 +288,7 @@ func (db *DB) ListRepos() ([]Repo, error) {
 		if err := rows.Scan(&r.ID, &r.RootPath, &r.Name, &createdAt); err != nil {
 			return nil, err
 		}
-		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		r.CreatedAt = parseSQLiteTime(createdAt)
 		repos = append(repos, r)
 	}
 	return repos, rows.Err()
@@ -177,7 +303,7 @@ func (db *DB) GetRepoByID(id int64) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	repo.CreatedAt = parseSQLiteTime(createdAt)
 	return &repo, nil
 }
 
@@ -190,7 +316,7 @@ func (db *DB) GetRepoByName(name string) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	repo.CreatedAt = parseSQLiteTime(createdAt)
 	return &repo, nil
 }
 
@@ -222,8 +348,10 @@ type RepoStats struct {
 	RunningJobs   int
 	CompletedJobs int
 	FailedJobs    int
-	PassedReviews int
-	FailedReviews int
+	PassedReviews      int
+	FailedReviews      int
+	AddressedReviews   int
+	UnaddressedReviews int
 }
 
 // GetRepoStats returns detailed statistics for a repo
@@ -268,12 +396,14 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 	err = db.QueryRow(`
 		SELECT
 			COALESCE(SUM(CASE WHEN r.output LIKE '%**Verdict: PASS%' OR r.output LIKE '%Verdict: PASS%' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN r.output LIKE '%**Verdict: FAIL%' OR r.output LIKE '%Verdict: FAIL%' THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN r.output LIKE '%**Verdict: FAIL%' OR r.output LIKE '%Verdict: FAIL%' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN r.addressed = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN r.addressed = 0 THEN 1 ELSE 0 END), 0)
 		FROM reviews r
 		JOIN review_jobs rj ON r.job_id = rj.id
 		WHERE rj.repo_id = ?
 		  AND NOT (rj.commit_id IS NULL AND rj.git_ref = 'prompt')
-	`, repoID).Scan(&stats.PassedReviews, &stats.FailedReviews)
+	`, repoID).Scan(&stats.PassedReviews, &stats.FailedReviews, &stats.AddressedReviews, &stats.UnaddressedReviews)
 	if err != nil {
 		return nil, err
 	}

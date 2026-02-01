@@ -12,6 +12,13 @@ import (
 	"github.com/roborev-dev/roborev/internal/git"
 )
 
+// HookConfig defines a hook that runs on review events
+type HookConfig struct {
+	Event   string `toml:"event"`   // "review.failed", "review.completed", "review.*"
+	Command string `toml:"command"` // shell command with {var} templates
+	Type    string `toml:"type"`    // "beads" for built-in, empty for command
+}
+
 // Config holds the daemon configuration
 type Config struct {
 	ServerAddr         string `toml:"server_addr"`
@@ -20,11 +27,38 @@ type Config struct {
 	DefaultAgent       string `toml:"default_agent"`
 	DefaultModel       string `toml:"default_model"` // Default model for agents (format varies by agent)
 	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
+
+	// Workflow-specific agent/model configuration
+	ReviewAgent         string `toml:"review_agent"`
+	ReviewAgentFast     string `toml:"review_agent_fast"`
+	ReviewAgentStandard string `toml:"review_agent_standard"`
+	ReviewAgentThorough string `toml:"review_agent_thorough"`
+	RefineAgent         string `toml:"refine_agent"`
+	RefineAgentFast     string `toml:"refine_agent_fast"`
+	RefineAgentStandard string `toml:"refine_agent_standard"`
+	RefineAgentThorough string `toml:"refine_agent_thorough"`
+	ReviewModel         string `toml:"review_model"`
+	ReviewModelFast     string `toml:"review_model_fast"`
+	ReviewModelStandard string `toml:"review_model_standard"`
+	ReviewModelThorough string `toml:"review_model_thorough"`
+	RefineModel         string `toml:"refine_model"`
+	RefineModelFast     string `toml:"refine_model_fast"`
+	RefineModelStandard string `toml:"refine_model_standard"`
+	RefineModelThorough string `toml:"refine_model_thorough"`
+	FixAgent            string `toml:"fix_agent"`
+	FixAgentFast        string `toml:"fix_agent_fast"`
+	FixAgentStandard    string `toml:"fix_agent_standard"`
+	FixAgentThorough    string `toml:"fix_agent_thorough"`
+	FixModel            string `toml:"fix_model"`
+	FixModelFast        string `toml:"fix_model_fast"`
+	FixModelStandard    string `toml:"fix_model_standard"`
+	FixModelThorough    string `toml:"fix_model_thorough"`
 	AllowUnsafeAgents  *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
 	ClaudeCodeCmd string `toml:"claude_code_cmd"`
+	CursorCmd     string `toml:"cursor_cmd"`
 
 	// API keys (optional - agents use subscription auth by default)
 	AnthropicAPIKey string `toml:"anthropic_api_key"`
@@ -33,8 +67,14 @@ type Config struct {
 	OllamaBaseURL string `toml:"ollama_base_url"` // Default: "http://localhost:11434"
 	OllamaModel   string `toml:"ollama_model"`   // Default: "" (require explicit)
 
+	// Hooks configuration
+	Hooks []HookConfig `toml:"hooks"`
+
 	// Sync configuration for PostgreSQL
 	Sync SyncConfig `toml:"sync"`
+
+	// Analysis settings
+	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
 }
 
 // SyncConfig holds configuration for PostgreSQL sync
@@ -122,6 +162,39 @@ type RepoConfig struct {
 	DisplayName        string   `toml:"display_name"`
 	ReviewReasoning    string   `toml:"review_reasoning"` // Reasoning level for reviews: thorough, standard, fast
 	RefineReasoning    string   `toml:"refine_reasoning"` // Reasoning level for refine: thorough, standard, fast
+	FixReasoning       string   `toml:"fix_reasoning"`    // Reasoning level for fix: thorough, standard, fast
+
+	// Workflow-specific agent/model configuration
+	ReviewAgent         string `toml:"review_agent"`
+	ReviewAgentFast     string `toml:"review_agent_fast"`
+	ReviewAgentStandard string `toml:"review_agent_standard"`
+	ReviewAgentThorough string `toml:"review_agent_thorough"`
+	RefineAgent         string `toml:"refine_agent"`
+	RefineAgentFast     string `toml:"refine_agent_fast"`
+	RefineAgentStandard string `toml:"refine_agent_standard"`
+	RefineAgentThorough string `toml:"refine_agent_thorough"`
+	ReviewModel         string `toml:"review_model"`
+	ReviewModelFast     string `toml:"review_model_fast"`
+	ReviewModelStandard string `toml:"review_model_standard"`
+	ReviewModelThorough string `toml:"review_model_thorough"`
+	RefineModel         string `toml:"refine_model"`
+	RefineModelFast     string `toml:"refine_model_fast"`
+	RefineModelStandard string `toml:"refine_model_standard"`
+	RefineModelThorough string `toml:"refine_model_thorough"`
+	FixAgent            string `toml:"fix_agent"`
+	FixAgentFast        string `toml:"fix_agent_fast"`
+	FixAgentStandard    string `toml:"fix_agent_standard"`
+	FixAgentThorough    string `toml:"fix_agent_thorough"`
+	FixModel            string `toml:"fix_model"`
+	FixModelFast        string `toml:"fix_model_fast"`
+	FixModelStandard    string `toml:"fix_model_standard"`
+	FixModelThorough    string `toml:"fix_model_thorough"`
+
+	// Hooks configuration (per-repo)
+	Hooks []HookConfig `toml:"hooks"`
+
+	// Analysis settings
+	MaxPromptSize int `toml:"max_prompt_size"` // Max prompt size in bytes before falling back to paths (overrides global default)
 }
 
 // DefaultConfig returns the default configuration
@@ -134,6 +207,7 @@ func DefaultConfig() *Config {
 		JobTimeoutMinutes:  30,
 		CodexCmd:           "codex",
 		ClaudeCodeCmd:      "claude",
+		CursorCmd:          "agent",
 		OllamaBaseURL:      "http://localhost:11434",
 		OllamaModel:        "",
 	}
@@ -296,6 +370,20 @@ func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 	return "standard", nil // Default for refine: balanced analysis
 }
 
+// ResolveFixReasoning determines reasoning level for fix.
+// Priority: explicit > per-repo config > default (standard)
+func ResolveFixReasoning(explicit string, repoPath string) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return normalizeReasoning(explicit)
+	}
+
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.FixReasoning) != "" {
+		return normalizeReasoning(repoCfg.FixReasoning)
+	}
+
+	return "standard", nil // Default for fix: balanced analysis
+}
+
 // ResolveModel determines which model to use based on config priority:
 // 1. Explicit model parameter (if non-empty)
 // 2. Per-repo config (model in .roborev.toml)
@@ -334,6 +422,217 @@ func ResolveOllamaBaseURL(globalCfg *Config) string {
 		return "http://" + s
 	}
 	return "http://localhost:11434"
+}
+
+// DefaultMaxPromptSize is the default maximum prompt size in bytes (200KB)
+const DefaultMaxPromptSize = 200 * 1024
+
+// ResolveMaxPromptSize determines the maximum prompt size based on config priority:
+// 1. Per-repo config (max_prompt_size in .roborev.toml)
+// 2. Global config (default_max_prompt_size in config.toml)
+// 3. Default (200KB)
+func ResolveMaxPromptSize(repoPath string, globalCfg *Config) int {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.MaxPromptSize > 0 {
+		return repoCfg.MaxPromptSize
+	}
+
+	if globalCfg != nil && globalCfg.DefaultMaxPromptSize > 0 {
+		return globalCfg.DefaultMaxPromptSize
+	}
+
+	return DefaultMaxPromptSize
+}
+
+// ResolveAgentForWorkflow determines which agent to use based on workflow and level.
+// Priority (Option A - layer wins first, then specificity):
+// 1. CLI explicit
+// 2. Repo {workflow}_agent_{level}
+// 3. Repo {workflow}_agent
+// 4. Repo agent
+// 5. Global {workflow}_agent_{level}
+// 6. Global {workflow}_agent
+// 7. Global default_agent
+// 8. "codex"
+func ResolveAgentForWorkflow(cli, repoPath string, globalCfg *Config, workflow, level string) string {
+	if s := strings.TrimSpace(cli); s != "" {
+		return s
+	}
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	if s := getWorkflowValue(repoCfg, globalCfg, workflow, level, true); s != "" {
+		return s
+	}
+	return "codex"
+}
+
+// ResolveModelForWorkflow determines which model to use based on workflow and level.
+// Same priority as ResolveAgentForWorkflow, but returns empty string as default.
+func ResolveModelForWorkflow(cli, repoPath string, globalCfg *Config, workflow, level string) string {
+	if s := strings.TrimSpace(cli); s != "" {
+		return s
+	}
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	return getWorkflowValue(repoCfg, globalCfg, workflow, level, false)
+}
+
+// getWorkflowValue looks up agent or model config following Option A priority.
+func getWorkflowValue(repo *RepoConfig, global *Config, workflow, level string, isAgent bool) string {
+	// Repo layer: level-specific > workflow-specific > generic
+	if repo != nil {
+		if s := repoWorkflowField(repo, workflow, level, isAgent); s != "" {
+			return s
+		}
+		if s := repoWorkflowField(repo, workflow, "", isAgent); s != "" {
+			return s
+		}
+		if isAgent && strings.TrimSpace(repo.Agent) != "" {
+			return strings.TrimSpace(repo.Agent)
+		}
+		if !isAgent && strings.TrimSpace(repo.Model) != "" {
+			return strings.TrimSpace(repo.Model)
+		}
+	}
+	// Global layer: level-specific > workflow-specific > generic
+	if global != nil {
+		if s := globalWorkflowField(global, workflow, level, isAgent); s != "" {
+			return s
+		}
+		if s := globalWorkflowField(global, workflow, "", isAgent); s != "" {
+			return s
+		}
+		if isAgent && strings.TrimSpace(global.DefaultAgent) != "" {
+			return strings.TrimSpace(global.DefaultAgent)
+		}
+		if !isAgent && strings.TrimSpace(global.DefaultModel) != "" {
+			return strings.TrimSpace(global.DefaultModel)
+		}
+	}
+	return ""
+}
+
+func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) string {
+	if r == nil {
+		return ""
+	}
+	var v string
+	if isAgent {
+		switch workflow + "_" + level {
+		case "review_fast":
+			v = r.ReviewAgentFast
+		case "review_standard":
+			v = r.ReviewAgentStandard
+		case "review_thorough":
+			v = r.ReviewAgentThorough
+		case "review_":
+			v = r.ReviewAgent
+		case "refine_fast":
+			v = r.RefineAgentFast
+		case "refine_standard":
+			v = r.RefineAgentStandard
+		case "refine_thorough":
+			v = r.RefineAgentThorough
+		case "refine_":
+			v = r.RefineAgent
+		case "fix_fast":
+			v = r.FixAgentFast
+		case "fix_standard":
+			v = r.FixAgentStandard
+		case "fix_thorough":
+			v = r.FixAgentThorough
+		case "fix_":
+			v = r.FixAgent
+		}
+	} else {
+		switch workflow + "_" + level {
+		case "review_fast":
+			v = r.ReviewModelFast
+		case "review_standard":
+			v = r.ReviewModelStandard
+		case "review_thorough":
+			v = r.ReviewModelThorough
+		case "review_":
+			v = r.ReviewModel
+		case "refine_fast":
+			v = r.RefineModelFast
+		case "refine_standard":
+			v = r.RefineModelStandard
+		case "refine_thorough":
+			v = r.RefineModelThorough
+		case "refine_":
+			v = r.RefineModel
+		case "fix_fast":
+			v = r.FixModelFast
+		case "fix_standard":
+			v = r.FixModelStandard
+		case "fix_thorough":
+			v = r.FixModelThorough
+		case "fix_":
+			v = r.FixModel
+		}
+	}
+	return strings.TrimSpace(v)
+}
+
+func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string {
+	if g == nil {
+		return ""
+	}
+	var v string
+	if isAgent {
+		switch workflow + "_" + level {
+		case "review_fast":
+			v = g.ReviewAgentFast
+		case "review_standard":
+			v = g.ReviewAgentStandard
+		case "review_thorough":
+			v = g.ReviewAgentThorough
+		case "review_":
+			v = g.ReviewAgent
+		case "refine_fast":
+			v = g.RefineAgentFast
+		case "refine_standard":
+			v = g.RefineAgentStandard
+		case "refine_thorough":
+			v = g.RefineAgentThorough
+		case "refine_":
+			v = g.RefineAgent
+		case "fix_fast":
+			v = g.FixAgentFast
+		case "fix_standard":
+			v = g.FixAgentStandard
+		case "fix_thorough":
+			v = g.FixAgentThorough
+		case "fix_":
+			v = g.FixAgent
+		}
+	} else {
+		switch workflow + "_" + level {
+		case "review_fast":
+			v = g.ReviewModelFast
+		case "review_standard":
+			v = g.ReviewModelStandard
+		case "review_thorough":
+			v = g.ReviewModelThorough
+		case "review_":
+			v = g.ReviewModel
+		case "refine_fast":
+			v = g.RefineModelFast
+		case "refine_standard":
+			v = g.RefineModelStandard
+		case "refine_thorough":
+			v = g.RefineModelThorough
+		case "refine_":
+			v = g.RefineModel
+		case "fix_fast":
+			v = g.FixModelFast
+		case "fix_standard":
+			v = g.FixModelStandard
+		case "fix_thorough":
+			v = g.FixModelThorough
+		case "fix_":
+			v = g.FixModel
+		}
+	}
+	return strings.TrimSpace(v)
 }
 
 // SaveGlobal saves the global configuration

@@ -53,17 +53,141 @@ func stripANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
 }
 
+// mockServerModel creates an httptest.Server and a tuiModel pointed at it.
+func mockServerModel(t *testing.T, handler http.HandlerFunc) (*httptest.Server, tuiModel) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts, newTuiModel(ts.URL)
+}
+
+// pressKey simulates pressing a rune key and returns the updated tuiModel.
+func pressKey(m tuiModel, r rune) (tuiModel, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	return updated.(tuiModel), cmd
+}
+
+// pressKeys simulates pressing multiple rune keys.
+func pressKeys(m tuiModel, runes []rune) (tuiModel, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: runes})
+	return updated.(tuiModel), cmd
+}
+
+// pressSpecial simulates pressing a special key (Enter, Escape, etc.).
+func pressSpecial(m tuiModel, key tea.KeyType) (tuiModel, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyMsg{Type: key})
+	return updated.(tuiModel), cmd
+}
+
+// updateModel sends a message to the model and returns the updated tuiModel.
+func updateModel(t *testing.T, m tuiModel, msg tea.Msg) (tuiModel, tea.Cmd) {
+	t.Helper()
+	updated, cmd := m.Update(msg)
+	newModel, ok := updated.(tuiModel)
+	if !ok {
+		t.Fatalf("Model type assertion failed: got %T", updated)
+	}
+	return newModel, cmd
+}
+
+// boolPtr returns a pointer to a bool value.
+func boolPtr(b bool) *bool { return &b }
+
+// makeJob creates a storage.ReviewJob with the given ID and sensible defaults.
+// Optional functional options can override specific fields.
+func makeJob(id int64, opts ...func(*storage.ReviewJob)) storage.ReviewJob {
+	j := storage.ReviewJob{ID: id, Status: storage.JobStatusDone}
+	for _, opt := range opts {
+		opt(&j)
+	}
+	return j
+}
+
+func withStatus(s storage.JobStatus) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.Status = s }
+}
+
+func withRef(ref string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.GitRef = ref }
+}
+
+func withAgent(agent string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.Agent = agent }
+}
+
+func withBranch(branch string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.Branch = branch }
+}
+
+func withAddressed(b *bool) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.Addressed = b }
+}
+
+func withRepoPath(path string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.RepoPath = path }
+}
+
+func withRepoName(name string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.RepoName = name }
+}
+
+func withFinishedAt(t *time.Time) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.FinishedAt = t }
+}
+
+func withEnqueuedAt(t time.Time) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.EnqueuedAt = t }
+}
+
+func withModel(model string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.Model = model }
+}
+
+func withError(err string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.Error = err }
+}
+
+func withVerdict(v string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.Verdict = &v }
+}
+
+// makeReview creates a storage.Review linked to the given job.
+func makeReview(id int64, job *storage.ReviewJob, opts ...func(*storage.Review)) *storage.Review {
+	r := &storage.Review{
+		ID:    id,
+		JobID: job.ID,
+		Job:   job,
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+func withReviewOutput(output string) func(*storage.Review) {
+	return func(r *storage.Review) { r.Output = output }
+}
+
+func withReviewAddressed(addressed bool) func(*storage.Review) {
+	return func(r *storage.Review) { r.Addressed = addressed }
+}
+
+func withReviewAgent(agent string) func(*storage.Review) {
+	return func(r *storage.Review) { r.Agent = agent }
+}
+
+func withReviewPrompt(prompt string) func(*storage.Review) {
+	return func(r *storage.Review) { r.Prompt = prompt }
+}
+
 func TestTUIFetchJobsSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/jobs" {
 			t.Errorf("Expected /api/jobs, got %s", r.URL.Path)
 		}
 		jobs := []storage.ReviewJob{{ID: 1, GitRef: "abc123", Agent: "test"}}
 		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": jobs})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchJobs()
 	msg := cmd()
 
@@ -77,12 +201,9 @@ func TestTUIFetchJobsSuccess(t *testing.T) {
 }
 
 func TestTUIFetchJobsError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchJobs()
 	msg := cmd()
 
@@ -93,12 +214,9 @@ func TestTUIFetchJobsError(t *testing.T) {
 }
 
 func TestTUIFetchReviewNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchReview(999)
 	msg := cmd()
 
@@ -112,12 +230,9 @@ func TestTUIFetchReviewNotFound(t *testing.T) {
 }
 
 func TestTUIFetchReviewServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchReview(1)
 	msg := cmd()
 
@@ -131,7 +246,7 @@ func TestTUIFetchReviewServerError(t *testing.T) {
 }
 
 func TestTUIAddressReviewSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
@@ -144,10 +259,7 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 			t.Errorf("Expected addressed true, got %v", req["addressed"])
 		}
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReview(42, 100, true, false, 1) // reviewID=42, jobID=100, newState=true, oldState=false
 	msg := cmd()
 
@@ -167,12 +279,9 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 }
 
 func TestTUIAddressReviewNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReview(999, 100, true, false, 1) // reviewID=999, jobID=100, newState=true, oldState=false
 	msg := cmd()
 
@@ -186,7 +295,7 @@ func TestTUIAddressReviewNotFound(t *testing.T) {
 }
 
 func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/review/address" {
 			var req map[string]interface{}
 			json.NewDecoder(r.Body).Decode(&req)
@@ -197,10 +306,7 @@ func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
 		} else {
 			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	currentState := false
 	cmd := m.toggleAddressedForJob(1, &currentState)
 	msg := cmd()
@@ -215,12 +321,9 @@ func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
 }
 
 func TestTUIToggleAddressedNoReview(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.toggleAddressedForJob(999, nil)
 	msg := cmd()
 
@@ -241,24 +344,18 @@ func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
-	addr1, addr2, addr3 := false, false, false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addr1},
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addr2},
-		{ID: 3, Status: storage.JobStatusDone, Addressed: &addr3},
+		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(2, withAddressed(boolPtr(false))),
+		makeJob(3, withAddressed(boolPtr(false))),
 	}
 	m.selectedIdx = 1 // Currently viewing job 2
 	m.selectedJobID = 2
-	m.currentReview = &storage.Review{
-		ID:       10,
-		JobID:    2,
-		Addressed: false,
-		Job:      &m.jobs[1],
-	}
+	m.currentReview = makeReview(10, &m.jobs[1])
 
 	// Press 'a' to mark as addressed - selection stays at current position
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'a')
 
 	// Selection stays at index 1 so left/right navigation works correctly from current position
 	if m2.selectedIdx != 1 {
@@ -273,8 +370,7 @@ func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
 	}
 
 	// Press escape to return to queue - NOW selection moves via normalizeSelectionIfHidden
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated2.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	// Selection moved to next visible job (job 3, index 2)
 	if m3.selectedIdx != 2 {
@@ -293,26 +389,19 @@ func TestTUIAddressFromReviewViewFallbackToPrev(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
-	addr1, addr2, addr3 := false, false, false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addr1},
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addr2},
-		{ID: 3, Status: storage.JobStatusDone, Addressed: &addr3},
+		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(2, withAddressed(boolPtr(false))),
+		makeJob(3, withAddressed(boolPtr(false))),
 	}
 	m.selectedIdx = 2 // Currently viewing job 3 (last one)
 	m.selectedJobID = 3
-	m.currentReview = &storage.Review{
-		ID:       10,
-		JobID:    3,
-		Addressed: false,
-		Job:      &m.jobs[2],
-	}
+	m.currentReview = makeReview(10, &m.jobs[2])
 
 	// Press 'a' then escape
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated2.(tuiModel)
+	m2, _ := pressKey(m, 'a')
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	// Should fall back to previous visible job (job 2, index 1)
 	if m3.selectedIdx != 1 {
@@ -328,28 +417,21 @@ func TestTUIAddressFromReviewViewExitWithQ(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
-	addr1, addr2, addr3 := false, false, false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addr1},
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addr2},
-		{ID: 3, Status: storage.JobStatusDone, Addressed: &addr3},
+		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(2, withAddressed(boolPtr(false))),
+		makeJob(3, withAddressed(boolPtr(false))),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
-	m.currentReview = &storage.Review{
-		ID:       10,
-		JobID:    2,
-		Addressed: false,
-		Job:      &m.jobs[1],
-	}
+	m.currentReview = makeReview(10, &m.jobs[1])
 
 	// Press 'a' to mark as addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'a')
 
 	// Press 'q' to return to queue - selection should normalize
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	m3 := updated2.(tuiModel)
+	m3, _ := pressKey(m2, 'q')
 
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
@@ -367,28 +449,21 @@ func TestTUIAddressFromReviewViewExitWithCtrlC(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
 	m.hideAddressed = true
-	addr1, addr2, addr3 := false, false, false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addr1},
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addr2},
-		{ID: 3, Status: storage.JobStatusDone, Addressed: &addr3},
+		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(2, withAddressed(boolPtr(false))),
+		makeJob(3, withAddressed(boolPtr(false))),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
-	m.currentReview = &storage.Review{
-		ID:       10,
-		JobID:    2,
-		Addressed: false,
-		Job:      &m.jobs[1],
-	}
+	m.currentReview = makeReview(10, &m.jobs[1])
 
 	// Press 'a' to mark as addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'a')
 
 	// Press ctrl+c to return to queue - selection should normalize
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	m3 := updated2.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyCtrlC)
 
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
@@ -408,7 +483,7 @@ type addressRequest struct {
 }
 
 func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -423,10 +498,7 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 			t.Errorf("Expected addressed=true, got %v", req.Addressed)
 		}
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReviewInBackground(42, true, false, 1) // jobID=42, newState=true, oldState=false
 	msg := cmd()
 
@@ -449,15 +521,12 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 }
 
 func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
@@ -477,15 +546,12 @@ func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
 }
 
 func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.addressReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
@@ -505,14 +571,11 @@ func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
 }
 
 func TestTUIHTTPTimeout(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		// Delay much longer than client timeout to avoid flaky timing on fast machines
 		time.Sleep(500 * time.Millisecond)
 		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	// Override with short timeout for test (10x shorter than server delay)
 	m.client.Timeout = 50 * time.Millisecond
 
@@ -530,18 +593,17 @@ func TestTUISelectionMaintainedOnInsert(t *testing.T) {
 
 	// Initial state with 3 jobs, select the middle one (ID=2)
 	m.jobs = []storage.ReviewJob{
-		{ID: 3}, {ID: 2}, {ID: 1},
+		makeJob(3), makeJob(2), makeJob(1),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 
 	// New jobs added at the top (newer jobs first)
 	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 5}, {ID: 4}, {ID: 3}, {ID: 2}, {ID: 1},
+		makeJob(5), makeJob(4), makeJob(3), makeJob(2), makeJob(1),
 	}}
 
-	updated, _ := m.Update(newJobs)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, newJobs)
 
 	// Should still be on job ID=2, now at index 3
 	if m.selectedJobID != 2 {
@@ -557,18 +619,17 @@ func TestTUISelectionClampsOnRemoval(t *testing.T) {
 
 	// Initial state with 3 jobs, select the last one (ID=1)
 	m.jobs = []storage.ReviewJob{
-		{ID: 3}, {ID: 2}, {ID: 1},
+		makeJob(3), makeJob(2), makeJob(1),
 	}
 	m.selectedIdx = 2
 	m.selectedJobID = 1
 
 	// Job ID=1 is removed
 	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 3}, {ID: 2},
+		makeJob(3), makeJob(2),
 	}}
 
-	updated, _ := m.Update(newJobs)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, newJobs)
 
 	// Should clamp to last valid index and update selectedJobID
 	if m.selectedIdx != 1 {
@@ -589,11 +650,10 @@ func TestTUISelectionFirstJobOnEmpty(t *testing.T) {
 
 	// Jobs arrive
 	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 5}, {ID: 4}, {ID: 3},
+		makeJob(5), makeJob(4), makeJob(3),
 	}}
 
-	updated, _ := m.Update(newJobs)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, newJobs)
 
 	// Should select first job
 	if m.selectedIdx != 0 {
@@ -608,14 +668,13 @@ func TestTUISelectionEmptyList(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Had jobs, now empty
-	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{}}
 
-	updated, _ := m.Update(newJobs)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, newJobs)
 
 	// Empty list should have selectedIdx=-1 (no valid selection)
 	if m.selectedIdx != -1 {
@@ -652,8 +711,7 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 	}
 
 	// Now handle the error result - should rollback
-	updated, _ := m.Update(errMsg)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, errMsg)
 
 	// Should have rolled back to false
 	if m.jobs[0].Addressed == nil || *m.jobs[0].Addressed != false {
@@ -684,8 +742,7 @@ func TestTUIAddressedSuccessNoRollback(t *testing.T) {
 		err:      nil,
 	}
 
-	updated, _ := m.Update(successMsg)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, successMsg)
 
 	// Should stay true (no rollback on success)
 	if m.jobs[0].Addressed == nil || *m.jobs[0].Addressed != true {
@@ -700,19 +757,18 @@ func TestTUISelectionMaintainedOnLargeBatch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Initial state with 1 job selected
-	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// 30 new jobs added at the top (simulating large batch)
 	newJobs := make([]storage.ReviewJob, 31)
 	for i := 0; i < 30; i++ {
-		newJobs[i] = storage.ReviewJob{ID: int64(31 - i)} // IDs 31, 30, 29, ..., 2
+		newJobs[i] = makeJob(int64(31 - i)) // IDs 31, 30, 29, ..., 2
 	}
-	newJobs[30] = storage.ReviewJob{ID: 1} // Original job at the end
+	newJobs[30] = makeJob(1) // Original job at the end
 
-	updated, _ := m.Update(tuiJobsMsg{jobs: newJobs})
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, tuiJobsMsg{jobs: newJobs})
 
 	// Should still follow job ID=1, now at index 30
 	if m.selectedJobID != 1 {
@@ -728,11 +784,7 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 
 	// Initial state with review view showing an unaddressed review
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:       42,
-		Addressed: false,
-		Job:      &storage.ReviewJob{ID: 100},
-	}
+	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
 
 	// Simulate optimistic update (what happens when 'a' is pressed in review view)
 	m.currentReview.Addressed = true
@@ -749,8 +801,7 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 		err:        fmt.Errorf("server error"),
 	}
 
-	updated, _ := m.Update(errMsg)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, errMsg)
 
 	// Should have rolled back to false
 	if m.currentReview.Addressed != false {
@@ -766,7 +817,7 @@ func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
 
 	// Initial state with review view
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 42, Addressed: false}
+	m.currentReview = makeReview(42, &storage.ReviewJob{})
 
 	// Simulate optimistic update
 	m.currentReview.Addressed = true
@@ -779,8 +830,7 @@ func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
 		err:        nil,
 	}
 
-	updated, _ := m.Update(successMsg)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, successMsg)
 
 	// Should stay true (no rollback on success)
 	if m.currentReview.Addressed != true {
@@ -804,13 +854,13 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 
 	// User views review A, toggles addressed (optimistic update)
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 42, Addressed: false, Job: &storage.ReviewJob{ID: 100}}
+	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
 	m.currentReview.Addressed = true  // Optimistic update to review
 	*m.jobs[0].Addressed = true       // Optimistic update to job in queue
 	m.pendingAddressed[100] = pendingState{newState: true, seq: 1}    // Track pending state for job A
 
 	// User navigates to review B before error response arrives
-	m.currentReview = &storage.Review{ID: 99, Addressed: false, Job: &storage.ReviewJob{ID: 200}}
+	m.currentReview = makeReview(99, &storage.ReviewJob{ID: 200})
 
 	// Error arrives for review A's toggle
 	errMsg := tuiAddressedResultMsg{
@@ -823,8 +873,7 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 		err:        fmt.Errorf("server error"),
 	}
 
-	updated, _ := m.Update(errMsg)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, errMsg)
 
 	// Review B should be unchanged (still false)
 	if m.currentReview.Addressed != false {
@@ -847,7 +896,7 @@ func TestTUISetJobAddressedHelper(t *testing.T) {
 
 	// Test with nil Addressed pointer - should allocate
 	m.jobs = []storage.ReviewJob{
-		{ID: 100, Status: storage.JobStatusDone, Addressed: nil},
+		makeJob(100),
 	}
 
 	m.setJobAddressed(100, true)
@@ -883,11 +932,7 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 
 	// User views review for job 100 and presses 'a'
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:        42,
-		Addressed: false,
-		Job:       &storage.ReviewJob{ID: 100},
-	}
+	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
 
 	// Simulate the optimistic update that happens when 'a' is pressed
 	oldState := m.currentReview.Addressed
@@ -905,7 +950,7 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 }
 
 func TestTUICancelJobSuccess(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/job/cancel" {
 			t.Errorf("Expected /api/job/cancel, got %s", r.URL.Path)
 		}
@@ -920,10 +965,7 @@ func TestTUICancelJobSuccess(t *testing.T) {
 			t.Errorf("Expected job_id=42, got %d", req.JobID)
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	oldFinishedAt := time.Now().Add(-1 * time.Hour)
 	cmd := m.cancelJob(42, storage.JobStatusRunning, &oldFinishedAt)
 	msg := cmd()
@@ -947,13 +989,10 @@ func TestTUICancelJobSuccess(t *testing.T) {
 }
 
 func TestTUICancelJobNotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.cancelJob(99, storage.JobStatusQueued, nil)
 	msg := cmd()
 
@@ -996,8 +1035,7 @@ func TestTUICancelRollbackOnError(t *testing.T) {
 		err:           fmt.Errorf("server error"),
 	}
 
-	updated, _ := m.Update(errResult)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, errResult)
 
 	if m2.jobs[0].Status != storage.JobStatusRunning {
 		t.Errorf("Expected status to rollback to 'running', got '%s'", m2.jobs[0].Status)
@@ -1037,8 +1075,7 @@ func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
 		err:           fmt.Errorf("server error"),
 	}
 
-	updated, _ := m.Update(errResult)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, errResult)
 
 	if m2.jobs[0].Status != storage.JobStatusQueued {
 		t.Errorf("Expected status to rollback to 'queued', got '%s'", m2.jobs[0].Status)
@@ -1067,8 +1104,7 @@ func TestTUICancelOptimisticUpdate(t *testing.T) {
 
 	// Simulate pressing 'x' key
 	beforeUpdate := time.Now()
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'x')
 
 	// Should have optimistically set status to canceled
 	if m2.jobs[0].Status != storage.JobStatusCanceled {
@@ -1107,8 +1143,7 @@ func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
 			m.currentView = tuiViewQueue
 
 			// Simulate pressing 'x' key
-			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-			m2 := updated.(tuiModel)
+			m2, cmd := pressKey(m, 'x')
 
 			// Status should not change
 			if m2.jobs[0].Status != status {
@@ -1134,17 +1169,16 @@ func TestTUIFilterOpenModal(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a"},
-		{ID: 2, RepoName: "repo-b"},
-		{ID: 3, RepoName: "repo-a"},
+		makeJob(1, withRepoName("repo-a")),
+		makeJob(2, withRepoName("repo-b")),
+		makeJob(3, withRepoName("repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 
 	// Press 'f' to open filter modal
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'f')
 
 	if m2.currentView != tuiViewFilter {
 		t.Errorf("Expected tuiViewFilter, got %d", m2.currentView)
@@ -1176,8 +1210,7 @@ func TestTUIFilterReposMsg(t *testing.T) {
 	}
 	msg := tuiReposMsg{repos: repos, totalCount: 4}
 
-	updated, _ := m.Update(msg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, msg)
 
 	// Should have: All repos (prepended), then the 3 repos from API
 	if len(m2.filterRepos) != 4 {
@@ -1246,29 +1279,25 @@ func TestTUIFilterNavigation(t *testing.T) {
 	m.filterSelectedIdx = 0
 
 	// Navigate down
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 	if m2.filterSelectedIdx != 1 {
 		t.Errorf("j key: expected filterSelectedIdx=1, got %d", m2.filterSelectedIdx)
 	}
 
 	// Navigate down again
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'j')
 	if m3.filterSelectedIdx != 2 {
 		t.Errorf("j key: expected filterSelectedIdx=2, got %d", m3.filterSelectedIdx)
 	}
 
 	// Navigate down at boundary - should stay at 2
-	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m4 := updated.(tuiModel)
+	m4, _ := pressKey(m3, 'j')
 	if m4.filterSelectedIdx != 2 {
 		t.Errorf("j key at boundary: expected filterSelectedIdx=2, got %d", m4.filterSelectedIdx)
 	}
 
 	// Navigate up
-	updated, _ = m4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m5 := updated.(tuiModel)
+	m5, _ := pressKey(m4, 'k')
 	if m5.filterSelectedIdx != 1 {
 		t.Errorf("k key: expected filterSelectedIdx=1, got %d", m5.filterSelectedIdx)
 	}
@@ -1278,9 +1307,9 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a"},
-		{ID: 2, RepoName: "repo-b"},
-		{ID: 3, RepoName: "repo-a"},
+		makeJob(1, withRepoName("repo-a")),
+		makeJob(2, withRepoName("repo-b")),
+		makeJob(3, withRepoName("repo-a")),
 	}
 	m.currentView = tuiViewFilter
 	m.filterRepos = []repoFilterItem{
@@ -1291,8 +1320,7 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 	m.filterSelectedIdx = 1 // repo-a
 
 	// Press enter to select
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	if m2.currentView != tuiViewQueue {
 		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
@@ -1310,17 +1338,17 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
 
 	// Press Esc to clear filter
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -1338,18 +1366,18 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
 	m.hideAddressed = true
 
 	// First Esc: clear project filter, keep hide-addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -1359,8 +1387,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 	}
 
 	// Second Esc: clear hide-addressed
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if m3.hideAddressed {
 		t.Error("Expected hideAddressed to be false after second escape")
@@ -1372,7 +1399,7 @@ func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a"},
+		makeJob(1, withRepoName("repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -1381,8 +1408,7 @@ func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 	// No project filter active
 
 	// Esc should clear hide-addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if m2.hideAddressed {
 		t.Error("Expected hideAddressed to be false after escape")
@@ -1397,17 +1423,17 @@ func TestTUIFilterEscapeWhileLoadingQueuesPendingRefetch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
-	m.loadingJobs = true // Already loading
+	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
+	m.loadingJobs = true             // Already loading
 
 	// Press Esc while loading - should set pendingRefetch, not start new fetch
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -1420,8 +1446,7 @@ func TestTUIFilterEscapeWhileLoadingQueuesPendingRefetch(t *testing.T) {
 	}
 
 	// Simulate jobs fetch completing - should trigger another fetch
-	updated, cmd = m2.Update(tuiJobsMsg{jobs: []storage.ReviewJob{{ID: 2}}, hasMore: false})
-	m3 := updated.(tuiModel)
+	m3, cmd := updateModel(t, m2, tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(2)}, hasMore: false})
 
 	if m3.pendingRefetch {
 		t.Error("Expected pendingRefetch to be cleared after jobs message")
@@ -1439,7 +1464,7 @@ func TestTUIFilterEscapeWhileLoadingErrorTriggersRefetch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -1449,8 +1474,7 @@ func TestTUIFilterEscapeWhileLoadingErrorTriggersRefetch(t *testing.T) {
 	m.pendingRefetch = true // Simulates escape pressed while loading
 
 	// Simulate jobs fetch failing
-	updated, cmd := m.Update(tuiJobsErrMsg{err: fmt.Errorf("network error")})
-	m2 := updated.(tuiModel)
+	m2, cmd := updateModel(t, m, tuiJobsErrMsg{err: fmt.Errorf("network error")})
 
 	if m2.pendingRefetch {
 		t.Error("Expected pendingRefetch to be cleared after error")
@@ -1472,18 +1496,18 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
-	m.loadingMore = true  // Pagination in flight
-	m.loadingJobs = false // Not a full refresh
+	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
+	m.loadingMore = true             // Pagination in flight
+	m.loadingJobs = false            // Not a full refresh
 
 	// Press Esc while pagination loading - should set pendingRefetch
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -1496,12 +1520,11 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 	}
 
 	// Simulate stale pagination response arriving - should be discarded and trigger fresh fetch
-	updated, cmd = m2.Update(tuiJobsMsg{
-		jobs:    []storage.ReviewJob{{ID: 99, RepoName: "stale"}},
+	m3, cmd := updateModel(t, m2, tuiJobsMsg{
+		jobs:    []storage.ReviewJob{makeJob(99, withRepoName("stale"))},
 		hasMore: true,
 		append:  true, // This is a pagination append
 	})
-	m3 := updated.(tuiModel)
 
 	if m3.pendingRefetch {
 		t.Error("Expected pendingRefetch to be cleared")
@@ -1527,7 +1550,7 @@ func TestTUIFilterEscapeWhilePaginationErrorTriggersRefetch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -1538,8 +1561,7 @@ func TestTUIFilterEscapeWhilePaginationErrorTriggersRefetch(t *testing.T) {
 	m.pendingRefetch = true // Simulates escape pressed while pagination loading
 
 	// Simulate pagination fetch failing
-	updated, cmd := m.Update(tuiPaginationErrMsg{err: fmt.Errorf("network error")})
-	m2 := updated.(tuiModel)
+	m2, cmd := updateModel(t, m, tuiPaginationErrMsg{err: fmt.Errorf("network error")})
 
 	if m2.pendingRefetch {
 		t.Error("Expected pendingRefetch to be cleared after pagination error")
@@ -1565,8 +1587,7 @@ func TestTUIFilterEscapeCloses(t *testing.T) {
 	m.filterRepos = []repoFilterItem{{name: "", count: 1}}
 
 	// Press 'esc' to close without selecting
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != tuiViewQueue {
 		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
@@ -1586,8 +1607,7 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 	m.filterSelectedIdx = 1
 
 	// Type 'a'
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'a')
 
 	if m2.filterSearch != "a" {
 		t.Errorf("Expected filterSearch='a', got '%s'", m2.filterSearch)
@@ -1597,16 +1617,14 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 	}
 
 	// Type 'b'
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'b')
 
 	if m3.filterSearch != "ab" {
 		t.Errorf("Expected filterSearch='ab', got '%s'", m3.filterSearch)
 	}
 
 	// Backspace
-	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m4 := updated.(tuiModel)
+	m4, _ := pressSpecial(m3, tea.KeyBackspace)
 
 	if m4.filterSearch != "a" {
 		t.Errorf("Expected filterSearch='a' after backspace, got '%s'", m4.filterSearch)
@@ -1618,11 +1636,11 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 
 	// Jobs from two repos, interleaved
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
-		{ID: 3, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 4, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
-		{ID: 5, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
+		makeJob(3, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(4, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
+		makeJob(5, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -1630,8 +1648,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 	m.activeRepoFilter = []string{"/path/to/repo-a"} // Filter to only repo-a jobs
 
 	// Navigate down - should skip repo-b jobs
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 
 	// Should jump from ID=1 (idx 0) to ID=3 (idx 2), skipping ID=2 (repo-b)
 	if m2.selectedIdx != 2 {
@@ -1642,8 +1659,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 	}
 
 	// Navigate down again - should go to ID=5
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'j')
 
 	if m3.selectedIdx != 4 {
 		t.Errorf("Expected selectedIdx=4, got %d", m3.selectedIdx)
@@ -1653,8 +1669,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 	}
 
 	// Navigate up - should go back to ID=3
-	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m4 := updated.(tuiModel)
+	m4, _ := pressKey(m3, 'k')
 
 	if m4.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx=2, got %d", m4.selectedIdx)
@@ -1665,9 +1680,9 @@ func TestTUIGetVisibleJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
-		{ID: 3, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
+		makeJob(3, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 
 	// No filter - all jobs visible
@@ -1698,9 +1713,9 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
-		{ID: 3, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
+		makeJob(3, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 
 	// No filter, valid selection
@@ -1740,9 +1755,9 @@ func TestTUIJobsRefreshWithFilter(t *testing.T) {
 
 	// Initial state with filter active
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
-		{ID: 3, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
+		makeJob(3, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 2
 	m.selectedJobID = 3
@@ -1750,13 +1765,12 @@ func TestTUIJobsRefreshWithFilter(t *testing.T) {
 
 	// Jobs refresh - same jobs
 	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
-		{ID: 3, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
+		makeJob(3, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}}
 
-	updated, _ := m.Update(newJobs)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, newJobs)
 
 	// Selection should be maintained
 	if m2.selectedIdx != 2 {
@@ -1768,12 +1782,11 @@ func TestTUIJobsRefreshWithFilter(t *testing.T) {
 
 	// Now the selected job is removed
 	newJobs = tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-b", RepoPath: "/path/to/repo-b"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
 	}}
 
-	updated, _ = m2.Update(newJobs)
-	m3 := updated.(tuiModel)
+	m3, _ := updateModel(t, m2, newJobs)
 
 	// Should select first visible job (ID=1, repo-a)
 	if m3.selectedIdx != 0 {
@@ -1796,8 +1809,7 @@ func TestTUIFilterPreselectsCurrent(t *testing.T) {
 	}
 	msg := tuiReposMsg{repos: repos, totalCount: 2}
 
-	updated, _ := m.Update(msg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, msg)
 
 	// filterRepos should be: All repos, repo-a, repo-b
 	// repo-b should be at index 2, which should be pre-selected
@@ -1811,8 +1823,8 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 
 	// Jobs only in repo-a
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -1825,8 +1837,7 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 	m.filterSelectedIdx = 2 // Select repo-b
 
 	// Press enter to select repo-b (triggers refetch)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
 	// Filter should be applied and a fetchJobs command should be returned
 	if len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-b" {
@@ -1844,8 +1855,7 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 	}
 
 	// Simulate receiving empty jobs from API (repo-b has no jobs)
-	updated2, _ := m2.Update(tuiJobsMsg{jobs: []storage.ReviewJob{}})
-	m3 := updated2.(tuiModel)
+	m3, _ := updateModel(t, m2, tuiJobsMsg{jobs: []storage.ReviewJob{}})
 
 	// Now selection should be cleared since no jobs
 	if m3.selectedIdx != -1 {
@@ -1861,9 +1871,9 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 
 	// Jobs from two repos that share a display name
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "backend-dev", RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone},
-		{ID: 2, RepoName: "backend-prod", RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone},
-		{ID: 3, RepoName: "frontend", RepoPath: "/path/to/frontend", Status: storage.JobStatusFailed},
+		makeJob(1, withRepoName("backend-dev"), withRepoPath("/path/to/backend-dev")),
+		makeJob(2, withRepoName("backend-prod"), withRepoPath("/path/to/backend-prod")),
+		makeJob(3, withRepoName("frontend"), withRepoPath("/path/to/frontend"), withStatus(storage.JobStatusFailed)),
 	}
 	m.currentView = tuiViewFilter
 	// Aggregated group: "backend" covers both backend-dev and backend-prod
@@ -1875,8 +1885,7 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 	m.filterSelectedIdx = 1 // Select "backend" group
 
 	// Press enter to select
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	// Should have both paths in the filter
 	if len(m2.activeRepoFilter) != 2 {
@@ -1975,13 +1984,16 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 	m.height = 20
 	m.daemonVersion = "test"
 
+	addrTrue := true
+	addrFalse := false
+
 	// Jobs from multiple repos
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone},
-		{ID: 2, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone},
-		{ID: 3, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusFailed},
-		{ID: 4, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone},
-		{ID: 5, RepoPath: "/path/to/frontend", Status: storage.JobStatusCanceled},
+		{ID: 1, RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone, Addressed: &addrTrue},
+		{ID: 2, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Addressed: &addrFalse},
+		{ID: 3, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Addressed: &addrFalse},
+		{ID: 4, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Addressed: &addrTrue},
+		{ID: 5, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Addressed: &addrTrue},
 	}
 
 	// Multi-path filter (backend group)
@@ -1989,16 +2001,16 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 
 	output := m.renderQueueView()
 
-	// Status line should show counts only for backend repos (2 done, 1 failed, 0 canceled)
-	// Not frontend (1 done, 1 canceled)
-	if !strings.Contains(output, "Done: 2") {
-		t.Errorf("Expected status to show 'Done: 2' for filtered repos, got: %s", output)
+	// Status line should show counts only for backend repos (3 done, 1 addressed, 2 unaddressed)
+	// Not frontend (2 done, 2 addressed)
+	if !strings.Contains(output, "Done: 3") {
+		t.Errorf("Expected status to show 'Done: 3' for filtered repos, got: %s", output)
 	}
-	if !strings.Contains(output, "Failed: 1") {
-		t.Errorf("Expected status to show 'Failed: 1' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Addressed: 1") {
+		t.Errorf("Expected status to show 'Addressed: 1' for filtered repos, got: %s", output)
 	}
-	if !strings.Contains(output, "Canceled: 0") {
-		t.Errorf("Expected status to show 'Canceled: 0' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Unaddressed: 2") {
+		t.Errorf("Expected status to show 'Unaddressed: 2' for filtered repos, got: %s", output)
 	}
 }
 
@@ -2007,7 +2019,7 @@ func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
 
 	// Start with jobs in repo-a, filter active for repo-b
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.activeRepoFilter = []string{"/path/to/repo-b"} // Filter to repo with no jobs
 	m.selectedIdx = 0
@@ -2015,11 +2027,10 @@ func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
 
 	// Simulate jobs refresh
 	newJobs := []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
-		{ID: 2, RepoName: "repo-a", RepoPath: "/path/to/repo-a"},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
+		makeJob(2, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
-	updated, _ := m.Update(tuiJobsMsg{jobs: newJobs})
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, tuiJobsMsg{jobs: newJobs})
 
 	// Selection should be cleared since no jobs match filter
 	if m2.selectedIdx != -1 {
@@ -2035,7 +2046,7 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 
 	// Setup: filter active with no matching jobs
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoName: "repo-a", RepoPath: "/path/to/repo-a", Status: storage.JobStatusDone},
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.activeRepoFilter = []string{"/path/to/repo-b"}
 	m.selectedIdx = -1
@@ -2043,8 +2054,7 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press enter - should be no-op
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
 	if cmd != nil {
 		t.Error("Expected no command for enter with no visible jobs")
 	}
@@ -2053,13 +2063,13 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 	}
 
 	// Press 'x' (cancel) - should be no-op
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	_, cmd = pressKey(m, 'x')
 	if cmd != nil {
 		t.Error("Expected no command for cancel with no visible jobs")
 	}
 
 	// Press 'a' (address) - should be no-op
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd = pressKey(m, 'a')
 	if cmd != nil {
 		t.Error("Expected no command for address with no visible jobs")
 	}
@@ -2204,21 +2214,20 @@ func TestTUIReviewNavigationJNext(t *testing.T) {
 
 	// Setup: 5 jobs, middle ones are queued/running (not viewable)
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusQueued},
-		{ID: 3, Status: storage.JobStatusRunning},
-		{ID: 4, Status: storage.JobStatusFailed},
-		{ID: 5, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2, withStatus(storage.JobStatusQueued)),
+		makeJob(3, withStatus(storage.JobStatusRunning)),
+		makeJob(4, withStatus(storage.JobStatusFailed)),
+		makeJob(5),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 10, Job: &storage.ReviewJob{ID: 1}}
+	m.currentReview = makeReview(10, &storage.ReviewJob{ID: 1})
 	m.reviewScroll = 5 // Ensure scroll resets
 
 	// Press 'j' - should skip to job 4 (failed, viewable)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	if m2.selectedIdx != 3 {
 		t.Errorf("Expected selectedIdx=3 (job ID=4), got %d", m2.selectedIdx)
@@ -2243,21 +2252,20 @@ func TestTUIReviewNavigationKPrev(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusQueued},
-		{ID: 3, Status: storage.JobStatusRunning},
-		{ID: 4, Status: storage.JobStatusFailed},
-		{ID: 5, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2, withStatus(storage.JobStatusQueued)),
+		makeJob(3, withStatus(storage.JobStatusRunning)),
+		makeJob(4, withStatus(storage.JobStatusFailed)),
+		makeJob(5),
 	}
 	m.selectedIdx = 4
 	m.selectedJobID = 5
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 50, Job: &storage.ReviewJob{ID: 5}}
+	m.currentReview = makeReview(50, &storage.ReviewJob{ID: 5})
 	m.reviewScroll = 10
 
 	// Press 'k' - should skip to job 4 (failed, viewable)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'k')
 
 	if m2.selectedIdx != 3 {
 		t.Errorf("Expected selectedIdx=3 (job ID=4), got %d", m2.selectedIdx)
@@ -2275,18 +2283,17 @@ func TestTUIReviewNavigationLeftRight(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 20, Job: &storage.ReviewJob{ID: 2}}
+	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2})
 
 	// Press 'left' - should navigate to next (higher index), like 'j'
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyLeft)
 
 	if m2.selectedIdx != 2 {
 		t.Errorf("Left arrow: expected selectedIdx=2, got %d", m2.selectedIdx)
@@ -2302,10 +2309,9 @@ func TestTUIReviewNavigationLeftRight(t *testing.T) {
 	// Reset and test 'right' - should navigate to prev (lower index), like 'k'
 	m.selectedIdx = 1
 	m.selectedJobID = 2
-	m.currentReview = &storage.Review{ID: 20, Job: &storage.ReviewJob{ID: 2}}
+	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2})
 
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m3 := updated.(tuiModel)
+	m3, cmd := pressSpecial(m, tea.KeyRight)
 
 	if m3.selectedIdx != 0 {
 		t.Errorf("Right arrow: expected selectedIdx=0, got %d", m3.selectedIdx)
@@ -2323,18 +2329,17 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusQueued}, // Not viewable
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2, withStatus(storage.JobStatusQueued)), // Not viewable
+		makeJob(3),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 10, Job: &storage.ReviewJob{ID: 1}}
+	m.currentReview = makeReview(10, &storage.ReviewJob{ID: 1})
 
 	// Press 'k' (right) at first viewable job - should show flash message
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'k')
 
 	if m2.selectedIdx != 0 {
 		t.Errorf("Expected selectedIdx to remain 0 at boundary, got %d", m2.selectedIdx)
@@ -2358,11 +2363,10 @@ func TestTUIReviewNavigationBoundaries(t *testing.T) {
 	// Now at last viewable job
 	m.selectedIdx = 2
 	m.selectedJobID = 3
-	m.currentReview = &storage.Review{ID: 30, Job: &storage.ReviewJob{ID: 3}}
+	m.currentReview = makeReview(30, &storage.ReviewJob{ID: 3})
 
 	// Press 'j' (left) at last viewable job - should show flash message
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m3 := updated.(tuiModel)
+	m3, cmd := pressKey(m, 'j')
 
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx to remain 2 at boundary, got %d", m3.selectedIdx)
@@ -2389,17 +2393,16 @@ func TestTUIReviewNavigationFailedJobInline(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusFailed, Agent: "codex", Error: "something went wrong"},
+		makeJob(1),
+		makeJob(2, withStatus(storage.JobStatusFailed), withAgent("codex"), withError("something went wrong")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 10, Job: &storage.ReviewJob{ID: 1}}
+	m.currentReview = makeReview(10, &storage.ReviewJob{ID: 1})
 
 	// Press 'j' - should navigate to failed job and display inline
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	if m2.selectedIdx != 1 {
 		t.Errorf("Expected selectedIdx=1, got %d", m2.selectedIdx)
@@ -2424,22 +2427,21 @@ func TestTUIReviewStaleResponseIgnored(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2 // Currently viewing job 2
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 20, Output: "Review for job 2", Job: &storage.ReviewJob{ID: 2}}
+	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2}, withReviewOutput("Review for job 2"))
 
 	// Simulate a stale response arriving for job 1 (user navigated away)
 	staleMsg := tuiReviewMsg{
-		review: &storage.Review{ID: 10, Output: "Stale review for job 1", Job: &storage.ReviewJob{ID: 1}},
+		review: makeReview(10, &storage.ReviewJob{ID: 1}, withReviewOutput("Stale review for job 1")),
 		jobID:  1, // This doesn't match selectedJobID (2)
 	}
 
-	updated, _ := m.Update(staleMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, staleMsg)
 
 	// Should ignore the stale response
 	if m2.currentReview.Output != "Review for job 2" {
@@ -2455,19 +2457,18 @@ func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
+		makeJob(1),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue // Still in queue view, waiting for fetch
 
 	validMsg := tuiReviewMsg{
-		review: &storage.Review{ID: 10, Output: "New review", Job: &storage.ReviewJob{ID: 1}},
+		review: makeReview(10, &storage.ReviewJob{ID: 1}, withReviewOutput("New review")),
 		jobID:  1,
 	}
 
-	updated, _ := m.Update(validMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, validMsg)
 
 	// Should accept the response and switch to review view
 	if m2.currentView != tuiViewReview {
@@ -2487,25 +2488,24 @@ func TestTUISelectionSyncInReviewView(t *testing.T) {
 
 	// Initial state: viewing review for job 2
 	m.jobs = []storage.ReviewJob{
-		{ID: 3, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 1, Status: storage.JobStatusDone},
+		makeJob(3),
+		makeJob(2),
+		makeJob(1),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 20, Job: &storage.ReviewJob{ID: 2}}
+	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2})
 
 	// New job arrives at the top, shifting indices
 	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 4, Status: storage.JobStatusDone}, // New job at top
-		{ID: 3, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone}, // Now at index 2
-		{ID: 1, Status: storage.JobStatusDone},
+		makeJob(4), // New job at top
+		makeJob(3),
+		makeJob(2), // Now at index 2
+		makeJob(1),
 	}}
 
-	updated, _ := m.Update(newJobs)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, newJobs)
 
 	// selectedIdx should sync with currentReview.Job.ID (2), now at index 2
 	if m2.selectedIdx != 2 {
@@ -2521,17 +2521,16 @@ func TestTUIQueueViewNavigationUpDown(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusQueued},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2, withStatus(storage.JobStatusQueued)),
+		makeJob(3),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 	m.currentView = tuiViewQueue
 
 	// 'j' in queue view moves down (higher index)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 
 	if m2.selectedIdx != 2 {
 		t.Errorf("j key: expected selectedIdx=2, got %d", m2.selectedIdx)
@@ -2541,8 +2540,7 @@ func TestTUIQueueViewNavigationUpDown(t *testing.T) {
 	}
 
 	// 'k' in queue view moves up (lower index)
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'k')
 
 	if m3.selectedIdx != 1 {
 		t.Errorf("k key: expected selectedIdx=1, got %d", m3.selectedIdx)
@@ -2554,17 +2552,16 @@ func TestTUIQueueViewArrowsMatchUpDown(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 	m.currentView = tuiViewQueue
 
 	// 'left' in queue view should move down (like j)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyLeft)
 
 	if m2.selectedIdx != 2 {
 		t.Errorf("Left arrow: expected selectedIdx=2, got %d", m2.selectedIdx)
@@ -2575,8 +2572,7 @@ func TestTUIQueueViewArrowsMatchUpDown(t *testing.T) {
 	m2.selectedJobID = 2
 
 	// 'right' in queue view should move up (like k)
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyRight)
 
 	if m3.selectedIdx != 0 {
 		t.Errorf("Right arrow: expected selectedIdx=0, got %d", m3.selectedIdx)
@@ -2588,9 +2584,9 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -2598,8 +2594,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	m.hasMore = false // No more jobs to load
 
 	// Press 'up' at top of queue - should show flash message
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyUp)
 
 	if m2.selectedIdx != 0 {
 		t.Errorf("Expected selectedIdx to remain 0 at top, got %d", m2.selectedIdx)
@@ -2620,8 +2615,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	m.flashMessage = "" // Clear
 
 	// Press 'down' at bottom of queue - should show flash message
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m, tea.KeyDown)
 
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx to remain 2 at bottom, got %d", m3.selectedIdx)
@@ -2642,8 +2636,8 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, RepoPath: "/repo1"},
-		{ID: 2, Status: storage.JobStatusDone, RepoPath: "/repo2"},
+		makeJob(1, withRepoPath("/repo1")),
+		makeJob(2, withRepoPath("/repo2")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -2652,8 +2646,7 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	m.activeRepoFilter = []string{"/repo1"} // Filter is active, prevents auto-load
 
 	// Press 'down' - only job 1 matches filter, so we're at bottom
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyDown)
 
 	// Should show flash since filter prevents loading more
 	if m2.flashMessage != "No older review" {
@@ -2675,14 +2668,14 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 20, Output: "Review for job 2", Job: &storage.ReviewJob{ID: 2}}
+	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2}, withReviewOutput("Review for job 2"))
 
 	// Simulate user navigating to next review (job 3)
 	// This updates selectedIdx and selectedJobID but doesn't update currentReview yet
@@ -2691,13 +2684,12 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 
 	// Before the review for job 3 arrives, a jobs refresh comes in
 	refreshedJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}}
 
-	updated, _ := m.Update(refreshedJobs)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, refreshedJobs)
 
 	// Selection should stay on job 3 (user's navigation intent), not revert to job 2
 	if m2.selectedJobID != 3 {
@@ -2714,12 +2706,11 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 
 	// Now when the review for job 3 arrives, it should be accepted
 	newReviewMsg := tuiReviewMsg{
-		review: &storage.Review{ID: 30, Output: "Review for job 3", Job: &storage.ReviewJob{ID: 3}},
+		review: makeReview(30, &storage.ReviewJob{ID: 3}, withReviewOutput("Review for job 3")),
 		jobID:  3,
 	}
 
-	updated, _ = m2.Update(newReviewMsg)
-	m3 := updated.(tuiModel)
+	m3, _ := updateModel(t, m2, newReviewMsg)
 
 	if m3.currentReview.ID != 30 {
 		t.Errorf("Expected new review ID=30, got %d", m3.currentReview.ID)
@@ -2736,20 +2727,19 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 20, Output: "Review for job 2", Job: &storage.ReviewJob{ID: 2}}
+	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2}, withReviewOutput("Review for job 2"))
 
 	// Transient empty refresh arrives
 	emptyJobs := tuiJobsMsg{jobs: []storage.ReviewJob{}}
 
-	updated, _ := m.Update(emptyJobs)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, emptyJobs)
 
 	// selectedJobID should be preserved (not cleared) while viewing a review
 	if m2.selectedJobID != 2 {
@@ -2758,13 +2748,12 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 
 	// Jobs repopulate
 	repopulatedJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}}
 
-	updated, _ = m2.Update(repopulatedJobs)
-	m3 := updated.(tuiModel)
+	m3, _ := updateModel(t, m2, repopulatedJobs)
 
 	// Selection should restore to job 2 (the displayed review)
 	if m3.selectedJobID != 2 {
@@ -2784,17 +2773,16 @@ func TestTUIEmptyRefreshSeedsFromCurrentReview(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 0 // Somehow cleared
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{ID: 20, Output: "Review for job 2", Job: &storage.ReviewJob{ID: 2}}
+	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2}, withReviewOutput("Review for job 2"))
 
 	// Jobs repopulate
 	repopulatedJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
-		{ID: 2, Status: storage.JobStatusDone},
-		{ID: 3, Status: storage.JobStatusDone},
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
 	}}
 
-	updated, _ := m.Update(repopulatedJobs)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, repopulatedJobs)
 
 	// Selection should be seeded from currentReview.Job.ID
 	if m2.selectedJobID != 2 {
@@ -2862,9 +2850,9 @@ func TestTUICalculateColumnWidths(t *testing.T) {
 				t.Errorf("agent width %d < 1", widths.agent)
 			}
 
-			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addr'd (6)
+			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addressed (9)
 			// Plus spacing: 2 (prefix) + 7 spaces between columns
-			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 6 + 7
+			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 9 + 7
 			flexibleTotal := widths.ref + widths.repo + widths.agent
 			totalWidth := fixedWidth + flexibleTotal
 
@@ -2900,14 +2888,12 @@ func TestTUIRenderJobLineTruncation(t *testing.T) {
 	m := tuiModel{width: 80}
 	// Use a git range - shortRef truncates ranges to 17 chars max, then renderJobLine
 	// truncates further based on colWidths.ref. Use a range longer than 17 chars.
-	job := storage.ReviewJob{
-		ID:         1,
-		GitRef:     "abcdef1234567..ghijkl7890123", // 28 char range, shortRef -> 17 chars
-		RepoName:   "very-long-repository-name-that-exceeds-width",
-		Agent:      "super-long-agent-name",
-		Status:     storage.JobStatusDone,
-		EnqueuedAt: time.Now(),
-	}
+	job := makeJob(1,
+		withRef("abcdef1234567..ghijkl7890123"), // 28 char range, shortRef -> 17 chars
+		withRepoName("very-long-repository-name-that-exceeds-width"),
+		withAgent("super-long-agent-name"),
+		withEnqueuedAt(time.Now()),
+	)
 
 	// Use narrow column widths to force truncation
 	// ref=10 will truncate the 17-char shortRef output
@@ -2941,14 +2927,12 @@ func TestTUIRenderJobLineTruncation(t *testing.T) {
 func TestTUIRenderJobLineLength(t *testing.T) {
 	// Test that rendered line length respects column widths
 	m := tuiModel{width: 100}
-	job := storage.ReviewJob{
-		ID:         123,
-		GitRef:     "abc1234..def5678901234567890", // Long range
-		RepoName:   "my-very-long-repository-name-here",
-		Agent:      "claude-code-agent",
-		Status:     storage.JobStatusDone,
-		EnqueuedAt: time.Now(),
-	}
+	job := makeJob(123,
+		withRef("abc1234..def5678901234567890"), // Long range
+		withRepoName("my-very-long-repository-name-here"),
+		withAgent("claude-code-agent"),
+		withEnqueuedAt(time.Now()),
+	)
 
 	idWidth := 4
 	colWidths := columnWidths{
@@ -2959,7 +2943,7 @@ func TestTUIRenderJobLineLength(t *testing.T) {
 
 	line := m.renderJobLine(job, false, idWidth, colWidths)
 
-	// Fixed widths: ID (idWidth=4), Status (10), Queued (12), Elapsed (8), Addr'd (varies)
+	// Fixed widths: ID (idWidth=4), Status (10), Queued (12), Elapsed (8), Addressed (varies)
 	// Plus spacing between columns
 	// The line should not be excessively long
 	// Note: line includes ANSI codes for status styling, so we check a reasonable max
@@ -2979,14 +2963,12 @@ func TestTUIRenderJobLineLength(t *testing.T) {
 
 func TestTUIRenderJobLineNoTruncation(t *testing.T) {
 	m := tuiModel{width: 200}
-	job := storage.ReviewJob{
-		ID:         1,
-		GitRef:     "abc1234",
-		RepoName:   "myrepo",
-		Agent:      "test",
-		Status:     storage.JobStatusDone,
-		EnqueuedAt: time.Now(),
-	}
+	job := makeJob(1,
+		withRef("abc1234"),
+		withRepoName("myrepo"),
+		withAgent("test"),
+		withEnqueuedAt(time.Now()),
+	)
 
 	// Use wide column widths - no truncation needed
 	colWidths := columnWidths{
@@ -3020,7 +3002,7 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 	// Start with 50 jobs
 	initialJobs := make([]storage.ReviewJob, 50)
 	for i := 0; i < 50; i++ {
-		initialJobs[i] = storage.ReviewJob{ID: int64(50 - i)}
+		initialJobs[i] = makeJob(int64(50 - i))
 	}
 	m.jobs = initialJobs
 	m.selectedIdx = 0
@@ -3030,12 +3012,11 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 	// Append 25 more jobs
 	moreJobs := make([]storage.ReviewJob, 25)
 	for i := 0; i < 25; i++ {
-		moreJobs[i] = storage.ReviewJob{ID: int64(i + 1)} // IDs 1-25 (older)
+		moreJobs[i] = makeJob(int64(i + 1)) // IDs 1-25 (older)
 	}
 	appendMsg := tuiJobsMsg{jobs: moreJobs, hasMore: false, append: true}
 
-	updated, _ := m.Update(appendMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, appendMsg)
 
 	// Should now have 75 jobs
 	if len(m2.jobs) != 75 {
@@ -3064,7 +3045,7 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 	// Simulate user has paginated to 100 jobs
 	jobs := make([]storage.ReviewJob, 100)
 	for i := 0; i < 100; i++ {
-		jobs[i] = storage.ReviewJob{ID: int64(100 - i)}
+		jobs[i] = makeJob(int64(100 - i))
 	}
 	m.jobs = jobs
 	m.selectedIdx = 50
@@ -3073,12 +3054,11 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 	// Refresh arrives (replace mode, not append)
 	refreshedJobs := make([]storage.ReviewJob, 100)
 	for i := 0; i < 100; i++ {
-		refreshedJobs[i] = storage.ReviewJob{ID: int64(101 - i)} // New job at top
+		refreshedJobs[i] = makeJob(int64(101 - i)) // New job at top
 	}
 	refreshMsg := tuiJobsMsg{jobs: refreshedJobs, hasMore: true, append: false}
 
-	updated, _ := m.Update(refreshMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, refreshMsg)
 
 	// Should still have 100 jobs
 	if len(m2.jobs) != 100 {
@@ -3100,8 +3080,7 @@ func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
 
 	// Pagination error arrives (only pagination errors clear loadingMore)
 	errMsg := tuiPaginationErrMsg{err: fmt.Errorf("network error")}
-	updated, _ := m.Update(errMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, errMsg)
 
 	// loadingMore should be cleared so user can retry
 	if m2.loadingMore {
@@ -3120,8 +3099,7 @@ func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
 
 	// Generic error arrives (should NOT clear loadingMore)
 	errMsg := tuiErrMsg(fmt.Errorf("some other error"))
-	updated, _ := m.Update(errMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, errMsg)
 
 	// loadingMore should remain true - only pagination errors clear it
 	if !m2.loadingMore {
@@ -3138,7 +3116,7 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Set up at last job with more available
-	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.hasMore = true
@@ -3147,8 +3125,7 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press down at bottom - should trigger load more
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyDown)
 
 	if !m2.loadingMore {
 		t.Error("loadingMore should be set when navigating past last job")
@@ -3162,7 +3139,7 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Set up at last job with filter active
-	m.jobs = []storage.ReviewJob{{ID: 1, RepoPath: "/path/to/repo"}}
+	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/path/to/repo"))}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.hasMore = true
@@ -3171,8 +3148,7 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press down at bottom - should NOT trigger load more (filtered view loads all)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyDown)
 
 	if m2.loadingMore {
 		t.Error("loadingMore should not be set when filter is active")
@@ -3186,15 +3162,14 @@ func TestTUIResizeDuringPaginationNoRefetch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Set up with jobs loaded and pagination in flight
-	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
+	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
 	m.hasMore = true
 	m.loadingMore = true // Pagination in progress
 	m.heightDetected = false
 	m.height = 24 // Default height
 
 	// Simulate WindowSizeMsg arriving while pagination is in flight
-	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 80})
-	m2 := updated.(tuiModel)
+	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
 
 	// Height should be updated
 	if m2.height != 80 {
@@ -3214,7 +3189,7 @@ func TestTUIResizeTriggersRefetchWhenNeeded(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Set up with few jobs loaded, more available, no pagination in flight
-	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
+	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
 	m.hasMore = true
 	m.loadingMore = false
 	m.loadingJobs = false // Must be false to allow refetch
@@ -3222,8 +3197,7 @@ func TestTUIResizeTriggersRefetchWhenNeeded(t *testing.T) {
 	m.height = 24 // Default height
 
 	// Simulate WindowSizeMsg arriving - tall terminal can show more jobs
-	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 80})
-	m2 := updated.(tuiModel)
+	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
 
 	// Height should be updated
 	if m2.height != 80 {
@@ -3246,7 +3220,7 @@ func TestTUIResizeNoRefetchWhenEnoughJobs(t *testing.T) {
 	// Set up with enough jobs to fill the terminal
 	jobs := make([]storage.ReviewJob, 100)
 	for i := range jobs {
-		jobs[i] = storage.ReviewJob{ID: int64(i + 1)}
+		jobs[i] = makeJob(int64(i + 1))
 	}
 	m.jobs = jobs
 	m.hasMore = true
@@ -3256,8 +3230,7 @@ func TestTUIResizeNoRefetchWhenEnoughJobs(t *testing.T) {
 
 	// Simulate WindowSizeMsg - terminal grows but we already have enough jobs
 	// newVisibleRows = 80 - 9 + 10 = 81, which is < len(jobs)=100
-	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 80})
-	m2 := updated.(tuiModel)
+	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
 
 	// Height should be updated
 	if m2.height != 80 {
@@ -3274,7 +3247,7 @@ func TestTUIResizeRefetchOnLaterResize(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Set up with few jobs, height already detected from earlier resize
-	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
+	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
 	m.hasMore = true
 	m.loadingMore = false
 	m.loadingJobs = false // Must be false to allow refetch
@@ -3283,8 +3256,7 @@ func TestTUIResizeRefetchOnLaterResize(t *testing.T) {
 
 	// Simulate terminal growing larger - can now show more jobs
 	// newVisibleRows = 80 - 9 + 10 = 81, which is > len(jobs)=3
-	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 80})
-	m2 := updated.(tuiModel)
+	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
 
 	if m2.height != 80 {
 		t.Errorf("Expected height 80, got %d", m2.height)
@@ -3305,7 +3277,7 @@ func TestTUIResizeNoRefetchWhileLoadingJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Set up with few jobs, but loadingJobs is already true (fetch in progress)
-	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
+	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
 	m.hasMore = true
 	m.loadingMore = false
 	m.loadingJobs = true // Already fetching
@@ -3313,8 +3285,7 @@ func TestTUIResizeNoRefetchWhileLoadingJobs(t *testing.T) {
 	m.height = 30
 
 	// Simulate terminal growing larger
-	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 80})
-	m2 := updated.(tuiModel)
+	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
 
 	if m2.height != 80 {
 		t.Errorf("Expected height 80, got %d", m2.height)
@@ -3330,12 +3301,11 @@ func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Set up with loadingJobs true
-	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2}, {ID: 3}}
+	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
 	m.loadingJobs = true
 
 	// Simulate tick
-	updated, _ := m.Update(tuiTickMsg(time.Now()))
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, tuiTickMsg(time.Now()))
 
 	// loadingJobs should still be true (not reset by tick)
 	if !m2.loadingJobs {
@@ -3403,12 +3373,11 @@ func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
 	m.loadingJobs = true
 
 	// Simulate jobs response (not append)
-	updated, _ := m.Update(tuiJobsMsg{
-		jobs:    []storage.ReviewJob{{ID: 1}},
+	m2, _ := updateModel(t, m, tuiJobsMsg{
+		jobs:    []storage.ReviewJob{makeJob(1)},
 		hasMore: false,
 		append:  false,
 	})
-	m2 := updated.(tuiModel)
 
 	// loadingJobs should be cleared
 	if m2.loadingJobs {
@@ -3420,16 +3389,15 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	// Set up with loadingJobs true (shouldn't normally happen with append, but test the logic)
-	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.loadingJobs = true
 
 	// Simulate jobs response (append mode - pagination)
-	updated, _ := m.Update(tuiJobsMsg{
-		jobs:    []storage.ReviewJob{{ID: 2}},
+	m2, _ := updateModel(t, m, tuiJobsMsg{
+		jobs:    []storage.ReviewJob{makeJob(2)},
 		hasMore: false,
 		append:  true,
 	})
-	m2 := updated.(tuiModel)
 
 	// loadingJobs should NOT be cleared by append (it's for pagination, not full refresh)
 	if !m2.loadingJobs {
@@ -3447,16 +3415,14 @@ func TestTUIHideAddressedToggle(t *testing.T) {
 	}
 
 	// Press 'h' to toggle
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'h')
 
 	if !m2.hideAddressed {
 		t.Error("hideAddressed should be true after pressing 'h'")
 	}
 
 	// Press 'h' again to toggle back
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, 'h')
 
 	if m3.hideAddressed {
 		t.Error("hideAddressed should be false after pressing 'h' again")
@@ -3468,14 +3434,12 @@ func TestTUIHideAddressedFiltersJobs(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-	addressedTrue := true
-	addressedFalse := false
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},  // hidden: addressed
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // visible
-		{ID: 3, Status: storage.JobStatusFailed},                           // hidden: failed
-		{ID: 4, Status: storage.JobStatusCanceled},                         // hidden: canceled
-		{ID: 5, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // visible
+		makeJob(1, withAddressed(boolPtr(true))),  // hidden: addressed
+		makeJob(2, withAddressed(boolPtr(false))), // visible
+		makeJob(3, withStatus(storage.JobStatusFailed)),                           // hidden: failed
+		makeJob(4, withStatus(storage.JobStatusCanceled)),                         // hidden: canceled
+		makeJob(5, withAddressed(boolPtr(false))), // visible
 	}
 
 	// Check visibility
@@ -3509,12 +3473,10 @@ func TestTUIHideAddressedSelectionMovesToVisible(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 
-	addressedTrue := true
-	addressedFalse := false
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},  // will be hidden
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // will be visible
-		{ID: 3, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // will be visible
+		makeJob(1, withAddressed(boolPtr(true))),  // will be hidden
+		makeJob(2, withAddressed(boolPtr(false))), // will be visible
+		makeJob(3, withAddressed(boolPtr(false))), // will be visible
 	}
 
 	// Select the first job (addressed)
@@ -3522,8 +3484,7 @@ func TestTUIHideAddressedSelectionMovesToVisible(t *testing.T) {
 	m.selectedJobID = 1
 
 	// Toggle hide addressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'h')
 
 	// Selection should move to first visible job (ID=2)
 	if m2.selectedIdx != 1 {
@@ -3539,24 +3500,23 @@ func TestTUIHideAddressedRefreshRevalidatesSelection(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(2, withAddressed(boolPtr(false))),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// Simulate jobs refresh where job 1 is now addressed
-	addressedTrue := true
-	updated, _ := m.Update(tuiJobsMsg{
+
+	m2, _ := updateModel(t, m, tuiJobsMsg{
 		jobs: []storage.ReviewJob{
-			{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},  // now addressed (hidden)
-			{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // still visible
+			makeJob(1, withAddressed(boolPtr(true))),  // now addressed (hidden)
+			makeJob(2, withAddressed(boolPtr(false))), // still visible
 		},
 		hasMore: false,
 	})
-	m2 := updated.(tuiModel)
 
 	// Selection should move to job 2 since job 1 is now hidden
 	if m2.selectedJobID != 2 {
@@ -3572,20 +3532,17 @@ func TestTUIHideAddressedNavigationSkipsHidden(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-	addressedTrue := true
-	addressedFalse := false
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // visible
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedTrue},  // hidden
-		{ID: 3, Status: storage.JobStatusFailed},                           // hidden
-		{ID: 4, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // visible
+		makeJob(1, withAddressed(boolPtr(false))), // visible
+		makeJob(2, withAddressed(boolPtr(true))),  // hidden
+		makeJob(3, withStatus(storage.JobStatusFailed)),                           // hidden
+		makeJob(4, withAddressed(boolPtr(false))), // visible
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// Navigate down - should skip jobs 2 and 3
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 
 	if m2.selectedJobID != 4 {
 		t.Errorf("Expected selectedJobID=4, got %d", m2.selectedJobID)
@@ -3601,13 +3558,11 @@ func TestTUIHideAddressedWithRepoFilter(t *testing.T) {
 	m.hideAddressed = true
 	m.activeRepoFilter = []string{"/repo/a"}
 
-	addressedTrue := true
-	addressedFalse := false
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoPath: "/repo/a", Status: storage.JobStatusDone, Addressed: &addressedFalse}, // visible: matches repo, not addressed
-		{ID: 2, RepoPath: "/repo/b", Status: storage.JobStatusDone, Addressed: &addressedFalse}, // hidden: wrong repo
-		{ID: 3, RepoPath: "/repo/a", Status: storage.JobStatusDone, Addressed: &addressedTrue},  // hidden: addressed
-		{ID: 4, RepoPath: "/repo/a", Status: storage.JobStatusFailed},                           // hidden: failed
+		makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))), // visible: matches repo, not addressed
+		makeJob(2, withRepoPath("/repo/b"), withAddressed(boolPtr(false))), // hidden: wrong repo
+		makeJob(3, withRepoPath("/repo/a"), withAddressed(boolPtr(true))),  // hidden: addressed
+		makeJob(4, withRepoPath("/repo/a"), withStatus(storage.JobStatusFailed)),                           // hidden: failed
 	}
 
 	// Only job 1 should be visible
@@ -3625,18 +3580,18 @@ func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedFalse},
-		{ID: 3, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(2, withAddressed(boolPtr(false))),
+		makeJob(3, withAddressed(boolPtr(false))),
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
 
 	// Simulate marking job 2 as addressed
-	addressedTrue := true
-	m.jobs[1].Addressed = &addressedTrue
+
+	m.jobs[1].Addressed = boolPtr(true)
 
 	// Verify job 2 is now hidden
 	if m.isJobVisible(m.jobs[1]) {
@@ -3664,8 +3619,7 @@ func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
 	m.loadingJobs = true
 
 	// Simulate job fetch error
-	updated, _ := m.Update(tuiJobsErrMsg{err: fmt.Errorf("connection refused")})
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, tuiJobsErrMsg{err: fmt.Errorf("connection refused")})
 
 	if m2.loadingJobs {
 		t.Error("loadingJobs should be cleared on job fetch error")
@@ -3683,13 +3637,12 @@ func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
 	m.loadingMore = false
 
 	// Set up at last job
-	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// Try to navigate down (would normally trigger pagination)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	// Pagination should NOT be triggered because loadingJobs is true
 	if m2.loadingMore {
@@ -3708,13 +3661,12 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 	m.loadingMore = false
 
 	// Set up at last job
-	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// Navigate down - should trigger pagination
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'j')
 
 	// Pagination SHOULD be triggered
 	if !m2.loadingMore {
@@ -3734,13 +3686,12 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 	m.height = 30
 
 	// Set up with one job
-	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// Try pgdown (would normally trigger pagination at end)
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyPgDown)
 
 	// Pagination should NOT be triggered
 	if m2.loadingMore {
@@ -3756,16 +3707,15 @@ func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = false
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// Toggle hide addressed ON
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'h')
 
 	// hideAddressed should be enabled
 	if !m2.hideAddressed {
@@ -3783,16 +3733,15 @@ func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true // Already enabled
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
 	// Toggle hide addressed OFF
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressKey(m, 'h')
 
 	// hideAddressed should be disabled
 	if m2.hideAddressed {
@@ -3808,7 +3757,7 @@ func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
 func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone},
+		makeJob(1),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -3816,13 +3765,12 @@ func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 
 	// Receive review message with branch name
 	msg := tuiReviewMsg{
-		review:     &storage.Review{ID: 10, Output: "Review text", Job: &storage.ReviewJob{ID: 1}},
+		review:     makeReview(10, &storage.ReviewJob{ID: 1}, withReviewOutput("Review text")),
 		jobID:      1,
 		branchName: "main",
 	}
 
-	updated, _ := m.Update(msg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, msg)
 
 	if m2.currentBranch != "main" {
 		t.Errorf("Expected currentBranch to be 'main', got '%s'", m2.currentBranch)
@@ -3832,7 +3780,7 @@ func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, GitRef: "abc123..def456", Status: storage.JobStatusDone},
+		makeJob(1, withRef("abc123..def456")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -3840,13 +3788,12 @@ func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 
 	// Receive review message with empty branch (range commits don't have branches)
 	msg := tuiReviewMsg{
-		review:     &storage.Review{ID: 10, Output: "Review text", Job: &storage.ReviewJob{ID: 1, GitRef: "abc123..def456"}},
+		review:     makeReview(10, &storage.ReviewJob{ID: 1, GitRef: "abc123..def456"}, withReviewOutput("Review text")),
 		jobID:      1,
 		branchName: "", // Empty for ranges
 	}
 
-	updated, _ := m.Update(msg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, msg)
 
 	if m2.currentBranch != "" {
 		t.Errorf("Expected currentBranch to be empty for range, got '%s'", m2.currentBranch)
@@ -4173,18 +4120,13 @@ func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 
 	// Set up jobs: current is done (idx 0), next is failed (idx 1)
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, GitRef: "abc123"},
-		{ID: 2, Status: storage.JobStatusFailed, GitRef: "def456", Error: "some error"},
+		makeJob(1, withRef("abc123")),
+		makeJob(2, withStatus(storage.JobStatusFailed), withRef("def456"), withError("some error")),
 	}
-	m.currentReview = &storage.Review{
-		ID:     10,
-		Output: "Good review",
-		Job:    &m.jobs[0],
-	}
+	m.currentReview = makeReview(10, &m.jobs[0], withReviewOutput("Good review"))
 
 	// Navigate down to failed job (j or down key in review view)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'j')
 
 	// Branch should be cleared
 	if m2.currentBranch != "" {
@@ -4211,12 +4153,11 @@ func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 	m.selectedJobID = 1
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusFailed, GitRef: "abc123", Error: "build failed"},
+		makeJob(1, withStatus(storage.JobStatusFailed), withRef("abc123"), withError("build failed")),
 	}
 
 	// Press Enter to view the failed job
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEnter)
 
 	// Branch should be cleared
 	if m2.currentBranch != "" {
@@ -4253,6 +4194,33 @@ func TestTUIRenderFailedJobNoBranchShown(t *testing.T) {
 	// Should NOT contain "on " when branch is cleared
 	if strings.Contains(output, " on ") {
 		t.Error("Failed job should not show branch in output")
+	}
+}
+
+func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
+	// Test that renderQueueView doesn't panic when branch filter is active
+	// but repo filter is empty (regression test for index out of range)
+	m := newTuiModel("http://localhost")
+	m.width = 100
+	m.height = 30
+	m.currentView = tuiViewQueue
+	m.activeBranchFilter = "feature"
+	m.activeRepoFilter = nil // Empty repo filter
+	m.filterStack = []string{"branch"}
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withBranch("feature"), withRepoName("test")),
+	}
+
+	// This should not panic
+	output := m.View()
+
+	// Should show branch filter indicator
+	if !strings.Contains(output, "[b: feature]") {
+		t.Error("Expected branch filter indicator in output")
+	}
+	// Should NOT show repo filter indicator (since no repo filter)
+	if strings.Contains(output, "[f:") {
+		t.Error("Should not show repo filter indicator when activeRepoFilter is empty")
 	}
 }
 
@@ -4491,7 +4459,7 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 	// Test that when job_id responses are empty, TUI falls back to SHA-based responses
 	requestedPaths := []string{}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		requestedPaths = append(requestedPaths, r.URL.String())
 
 		if r.URL.Path == "/api/review" {
@@ -4534,10 +4502,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchReview(42)
 	msg := cmd()
 
@@ -4577,7 +4542,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 	// Test that SHA fallback is NOT used for range reviews (abc..def format)
 	requestedPaths := []string{}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		requestedPaths = append(requestedPaths, r.URL.String())
 
 		if r.URL.Path == "/api/review" {
@@ -4606,10 +4571,7 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 	cmd := m.fetchReview(42)
 	msg := cmd()
 
@@ -4630,12 +4592,9 @@ func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.hideAddressed = true
 
-	addressedFalse := false
-	addressedTrue := true
-
 	// Job with Addressed=false but pendingAddressed=true should be hidden
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
 	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
 
@@ -4645,7 +4604,7 @@ func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
 
 	// Job with Addressed=true but pendingAddressed=false should be visible
 	m.jobs = []storage.ReviewJob{
-		{ID: 2, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+		makeJob(2, withAddressed(boolPtr(true))),
 	}
 	m.pendingAddressed[2] = pendingState{newState: false, seq: 1}
 
@@ -4655,7 +4614,7 @@ func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
 
 	// Job with no pendingAddressed entry falls back to job.Addressed
 	m.jobs = []storage.ReviewJob{
-		{ID: 3, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+		makeJob(3, withAddressed(boolPtr(true))),
 	}
 	delete(m.pendingAddressed, 3)
 
@@ -4670,15 +4629,14 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
 	m.hideAddressed = true
 	m.loadingJobs = false
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
-	m.currentReview = &storage.Review{ID: 1, JobID: 1}
+	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1})
 
 	// Press escape to return to queue view
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != tuiViewQueue {
 		t.Error("Expected to return to queue view")
@@ -4697,15 +4655,14 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 	m.hideAddressed = false
 	m.loadingJobs = false
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
-	m.currentReview = &storage.Review{ID: 1, JobID: 1}
+	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1})
 
 	// Press escape to return to queue view
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != tuiViewQueue {
 		t.Error("Expected to return to queue view")
@@ -4721,9 +4678,9 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
 
 	// User toggles addressed to true
@@ -4739,8 +4696,7 @@ func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 		err:      nil,
 	}
 
-	updated, _ := m.Update(staleMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, staleMsg)
 
 	// pendingAddressed should NOT be cleared because newState (false) != current pending (true)
 	if _, ok := m2.pendingAddressed[1]; !ok {
@@ -4754,9 +4710,9 @@ func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
 
 	// User toggles addressed to true
@@ -4771,8 +4727,7 @@ func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
 		err:      nil,
 	}
 
-	updated, _ := m.Update(successMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, successMsg)
 
 	// pendingAddressed should NOT be cleared on success - it waits for jobs refresh
 	// to confirm the update. This prevents race condition where stale jobs response
@@ -4785,24 +4740,23 @@ func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
 func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
 
 	// User toggles addressed to true
 	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
 
 	// Jobs refresh arrives with server data confirming the update
-	addressedTrue := true
+
 	jobsMsg := tuiJobsMsg{
 		jobs: []storage.ReviewJob{
-			{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+			makeJob(1, withAddressed(boolPtr(true))),
 		},
 	}
 
-	updated, _ := m.Update(jobsMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, jobsMsg)
 
 	// pendingAddressed should be cleared because server data matches pending state
 	if _, ok := m2.pendingAddressed[1]; ok {
@@ -4813,9 +4767,9 @@ func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
 func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
 
 	// User toggles addressed to true
@@ -4824,12 +4778,11 @@ func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
 	// Stale jobs refresh arrives with old data (from request sent before update)
 	staleJobsMsg := tuiJobsMsg{
 		jobs: []storage.ReviewJob{
-			{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse}, // Still false!
+			makeJob(1, withAddressed(boolPtr(false))), // Still false!
 		},
 	}
 
-	updated, _ := m.Update(staleJobsMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, staleJobsMsg)
 
 	// pendingAddressed should NOT be cleared because server data doesn't match
 	if _, ok := m2.pendingAddressed[1]; !ok {
@@ -4845,9 +4798,9 @@ func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
 func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	addressedTrue := true
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+		makeJob(1, withAddressed(boolPtr(true))),
 	}
 
 	// User toggles addressed to false
@@ -4862,8 +4815,7 @@ func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 		err:      fmt.Errorf("server error"),
 	}
 
-	updated, _ := m.Update(errorMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, errorMsg)
 
 	// pendingAddressed should be cleared on error (we're rolling back)
 	if _, ok := m2.pendingAddressed[1]; ok {
@@ -4884,9 +4836,9 @@ func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 func TestTUIStaleErrorResponseIgnored(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	addressedTrue := true
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedTrue},
+		makeJob(1, withAddressed(boolPtr(true))),
 	}
 
 	// User toggles to false, then back to true (pendingAddressed=true)
@@ -4903,8 +4855,7 @@ func TestTUIStaleErrorResponseIgnored(t *testing.T) {
 		err:      fmt.Errorf("network error"),
 	}
 
-	updated, _ := m.Update(staleErrorMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, staleErrorMsg)
 
 	// pendingAddressed should NOT be cleared (stale error)
 	if _, ok := m2.pendingAddressed[1]; !ok {
@@ -4930,9 +4881,9 @@ func TestTUIQueueViewSameStateLateError(t *testing.T) {
 	// Same as TestTUIReviewViewSameStateLateError but for queue view using pendingAddressed
 	m := newTuiModel("http://localhost")
 
-	addressedFalse := false
+
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: &addressedFalse},
+		makeJob(1, withAddressed(boolPtr(false))),
 	}
 
 	// Sequence: toggle true (seq 1) → toggle false (seq 2) → toggle true (seq 3)
@@ -4951,8 +4902,7 @@ func TestTUIQueueViewSameStateLateError(t *testing.T) {
 		err:      fmt.Errorf("network error from first toggle"),
 	}
 
-	updated, _ := m.Update(lateErrorMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, lateErrorMsg)
 
 	// With sequence numbers, the late error should be IGNORED (not rolled back)
 	// because seq: 1 != pending seq: 3
@@ -4978,11 +4928,7 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 
 	// Review without an associated job (Job is nil)
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:        42,
-		Addressed: false,
-		Job:       nil, // No job associated
-	}
+	m.currentReview = &storage.Review{ID: 42}
 
 	// Simulate optimistic update (what happens when 'a' is pressed)
 	m.currentReview.Addressed = true
@@ -4999,8 +4945,7 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 		err:        fmt.Errorf("server error"),
 	}
 
-	updated, _ := m.Update(errMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, errMsg)
 
 	// Should have rolled back to false
 	if m2.currentReview.Addressed != false {
@@ -5024,11 +4969,7 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 
 	// Review without an associated job
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:        42,
-		Addressed: false,
-		Job:       nil,
-	}
+	m.currentReview = &storage.Review{ID: 42}
 
 	// User toggled to true, then back to false
 	// pendingReviewAddressed is now false (from the second toggle)
@@ -5046,8 +4987,7 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 		err:        fmt.Errorf("network error"),
 	}
 
-	updated, _ := m.Update(staleErrorMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, staleErrorMsg)
 
 	// State should NOT be rolled back (stale error)
 	if m2.currentReview.Addressed != false {
@@ -5073,11 +5013,7 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 
 	// Review without an associated job
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:        42,
-		Addressed: false,
-		Job:       nil,
-	}
+	m.currentReview = &storage.Review{ID: 42}
 
 	// Sequence: toggle true (seq 1) → toggle false (seq 2) → toggle true (seq 3)
 	// After third toggle, state is true and pendingReviewAddressed has seq 3
@@ -5097,8 +5033,7 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 		err:        fmt.Errorf("network error from first toggle"),
 	}
 
-	updated, _ := m.Update(lateErrorMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, lateErrorMsg)
 
 	// With sequence numbers, the late error should be IGNORED (not rolled back)
 	// because seq: 1 != pending seq: 3
@@ -5252,8 +5187,8 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 	m.height = 30
 	// Add just 2 jobs - should not need scroll indicator
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"},
-		{ID: 2, GitRef: "def456", Agent: "test", Status: "done"},
+		makeJob(1, withRef("abc123"), withAgent("test")),
+		makeJob(2, withRef("def456"), withAgent("test")),
 	}
 
 	output := m.View()
@@ -5284,8 +5219,7 @@ func TestTUIPendingReviewAddressedClearedOnSuccess(t *testing.T) {
 		err:        nil,
 	}
 
-	updated, _ := m.Update(successMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, successMsg)
 
 	// pendingReviewAddressed SHOULD be cleared on success (no race condition for review-only)
 	if _, ok := m2.pendingReviewAddressed[42]; ok {
@@ -5300,7 +5234,7 @@ func TestTUIPendingAddressedClearsWhenServerNilMatchesFalse(t *testing.T) {
 
 	// Job with nil Addressed (e.g., partial payload or non-done status that became done)
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: nil},
+		makeJob(1),
 	}
 
 	// User had toggled to false (unaddressed)
@@ -5309,12 +5243,11 @@ func TestTUIPendingAddressedClearsWhenServerNilMatchesFalse(t *testing.T) {
 	// Jobs refresh arrives with nil Addressed (should match false)
 	jobsMsg := tuiJobsMsg{
 		jobs: []storage.ReviewJob{
-			{ID: 1, Status: storage.JobStatusDone, Addressed: nil},
+			makeJob(1),
 		},
 	}
 
-	updated, _ := m.Update(jobsMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, jobsMsg)
 
 	// pendingAddressed should be cleared because nil == false matches newState=false
 	if _, ok := m2.pendingAddressed[1]; ok {
@@ -5328,7 +5261,7 @@ func TestTUIPendingAddressedNotClearsWhenServerNilMismatchesTrue(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, Addressed: nil},
+		makeJob(1),
 	}
 
 	// User toggled to true (addressed)
@@ -5337,12 +5270,11 @@ func TestTUIPendingAddressedNotClearsWhenServerNilMismatchesTrue(t *testing.T) {
 	// Jobs refresh arrives with nil Addressed (doesn't match true)
 	jobsMsg := tuiJobsMsg{
 		jobs: []storage.ReviewJob{
-			{ID: 1, Status: storage.JobStatusDone, Addressed: nil},
+			makeJob(1),
 		},
 	}
 
-	updated, _ := m.Update(jobsMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, jobsMsg)
 
 	// pendingAddressed should NOT be cleared because nil != true
 	if _, ok := m2.pendingAddressed[1]; !ok {
@@ -5358,8 +5290,8 @@ func TestTUIPendingAddressedNotClearsWhenServerNilMismatchesTrue(t *testing.T) {
 func TestTUIRespondTextPreservation(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, GitRef: "abc1234"},
-		{ID: 2, Status: storage.JobStatusDone, GitRef: "def5678"},
+		makeJob(1, withRef("abc1234")),
+		makeJob(2, withRef("def5678")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -5367,8 +5299,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	m.height = 24
 
 	// 1. Open respond for Job 1
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = updated.(tuiModel)
+	m, _ = pressKey(m, 'c')
 
 	if m.currentView != tuiViewComment {
 		t.Fatalf("Expected tuiViewComment, got %v", m.currentView)
@@ -5383,8 +5314,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	// 3. Simulate failed submission - press enter then receive error
 	m.currentView = m.commentFromView // Simulate what happens on enter
 	errMsg := tuiCommentResultMsg{jobID: 1, err: fmt.Errorf("network error")}
-	updated, _ = m.Update(errMsg)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, errMsg)
 
 	// Text should be preserved after error
 	if m.commentText != "My draft response" {
@@ -5397,8 +5327,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	// 4. Re-open respond for Job 1 (Retry) - text should still be there
 	m.currentView = tuiViewQueue
 	m.selectedIdx = 0
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = updated.(tuiModel)
+	m, _ = pressKey(m, 'c')
 
 	if m.commentText != "My draft response" {
 		t.Errorf("Expected text preserved on retry for same job, got %q", m.commentText)
@@ -5408,8 +5337,7 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.selectedIdx = 1
 	m.selectedJobID = 2
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = updated.(tuiModel)
+	m, _ = pressKey(m, 'c')
 
 	if m.commentText != "" {
 		t.Errorf("Expected text cleared for different job, got %q", m.commentText)
@@ -5422,8 +5350,8 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, Status: storage.JobStatusDone, GitRef: "abc1234"},
-		{ID: 2, Status: storage.JobStatusDone, GitRef: "def5678"},
+		makeJob(1, withRef("abc1234")),
+		makeJob(2, withRef("def5678")),
 	}
 
 	// User submitted response for job 1, then started drafting for job 2
@@ -5432,8 +5360,7 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 
 	// Success message arrives for job 1 (the old submission)
 	successMsg := tuiCommentResultMsg{jobID: 1, err: nil}
-	updated, _ := m.Update(successMsg)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, successMsg)
 
 	// Draft for job 2 should NOT be cleared
 	if m.commentText != "New draft for job 2" {
@@ -5445,8 +5372,7 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 
 	// Now success for job 2 should clear
 	successMsg = tuiCommentResultMsg{jobID: 2, err: nil}
-	updated, _ = m.Update(successMsg)
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, successMsg)
 
 	if m.commentText != "" {
 		t.Errorf("Expected text cleared for matching job, got %q", m.commentText)
@@ -5462,27 +5388,22 @@ func TestTUIFilterBackspaceMultiByte(t *testing.T) {
 	m.filterRepos = []repoFilterItem{{name: "", count: 10}}
 
 	// Type an emoji (multi-byte character)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m = updated.(tuiModel)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("😊")})
-	m = updated.(tuiModel)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	m = updated.(tuiModel)
+	m, _ = pressKey(m, 'a')
+	m, _ = pressKeys(m, []rune("😊"))
+	m, _ = pressKey(m, 'b')
 
 	if m.filterSearch != "a😊b" {
 		t.Errorf("Expected filterSearch='a😊b', got %q", m.filterSearch)
 	}
 
 	// Backspace should remove 'b'
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = updated.(tuiModel)
+	m, _ = pressSpecial(m, tea.KeyBackspace)
 	if m.filterSearch != "a😊" {
 		t.Errorf("Expected filterSearch='a😊' after first backspace, got %q", m.filterSearch)
 	}
 
 	// Backspace should remove the entire emoji, not corrupt it
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = updated.(tuiModel)
+	m, _ = pressSpecial(m, tea.KeyBackspace)
 	if m.filterSearch != "a" {
 		t.Errorf("Expected filterSearch='a' after second backspace, got %q", m.filterSearch)
 	}
@@ -5494,23 +5415,20 @@ func TestTUIRespondBackspaceMultiByte(t *testing.T) {
 	m.commentJobID = 1
 
 	// Type text with multi-byte characters
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Hello 世界")})
-	m = updated.(tuiModel)
+	m, _ = pressKeys(m, []rune("Hello 世界"))
 
 	if m.commentText != "Hello 世界" {
 		t.Errorf("Expected commentText='Hello 世界', got %q", m.commentText)
 	}
 
 	// Backspace should remove '界' (one character), not corrupt it
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = updated.(tuiModel)
+	m, _ = pressSpecial(m, tea.KeyBackspace)
 	if m.commentText != "Hello 世" {
 		t.Errorf("Expected commentText='Hello 世' after backspace, got %q", m.commentText)
 	}
 
 	// Backspace should remove '世'
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = updated.(tuiModel)
+	m, _ = pressSpecial(m, tea.KeyBackspace)
 	if m.commentText != "Hello " {
 		t.Errorf("Expected commentText='Hello ' after second backspace, got %q", m.commentText)
 	}
@@ -5630,16 +5548,10 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:     1,
-		JobID:  1,
-		Agent:  "test",
-		Output: "This is the review content to copy",
-	}
+	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("This is the review content to copy"))
 
 	// Press 'y' to yank/copy
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	m = updated.(tuiModel)
+	m, cmd := pressKey(m, 'y')
 
 	// Should return a command to copy to clipboard
 	if cmd == nil {
@@ -5666,18 +5578,12 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:     1,
-		JobID:  1,
-		Agent:  "test",
-		Output: "Review content",
-	}
+	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 	m.width = 80
 	m.height = 24
 
 	// Simulate receiving a successful clipboard result (view captured at trigger time)
-	updated, _ := m.Update(tuiClipboardResultMsg{err: nil, view: tuiViewReview})
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, tuiClipboardResultMsg{err: nil, view: tuiViewReview})
 
 	if m.flashMessage != "Copied to clipboard" {
 		t.Errorf("Expected flash message 'Copied to clipboard', got %q", m.flashMessage)
@@ -5703,8 +5609,7 @@ func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Simulate receiving a failed clipboard result
-	updated, _ := m.Update(tuiClipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: tuiViewQueue})
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, tuiClipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: tuiViewQueue})
 
 	if m.err == nil {
 		t.Error("Expected error to be set")
@@ -5722,19 +5627,13 @@ func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.width = 80
 	m.height = 24
-	m.currentReview = &storage.Review{
-		ID:     1,
-		JobID:  1,
-		Agent:  "test",
-		Output: "Review content",
-	}
+	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 
 	// User switches to review view before clipboard result arrives
 	m.currentView = tuiViewReview
 
 	// Clipboard result arrives with view captured at trigger time (queue)
-	updated, _ := m.Update(tuiClipboardResultMsg{err: nil, view: tuiViewQueue})
-	m = updated.(tuiModel)
+	m, _ = updateModel(t, m, tuiClipboardResultMsg{err: nil, view: tuiViewQueue})
 
 	// Flash should be attributed to queue view, not current (review) view
 	if m.flashView != tuiViewQueue {
@@ -5752,20 +5651,20 @@ func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatusRunning},
-		{ID: 2, GitRef: "def456", Agent: "test", Status: storage.JobStatusDone},
+		makeJob(1, withRef("abc123"), withAgent("test"), withStatus(storage.JobStatusRunning)),
+		makeJob(2, withRef("def456"), withAgent("test")),
 	}
 	m.selectedIdx = 0
 
 	// Press 'y' on running job - should not copy
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := pressKey(m, 'y')
 	if cmd != nil {
 		t.Error("Expected no command for running job")
 	}
 
 	// Select completed job
 	m.selectedIdx = 1
-	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd = pressKey(m, 'y')
 	if cmd == nil {
 		t.Error("Expected command for completed job")
 	}
@@ -5794,10 +5693,7 @@ func TestTUIFlashMessageNotShownInDifferentView(t *testing.T) {
 	m.flashMessage = "Copied to clipboard"
 	m.flashExpiresAt = time.Now().Add(2 * time.Second)
 	m.flashView = tuiViewQueue // Flash was triggered in queue view, not review view
-	m.currentReview = &storage.Review{
-		ID:     1,
-		Output: "Test review content",
-	}
+	m.currentReview = makeReview(1, &storage.ReviewJob{}, withReviewOutput("Test review content"))
 
 	output := m.renderReviewView()
 	if strings.Contains(output, "Copied to clipboard") {
@@ -5855,10 +5751,7 @@ func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
 	m.width = 80
 	m.height = 24
 	m.updateAvailable = "1.2.3"
-	m.currentReview = &storage.Review{
-		ID:     1,
-		Output: "Test review content",
-	}
+	m.currentReview = makeReview(1, &storage.ReviewJob{}, withReviewOutput("Test review content"))
 
 	output := m.renderReviewView()
 	if strings.Contains(output, "Update available") {
@@ -5874,7 +5767,7 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a review
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review" {
 			t.Errorf("Expected /api/review, got %s", r.URL.Path)
 		}
@@ -5889,10 +5782,7 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 			Output: "Review content for clipboard",
 		}
 		json.NewEncoder(w).Encode(review)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	// Execute fetchReviewAndCopy
 	cmd := m.fetchReviewAndCopy(123, nil)
@@ -5916,12 +5806,9 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 
 func TestTUIFetchReviewAndCopy404(t *testing.T) {
 	// Create test server that returns 404
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
@@ -5942,7 +5829,7 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 
 func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 	// Create test server that returns a review with empty output
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		review := storage.Review{
 			ID:     1,
 			JobID:  123,
@@ -5950,10 +5837,7 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 			Output: "", // Empty output
 		}
 		json.NewEncoder(w).Encode(review)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
@@ -5981,15 +5865,10 @@ func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:     1,
-		JobID:  1,
-		Agent:  "test",
-		Output: "Review content",
-	}
+	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 
 	// Press 'y' to copy
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := pressKey(m, 'y')
 	if cmd == nil {
 		t.Fatal("Expected command to be returned")
 	}
@@ -6019,7 +5898,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a valid review
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		review := storage.Review{
 			ID:     1,
 			JobID:  123,
@@ -6027,10 +5906,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 			Output: "Review content",
 		}
 		json.NewEncoder(w).Encode(review)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	// Fetch succeeds but clipboard write fails
 	cmd := m.fetchReviewAndCopy(123, nil)
@@ -6058,7 +5934,7 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a review WITHOUT Job populated
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		review := storage.Review{
 			ID:     42,
 			JobID:  123,
@@ -6067,19 +5943,12 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 			// Job is intentionally nil
 		}
 		json.NewEncoder(w).Encode(review)
-	}))
-	defer ts.Close()
-
-	m := newTuiModel(ts.URL)
+	})
 
 	// Pass a job parameter - this should be injected when review.Job is nil
-	job := &storage.ReviewJob{
-		ID:       123,
-		RepoPath: "/path/to/repo",
-		GitRef:   "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", // 40 hex chars
-	}
+	j := makeJob(123, withRepoPath("/path/to/repo"), withRef("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"))
 
-	cmd := m.fetchReviewAndCopy(123, job)
+	cmd := m.fetchReviewAndCopy(123, &j)
 	msg := cmd()
 
 	result, ok := msg.(tuiClipboardResultMsg)
@@ -6273,8 +6142,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 			Version: "different-version",
 		})
 
-		updated, _ := m.Update(status)
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, status)
 
 		if !m2.versionMismatch {
 			t.Error("Expected versionMismatch=true when daemon version differs")
@@ -6292,8 +6160,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 			Version: version.Version,
 		})
 
-		updated, _ := m.Update(status)
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, status)
 
 		if m2.versionMismatch {
 			t.Error("Expected versionMismatch=false when versions match")
@@ -6355,8 +6222,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 			ConfigReloadCounter: 1,
 		})
 
-		updated, _ := m.Update(status1)
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, status1)
 
 		if m2.flashMessage != "" {
 			t.Errorf("Expected no flash on first fetch, got %q", m2.flashMessage)
@@ -6381,8 +6247,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 			ConfigReloadCounter: 2,
 		})
 
-		updated, _ := m.Update(status2)
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, status2)
 
 		if m2.flashMessage != "Config reloaded" {
 			t.Errorf("Expected flash 'Config reloaded', got %q", m2.flashMessage)
@@ -6404,8 +6269,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 			ConfigReloadCounter: 1,
 		})
 
-		updated, _ := m.Update(status)
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, status)
 
 		if m2.flashMessage != "Config reloaded" {
 			t.Errorf("Expected flash when ConfigReloadCounter goes from 0 to 1, got %q", m2.flashMessage)
@@ -6423,8 +6287,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 			ConfigReloadCounter: 1,
 		})
 
-		updated, _ := m.Update(status)
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, status)
 
 		if m2.flashMessage != "" {
 			t.Errorf("Expected no flash when counter unchanged, got %q", m2.flashMessage)
@@ -6439,8 +6302,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m.consecutiveErrors = 2 // Already had 2 connection errors
 
 		// Third connection error should trigger reconnection
-		updated, cmd := m.Update(tuiJobsErrMsg{err: mockConnError("connection refused")})
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiJobsErrMsg{err: mockConnError("connection refused")})
 
 		if m2.consecutiveErrors != 3 {
 			t.Errorf("Expected consecutiveErrors=3, got %d", m2.consecutiveErrors)
@@ -6457,8 +6319,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 1 // Only 1 error so far
 
-		updated, cmd := m.Update(tuiJobsErrMsg{err: mockConnError("connection refused")})
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiJobsErrMsg{err: mockConnError("connection refused")})
 
 		if m2.consecutiveErrors != 2 {
 			t.Errorf("Expected consecutiveErrors=2, got %d", m2.consecutiveErrors)
@@ -6476,8 +6337,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m.consecutiveErrors = 2 // 2 connection errors
 
 		// Application error (404, parse error, etc.) should not increment counter
-		updated, cmd := m.Update(tuiErrMsg(fmt.Errorf("no review found")))
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiErrMsg(fmt.Errorf("no review found")))
 
 		if m2.consecutiveErrors != 2 {
 			t.Errorf("Expected consecutiveErrors unchanged at 2, got %d", m2.consecutiveErrors)
@@ -6495,8 +6355,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m.consecutiveErrors = 2
 
 		// Non-connection error (like parse error) should not increment
-		updated, _ := m.Update(tuiJobsErrMsg{err: fmt.Errorf("invalid JSON response")})
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, tuiJobsErrMsg{err: fmt.Errorf("invalid JSON response")})
 
 		if m2.consecutiveErrors != 2 {
 			t.Errorf("Expected consecutiveErrors unchanged at 2, got %d", m2.consecutiveErrors)
@@ -6508,8 +6367,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m.consecutiveErrors = 2
 
 		// Connection error in pagination should trigger reconnection
-		updated, cmd := m.Update(tuiPaginationErrMsg{err: mockConnError("connection refused")})
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiPaginationErrMsg{err: mockConnError("connection refused")})
 
 		if m2.consecutiveErrors != 3 {
 			t.Errorf("Expected consecutiveErrors=3, got %d", m2.consecutiveErrors)
@@ -6527,8 +6385,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m.consecutiveErrors = 2
 
 		// Connection error via tuiErrMsg (from fetchStatus, fetchReview, etc.)
-		updated, cmd := m.Update(tuiErrMsg(mockConnError("connection refused")))
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiErrMsg(mockConnError("connection refused")))
 
 		if m2.consecutiveErrors != 3 {
 			t.Errorf("Expected consecutiveErrors=3, got %d", m2.consecutiveErrors)
@@ -6546,8 +6403,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m.consecutiveErrors = 2
 
 		// Application error via tuiErrMsg should not increment
-		updated, cmd := m.Update(tuiErrMsg(fmt.Errorf("review not found")))
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiErrMsg(fmt.Errorf("review not found")))
 
 		if m2.consecutiveErrors != 2 {
 			t.Errorf("Expected consecutiveErrors unchanged at 2, got %d", m2.consecutiveErrors)
@@ -6564,8 +6420,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 5
 
-		updated, _ := m.Update(tuiJobsMsg{jobs: []storage.ReviewJob{}, hasMore: false})
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, tuiJobsMsg{jobs: []storage.ReviewJob{}, hasMore: false})
 
 		if m2.consecutiveErrors != 0 {
 			t.Errorf("Expected consecutiveErrors=0 after success, got %d", m2.consecutiveErrors)
@@ -6576,8 +6431,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m := newTuiModel(testServerAddr)
 		m.consecutiveErrors = 5
 
-		updated, _ := m.Update(tuiStatusMsg(storage.DaemonStatus{Version: "1.0.0"}))
-		m2 := updated.(tuiModel)
+		m2, _ := updateModel(t, m, tuiStatusMsg(storage.DaemonStatus{Version: "1.0.0"}))
 
 		if m2.consecutiveErrors != 0 {
 			t.Errorf("Expected consecutiveErrors=0 after status success, got %d", m2.consecutiveErrors)
@@ -6588,8 +6442,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m := newTuiModel(testServerAddr)
 		m.reconnecting = true
 
-		updated, cmd := m.Update(tuiReconnectMsg{newAddr: "http://127.0.0.1:7374", version: "2.0.0"})
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiReconnectMsg{newAddr: "http://127.0.0.1:7374", version: "2.0.0"})
 
 		if m2.serverAddr != "http://127.0.0.1:7374" {
 			t.Errorf("Expected serverAddr updated to new address, got %s", m2.serverAddr)
@@ -6617,8 +6470,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m.consecutiveErrors = 3
 
 		// Same address - no change needed
-		updated, cmd := m.Update(tuiReconnectMsg{newAddr: testServerAddr})
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiReconnectMsg{newAddr: testServerAddr})
 
 		if m2.serverAddr != testServerAddr {
 			t.Errorf("Expected serverAddr unchanged, got %s", m2.serverAddr)
@@ -6637,8 +6489,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		m.reconnecting = true
 		m.consecutiveErrors = 3
 
-		updated, cmd := m.Update(tuiReconnectMsg{err: fmt.Errorf("no daemon found")})
-		m2 := updated.(tuiModel)
+		m2, cmd := updateModel(t, m, tuiReconnectMsg{err: fmt.Errorf("no daemon found")})
 
 		if m2.reconnecting {
 			t.Error("Expected reconnecting=false after failed reconnection")
@@ -6656,7 +6507,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 	// Test that pressing escape in commit message view returns to the originating view (queue)
 	m := newTuiModel("http://localhost")
-	m.jobs = []storage.ReviewJob{{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}}
+	m.jobs = []storage.ReviewJob{makeJob(1, withRef("abc123"))}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
@@ -6664,16 +6515,14 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 	m.commitMsgFromView = tuiViewQueue // Track where we came from
 
 	// Simulate receiving commit message content (sets view to CommitMsg)
-	updated, _ := m.Update(tuiCommitMsgMsg{jobID: 1, content: "test message"})
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, tuiCommitMsgMsg{jobID: 1, content: "test message"})
 
 	if m2.currentView != tuiViewCommitMsg {
 		t.Errorf("Expected tuiViewCommitMsg, got %d", m2.currentView)
 	}
 
 	// Press escape to go back
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if m3.currentView != tuiViewQueue {
 		t.Errorf("Expected to return to tuiViewQueue, got %d", m3.currentView)
@@ -6686,17 +6535,16 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
 	// Test that pressing escape in commit message view returns to the originating view (review)
 	m := newTuiModel("http://localhost")
-	job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}
-	m.jobs = []storage.ReviewJob{*job}
-	m.currentReview = &storage.Review{ID: 1, JobID: 1, Job: job}
+	j := makeJob(1, withRef("abc123"))
+	m.jobs = []storage.ReviewJob{j}
+	m.currentReview = makeReview(1, &j)
 	m.currentView = tuiViewReview
 	m.commitMsgFromView = tuiViewReview
 	m.commitMsgContent = "test message"
 	m.currentView = tuiViewCommitMsg
 
 	// Press escape to go back
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := updated.(tuiModel)
+	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if m2.currentView != tuiViewReview {
 		t.Errorf("Expected to return to tuiViewReview, got %d", m2.currentView)
@@ -6711,8 +6559,7 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	m.commitMsgContent = "test message"
 
 	// Press 'q' to go back
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, 'q')
 
 	if m2.currentView != tuiViewReview {
 		t.Errorf("Expected to return to tuiViewReview after 'q', got %d", m2.currentView)
@@ -6722,7 +6569,7 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 	// Test that fetchCommitMsg correctly identifies job types and returns appropriate errors
 	// This is critical: Prompt field is populated for ALL jobs (stores review prompt),
-	// so we must check GitRef == "prompt" to identify run tasks, not Prompt != ""
+	// so we must use IsTaskJob() to identify task jobs, not Prompt != ""
 
 	m := newTuiModel("http://localhost")
 
@@ -6734,11 +6581,12 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 		{
 			name: "regular commit with Prompt populated should not error early",
 			job: storage.ReviewJob{
-				ID:     1,
-				GitRef: "abc123def456",                      // valid commit SHA
-				Prompt: "You are a code reviewer...",        // review prompt is stored for all jobs
+				ID:       1,
+				GitRef:   "abc123def456",               // valid commit SHA
+				Prompt:   "You are a code reviewer...", // review prompt is stored for all jobs
+				CommitID: func() *int64 { id := int64(123); return &id }(),
 			},
-			expectError: "", // should attempt git lookup, not return "run tasks" error
+			expectError: "", // should attempt git lookup, not return "task jobs" error
 		},
 		{
 			name: "run task (GitRef=prompt) should error",
@@ -6747,7 +6595,34 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 				GitRef: "prompt",
 				Prompt: "Explain this codebase",
 			},
-			expectError: "no commit message for run tasks",
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "run task (GitRef=run) should error",
+			job: storage.ReviewJob{
+				ID:     8,
+				GitRef: "run",
+				Prompt: "Do something",
+			},
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "analyze task should error",
+			job: storage.ReviewJob{
+				ID:     9,
+				GitRef: "analyze",
+				Prompt: "Analyze these files",
+			},
+			expectError: "no commit message for task jobs",
+		},
+		{
+			name: "custom label task should error",
+			job: storage.ReviewJob{
+				ID:     10,
+				GitRef: "my-custom-task",
+				Prompt: "Do my custom task",
+			},
+			expectError: "no commit message for task jobs",
 		},
 		{
 			name: "dirty job (GitRef=dirty) should error",
@@ -6812,11 +6687,11 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 				}
 			} else {
 				// For valid commits, we expect a git error (repo doesn't exist in test)
-				// but NOT the "run tasks" or "uncommitted changes" error
+				// but NOT the "task jobs" or "uncommitted changes" error
 				if result.err != nil {
 					errMsg := result.err.Error()
-					if errMsg == "no commit message for run tasks" {
-						t.Errorf("Regular commit with Prompt should not be detected as run task")
+					if errMsg == "no commit message for task jobs" {
+						t.Errorf("Regular commit with Prompt should not be detected as task job")
 					}
 					if errMsg == "no commit message for uncommitted changes" {
 						t.Errorf("Regular commit should not be detected as uncommitted changes")
@@ -6834,8 +6709,7 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 	m.currentView = tuiViewQueue
 
 	// Press '?' to open help
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, '?')
 
 	if m2.currentView != tuiViewHelp {
 		t.Errorf("Expected tuiViewHelp, got %d", m2.currentView)
@@ -6845,8 +6719,7 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 	}
 
 	// Press '?' again to close help
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	m3 := updated.(tuiModel)
+	m3, _ := pressKey(m2, '?')
 
 	if m3.currentView != tuiViewQueue {
 		t.Errorf("Expected to return to tuiViewQueue, got %d", m3.currentView)
@@ -6856,13 +6729,12 @@ func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 func TestTUIHelpViewToggleFromReview(t *testing.T) {
 	// Test that '?' opens help from review and escape returns to review
 	m := newTuiModel("http://localhost")
-	job := &storage.ReviewJob{ID: 1, GitRef: "abc123", Status: storage.JobStatusDone}
-	m.currentReview = &storage.Review{ID: 1, JobID: 1, Job: job}
+	j := makeJob(1, withRef("abc123"))
+	m.currentReview = makeReview(1, &j)
 	m.currentView = tuiViewReview
 
 	// Press '?' to open help
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	m2 := updated.(tuiModel)
+	m2, _ := pressKey(m, '?')
 
 	if m2.currentView != tuiViewHelp {
 		t.Errorf("Expected tuiViewHelp, got %d", m2.currentView)
@@ -6872,8 +6744,7 @@ func TestTUIHelpViewToggleFromReview(t *testing.T) {
 	}
 
 	// Press escape to close help
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m3 := updated.(tuiModel)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
 	if m3.currentView != tuiViewReview {
 		t.Errorf("Expected to return to tuiViewReview, got %d", m3.currentView)
@@ -6966,8 +6837,7 @@ func TestTUITailOutputPreservesLinesOnEmptyResponse(t *testing.T) {
 		err:     nil,
 	}
 
-	updated, _ := m.Update(emptyMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, emptyMsg)
 
 	// Lines should be preserved (not cleared)
 	if len(m2.tailLines) != 3 {
@@ -7008,8 +6878,7 @@ func TestTUITailOutputUpdatesLinesWhenStreaming(t *testing.T) {
 		err:     nil,
 	}
 
-	updated, _ := m.Update(newMsg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, newMsg)
 
 	// Lines should be updated
 	if len(m2.tailLines) != 2 {
@@ -7042,8 +6911,7 @@ func TestTUITailOutputIgnoredWhenNotInTailView(t *testing.T) {
 		err:     nil,
 	}
 
-	updated, _ := m.Update(msg)
-	m2 := updated.(tuiModel)
+	m2, _ := updateModel(t, m, msg)
 
 	// Lines should not be updated since we're not in tail view
 	if len(m2.tailLines) != 1 {
@@ -7051,5 +6919,599 @@ func TestTUITailOutputIgnoredWhenNotInTailView(t *testing.T) {
 	}
 	if m2.tailLines[0].text != "Previous session line" {
 		t.Errorf("Lines should not be updated when not in tail view")
+	}
+}
+
+// Branch filter tests
+
+func TestTUIBranchFilterApplied(t *testing.T) {
+	// Test that branch filter correctly filters jobs
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("repo-a"), withBranch("main")),
+		makeJob(2, withRepoName("repo-a"), withBranch("feature")),
+		makeJob(3, withRepoName("repo-b"), withBranch("main")),
+		{ID: 4, RepoName: "repo-b", Branch: ""}, // No branch
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Apply branch filter
+	m.activeBranchFilter = "main"
+
+	visible := m.getVisibleJobs()
+	if len(visible) != 2 {
+		t.Errorf("Expected 2 visible jobs with branch=main, got %d", len(visible))
+	}
+	for _, job := range visible {
+		if job.Branch != "main" {
+			t.Errorf("Expected all visible jobs to have branch=main, got %s", job.Branch)
+		}
+	}
+}
+
+func TestTUIBranchFilterNone(t *testing.T) {
+	// Test filtering for jobs with no branch
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("repo-a"), withBranch("main")),
+		{ID: 2, RepoName: "repo-a", Branch: ""},
+		{ID: 3, RepoName: "repo-b", Branch: ""},
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Apply branch filter for "(none)"
+	m.activeBranchFilter = "(none)"
+
+	visible := m.getVisibleJobs()
+	if len(visible) != 2 {
+		t.Errorf("Expected 2 visible jobs with no branch, got %d", len(visible))
+	}
+	for _, job := range visible {
+		if job.Branch != "" {
+			t.Errorf("Expected all visible jobs to have empty branch, got %s", job.Branch)
+		}
+	}
+}
+
+func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
+	// Test that branch and repo filters work together
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a"), withBranch("main")),
+		makeJob(2, withRepoName("repo-a"), withRepoPath("/path/to/repo-a"), withBranch("feature")),
+		makeJob(3, withRepoName("repo-b"), withRepoPath("/path/to/repo-b"), withBranch("main")),
+		makeJob(4, withRepoName("repo-b"), withRepoPath("/path/to/repo-b"), withBranch("feature")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Apply both filters
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.activeBranchFilter = "main"
+
+	visible := m.getVisibleJobs()
+	if len(visible) != 1 {
+		t.Errorf("Expected 1 visible job (repo-a + main), got %d", len(visible))
+	}
+	if len(visible) > 0 && (visible[0].RepoPath != "/path/to/repo-a" || visible[0].Branch != "main") {
+		t.Errorf("Expected repo-a with main branch, got %s with %s", visible[0].RepoPath, visible[0].Branch)
+	}
+}
+
+// Filter stack tests
+
+func TestTUIFilterStackPush(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Push repo filter
+	m.pushFilter("repo")
+	if len(m.filterStack) != 1 || m.filterStack[0] != "repo" {
+		t.Errorf("Expected filterStack=['repo'], got %v", m.filterStack)
+	}
+
+	// Push branch filter
+	m.pushFilter("branch")
+	if len(m.filterStack) != 2 || m.filterStack[0] != "repo" || m.filterStack[1] != "branch" {
+		t.Errorf("Expected filterStack=['repo', 'branch'], got %v", m.filterStack)
+	}
+}
+
+func TestTUIFilterStackPushMovesDuplicate(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	// Push repo then branch
+	m.pushFilter("repo")
+	m.pushFilter("branch")
+
+	// Push repo again - should move to end
+	m.pushFilter("repo")
+	if len(m.filterStack) != 2 || m.filterStack[0] != "branch" || m.filterStack[1] != "repo" {
+		t.Errorf("Expected filterStack=['branch', 'repo'] after re-pushing repo, got %v", m.filterStack)
+	}
+}
+
+func TestTUIFilterStackPopClearsValue(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.activeRepoFilter = []string{"/path/to/repo"}
+	m.activeBranchFilter = "main"
+	m.filterStack = []string{"repo", "branch"}
+
+	// Pop should remove branch (last)
+	popped := m.popFilter()
+	if popped != "branch" {
+		t.Errorf("Expected popped='branch', got %s", popped)
+	}
+	if m.activeBranchFilter != "" {
+		t.Errorf("Expected activeBranchFilter to be cleared, got %s", m.activeBranchFilter)
+	}
+	if len(m.activeRepoFilter) != 1 {
+		t.Errorf("Expected activeRepoFilter to remain, got %v", m.activeRepoFilter)
+	}
+
+	// Pop again should remove repo
+	popped = m.popFilter()
+	if popped != "repo" {
+		t.Errorf("Expected popped='repo', got %s", popped)
+	}
+	if len(m.activeRepoFilter) != 0 {
+		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m.activeRepoFilter)
+	}
+
+	// Pop on empty stack
+	popped = m.popFilter()
+	if popped != "" {
+		t.Errorf("Expected popped='' on empty stack, got %s", popped)
+	}
+}
+
+func TestTUIFilterStackEscapeOrder(t *testing.T) {
+	// Test that escape pops filters in stack order (LIFO)
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a"), withBranch("main")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.currentView = tuiViewQueue
+
+	// Apply repo filter first, then branch filter
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.filterStack = []string{"repo"}
+	m.activeBranchFilter = "main"
+	m.filterStack = append(m.filterStack, "branch")
+
+	// First escape - should clear branch filter
+	m2, _ := pressSpecial(m, tea.KeyEscape)
+
+	if m2.activeBranchFilter != "" {
+		t.Errorf("Expected branch filter to be cleared first, got %s", m2.activeBranchFilter)
+	}
+	if len(m2.activeRepoFilter) == 0 {
+		t.Error("Expected repo filter to remain after first escape")
+	}
+	if len(m2.filterStack) != 1 || m2.filterStack[0] != "repo" {
+		t.Errorf("Expected filterStack=['repo'] after first escape, got %v", m2.filterStack)
+	}
+
+	// Second escape - should clear repo filter
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
+
+	if len(m3.activeRepoFilter) != 0 {
+		t.Errorf("Expected repo filter to be cleared, got %v", m3.activeRepoFilter)
+	}
+	if len(m3.filterStack) != 0 {
+		t.Errorf("Expected filterStack to be empty, got %v", m3.filterStack)
+	}
+}
+
+func TestTUIFilterStackTitleBarOrder(t *testing.T) {
+	// Test that title bar shows filters in stack order
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("myrepo"), withRepoPath("/path/to/myrepo"), withBranch("feature")),
+	}
+	m.currentView = tuiViewQueue
+
+	// Apply filters in order: branch first, then repo
+	m.activeBranchFilter = "feature"
+	m.filterStack = []string{"branch"}
+	m.activeRepoFilter = []string{"/path/to/myrepo"}
+	m.filterStack = append(m.filterStack, "repo")
+
+	output := m.View()
+
+	// Should contain both filters in the title
+	if !strings.Contains(output, "[b: feature]") {
+		t.Error("Expected output to contain [b: feature]")
+	}
+	if !strings.Contains(output, "[f: myrepo]") {
+		t.Error("Expected output to contain [f: myrepo]")
+	}
+
+	// Branch should appear before repo (stack order)
+	bIdx := strings.Index(output, "[b: feature]")
+	fIdx := strings.Index(output, "[f: myrepo]")
+	if bIdx > fIdx {
+		t.Error("Expected branch filter to appear before repo filter in title (stack order)")
+	}
+}
+
+func TestTUIFilterStackReverseOrder(t *testing.T) {
+	// Test title bar with reverse order (repo first, then branch)
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("myrepo"), withRepoPath("/path/to/myrepo"), withBranch("develop")),
+	}
+	m.currentView = tuiViewQueue
+
+	// Apply filters in order: repo first, then branch
+	m.activeRepoFilter = []string{"/path/to/myrepo"}
+	m.filterStack = []string{"repo"}
+	m.activeBranchFilter = "develop"
+	m.filterStack = append(m.filterStack, "branch")
+
+	output := m.View()
+
+	// Repo should appear before branch (stack order)
+	fIdx := strings.Index(output, "[f: myrepo]")
+	bIdx := strings.Index(output, "[b: develop]")
+	if fIdx > bIdx {
+		t.Error("Expected repo filter to appear before branch filter in title (stack order)")
+	}
+}
+
+func TestTUIBranchFilterModalOpensWithB(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("repo-a"), withBranch("main")),
+	}
+	m.selectedIdx = 0
+	m.currentView = tuiViewQueue
+
+	// Press 'b' to open branch filter
+	m2, cmd := pressKey(m, 'b')
+
+	if m2.currentView != tuiViewBranchFilter {
+		t.Errorf("Expected view to be tuiViewBranchFilter, got %v", m2.currentView)
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranches command to be returned")
+	}
+}
+
+func TestTUIBranchFilterSelectAppliesFilter(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.currentView = tuiViewBranchFilter
+	m.filterBranches = []branchFilterItem{
+		{name: "main", count: 5},
+		{name: "feature", count: 3},
+		{name: "(none)", count: 2},
+	}
+	m.branchFilterSelectedIdx = 1 // Select "feature"
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withBranch("main")),
+		makeJob(2, withBranch("feature")),
+	}
+
+	// Press Enter to select
+	m2, _ := pressSpecial(m, tea.KeyEnter)
+
+	if m2.activeBranchFilter != "feature" {
+		t.Errorf("Expected activeBranchFilter='feature', got '%s'", m2.activeBranchFilter)
+	}
+	if m2.currentView != tuiViewQueue {
+		t.Errorf("Expected view to return to queue, got %v", m2.currentView)
+	}
+	// Should be in filter stack
+	found := false
+	for _, f := range m2.filterStack {
+		if f == "branch" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected 'branch' to be in filterStack, got %v", m2.filterStack)
+	}
+}
+
+func TestTUIRemoveFilterFromStack(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.filterStack = []string{"repo", "branch", "other"}
+
+	m.removeFilterFromStack("branch")
+	if len(m.filterStack) != 2 || m.filterStack[0] != "repo" || m.filterStack[1] != "other" {
+		t.Errorf("Expected filterStack=['repo', 'other'], got %v", m.filterStack)
+	}
+
+	// Remove non-existent filter should be no-op
+	m.removeFilterFromStack("nonexistent")
+	if len(m.filterStack) != 2 {
+		t.Errorf("Expected filterStack length to remain 2, got %d", len(m.filterStack))
+	}
+}
+
+func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
+	// Test that pagination is disabled when branch filter is active
+	// (since branch filtering fetches all jobs upfront)
+	m := newTuiModel("http://localhost")
+
+	// Set up at last job with branch filter active
+	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.hasMore = true
+	m.loadingMore = false
+	m.activeBranchFilter = "feature" // Branch filter active
+	m.currentView = tuiViewQueue
+
+	// Press down at bottom - should NOT trigger load more (filtered view loads all)
+	m2, cmd := pressSpecial(m, tea.KeyDown)
+
+	if m2.loadingMore {
+		t.Error("loadingMore should not be set when branch filter is active")
+	}
+	if cmd != nil {
+		t.Error("Should not return command when branch filter is active")
+	}
+}
+
+func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
+	// Test that j/left key pagination is disabled when branch filter is active
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.hasMore = true
+	m.loadingMore = false
+	m.activeBranchFilter = "feature"
+	m.currentView = tuiViewQueue
+
+	// Press j at bottom - should NOT trigger load more
+	m2, cmd := pressKey(m, 'j')
+
+	if m2.loadingMore {
+		t.Error("loadingMore should not be set when branch filter is active (j key)")
+	}
+	if cmd != nil {
+		t.Error("Should not return command when branch filter is active (j key)")
+	}
+}
+
+func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
+	// Test that pgdown pagination is disabled when branch filter is active
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.hasMore = true
+	m.loadingMore = false
+	m.activeBranchFilter = "feature"
+	m.currentView = tuiViewQueue
+	m.height = 20 // Ensure page size calc works
+
+	// Press pgdown at bottom - should NOT trigger load more
+	m2, cmd := pressSpecial(m, tea.KeyPgDown)
+
+	if m2.loadingMore {
+		t.Error("loadingMore should not be set when branch filter is active (pgdown)")
+	}
+	if cmd != nil {
+		t.Error("Should not return command when branch filter is active (pgdown)")
+	}
+}
+
+func TestTUIWindowResizeNoLoadMoreWhenBranchFiltered(t *testing.T) {
+	// Test that window resize doesn't trigger pagination when branch filter is active
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
+	m.hasMore = true
+	m.loadingMore = false
+	m.loadingJobs = false
+	m.activeBranchFilter = "feature"
+	m.currentView = tuiViewQueue
+	m.height = 10
+
+	// Resize to larger window - should NOT trigger load more
+	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 50})
+
+	if m2.loadingMore {
+		t.Error("loadingMore should not be set when branch filter is active (window resize)")
+	}
+	if m2.loadingJobs {
+		t.Error("loadingJobs should not be set when branch filter is active (window resize)")
+	}
+	// Window resize returns nil command when not triggering fetch
+	_ = cmd
+}
+
+func TestTUIBranchFilterTriggersRefetch(t *testing.T) {
+	// Test that applying a branch filter triggers a refetch
+	// (needed because branch filter changes fetch from limited to unlimited)
+	m := newTuiModel("http://localhost")
+
+	m.currentView = tuiViewBranchFilter
+	m.filterBranches = []branchFilterItem{
+		{name: "main", count: 5},
+		{name: "feature", count: 3},
+	}
+	m.branchFilterSelectedIdx = 1 // Select "feature"
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withBranch("main")),
+		makeJob(2, withBranch("feature")),
+	}
+	m.loadingJobs = false
+
+	// Press Enter to select
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
+
+	if !m2.loadingJobs {
+		t.Error("loadingJobs should be true after applying branch filter")
+	}
+	if m2.jobs != nil {
+		t.Error("jobs should be cleared when applying branch filter")
+	}
+	if cmd == nil {
+		t.Error("Should return fetchJobs command when applying branch filter")
+	}
+}
+
+func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
+	// Test that clearing a branch filter triggers a refetch
+	m := newTuiModel("http://localhost")
+
+	m.currentView = tuiViewQueue
+	m.activeBranchFilter = "feature"
+	m.filterStack = []string{"branch"}
+	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
+	m.loadingJobs = false
+
+	// Press Escape to clear filter
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
+
+	if m2.activeBranchFilter != "" {
+		t.Errorf("Expected activeBranchFilter to be cleared, got '%s'", m2.activeBranchFilter)
+	}
+	if !m2.loadingJobs {
+		t.Error("loadingJobs should be true after clearing branch filter")
+	}
+	if cmd == nil {
+		t.Error("Should return fetchJobs command when clearing branch filter")
+	}
+}
+
+// Backfill gating tests
+
+func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
+	// Test that branchBackfillDone is set only when nullsRemaining is 0
+	m := newTuiModel("http://localhost")
+	m.branchBackfillDone = false
+
+	// Receive message with no NULLs remaining
+	m2, _ := updateModel(t, m, tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 5}},
+		totalCount:     5,
+		backfillCount:  0,
+		nullsRemaining: 0,
+	})
+
+	if !m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to be true when nullsRemaining is 0")
+	}
+}
+
+func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
+	// Test that branchBackfillDone IS set even when nullsRemaining > 0
+	// Backfill is a one-time migration operation - new jobs have branches set at enqueue time
+	m := newTuiModel("http://localhost")
+	m.branchBackfillDone = false
+
+	// Receive message with some NULLs remaining
+	m2, _ := updateModel(t, m, tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 3}},
+		totalCount:     8,
+		backfillCount:  2,
+		nullsRemaining: 3, // Some legacy jobs still have NULL branches
+	})
+
+	if !m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to be true after first fetch (one-time operation)")
+	}
+}
+
+func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
+	// Test that backfill is a one-time operation - branchBackfillDone stays true once set
+	m := newTuiModel("http://localhost")
+	m.branchBackfillDone = false
+
+	// First fetch: some NULLs remain, backfillDone should be set anyway (one-time operation)
+	m2, _ := updateModel(t, m, tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 2}},
+		totalCount:     7,
+		backfillCount:  1,
+		nullsRemaining: 2,
+	})
+
+	if !m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to be true after first fetch")
+	}
+
+	// Second fetch: branchBackfillDone stays true
+	m3, _ := updateModel(t, m2, tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 7}},
+		totalCount:     7,
+		backfillCount:  0,
+		nullsRemaining: 0,
+	})
+
+	if !m3.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to remain true after subsequent fetches")
+	}
+}
+
+func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
+	// Test that branchBackfillDone stays true even if NULLs appear in stats
+	// Backfill is a one-time migration - new jobs should have branches set at enqueue time
+	// Any "(none)" count represents legacy jobs that weren't backfilled, not new work to do
+	m := newTuiModel("http://localhost")
+	m.branchBackfillDone = true // Previously marked as done
+
+	// Receive message with NULLs (legacy jobs that weren't backfilled)
+	m2, _ := updateModel(t, m, tuiBranchesMsg{
+		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 2}},
+		totalCount:     7,
+		backfillCount:  0,
+		nullsRemaining: 2,
+	})
+
+	if !m2.branchBackfillDone {
+		t.Error("Expected branchBackfillDone to remain true (one-time operation)")
+	}
+}
+
+func TestTUIStatusDisplaysCorrectly(t *testing.T) {
+	// Test that the queue view renders status correctly
+	m := newTuiModel("http://localhost")
+	m.width = 200
+	m.height = 30
+	m.currentView = tuiViewQueue
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("repo"), withRepoPath("/path"), withRef("abc"), withStatus(storage.JobStatusRunning)),
+		makeJob(2, withRepoName("repo"), withRepoPath("/path"), withRef("def"), withStatus(storage.JobStatusQueued)),
+		makeJob(3, withRepoName("repo"), withRepoPath("/path"), withRef("ghi")),
+		makeJob(4, withRepoName("repo"), withRepoPath("/path"), withRef("jkl"), withStatus(storage.JobStatusFailed)),
+		makeJob(5, withRepoName("repo"), withRepoPath("/path"), withRef("mno"), withStatus(storage.JobStatusCanceled)),
+	}
+	m.selectedIdx = 0
+
+	output := m.View()
+	if len(output) == 0 {
+		t.Error("Expected non-empty view output")
+	}
+
+	// Verify all status strings appear in output
+	for _, status := range []string{"running", "queued", "done", "failed", "canceled"} {
+		if !strings.Contains(output, status) {
+			t.Errorf("Expected output to contain status '%s'", status)
+		}
 	}
 }

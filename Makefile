@@ -10,13 +10,11 @@ build:
 	go build -ldflags="$(LDFLAGS)" -o bin/roborev ./cmd/roborev
 
 install:
-	@# Install to existing location if found, otherwise use go install default
-	@if [ -f "$(HOME)/.local/bin/roborev" ]; then \
-		echo "Installing to ~/.local/bin/roborev"; \
-		go build -ldflags="$(LDFLAGS)" -o "$(HOME)/.local/bin/roborev" ./cmd/roborev; \
-	else \
-		go install -ldflags="$(LDFLAGS)" ./cmd/roborev; \
-	fi
+	@# Install to ~/.local/bin for development (creates directory if needed)
+	@if [ -z "$(HOME)" ]; then echo "error: HOME is not set" >&2; exit 1; fi
+	@mkdir -p "$(HOME)/.local/bin"
+	go build -ldflags="$(LDFLAGS)" -o "$(HOME)/.local/bin/roborev" ./cmd/roborev
+	@echo "Installed to ~/.local/bin/roborev"
 
 clean:
 	rm -rf bin/

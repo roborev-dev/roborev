@@ -14,8 +14,8 @@ func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, times
 	err := db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha).
 		Scan(&commit.ID, &commit.RepoID, &commit.SHA, &commit.Author, &commit.Subject, &ts, &createdAt)
 	if err == nil {
-		commit.Timestamp, _ = time.Parse(time.RFC3339, ts)
-		commit.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		commit.Timestamp = parseSQLiteTime(ts)
+		commit.CreatedAt = parseSQLiteTime(createdAt)
 		return &commit, nil
 	}
 	if err != sql.ErrNoRows {
@@ -65,8 +65,8 @@ func (db *DB) GetCommitBySHA(sha string) (*Commit, error) {
 	if err != nil {
 		return nil, err
 	}
-	commit.Timestamp, _ = time.Parse(time.RFC3339, ts)
-	commit.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	commit.Timestamp = parseSQLiteTime(ts)
+	commit.CreatedAt = parseSQLiteTime(createdAt)
 	return &commit, nil
 }
 
@@ -79,8 +79,8 @@ func (db *DB) GetCommitByRepoAndSHA(repoID int64, sha string) (*Commit, error) {
 	if err != nil {
 		return nil, err
 	}
-	commit.Timestamp, _ = time.Parse(time.RFC3339, ts)
-	commit.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	commit.Timestamp = parseSQLiteTime(ts)
+	commit.CreatedAt = parseSQLiteTime(createdAt)
 	return &commit, nil
 }
 
@@ -93,7 +93,7 @@ func (db *DB) GetCommitByID(id int64) (*Commit, error) {
 	if err != nil {
 		return nil, err
 	}
-	commit.Timestamp, _ = time.Parse(time.RFC3339, ts)
-	commit.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	commit.Timestamp = parseSQLiteTime(ts)
+	commit.CreatedAt = parseSQLiteTime(createdAt)
 	return &commit, nil
 }

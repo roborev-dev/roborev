@@ -27,6 +27,7 @@ type Server struct {
 	workerPool    *WorkerPool
 	httpServer    *http.Server
 	syncWorker    *storage.SyncWorker
+	hookRunner    *HookRunner
 	errorLog      *ErrorLog
 	startTime     time.Time
 
@@ -51,11 +52,15 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	// Create config watcher for hot-reloading
 	configWatcher := NewConfigWatcher(configPath, cfg, broadcaster)
 
+	// Create hook runner to fire hooks on review events
+	hookRunner := NewHookRunner(configWatcher, broadcaster)
+
 	s := &Server{
 		db:            db,
 		configWatcher: configWatcher,
 		broadcaster:   broadcaster,
 		workerPool:    NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog),
+		hookRunner:    hookRunner,
 		errorLog:      errorLog,
 		startTime:     time.Now(),
 	}
@@ -67,7 +72,9 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/job/cancel", s.handleCancelJob)
 	mux.HandleFunc("/api/job/output", s.handleJobOutput)
 	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
+	mux.HandleFunc("/api/job/update-branch", s.handleUpdateJobBranch)
 	mux.HandleFunc("/api/repos", s.handleListRepos)
+	mux.HandleFunc("/api/branches", s.handleListBranches)
 	mux.HandleFunc("/api/review", s.handleGetReview)
 	mux.HandleFunc("/api/review/address", s.handleAddressReview)
 	mux.HandleFunc("/api/comment", s.handleAddComment)
@@ -153,6 +160,11 @@ func (s *Server) Stop() error {
 
 	// Stop worker pool
 	s.workerPool.Stop()
+
+	// Stop hook runner
+	if s.hookRunner != nil {
+		s.hookRunner.Stop()
+	}
 
 	// Close error log
 	if s.errorLog != nil {
@@ -294,12 +306,14 @@ type EnqueueRequest struct {
 	RepoPath     string `json:"repo_path"`
 	CommitSHA    string `json:"commit_sha,omitempty"`    // Single commit (for backwards compat)
 	GitRef       string `json:"git_ref,omitempty"`       // Single commit, range like "abc..def", or "dirty"
+	Branch       string `json:"branch,omitempty"`        // Branch name at time of job creation
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
 	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
 	Reasoning    string `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
 	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
 	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
+	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 }
 
 type ErrorResponse struct {
@@ -330,9 +344,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Limit request body size to prevent DoS via large payloads
-	// 250KB allows for 200KB diff content plus JSON overhead
-	const maxBodySize = 250 * 1024
+	// Limit request body size to prevent DoS via large payloads.
+	// Derive from configured max prompt size + 50KB overhead for JSON envelope.
+	maxPromptSize := config.DefaultMaxPromptSize
+	if cfg := s.configWatcher.Config(); cfg != nil && cfg.DefaultMaxPromptSize > 0 {
+		maxPromptSize = cfg.DefaultMaxPromptSize
+	}
+	maxBodySize := int64(maxPromptSize) + 50*1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
 	var req EnqueueRequest
@@ -340,7 +358,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		// Use errors.As for reliable detection of MaxBytesReader errors
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large (max 250KB)")
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body too large (max %dKB)", maxBodySize/1024))
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -395,18 +413,18 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve agent (uses main repo root for config lookup)
-	agentName := config.ResolveAgent(req.Agent, repoRoot, s.configWatcher.Config())
-
-	// Resolve model (uses main repo root for config lookup)
-	model := config.ResolveModel(req.Model, repoRoot, s.configWatcher.Config())
-
-	// Resolve reasoning level (uses main repo root for config lookup)
+	// Resolve reasoning level first (needed for agent/model resolution)
 	reasoning, err := config.ResolveReviewReasoning(req.Reasoning, repoRoot)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// Resolve agent for review workflow at this reasoning level
+	agentName := config.ResolveAgentForWorkflow(req.Agent, repoRoot, s.configWatcher.Config(), "review", reasoning)
+
+	// Resolve model for review workflow at this reasoning level
+	model := config.ResolveModelForWorkflow(req.Model, repoRoot, s.configWatcher.Config(), "review", reasoning)
 
 	// Check if this is a custom prompt, dirty review, range, or single commit
 	// Note: isPrompt is determined by whether custom_prompt is provided, not git_ref value
@@ -431,14 +449,24 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var job *storage.ReviewJob
 	if isPrompt {
 		// Custom prompt job - use provided prompt directly
-		job, err = s.db.EnqueuePromptJob(repo.ID, agentName, model, reasoning, req.CustomPrompt, req.Agentic)
+		job, err = s.db.EnqueuePromptJob(storage.PromptJobOptions{
+			RepoID:       repo.ID,
+			Branch:       req.Branch,
+			Agent:        agentName,
+			Model:        model,
+			Reasoning:    reasoning,
+			Prompt:       req.CustomPrompt,
+			OutputPrefix: req.OutputPrefix,
+			Agentic:      req.Agentic,
+			Label:        gitRef, // Use git_ref as TUI label (run, analyze type, custom)
+		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
 			return
 		}
 	} else if isDirty {
 		// Dirty review - use pre-captured diff
-		job, err = s.db.EnqueueDirtyJob(repo.ID, gitRef, agentName, model, reasoning, req.DiffContent)
+		job, err = s.db.EnqueueDirtyJob(repo.ID, gitRef, req.Branch, agentName, model, reasoning, req.DiffContent)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue dirty job: %v", err))
 			return
@@ -460,7 +488,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 		// Store as full SHA range
 		fullRef := startSHA + ".." + endSHA
-		job, err = s.db.EnqueueRangeJob(repo.ID, fullRef, agentName, model, reasoning)
+		job, err = s.db.EnqueueRangeJob(repo.ID, fullRef, req.Branch, agentName, model, reasoning)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
 			return
@@ -487,7 +515,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		job, err = s.db.EnqueueJob(repo.ID, commit.ID, sha, agentName, model, reasoning)
+		job, err = s.db.EnqueueJob(repo.ID, commit.ID, sha, req.Branch, agentName, model, reasoning)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
 			return
@@ -573,7 +601,22 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		fetchLimit = limit + 1
 	}
 
-	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset, gitRef)
+	var listOpts []storage.ListJobsOption
+	if gitRef != "" {
+		listOpts = append(listOpts, storage.WithGitRef(gitRef))
+	}
+	if branch := r.URL.Query().Get("branch"); branch != "" {
+		if r.URL.Query().Get("branch_include_empty") == "true" {
+			listOpts = append(listOpts, storage.WithBranchOrEmpty(branch))
+		} else {
+			listOpts = append(listOpts, storage.WithBranch(branch))
+		}
+	}
+	if addrStr := r.URL.Query().Get("addressed"); addrStr == "true" || addrStr == "false" {
+		listOpts = append(listOpts, storage.WithAddressed(addrStr == "true"))
+	}
+
+	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset, listOpts...)
 	if err != nil {
 		s.writeInternalError(w, fmt.Sprintf("list jobs: %v", err))
 		return
@@ -598,7 +641,18 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repos, totalCount, err := s.db.ListReposWithReviewCounts()
+	// Optional branch filter
+	branch := r.URL.Query().Get("branch")
+
+	var repos []storage.RepoWithCount
+	var totalCount int
+	var err error
+
+	if branch != "" {
+		repos, totalCount, err = s.db.ListReposWithReviewCountsByBranch(branch)
+	} else {
+		repos, totalCount, err = s.db.ListReposWithReviewCounts()
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list repos: %v", err))
 		return
@@ -607,6 +661,34 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"repos":       repos,
 		"total_count": totalCount,
+	})
+}
+
+func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Optional repo filter (by path) - supports multiple values
+	// Filter out empty strings to treat ?repo= as no filter
+	var repoPaths []string
+	for _, p := range r.URL.Query()["repo"] {
+		if p != "" {
+			repoPaths = append(repoPaths, p)
+		}
+	}
+
+	result, err := s.db.ListBranchesWithCounts(repoPaths)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list branches: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"branches":        result.Branches,
+		"total_count":     result.TotalCount,
+		"nulls_remaining": result.NullsRemaining,
 	})
 }
 
@@ -801,6 +883,42 @@ func (s *Server) handleRerunJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *Server) handleUpdateJobBranch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req struct {
+		JobID  int64  `json:"job_id"`
+		Branch string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.JobID == 0 {
+		writeError(w, http.StatusBadRequest, "job_id is required")
+		return
+	}
+	if req.Branch == "" {
+		writeError(w, http.StatusBadRequest, "branch is required")
+		return
+	}
+
+	rowsAffected, err := s.db.UpdateJobBranch(req.JobID, req.Branch)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("update branch: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"updated": rowsAffected > 0,
+	})
 }
 
 func (s *Server) handleGetReview(w http.ResponseWriter, r *http.Request) {

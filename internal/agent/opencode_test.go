@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
-	"strings"
 	"testing"
 )
 
 func TestFilterOpencodeToolCallLines(t *testing.T) {
+	readCall := makeToolCallJSON("read", map[string]interface{}{"path": "/foo"})
+	editCall := makeToolCallJSON("edit", map[string]interface{}{})
+
 	tests := []struct {
 		name     string
 		input    string
@@ -14,7 +16,7 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 	}{
 		{
 			name:     "only tool-call lines",
-			input:    `{"name":"read","arguments":{"path":"/foo"}}` + "\n" + `{"name":"edit","arguments":{}}`,
+			input:    readCall + "\n" + editCall,
 			expected: "",
 		},
 		{
@@ -24,7 +26,7 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 		},
 		{
 			name:     "mixed",
-			input:    `{"name":"read","arguments":{}}` + "\n" + "Real text\n" + `{"name":"edit","arguments":{}}`,
+			input:    makeToolCallJSON("read", map[string]interface{}{}) + "\n" + "Real text\n" + makeToolCallJSON("edit", map[string]interface{}{}),
 			expected: "Real text",
 		},
 		{
@@ -75,25 +77,19 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 
 func TestOpenCodeReviewFiltersToolCallLines(t *testing.T) {
 	skipIfWindows(t)
-	script := `#!/bin/sh
-printf '%s\n' '{"name":"read","arguments":{"path":"/foo"}}'
-echo "**Review:** Fix the typo."
-printf '%s\n' '{"name":"edit","arguments":{}}'
-echo "Done."
-`
+	script := NewScriptBuilder().
+		AddToolCall("read", map[string]interface{}{"path": "/foo"}).
+		AddOutput("**Review:** Fix the typo.").
+		AddToolCall("edit", map[string]interface{}{}).
+		AddOutput("Done.").
+		Build()
 	cmdPath := writeTempCommand(t, script)
 	a := NewOpenCodeAgent(cmdPath)
 	result, err := a.Review(context.Background(), t.TempDir(), "head", "prompt", nil)
 	if err != nil {
 		t.Fatalf("Review: %v", err)
 	}
-	if !strings.Contains(result, "**Review:**") {
-		t.Errorf("result missing **Review:**: %q", result)
-	}
-	if !strings.Contains(result, "Done.") {
-		t.Errorf("result missing Done.: %q", result)
-	}
-	if strings.Contains(result, `"name":"read"`) {
-		t.Errorf("result should not contain tool-call JSON: %q", result)
-	}
+	assertContains(t, result, "**Review:**")
+	assertContains(t, result, "Done.")
+	assertNotContains(t, result, `"name":"read"`)
 }

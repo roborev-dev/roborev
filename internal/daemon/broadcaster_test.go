@@ -5,6 +5,54 @@ import (
 	"time"
 )
 
+// assertEventReceived waits for an event or fails the test if it times out.
+func assertEventReceived(t *testing.T, ch <-chan Event) Event {
+	t.Helper()
+	select {
+	case e := <-ch:
+		return e
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for event")
+		return Event{}
+	}
+}
+
+// assertNoEventReceived verifies no event arrives within a short window.
+func assertNoEventReceived(t *testing.T, ch <-chan Event) {
+	t.Helper()
+	select {
+	case e := <-ch:
+		t.Fatalf("received unexpected event: %v", e)
+	case <-time.After(100 * time.Millisecond):
+		// OK
+	}
+}
+
+// getSubscriberCount safely retrieves the current number of subscribers.
+func getSubscriberCount(t *testing.T, b Broadcaster) int {
+	t.Helper()
+	eb, ok := b.(*EventBroadcaster)
+	if !ok {
+		t.Fatal("Broadcaster is not *EventBroadcaster")
+	}
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return len(eb.subscribers)
+}
+
+// makeTestEvent creates a valid event with the given job ID and repo.
+func makeTestEvent(jobID int64, repo string) Event {
+	return Event{
+		Type:    "review.completed",
+		TS:      time.Now(),
+		JobID:   jobID,
+		Repo:    repo,
+		SHA:     "abc123",
+		Agent:   "test-agent",
+		Verdict: "P",
+	}
+}
+
 func TestBroadcaster_Subscribe(t *testing.T) {
 	b := NewBroadcaster()
 
@@ -25,12 +73,7 @@ func TestBroadcaster_Subscribe(t *testing.T) {
 		t.Error("subscriber channels should be different")
 	}
 
-	// Verify broadcaster has 2 subscribers
-	eb := b.(*EventBroadcaster)
-	eb.mu.RLock()
-	count := len(eb.subscribers)
-	eb.mu.RUnlock()
-	if count != 2 {
+	if count := getSubscriberCount(t, b); count != 2 {
 		t.Errorf("expected 2 subscribers, got %d", count)
 	}
 }
@@ -49,12 +92,7 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 		t.Error("expected channel to be closed after unsubscribe")
 	}
 
-	// Verify broadcaster has 0 subscribers
-	eb := b.(*EventBroadcaster)
-	eb.mu.RLock()
-	count := len(eb.subscribers)
-	eb.mu.RUnlock()
-	if count != 0 {
+	if count := getSubscriberCount(t, b); count != 0 {
 		t.Errorf("expected 0 subscribers after unsubscribe, got %d", count)
 	}
 }
@@ -62,93 +100,39 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 func TestBroadcaster_Broadcast(t *testing.T) {
 	b := NewBroadcaster()
 
-	// Subscribe two clients
 	_, ch1 := b.Subscribe("")
 	_, ch2 := b.Subscribe("")
 
-	// Broadcast an event
-	event := Event{
-		Type:    "review.completed",
-		TS:      time.Now(),
-		JobID:   123,
-		Repo:    "/path/to/repo",
-		SHA:     "abc123",
-		Agent:   "test-agent",
-		Verdict: "P",
+	b.Broadcast(makeTestEvent(123, "/path/to/repo"))
+
+	e1 := assertEventReceived(t, ch1)
+	if e1.JobID != 123 {
+		t.Errorf("expected JobID 123, got %d", e1.JobID)
 	}
 
-	b.Broadcast(event)
-
-	// Both subscribers should receive the event
-	select {
-	case e := <-ch1:
-		if e.JobID != 123 {
-			t.Errorf("expected JobID 123, got %d", e.JobID)
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("subscriber 1 did not receive event")
-	}
-
-	select {
-	case e := <-ch2:
-		if e.JobID != 123 {
-			t.Errorf("expected JobID 123, got %d", e.JobID)
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("subscriber 2 did not receive event")
+	e2 := assertEventReceived(t, ch2)
+	if e2.JobID != 123 {
+		t.Errorf("expected JobID 123, got %d", e2.JobID)
 	}
 }
 
 func TestBroadcaster_BroadcastWithFilter(t *testing.T) {
 	b := NewBroadcaster()
 
-	// Subscribe with different filters
 	_, chAll := b.Subscribe("")
 	_, chRepo1 := b.Subscribe("/path/to/repo1")
 	_, chRepo2 := b.Subscribe("/path/to/repo2")
 
-	// Broadcast event for repo1
-	event := Event{
-		Type:    "review.completed",
-		TS:      time.Now(),
-		JobID:   123,
-		Repo:    "/path/to/repo1",
-		SHA:     "abc123",
-		Agent:   "test-agent",
-		Verdict: "P",
-	}
+	b.Broadcast(makeTestEvent(123, "/path/to/repo1"))
 
-	b.Broadcast(event)
-
-	// Subscriber with no filter should receive it
-	select {
-	case <-chAll:
-		// OK
-	case <-time.After(100 * time.Millisecond):
-		t.Error("subscriber with no filter did not receive event")
-	}
-
-	// Subscriber for repo1 should receive it
-	select {
-	case <-chRepo1:
-		// OK
-	case <-time.After(100 * time.Millisecond):
-		t.Error("subscriber for repo1 did not receive event")
-	}
-
-	// Subscriber for repo2 should NOT receive it
-	select {
-	case <-chRepo2:
-		t.Error("subscriber for repo2 should not have received event")
-	case <-time.After(100 * time.Millisecond):
-		// OK - no event received
-	}
+	assertEventReceived(t, chAll)
+	assertEventReceived(t, chRepo1)
+	assertNoEventReceived(t, chRepo2)
 }
 
 func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 	b := NewBroadcaster()
 
-	// Subscribe a client
 	_, ch := b.Subscribe("")
 
 	// Fill the channel buffer (capacity is 10)
@@ -179,12 +163,7 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 	}
 
 	// Channel should be empty now
-	select {
-	case <-ch:
-		t.Error("unexpected event in channel")
-	case <-time.After(10 * time.Millisecond):
-		// OK
-	}
+	assertNoEventReceived(t, ch)
 }
 
 func TestEvent_MarshalJSON(t *testing.T) {

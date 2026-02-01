@@ -15,10 +15,51 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+// createTestGitRepo creates a temporary git repo with an initial commit and
+// returns the repo path (symlink-resolved) and a helper to run git commands in it.
+func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(tmpDir); err == nil {
+		tmpDir = resolved
+	}
+	repoDir := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
+	testFile := filepath.Join(repoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "initial")
+	return repoDir, run
+}
+
+// mockAPI creates an httptest.Server with the given handler and returns
+// an HTTPClient pointing at it. The server is closed when the test finishes.
+func mockAPI(t *testing.T, handler http.HandlerFunc) *HTTPClient {
+	t.Helper()
+	s := httptest.NewServer(handler)
+	t.Cleanup(s.Close)
+	return NewHTTPClient(s.URL)
+}
+
 func TestHTTPClientAddComment(t *testing.T) {
 	var received map[string]interface{}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/comment" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -28,10 +69,7 @@ func TestHTTPClientAddComment(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		w.WriteHeader(http.StatusCreated)
-	}))
-	defer server.Close()
-
-	client := NewHTTPClient(server.URL)
+	})
 	if err := client.AddComment(42, "test-agent", "Fixed the issue"); err != nil {
 		t.Fatalf("AddComment failed: %v", err)
 	}
@@ -50,7 +88,7 @@ func TestHTTPClientAddComment(t *testing.T) {
 func TestHTTPClientMarkReviewAddressed(t *testing.T) {
 	var received map[string]interface{}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -60,10 +98,7 @@ func TestHTTPClientMarkReviewAddressed(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := NewHTTPClient(server.URL)
+	})
 	if err := client.MarkReviewAddressed(99); err != nil {
 		t.Fatalf("MarkReviewAddressed failed: %v", err)
 	}
@@ -79,7 +114,7 @@ func TestHTTPClientMarkReviewAddressed(t *testing.T) {
 func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 	var reviewCalls int32
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/jobs" && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -103,10 +138,7 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer server.Close()
-
-	client := NewHTTPClient(server.URL)
+	})
 	client.SetPollInterval(1 * time.Millisecond)
 	review, err := client.WaitForReview(1)
 	if err != nil {
@@ -127,39 +159,9 @@ func TestFindJobForCommitWorktree(t *testing.T) {
 	}
 
 	// Create a real git repo and worktree to test path normalization
-	tmpDir := t.TempDir()
-	// Resolve symlinks (macOS /var -> /private/var)
-	if resolved, err := filepath.EvalSymlinks(tmpDir); err == nil {
-		tmpDir = resolved
-	}
-	mainRepo := filepath.Join(tmpDir, "main")
-	worktreeDir := filepath.Join(tmpDir, "worktree")
-
-	// Initialize main repo
-	if err := os.MkdirAll(mainRepo, 0755); err != nil {
-		t.Fatal(err)
-	}
-	runGit := func(dir string, args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	runGit(mainRepo, "init")
-	runGit(mainRepo, "config", "user.email", "test@test.com")
-	runGit(mainRepo, "config", "user.name", "Test")
-
-	// Create initial commit
-	testFile := filepath.Join(mainRepo, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(mainRepo, "add", ".")
-	runGit(mainRepo, "commit", "-m", "initial")
-
-	// Create worktree
-	runGit(mainRepo, "worktree", "add", worktreeDir, "HEAD")
+	mainRepo, runGit := createTestGitRepo(t)
+	worktreeDir := filepath.Join(filepath.Dir(mainRepo), "worktree")
+	runGit("worktree", "add", worktreeDir, "HEAD")
 
 	sha := "abc123"
 
@@ -167,7 +169,7 @@ func TestFindJobForCommitWorktree(t *testing.T) {
 	var mu sync.Mutex
 	var receivedRepo string
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/jobs" || r.Method != http.MethodGet {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -194,10 +196,7 @@ func TestFindJobForCommitWorktree(t *testing.T) {
 		}
 
 		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
-	}))
-	defer server.Close()
-
-	client := NewHTTPClient(server.URL)
+	})
 
 	t.Run("worktree path normalized to main repo", func(t *testing.T) {
 		// Query using worktree path - should be normalized to main repo path
@@ -245,7 +244,7 @@ func TestFindJobForCommitFallback(t *testing.T) {
 
 	var primaryCalled, fallbackCalled int32
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/jobs" || r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -267,10 +266,7 @@ func TestFindJobForCommitFallback(t *testing.T) {
 				{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
 			},
 		})
-	}))
-	defer server.Close()
-
-	client := NewHTTPClient(server.URL)
+	})
 
 	// Use the same temp dir so paths match after normalization
 	job, err := client.FindJobForCommit(mainRepo, sha)
@@ -295,7 +291,7 @@ func TestFindJobForCommitFallback(t *testing.T) {
 
 func TestFindPendingJobForRef(t *testing.T) {
 	t.Run("returns running job via server-side status filter", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/jobs" || r.Method != http.MethodGet {
 				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 				w.WriteHeader(http.StatusNotFound)
@@ -320,10 +316,7 @@ func TestFindPendingJobForRef(t *testing.T) {
 				// No queued jobs
 				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 			}
-		}))
-		defer server.Close()
-
-		client := NewHTTPClient(server.URL)
+		})
 		job, err := client.FindPendingJobForRef("/test/repo", "abc123..def456")
 		if err != nil {
 			t.Fatalf("FindPendingJobForRef failed: %v", err)
@@ -338,13 +331,10 @@ func TestFindPendingJobForRef(t *testing.T) {
 	})
 
 	t.Run("returns nil when no pending jobs", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 			// No jobs for any status
 			json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
-		}))
-		defer server.Close()
-
-		client := NewHTTPClient(server.URL)
+		})
 		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
 		if err != nil {
 			t.Fatalf("FindPendingJobForRef failed: %v", err)
@@ -357,7 +347,7 @@ func TestFindPendingJobForRef(t *testing.T) {
 
 	t.Run("returns queued job before checking running", func(t *testing.T) {
 		var queriedStatuses []string
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 			status := r.URL.Query().Get("status")
 			queriedStatuses = append(queriedStatuses, status)
 
@@ -370,10 +360,7 @@ func TestFindPendingJobForRef(t *testing.T) {
 			} else {
 				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 			}
-		}))
-		defer server.Close()
-
-		client := NewHTTPClient(server.URL)
+		})
 		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
 		if err != nil {
 			t.Fatalf("FindPendingJobForRef failed: %v", err)
@@ -394,7 +381,7 @@ func TestFindPendingJobForRef(t *testing.T) {
 
 	t.Run("queries both queued and running when needed", func(t *testing.T) {
 		var queriedStatuses []string
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 			status := r.URL.Query().Get("status")
 			queriedStatuses = append(queriedStatuses, status)
 
@@ -407,10 +394,7 @@ func TestFindPendingJobForRef(t *testing.T) {
 			} else {
 				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 			}
-		}))
-		defer server.Close()
-
-		client := NewHTTPClient(server.URL)
+		})
 		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
 		if err != nil {
 			t.Fatalf("FindPendingJobForRef failed: %v", err)

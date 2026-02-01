@@ -149,6 +149,30 @@ func GetStat(repoPath, sha string) (string, error) {
 	return string(out), nil
 }
 
+// IsUnbornHead returns true if the repository has an unborn HEAD (no commits yet).
+// Returns false if HEAD points to a valid commit, if the path is not a git repo,
+// or if HEAD is corrupt (e.g., ref pointing to a missing object).
+func IsUnbornHead(repoPath string) bool {
+	// Unborn HEAD = symbolic ref exists but the target branch ref doesn't.
+	// Step 1: HEAD must be a symbolic ref (e.g., refs/heads/main)
+	cmd := exec.Command("git", "symbolic-ref", "-q", "HEAD")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return false // not a symbolic ref or not a git repo
+	}
+	ref := strings.TrimSpace(string(out))
+	if ref == "" {
+		return false
+	}
+	// Step 2: "rev-parse --verify <ref>" fails only when the ref doesn't
+	// exist at all (unborn). For corrupt refs (file exists but points to a
+	// missing object), rev-parse still succeeds and returns the raw SHA.
+	cmd = exec.Command("git", "rev-parse", "--verify", ref)
+	cmd.Dir = repoPath
+	return cmd.Run() != nil
+}
+
 // ResolveSHA resolves a ref (like HEAD) to a full SHA
 func ResolveSHA(repoPath, ref string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", ref)
@@ -604,6 +628,12 @@ func GetBranchName(repoPath, sha string) string {
 	// name-rev returns "undefined" if commit isn't reachable from any branch
 	if name == "" || name == "undefined" {
 		return ""
+	}
+
+	// Strip ~N or ^N suffix (e.g., "main~12" -> "main")
+	// These indicate the commit is N commits behind the branch tip
+	if idx := strings.IndexAny(name, "~^"); idx != -1 {
+		name = name[:idx]
 	}
 
 	return name

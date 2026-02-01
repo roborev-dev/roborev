@@ -83,6 +83,16 @@ func waitForEvents(w *safeRecorder, minEvents int, timeout time.Duration) bool {
 	return false
 }
 
+// newTestServer creates a Server with a test DB and default config.
+// Returns the server, DB (for seeding/assertions), and temp directory.
+func newTestServer(t *testing.T) (*Server, *storage.DB, string) {
+	t.Helper()
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+	return server, db, tmpDir
+}
+
 func TestNewServerAllowUnsafeAgents(t *testing.T) {
 	boolTrue := true
 	boolFalse := false
@@ -144,9 +154,7 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 }
 
 func TestHandleListRepos(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	t.Run("empty database", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
@@ -157,9 +165,7 @@ func TestHandleListRepos(t *testing.T) {
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
 		var response map[string]interface{}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// repos can be nil when empty
 		var reposLen int
@@ -193,7 +199,7 @@ func TestHandleListRepos(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test", "", ""); err != nil {
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -205,7 +211,7 @@ func TestHandleListRepos(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test", "", ""); err != nil {
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -221,9 +227,7 @@ func TestHandleListRepos(t *testing.T) {
 		}
 
 		var response map[string]interface{}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		repos := response["repos"].([]interface{})
 		totalCount := int(response["total_count"].(float64))
@@ -262,10 +266,225 @@ func TestHandleListRepos(t *testing.T) {
 	})
 }
 
+func TestHandleListReposWithBranchFilter(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	// Create repos
+	repo1, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
+	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
+
+	// Add jobs to repos
+	for i := 0; i < 3; i++ {
+		sha := "repo1sha" + string(rune('a'+i))
+		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
+		db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
+	}
+	for i := 0; i < 2; i++ {
+		sha := "repo2sha" + string(rune('a'+i))
+		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
+		db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
+	}
+
+	// Set branches: repo1 jobs 1,2 = main, job 3 = feature; repo2 jobs 4,5 = main
+	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4, 5)")
+	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+
+	t.Run("filter by main branch", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=main", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListRepos(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		testutil.DecodeJSON(t, w, &response)
+
+		repos := response["repos"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		if len(repos) != 2 {
+			t.Errorf("Expected 2 repos with main branch, got %d", len(repos))
+		}
+		if totalCount != 4 {
+			t.Errorf("Expected total_count 4, got %d", totalCount)
+		}
+	})
+
+	t.Run("filter by feature branch", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=feature", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListRepos(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		testutil.DecodeJSON(t, w, &response)
+
+		repos := response["repos"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		if len(repos) != 1 {
+			t.Errorf("Expected 1 repo with feature branch, got %d", len(repos))
+		}
+		if totalCount != 1 {
+			t.Errorf("Expected total_count 1, got %d", totalCount)
+		}
+	})
+
+	t.Run("nonexistent branch returns empty", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=nonexistent", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListRepos(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		testutil.DecodeJSON(t, w, &response)
+
+		totalCount := int(response["total_count"].(float64))
+		if totalCount != 0 {
+			t.Errorf("Expected total_count 0 for nonexistent branch, got %d", totalCount)
+		}
+	})
+}
+
+func TestHandleListBranches(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	// Create repos
+	repo1, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
+	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
+
+	// Add jobs to repos
+	for i := 0; i < 3; i++ {
+		sha := "repo1sha" + string(rune('a'+i))
+		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
+		db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
+	}
+	for i := 0; i < 2; i++ {
+		sha := "repo2sha" + string(rune('a'+i))
+		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
+		db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
+	}
+
+	// Set branches: jobs 1,2,4 = main, job 3 = feature, job 5 = no branch
+	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4)")
+	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+
+	t.Run("list all branches", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/branches", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		testutil.DecodeJSON(t, w, &response)
+
+		branches := response["branches"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+		nullsRemaining := int(response["nulls_remaining"].(float64))
+
+		if len(branches) != 3 {
+			t.Errorf("Expected 3 branches, got %d", len(branches))
+		}
+		if totalCount != 5 {
+			t.Errorf("Expected total_count 5, got %d", totalCount)
+		}
+		if nullsRemaining != 1 {
+			t.Errorf("Expected nulls_remaining 1, got %d", nullsRemaining)
+		}
+	})
+
+	t.Run("filter by repo", func(t *testing.T) {
+		repoPath := filepath.Join(tmpDir, "repo1")
+		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repoPath, nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		testutil.DecodeJSON(t, w, &response)
+
+		branches := response["branches"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		if len(branches) != 2 {
+			t.Errorf("Expected 2 branches for repo1, got %d", len(branches))
+		}
+		if totalCount != 3 {
+			t.Errorf("Expected total_count 3 for repo1, got %d", totalCount)
+		}
+	})
+
+	t.Run("filter by multiple repos", func(t *testing.T) {
+		repo1Path := filepath.Join(tmpDir, "repo1")
+		repo2Path := filepath.Join(tmpDir, "repo2")
+		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repo1Path+"&repo="+repo2Path, nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		testutil.DecodeJSON(t, w, &response)
+
+		branches := response["branches"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		if len(branches) != 3 {
+			t.Errorf("Expected 3 branches for both repos, got %d", len(branches))
+		}
+		if totalCount != 5 {
+			t.Errorf("Expected total_count 5 for both repos, got %d", totalCount)
+		}
+	})
+
+	t.Run("empty repo param treated as no filter", func(t *testing.T) {
+		// Empty repo param should be ignored, returning all branches
+		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo=", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response map[string]interface{}
+		testutil.DecodeJSON(t, w, &response)
+
+		branches := response["branches"].([]interface{})
+		totalCount := int(response["total_count"].(float64))
+
+		// Should return all 3 branches and 5 jobs, not zero
+		if len(branches) != 3 {
+			t.Errorf("Expected 3 branches (empty repo = no filter), got %d", len(branches))
+		}
+		if totalCount != 5 {
+			t.Errorf("Expected total_count 5 (empty repo = no filter), got %d", totalCount)
+		}
+	})
+
+	t.Run("wrong method fails", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/branches", nil)
+		w := httptest.NewRecorder()
+
+		server.handleListBranches(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405 for POST, got %d", w.Code)
+		}
+	})
+}
+
 func TestHandleListJobsWithFilter(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	// Create repos and jobs
 	repo1, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
@@ -284,7 +503,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "test", "", ""); err != nil {
+		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -296,7 +515,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "test", "", ""); err != nil {
+		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", ""); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -314,9 +533,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 5 {
 			t.Errorf("Expected 5 jobs, got %d", len(response.Jobs))
@@ -337,9 +554,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 3 {
 			t.Errorf("Expected 3 jobs for repo1, got %d", len(response.Jobs))
@@ -366,9 +581,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 2 {
 			t.Errorf("Expected 2 jobs with limit=2, got %d", len(response.Jobs))
@@ -388,9 +601,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 5 {
 			t.Errorf("Expected 5 jobs with limit=0 (no limit), got %d", len(response.Jobs))
@@ -410,9 +621,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 2 {
 			t.Errorf("Expected 2 jobs with repo filter and limit=2, got %d", len(response.Jobs))
@@ -439,9 +648,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// Negative clamped to 0 (unlimited), should return all 5 jobs
 		if len(response.Jobs) != 5 {
@@ -462,9 +669,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// Large limit capped to 10000, but we only have 5 jobs
 		if len(response.Jobs) != 5 {
@@ -485,9 +690,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// Invalid limit uses default (50), we have 5 jobs
 		if len(response.Jobs) != 5 {
@@ -497,9 +700,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 }
 
 func TestHandleStatus(t *testing.T) {
-	db := testutil.OpenTestDB(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, _, _ := newTestServer(t)
 
 	t.Run("returns status with version", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
@@ -512,9 +713,7 @@ func TestHandleStatus(t *testing.T) {
 		}
 
 		var status storage.DaemonStatus
-		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &status)
 
 		// Version should be set (non-empty)
 		if status.Version == "" {
@@ -540,13 +739,12 @@ func TestHandleStatus(t *testing.T) {
 		server.handleStatus(w, req)
 
 		var status storage.DaemonStatus
-		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &status)
 
 		// MaxWorkers should match the pool size (config default), not a potentially reloaded config value
-		if status.MaxWorkers != cfg.MaxWorkers {
-			t.Errorf("Expected MaxWorkers %d from pool, got %d", cfg.MaxWorkers, status.MaxWorkers)
+		expectedWorkers := config.DefaultConfig().MaxWorkers
+		if status.MaxWorkers != expectedWorkers {
+			t.Errorf("Expected MaxWorkers %d from pool, got %d", expectedWorkers, status.MaxWorkers)
 		}
 	})
 
@@ -557,9 +755,7 @@ func TestHandleStatus(t *testing.T) {
 		server.handleStatus(w, req)
 
 		var status storage.DaemonStatus
-		if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
-			t.Fatalf("Failed to unmarshal response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &status)
 
 		// ConfigReloadedAt should be empty when no reload has occurred
 		if status.ConfigReloadedAt != "" {
@@ -569,9 +765,7 @@ func TestHandleStatus(t *testing.T) {
 }
 
 func TestHandleCancelJob(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	// Create a repo and job
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -582,14 +776,13 @@ func TestHandleCancelJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "canceltest", "test", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "canceltest", "", "test", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
 
 	t.Run("cancel queued job", func(t *testing.T) {
-		reqBody, _ := json.Marshal(CancelJobRequest{JobID: job.ID})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/cancel", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
 		server.handleCancelJob(w, req)
@@ -609,8 +802,7 @@ func TestHandleCancelJob(t *testing.T) {
 
 	t.Run("cancel already canceled job fails", func(t *testing.T) {
 		// Job is already canceled from previous test
-		reqBody, _ := json.Marshal(CancelJobRequest{JobID: job.ID})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/cancel", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
 		server.handleCancelJob(w, req)
@@ -621,8 +813,7 @@ func TestHandleCancelJob(t *testing.T) {
 	})
 
 	t.Run("cancel nonexistent job fails", func(t *testing.T) {
-		reqBody, _ := json.Marshal(CancelJobRequest{JobID: 99999})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/cancel", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: 99999})
 		w := httptest.NewRecorder()
 
 		server.handleCancelJob(w, req)
@@ -633,8 +824,7 @@ func TestHandleCancelJob(t *testing.T) {
 	})
 
 	t.Run("cancel with missing job_id fails", func(t *testing.T) {
-		reqBody, _ := json.Marshal(map[string]interface{}{})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/cancel", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", map[string]interface{}{})
 		w := httptest.NewRecorder()
 
 		server.handleCancelJob(w, req)
@@ -661,7 +851,7 @@ func TestHandleCancelJob(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		job2, err := db.EnqueueJob(repo.ID, commit2.ID, "cancelrunning", "test", "", "")
+		job2, err := db.EnqueueJob(repo.ID, commit2.ID, "cancelrunning", "", "test", "", "")
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -669,8 +859,7 @@ func TestHandleCancelJob(t *testing.T) {
 			t.Fatalf("ClaimJob failed: %v", err)
 		}
 
-		reqBody, _ := json.Marshal(CancelJobRequest{JobID: job2.ID})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/cancel", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job2.ID})
 		w := httptest.NewRecorder()
 
 		server.handleCancelJob(w, req)
@@ -690,9 +879,7 @@ func TestHandleCancelJob(t *testing.T) {
 }
 
 func TestListJobsPagination(t *testing.T) {
-	db := testutil.OpenTestDB(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, _ := newTestServer(t)
 
 	// Create test repo and jobs
 	repo, err := db.GetOrCreateRepo("/test/repo")
@@ -706,7 +893,7 @@ func TestListJobsPagination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		_, err = db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("sha%d", i), "test", "", "")
+		_, err = db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("sha%d", i), "", "test", "", "")
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -821,16 +1008,14 @@ func TestListJobsPagination(t *testing.T) {
 }
 
 func TestListJobsWithGitRefFilter(t *testing.T) {
-	db := testutil.OpenTestDB(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, _ := newTestServer(t)
 
 	// Create repo and jobs with different git refs
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 	refs := []string{"abc123", "def456", "abc123..def456"}
 	for _, ref := range refs {
 		commit, _ := db.GetOrCreateCommit(repo.ID, ref, "A", "S", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, ref, "codex", "", "")
+		db.EnqueueJob(repo.ID, commit.ID, ref, "", "codex", "", "")
 	}
 
 	t.Run("git_ref filter returns matching job", func(t *testing.T) {
@@ -888,10 +1073,54 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 }
 
-func TestHandleStreamEvents(t *testing.T) {
+func TestHandleListJobsAddressedFilter(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
+
+	repo, _ := db.GetOrCreateRepo("/tmp/repo-addr-filter")
+	commit, _ := db.GetOrCreateCommit(repo.ID, "aaa", "A", "S", time.Now())
+	job1, _ := db.EnqueueJob(repo.ID, commit.ID, "aaa", "main", "codex", "", "")
+	db.ClaimJob("w")
+	db.CompleteJob(job1.ID, "codex", "", "output1")
+
+	commit2, _ := db.GetOrCreateCommit(repo.ID, "bbb", "A", "S2", time.Now())
+	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "bbb", "main", "codex", "", "")
+	db.ClaimJob("w")
+	db.CompleteJob(job2.ID, "codex", "", "output2")
+	db.MarkReviewAddressedByJobID(job2.ID, true)
+
+	t.Run("addressed=false", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs?addressed=false", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&result)
+		if len(result.Jobs) != 1 {
+			t.Errorf("Expected 1 unaddressed job, got %d", len(result.Jobs))
+		}
+	})
+
+	t.Run("branch filter", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs?branch=main", nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		json.NewDecoder(w.Body).Decode(&result)
+		if len(result.Jobs) != 2 {
+			t.Errorf("Expected 2 jobs on main, got %d", len(result.Jobs))
+		}
+	})
+}
+
+func TestHandleStreamEvents(t *testing.T) {
+	server, _, _ := newTestServer(t)
 
 	t.Run("returns correct headers", func(t *testing.T) {
 		// Create a request with a context that we can cancel
@@ -1348,9 +1577,7 @@ func TestHandleStreamEvents(t *testing.T) {
 }
 
 func TestHandleRerunJob(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	// Create a repo
 	repo, err := db.GetOrCreateRepo(tmpDir)
@@ -1360,12 +1587,11 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun failed job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "test", "", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "", "test", "", "")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "some error")
 
-		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
 		server.handleRerunJob(w, req)
@@ -1385,11 +1611,10 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun canceled job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "test", "", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "", "test", "", "")
 		db.CancelJob(job.ID)
 
-		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
 		server.handleRerunJob(w, req)
@@ -1409,7 +1634,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun done job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "test", "", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "", "test", "", "")
 		// Claim and complete job
 		var claimed *storage.ReviewJob
 		for {
@@ -1424,8 +1649,7 @@ func TestHandleRerunJob(t *testing.T) {
 		}
 		db.CompleteJob(job.ID, "test", "prompt", "output")
 
-		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
 		server.handleRerunJob(w, req)
@@ -1445,10 +1669,9 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "test", "", "")
+		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "", "test", "", "")
 
-		reqBody, _ := json.Marshal(RerunJobRequest{JobID: job.ID})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
 
 		server.handleRerunJob(w, req)
@@ -1459,8 +1682,7 @@ func TestHandleRerunJob(t *testing.T) {
 	})
 
 	t.Run("rerun nonexistent job fails", func(t *testing.T) {
-		reqBody, _ := json.Marshal(RerunJobRequest{JobID: 99999})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: 99999})
 		w := httptest.NewRecorder()
 
 		server.handleRerunJob(w, req)
@@ -1471,8 +1693,7 @@ func TestHandleRerunJob(t *testing.T) {
 	})
 
 	t.Run("rerun with missing job_id fails", func(t *testing.T) {
-		reqBody, _ := json.Marshal(map[string]interface{}{})
-		req := httptest.NewRequest(http.MethodPost, "/api/job/rerun", bytes.NewReader(reqBody))
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", map[string]interface{}{})
 		w := httptest.NewRecorder()
 
 		server.handleRerunJob(w, req)
@@ -1495,45 +1716,15 @@ func TestHandleRerunJob(t *testing.T) {
 }
 
 func TestHandleEnqueueExcludedBranch(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
-	// Create a git repo
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatalf("Failed to create repo dir: %v", err)
-	}
+	testutil.InitTestGitRepo(t, repoDir)
 
-	// Initialize git repo
-	cmds := [][]string{
-		{"git", "init"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test"},
-		{"git", "checkout", "-b", "wip-feature"},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	// Create a commit so we have a valid SHA
-	testFile := filepath.Join(repoDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	addCmd := exec.Command("git", "add", ".")
-	addCmd.Dir = repoDir
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add failed: %v\n%s", err, out)
-	}
-	commitCmd := exec.Command("git", "commit", "-m", "initial commit")
-	commitCmd.Dir = repoDir
-	if out, err := commitCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git commit failed: %v\n%s", err, out)
+	// Switch to excluded branch
+	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "wip-feature")
+	if out, err := checkoutCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout failed: %v\n%s", err, out)
 	}
 
 	// Create .roborev.toml with excluded_branches
@@ -1545,9 +1736,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 
 	t.Run("enqueue on excluded branch returns skipped", func(t *testing.T) {
 		reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -1585,9 +1774,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		}
 
 		reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -1605,45 +1792,13 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 }
 
 func TestHandleEnqueueBodySizeLimit(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, _, tmpDir := newTestServer(t)
 
-	// Create a git repo
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatalf("Failed to create repo dir: %v", err)
-	}
-
-	// Initialize git repo with a commit
-	cmds := [][]string{
-		{"git", "init"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test"},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	testFile := filepath.Join(repoDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	addCmd := exec.Command("git", "-C", repoDir, "add", ".")
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add failed: %v\n%s", err, out)
-	}
-	commitCmd := exec.Command("git", "-C", repoDir, "commit", "-m", "init")
-	if out, err := commitCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git commit failed: %v\n%s", err, out)
-	}
+	testutil.InitTestGitRepo(t, repoDir)
 
 	t.Run("rejects oversized request body", func(t *testing.T) {
-		// Create a request body larger than 250KB
+		// Create a request body larger than the default limit (200KB + 50KB overhead)
 		largeDiff := strings.Repeat("a", 300*1024) // 300KB
 		reqData := map[string]string{
 			"repo_path":    repoDir,
@@ -1651,9 +1806,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 			"agent":        "test",
 			"diff_content": largeDiff,
 		}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -1680,9 +1833,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 			"agent":     "test",
 			// diff_content intentionally omitted/empty
 		}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -1710,9 +1861,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 			"agent":        "test",
 			"diff_content": validDiff,
 		}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -1724,51 +1873,17 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 }
 
 func TestHandleListJobsByID(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, _, tmpDir := newTestServer(t)
 
-	// Create a git repo
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatalf("Failed to create repo dir: %v", err)
-	}
-
-	// Initialize git repo with a commit
-	cmds := [][]string{
-		{"git", "init"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test"},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git command %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	testFile := filepath.Join(repoDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	addCmd := exec.Command("git", "-C", repoDir, "add", ".")
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add failed: %v\n%s", err, out)
-	}
-	commitCmd := exec.Command("git", "-C", repoDir, "commit", "-m", "init")
-	if out, err := commitCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git commit failed: %v\n%s", err, out)
-	}
+	testutil.InitTestGitRepo(t, repoDir)
 
 	// Create multiple jobs
 	var job1ID, job2ID, job3ID int64
 
 	// Enqueue job 1
 	reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
-	reqBody, _ := json.Marshal(reqData)
-	req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
 	server.handleEnqueue(w, req)
 	if w.Code != http.StatusCreated {
@@ -1779,9 +1894,7 @@ func TestHandleListJobsByID(t *testing.T) {
 	job1ID = respJob.ID
 
 	// Enqueue job 2
-	reqBody, _ = json.Marshal(reqData)
-	req = httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req = testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w = httptest.NewRecorder()
 	server.handleEnqueue(w, req)
 	if w.Code != http.StatusCreated {
@@ -1791,9 +1904,7 @@ func TestHandleListJobsByID(t *testing.T) {
 	job2ID = respJob.ID
 
 	// Enqueue job 3
-	reqBody, _ = json.Marshal(reqData)
-	req = httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req = testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w = httptest.NewRecorder()
 	server.handleEnqueue(w, req)
 	if w.Code != http.StatusCreated {
@@ -1919,28 +2030,10 @@ func TestHandleListJobsByID(t *testing.T) {
 }
 
 func TestHandleEnqueuePromptJob(t *testing.T) {
-	// Create a test git repo
 	repoDir := t.TempDir()
-	initCmd := exec.Command("git", "init", repoDir)
-	if out, err := initCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
-	}
-	configCmd := exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com")
-	configCmd.Run()
-	configCmd = exec.Command("git", "-C", repoDir, "config", "user.name", "Test")
-	configCmd.Run()
+	testutil.InitTestGitRepo(t, repoDir)
 
-	// Create initial commit
-	testFile := filepath.Join(repoDir, "test.txt")
-	os.WriteFile(testFile, []byte("test"), 0644)
-	addCmd := exec.Command("git", "-C", repoDir, "add", ".")
-	addCmd.Run()
-	commitCmd := exec.Command("git", "-C", repoDir, "commit", "-m", "init")
-	commitCmd.Run()
-
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, _, _ := newTestServer(t)
 
 	t.Run("enqueues prompt job successfully", func(t *testing.T) {
 		reqData := map[string]string{
@@ -1949,9 +2042,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 			"agent":         "test",
 			"custom_prompt": "Explain this codebase",
 		}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -1986,9 +2077,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 			"agent":     "test",
 			// no custom_prompt - should try to resolve "prompt" as a git ref
 		}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -2015,9 +2104,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 			"reasoning":     "fast",
 			"custom_prompt": "Quick analysis",
 		}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -2042,9 +2129,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 			"custom_prompt": "Fix all bugs",
 			"agentic":       true,
 		}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -2068,9 +2153,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 			"agent":         "test",
 			"custom_prompt": "Read-only review",
 		}
-		reqBody, _ := json.Marshal(reqData)
-		req := httptest.NewRequest(http.MethodPost, "/api/enqueue", bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
 		server.handleEnqueue(w, req)
@@ -2090,9 +2173,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 
 func TestGetMachineID_CachingBehavior(t *testing.T) {
 	t.Run("caches valid machine ID", func(t *testing.T) {
-		db, _ := testutil.OpenTestDBWithDir(t)
-		cfg := config.DefaultConfig()
-		server := NewServer(db, cfg, "")
+		server, _, _ := newTestServer(t)
 
 		// First call should fetch from DB and cache
 		id1 := server.getMachineID()
@@ -2121,9 +2202,7 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 		// 2. DB replaced with working one
 		// 3. Second call succeeds → returns valid ID and caches it
 
-		db, tmpDir := testutil.OpenTestDBWithDir(t)
-		cfg := config.DefaultConfig()
-		server := NewServer(db, cfg, "")
+		server, db, tmpDir := newTestServer(t)
 
 		// Close the DB to simulate error condition
 		db.Close()
@@ -2175,9 +2254,7 @@ func TestGetMachineID_CachingBehavior(t *testing.T) {
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs
 // in any state: queued, running, done, failed, and canceled.
 func TestHandleAddCommentToJobStates(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	// Create repo and commit
 	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
@@ -2203,7 +2280,7 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a job
-			job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+			job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
 			if err != nil {
 				t.Fatalf("EnqueueJob failed: %v", err)
 			}
@@ -2221,9 +2298,7 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 				"commenter": "test-user",
 				"comment":   "Test comment for " + tc.name,
 			}
-			reqBody, _ := json.Marshal(reqData)
-			req := httptest.NewRequest(http.MethodPost, "/api/comment", bytes.NewReader(reqBody))
-			req.Header.Set("Content-Type", "application/json")
+			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 			w := httptest.NewRecorder()
 
 			server.handleAddComment(w, req)
@@ -2234,9 +2309,7 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 
 			// Verify response contains the comment
 			var resp storage.Response
-			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-				t.Fatalf("Failed to unmarshal response: %v", err)
-			}
+			testutil.DecodeJSON(t, w, &resp)
 			if resp.Responder != "test-user" {
 				t.Errorf("Expected responder 'test-user', got %q", resp.Responder)
 			}
@@ -2247,18 +2320,14 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 // TestHandleAddCommentToNonExistentJob tests that adding a comment to a
 // non-existent job returns 404.
 func TestHandleAddCommentToNonExistentJob(t *testing.T) {
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, _, _ := newTestServer(t)
 
 	reqData := map[string]interface{}{
 		"job_id":    99999,
 		"commenter": "test-user",
 		"comment":   "This should fail",
 	}
-	reqBody, _ := json.Marshal(reqData)
-	req := httptest.NewRequest(http.MethodPost, "/api/comment", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 	w := httptest.NewRecorder()
 
 	server.handleAddComment(w, req)
@@ -2274,9 +2343,7 @@ func TestHandleAddCommentToNonExistentJob(t *testing.T) {
 // TestHandleAddCommentWithoutReview tests that comments can be added to jobs
 // that don't have a review yet (job exists but hasn't completed).
 func TestHandleAddCommentWithoutReview(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	// Create repo, commit, and job (but NO review)
 	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
@@ -2287,7 +2354,7 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -2308,9 +2375,7 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 		"commenter": "test-user",
 		"comment":   "Comment on in-progress job without review",
 	}
-	reqBody, _ := json.Marshal(reqData)
-	req := httptest.NewRequest(http.MethodPost, "/api/comment", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 	w := httptest.NewRecorder()
 
 	server.handleAddComment(w, req)
@@ -2334,9 +2399,7 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 
 // TestHandleJobOutput_InvalidJobID tests that invalid job_id returns 400.
 func TestHandleJobOutput_InvalidJobID(t *testing.T) {
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=notanumber", nil)
 	w := httptest.NewRecorder()
@@ -2350,9 +2413,7 @@ func TestHandleJobOutput_InvalidJobID(t *testing.T) {
 
 // TestHandleJobOutput_NonExistentJob tests that non-existent job returns 404.
 func TestHandleJobOutput_NonExistentJob(t *testing.T) {
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=99999", nil)
 	w := httptest.NewRecorder()
@@ -2366,9 +2427,7 @@ func TestHandleJobOutput_NonExistentJob(t *testing.T) {
 
 // TestHandleJobOutput_PollingRunningJob tests polling mode for a running job.
 func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	// Create a running job
 	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
@@ -2379,7 +2438,7 @@ func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -2410,9 +2469,7 @@ func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
 		} `json:"lines"`
 		HasMore bool `json:"has_more"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
+	testutil.DecodeJSON(t, w, &resp)
 
 	if resp.JobID != job.ID {
 		t.Errorf("Expected job_id %d, got %d", job.ID, resp.JobID)
@@ -2427,9 +2484,7 @@ func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
 
 // TestHandleJobOutput_PollingCompletedJob tests polling mode for a completed job.
 func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	// Create a completed job
 	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
@@ -2440,7 +2495,7 @@ func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -2466,9 +2521,7 @@ func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
 		Status  string `json:"status"`
 		HasMore bool   `json:"has_more"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
+	testutil.DecodeJSON(t, w, &resp)
 
 	if resp.Status != "done" {
 		t.Errorf("Expected status 'done', got %q", resp.Status)
@@ -2481,9 +2534,7 @@ func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
 // TestHandleJobOutput_StreamingCompletedJob tests that streaming mode for a
 // completed job returns an immediate complete response instead of hanging.
 func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, db, tmpDir := newTestServer(t)
 
 	// Create a completed job
 	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
@@ -2494,7 +2545,7 @@ func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "test-agent", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -2520,9 +2571,7 @@ func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
 		Type   string `json:"type"`
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
+	testutil.DecodeJSON(t, w, &resp)
 
 	if resp.Type != "complete" {
 		t.Errorf("Expected type 'complete', got %q", resp.Type)
@@ -2534,9 +2583,7 @@ func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
 
 // TestHandleJobOutput_MissingJobID tests that missing job_id returns 400.
 func TestHandleJobOutput_MissingJobID(t *testing.T) {
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/job/output", nil)
 	w := httptest.NewRecorder()

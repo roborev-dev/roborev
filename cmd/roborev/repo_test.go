@@ -8,33 +8,53 @@ import (
 	"testing"
 )
 
-// requireGit skips the test if git is not available
-func requireGit(t *testing.T) {
+// setupGitRepo creates a temporary git repository with symlinks resolved.
+// Returns the absolute path to the repo root.
+func setupGitRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available, skipping test")
 	}
-}
-
-// initGitRepo initializes a real git repo in the given directory
-func initGitRepo(t *testing.T, dir string) {
-	t.Helper()
-	requireGit(t)
-	cmd := exec.Command("git", "init")
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("Failed to git init: %v", err)
-	}
-}
-
-// evalSymlinks resolves symlinks in a path (needed on macOS where /var -> /private/var)
-func evalSymlinks(t *testing.T, path string) string {
-	t.Helper()
-	resolved, err := filepath.EvalSymlinks(path)
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatalf("Failed to resolve symlinks: %v", err)
 	}
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = resolved
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("Failed to run git %v: %v", args, err)
+		}
+	}
 	return resolved
+}
+
+// chdir changes to dir and registers a t.Cleanup to restore the original directory.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+}
+
+// makeDir creates a subdirectory under parent and returns its path.
+func makeDir(t *testing.T, parent string, parts ...string) string {
+	t.Helper()
+	dir := filepath.Join(append([]string{parent}, parts...)...)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+	return dir
 }
 
 func TestResolveRepoIdentifier(t *testing.T) {
@@ -55,7 +75,6 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	})
 
 	t.Run("returns name with slash when path is inaccessible", func(t *testing.T) {
-		// Skip on Windows (chmod doesn't make directories unreadable) or if running as root
 		if runtime.GOOS == "windows" {
 			t.Skip("skipping permission test on Windows")
 		}
@@ -64,27 +83,17 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		}
 
 		tmpDir := t.TempDir()
-		// Create org/project structure
 		orgDir := filepath.Join(tmpDir, "org")
 		if err := os.Mkdir(orgDir, 0755); err != nil {
 			t.Fatalf("Failed to create org dir: %v", err)
 		}
-
-		// Make org unreadable
 		if err := os.Chmod(orgDir, 0000); err != nil {
 			t.Fatalf("Failed to chmod: %v", err)
 		}
-		defer os.Chmod(orgDir, 0755) // Restore for cleanup
+		defer os.Chmod(orgDir, 0755)
 
-		// Change to tmpDir so "org/project" is a relative path that exists but is unreadable
-		origDir, _ := os.Getwd()
-		defer os.Chdir(origDir)
-		if err := os.Chdir(tmpDir); err != nil {
-			t.Fatalf("Failed to chdir: %v", err)
-		}
+		chdir(t, tmpDir)
 
-		// "org/project" should be treated as a name (not a path) since it's inaccessible
-		// and user didn't use explicit path syntax like "./org/project"
 		result := resolveRepoIdentifier("org/project")
 		if result != "org/project" {
 			t.Errorf("Expected 'org/project' (name), got %q", result)
@@ -92,21 +101,9 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	})
 
 	t.Run("resolves dot to git root", func(t *testing.T) {
-		// Create a temp git repo with a subdirectory
-		tmpDir := evalSymlinks(t, t.TempDir())
-		initGitRepo(t, tmpDir)
-
-		subDir := filepath.Join(tmpDir, "sub", "dir")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("Failed to create subdir: %v", err)
-		}
-
-		// Change to subdirectory
-		origDir, _ := os.Getwd()
-		defer os.Chdir(origDir)
-		if err := os.Chdir(subDir); err != nil {
-			t.Fatalf("Failed to chdir: %v", err)
-		}
+		tmpDir := setupGitRepo(t)
+		subDir := makeDir(t, tmpDir, "sub", "dir")
+		chdir(t, subDir)
 
 		result := resolveRepoIdentifier(".")
 		if result != tmpDir {
@@ -115,21 +112,9 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	})
 
 	t.Run("resolves relative path to git root", func(t *testing.T) {
-		// Create a temp git repo with a subdirectory
-		tmpDir := evalSymlinks(t, t.TempDir())
-		initGitRepo(t, tmpDir)
-
-		subDir := filepath.Join(tmpDir, "sub")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("Failed to create subdir: %v", err)
-		}
-
-		// Change to subdirectory
-		origDir, _ := os.Getwd()
-		defer os.Chdir(origDir)
-		if err := os.Chdir(subDir); err != nil {
-			t.Fatalf("Failed to chdir: %v", err)
-		}
+		tmpDir := setupGitRepo(t)
+		subDir := makeDir(t, tmpDir, "sub")
+		chdir(t, subDir)
 
 		result := resolveRepoIdentifier("./")
 		if result != tmpDir {
@@ -138,14 +123,8 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	})
 
 	t.Run("resolves absolute path to git root", func(t *testing.T) {
-		// Create a temp git repo with a subdirectory
-		tmpDir := evalSymlinks(t, t.TempDir())
-		initGitRepo(t, tmpDir)
-
-		subDir := filepath.Join(tmpDir, "sub", "dir")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("Failed to create subdir: %v", err)
-		}
+		tmpDir := setupGitRepo(t)
+		subDir := makeDir(t, tmpDir, "sub", "dir")
 
 		result := resolveRepoIdentifier(subDir)
 		if result != tmpDir {
@@ -154,41 +133,25 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	})
 
 	t.Run("non-git path returns absolute path", func(t *testing.T) {
-		// Create a temp dir without .git
-		tmpDir := evalSymlinks(t, t.TempDir())
-
-		// Change to directory
-		origDir, _ := os.Getwd()
-		defer os.Chdir(origDir)
-		if err := os.Chdir(tmpDir); err != nil {
-			t.Fatalf("Failed to chdir: %v", err)
+		tmpDir := t.TempDir()
+		resolved, err := filepath.EvalSymlinks(tmpDir)
+		if err != nil {
+			t.Fatalf("Failed to resolve symlinks: %v", err)
 		}
+		chdir(t, resolved)
 
 		result := resolveRepoIdentifier(".")
-		if result != tmpDir {
-			t.Errorf("Expected %q (abs path), got %q", tmpDir, result)
+		if result != resolved {
+			t.Errorf("Expected %q (abs path), got %q", resolved, result)
 		}
 	})
 
 	t.Run("dotdot resolves correctly", func(t *testing.T) {
-		// Create a temp git repo with nested subdirs
-		tmpDir := evalSymlinks(t, t.TempDir())
-		initGitRepo(t, tmpDir)
-
-		subDir := filepath.Join(tmpDir, "a", "b", "c")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("Failed to create subdir: %v", err)
-		}
-
-		// Change to deepest directory
-		origDir, _ := os.Getwd()
-		defer os.Chdir(origDir)
-		if err := os.Chdir(subDir); err != nil {
-			t.Fatalf("Failed to chdir: %v", err)
-		}
+		tmpDir := setupGitRepo(t)
+		subDir := makeDir(t, tmpDir, "a", "b", "c")
+		chdir(t, subDir)
 
 		result := resolveRepoIdentifier("..")
-		// ".." from a/b/c = a/b, which is still inside the git repo
 		if result != tmpDir {
 			t.Errorf("Expected %q (git root), got %q", tmpDir, result)
 		}

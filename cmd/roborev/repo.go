@@ -186,7 +186,11 @@ Examples:
 				fmt.Printf("  Failed:   %d\n", stats.FailedJobs)
 			}
 			fmt.Println()
-			fmt.Printf("Reviews:    %d passed, %d failed\n", stats.PassedReviews, stats.FailedReviews)
+			fmt.Printf("Reviews:    %d total\n", stats.AddressedReviews+stats.UnaddressedReviews)
+			fmt.Printf("  Passed:      %d\n", stats.PassedReviews)
+			fmt.Printf("  Failed:      %d\n", stats.FailedReviews)
+			fmt.Printf("  Addressed:   %d\n", stats.AddressedReviews)
+			fmt.Printf("  Unaddressed: %d\n", stats.UnaddressedReviews)
 
 			return nil
 		},

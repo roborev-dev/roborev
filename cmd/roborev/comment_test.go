@@ -9,17 +9,12 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/version"
 )
 
 func TestCommentJobFlag(t *testing.T) {
 	t.Run("--job forces job ID interpretation", func(t *testing.T) {
 		var receivedJobID int64
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/status" {
-				json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-				return
-			}
 			if r.URL.Path == "/api/comment" && r.Method == "POST" {
 				var req struct {
 					JobID int64 `json:"job_id"`
@@ -48,7 +43,6 @@ func TestCommentJobFlag(t *testing.T) {
 
 	t.Run("--job rejects non-numeric input", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"time"
@@ -9,7 +10,14 @@ import (
 // ParseVerdict extracts P (pass) or F (fail) from review output.
 // Returns "P" only if a clear pass indicator appears at the start of a line.
 // Rejects lines containing caveats like "but", "however", "except".
+// Also fails if severity labels (Critical/High/Medium/Low) indicate findings.
 func ParseVerdict(output string) string {
+	// First check for severity labels which indicate actual findings
+	// These appear as "- Medium —", "* Low:", "Critical -", etc.
+	if hasSeverityLabel(output) {
+		return "F"
+	}
+
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(strings.ToLower(line))
 		// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
@@ -77,6 +85,101 @@ func stripListMarker(s string) string {
 		break
 	}
 	return s
+}
+
+// hasSeverityLabel checks if the output contains severity labels indicating findings.
+// Matches patterns like "- Medium —", "* Low:", "Critical — issue", etc.
+// Checks lines that start with bullets/numbers OR directly with severity words.
+// Requires separators to be followed by space to avoid "High-level overview".
+// Skips lines that appear to be part of a severity legend/rubric.
+func hasSeverityLabel(output string) bool {
+	lc := strings.ToLower(output)
+	severities := []string{"critical", "high", "medium", "low"}
+	lines := strings.Split(lc, "\n")
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) == 0 {
+			continue
+		}
+
+		// Check if line starts with bullet/number - if so, strip it
+		first := trimmed[0]
+		hasBullet := first == '-' || first == '*' || (first >= '0' && first <= '9') ||
+			strings.HasPrefix(trimmed, "•")
+
+		checkText := trimmed
+		if hasBullet {
+			// Strip leading bullets/asterisks/numbers
+			checkText = strings.TrimLeft(trimmed, "-*•0123456789.) ")
+			checkText = strings.TrimSpace(checkText)
+		}
+
+		// Check if text starts with a severity word
+		for _, sev := range severities {
+			if !strings.HasPrefix(checkText, sev) {
+				continue
+			}
+
+			// Check if followed by separator (dash, em-dash, colon, pipe)
+			rest := checkText[len(sev):]
+			rest = strings.TrimSpace(rest)
+			if len(rest) == 0 {
+				continue
+			}
+
+			// Check for valid separator
+			hasValidSep := false
+			// Check for em-dash or en-dash (these are unambiguous)
+			if strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–") {
+				hasValidSep = true
+			}
+			// Check for colon or pipe (unambiguous separators)
+			if rest[0] == ':' || rest[0] == '|' {
+				hasValidSep = true
+			}
+			// For hyphen, require space after to avoid "High-level"
+			if rest[0] == '-' && len(rest) > 1 && rest[1] == ' ' {
+				hasValidSep = true
+			}
+
+			if !hasValidSep {
+				continue
+			}
+
+			// Skip if this looks like a legend/rubric entry
+			// Check if previous non-empty line is a legend header
+			if isLegendEntry(lines, i) {
+				continue
+			}
+
+			return true
+		}
+	}
+	return false
+}
+
+// isLegendEntry checks if a line at index i appears to be part of a severity legend/rubric
+// by looking at preceding lines for legend indicators. Scans up to 10 lines back,
+// skipping empty lines, severity lines, and description lines that may appear
+// between legend entries.
+func isLegendEntry(lines []string, i int) bool {
+	for j := i - 1; j >= 0 && j >= i-10; j-- {
+		prev := strings.TrimSpace(lines[j])
+		if len(prev) == 0 {
+			continue
+		}
+
+		// Check for legend header patterns (ends with ":" and contains indicator word)
+		if strings.HasSuffix(prev, ":") || strings.HasSuffix(prev, "：") {
+			if strings.Contains(prev, "severity") || strings.Contains(prev, "level") ||
+				strings.Contains(prev, "legend") || strings.Contains(prev, "scale") ||
+				strings.Contains(prev, "rating") || strings.Contains(prev, "priority") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasCaveat checks if the line contains contrastive words or additional sentences with issues
@@ -333,7 +436,7 @@ func checkClauseForCaveat(clause string) bool {
 		// Strip punctuation from both sides for word matching
 		w = strings.Trim(w, ".,;:!?()[]\"'")
 		// Contrastive words
-		if w == "but" || w == "however" || w == "except" {
+		if w == "but" || w == "however" || w == "except" || w == "beyond" {
 			return true
 		}
 		// Negative indicators that suggest problems (unless negated)
@@ -557,7 +660,7 @@ func parseSQLiteTime(s string) time.Time {
 }
 
 // EnqueueJob creates a new review job for a single commit
-func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, agent, model, reasoning string) (*ReviewJob, error) {
+func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, branch, agent, model, reasoning string) (*ReviewJob, error) {
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
@@ -566,8 +669,8 @@ func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, agent, model, reasoning
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, model, reasoning, status, uuid, source_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
-		repoID, commitID, gitRef, agent, nullString(model), reasoning, uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, uuid, source_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+		repoID, commitID, gitRef, nullString(branch), agent, nullString(model), reasoning, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -578,6 +681,7 @@ func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, agent, model, reasoning
 		RepoID:          repoID,
 		CommitID:        &commitID,
 		GitRef:          gitRef,
+		Branch:          branch,
 		Agent:           agent,
 		Model:           model,
 		Reasoning:       reasoning,
@@ -590,7 +694,7 @@ func (db *DB) EnqueueJob(repoID, commitID int64, gitRef, agent, model, reasoning
 }
 
 // EnqueueRangeJob creates a new review job for a commit range
-func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent, model, reasoning string) (*ReviewJob, error) {
+func (db *DB) EnqueueRangeJob(repoID int64, gitRef, branch, agent, model, reasoning string) (*ReviewJob, error) {
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
@@ -599,8 +703,8 @@ func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent, model, reasoning stri
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, model, reasoning, status, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
-		repoID, gitRef, agent, nullString(model), reasoning, uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+		repoID, gitRef, nullString(branch), agent, nullString(model), reasoning, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -611,6 +715,7 @@ func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent, model, reasoning stri
 		RepoID:          repoID,
 		CommitID:        nil,
 		GitRef:          gitRef,
+		Branch:          branch,
 		Agent:           agent,
 		Model:           model,
 		Reasoning:       reasoning,
@@ -624,7 +729,7 @@ func (db *DB) EnqueueRangeJob(repoID int64, gitRef, agent, model, reasoning stri
 
 // EnqueueDirtyJob creates a new review job for uncommitted (dirty) changes.
 // The diff is captured at enqueue time since the working tree may change.
-func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, model, reasoning, diffContent string) (*ReviewJob, error) {
+func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, branch, agent, model, reasoning, diffContent string) (*ReviewJob, error) {
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
@@ -633,8 +738,8 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, model, reasoning, dif
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, model, reasoning, status, diff_content, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
-		repoID, gitRef, agent, nullString(model), reasoning, diffContent, uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, diff_content, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+		repoID, gitRef, nullString(branch), agent, nullString(model), reasoning, diffContent, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -645,6 +750,7 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, model, reasoning, dif
 		RepoID:          repoID,
 		CommitID:        nil,
 		GitRef:          gitRef,
+		Branch:          branch,
 		Agent:           agent,
 		Model:           model,
 		Reasoning:       reasoning,
@@ -657,24 +763,41 @@ func (db *DB) EnqueueDirtyJob(repoID int64, gitRef, agent, model, reasoning, dif
 	}, nil
 }
 
+// PromptJobOptions contains options for creating a prompt-based job.
+type PromptJobOptions struct {
+	RepoID       int64
+	Branch       string
+	Agent        string
+	Model        string
+	Reasoning    string
+	Prompt       string
+	OutputPrefix string // Prefix to prepend to review output (e.g., file paths)
+	Agentic      bool   // Allow file edits and command execution
+	Label        string // Display label in TUI (default: "prompt")
+}
+
 // EnqueuePromptJob creates a new job with a custom prompt (not a git review).
 // The prompt is stored at enqueue time and used directly by the worker.
-// If agentic is true, the agent will be allowed to edit files and run commands.
-func (db *DB) EnqueuePromptJob(repoID int64, agent, model, reasoning, customPrompt string, agentic bool) (*ReviewJob, error) {
+func (db *DB) EnqueuePromptJob(opts PromptJobOptions) (*ReviewJob, error) {
+	reasoning := opts.Reasoning
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
 	agenticInt := 0
-	if agentic {
+	if opts.Agentic {
 		agenticInt = 1
+	}
+	label := opts.Label
+	if label == "" {
+		label = "prompt" // Default for backward compatibility
 	}
 	uuid := GenerateUUID()
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, model, reasoning, status, prompt, agentic, uuid, source_machine_id, updated_at) VALUES (?, NULL, 'prompt', ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
-		repoID, agent, nullString(model), reasoning, customPrompt, agenticInt, uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning, status, prompt, agentic, output_prefix, uuid, source_machine_id, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
+		opts.RepoID, label, nullString(opts.Branch), opts.Agent, nullString(opts.Model), reasoning, opts.Prompt, agenticInt, nullString(opts.OutputPrefix), uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -682,16 +805,18 @@ func (db *DB) EnqueuePromptJob(repoID int64, agent, model, reasoning, customProm
 	id, _ := result.LastInsertId()
 	return &ReviewJob{
 		ID:              id,
-		RepoID:          repoID,
+		RepoID:          opts.RepoID,
 		CommitID:        nil,
-		GitRef:          "prompt",
-		Agent:           agent,
-		Model:           model,
+		GitRef:          label,
+		Branch:          opts.Branch,
+		Agent:           opts.Agent,
+		Model:           opts.Model,
 		Reasoning:       reasoning,
 		Status:          JobStatusQueued,
 		EnqueuedAt:      now,
-		Prompt:          customPrompt,
-		Agentic:         agentic,
+		Prompt:          opts.Prompt,
+		Agentic:         opts.Agentic,
+		OutputPrefix:    opts.OutputPrefix,
 		UUID:            uuid,
 		SourceMachineID: machineID,
 		UpdatedAt:       &now,
@@ -735,10 +860,10 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var diffContent sql.NullString
 	var prompt sql.NullString
-	var model sql.NullString
+	var model, branch sql.NullString
 	var agenticInt int
 	err = db.QueryRow(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.model, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.model, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
@@ -746,7 +871,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		WHERE j.worker_id = ? AND j.status = 'running'
 		ORDER BY j.started_at DESC
 		LIMIT 1
-	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &model, &job.Reasoning, &job.Status, &enqueuedAt,
+	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &job.Agent, &model, &job.Reasoning, &job.Status, &enqueuedAt,
 		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent, &prompt, &agenticInt)
 	if err != nil {
 		return nil, err
@@ -767,6 +892,9 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	if model.Valid {
 		job.Model = model.String
 	}
+	if branch.Valid {
+		job.Branch = branch.String
+	}
 	job.Agentic = agenticInt != 0
 	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	job.Status = JobStatusRunning
@@ -783,19 +911,48 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 
 // CompleteJob marks a job as done and stores the review.
 // Only updates if job is still in 'running' state (respects cancellation).
+// If the job has an output_prefix, it will be prepended to the output.
 func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
+	// Get machine ID and generate UUIDs before starting transaction
+	// to avoid potential lock conflicts with GetMachineID's writes
 	now := time.Now().Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
+	// Use BEGIN IMMEDIATE to acquire write lock upfront, avoiding deadlocks
+	// when concurrent goroutines (workers, sync) try to upgrade from read to write.
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+
+	// Fetch output_prefix from job (if any)
+	var outputPrefix sql.NullString
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// Prepend output_prefix if present
+	finalOutput := output
+	if outputPrefix.Valid && outputPrefix.String != "" {
+		finalOutput = outputPrefix.String + output
+	}
+
 	// Update job status only if still running (not canceled)
-	result, err := tx.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
+	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
 	if err != nil {
 		return err
 	}
@@ -811,13 +968,18 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	}
 
 	// Insert review with sync columns
-	_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, output, reviewUUID, machineID, now)
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}
 
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	if err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // FailJob marks a job as failed with an error message.
@@ -854,20 +1016,31 @@ func (db *DB) CancelJob(jobID int64) error {
 // This allows manual re-running of jobs to get a fresh review.
 // For done jobs, the existing review is deleted to avoid unique constraint violations.
 func (db *DB) ReenqueueJob(jobID int64) error {
-	tx, err := db.Begin()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
 
 	// Delete any existing review for this job (for done jobs being rerun)
-	_, err = tx.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
 	if err != nil {
 		return err
 	}
 
 	// Reset job status
-	result, err := tx.Exec(`
+	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
@@ -883,7 +1056,12 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 		return sql.ErrNoRows
 	}
 
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	if err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // RetryJob atomically resets a running job to queued for retry.
@@ -916,10 +1094,45 @@ func (db *DB) GetJobRetryCount(jobID int64) (int, error) {
 	return count, err
 }
 
-// ListJobs returns jobs with optional status and repo filters
-func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, gitRefFilter ...string) ([]ReviewJob, error) {
+// ListJobsOption configures optional filters for ListJobs.
+type ListJobsOption func(*listJobsOptions)
+
+type listJobsOptions struct {
+	gitRef             string
+	branch             string
+	branchIncludeEmpty bool
+	addressed          *bool
+}
+
+// WithGitRef filters jobs by git ref.
+func WithGitRef(ref string) ListJobsOption {
+	return func(o *listJobsOptions) { o.gitRef = ref }
+}
+
+// WithBranch filters jobs by exact branch name.
+func WithBranch(branch string) ListJobsOption {
+	return func(o *listJobsOptions) { o.branch = branch }
+}
+
+// WithBranchOrEmpty filters jobs by branch name, also including jobs
+// with no branch set (empty string or NULL).
+func WithBranchOrEmpty(branch string) ListJobsOption {
+	return func(o *listJobsOptions) {
+		o.branch = branch
+		o.branchIncludeEmpty = true
+	}
+}
+
+// WithAddressed filters jobs by addressed state (true/false).
+func WithAddressed(addressed bool) ListJobsOption {
+	return func(o *listJobsOptions) { o.addressed = &addressed }
+}
+
+// ListJobs returns jobs with optional status, repo, branch, and addressed filters.
+// addressedFilter: nil = no filter, non-nil bool = filter by addressed state.
+func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	query := `
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.addressed, rv.output,
 		       j.source_machine_id, j.uuid, j.model
@@ -939,9 +1152,28 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		conditions = append(conditions, "r.root_path = ?")
 		args = append(args, repoFilter)
 	}
-	if len(gitRefFilter) > 0 && gitRefFilter[0] != "" {
+	var o listJobsOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.gitRef != "" {
 		conditions = append(conditions, "j.git_ref = ?")
-		args = append(args, gitRefFilter[0])
+		args = append(args, o.gitRef)
+	}
+	if o.branch != "" {
+		if o.branchIncludeEmpty {
+			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
+		} else {
+			conditions = append(conditions, "j.branch = ?")
+		}
+		args = append(args, o.branch)
+	}
+	if o.addressed != nil {
+		if *o.addressed {
+			conditions = append(conditions, "rv.addressed = 1")
+		} else {
+			conditions = append(conditions, "(rv.addressed IS NULL OR rv.addressed = 0)")
+		}
 	}
 
 	if len(conditions) > 0 {
@@ -970,13 +1202,13 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var addressed sql.NullInt64
 		var agentic int
 
-		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
+		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
 			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &addressed, &output,
 			&sourceMachineID, &jobUUID, &model)
@@ -996,11 +1228,11 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		j.Agentic = agentic != 0
 		j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 		if startedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, startedAt.String)
+			t := parseSQLiteTime(startedAt.String)
 			j.StartedAt = &t
 		}
 		if finishedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, finishedAt.String)
+			t := parseSQLiteTime(finishedAt.String)
 			j.FinishedAt = &t
 		}
 		if workerID.Valid {
@@ -1018,15 +1250,16 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		if model.Valid {
 			j.Model = model.String
 		}
+		if branch.Valid {
+			j.Branch = branch.String
+		}
 		if addressed.Valid {
 			val := addressed.Int64 != 0
 			j.Addressed = &val
 		}
-		// Compute verdict only for non-prompt jobs (prompt jobs don't have PASS/FAIL verdicts)
-		// Prompt jobs are identified by having no commit_id (NULL) - this distinguishes them from
-		// regular reviews of branches/commits that might be named "prompt"
-		isPromptJob := j.CommitID == nil && j.GitRef == "prompt"
-		if output.Valid && !isPromptJob {
+		// Compute verdict only for non-task jobs (task jobs don't have PASS/FAIL verdicts)
+		// Task jobs (run, analyze, custom) are identified by having no commit_id and not being dirty
+		if output.Valid && !j.IsTaskJob() {
 			verdict := ParseVerdict(output.String)
 			j.Verdict = &verdict
 		}
@@ -1046,16 +1279,16 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var agentic int
 
-	var model sql.NullString
+	var model, branch sql.NullString
 	err := db.QueryRow(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE j.id = ?
-	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
+	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &agentic,
 		&j.RepoPath, &j.RepoName, &commitSubject, &model)
 	if err != nil {
@@ -1071,11 +1304,11 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	j.Agentic = agentic != 0
 	j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	if startedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, startedAt.String)
+		t := parseSQLiteTime(startedAt.String)
 		j.StartedAt = &t
 	}
 	if finishedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, finishedAt.String)
+		t := parseSQLiteTime(finishedAt.String)
 		j.FinishedAt = &t
 	}
 	if workerID.Valid {
@@ -1089,6 +1322,9 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	}
 	if model.Valid {
 		j.Model = model.String
+	}
+	if branch.Valid {
+		j.Branch = branch.String
 	}
 
 	return &j, nil
@@ -1123,4 +1359,16 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled int, err e
 	}
 	err = rows.Err()
 	return
+}
+
+// UpdateJobBranch sets the branch field for a job that doesn't have one.
+// This is used to backfill the branch when it's derived from git.
+// Only updates if the current branch is NULL or empty.
+// Returns the number of rows affected (0 if branch was already set or job not found, 1 if updated).
+func (db *DB) UpdateJobBranch(jobID int64, branch string) (int64, error) {
+	result, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ? AND (branch IS NULL OR branch = '')`, branch, jobID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

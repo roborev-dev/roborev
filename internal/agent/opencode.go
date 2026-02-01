@@ -113,9 +113,11 @@ func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt 
 	//   opencode --help
 	//   opencode run --help
 	args := []string{"run", "--format", "default"}
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
+	model := a.Model
+	if model == "" {
+		model = "opencode/minimax-m2.1-free"
 	}
+	args = append(args, "--model", model)
 	args = append(args, prompt)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)

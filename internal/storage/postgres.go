@@ -14,12 +14,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 2
+const pgSchemaVersion = 3
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v2.sql
+//go:embed schemas/postgres_v3.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -173,6 +173,11 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("insert schema version: %w", err)
 		}
+		// Create indexes not in base schema (to support upgrades from older versions)
+		_, err = p.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch ON review_jobs(branch)`)
+		if err != nil {
+			return fmt.Errorf("create branch index: %w", err)
+		}
 	} else if currentVersion > pgSchemaVersion {
 		return fmt.Errorf("database schema version %d is newer than supported version %d", currentVersion, pgSchemaVersion)
 	} else if currentVersion < pgSchemaVersion {
@@ -182,6 +187,18 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS model TEXT`)
 			if err != nil {
 				return fmt.Errorf("migrate to v2 (add model column): %w", err)
+			}
+		}
+		if currentVersion < 3 {
+			// Migration 2->3: Add branch column to review_jobs
+			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS branch TEXT`)
+			if err != nil {
+				return fmt.Errorf("migrate to v3 (add branch column): %w", err)
+			}
+			// Add index for branch filtering
+			_, err = p.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch ON review_jobs(branch)`)
+			if err != nil {
+				return fmt.Errorf("migrate to v3 (add branch index): %w", err)
 			}
 		}
 		// Update version

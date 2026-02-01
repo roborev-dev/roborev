@@ -700,6 +700,76 @@ func TestParseVerdict(t *testing.T) {
 			want:   "F",
 		},
 		{
+			name:   "no issues found beyond caveat",
+			output: "No issues found beyond the two notes above.",
+			want:   "F",
+		},
+		{
+			name:   "severity label medium em dash",
+			output: "**Findings**\n- Medium — Possible regression in deploy.\nNo issues found beyond the notes above.",
+			want:   "F",
+		},
+		{
+			name:   "severity label low with colon",
+			output: "- Low: Minor style issue.\nOtherwise no issues.",
+			want:   "F",
+		},
+		{
+			name:   "severity label high with dash",
+			output: "* High - Security vulnerability found.\nNo issues found.",
+			want:   "F",
+		},
+		{
+			name:   "severity label critical with bullet",
+			output: "- Critical — Data loss possible.\nNo issues otherwise.",
+			want:   "F",
+		},
+		{
+			name:   "severity label critical without bullet",
+			output: "Critical — Data loss possible.\nNo issues otherwise.",
+			want:   "F",
+		},
+		{
+			name:   "severity label high without bullet",
+			output: "High: Security vulnerability in auth module.\nNo issues found.",
+			want:   "F",
+		},
+		{
+			name:   "high-level overview not a finding",
+			output: "No issues found. This is a high-level overview of the changes.",
+			want:   "P",
+		},
+		{
+			name:   "low-level details not a finding",
+			output: "No issues found. The commit adds low-level optimizations.",
+			want:   "P",
+		},
+		{
+			name:   "severity in prose not a finding",
+			output: "No issues found. I rate this as Medium importance for the project.",
+			want:   "P",
+		},
+		{
+			name:   "medium without separator not a finding",
+			output: "No issues found. The medium was oil on canvas.",
+			want:   "P",
+		},
+		{
+			name:   "severity legend not a finding",
+			output: "No issues found.\n\nSeverity levels:\nHigh - immediate action required.\nMedium - should be addressed.\nLow - minor concern.",
+			want:   "P",
+		},
+		{
+			name:   "priority scale not a finding",
+			output: "No issues found.\n\nPriority scale:\nCritical: system down\nHigh: major feature broken",
+			want:   "P",
+		},
+		{
+			name:   "severity legend with descriptions not a finding",
+			output: "No issues found.\n\nSeverity levels:\nHigh - immediate action required.\n  These issues block release.\nMedium - should be addressed.",
+			want:   "P",
+		},
+		{
 			name:   "no issues found but with period",
 			output: "No issues found but.",
 			want:   "F",

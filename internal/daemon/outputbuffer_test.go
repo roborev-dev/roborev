@@ -7,6 +7,24 @@ import (
 	"time"
 )
 
+// simpleNormalizer matches the common pattern used in Writer tests.
+func simpleNormalizer(line string) *OutputLine {
+	return &OutputLine{Text: line, Type: "text"}
+}
+
+// assertLines verifies the count and text content of lines for a job.
+func assertLines(t *testing.T, lines []OutputLine, expectedTexts ...string) {
+	t.Helper()
+	if len(lines) != len(expectedTexts) {
+		t.Fatalf("expected %d lines, got %d", len(expectedTexts), len(lines))
+	}
+	for i, want := range expectedTexts {
+		if lines[i].Text != want {
+			t.Errorf("line[%d]: expected %q, got %q", i, want, lines[i].Text)
+		}
+	}
+}
+
 func TestOutputBuffer_Append(t *testing.T) {
 	ob := NewOutputBuffer(1024, 4096)
 
@@ -247,80 +265,41 @@ func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
 
 func TestOutputWriter_Write(t *testing.T) {
 	ob := NewOutputBuffer(1024, 4096)
-	normalize := func(line string) *OutputLine {
-		return &OutputLine{Text: line, Type: "text"}
-	}
-
-	w := ob.Writer(1, normalize)
+	w := ob.Writer(1, simpleNormalizer)
 
 	// Write with newline
 	w.Write([]byte("hello\n"))
 	w.Write([]byte("world\n"))
 
-	lines := ob.GetLines(1)
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d", len(lines))
-	}
-	if lines[0].Text != "hello" {
-		t.Errorf("expected 'hello', got %q", lines[0].Text)
-	}
-	if lines[1].Text != "world" {
-		t.Errorf("expected 'world', got %q", lines[1].Text)
-	}
+	assertLines(t, ob.GetLines(1), "hello", "world")
 }
 
 func TestOutputWriter_WritePartialLines(t *testing.T) {
 	ob := NewOutputBuffer(1024, 4096)
-	normalize := func(line string) *OutputLine {
-		return &OutputLine{Text: line, Type: "text"}
-	}
-
-	w := ob.Writer(1, normalize)
+	w := ob.Writer(1, simpleNormalizer)
 
 	// Write partial line
 	w.Write([]byte("hel"))
 	w.Write([]byte("lo\nwor"))
 	w.Write([]byte("ld\n"))
 
-	lines := ob.GetLines(1)
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d", len(lines))
-	}
-	if lines[0].Text != "hello" {
-		t.Errorf("expected 'hello', got %q", lines[0].Text)
-	}
-	if lines[1].Text != "world" {
-		t.Errorf("expected 'world', got %q", lines[1].Text)
-	}
+	assertLines(t, ob.GetLines(1), "hello", "world")
 }
 
 func TestOutputWriter_Flush(t *testing.T) {
 	ob := NewOutputBuffer(1024, 4096)
-	normalize := func(line string) *OutputLine {
-		return &OutputLine{Text: line, Type: "text"}
-	}
-
-	w := ob.Writer(1, normalize)
+	w := ob.Writer(1, simpleNormalizer)
 
 	// Write without newline
 	w.Write([]byte("incomplete"))
 
 	// Should not appear yet
-	lines := ob.GetLines(1)
-	if len(lines) != 0 {
-		t.Fatalf("expected 0 lines before flush, got %d", len(lines))
-	}
+	assertLines(t, ob.GetLines(1))
 
 	// Flush should process remaining
 	w.Flush()
 
-	lines = ob.GetLines(1)
-	if len(lines) != 1 {
-		t.Fatalf("expected 1 line after flush, got %d", len(lines))
-	}
-	if lines[0].Text != "incomplete" {
-		t.Errorf("expected 'incomplete', got %q", lines[0].Text)
-	}
+	assertLines(t, ob.GetLines(1), "incomplete")
 }
 
 func TestOutputWriter_NormalizeFilters(t *testing.T) {
@@ -346,11 +325,7 @@ func TestOutputWriter_NormalizeFilters(t *testing.T) {
 func TestOutputWriter_LongLineWithoutNewline(t *testing.T) {
 	// Per-job limit: 50 bytes
 	ob := NewOutputBuffer(50, 1000)
-	normalize := func(line string) *OutputLine {
-		return &OutputLine{Text: line, Type: "text"}
-	}
-
-	w := ob.Writer(1, normalize)
+	w := ob.Writer(1, simpleNormalizer)
 
 	// Write a very long line without newline - should be force-flushed with truncation
 	longLine := strings.Repeat("x", 100)
@@ -390,11 +365,7 @@ func TestOutputWriter_SmallMaxLine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ob := NewOutputBuffer(tt.maxLine, 10000)
-			normalize := func(line string) *OutputLine {
-				return &OutputLine{Text: line, Type: "text"}
-			}
-
-			w := ob.Writer(1, normalize)
+			w := ob.Writer(1, simpleNormalizer)
 			w.Write([]byte(tt.input)) // No newline, triggers truncation
 
 			lines := ob.GetLines(1)
@@ -422,11 +393,7 @@ func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
 	// same line are discarded until a newline is seen.
 	// Key invariant: repeated writes without newlines produce at most ONE truncated line
 	ob := NewOutputBuffer(100, 10000)
-	normalize := func(line string) *OutputLine {
-		return &OutputLine{Text: line, Type: "text"}
-	}
-
-	w := ob.Writer(1, normalize)
+	w := ob.Writer(1, simpleNormalizer)
 
 	// Write data exceeding maxLine (100 bytes) multiple times WITHOUT a newline
 	// This simulates a single very long line being written in chunks

@@ -1,5 +1,5 @@
--- PostgreSQL schema version 2
--- Added model column to review_jobs for specifying which model an agent should use.
+-- PostgreSQL schema version 3
+-- Added branch column to review_jobs for tracking/filtering by branch name.
 -- Note: Version is managed by EnsureSchema(), not this file.
 
 CREATE SCHEMA IF NOT EXISTS roborev;
@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS roborev.review_jobs (
   repo_id INTEGER NOT NULL REFERENCES roborev.repos(id),
   commit_id INTEGER REFERENCES roborev.commits(id),
   git_ref TEXT NOT NULL,
+  branch TEXT,
   agent TEXT NOT NULL,
   model TEXT,
   reasoning TEXT,
@@ -80,6 +81,7 @@ CREATE TABLE IF NOT EXISTS roborev.responses (
 
 CREATE INDEX IF NOT EXISTS idx_review_jobs_source ON roborev.review_jobs(source_machine_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_updated ON roborev.review_jobs(updated_at);
+-- Note: idx_review_jobs_branch is created by migration, not here (to support v2->v3 upgrade)
 CREATE INDEX IF NOT EXISTS idx_reviews_job_uuid ON roborev.reviews(job_uuid);
 CREATE INDEX IF NOT EXISTS idx_reviews_updated ON roborev.reviews(updated_at);
 CREATE INDEX IF NOT EXISTS idx_responses_job_uuid ON roborev.responses(job_uuid);

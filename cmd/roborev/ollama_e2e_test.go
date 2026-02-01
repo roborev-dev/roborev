@@ -19,10 +19,10 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
-// setupGitRepo initializes a git repository in the given directory and returns the commit SHA.
+// setupE2EGitRepo initializes a git repository in the given directory and returns the commit SHA.
 // It creates an initial commit with a test file.
 // Additional environment variables can be provided via extraEnv (e.g., "HOME=/path").
-func setupGitRepo(t *testing.T, tmpDir string, extraEnv ...string) string {
+func setupE2EGitRepo(t *testing.T, tmpDir string, extraEnv ...string) string {
 	t.Helper()
 
 	runGit := func(args ...string) {
@@ -70,7 +70,7 @@ func TestOllamaE2E_ReviewWithMockServer(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	// Initialize git repo and get commit SHA
-	commitSHA := setupGitRepo(t, tmpDir)
+	commitSHA := setupE2EGitRepo(t, tmpDir)
 
 	// Create mock Ollama server
 	var receivedRequest []byte
@@ -120,7 +120,7 @@ func TestOllamaE2E_ReviewWithMockServer(t *testing.T) {
 	}
 
 	// Enqueue a job with Ollama agent
-	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "ollama", "test-model", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "", "ollama", "test-model", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestOllamaE2E_ConfigResolution(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	// Initialize git repo and get commit SHA
-	commitSHA := setupGitRepo(t, tmpDir)
+	commitSHA := setupE2EGitRepo(t, tmpDir)
 
 	// Create mock Ollama server
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +236,7 @@ func TestOllamaE2E_ConfigResolution(t *testing.T) {
 	}
 
 	// Enqueue job without explicit model (should use repo config)
-	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "ollama", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "", "ollama", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestOllamaE2E_ModelRequired(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	// Initialize git repo and get commit SHA
-	commitSHA := setupGitRepo(t, tmpDir)
+	commitSHA := setupE2EGitRepo(t, tmpDir)
 
 	// Create mock Ollama server (should not be called)
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +308,7 @@ func TestOllamaE2E_ModelRequired(t *testing.T) {
 	}
 
 	// Enqueue job without model
-	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "ollama", "", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "", "ollama", "", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestOllamaE2E_BaseURLOverride(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	// Initialize git repo and get commit SHA
-	commitSHA := setupGitRepo(t, tmpDir)
+	commitSHA := setupE2EGitRepo(t, tmpDir)
 
 	// Create mock Ollama server
 	// Note: We can't actually test a different URL with httptest, but we can verify
@@ -391,7 +391,7 @@ func TestOllamaE2E_BaseURLOverride(t *testing.T) {
 	}
 
 	// Enqueue job
-	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "ollama", "test-model", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "", "ollama", "test-model", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestOllamaE2E_StreamingOutput(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	// Initialize git repo and get commit SHA
-	commitSHA := setupGitRepo(t, tmpDir)
+	commitSHA := setupE2EGitRepo(t, tmpDir)
 
 	// Create mock Ollama server with streaming response
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -483,7 +483,7 @@ func TestOllamaE2E_StreamingOutput(t *testing.T) {
 	}
 
 	// Enqueue job
-	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "ollama", "test-model", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "", "ollama", "test-model", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -533,7 +533,7 @@ func TestOllamaE2E_ErrorHandling(t *testing.T) {
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
 	// Initialize git repo and get commit SHA
-	commitSHA := setupGitRepo(t, tmpDir)
+	commitSHA := setupE2EGitRepo(t, tmpDir)
 
 	// Create mock Ollama server that returns errors
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -569,7 +569,7 @@ func TestOllamaE2E_ErrorHandling(t *testing.T) {
 	}
 
 	// Enqueue job
-	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "ollama", "missing-model", "")
+	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "", "ollama", "missing-model", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -613,6 +613,10 @@ func TestOllamaE2E_ServerNotRunning(t *testing.T) {
 
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
 
+	// Initialize a real git repo so the worker can build the prompt before calling Ollama
+	testutil.InitTestGitRepo(t, tmpDir)
+	commitSHA := testutil.GetHeadSHA(t, tmpDir)
+
 	// Use a URL that will fail to connect (nothing listening on this port)
 	unreachableURL := "http://127.0.0.1:19999"
 
@@ -622,19 +626,19 @@ func TestOllamaE2E_ServerNotRunning(t *testing.T) {
 	cfg.DefaultModel = "test-model"
 	cfg.OllamaBaseURL = unreachableURL
 
-	// Create a repo and commit
+	// Create a repo (tmpDir is now a valid git repo)
 	repo, err := db.GetOrCreateRepo(tmpDir)
 	if err != nil {
 		t.Fatalf("GetOrCreateRepo failed: %v", err)
 	}
 
-	commit, err := db.GetOrCreateCommit(repo.ID, "testsha-unreachable", "Test Author", "Test commit", time.Now())
+	commit, err := db.GetOrCreateCommit(repo.ID, commitSHA, "Test Author", "Test commit", time.Now())
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
 
-	// Enqueue job
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "testsha-unreachable", "ollama", "test-model", "")
+	// Enqueue job with real SHA so worker can build prompt
+	job, err := db.EnqueueJob(repo.ID, commit.ID, commitSHA, "", "ollama", "test-model", "")
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -688,7 +692,7 @@ func TestOllamaE2E_CLIEnqueue(t *testing.T) {
 
 	// Create a temp git repo with custom HOME
 	tmpDir := t.TempDir()
-	setupGitRepo(t, tmpDir, "HOME="+tmpHome)
+	setupE2EGitRepo(t, tmpDir, "HOME="+tmpHome)
 
 	// Create mock daemon server
 	var receivedAgent string

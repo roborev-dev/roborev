@@ -9,15 +9,30 @@ import (
 	"time"
 )
 
-func TestNewErrorLog(t *testing.T) {
+func createTestErrorLog(t *testing.T) (*ErrorLog, string) {
+	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "errors.log")
-
 	el, err := NewErrorLog(path)
 	if err != nil {
 		t.Fatalf("NewErrorLog failed: %v", err)
 	}
-	defer el.Close()
+	t.Cleanup(func() { el.Close() })
+	return el, path
+}
+
+func seedErrorLog(el *ErrorLog, count int) {
+	for i := 1; i <= count; i++ {
+		el.Log("error", "worker", "error", int64(i))
+	}
+}
+
+func TestNewErrorLog(t *testing.T) {
+	el, path := createTestErrorLog(t)
+
+	if el == nil {
+		t.Fatal("NewErrorLog returned nil")
+	}
 
 	// Verify file was created
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -26,13 +41,7 @@ func TestNewErrorLog(t *testing.T) {
 }
 
 func TestErrorLogLog(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "errors.log")
-
-	el, err := NewErrorLog(path)
-	if err != nil {
-		t.Fatalf("NewErrorLog failed: %v", err)
-	}
+	el, path := createTestErrorLog(t)
 
 	// Log an error
 	el.Log("error", "worker", "test error message", 123)
@@ -64,14 +73,7 @@ func TestErrorLogLog(t *testing.T) {
 }
 
 func TestErrorLogRecent(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "errors.log")
-
-	el, err := NewErrorLog(path)
-	if err != nil {
-		t.Fatalf("NewErrorLog failed: %v", err)
-	}
-	defer el.Close()
+	el, _ := createTestErrorLog(t)
 
 	// Log several errors
 	for i := 1; i <= 5; i++ {
@@ -95,19 +97,9 @@ func TestErrorLogRecent(t *testing.T) {
 }
 
 func TestErrorLogRecentN(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "errors.log")
+	el, _ := createTestErrorLog(t)
 
-	el, err := NewErrorLog(path)
-	if err != nil {
-		t.Fatalf("NewErrorLog failed: %v", err)
-	}
-	defer el.Close()
-
-	// Log several errors
-	for i := 1; i <= 10; i++ {
-		el.Log("error", "worker", "error", int64(i))
-	}
+	seedErrorLog(el, 10)
 
 	// Get only 3 recent errors
 	recent := el.RecentN(3)
@@ -117,19 +109,9 @@ func TestErrorLogRecentN(t *testing.T) {
 }
 
 func TestErrorLogCount24h(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "errors.log")
+	el, _ := createTestErrorLog(t)
 
-	el, err := NewErrorLog(path)
-	if err != nil {
-		t.Fatalf("NewErrorLog failed: %v", err)
-	}
-	defer el.Close()
-
-	// Log several errors
-	for i := 0; i < 5; i++ {
-		el.Log("error", "worker", "error", 0)
-	}
+	seedErrorLog(el, 5)
 
 	count := el.Count24h()
 	if count != 5 {
@@ -138,19 +120,9 @@ func TestErrorLogCount24h(t *testing.T) {
 }
 
 func TestErrorLogRingBuffer(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "errors.log")
+	el, _ := createTestErrorLog(t)
 
-	el, err := NewErrorLog(path)
-	if err != nil {
-		t.Fatalf("NewErrorLog failed: %v", err)
-	}
-	defer el.Close()
-
-	// Log more errors than the ring buffer can hold (100)
-	for i := 1; i <= 150; i++ {
-		el.Log("error", "worker", "error", int64(i))
-	}
+	seedErrorLog(el, 150)
 
 	// Should only have the last 100 errors
 	recent := el.Recent()
@@ -165,14 +137,7 @@ func TestErrorLogRingBuffer(t *testing.T) {
 }
 
 func TestErrorLogConcurrency(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "errors.log")
-
-	el, err := NewErrorLog(path)
-	if err != nil {
-		t.Fatalf("NewErrorLog failed: %v", err)
-	}
-	defer el.Close()
+	el, _ := createTestErrorLog(t)
 
 	// Log from multiple goroutines
 	done := make(chan bool)

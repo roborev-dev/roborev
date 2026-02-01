@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"strings"
+	"time"
 )
 
 //go:embed templates/*.tmpl
@@ -30,23 +31,33 @@ func GetSystemPrompt(agentName string, promptType string) string {
 	tmplName := fmt.Sprintf("templates/%s_%s.tmpl", agentName, templateType)
 	content, err := templateFS.ReadFile(tmplName)
 	if err == nil {
-		return string(content)
+		return appendDateLine(string(content))
 	}
 
 	// Fallback to default constants
+	var base string
 	switch promptType {
 	case "review":
-		return SystemPromptSingle
+		base = SystemPromptSingle
 	case "dirty":
-		return SystemPromptDirty
+		base = SystemPromptDirty
 	case "range":
-		return SystemPromptRange
+		base = SystemPromptRange
 	case "address":
-		return SystemPromptAddress
+		base = SystemPromptAddress
 	case "run":
 		// No default run preamble - return empty so raw prompts are used
 		return ""
 	default:
-		return SystemPromptSingle
+		base = SystemPromptSingle
 	}
+	return appendDateLine(base)
+}
+
+// nowFunc is the time source for date lines in prompts. Override in tests.
+var nowFunc = time.Now
+
+// appendDateLine adds the current UTC date to a system prompt.
+func appendDateLine(prompt string) string {
+	return prompt + "\n\nCurrent date: " + nowFunc().UTC().Format("2006-01-02") + " (UTC)"
 }

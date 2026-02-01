@@ -46,8 +46,7 @@ var (
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
 
 	tuiSelectedStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.AdaptiveColor{Light: "127", Dark: "212"}) // Magenta/Pink
+				Background(lipgloss.AdaptiveColor{Light: "153", Dark: "24"}) // Light blue background
 
 	tuiQueuedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}) // Yellow/Gold
 	tuiRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "25", Dark: "33"})   // Blue
@@ -93,6 +92,7 @@ const (
 	tuiViewReview
 	tuiViewPrompt
 	tuiViewFilter
+	tuiViewBranchFilter
 	tuiViewComment
 	tuiViewCommitMsg
 	tuiViewHelp
@@ -104,6 +104,12 @@ type repoFilterItem struct {
 	name      string   // Display name. Empty string means "All repos"
 	rootPaths []string // Repo paths that share this display name. Empty for "All repos"
 	count     int
+}
+
+// branchFilterItem represents a branch in the filter modal
+type branchFilterItem struct {
+	name  string // Branch name. Empty string means "All branches"
+	count int
 }
 
 type tuiModel struct {
@@ -135,10 +141,15 @@ type tuiModel struct {
 	pendingRefetch bool // true if filter changed while loading, needs refetch when done
 	heightDetected bool // true after first WindowSizeMsg (real terminal height known)
 
-	// Filter modal state
+	// Repo filter modal state
 	filterRepos       []repoFilterItem // Available repos with counts
 	filterSelectedIdx int              // Currently highlighted repo in filter list
 	filterSearch      string           // Search/filter text typed by user
+
+	// Branch filter modal state
+	filterBranches          []branchFilterItem // Available branches with counts
+	branchFilterSelectedIdx int                // Currently highlighted branch in filter list
+	branchFilterSearch      string             // Search/filter text typed by user
 
 	// Comment modal state
 	commentText     string  // The response text being typed
@@ -147,11 +158,19 @@ type tuiModel struct {
 	commentFromView tuiView // View to return to after comment modal closes
 
 	// Active filter (applied to queue view)
-	activeRepoFilter []string // Empty = show all, otherwise repo root_paths to filter by
-	hideAddressed    bool     // When true, hide jobs with addressed reviews
+	activeRepoFilter   []string // Empty = show all, otherwise repo root_paths to filter by
+	activeBranchFilter string   // Empty = show all, otherwise branch name to filter by
+	filterStack        []string // Order of applied filters: "repo", "branch" - for escape to pop in order
+	hideAddressed      bool     // When true, hide jobs with addressed reviews
 
 	// Display name cache (keyed by repo path)
 	displayNames map[string]string
+
+	// Branch name cache (keyed by job ID) - caches derived branches to avoid repeated git calls
+	branchNames map[int64]string
+
+	// Track if branch backfill has run this session (one-time migration)
+	branchBackfillDone bool
 
 	// Pending addressed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
@@ -263,6 +282,12 @@ type tuiReposMsg struct {
 	repos      []repoFilterItem
 	totalCount int
 }
+type tuiBranchesMsg struct {
+	branches       []branchFilterItem
+	totalCount     int
+	backfillCount  int // Number of branches successfully backfilled to the database
+	nullsRemaining int // Number of jobs still without branch info (for backfill gating)
+}
 type tuiCommentResultMsg struct {
 	jobID int64
 	err   error
@@ -333,6 +358,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		height:                 24,
 		loadingJobs:            true,                           // Init() calls fetchJobs, so mark as loading
 		displayNames:           make(map[string]string),        // Cache display names to avoid disk reads on render
+		branchNames:            make(map[int64]string),         // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState),   // Track pending addressed changes (by job ID)
 		pendingReviewAddressed: make(map[int64]pendingState),   // Track pending addressed changes (by review ID)
 	}
@@ -381,6 +407,56 @@ func (m *tuiModel) updateDisplayNameCache(jobs []storage.ReviewJob) {
 	}
 }
 
+// getBranchForJob returns the branch name for a job, falling back to git lookup
+// if the stored branch is empty and the repo is available locally.
+// Results are cached to avoid repeated git calls on render.
+func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
+	// Use stored branch if available
+	if job.Branch != "" {
+		return job.Branch
+	}
+
+	// Check cache for previously derived branch (if cache exists)
+	if m.branchNames != nil {
+		if cached, ok := m.branchNames[job.ID]; ok {
+			return cached
+		}
+	}
+
+	// For task jobs (run, analyze, custom) or dirty jobs, no branch makes sense
+	if job.IsTaskJob() || job.GitRef == "dirty" {
+		return ""
+	}
+
+	// Fall back to git lookup if repo path exists locally and we have a SHA
+	// Only try if repo path is set and is not from a remote machine
+	if job.RepoPath == "" || (m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID) {
+		// Don't cache - repo might become available later
+		return ""
+	}
+
+	// Check if repo exists locally before attempting git lookup
+	// Return early on any error (not exists, permission denied, I/O failure)
+	// to avoid caching incorrect results
+	if _, err := os.Stat(job.RepoPath); err != nil {
+		return ""
+	}
+
+	// For ranges (SHA..SHA), use the end SHA
+	sha := job.GitRef
+	if idx := strings.Index(sha, ".."); idx != -1 {
+		sha = sha[idx+2:]
+	}
+
+	branch := git.GetBranchName(job.RepoPath, sha)
+	// Cache result (including empty for detached HEAD / commit not on branch)
+	// We only skip caching above when repo doesn't exist yet
+	if m.branchNames != nil {
+		m.branchNames[job.ID] = branch
+	}
+	return branch
+}
+
 func (m tuiModel) tick() tea.Cmd {
 	return tea.Tick(m.tickInterval(), func(t time.Time) tea.Msg {
 		return tuiTickMsg(t)
@@ -413,7 +489,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 
 	return func() tea.Msg {
 		// Determine limit:
-		// - No limit (limit=0) when filtering to show full repo/addressed history
+		// - No limit (limit=0) when filtering to show full repo/branch/addressed history
 		// - If we've paginated beyond visible area, maintain current view size
 		// - Otherwise fetch enough to fill visible area
 		var url string
@@ -422,6 +498,9 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 			url = fmt.Sprintf("%s/api/jobs?limit=0&repo=%s", m.serverAddr, neturl.QueryEscape(m.activeRepoFilter[0]))
 		} else if len(m.activeRepoFilter) > 1 {
 			// Multiple repos (shared display name) - fetch all, filter client-side
+			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
+		} else if m.activeBranchFilter != "" {
+			// Fetch all jobs when filtering by branch - client-side filtering needs full dataset
 			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
 		} else if m.hideAddressed {
 			// Fetch all jobs when hiding addressed - client-side filtering needs full dataset
@@ -457,7 +536,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 func (m tuiModel) fetchMoreJobs() tea.Cmd {
 	return func() tea.Msg {
 		// Only fetch more when not filtering (filtered view loads all)
-		if len(m.activeRepoFilter) > 0 {
+		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 			return nil
 		}
 		offset := len(m.jobs)
@@ -527,8 +606,21 @@ func (m tuiModel) tryReconnect() tea.Cmd {
 }
 
 func (m tuiModel) fetchRepos() tea.Cmd {
+	// Capture values for use in goroutine
+	client := m.client
+	serverAddr := m.serverAddr
+	activeBranchFilter := m.activeBranchFilter // Constrain repos by active branch filter
+
 	return func() tea.Msg {
-		resp, err := m.client.Get(m.serverAddr + "/api/repos")
+		// Build URL with optional branch filter (URL-encoded)
+		reposURL := serverAddr + "/api/repos"
+		if activeBranchFilter != "" {
+			params := neturl.Values{}
+			params.Set("branch", activeBranchFilter)
+			reposURL += "?" + params.Encode()
+		}
+
+		resp, err := client.Get(reposURL)
 		if err != nil {
 			return tuiErrMsg(err)
 		}
@@ -538,7 +630,7 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 			return tuiErrMsg(fmt.Errorf("fetch repos: %s", resp.Status))
 		}
 
-		var result struct {
+		var reposResult struct {
 			Repos []struct {
 				Name     string `json:"name"`
 				RootPath string `json:"root_path"`
@@ -546,14 +638,14 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 			} `json:"repos"`
 			TotalCount int `json:"total_count"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.NewDecoder(resp.Body).Decode(&reposResult); err != nil {
 			return tuiErrMsg(err)
 		}
 
 		// Aggregate repos by display name
 		displayNameMap := make(map[string]*repoFilterItem)
 		var displayNameOrder []string // Preserve order for stable display
-		for _, r := range result.Repos {
+		for _, r := range reposResult.Repos {
 			displayName := config.GetDisplayName(r.RootPath)
 			if displayName == "" {
 				displayName = r.Name
@@ -574,7 +666,166 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 		for i, name := range displayNameOrder {
 			repos[i] = *displayNameMap[name]
 		}
-		return tuiReposMsg{repos: repos, totalCount: result.TotalCount}
+		return tuiReposMsg{repos: repos, totalCount: reposResult.TotalCount}
+	}
+}
+
+func (m tuiModel) fetchBranches() tea.Cmd {
+	// Capture values for use in goroutine
+	machineID := m.status.MachineID
+	client := m.client
+	serverAddr := m.serverAddr
+	backfillDone := m.branchBackfillDone
+	activeRepoFilter := m.activeRepoFilter // Constrain branches by active repo filter
+
+	return func() tea.Msg {
+		var backfillCount int
+
+		// Check if backfill is needed (only if not already done this session)
+		if !backfillDone {
+			// First, check if there are any NULL branches via the API
+			resp, err := client.Get(serverAddr + "/api/branches")
+			if err != nil {
+				return tuiErrMsg(err)
+			}
+			var checkResult struct {
+				NullsRemaining int `json:"nulls_remaining"`
+			}
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				return tuiErrMsg(fmt.Errorf("check branches for backfill: %s", resp.Status))
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&checkResult); err != nil {
+				resp.Body.Close()
+				return tuiErrMsg(fmt.Errorf("decode branches response: %w", err))
+			}
+			resp.Body.Close()
+
+			// If there are NULL branches, fetch all jobs to backfill
+			if checkResult.NullsRemaining > 0 {
+				resp, err := client.Get(serverAddr + "/api/jobs")
+				if err != nil {
+					return tuiErrMsg(err)
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != http.StatusOK {
+					return tuiErrMsg(fmt.Errorf("fetch jobs for backfill: %s", resp.Status))
+				}
+
+				var jobsResult struct {
+					Jobs []storage.ReviewJob `json:"jobs"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&jobsResult); err != nil {
+					return tuiErrMsg(err)
+				}
+
+				// Find jobs that need backfill
+				type backfillJob struct {
+					id     int64
+					branch string
+				}
+				var toBackfill []backfillJob
+
+				for _, job := range jobsResult.Jobs {
+					if job.Branch != "" {
+						continue // Already has branch (including "(none)" sentinel)
+					}
+					// Mark task jobs (run, analyze, custom) or dirty jobs with "(none)" sentinel
+					if job.IsTaskJob() || job.GitRef == "dirty" {
+						toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: "(none)"})
+						continue
+					}
+					// Mark remote jobs with "(none)" sentinel (can't look up)
+					if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
+						toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: "(none)"})
+						continue
+					}
+
+					sha := job.GitRef
+					if idx := strings.Index(sha, ".."); idx != -1 {
+						sha = sha[idx+2:]
+					}
+					branch := git.GetBranchName(job.RepoPath, sha)
+					if branch == "" {
+						branch = "(none)" // Mark as attempted but not found
+					}
+					toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
+				}
+
+				// Persist to database
+				for _, bf := range toBackfill {
+					reqBody, _ := json.Marshal(map[string]interface{}{
+						"job_id": bf.id,
+						"branch": bf.branch,
+					})
+					resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
+					if err == nil {
+						if resp.StatusCode == http.StatusOK {
+							var updateResult struct {
+								Updated bool `json:"updated"`
+							}
+							if json.NewDecoder(resp.Body).Decode(&updateResult) == nil && updateResult.Updated {
+								backfillCount++
+							}
+						}
+						resp.Body.Close()
+					}
+				}
+			}
+		}
+
+		// Now fetch branches from server with optional repo filter
+		branchURL := serverAddr + "/api/branches"
+		if len(activeRepoFilter) > 0 {
+			params := neturl.Values{}
+			for _, repoPath := range activeRepoFilter {
+				if repoPath != "" { // Skip empty paths
+					params.Add("repo", repoPath)
+				}
+			}
+			if len(params) > 0 {
+				branchURL += "?" + params.Encode()
+			}
+		}
+
+		resp, err := client.Get(branchURL)
+		if err != nil {
+			return tuiErrMsg(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return tuiErrMsg(fmt.Errorf("fetch branches: %s", resp.Status))
+		}
+
+		var branchResult struct {
+			Branches []struct {
+				Name  string `json:"name"`
+				Count int    `json:"count"`
+			} `json:"branches"`
+			TotalCount     int `json:"total_count"`
+			NullsRemaining int `json:"nulls_remaining"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&branchResult); err != nil {
+			return tuiErrMsg(err)
+		}
+
+		// Convert to branchFilterItem
+		branches := make([]branchFilterItem, len(branchResult.Branches))
+		for i, b := range branchResult.Branches {
+			branches[i] = branchFilterItem{
+				name:  b.Name,
+				count: b.Count,
+			}
+		}
+
+		return tuiBranchesMsg{
+			branches:       branches,
+			totalCount:     branchResult.TotalCount,
+			backfillCount:  backfillCount,
+			nullsRemaining: branchResult.NullsRemaining,
+		}
 	}
 }
 
@@ -806,12 +1057,12 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 	jobID := job.ID
 	return func() tea.Msg {
-		// Handle prompt/run jobs first (GitRef == "prompt" indicates a run task, not a commit review)
+		// Handle task jobs first (run, analyze, custom labels)
 		// Check this before dirty to handle backward compatibility with older run jobs
-		if job.GitRef == "prompt" {
+		if job.IsTaskJob() {
 			return tuiCommitMsgMsg{
 				jobID: jobID,
-				err:   fmt.Errorf("no commit message for run tasks"),
+				err:   fmt.Errorf("no commit message for task jobs"),
 			}
 		}
 
@@ -1182,6 +1433,45 @@ func (m *tuiModel) getSelectedFilterRepo() *repoFilterItem {
 	return nil
 }
 
+// branchFilterNavigateUp moves selection up in the branch filter modal
+func (m *tuiModel) branchFilterNavigateUp() {
+	if m.branchFilterSelectedIdx > 0 {
+		m.branchFilterSelectedIdx--
+	}
+}
+
+// branchFilterNavigateDown moves selection down in the branch filter modal
+func (m *tuiModel) branchFilterNavigateDown() {
+	visible := m.getVisibleFilterBranches()
+	if m.branchFilterSelectedIdx < len(visible)-1 {
+		m.branchFilterSelectedIdx++
+	}
+}
+
+// getSelectedFilterBranch returns the currently selected branch in the filter modal
+func (m *tuiModel) getSelectedFilterBranch() *branchFilterItem {
+	visible := m.getVisibleFilterBranches()
+	if m.branchFilterSelectedIdx >= 0 && m.branchFilterSelectedIdx < len(visible) {
+		return &visible[m.branchFilterSelectedIdx]
+	}
+	return nil
+}
+
+// getVisibleFilterBranches returns branches that match the current search filter
+func (m *tuiModel) getVisibleFilterBranches() []branchFilterItem {
+	if m.branchFilterSearch == "" {
+		return m.filterBranches
+	}
+	searchLower := strings.ToLower(m.branchFilterSearch)
+	var visible []branchFilterItem
+	for _, b := range m.filterBranches {
+		if b.name == "" || strings.Contains(strings.ToLower(b.name), searchLower) {
+			visible = append(visible, b)
+		}
+	}
+	return visible
+}
+
 // repoMatchesFilter checks if a repo path matches the active filter
 func (m tuiModel) repoMatchesFilter(repoPath string) bool {
 	for _, p := range m.activeRepoFilter {
@@ -1195,6 +1485,9 @@ func (m tuiModel) repoMatchesFilter(repoPath string) bool {
 // isJobVisible checks if a job passes all active filters
 func (m tuiModel) isJobVisible(job storage.ReviewJob) bool {
 	if len(m.activeRepoFilter) > 0 && !m.repoMatchesFilter(job.RepoPath) {
+		return false
+	}
+	if m.activeBranchFilter != "" && !m.branchMatchesFilter(job) {
 		return false
 	}
 	if m.hideAddressed {
@@ -1214,9 +1507,56 @@ func (m tuiModel) isJobVisible(job storage.ReviewJob) bool {
 	return true
 }
 
-// getVisibleJobs returns jobs filtered by active filters (repo, addressed)
+// branchMatchesFilter checks if a job's branch matches the active branch filter
+func (m tuiModel) branchMatchesFilter(job storage.ReviewJob) bool {
+	branch := m.getBranchForJob(job)
+	if branch == "" {
+		branch = "(none)"
+	}
+	return branch == m.activeBranchFilter
+}
+
+// pushFilter adds a filter type to the stack (or moves it to the end if already present)
+func (m *tuiModel) pushFilter(filterType string) {
+	// Remove if already present
+	m.removeFilterFromStack(filterType)
+	// Add to end
+	m.filterStack = append(m.filterStack, filterType)
+}
+
+// popFilter removes the most recent filter from the stack and clears its value
+// Returns the filter type that was popped, or empty string if stack was empty
+func (m *tuiModel) popFilter() string {
+	if len(m.filterStack) == 0 {
+		return ""
+	}
+	// Pop the last filter
+	last := m.filterStack[len(m.filterStack)-1]
+	m.filterStack = m.filterStack[:len(m.filterStack)-1]
+	// Clear the corresponding filter value
+	switch last {
+	case "repo":
+		m.activeRepoFilter = nil
+	case "branch":
+		m.activeBranchFilter = ""
+	}
+	return last
+}
+
+// removeFilterFromStack removes a filter type from the stack without clearing its value
+func (m *tuiModel) removeFilterFromStack(filterType string) {
+	var newStack []string
+	for _, f := range m.filterStack {
+		if f != filterType {
+			newStack = append(newStack, f)
+		}
+	}
+	m.filterStack = newStack
+}
+
+// getVisibleJobs returns jobs filtered by active filters (repo, branch, addressed)
 func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
-	if len(m.activeRepoFilter) == 0 && !m.hideAddressed {
+	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideAddressed {
 		return m.jobs
 	}
 	var visible []storage.ReviewJob
@@ -1234,7 +1574,7 @@ func (m tuiModel) getVisibleSelectedIdx() int {
 	if m.selectedIdx < 0 {
 		return -1
 	}
-	if len(m.activeRepoFilter) == 0 && !m.hideAddressed {
+	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideAddressed {
 		return m.selectedIdx
 	}
 	count := 0
@@ -1352,7 +1692,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				selected := m.getSelectedFilterRepo()
 				if selected != nil {
-					m.activeRepoFilter = selected.rootPaths
+					if len(selected.rootPaths) == 0 {
+						// "All projects" - remove repo filter from stack
+						m.activeRepoFilter = nil
+						m.removeFilterFromStack("repo")
+					} else {
+						// Apply repo filter and push onto stack
+						m.activeRepoFilter = selected.rootPaths
+						m.pushFilter("repo")
+					}
 					m.currentView = tuiViewQueue
 					m.filterSearch = ""
 					// Invalidate selection until refetch completes - prevents
@@ -1378,6 +1726,70 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if unicode.IsPrint(r) && !unicode.IsControl(r) {
 							m.filterSearch += string(r)
 							m.filterSelectedIdx = 0 // Reset selection when search changes
+						}
+					}
+				}
+				return m, nil
+			}
+		}
+
+		// Handle branch filter modal
+		if m.currentView == tuiViewBranchFilter {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc", "q":
+				m.currentView = tuiViewQueue
+				m.branchFilterSearch = ""
+				return m, nil
+			case "up", "k":
+				m.branchFilterNavigateUp()
+				return m, nil
+			case "down", "j":
+				m.branchFilterNavigateDown()
+				return m, nil
+			case "enter":
+				selected := m.getSelectedFilterBranch()
+				if selected != nil {
+					if selected.name == "" {
+						// "All branches" - remove branch filter from stack
+						m.activeBranchFilter = ""
+						m.removeFilterFromStack("branch")
+					} else {
+						// Apply branch filter and push onto stack
+						m.activeBranchFilter = selected.name
+						m.pushFilter("branch")
+					}
+					m.currentView = tuiViewQueue
+					m.branchFilterSearch = ""
+					// Branch filter changes fetch behavior (limited vs unlimited),
+					// so we need to refetch
+					m.jobs = nil
+					m.hasMore = false
+					m.selectedIdx = -1
+					m.selectedJobID = 0
+					if m.loadingJobs || m.loadingMore {
+						m.pendingRefetch = true
+						return m, nil
+					}
+					m.loadingJobs = true
+					return m, m.fetchJobs()
+				}
+				return m, nil
+			case "backspace":
+				if len(m.branchFilterSearch) > 0 {
+					runes := []rune(m.branchFilterSearch)
+					m.branchFilterSearch = string(runes[:len(runes)-1])
+					m.branchFilterSelectedIdx = 0 // Reset selection when search changes
+				}
+				return m, nil
+			default:
+				// Handle typing for search (supports non-ASCII runes)
+				if len(msg.Runes) > 0 {
+					for _, r := range msg.Runes {
+						if unicode.IsPrint(r) && !unicode.IsControl(r) {
+							m.branchFilterSearch += string(r)
+							m.branchFilterSelectedIdx = 0 // Reset selection when search changes
 						}
 					}
 				}
@@ -1584,11 +1996,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
-				} else if !m.hasMore || len(m.activeRepoFilter) > 0 {
+				} else if !m.hasMore || len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 					// Truly at the bottom - no more to load or filter prevents auto-load
 					m.flashMessage = "No older review"
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
@@ -1609,7 +2021,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -1676,7 +2088,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.updateSelectedJobID()
 				// If we hit the end, try to load more
-				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 {
+				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
 				}
@@ -1870,6 +2282,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.fetchRepos()
 			}
 
+		case "b":
+			// Open branch filter modal
+			if m.currentView == tuiViewQueue {
+				m.filterBranches = nil // Clear previous branches (will show loading)
+				m.branchFilterSelectedIdx = 0
+				m.branchFilterSearch = ""
+				m.currentView = tuiViewBranchFilter
+				return m, m.fetchBranches()
+			}
+
 		case "h":
 			// Toggle hide addressed
 			if m.currentView == tuiViewQueue {
@@ -1992,23 +2414,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "esc":
-			if m.currentView == tuiViewQueue && len(m.activeRepoFilter) > 0 {
-				// Clear project filter first (keep hide-addressed if active)
-				m.activeRepoFilter = nil
-				m.jobs = nil
-				m.hasMore = false
-				m.selectedIdx = -1
-				m.selectedJobID = 0
-				// If already loading (full refresh or pagination), queue a refetch
-				// to avoid out-of-order responses mixing stale data
-				if m.loadingJobs || m.loadingMore {
-					m.pendingRefetch = true
-					return m, nil
+			if m.currentView == tuiViewQueue && len(m.filterStack) > 0 {
+				// Pop the most recent filter from the stack
+				popped := m.popFilter()
+				if popped == "repo" || popped == "branch" {
+					// Repo/branch filter changes fetch behavior, need to refetch
+					m.jobs = nil
+					m.hasMore = false
+					m.selectedIdx = -1
+					m.selectedJobID = 0
+					if m.loadingJobs || m.loadingMore {
+						m.pendingRefetch = true
+						return m, nil
+					}
+					m.loadingJobs = true
+					return m, m.fetchJobs()
 				}
-				m.loadingJobs = true
-				return m, m.fetchJobs()
+				return m, nil
 			} else if m.currentView == tuiViewQueue && m.hideAddressed {
-				// Clear hide-addressed filter (no project filter active)
+				// Clear hide-addressed filter (no project/branch filter active)
 				m.hideAddressed = false
 				m.jobs = nil
 				m.hasMore = false
@@ -2061,7 +2485,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// If terminal can show more jobs than we have, re-fetch to fill screen
 		// Gate on !loadingMore and !loadingJobs to avoid race conditions
-		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) == 0 {
+		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 			newVisibleRows := m.height - 9 + 10
 			if newVisibleRows > len(m.jobs) {
 				m.loadingJobs = true
@@ -2370,7 +2794,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filterRepos = []repoFilterItem{{name: "", count: msg.totalCount}}
 		m.filterRepos = append(m.filterRepos, msg.repos...)
 		// Pre-select current filter if active
-		if len(m.activeRepoFilter) > 0 {
+		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 			for i, r := range m.filterRepos {
 				if len(r.rootPaths) == len(m.activeRepoFilter) && len(r.rootPaths) > 0 {
 					// Check if all paths match
@@ -2387,6 +2811,30 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+		}
+
+	case tuiBranchesMsg:
+		m.consecutiveErrors = 0 // Reset on successful fetch
+		// Only mark backfill done when no NULL branches remain
+		// Track whether all branches are filled - reset if new NULLs appear
+		m.branchBackfillDone = true // Mark done after first attempt (don't retry unresolvable NULLs)
+		// Populate filter branches with "All branches" as first option
+		m.filterBranches = []branchFilterItem{{name: "", count: msg.totalCount}}
+		m.filterBranches = append(m.filterBranches, msg.branches...)
+		// Pre-select current filter if active
+		if m.activeBranchFilter != "" {
+			for i, b := range m.filterBranches {
+				if b.name == m.activeBranchFilter {
+					m.branchFilterSelectedIdx = i
+					break
+				}
+			}
+		}
+		// Show flash message if branches were backfilled
+		if msg.backfillCount > 0 {
+			m.flashMessage = fmt.Sprintf("Backfilled branch info for %d jobs", msg.backfillCount)
+			m.flashExpiresAt = time.Now().Add(5 * time.Second)
+			m.flashView = tuiViewBranchFilter
 		}
 
 	case tuiCommentResultMsg:
@@ -2514,6 +2962,9 @@ func (m tuiModel) View() string {
 	if m.currentView == tuiViewFilter {
 		return m.renderFilterView()
 	}
+	if m.currentView == tuiViewBranchFilter {
+		return m.renderBranchFilterView()
+	}
 	if m.currentView == tuiViewCommitMsg {
 		return m.renderCommitMsgView()
 	}
@@ -2535,12 +2986,20 @@ func (m tuiModel) View() string {
 func (m tuiModel) renderQueueView() string {
 	var b strings.Builder
 
-	// Title with version, optional update notification, and filter indicators
+	// Title with version, optional update notification, and filter indicators (in stack order)
 	title := fmt.Sprintf("roborev queue (%s)", version.Version)
-	if len(m.activeRepoFilter) > 0 {
-		// Show display name for the filter (all paths share the same display name)
-		filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
-		title += fmt.Sprintf(" [f: %s]", filterName)
+	for _, filterType := range m.filterStack {
+		switch filterType {
+		case "repo":
+			if len(m.activeRepoFilter) > 0 {
+				filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
+				title += fmt.Sprintf(" [f: %s]", filterName)
+			}
+		case "branch":
+			if m.activeBranchFilter != "" {
+				title += fmt.Sprintf(" [b: %s]", m.activeBranchFilter)
+			}
+		}
 	}
 	if m.hideAddressed {
 		title += " [hiding addressed]"
@@ -2548,32 +3007,34 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString(tuiTitleStyle.Render(title))
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Status line - show filtered counts when filter is active
+	// Status line - count addressed/unaddressed from jobs
 	var statusLine string
-	if len(m.activeRepoFilter) > 0 {
-		// Calculate counts from visible jobs (handles multi-path client-side filtering)
-		var done, failed, canceled int
-		for _, job := range m.jobs {
+	var done, addressed, unaddressed int
+	for _, job := range m.jobs {
+		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 			if !m.repoMatchesFilter(job.RepoPath) {
 				continue
 			}
-			switch job.Status {
-			case storage.JobStatusDone:
-				done++
-			case storage.JobStatusFailed:
-				failed++
-			case storage.JobStatusCanceled:
-				canceled++
+		}
+		if job.Status == storage.JobStatusDone {
+			done++
+			if job.Addressed != nil {
+				if *job.Addressed {
+					addressed++
+				} else {
+					unaddressed++
+				}
 			}
 		}
-		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Failed: %d | Canceled: %d",
-			m.daemonVersion, done, failed, canceled)
+	}
+	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
+		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addressed: %d | Unaddressed: %d",
+			m.daemonVersion, done, addressed, unaddressed)
 	} else {
-		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Failed: %d | Canceled: %d",
+		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Addressed: %d | Unaddressed: %d",
 			m.daemonVersion,
 			m.status.ActiveWorkers, m.status.MaxWorkers,
-			m.status.CompletedJobs, m.status.FailedJobs,
-			m.status.CanceledJobs)
+			done, addressed, unaddressed)
 	}
 	b.WriteString(tuiStatusStyle.Render(statusLine))
 	b.WriteString("\x1b[K\n") // Clear status line
@@ -2639,12 +3100,13 @@ func (m tuiModel) renderQueueView() string {
 		colWidths := m.calculateColumnWidths(idWidth)
 
 		// Header (with 2-char prefix to align with row selector)
-		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-10s %-3s %-12s %-8s %s",
+		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-8s %-3s %-12s %-8s %s",
 			idWidth, "ID",
 			colWidths.ref, "Ref",
+			colWidths.branch, "Branch",
 			colWidths.repo, "Repo",
 			colWidths.agent, "Agent",
-			"Status", "P/F", "Queued", "Elapsed", "Addr'd")
+			"Status", "P/F", "Queued", "Elapsed", "Addressed")
 		b.WriteString(tuiStatusStyle.Render(header))
 		b.WriteString("\x1b[K\n") // Clear to end of line
 		b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
@@ -2674,7 +3136,13 @@ func (m tuiModel) renderQueueView() string {
 			selected := i == visibleSelectedIdx
 			line := m.renderJobLine(job, selected, idWidth, colWidths)
 			if selected {
-				line = tuiSelectedStyle.Render("> " + line)
+				// Pad line to full terminal width for background styling
+				lineWidth := lipgloss.Width(line)
+				paddedLine := "> " + line
+				if padding := m.width - lineWidth - 2; padding > 0 {
+					paddedLine += strings.Repeat(" ", padding)
+				}
+				line = tuiSelectedStyle.Render(paddedLine)
 			} else {
 				line = "  " + line
 			}
@@ -2693,7 +3161,7 @@ func (m tuiModel) renderQueueView() string {
 		if len(visibleJobList) > visibleRows || m.hasMore || m.loadingMore {
 			if m.loadingMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(visibleJobList))
-			} else if m.hasMore && len(m.activeRepoFilter) == 0 {
+			} else if m.hasMore && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d+] scroll down to load more", start+1, end, len(visibleJobList))
 			} else if len(visibleJobList) > visibleRows {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visibleJobList))
@@ -2708,23 +3176,20 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
 	// Status line: flash message (temporary)
-	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewQueue {
+	// Version mismatch takes priority over flash messages (it's persistent and important)
+	if m.versionMismatch {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
+		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
+	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewQueue {
 		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Version mismatch error (persistent, red)
-	if m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
-		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-		b.WriteString("\x1b[K\n")
-	}
-
 	// Help (two lines)
 	helpLine1 := "↑/↓: navigate | enter: review | y: copy | m: commit msg | q: quit | ?: help"
-	helpLine2 := "f: filter | h: hide addressed | a: toggle addressed | x: cancel"
-	if len(m.activeRepoFilter) > 0 || m.hideAddressed {
+	helpLine2 := "f: filter | b: branch | h: hide addressed | a: toggle addressed | x: cancel"
+	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" || m.hideAddressed {
 		helpLine2 += " | esc: clear filters"
 	}
 	b.WriteString(tuiHelpStyle.Render(helpLine1))
@@ -2737,47 +3202,53 @@ func (m tuiModel) renderQueueView() string {
 }
 
 type columnWidths struct {
-	ref   int
-	repo  int
-	agent int
+	ref    int
+	branch int
+	repo   int
+	agent  int
 }
 
 func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (10), P/F (3), Queued (12), Elapsed (8), Addr'd (6)
-	// Plus spacing: 2 (prefix) + 8 spaces between columns
-	fixedWidth := 2 + idWidth + 10 + 3 + 12 + 8 + 6 + 8
+	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addressed (9)
+	// Status width 8 accommodates "canceled" (longest status)
+	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
+	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 9 + 9
 
-	// Available width for flexible columns (ref, repo, agent)
+	// Available width for flexible columns (ref, branch, repo, agent)
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
-	availableWidth := max(3, m.width-fixedWidth) // At least 3 chars total for columns
+	availableWidth := max(4, m.width-fixedWidth) // At least 4 chars total for columns
 
-	// Distribute available width: ref (25%), repo (45%), agent (30%)
-	refWidth := max(1, availableWidth*25/100)
-	repoWidth := max(1, availableWidth*45/100)
-	agentWidth := max(1, availableWidth*30/100)
+	// Distribute available width: ref (20%), branch (32%), repo (33%), agent (15%)
+	refWidth := max(1, availableWidth*20/100)
+	branchWidth := max(1, availableWidth*32/100)
+	repoWidth := max(1, availableWidth*33/100)
+	agentWidth := max(1, availableWidth*15/100)
 
 	// Scale down if total exceeds available (can happen due to rounding with small values)
-	total := refWidth + repoWidth + agentWidth
+	total := refWidth + branchWidth + repoWidth + agentWidth
 	if total > availableWidth && availableWidth > 0 {
-		refWidth = max(1, availableWidth*25/100)
-		repoWidth = max(1, availableWidth*45/100)
-		agentWidth = availableWidth - refWidth - repoWidth // Give remainder to agent
+		refWidth = max(1, availableWidth*20/100)
+		branchWidth = max(1, availableWidth*32/100)
+		repoWidth = max(1, availableWidth*33/100)
+		agentWidth = availableWidth - refWidth - branchWidth - repoWidth // Give remainder to agent
 		if agentWidth < 1 {
 			agentWidth = 1
 		}
 	}
 
 	// Apply higher minimums only when there's plenty of space
-	if availableWidth >= 35 {
-		refWidth = max(10, refWidth)
-		repoWidth = max(15, repoWidth)
-		agentWidth = max(10, agentWidth)
+	if availableWidth >= 45 {
+		refWidth = max(8, refWidth)
+		branchWidth = max(10, branchWidth)
+		repoWidth = max(10, repoWidth)
+		agentWidth = max(6, agentWidth)
 	}
 
 	return columnWidths{
-		ref:   refWidth,
-		repo:  repoWidth,
-		agent: agentWidth,
+		ref:    refWidth,
+		branch: branchWidth,
+		repo:   repoWidth,
+		agent:  agentWidth,
 	}
 }
 
@@ -2785,6 +3256,12 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 	ref := shortJobRef(job)
 	if len(ref) > colWidths.ref {
 		ref = ref[:max(1, colWidths.ref-3)] + "..."
+	}
+
+	// Get branch name with fallback to git lookup
+	branch := m.getBranchForJob(job)
+	if len(branch) > colWidths.branch {
+		branch = branch[:max(1, colWidths.branch-3)] + "..."
 	}
 
 	// Use cached display name, falling back to RepoName
@@ -2798,6 +3275,10 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 	}
 
 	agent := job.Agent
+	// Normalize agent display names for compactness
+	if agent == "claude-code" {
+		agent = "claude"
+	}
 	if len(agent) > colWidths.agent {
 		agent = agent[:max(1, colWidths.agent-3)] + "..."
 	}
@@ -2815,13 +3296,8 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 		}
 	}
 
-	// Format status with retry count for queued/running jobs (e.g., "queued(1)")
-	status := string(job.Status)
-	if job.RetryCount > 0 && (job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning) {
-		status = fmt.Sprintf("%s(%d)", job.Status, job.RetryCount)
-	}
-
 	// Color the status only when not selected (selection style should be uniform)
+	status := string(job.Status)
 	var styledStatus string
 	if selected {
 		styledStatus = status
@@ -2842,8 +3318,8 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 		}
 	}
 	// Pad after coloring since lipgloss strips trailing spaces
-	// Width 10 accommodates "running(3)" (10 chars)
-	padding := 10 - len(status)
+	// Width 8 accommodates "canceled" (longest status)
+	padding := 8 - len(status)
 	if padding > 0 {
 		styledStatus += strings.Repeat(" ", padding)
 	}
@@ -2875,9 +3351,10 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 		}
 	}
 
-	return fmt.Sprintf("%-*d %-*s %-*s %-*s %s %s %-12s %-8s %s",
+	return fmt.Sprintf("%-*d %-*s %-*s %-*s %-*s %s %s %-12s %-8s %s",
 		idWidth, job.ID,
 		colWidths.ref, ref,
+		colWidths.branch, branch,
 		colWidths.repo, repo,
 		colWidths.agent, agent,
 		styledStatus, verdict, enqueued, elapsed, addr)
@@ -3073,8 +3550,11 @@ func (m tuiModel) renderReviewView() string {
 		linesWritten++
 	}
 
-	// Status line: flash message (temporary) takes priority over scroll indicator
-	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewReview {
+	// Status line: version mismatch (persistent) takes priority, then flash message, then scroll indicator
+	if m.versionMismatch {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
+		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
+	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewReview {
 		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	} else if len(lines) > visibleLines {
@@ -3082,13 +3562,6 @@ func (m tuiModel) renderReviewView() string {
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n") // Clear status line
-
-	// Version mismatch error (persistent, red)
-	if m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true)
-		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-		b.WriteString("\x1b[K\n")
-	}
 
 	b.WriteString(tuiHelpStyle.Render(helpText))
 	b.WriteString("\x1b[K") // Clear help line
@@ -3278,6 +3751,118 @@ func (m tuiModel) renderFilterView() string {
 	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | esc: cancel | type to search"))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
+
+	return b.String()
+}
+
+func (m tuiModel) renderBranchFilterView() string {
+	var b strings.Builder
+
+	b.WriteString(tuiTitleStyle.Render("Filter by Branch"))
+	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
+
+	// Show loading state if branches haven't been fetched yet
+	if m.filterBranches == nil {
+		b.WriteString(tuiStatusStyle.Render("Loading branches..."))
+		b.WriteString("\x1b[K\n")
+		// Pad to fill terminal height
+		linesWritten := 3
+		for linesWritten < m.height-1 {
+			b.WriteString("\x1b[K\n")
+			linesWritten++
+		}
+		b.WriteString(tuiHelpStyle.Render("esc: cancel"))
+		b.WriteString("\x1b[K")
+		b.WriteString("\x1b[J")
+		return b.String()
+	}
+
+	// Search box
+	searchDisplay := m.branchFilterSearch
+	if searchDisplay == "" {
+		searchDisplay = tuiStatusStyle.Render("Type to search...")
+	}
+	b.WriteString(fmt.Sprintf("Search: %s", searchDisplay))
+	b.WriteString("\x1b[K\n\x1b[K\n")
+
+	visible := m.getVisibleFilterBranches()
+
+	// Calculate visible rows
+	reservedLines := 7
+	visibleRows := m.height - reservedLines
+	if visibleRows < 0 {
+		visibleRows = 0
+	}
+
+	// Determine which branches to show, keeping selected item visible
+	start := 0
+	end := len(visible)
+	needsScroll := len(visible) > visibleRows && visibleRows > 0
+	if needsScroll {
+		start = m.branchFilterSelectedIdx - visibleRows/2
+		if start < 0 {
+			start = 0
+		}
+		end = start + visibleRows
+		if end > len(visible) {
+			end = len(visible)
+			start = end - visibleRows
+			if start < 0 {
+				start = 0
+			}
+		}
+	} else if visibleRows > 0 {
+		if end > visibleRows {
+			end = visibleRows
+		}
+	} else {
+		end = 0
+	}
+
+	branchLinesWritten := 0
+	for i := start; i < end; i++ {
+		branch := visible[i]
+		var line string
+		if branch.name == "" {
+			line = fmt.Sprintf("All branches (%d)", branch.count)
+		} else {
+			line = fmt.Sprintf("%s (%d)", branch.name, branch.count)
+		}
+
+		if i == m.branchFilterSelectedIdx {
+			b.WriteString(tuiSelectedStyle.Render("> " + line))
+		} else {
+			b.WriteString("  " + line)
+		}
+		b.WriteString("\x1b[K\n")
+		branchLinesWritten++
+	}
+
+	if len(visible) == 0 {
+		b.WriteString(tuiStatusStyle.Render("  No matching branches"))
+		b.WriteString("\x1b[K\n")
+		branchLinesWritten++
+	} else if visibleRows == 0 {
+		b.WriteString(tuiStatusStyle.Render("  (terminal too small)"))
+		b.WriteString("\x1b[K\n")
+		branchLinesWritten++
+	}
+
+	// Pad with clear-to-end-of-line sequences
+	for branchLinesWritten < visibleRows {
+		b.WriteString("\x1b[K\n")
+		branchLinesWritten++
+	}
+
+	if needsScroll {
+		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visible))
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
+	b.WriteString("\x1b[K\n")
+
+	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | esc: cancel | type to search"))
+	b.WriteString("\x1b[K")
+	b.WriteString("\x1b[J")
 
 	return b.String()
 }

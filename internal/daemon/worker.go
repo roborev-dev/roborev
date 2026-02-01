@@ -206,6 +206,14 @@ func (wp *WorkerPool) registerRunningJob(jobID int64, cancel context.CancelFunc)
 	wp.runningJobsMu.Unlock()
 }
 
+// IsJobPendingCancel reports whether a job is in the pendingCancels set.
+// This is intended for use in tests.
+func (wp *WorkerPool) IsJobPendingCancel(jobID int64) bool {
+	wp.runningJobsMu.Lock()
+	defer wp.runningJobsMu.Unlock()
+	return wp.pendingCancels[jobID]
+}
+
 // unregisterRunningJob removes a job from the running jobs map
 func (wp *WorkerPool) unregisterRunningJob(jobID int64) {
 	wp.runningJobsMu.Lock()
@@ -272,11 +280,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	wp.registerRunningJob(job.ID, cancel)
 	defer wp.unregisterRunningJob(job.ID)
 
-	// Build the prompt (or use pre-stored prompt for prompt jobs)
+	// Build the prompt (or use pre-stored prompt for task jobs)
 	var reviewPrompt string
 	var err error
-	if job.GitRef == "prompt" && job.Prompt != "" {
-		// Custom prompt job - prepend agent-specific preamble if available
+	if job.IsTaskJob() && job.Prompt != "" {
+		// Task job (run, analyze, custom) - prepend agent-specific preamble if available
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
 		if preamble != "" {
 			reviewPrompt = preamble + "\n" + job.Prompt

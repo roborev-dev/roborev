@@ -11,17 +11,16 @@ func TestEnqueuePromptJob(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/prompt-test")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/prompt-test")
 
 	t.Run("creates job with custom prompt", func(t *testing.T) {
 		customPrompt := "Explain the architecture of this codebase"
-		job, err := db.EnqueuePromptJob(repo.ID, "claude-code", "", "thorough", customPrompt, false)
-		if err != nil {
-			t.Fatalf("EnqueuePromptJob failed: %v", err)
-		}
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "claude-code",
+			Reasoning: "thorough",
+			Prompt:    customPrompt,
+		})
 
 		if job.GitRef != "prompt" {
 			t.Errorf("Expected git_ref 'prompt', got '%s'", job.GitRef)
@@ -41,10 +40,11 @@ func TestEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("defaults reasoning to thorough", func(t *testing.T) {
-		job, err := db.EnqueuePromptJob(repo.ID, "codex", "", "", "test prompt", false)
-		if err != nil {
-			t.Fatalf("EnqueuePromptJob failed: %v", err)
-		}
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "codex",
+			Prompt: "test prompt",
+		})
 		if job.Reasoning != "thorough" {
 			t.Errorf("Expected default reasoning 'thorough', got '%s'", job.Reasoning)
 		}
@@ -63,19 +63,14 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		customPrompt := "Find security issues in the codebase"
-		_, err := db.EnqueuePromptJob(repo.ID, "claude-code", "", "standard", customPrompt, false)
-		if err != nil {
-			t.Fatalf("EnqueuePromptJob failed: %v", err)
-		}
+		mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "claude-code",
+			Reasoning: "standard",
+			Prompt:    customPrompt,
+		})
 
-		// Claim the job
-		claimed, err := db.ClaimJob("test-worker")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-		if claimed == nil {
-			t.Fatal("Expected to claim a job")
-		}
+		claimed := claimJob(t, db, "test-worker")
 
 		if claimed.GitRef != "prompt" {
 			t.Errorf("Expected git_ref 'prompt', got '%s'", claimed.GitRef)
@@ -89,16 +84,15 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, err := db.GetOrCreateRepo("/tmp/agentic-test")
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo failed: %v", err)
-		}
+		repo := createRepo(t, db, "/tmp/agentic-test")
 
 		// Enqueue with agentic=true
-		job, err := db.EnqueuePromptJob(repo.ID, "claude-code", "", "thorough", "Test agentic prompt", true)
-		if err != nil {
-			t.Fatalf("EnqueuePromptJob failed: %v", err)
-		}
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID:  repo.ID,
+			Agent:   "claude-code",
+			Prompt:  "Test agentic prompt",
+			Agentic: true,
+		})
 
 		if !job.Agentic {
 			t.Error("Expected Agentic to be true on returned job")
@@ -106,7 +100,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 		// Verify it's stored in the database
 		var agenticInt int
-		err = db.QueryRow(`SELECT agentic FROM review_jobs WHERE id = ?`, job.ID).Scan(&agenticInt)
+		err := db.QueryRow(`SELECT agentic FROM review_jobs WHERE id = ?`, job.ID).Scan(&agenticInt)
 		if err != nil {
 			t.Fatalf("Failed to query agentic: %v", err)
 		}
@@ -115,13 +109,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		// Claim the job and verify agentic flag is loaded
-		claimed, err := db.ClaimJob("test-worker")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-		if claimed == nil {
-			t.Fatal("Expected to claim a job")
-		}
+		claimed := claimJob(t, db, "test-worker")
 
 		if !claimed.Agentic {
 			t.Error("Expected Agentic to be true on claimed job")
@@ -132,32 +120,163 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, err := db.GetOrCreateRepo("/tmp/agentic-default-test")
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo failed: %v", err)
-		}
+		repo := createRepo(t, db, "/tmp/agentic-default-test")
 
 		// Enqueue with agentic=false
-		job, err := db.EnqueuePromptJob(repo.ID, "codex", "", "standard", "Non-agentic prompt", false)
-		if err != nil {
-			t.Fatalf("EnqueuePromptJob failed: %v", err)
-		}
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID:    repo.ID,
+			Agent:     "codex",
+			Reasoning: "standard",
+			Prompt:    "Non-agentic prompt",
+		})
 
 		if job.Agentic {
 			t.Error("Expected Agentic to be false")
 		}
 
 		// Claim and verify
-		claimed, err := db.ClaimJob("test-worker")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-		if claimed == nil {
-			t.Fatal("Expected to claim a job")
-		}
+		claimed := claimJob(t, db, "test-worker")
 
 		if claimed.Agentic {
 			t.Error("Expected Agentic to be false on claimed job")
+		}
+	})
+
+	t.Run("output_prefix is prepended to review output", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/output-prefix-test")
+
+		outputPrefix := "## Test Analysis\n\n**Files:**\n- file1.go\n- file2.go\n\n---\n\n"
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID:       repo.ID,
+			Agent:        "test",
+			Prompt:       "Test prompt",
+			OutputPrefix: outputPrefix,
+		})
+
+		// Claim and complete the job
+		claimJob(t, db, "test-worker")
+
+		agentOutput := "No issues found."
+		err := db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
+		if err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
+		// Fetch the review and verify prefix was prepended
+		review, err := db.GetReviewByJobID(job.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed: %v", err)
+		}
+
+		expectedOutput := outputPrefix + agentOutput
+		if review.Output != expectedOutput {
+			t.Errorf("Expected output to have prefix prepended.\nExpected:\n%s\n\nGot:\n%s", expectedOutput, review.Output)
+		}
+	})
+
+	t.Run("empty output_prefix leaves output unchanged", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/empty-prefix-test")
+
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID:       repo.ID,
+			Agent:        "test",
+			Prompt:       "Test prompt",
+			OutputPrefix: "", // Empty prefix
+		})
+
+		// Claim and complete the job
+		claimJob(t, db, "test-worker")
+
+		agentOutput := "Analysis complete."
+		err := db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
+		if err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
+		// Fetch the review and verify output is unchanged
+		review, err := db.GetReviewByJobID(job.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed: %v", err)
+		}
+
+		if review.Output != agentOutput {
+			t.Errorf("Expected output unchanged.\nExpected:\n%s\n\nGot:\n%s", agentOutput, review.Output)
+		}
+	})
+
+	t.Run("custom label sets git_ref", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/label-test")
+
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			Label:  "test-fixtures",
+		})
+
+		if job.GitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref 'test-fixtures', got '%s'", job.GitRef)
+		}
+
+		// Verify it's stored in the database
+		var gitRef string
+		err := db.QueryRow(`SELECT git_ref FROM review_jobs WHERE id = ?`, job.ID).Scan(&gitRef)
+		if err != nil {
+			t.Fatalf("Failed to query git_ref: %v", err)
+		}
+		if gitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref='test-fixtures' in database, got '%s'", gitRef)
+		}
+
+		// Claim and verify label persists
+		claimed := claimJob(t, db, "test-worker")
+		if claimed.GitRef != "test-fixtures" {
+			t.Errorf("Expected git_ref 'test-fixtures' on claimed job, got '%s'", claimed.GitRef)
+		}
+	})
+
+	t.Run("empty label defaults to prompt", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/empty-label-test")
+
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			// Label not set - should default to "prompt"
+		})
+
+		if job.GitRef != "prompt" {
+			t.Errorf("Expected git_ref 'prompt' when label empty, got '%s'", job.GitRef)
+		}
+	})
+
+	t.Run("run label", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/run-label-test")
+
+		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "Test prompt",
+			Label:  "run",
+		})
+
+		if job.GitRef != "run" {
+			t.Errorf("Expected git_ref 'run', got '%s'", job.GitRef)
 		}
 	})
 }
@@ -166,10 +285,7 @@ func TestRenameRepo(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/rename-test")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/rename-test")
 
 	t.Run("rename by path", func(t *testing.T) {
 		affected, err := db.RenameRepo("/tmp/rename-test", "new-name")
@@ -234,14 +350,8 @@ func TestListRepos(t *testing.T) {
 	})
 
 	// Create repos
-	_, err := db.GetOrCreateRepo("/tmp/repo-a")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	_, err = db.GetOrCreateRepo("/tmp/repo-b")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	createRepo(t, db, "/tmp/repo-a")
+	createRepo(t, db, "/tmp/repo-b")
 
 	t.Run("lists repos in order", func(t *testing.T) {
 		repos, err := db.ListRepos()
@@ -262,10 +372,7 @@ func TestGetRepoByID(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/getbyid-test")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/getbyid-test")
 
 	t.Run("found", func(t *testing.T) {
 		found, err := db.GetRepoByID(repo.ID)
@@ -295,10 +402,7 @@ func TestGetRepoByName(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/getbyname-test")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/getbyname-test")
 
 	t.Run("found", func(t *testing.T) {
 		found, err := db.GetRepoByName("getbyname-test")
@@ -322,10 +426,7 @@ func TestFindRepo(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/findrepo-test")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/findrepo-test")
 
 	t.Run("find by path", func(t *testing.T) {
 		found, err := db.FindRepo("/tmp/findrepo-test")
@@ -347,6 +448,20 @@ func TestFindRepo(t *testing.T) {
 		}
 	})
 
+	t.Run("created_at is populated", func(t *testing.T) {
+		found, err := db.FindRepo("/tmp/findrepo-test")
+		if err != nil {
+			t.Fatalf("FindRepo failed: %v", err)
+		}
+		if found.CreatedAt.IsZero() {
+			t.Error("CreatedAt should not be zero (SQLite CURRENT_TIMESTAMP must be parsed)")
+		}
+		// Should be recent (within the last minute)
+		if time.Since(found.CreatedAt) > time.Minute {
+			t.Errorf("CreatedAt too old: %v", found.CreatedAt)
+		}
+	})
+
 	t.Run("not found", func(t *testing.T) {
 		_, err := db.FindRepo("nonexistent")
 		if err == nil {
@@ -359,10 +474,7 @@ func TestGetRepoStats(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, err := db.GetOrCreateRepo("/tmp/stats-test")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
+	repo := createRepo(t, db, "/tmp/stats-test")
 
 	t.Run("empty repo", func(t *testing.T) {
 		stats, err := db.GetRepoStats(repo.ID)
@@ -378,26 +490,32 @@ func TestGetRepoStats(t *testing.T) {
 	})
 
 	// Add some jobs
-	commit1, _ := db.GetOrCreateCommit(repo.ID, "stats-sha1", "A", "S", time.Now())
-	job1, _ := db.EnqueueJob(repo.ID, commit1.ID, "stats-sha1", "codex", "", "")
+	commit1 := createCommit(t, db, repo.ID, "stats-sha1")
+	job1 := enqueueJob(t, db, repo.ID, commit1.ID, "stats-sha1")
 
-	commit2, _ := db.GetOrCreateCommit(repo.ID, "stats-sha2", "A", "S", time.Now())
-	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "stats-sha2", "codex", "", "")
+	commit2 := createCommit(t, db, repo.ID, "stats-sha2")
+	job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stats-sha2")
 
-	commit3, _ := db.GetOrCreateCommit(repo.ID, "stats-sha3", "A", "S", time.Now())
-	job3, _ := db.EnqueueJob(repo.ID, commit3.ID, "stats-sha3", "codex", "", "")
+	commit3 := createCommit(t, db, repo.ID, "stats-sha3")
+	job3 := enqueueJob(t, db, repo.ID, commit3.ID, "stats-sha3")
 
 	// Complete job1 with PASS verdict
-	db.ClaimJob("worker-1")
-	db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
+	claimJob(t, db, "worker-1")
+	if err := db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!"); err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
 
 	// Complete job2 with FAIL verdict
-	db.ClaimJob("worker-1")
-	db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: FAIL**\nIssues found.")
+	claimJob(t, db, "worker-1")
+	if err := db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: FAIL**\nIssues found."); err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
 
 	// Fail job3
-	db.ClaimJob("worker-1")
-	db.FailJob(job3.ID, "agent error")
+	claimJob(t, db, "worker-1")
+	if err := db.FailJob(job3.ID, "agent error"); err != nil {
+		t.Fatalf("FailJob failed: %v", err)
+	}
 
 	t.Run("stats with jobs", func(t *testing.T) {
 		stats, err := db.GetRepoStats(repo.ID)
@@ -419,6 +537,35 @@ func TestGetRepoStats(t *testing.T) {
 		if stats.FailedReviews != 1 {
 			t.Errorf("Expected 1 failed review, got %d", stats.FailedReviews)
 		}
+		// Both reviews should be unaddressed by default
+		if stats.AddressedReviews != 0 {
+			t.Errorf("Expected 0 addressed reviews, got %d", stats.AddressedReviews)
+		}
+		if stats.UnaddressedReviews != 2 {
+			t.Errorf("Expected 2 unaddressed reviews, got %d", stats.UnaddressedReviews)
+		}
+	})
+
+	t.Run("addressed reviews counted", func(t *testing.T) {
+		// Mark job1's review as addressed
+		review, err := db.GetReviewByJobID(job1.ID)
+		if err != nil {
+			t.Fatalf("GetReviewByJobID failed: %v", err)
+		}
+		if err := db.MarkReviewAddressed(review.ID, true); err != nil {
+			t.Fatalf("MarkReviewAddressed failed: %v", err)
+		}
+
+		stats, err := db.GetRepoStats(repo.ID)
+		if err != nil {
+			t.Fatalf("GetRepoStats failed: %v", err)
+		}
+		if stats.AddressedReviews != 1 {
+			t.Errorf("Expected 1 addressed review, got %d", stats.AddressedReviews)
+		}
+		if stats.UnaddressedReviews != 1 {
+			t.Errorf("Expected 1 unaddressed review, got %d", stats.UnaddressedReviews)
+		}
 	})
 
 	t.Run("nonexistent repo", func(t *testing.T) {
@@ -432,17 +579,17 @@ func TestGetRepoStats(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, _ := db.GetOrCreateRepo("/tmp/stats-prompt-test")
+		repo := createRepo(t, db, "/tmp/stats-prompt-test")
 
 		// Create a regular job with PASS verdict
-		commit, _ := db.GetOrCreateCommit(repo.ID, "stats-prompt-sha1", "A", "S", time.Now())
-		job1, _ := db.EnqueueJob(repo.ID, commit.ID, "stats-prompt-sha1", "codex", "", "")
-		db.ClaimJob("worker-1")
+		commit := createCommit(t, db, repo.ID, "stats-prompt-sha1")
+		job1 := enqueueJob(t, db, repo.ID, commit.ID, "stats-prompt-sha1")
+		claimJob(t, db, "worker-1")
 		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
 
 		// Create a prompt job with output that contains verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "", "thorough", "Test prompt", false)
-		db.ClaimJob("worker-1")
+		promptJob := mustEnqueuePromptJob(t, db, PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
+		claimJob(t, db, "worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
 
@@ -475,7 +622,7 @@ func TestDeleteRepo(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, _ := db.GetOrCreateRepo("/tmp/delete-empty")
+		repo := createRepo(t, db, "/tmp/delete-empty")
 
 		err := db.DeleteRepo(repo.ID, false)
 		if err != nil {
@@ -493,9 +640,9 @@ func TestDeleteRepo(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, _ := db.GetOrCreateRepo("/tmp/delete-with-jobs")
-		commit, _ := db.GetOrCreateCommit(repo.ID, "delete-sha", "A", "S", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, "delete-sha", "codex", "", "")
+		repo := createRepo(t, db, "/tmp/delete-with-jobs")
+		commit := createCommit(t, db, repo.ID, "delete-sha")
+		enqueueJob(t, db, repo.ID, commit.ID, "delete-sha")
 
 		// Without cascade, delete should return ErrRepoHasJobs
 		err := db.DeleteRepo(repo.ID, false)
@@ -517,10 +664,10 @@ func TestDeleteRepo(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, _ := db.GetOrCreateRepo("/tmp/delete-cascade")
-		commit, _ := db.GetOrCreateCommit(repo.ID, "cascade-sha", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "cascade-sha", "codex", "", "")
-		db.ClaimJob("worker-1")
+		repo := createRepo(t, db, "/tmp/delete-cascade")
+		commit := createCommit(t, db, repo.ID, "cascade-sha")
+		job := enqueueJob(t, db, repo.ID, commit.ID, "cascade-sha")
+		claimJob(t, db, "worker-1")
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
 		// Add a comment
@@ -565,18 +712,18 @@ func TestMergeRepos(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		source, _ := db.GetOrCreateRepo("/tmp/merge-source")
-		target, _ := db.GetOrCreateRepo("/tmp/merge-target")
+		source := createRepo(t, db, "/tmp/merge-source")
+		target := createRepo(t, db, "/tmp/merge-target")
 
 		// Create jobs in source
-		commit1, _ := db.GetOrCreateCommit(source.ID, "merge-sha1", "A", "S", time.Now())
-		db.EnqueueJob(source.ID, commit1.ID, "merge-sha1", "codex", "", "")
-		commit2, _ := db.GetOrCreateCommit(source.ID, "merge-sha2", "A", "S", time.Now())
-		db.EnqueueJob(source.ID, commit2.ID, "merge-sha2", "codex", "", "")
+		commit1 := createCommit(t, db, source.ID, "merge-sha1")
+		enqueueJob(t, db, source.ID, commit1.ID, "merge-sha1")
+		commit2 := createCommit(t, db, source.ID, "merge-sha2")
+		enqueueJob(t, db, source.ID, commit2.ID, "merge-sha2")
 
 		// Create job in target
-		commit3, _ := db.GetOrCreateCommit(target.ID, "merge-sha3", "A", "S", time.Now())
-		db.EnqueueJob(target.ID, commit3.ID, "merge-sha3", "codex", "", "")
+		commit3 := createCommit(t, db, target.ID, "merge-sha3")
+		enqueueJob(t, db, target.ID, commit3.ID, "merge-sha3")
 
 		moved, err := db.MergeRepos(source.ID, target.ID)
 		if err != nil {
@@ -603,7 +750,7 @@ func TestMergeRepos(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, _ := db.GetOrCreateRepo("/tmp/merge-same")
+		repo := createRepo(t, db, "/tmp/merge-same")
 
 		moved, err := db.MergeRepos(repo.ID, repo.ID)
 		if err != nil {
@@ -624,8 +771,8 @@ func TestMergeRepos(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		source, _ := db.GetOrCreateRepo("/tmp/merge-empty-source")
-		target, _ := db.GetOrCreateRepo("/tmp/merge-empty-target")
+		source := createRepo(t, db, "/tmp/merge-empty-source")
+		target := createRepo(t, db, "/tmp/merge-empty-target")
 
 		moved, err := db.MergeRepos(source.ID, target.ID)
 		if err != nil {
@@ -646,14 +793,14 @@ func TestMergeRepos(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		source, _ := db.GetOrCreateRepo("/tmp/merge-commits-source")
-		target, _ := db.GetOrCreateRepo("/tmp/merge-commits-target")
+		source := createRepo(t, db, "/tmp/merge-commits-source")
+		target := createRepo(t, db, "/tmp/merge-commits-target")
 
 		// Create commits in source
-		commit1, _ := db.GetOrCreateCommit(source.ID, "commit-sha-1", "Author", "Subject 1", time.Now())
-		commit2, _ := db.GetOrCreateCommit(source.ID, "commit-sha-2", "Author", "Subject 2", time.Now())
-		db.EnqueueJob(source.ID, commit1.ID, "commit-sha-1", "codex", "", "")
-		db.EnqueueJob(source.ID, commit2.ID, "commit-sha-2", "codex", "", "")
+		commit1 := createCommit(t, db, source.ID, "commit-sha-1")
+		commit2 := createCommit(t, db, source.ID, "commit-sha-2")
+		enqueueJob(t, db, source.ID, commit1.ID, "commit-sha-1")
+		enqueueJob(t, db, source.ID, commit2.ID, "commit-sha-2")
 
 		// Verify commits belong to source before merge
 		var sourceCommitCount int
@@ -687,11 +834,11 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/delete-commits-test")
-	commit1, _ := db.GetOrCreateCommit(repo.ID, "del-commit-1", "A", "S1", time.Now())
-	commit2, _ := db.GetOrCreateCommit(repo.ID, "del-commit-2", "A", "S2", time.Now())
-	db.EnqueueJob(repo.ID, commit1.ID, "del-commit-1", "codex", "", "")
-	db.EnqueueJob(repo.ID, commit2.ID, "del-commit-2", "codex", "", "")
+	repo := createRepo(t, db, "/tmp/delete-commits-test")
+	commit1 := createCommit(t, db, repo.ID, "del-commit-1")
+	commit2 := createCommit(t, db, repo.ID, "del-commit-2")
+	enqueueJob(t, db, repo.ID, commit1.ID, "del-commit-1")
+	enqueueJob(t, db, repo.ID, commit2.ID, "del-commit-2")
 
 	// Verify commits exist before delete
 	var beforeCount int
@@ -717,8 +864,8 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/delete-legacy-resp-test")
-	commit, _ := db.GetOrCreateCommit(repo.ID, "legacy-resp-commit", "A", "S", time.Now())
+	repo := createRepo(t, db, "/tmp/delete-legacy-resp-test")
+	commit := createCommit(t, db, repo.ID, "legacy-resp-commit")
 
 	// Add legacy commit-based comment (not job-based)
 	_, err := db.AddComment(commit.ID, "reviewer", "Legacy comment on commit")
@@ -751,11 +898,11 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, _ := db.GetOrCreateRepo("/tmp/verdict-prompt-test")
+		repo := createRepo(t, db, "/tmp/verdict-prompt-test")
 
 		// Create a prompt job and complete it with output containing verdict-like text
-		promptJob, _ := db.EnqueuePromptJob(repo.ID, "codex", "", "thorough", "Test prompt", false)
-		db.ClaimJob("worker-1")
+		promptJob := mustEnqueuePromptJob(t, db, PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
+		claimJob(t, db, "worker-1")
 		// Output that would normally be parsed as FAIL
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")
 
@@ -782,12 +929,12 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, _ := db.GetOrCreateRepo("/tmp/verdict-regular-test")
-		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-sha", "Author", "Subject", time.Now())
+		repo := createRepo(t, db, "/tmp/verdict-regular-test")
+		commit := createCommit(t, db, repo.ID, "verdict-sha")
 
 		// Create a regular job and complete it
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "verdict-sha", "codex", "", "")
-		db.ClaimJob("worker-1")
+		job := enqueueJob(t, db, repo.ID, commit.ID, "verdict-sha")
+		claimJob(t, db, "worker-1")
 		// Output that should be parsed as PASS
 		db.CompleteJob(job.ID, "codex", "prompt", "No issues found in this commit.")
 
@@ -816,16 +963,16 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo, _ := db.GetOrCreateRepo("/tmp/verdict-branch-prompt")
+		repo := createRepo(t, db, "/tmp/verdict-branch-prompt")
 		// Create a commit for a branch literally named "prompt"
-		commit, _ := db.GetOrCreateCommit(repo.ID, "branch-prompt-sha", "Author", "Subject", time.Now())
+		commit := createCommit(t, db, repo.ID, "branch-prompt-sha")
 
 		// Enqueue with git_ref = "prompt" but WITH a commit_id (simulating review of branch "prompt")
 		result, _ := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, ?, 'prompt', 'codex', 'thorough', 'queued')`,
 			repo.ID, commit.ID)
 		jobID, _ := result.LastInsertId()
 
-		db.ClaimJob("worker-1")
+		claimJob(t, db, "worker-1")
 		// Output that should be parsed as FAIL
 		db.CompleteJob(jobID, "codex", "prompt", "Found issues:\n1. Bug found")
 

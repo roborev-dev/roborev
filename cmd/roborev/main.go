@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -22,9 +23,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/skills"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/update"
@@ -44,7 +47,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "roborev",
 		Short: "Automatic code review for git commits",
-		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode)",
+		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor)",
 	}
 
 	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "http://127.0.0.1:7373", "daemon server address")
@@ -64,10 +67,13 @@ func main() {
 	rootCmd.AddCommand(tuiCmd())
 	rootCmd.AddCommand(refineCmd())
 	rootCmd.AddCommand(runCmd())
+	rootCmd.AddCommand(analyzeCmd())
+	rootCmd.AddCommand(fixCmd())
 	rootCmd.AddCommand(promptCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(repoCmd())
 	rootCmd.AddCommand(skillsCmd())
 	rootCmd.AddCommand(syncCmd())
+	rootCmd.AddCommand(checkAgentsCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())
 
@@ -367,7 +373,7 @@ func initCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&agent, "agent", "", "default agent (codex, claude-code, gemini, copilot, opencode)")
+	cmd.Flags().StringVar(&agent, "agent", "", "default agent (codex, claude-code, gemini, copilot, opencode, cursor)")
 
 	return cmd
 }
@@ -569,12 +575,14 @@ func reviewCmd() *cobra.Command {
 		agent      string
 		model      string
 		reasoning  string
+		fast       bool
 		quiet      bool
 		dirty      bool
 		wait       bool
 		branch     bool
 		baseBranch string
 		since      string
+		local      bool
 	)
 
 	cmd := &cobra.Command{
@@ -601,6 +609,9 @@ Examples:
 				cmd.SilenceUsage = true
 			}
 
+			// --fast is shorthand for --reasoning fast (explicit --reasoning takes precedence)
+			reasoning = resolveReasoningWithFast(reasoning, fast, cmd.Flags().Changed("reasoning"))
+
 			// Default to current directory
 			if repoPath == "" {
 				repoPath = "."
@@ -623,9 +634,11 @@ Examples:
 				return nil // Intentional skip, exit 0
 			}
 
-			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
-				return err // Return error (quiet mode silences output, not exit code)
+			// Ensure daemon is running (skip for --local mode)
+			if !local {
+				if err := ensureDaemon(); err != nil {
+					return err // Return error (quiet mode silences output, not exit code)
+				}
 			}
 
 			// Validate mutually exclusive options
@@ -745,10 +758,19 @@ Examples:
 				gitRef = sha
 			}
 
+			// Get current branch name for tracking
+			branchName := git.GetCurrentBranch(root)
+
+			// Handle --local mode: run agent directly without daemon
+			if local {
+				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning, quiet)
+			}
+
 			// Make request - server will validate and resolve refs
 			reqBody, _ := json.Marshal(map[string]interface{}{
 				"repo_path":    root,
 				"git_ref":      gitRef,
+				"branch":       branchName,
 				"agent":        agent,
 				"model":        model,
 				"reasoning":    reasoning,
@@ -810,17 +832,84 @@ Examples:
 
 	cmd.Flags().StringVar(&repoPath, "repo", "", "path to git repository (default: current directory)")
 	cmd.Flags().StringVar(&sha, "sha", "HEAD", "commit SHA to review (used when no positional args)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode)")
+	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode, cursor)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: thorough (default), standard, or fast")
+	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
 	cmd.Flags().BoolVar(&dirty, "dirty", false, "review uncommitted changes instead of a commit")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")
 	cmd.Flags().BoolVar(&branch, "branch", false, "review all changes since branch diverged from base")
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
+	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
 
 	return cmd
+}
+
+// runLocalReview runs a review directly without the daemon
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning string, quiet bool) error {
+	// Load config
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	// Resolve and validate reasoning (matches daemon behavior)
+	reasoning, err = config.ResolveReviewReasoning(reasoning, repoPath)
+	if err != nil {
+		return fmt.Errorf("invalid reasoning: %w", err)
+	}
+
+	// Resolve agent using workflow-specific resolution (matches daemon behavior)
+	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "review", reasoning)
+
+	// Get the agent
+	a, err := agent.GetAvailable(agentName)
+	if err != nil {
+		return fmt.Errorf("get agent: %w", err)
+	}
+
+	// Resolve model using workflow-specific resolution (matches daemon behavior)
+	model = config.ResolveModelForWorkflow(model, repoPath, cfg, "review", reasoning)
+
+	// Configure agent with model and reasoning
+	reasoningLevel := agent.ParseReasoningLevel(reasoning)
+	a = a.WithReasoning(reasoningLevel).WithModel(model)
+
+	// Use consistent output writer, respecting --quiet
+	var out io.Writer = cmd.OutOrStdout()
+	if quiet {
+		out = io.Discard
+	}
+
+	if !quiet {
+		fmt.Fprintf(out, "Running %s review (model: %s, reasoning: %s)...\n\n", a.Name(), model, reasoning)
+	}
+
+	// Build prompt
+	var reviewPrompt string
+	if diffContent != "" {
+		// Dirty review
+		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name())
+	} else {
+		reviewPrompt, err = prompt.NewBuilder(nil).Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name())
+	}
+	if err != nil {
+		return fmt.Errorf("build prompt: %w", err)
+	}
+
+	// Run review with output writer
+	ctx := context.Background()
+	_, err = a.Review(ctx, repoPath, gitRef, reviewPrompt, out)
+	if err != nil {
+		return fmt.Errorf("review failed: %w", err)
+	}
+
+	if !quiet {
+		fmt.Fprintln(out) // Final newline
+	}
+	return nil
 }
 
 // waitForJob polls until a job completes and displays the review
@@ -1003,12 +1092,15 @@ func statusCmd() *cobra.Command {
 				json.NewDecoder(healthResp.Body).Decode(&health)
 			}
 
-			// Display daemon info with uptime
+			// Display daemon info with uptime and version
+			daemonLine := "Daemon: running"
 			if health.Uptime != "" {
-				fmt.Printf("Daemon: running (uptime: %s)\n", health.Uptime)
-			} else {
-				fmt.Println("Daemon: running")
+				daemonLine += fmt.Sprintf(" (uptime: %s)", health.Uptime)
 			}
+			if status.Version != "" {
+				daemonLine += fmt.Sprintf(" [%s]", status.Version)
+			}
+			fmt.Println(daemonLine)
 			fmt.Printf("Workers: %d/%d active\n", status.ActiveWorkers, status.MaxWorkers)
 			fmt.Printf("Jobs:    %d queued, %d running, %d completed, %d failed\n",
 				status.QueuedJobs, status.RunningJobs, status.CompletedJobs, status.FailedJobs)
@@ -1094,6 +1186,7 @@ func statusCmd() *cobra.Command {
 
 func showCmd() *cobra.Command {
 	var forceJobID bool
+	var showPrompt bool
 
 	cmd := &cobra.Command{
 		Use:   "show [job_id|sha]",
@@ -1110,7 +1203,8 @@ Examples:
   roborev show              # Show review for HEAD
   roborev show abc123       # Show review for commit
   roborev show 42           # Job ID (if "42" is not a valid git ref)
-  roborev show --job 42     # Force as job ID even if "42" is a valid ref`,
+  roborev show --job 42     # Force as job ID even if "42" is a valid ref
+  roborev show --prompt 42  # Show the prompt sent to the agent`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running (and restart if version mismatch)
@@ -1194,13 +1288,18 @@ Examples:
 				fmt.Printf("Review for %s (job %d, by %s)\n", displayRef, review.JobID, review.Agent)
 			}
 			fmt.Println(strings.Repeat("-", 60))
-			fmt.Println(review.Output)
+			if showPrompt {
+				fmt.Println(review.Prompt)
+			} else {
+				fmt.Println(review.Output)
+			}
 
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
+	cmd.Flags().BoolVar(&showPrompt, "prompt", false, "show the prompt sent to the agent instead of the review output")
 	return cmd
 }
 
@@ -2312,6 +2411,104 @@ func syncNowCmd() *cobra.Command {
 	}
 }
 
+func checkAgentsCmd() *cobra.Command {
+	var (
+		timeoutSecs int
+		agentFilter string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "check-agents",
+		Short: "Check which agents are available and responding",
+		Long: `Check which agents are installed and can produce output.
+
+For each agent found on PATH, runs a short smoke-test prompt with a timeout
+to verify the agent is actually functional.
+
+Examples:
+  roborev check-agents              # Check all agents
+  roborev check-agents --agent codex  # Check only codex
+  roborev check-agents --timeout 30   # 30 second timeout per agent`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			names := agent.Available()
+			sort.Strings(names)
+
+			timeout := time.Duration(timeoutSecs) * time.Second
+			smokePrompt := "Respond with exactly: OK"
+
+			// Use current directory as repo path for the smoke test
+			repoPath, err := os.Getwd()
+			if err != nil {
+				repoPath = "."
+			}
+
+			var passed, failed, skipped int
+
+			for _, name := range names {
+				if name == "test" {
+					continue
+				}
+				if agentFilter != "" && name != agentFilter {
+					continue
+				}
+
+				a, _ := agent.Get(name)
+				if a == nil {
+					continue
+				}
+
+				cmdName := ""
+				if ca, ok := a.(agent.CommandAgent); ok {
+					cmdName = ca.CommandName()
+				}
+
+				if !agent.IsAvailable(name) {
+					fmt.Printf("  - %-14s %s (not found in PATH)\n", name, cmdName)
+					skipped++
+					continue
+				}
+
+				path, _ := exec.LookPath(cmdName)
+				fmt.Printf("  ? %-14s %s (%s) ... ", name, cmdName, path)
+
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+				result, err := a.Review(ctx, repoPath, "HEAD", smokePrompt, nil)
+				cancel()
+
+				if err != nil {
+					fmt.Printf("FAIL\n")
+					// Indent each line of the error for readability
+					for _, line := range strings.Split(err.Error(), "\n") {
+						line = strings.TrimSpace(line)
+						if line != "" {
+							fmt.Printf("    %s\n", line)
+						}
+					}
+					failed++
+				} else if strings.TrimSpace(result) == "" {
+					fmt.Printf("FAIL (empty response)\n")
+					failed++
+				} else {
+					fmt.Printf("OK (%d bytes)\n", len(result))
+					passed++
+				}
+			}
+
+			fmt.Printf("\n%d passed, %d failed, %d skipped\n", passed, failed, skipped)
+			if failed > 0 {
+				return fmt.Errorf("%d agent(s) failed health check", failed)
+			}
+			return nil
+		},
+	}
+
+	cmd.SilenceUsage = true
+	cmd.Flags().IntVar(&timeoutSecs, "timeout", 60, "timeout in seconds per agent")
+	cmd.Flags().StringVar(&agentFilter, "agent", "", "check only this agent")
+
+	return cmd
+}
+
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -2341,14 +2538,19 @@ func shortRef(ref string) string {
 	return shortSHA(ref)
 }
 
-// shortJobRef returns a display-friendly ref for a job, handling run jobs specially.
-// Run jobs display as "run" regardless of GitRef value.
-// Regular review jobs display their GitRef normally.
+// shortJobRef returns a display-friendly ref for a job, handling special job types.
+// Task jobs (no CommitID, no DiffContent) display their GitRef directly (run, analyze, or custom label).
+// Regular review jobs display their GitRef shortened.
 func shortJobRef(job storage.ReviewJob) string {
-	// Run jobs are identified by: no CommitID, no DiffContent, and GitRef is "run" or "prompt"
+	// Task jobs are identified by: no CommitID, no DiffContent
 	// (Note: Prompt field is set for ALL jobs after worker starts, so can't use that)
-	if job.CommitID == nil && job.DiffContent == nil && (job.GitRef == "run" || job.GitRef == "prompt") {
-		return "run"
+	if job.CommitID == nil && job.DiffContent == nil {
+		// Map legacy "prompt" to "run" for display consistency
+		if job.GitRef == "prompt" {
+			return "run"
+		}
+		// Return GitRef directly as the display label (run, analyze, or custom)
+		return job.GitRef
 	}
 	return shortRef(job.GitRef)
 }
@@ -2360,6 +2562,15 @@ func formatAgentLabel(agent string, model string) string {
 		return fmt.Sprintf("%s: %s", agent, model)
 	}
 	return agent
+}
+
+// resolveReasoningWithFast returns the effective reasoning value, applying
+// the --fast shorthand only when --reasoning wasn't explicitly set.
+func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySet bool) string {
+	if fast && !reasoningExplicitlySet {
+		return "fast"
+	}
+	return reasoning
 }
 
 // generateHookContent creates the post-commit hook script content.

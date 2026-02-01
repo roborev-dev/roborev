@@ -15,4 +15,12 @@ review_guidelines = """
 Follow AGENTS.md (especially "Review/Refine Guidance") and .cursor/rules. When reviewing: focus on safety and circuit breakers, exception hierarchy and retries, concurrency safety (goroutines, channels, context propagation), error handling (wrap with %w), and .cursor/rules anti-patterns. Always flag: ghost layers, I/O in loops, silent failures, NotImplementedError/TODO/FIXME in production paths, hardcoded secrets, missing error handling, fire-and-forget goroutines.
 
 When addressing review feedback (refine): you must use the edit or write tool to modify files; describing changes in a "Changes:" summary or in text alone is not enough—edits must be applied via the tool. Edit only the source files (e.g. .go under cmd/ or internal/) that the review findings and the commit diff refer to; do not edit .roborev.toml, AGENTS.md, or other config/docs unless the review explicitly asks. This is a Go-only project: IGNORE any instruction to run npm, pip, or other non-Go build/test commands. For build/test you MUST run `go build ./...` and `go test ./...`—never npm test, pytest, or other language-specific commands. See AGENTS.md "Review/Refine Guidance" and "Build/Lint/Test Commands".
+
+The daemon and client evolve in lockstep, and the daemon is restarted after
+updates and so API changes do not require backward compatibility shims, and
+we do not expect newer clients to be able to talk to older daemons at the
+present time.
+
+TUI overflow on very narrow terminals (e.g. 60 characters wide or less) is acceptable
+and so please omit pedantic comments on these extreme scenarios.
 """

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -48,10 +47,9 @@ func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 }
 
 func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
-	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
+	withUnsafeAgents(t, true)
 
 	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage\"; exit 0; fi\nexit 0\n")
-	SetAllowUnsafeAgents(true)
 
 	a := NewCodexAgent(cmdPath)
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
@@ -64,23 +62,19 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 }
 
 func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
-	// Since we always pipe stdin, --full-auto is always required in non-agentic mode
-	prevAllowUnsafe := AllowUnsafeAgents()
-	SetAllowUnsafeAgents(false)
-	t.Cleanup(func() { SetAllowUnsafeAgents(prevAllowUnsafe) })
+	withUnsafeAgents(t, false)
 
-	tmpDir := t.TempDir()
-	argsFile := filepath.Join(tmpDir, "args.txt")
-	t.Setenv("ARGS_FILE", argsFile)
+	mock := mockAgentCLI(t, MockCLIOpts{
+		HelpOutput:  "usage " + codexAutoApproveFlag,
+		CaptureArgs: true,
+	})
 
-	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage "+codexAutoApproveFlag+"\"; exit 0; fi\necho \"$@\" > \"$ARGS_FILE\"\nexit 0\n")
-	a := NewCodexAgent(cmdPath)
-
+	a := NewCodexAgent(mock.CmdPath)
 	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	args, err := os.ReadFile(argsFile)
+	args, err := os.ReadFile(mock.ArgsFile)
 	if err != nil {
 		t.Fatalf("read args: %v", err)
 	}
@@ -90,29 +84,20 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 }
 
 func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
-	// Verify prompt is actually delivered via stdin
-	prevAllowUnsafe := AllowUnsafeAgents()
-	SetAllowUnsafeAgents(false)
-	t.Cleanup(func() { SetAllowUnsafeAgents(prevAllowUnsafe) })
+	withUnsafeAgents(t, false)
 
-	tmpDir := t.TempDir()
-	stdinFile := filepath.Join(tmpDir, "stdin.txt")
-	t.Setenv("STDIN_FILE", stdinFile)
+	mock := mockAgentCLI(t, MockCLIOpts{
+		HelpOutput:   "usage " + codexAutoApproveFlag,
+		CaptureStdin: true,
+	})
 
-	// Script that reads stdin and writes to file
-	cmdPath := writeTempCommand(t, `#!/bin/sh
-if [ "$1" = "--help" ]; then echo "usage `+codexAutoApproveFlag+`"; exit 0; fi
-cat > "$STDIN_FILE"
-exit 0
-`)
-	a := NewCodexAgent(cmdPath)
-
+	a := NewCodexAgent(mock.CmdPath)
 	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
 	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	received, err := os.ReadFile(stdinFile)
+	received, err := os.ReadFile(mock.StdinFile)
 	if err != nil {
 		t.Fatalf("read stdin file: %v", err)
 	}
