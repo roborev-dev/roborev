@@ -41,6 +41,9 @@ You catch problems while context is fresh instead of waiting for PR review.
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
 - **Interactive TUI** - Real-time review queue with vim-style navigation.
+- **Extensible Hooks** - Run shell commands on review events. Built-in
+  [beads](https://github.com/steveyegge/beads) integration creates trackable issues from
+  review failures automatically.
 
 ## Installation
 
@@ -146,6 +149,35 @@ Project-specific review instructions here.
 
 See [configuration guide](https://roborev.io/configuration/) for all options.
 
+## Hooks
+
+Run custom commands when reviews complete or fail. Add to `.roborev.toml`:
+
+```toml
+[[hooks]]
+event = "review.completed"
+command = "notify-send 'Review done for {repo_name} ({sha})'"
+```
+
+Template variables: `{job_id}`, `{repo}`, `{repo_name}`, `{sha}`, `{verdict}`, `{error}`.
+
+### Beads Integration
+
+The built-in `beads` hook type creates [beads](https://github.com/steveyegge/beads) issues
+from review failures, giving your agents a task queue of findings to fix:
+
+```toml
+[[hooks]]
+event = "review.*"
+type = "beads"
+```
+
+When a review fails or finds issues, a beads issue is created with the
+job ID and a `roborev fix` command, so agents can pick it up and resolve
+it autonomously.
+
+See [hooks guide](https://roborev.io/guides/hooks/) for details.
+
 ## Supported Agents
 
 | Agent | Install |
@@ -170,6 +202,7 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Configuration](https://roborev.io/configuration/)
 - [Auto-Fixing with Refine](https://roborev.io/guides/auto-fixing/)
 - [Code Analysis and Assisted Refactoring](https://roborev.io/guides/assisted-refactoring/)
+- [Hooks](https://roborev.io/guides/hooks/)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
 - [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
 
