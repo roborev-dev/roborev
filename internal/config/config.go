@@ -319,10 +319,19 @@ func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 
 // ResolveOllamaBaseURL determines which Ollama base URL to use based on config priority:
 // 1. Global config (ollama_base_url in config.toml)
-// 2. Default ("http://localhost:11434")
+// 2. OLLAMA_HOST environment variable (same as ollama CLI uses)
+// 3. Default ("http://localhost:11434")
 func ResolveOllamaBaseURL(globalCfg *Config) string {
 	if globalCfg != nil && strings.TrimSpace(globalCfg.OllamaBaseURL) != "" {
 		return strings.TrimSpace(globalCfg.OllamaBaseURL)
+	}
+	if s := strings.TrimSpace(os.Getenv("OLLAMA_HOST")); s != "" {
+		s = strings.Trim(s, "'\"")
+		if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+			return strings.TrimSuffix(s, "/")
+		}
+		// Bare "host:port" -> assume http
+		return "http://" + s
 	}
 	return "http://localhost:11434"
 }
