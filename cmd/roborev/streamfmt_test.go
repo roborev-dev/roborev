@@ -87,6 +87,22 @@ func eventAssistantLegacy(content string) string {
 	return fmt.Sprintf(`{"type":"assistant","message":{"content":%s}}`, mustMarshal(content))
 }
 
+// Event builders for Ollama-style NDJSON.
+
+func eventOllamaContent(content string, done bool) string {
+	return fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":%s},"done":%t}`,
+		mustMarshal(content), done)
+}
+
+func eventOllamaToolUse(toolName string, args map[string]interface{}, done bool) string {
+	return fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":%q,"arguments":%s}}]},"done":%t}`,
+		toolName, mustMarshal(args), done)
+}
+
+func eventOllamaDoneOnly() string {
+	return `{"model":"x","message":{"role":"assistant","content":""},"done":true}`
+}
+
 // Event builders for Gemini-style JSON.
 
 func eventGeminiToolUse(toolName, toolID string, params map[string]interface{}) string {
@@ -230,4 +246,32 @@ func TestStreamFormatter_PartialWrites(t *testing.T) {
 	}
 	fix.f.Write([]byte(full[20:]))
 	fix.assertContains(t, "hello")
+}
+
+func TestStreamFormatter_OllamaContent(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOllamaContent("Hello", false))
+	fix.assertContains(t, "Hello")
+}
+
+func TestStreamFormatter_OllamaToolUse(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOllamaToolUse("Read", map[string]interface{}{"file_path": "main.go"}, false))
+	fix.assertContains(t, "Read   main.go")
+}
+
+func TestStreamFormatter_OllamaDoneSuppressed(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOllamaDoneOnly())
+	fix.assertEmpty(t)
+}
+
+func TestStreamFormatter_OllamaNonTTY(t *testing.T) {
+	fix := newFixture(false)
+	raw := eventOllamaContent("Hello", false)
+	fix.writeLine(raw)
+	// Non-TTY should pass through raw JSON
+	if fix.output() != raw+"\n" {
+		t.Errorf("non-TTY Ollama should pass through raw, got:\n%s", fix.output())
+	}
 }
