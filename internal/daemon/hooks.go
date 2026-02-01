@@ -164,6 +164,7 @@ func interpolate(cmd string, event Event) string {
 		"{sha}", shellEscape(event.SHA),
 		"{agent}", shellEscape(event.Agent),
 		"{verdict}", shellEscape(event.Verdict),
+		"{findings}", shellEscape(event.Findings),
 		"{error}", shellEscape(event.Error),
 	)
 	return r.Replace(cmd)

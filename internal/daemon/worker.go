@@ -394,6 +394,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		SHA:      job.GitRef,
 		Agent:    agentName,
 		Verdict:  verdict,
+		Findings: output,
 	})
 }
 

@@ -16,6 +16,7 @@ type Event struct {
 	SHA      string    `json:"sha"`
 	Agent    string    `json:"agent,omitempty"`
 	Verdict  string    `json:"verdict,omitempty"`
+	Findings string    `json:"findings,omitempty"`
 	Error    string    `json:"error,omitempty"`
 }
 

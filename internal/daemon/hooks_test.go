@@ -77,6 +77,7 @@ func TestInterpolate(t *testing.T) {
 		SHA:      "abc123def456",
 		Agent:    "codex",
 		Verdict:  "F",
+		Findings: "High — missing input validation in handler",
 		Error:    "agent timeout",
 	}
 
@@ -95,6 +96,10 @@ func TestInterpolate(t *testing.T) {
 		{
 			"log {error}",
 			"log " + q("agent timeout"),
+		},
+		{
+			"process {findings}",
+			"process " + q("High — missing input validation in handler"),
 		},
 		{
 			"",
@@ -124,25 +129,24 @@ func TestInterpolateShellInjection(t *testing.T) {
 	}
 
 	for _, payload := range payloads {
-		event := Event{JobID: 1, Repo: "/repo", Error: payload}
+		// Test via both {error} and {findings} since findings contain arbitrary agent output
+		event := Event{JobID: 1, Repo: "/repo", Error: payload, Findings: payload}
 		got := interpolate("echo {error}", event)
+		gotFindings := interpolate("echo {findings}", event)
 
-		prefix := "echo "
-		if !strings.HasPrefix(got, prefix) || len(got) <= len(prefix)+1 {
-			t.Fatalf("payload %q: unexpected format (too short or wrong prefix): %q", payload, got)
-		}
-		val := got[len(prefix):]
-
-		// The value must be fully enclosed in single quotes on all platforms.
-		if val[0] != '\'' || val[len(val)-1] != '\'' {
-			t.Errorf("payload %q: not single-quoted: %q", payload, got)
-		}
-
-		// The payload content must be present inside the quoted region (not dropped).
-		// Use an unambiguous substring that survives escaping.
-		substr := payload[:4] // first 4 chars are always safe to check
-		if !strings.Contains(val, substr) {
-			t.Errorf("payload %q: escaped value doesn't contain expected substring %q: %q", payload, substr, val)
+		for _, result := range []string{got, gotFindings} {
+			prefix := "echo "
+			if !strings.HasPrefix(result, prefix) || len(result) <= len(prefix)+1 {
+				t.Fatalf("payload %q: unexpected format (too short or wrong prefix): %q", payload, result)
+			}
+			val := result[len(prefix):]
+			if val[0] != '\'' || val[len(val)-1] != '\'' {
+				t.Errorf("payload %q: not single-quoted: %q", payload, result)
+			}
+			substr := payload[:4]
+			if !strings.Contains(val, substr) {
+				t.Errorf("payload %q: escaped value doesn't contain expected substring %q: %q", payload, substr, val)
+			}
 		}
 	}
 }
