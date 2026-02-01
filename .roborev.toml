@@ -2,7 +2,8 @@
 # Uses native Ollama agent (direct HTTP API to local Ollama server)
 
 agent = "ollama"
-model = "qwen2.5-coder:32b"
+#model = "qwen2.5-coder:32b"
+model = "qwen3-coder:30b"
 review_reasoning = "thorough"
 
 # Ollama model: use any model you have pulled (ollama list)
