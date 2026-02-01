@@ -1,0 +1,3 @@
+# Qwen 2.5 Coder 32B with 128K context (model maximum)
+FROM qwen2.5-coder:32b
+PARAMETER num_ctx 131072
