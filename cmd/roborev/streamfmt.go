@@ -153,20 +153,31 @@ func (f *streamFormatter) processLine(line string) {
 		// Suppress
 	default:
 		// Ollama format: no "type" field, has "done" and "message"
-		if ev.Type == "" && strings.Contains(line, `"done"`) {
-			var oev ollamaStreamEvent
-			if json.Unmarshal([]byte(line), &oev) == nil {
-				f.processOllamaEvent(oev)
-				return
-			}
+		if f.tryProcessOllamaEvent(line) {
+			return
 		}
 		// Suppress system, user, and other events
 	}
 }
 
+// tryProcessOllamaEvent attempts to parse line as Ollama NDJSON and process it.
+// Returns true if the line was handled as Ollama; false otherwise (fall through to suppress).
+func (f *streamFormatter) tryProcessOllamaEvent(line string) bool {
+	if !strings.Contains(line, `"done"`) {
+		return false
+	}
+	var oev ollamaStreamEvent
+	if err := json.Unmarshal([]byte(line), &oev); err != nil {
+		return false
+	}
+	f.processOllamaEvent(oev)
+	return true
+}
+
 // processOllamaEvent handles Ollama NDJSON stream chunks.
 func (f *streamFormatter) processOllamaEvent(oev ollamaStreamEvent) {
-	// Suppress done-only chunks with no content or tool calls
+	// Suppress done-only chunks with no content or tool calls.
+	// Message is a value struct; unmarshal yields zero-value if missing, so no nil check needed.
 	if oev.Done && oev.Message.Content == "" && len(oev.Message.ToolCalls) == 0 {
 		return
 	}
@@ -182,7 +193,11 @@ func (f *streamFormatter) processOllamaEvent(oev ollamaStreamEvent) {
 		}
 		var argsJSON json.RawMessage
 		if len(tc.Function.Arguments) > 0 {
-			b, _ := json.Marshal(tc.Function.Arguments)
+			b, err := json.Marshal(tc.Function.Arguments)
+			if err != nil {
+				f.writef("%-6s\n", tc.Function.Name)
+				continue
+			}
 			argsJSON = b
 		}
 		f.formatToolUse(tc.Function.Name, argsJSON)

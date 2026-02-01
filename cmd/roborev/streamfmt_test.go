@@ -275,3 +275,35 @@ func TestStreamFormatter_OllamaNonTTY(t *testing.T) {
 		t.Errorf("non-TTY Ollama should pass through raw, got:\n%s", fix.output())
 	}
 }
+
+func TestStreamFormatter_OllamaMalformedInput(t *testing.T) {
+	inputs := []string{
+		`{"message":"not an object","done":false}`,
+		`{"message":{"role":"assistant","content":"x"}`,
+		`{"done":true}`,
+		`not json at all`,
+	}
+	for _, input := range inputs {
+		input := input
+		t.Run(input, func(t *testing.T) {
+			fix := newFixture(true)
+			fix.writeLine(input)
+			// Should not panic; output may be empty or suppressed
+		})
+	}
+}
+
+func TestStreamFormatter_OllamaTTYVsNonTTY(t *testing.T) {
+	raw := eventOllamaToolUse("Read", map[string]interface{}{"file_path": "pkg/foo.go"}, false)
+	// TTY: formatted
+	fixTTY := newFixture(true)
+	fixTTY.writeLine(raw)
+	fixTTY.assertContains(t, "Read   pkg/foo.go")
+	fixTTY.assertNotContains(t, "model")
+	// Non-TTY: raw passthrough
+	fixNoTTY := newFixture(false)
+	fixNoTTY.writeLine(raw)
+	if fixNoTTY.output() != raw+"\n" {
+		t.Errorf("non-TTY should pass through raw, got:\n%s", fixNoTTY.output())
+	}
+}
