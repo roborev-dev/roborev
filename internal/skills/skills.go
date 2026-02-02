@@ -268,10 +268,10 @@ type AgentStatus struct {
 }
 
 // ListSkills returns metadata for all embedded skills (from the Claude skill set).
-func ListSkills() []SkillInfo {
+func ListSkills() ([]SkillInfo, error) {
 	entries, err := fs.ReadDir(claudeSkills, "claude")
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("read embedded skills: %w", err)
 	}
 
 	var out []SkillInfo
@@ -281,7 +281,7 @@ func ListSkills() []SkillInfo {
 		}
 		content, err := claudeSkills.ReadFile(path.Join("claude", entry.Name(), "SKILL.md"))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("read %s/SKILL.md: %w", entry.Name(), err)
 		}
 		name, desc := parseFrontmatter(content)
 		if name == "" {
@@ -289,7 +289,7 @@ func ListSkills() []SkillInfo {
 		}
 		out = append(out, SkillInfo{DirName: entry.Name(), Name: name, Description: desc})
 	}
-	return out
+	return out, nil
 }
 
 // Status returns per-agent, per-skill installation state.
@@ -318,7 +318,7 @@ func Status() []AgentStatus {
 			Skills: make(map[string]SkillState),
 		}
 
-		if _, err := os.Stat(a.configDir); os.IsNotExist(err) {
+		if _, err := os.Stat(a.configDir); err != nil {
 			out = append(out, status)
 			continue
 		}
@@ -365,6 +365,7 @@ func Status() []AgentStatus {
 // parseFrontmatter extracts name and description from YAML frontmatter.
 func parseFrontmatter(data []byte) (name, description string) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
 	if !scanner.Scan() || strings.TrimSpace(scanner.Text()) != "---" {
 		return "", ""
 	}

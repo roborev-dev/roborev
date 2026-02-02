@@ -1909,7 +1909,10 @@ func skillsCmd() *cobra.Command {
 		Short: "Manage AI agent skills",
 		Long:  "Install and manage roborev skills for AI agents (Claude Code, Codex)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			available := skills.ListSkills()
+			available, err := skills.ListSkills()
+			if err != nil {
+				return fmt.Errorf("list skills: %w", err)
+			}
 			if len(available) == 0 {
 				fmt.Println("No skills available.")
 				return nil
@@ -1930,7 +1933,10 @@ func skillsCmd() *cobra.Command {
 
 			fmt.Println("Skills:")
 			for _, s := range available {
-				fmt.Printf("\n  %s\n", s.Description)
+				fmt.Printf("\n  %s\n", s.Name)
+			if s.Description != "" {
+				fmt.Printf("  %s\n", s.Description)
+			}
 
 				for _, a := range agents {
 					var as *skills.AgentStatus
