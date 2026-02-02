@@ -79,14 +79,17 @@ func TestInstallClaudeWhenDirExists(t *testing.T) {
 	if claudeResult.Skipped {
 		t.Error("expected Claude NOT to be skipped when ~/.claude exists")
 	}
-	if len(claudeResult.Installed) != 2 {
-		t.Errorf("expected 2 installed skills, got %v", claudeResult.Installed)
+	if len(claudeResult.Installed) != 3 {
+		t.Errorf("expected 3 installed skills, got %v", claudeResult.Installed)
 	}
 
 	// Verify Claude skill structure (flat directories with SKILL.md)
 	skillsDir := filepath.Join(claudeDir, "skills")
 	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-address", "SKILL.md")); err != nil {
 		t.Error("expected roborev-address/SKILL.md to exist")
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-fix", "SKILL.md")); err != nil {
+		t.Error("expected roborev-fix/SKILL.md to exist")
 	}
 	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-respond", "SKILL.md")); err != nil {
 		t.Error("expected roborev-respond/SKILL.md to exist")
@@ -111,14 +114,17 @@ func TestInstallCodexWhenDirExists(t *testing.T) {
 	if codexResult.Skipped {
 		t.Error("expected Codex NOT to be skipped when ~/.codex exists")
 	}
-	if len(codexResult.Installed) != 2 {
-		t.Errorf("expected 2 installed skills, got %v", codexResult.Installed)
+	if len(codexResult.Installed) != 3 {
+		t.Errorf("expected 3 installed skills, got %v", codexResult.Installed)
 	}
 
 	// Verify Codex skill structure (flat directories with SKILL.md)
 	skillsDir := filepath.Join(codexDir, "skills")
 	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-address", "SKILL.md")); err != nil {
 		t.Error("expected roborev-address/SKILL.md to exist")
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-fix", "SKILL.md")); err != nil {
+		t.Error("expected roborev-fix/SKILL.md to exist")
 	}
 	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-respond", "SKILL.md")); err != nil {
 		t.Error("expected roborev-respond/SKILL.md to exist")
@@ -140,8 +146,8 @@ func TestInstallIdempotent(t *testing.T) {
 	}
 
 	claude1 := getResultForAgent(t, results1, AgentClaude)
-	if len(claude1.Installed) != 2 {
-		t.Errorf("first install: expected 2 installed, got %d", len(claude1.Installed))
+	if len(claude1.Installed) != 3 {
+		t.Errorf("first install: expected 3 installed, got %d", len(claude1.Installed))
 	}
 	if len(claude1.Updated) != 0 {
 		t.Errorf("first install: expected 0 updated, got %d", len(claude1.Updated))
@@ -157,8 +163,8 @@ func TestInstallIdempotent(t *testing.T) {
 	if len(claude2.Installed) != 0 {
 		t.Errorf("second install: expected 0 installed, got %d", len(claude2.Installed))
 	}
-	if len(claude2.Updated) != 2 {
-		t.Errorf("second install: expected 2 updated, got %d", len(claude2.Updated))
+	if len(claude2.Updated) != 3 {
+		t.Errorf("second install: expected 3 updated, got %d", len(claude2.Updated))
 	}
 }
 
@@ -256,13 +262,13 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		if len(results) > 0 && results[0].Agent != AgentClaude {
 			t.Errorf("expected Claude result, got %s", results[0].Agent)
 		}
-		// Should update respond (existed) and install address (didn't exist)
+		// Should update respond (existed) and install address+fix (didn't exist)
 		if len(results) > 0 {
 			if len(results[0].Updated) != 1 {
 				t.Errorf("expected 1 updated (respond), got %d", len(results[0].Updated))
 			}
-			if len(results[0].Installed) != 1 {
-				t.Errorf("expected 1 installed (address), got %d", len(results[0].Installed))
+			if len(results[0].Installed) != 2 {
+				t.Errorf("expected 2 installed (address, fix), got %d", len(results[0].Installed))
 			}
 		}
 	})
