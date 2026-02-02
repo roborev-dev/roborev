@@ -3,12 +3,15 @@
 package skills
 
 import (
+	"bufio"
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 )
 
 //go:embed claude/*/SKILL.md
@@ -239,6 +242,57 @@ func installCodex() (InstallResult, error) {
 	}
 
 	return result, nil
+}
+
+// SkillInfo describes an available skill.
+type SkillInfo struct {
+	Name        string // e.g. "roborev:address"
+	Description string
+}
+
+// ListSkills returns metadata for all embedded skills (from the Claude skill set).
+func ListSkills() []SkillInfo {
+	entries, err := fs.ReadDir(claudeSkills, "claude")
+	if err != nil {
+		return nil
+	}
+
+	var out []SkillInfo
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		content, err := claudeSkills.ReadFile(path.Join("claude", entry.Name(), "SKILL.md"))
+		if err != nil {
+			continue
+		}
+		name, desc := parseFrontmatter(content)
+		if name == "" {
+			name = strings.Replace(entry.Name(), "roborev-", "roborev:", 1)
+		}
+		out = append(out, SkillInfo{Name: name, Description: desc})
+	}
+	return out
+}
+
+// parseFrontmatter extracts name and description from YAML frontmatter.
+func parseFrontmatter(data []byte) (name, description string) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	if !scanner.Scan() || strings.TrimSpace(scanner.Text()) != "---" {
+		return "", ""
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "---" {
+			break
+		}
+		if strings.HasPrefix(line, "name:") {
+			name = strings.TrimSpace(strings.TrimPrefix(line, "name:"))
+		} else if strings.HasPrefix(line, "description:") {
+			description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+		}
+	}
+	return name, description
 }
 
 func fileExists(path string) bool {

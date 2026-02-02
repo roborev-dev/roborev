@@ -1908,6 +1908,38 @@ func skillsCmd() *cobra.Command {
 		Use:   "skills",
 		Short: "Manage AI agent skills",
 		Long:  "Install and manage roborev skills for AI agents (Claude Code, Codex)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			available := skills.ListSkills()
+			if len(available) == 0 {
+				fmt.Println("No skills available.")
+				return nil
+			}
+
+			fmt.Print("Available skills:\n\n")
+			for _, s := range available {
+				fmt.Printf("  /%s\n", s.Name)
+				if s.Description != "" {
+					fmt.Printf("    %s\n\n", s.Description)
+				}
+			}
+
+			// Show installation status
+			claudeInstalled := skills.IsInstalled(skills.AgentClaude)
+			codexInstalled := skills.IsInstalled(skills.AgentCodex)
+			if claudeInstalled || codexInstalled {
+				fmt.Print("Installed for:")
+				if claudeInstalled {
+					fmt.Print(" Claude Code")
+				}
+				if codexInstalled {
+					fmt.Print(" Codex")
+				}
+				fmt.Println()
+			} else {
+				fmt.Println("Not installed. Run 'roborev skills install' to install.")
+			}
+			return nil
+		},
 	}
 
 	installCmd := &cobra.Command{
@@ -1970,9 +2002,9 @@ This command is idempotent - running it multiple times is safe.`,
 				fmt.Println("\nSkills installed! Try:")
 				for _, agent := range installedAgents {
 					if agent == skills.AgentClaude {
-						fmt.Println("  Claude Code: /roborev:address or /roborev:respond")
+						fmt.Println("  Claude Code: /roborev:address, /roborev:respond, /roborev:fix")
 					} else if agent == skills.AgentCodex {
-						fmt.Println("  Codex: $roborev:address or $roborev:respond")
+						fmt.Println("  Codex: $roborev:address, $roborev:respond, $roborev:fix")
 					}
 				}
 			}
