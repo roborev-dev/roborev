@@ -246,8 +246,25 @@ func installCodex() (InstallResult, error) {
 
 // SkillInfo describes an available skill.
 type SkillInfo struct {
+	DirName     string // e.g. "roborev-address"
 	Name        string // e.g. "roborev:address"
 	Description string
+}
+
+// SkillState describes whether a skill is installed and up to date for an agent.
+type SkillState int
+
+const (
+	SkillMissing  SkillState = iota // Not installed
+	SkillCurrent                    // Installed and matches embedded version
+	SkillOutdated                   // Installed but content differs from embedded
+)
+
+// AgentStatus describes the installation state for a single agent.
+type AgentStatus struct {
+	Agent     Agent
+	Available bool                  // Whether the agent config dir exists
+	Skills    map[string]SkillState // keyed by dir name (e.g. "roborev-address")
 }
 
 // ListSkills returns metadata for all embedded skills (from the Claude skill set).
@@ -270,7 +287,77 @@ func ListSkills() []SkillInfo {
 		if name == "" {
 			name = strings.Replace(entry.Name(), "roborev-", "roborev:", 1)
 		}
-		out = append(out, SkillInfo{Name: name, Description: desc})
+		out = append(out, SkillInfo{DirName: entry.Name(), Name: name, Description: desc})
+	}
+	return out
+}
+
+// Status returns per-agent, per-skill installation state.
+func Status() []AgentStatus {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+
+	type agentDef struct {
+		agent    Agent
+		configDir string
+		embedFS  embed.FS
+		embedDir string
+	}
+
+	agents := []agentDef{
+		{AgentClaude, filepath.Join(home, ".claude"), claudeSkills, "claude"},
+		{AgentCodex, filepath.Join(home, ".codex"), codexSkills, "codex"},
+	}
+
+	var out []AgentStatus
+	for _, a := range agents {
+		status := AgentStatus{
+			Agent:  a.agent,
+			Skills: make(map[string]SkillState),
+		}
+
+		if _, err := os.Stat(a.configDir); os.IsNotExist(err) {
+			out = append(out, status)
+			continue
+		}
+		status.Available = true
+
+		entries, err := fs.ReadDir(a.embedFS, a.embedDir)
+		if err != nil {
+			out = append(out, status)
+			continue
+		}
+
+		skillsDir := filepath.Join(a.configDir, "skills")
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			installedPath := filepath.Join(skillsDir, name, "SKILL.md")
+
+			installedContent, err := os.ReadFile(installedPath)
+			if err != nil {
+				status.Skills[name] = SkillMissing
+				continue
+			}
+
+			embeddedContent, err := a.embedFS.ReadFile(path.Join(a.embedDir, name, "SKILL.md"))
+			if err != nil {
+				status.Skills[name] = SkillMissing
+				continue
+			}
+
+			if bytes.Equal(installedContent, embeddedContent) {
+				status.Skills[name] = SkillCurrent
+			} else {
+				status.Skills[name] = SkillOutdated
+			}
+		}
+
+		out = append(out, status)
 	}
 	return out
 }
