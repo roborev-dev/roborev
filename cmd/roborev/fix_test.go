@@ -1181,7 +1181,9 @@ func TestRunFixList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		os.Chdir(tmpDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatal(err)
+		}
 		defer os.Chdir(oldWd)
 
 		err = runFixList(cmd, "", false)
@@ -1248,7 +1250,9 @@ func TestRunFixList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		os.Chdir(tmpDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatal(err)
+		}
 		defer os.Chdir(oldWd)
 
 		err = runFixList(cmd, "", false)
@@ -1302,7 +1306,9 @@ func TestRunFixList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		os.Chdir(tmpDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatal(err)
+		}
 		defer os.Chdir(oldWd)
 
 		// With newestFirst=true, should process in order: 30, 20, 10
@@ -1338,7 +1344,7 @@ func TestTruncateString(t *testing.T) {
 		{"hello", 0, ""},
 		{"hello", -1, ""},
 		// Unicode handling: ensure multi-byte characters aren't split
-		{"こんにちは世界", 5, "こん..."},       // Japanese: truncate at 5 runes
+		{"こんにちは世界", 5, "こん..."},       // Japanese: maxLen=5, output is 2 chars + "..." = 5 runes
 		{"こんにちは", 10, "こんにちは"},          // Japanese: fits within limit
 		{"Hello 世界!", 8, "Hello..."},   // Mixed ASCII and Unicode
 		{"🎉🎊🎁🎄🎅", 3, "🎉🎊🎁"},            // Emoji: exactly 3 runes
