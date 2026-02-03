@@ -88,6 +88,8 @@ Examples:
 				return fmt.Errorf("--list and --batch are mutually exclusive")
 			}
 			if list {
+				// When --all-branches, effectiveBranch stays "" so
+				// queryUnaddressedJobs omits the branch filter.
 				effectiveBranch := branch
 				if !allBranches && effectiveBranch == "" {
 					workDir, err := os.Getwd()
@@ -503,10 +505,12 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	for _, id := range jobIDs {
 		job, err := fetchJob(ctx, serverAddr, id)
 		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not fetch job %d: %v\n", id, err)
 			continue
 		}
 		review, err := fetchReview(ctx, serverAddr, id)
 		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not fetch review for job %d: %v\n", id, err)
 			continue
 		}
 		summary := firstLine(review.Output)
