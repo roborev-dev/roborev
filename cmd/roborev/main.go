@@ -337,11 +337,40 @@ func initCmd() *cobra.Command {
 
 			// Check for existing hook
 			if existing, err := os.ReadFile(hookPath); err == nil {
-				if !strings.Contains(string(existing), "roborev") {
+				existingStr := string(existing)
+				if !strings.Contains(strings.ToLower(existingStr), "roborev") {
 					// Append to existing hook
-					hookContent = string(existing) + "\n" + hookContent
-				} else {
+					hookContent = existingStr + "\n" + hookContent
+				} else if strings.Contains(existingStr, hookVersionMarker) {
 					fmt.Println("  Hook already installed")
+					goto startDaemon
+				} else {
+					// Upgrade: strip old roborev lines, append new content
+					lines := strings.Split(existingStr, "\n")
+					var kept []string
+					for _, line := range lines {
+						if !strings.Contains(strings.ToLower(line), "roborev") {
+							kept = append(kept, line)
+						}
+					}
+					// Remove trailing empty lines
+					for len(kept) > 0 && strings.TrimSpace(kept[len(kept)-1]) == "" {
+						kept = kept[:len(kept)-1]
+					}
+					// Strip shebang from new content if prepending to existing content
+					newHook := hookContent
+					if len(kept) > 0 {
+						newHook = strings.TrimPrefix(newHook, "#!/bin/sh\n")
+					}
+					if len(kept) > 0 {
+						hookContent = strings.Join(kept, "\n") + "\n" + newHook
+					} else {
+						hookContent = newHook
+					}
+					if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
+						return fmt.Errorf("upgrade hook: %w", err)
+					}
+					fmt.Println("  Upgraded post-commit hook")
 					goto startDaemon
 				}
 			}
@@ -1177,6 +1206,14 @@ func statusCmd() *cobra.Command {
 						j.ID, shortRef(j.GitRef), repoDisplay, j.Agent, j.Status, elapsed)
 				}
 				w.Flush()
+			}
+
+			// Check for outdated hook in current repo
+			if root, err := git.GetRepoRoot("."); err == nil {
+				if hookNeedsUpgrade(root) {
+					fmt.Println()
+					fmt.Println("Warning: post-commit hook is outdated -- run 'roborev init' to upgrade")
+				}
 			}
 
 			return nil
@@ -2657,6 +2694,25 @@ func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySe
 	return reasoning
 }
 
+// hookVersionMarker is the string that identifies the current hook version.
+// Bump this when the hook template changes to trigger upgrade warnings.
+const hookVersionMarker = "post-commit hook v2"
+
+// hookNeedsUpgrade checks whether a repo's post-commit hook contains roborev
+// but is outdated (missing the current version marker).
+func hookNeedsUpgrade(repoPath string) bool {
+	hooksDir, err := git.GetHooksPath(repoPath)
+	if err != nil {
+		return false
+	}
+	content, err := os.ReadFile(filepath.Join(hooksDir, "post-commit"))
+	if err != nil {
+		return false
+	}
+	s := string(content)
+	return strings.Contains(strings.ToLower(s), "roborev") && !strings.Contains(s, hookVersionMarker)
+}
+
 // generateHookContent creates the post-commit hook script content.
 // It bakes the path to the currently running binary for consistency.
 // Falls back to PATH lookup if the baked path becomes unavailable.
@@ -2678,12 +2734,12 @@ func generateHookContent() string {
 
 	// Prefer baked path (security), fall back to PATH only if baked is missing
 	return fmt.Sprintf(`#!/bin/sh
-# roborev post-commit hook - auto-reviews every commit
+# roborev post-commit hook v2 - auto-reviews every commit
 ROBOREV=%q
 if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
-"$ROBOREV" enqueue --quiet 2>/dev/null &
+"$ROBOREV" enqueue --quiet 2>/dev/null
 `, roborevPath)
 }

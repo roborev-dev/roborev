@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -132,6 +134,15 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool
 	s.workerPool.Start()
 
+	// Check for outdated hooks in registered repos
+	if repos, err := s.db.ListRepos(); err == nil {
+		for _, repo := range repos {
+			if hookNeedsUpgrade(repo.RootPath) {
+				log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
+			}
+		}
+	}
+
 	// Start HTTP server
 	log.Printf("Starting HTTP server on %s", addr)
 	if err := s.httpServer.ListenAndServe(); err != http.ErrServerClosed {
@@ -140,6 +151,23 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// hookVersionMarker identifies the current hook version.
+const hookVersionMarker = "post-commit hook v2"
+
+// hookNeedsUpgrade checks whether a repo's post-commit hook is outdated.
+func hookNeedsUpgrade(repoPath string) bool {
+	hooksDir, err := git.GetHooksPath(repoPath)
+	if err != nil {
+		return false
+	}
+	content, err := os.ReadFile(filepath.Join(hooksDir, "post-commit"))
+	if err != nil {
+		return false
+	}
+	s := string(content)
+	return strings.Contains(strings.ToLower(s), "roborev") && !strings.Contains(s, hookVersionMarker)
 }
 
 // Stop gracefully shuts down the server

@@ -244,19 +244,24 @@ func TestGenerateHookContent(t *testing.T) {
 		}
 	})
 
-	t.Run("enqueue line has quiet and stderr redirect", func(t *testing.T) {
-		// Must have exact enqueue line with --quiet, stderr redirect, and background
+	t.Run("enqueue line has quiet and stderr redirect without background", func(t *testing.T) {
 		found := false
 		for _, line := range lines {
 			if strings.Contains(line, "enqueue --quiet") &&
 				strings.Contains(line, "2>/dev/null") &&
-				strings.HasSuffix(strings.TrimSpace(line), "&") {
+				!strings.HasSuffix(strings.TrimSpace(line), "&") {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Error("hook should have enqueue line with --quiet, 2>/dev/null, and & on same line")
+			t.Error("hook should have enqueue line with --quiet and 2>/dev/null but no trailing &")
+		}
+	})
+
+	t.Run("has version marker", func(t *testing.T) {
+		if !strings.Contains(content, "hook v2") {
+			t.Error("hook should contain version marker 'hook v2'")
 		}
 	})
 
@@ -288,6 +293,118 @@ func TestGenerateHookContent(t *testing.T) {
 				}
 				break
 			}
+		}
+	})
+}
+
+func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	repo := testutil.NewTestRepo(t)
+
+	// Write an old-style hook (no version marker, has &)
+	oldHook := "#!/bin/sh\n# roborev post-commit hook - auto-reviews every commit\nROBOREV=\"/usr/local/bin/roborev\"\n\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
+	repo.WriteHook(oldHook)
+
+	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
+	defer repo.Chdir()()
+
+	initCommand := initCmd()
+	initCommand.SetArgs([]string{"--agent", "test"})
+	err := initCommand.Execute()
+	if err != nil {
+		t.Fatalf("init command failed: %v", err)
+	}
+
+	content, err := os.ReadFile(repo.HookPath)
+	if err != nil {
+		t.Fatalf("Failed to read hook: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "hook v2") {
+		t.Error("upgraded hook should contain version marker")
+	}
+	if strings.Contains(contentStr, "2>/dev/null &") {
+		t.Error("upgraded hook should not have backgrounded enqueue")
+	}
+}
+
+func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	repo := testutil.NewTestRepo(t)
+
+	oldHook := "#!/bin/sh\necho 'my custom hook'\n# roborev post-commit hook - auto-reviews every commit\nROBOREV=\"/usr/local/bin/roborev\"\n\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
+	repo.WriteHook(oldHook)
+
+	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
+	defer repo.Chdir()()
+
+	initCommand := initCmd()
+	initCommand.SetArgs([]string{"--agent", "test"})
+	err := initCommand.Execute()
+	if err != nil {
+		t.Fatalf("init command failed: %v", err)
+	}
+
+	content, err := os.ReadFile(repo.HookPath)
+	if err != nil {
+		t.Fatalf("Failed to read hook: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "echo 'my custom hook'") {
+		t.Error("upgrade should preserve non-roborev lines")
+	}
+	if !strings.Contains(contentStr, "hook v2") {
+		t.Error("upgrade should contain version marker")
+	}
+}
+
+func TestHookNeedsUpgrade(t *testing.T) {
+	t.Run("outdated hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook("#!/bin/sh\n# roborev post-commit hook\nroborev enqueue\n")
+		if !hookNeedsUpgrade(repo.Root) {
+			t.Error("should detect outdated hook")
+		}
+	})
+
+	t.Run("current hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook("#!/bin/sh\n# roborev post-commit hook v2 - auto-reviews every commit\nroborev enqueue\n")
+		if hookNeedsUpgrade(repo.Root) {
+			t.Error("should not flag current hook as outdated")
+		}
+	})
+
+	t.Run("no hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if hookNeedsUpgrade(repo.Root) {
+			t.Error("should not flag missing hook as outdated")
+		}
+	})
+
+	t.Run("non-roborev hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook("#!/bin/sh\necho hello\n")
+		if hookNeedsUpgrade(repo.Root) {
+			t.Error("should not flag non-roborev hook as outdated")
 		}
 	})
 }
