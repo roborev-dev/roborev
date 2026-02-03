@@ -22,13 +22,12 @@ When the user invokes `/roborev:fix [job_id...]`:
 If job IDs are provided, use those. Otherwise, discover unaddressed reviews:
 
 ```bash
-roborev show HEAD
-roborev show HEAD~1
+roborev fix --unaddressed --list
 ```
 
-Look for jobs with verdict **Fail** that have no comments (unaddressed). Collect their job IDs.
+This prints one line per unaddressed job with its ID, commit SHA, agent, and summary. Collect the job IDs from the output.
 
-If no failed reviews are found, inform the user there is nothing to fix.
+If no unaddressed reviews are found, inform the user there is nothing to fix.
 
 ### 2. Fetch all reviews
 
@@ -56,12 +55,13 @@ go test ./...
 
 Or whatever test command the project uses.
 
-### 5. Record comments
+### 5. Record comments and mark addressed
 
-For each job that was addressed, record a summary comment:
+For each job that was addressed, record a summary comment and mark it as addressed:
 
 ```bash
 roborev comment --job <job_id> "<summary of changes>"
+roborev address <job_id>
 ```
 
 ### 6. Ask to commit
@@ -73,10 +73,11 @@ Ask the user if they want to commit all the changes together.
 User: `/roborev:fix`
 
 Agent:
-1. Runs `roborev show HEAD` and `roborev show HEAD~1`
-2. Finds 2 failed reviews: job 1019 (2 findings) and job 1021 (1 finding)
-3. Fetches both reviews with `roborev show --job 1019` and `roborev show --job 1021`
-4. Fixes all 3 findings across both reviews, prioritizing by severity
-5. Runs tests to verify
-6. Executes `roborev comment --job 1019 "Fixed null check and added error handling"` and `roborev comment --job 1021 "Fixed missing validation"`
-7. Asks: "I've addressed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"
+1. Runs `roborev fix --unaddressed --list` and finds 2 unaddressed reviews: job 1019 and job 1021
+2. Fetches both reviews with `roborev show --job 1019` and `roborev show --job 1021`
+3. Fixes all 3 findings across both reviews, prioritizing by severity
+4. Runs tests to verify
+5. Records comments and marks addressed:
+   - `roborev comment --job 1019 "Fixed null check and added error handling"` then `roborev address 1019`
+   - `roborev comment --job 1021 "Fixed missing validation"` then `roborev address 1021`
+6. Asks: "I've addressed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"

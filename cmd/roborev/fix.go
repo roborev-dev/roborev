@@ -30,6 +30,7 @@ func fixCmd() *cobra.Command {
 		newestFirst bool
 		branch      string
 		batch       bool
+		list        bool
 	)
 
 	cmd := &cobra.Command{
@@ -57,26 +58,49 @@ Examples:
   roborev fix --unaddressed --all-branches
   roborev fix --batch 123 124 125        # Batch multiple jobs into one prompt
   roborev fix --batch                    # Batch all unaddressed on current branch
+  roborev fix --list                     # List unaddressed jobs without fixing
+  roborev fix --unaddressed --list       # Same as above
 `,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if branch != "" && !unaddressed && !batch {
-				return fmt.Errorf("--branch requires --unaddressed or --batch")
+			if branch != "" && !unaddressed && !batch && !list {
+				return fmt.Errorf("--branch requires --unaddressed, --batch, or --list")
 			}
-			if allBranches && !unaddressed && !batch {
-				return fmt.Errorf("--all-branches requires --unaddressed or --batch")
+			if allBranches && !unaddressed && !batch && !list {
+				return fmt.Errorf("--all-branches requires --unaddressed, --batch, or --list")
 			}
 			if allBranches && branch != "" {
 				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
 			}
-			if newestFirst && !unaddressed && !batch {
-				return fmt.Errorf("--newest-first requires --unaddressed or --batch")
+			if newestFirst && !unaddressed && !batch && !list {
+				return fmt.Errorf("--newest-first requires --unaddressed, --batch, or --list")
 			}
 			if unaddressed && len(args) > 0 {
 				return fmt.Errorf("--unaddressed cannot be used with positional job IDs")
 			}
 			if batch && unaddressed {
 				return fmt.Errorf("--batch and --unaddressed are mutually exclusive (--batch without args already discovers unaddressed jobs)")
+			}
+			if list && len(args) > 0 {
+				return fmt.Errorf("--list cannot be used with positional job IDs")
+			}
+			if list && batch {
+				return fmt.Errorf("--list and --batch are mutually exclusive")
+			}
+			if list {
+				effectiveBranch := branch
+				if !allBranches && effectiveBranch == "" {
+					workDir, err := os.Getwd()
+					if err != nil {
+						return fmt.Errorf("get working directory: %w", err)
+					}
+					repoRoot := workDir
+					if root, err := git.GetRepoRoot(workDir); err == nil {
+						repoRoot = root
+					}
+					effectiveBranch = git.GetCurrentBranch(repoRoot)
+				}
+				return runFixList(cmd, effectiveBranch, newestFirst)
 			}
 			opts := fixOptions{
 				agentName: agentName,
@@ -156,6 +180,7 @@ Examples:
 	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include unaddressed jobs from all branches (requires --unaddressed)")
 	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first (requires --unaddressed)")
 	cmd.Flags().BoolVar(&batch, "batch", false, "concatenate reviews into a single prompt for the agent")
+	cmd.Flags().BoolVar(&list, "list", false, "list unaddressed jobs without fixing (implies --unaddressed)")
 
 	return cmd
 }
@@ -437,6 +462,75 @@ func queryUnaddressedJobs(repoRoot, branch string) ([]int64, error) {
 		jobIDs = append(jobIDs, j.ID)
 	}
 	return jobIDs, nil
+}
+
+// runFixList prints unaddressed jobs in a parseable format without running any agent.
+func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
+	if err := ensureDaemon(); err != nil {
+		return err
+	}
+
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	repoRoot := workDir
+	if root, err := git.GetRepoRoot(workDir); err == nil {
+		repoRoot = root
+	}
+
+	jobIDs, err := queryUnaddressedJobs(repoRoot, branch)
+	if err != nil {
+		return err
+	}
+
+	if !newestFirst {
+		for i, j := 0, len(jobIDs)-1; i < j; i, j = i+1, j-1 {
+			jobIDs[i], jobIDs[j] = jobIDs[j], jobIDs[i]
+		}
+	}
+
+	if len(jobIDs) == 0 {
+		cmd.Println("No unaddressed jobs found.")
+		return nil
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	for _, id := range jobIDs {
+		job, err := fetchJob(ctx, serverAddr, id)
+		if err != nil {
+			continue
+		}
+		review, err := fetchReview(ctx, serverAddr, id)
+		if err != nil {
+			continue
+		}
+		summary := firstLine(review.Output)
+		cmd.Printf("job %d  %s  %s  %q\n", id, shortSHA(job.GitRef), job.Agent, summary)
+	}
+
+	return nil
+}
+
+// firstLine returns the first non-empty line of s, truncated to 80 chars.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			if len(line) > 80 {
+				return line[:77] + "..."
+			}
+			return line
+		}
+	}
+	if len(s) > 80 {
+		return s[:77] + "..."
+	}
+	return s
 }
 
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions) error {
