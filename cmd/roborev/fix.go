@@ -549,14 +549,19 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 }
 
 // truncateString truncates s to maxLen characters, adding "..." if truncated.
+// It operates on Unicode runes to avoid cutting multi-byte characters.
 func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if maxLen <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return string(runes[:maxLen])
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }
 
 // firstLine returns the first non-empty line of s, truncated to 80 chars.

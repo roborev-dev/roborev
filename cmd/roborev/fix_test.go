@@ -1148,42 +1148,22 @@ func TestRunFixList(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/jobs":
-				q := r.URL.Query()
-				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"jobs": []storage.ReviewJob{
-							{
-								ID:            42,
-								GitRef:        "abc123def456",
-								Branch:        "feature-branch",
-								CommitSubject: "Fix the widget",
-								Agent:         "claude-code",
-								Model:         "claude-3-opus",
-								Status:        storage.JobStatusDone,
-								FinishedAt:    &finishedAt,
-								Verdict:       &verdict,
-							},
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jobs": []storage.ReviewJob{
+						{
+							ID:            42,
+							GitRef:        "abc123def456",
+							Branch:        "feature-branch",
+							CommitSubject: "Fix the widget",
+							Agent:         "claude-code",
+							Model:         "claude-3-opus",
+							Status:        storage.JobStatusDone,
+							FinishedAt:    &finishedAt,
+							Verdict:       &verdict,
 						},
-						"has_more": false,
-					})
-				} else {
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"jobs": []storage.ReviewJob{
-							{
-								ID:            42,
-								GitRef:        "abc123def456",
-								Branch:        "feature-branch",
-								CommitSubject: "Fix the widget",
-								Agent:         "claude-code",
-								Model:         "claude-3-opus",
-								Status:        storage.JobStatusDone,
-								FinishedAt:    &finishedAt,
-								Verdict:       &verdict,
-							},
-						},
-						"has_more": false,
-					})
-				}
+					},
+					"has_more": false,
+				})
 			case "/api/review":
 				json.NewEncoder(w).Encode(storage.Review{
 					JobID:  42,
@@ -1197,11 +1177,14 @@ func TestRunFixList(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
 		os.Chdir(tmpDir)
 		defer os.Chdir(oldWd)
 
-		err := runFixList(cmd, "", false)
+		err = runFixList(cmd, "", false)
 		if err != nil {
 			t.Fatalf("runFixList: %v", err)
 		}
@@ -1261,11 +1244,14 @@ func TestRunFixList(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
 		os.Chdir(tmpDir)
 		defer os.Chdir(oldWd)
 
-		err := runFixList(cmd, "", false)
+		err = runFixList(cmd, "", false)
 		if err != nil {
 			t.Fatalf("runFixList: %v", err)
 		}
@@ -1312,13 +1298,16 @@ func TestRunFixList(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
 		os.Chdir(tmpDir)
 		defer os.Chdir(oldWd)
 
 		// With newestFirst=true, should process in order: 30, 20, 10
 		gotIDs = nil
-		err := runFixList(cmd, "", true)
+		err = runFixList(cmd, "", true)
 		if err != nil {
 			t.Fatalf("runFixList: %v", err)
 		}
@@ -1345,6 +1334,15 @@ func TestTruncateString(t *testing.T) {
 		{"hi", 3, "hi"},
 		{"hello", 3, "hel"},
 		{"", 10, ""},
+		// Edge cases for maxLen <= 0
+		{"hello", 0, ""},
+		{"hello", -1, ""},
+		// Unicode handling: ensure multi-byte characters aren't split
+		{"こんにちは世界", 5, "こん..."},       // Japanese: truncate at 5 runes
+		{"こんにちは", 10, "こんにちは"},          // Japanese: fits within limit
+		{"Hello 世界!", 8, "Hello..."},   // Mixed ASCII and Unicode
+		{"🎉🎊🎁🎄🎅", 3, "🎉🎊🎁"},            // Emoji: exactly 3 runes
+		{"🎉🎊🎁🎄🎅", 4, "🎉..."},            // Emoji: truncate with ellipsis
 	}
 
 	for _, tt := range tests {
