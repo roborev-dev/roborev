@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -1135,5 +1136,256 @@ func TestEnqueueIfNeededEnqueuesWhenNoJobExists(t *testing.T) {
 	}
 	if enqueueCalls.Load() != 1 {
 		t.Errorf("should have enqueued exactly once, got %d", enqueueCalls.Load())
+	}
+}
+
+func TestRunFixList(t *testing.T) {
+	tmpDir := initTestGitRepo(t)
+
+	t.Run("lists unaddressed jobs with details", func(t *testing.T) {
+		finishedAt := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
+		verdict := "FAIL"
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				q := r.URL.Query()
+				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"jobs": []storage.ReviewJob{
+							{
+								ID:            42,
+								GitRef:        "abc123def456",
+								Branch:        "feature-branch",
+								CommitSubject: "Fix the widget",
+								Agent:         "claude-code",
+								Model:         "claude-3-opus",
+								Status:        storage.JobStatusDone,
+								FinishedAt:    &finishedAt,
+								Verdict:       &verdict,
+							},
+						},
+						"has_more": false,
+					})
+				} else {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"jobs": []storage.ReviewJob{
+							{
+								ID:            42,
+								GitRef:        "abc123def456",
+								Branch:        "feature-branch",
+								CommitSubject: "Fix the widget",
+								Agent:         "claude-code",
+								Model:         "claude-3-opus",
+								Status:        storage.JobStatusDone,
+								FinishedAt:    &finishedAt,
+								Verdict:       &verdict,
+							},
+						},
+						"has_more": false,
+					})
+				}
+			case "/api/review":
+				json.NewEncoder(w).Encode(storage.Review{
+					JobID:  42,
+					Output: "Found 3 issues:\n- Missing error handling\n- Unused variable",
+				})
+			}
+		}))
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		err := runFixList(cmd, "", false)
+		if err != nil {
+			t.Fatalf("runFixList: %v", err)
+		}
+
+		out := output.String()
+
+		// Check header
+		if !strings.Contains(out, "Found 1 unaddressed fix(es):") {
+			t.Errorf("expected header message, got:\n%s", out)
+		}
+
+		// Check job details are displayed
+		if !strings.Contains(out, "Job #42") {
+			t.Errorf("expected job ID, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Git Ref:  abc123d") {
+			t.Errorf("expected git ref, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Branch:   feature-branch") {
+			t.Errorf("expected branch, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Subject:  Fix the widget") {
+			t.Errorf("expected subject, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Agent:    claude-code") {
+			t.Errorf("expected agent, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Model:    claude-3-opus") {
+			t.Errorf("expected model, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Verdict:  FAIL") {
+			t.Errorf("expected verdict, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Summary:  Found 3 issues:") {
+			t.Errorf("expected summary, got:\n%s", out)
+		}
+
+		// Check usage hints
+		if !strings.Contains(out, "roborev fix <job_id>") {
+			t.Errorf("expected usage hint, got:\n%s", out)
+		}
+		if !strings.Contains(out, "roborev fix --unaddressed") {
+			t.Errorf("expected unaddressed hint, got:\n%s", out)
+		}
+	})
+
+	t.Run("no unaddressed jobs", func(t *testing.T) {
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs":     []storage.ReviewJob{},
+				"has_more": false,
+			})
+		}))
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		err := runFixList(cmd, "", false)
+		if err != nil {
+			t.Fatalf("runFixList: %v", err)
+		}
+
+		if !strings.Contains(output.String(), "No unaddressed jobs found") {
+			t.Errorf("expected no jobs message, got:\n%s", output.String())
+		}
+	})
+
+	t.Run("respects newest-first flag", func(t *testing.T) {
+		var gotIDs []int64
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				q := r.URL.Query()
+				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
+					// API returns newest first
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"jobs": []storage.ReviewJob{
+							{ID: 30, Status: storage.JobStatusDone, Agent: "test"},
+							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
+							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+				} else if q.Get("id") != "" {
+					var id int64
+					fmt.Sscanf(q.Get("id"), "%d", &id)
+					gotIDs = append(gotIDs, id)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"jobs": []storage.ReviewJob{
+							{ID: id, Status: storage.JobStatusDone, Agent: "test"},
+						},
+						"has_more": false,
+					})
+				}
+			case "/api/review":
+				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
+			}
+		}))
+		defer cleanup()
+
+		var output bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&output)
+
+		oldWd, _ := os.Getwd()
+		os.Chdir(tmpDir)
+		defer os.Chdir(oldWd)
+
+		// With newestFirst=true, should process in order: 30, 20, 10
+		gotIDs = nil
+		err := runFixList(cmd, "", true)
+		if err != nil {
+			t.Fatalf("runFixList: %v", err)
+		}
+
+		if len(gotIDs) != 3 {
+			t.Fatalf("expected 3 job fetches, got %d", len(gotIDs))
+		}
+		if gotIDs[0] != 30 || gotIDs[1] != 20 || gotIDs[2] != 10 {
+			t.Errorf("expected newest-first order [30, 20, 10], got %v", gotIDs)
+		}
+	})
+}
+
+func TestTruncateString(t *testing.T) {
+	tests := []struct {
+		s      string
+		maxLen int
+		want   string
+	}{
+		{"hello", 10, "hello"},
+		{"hello", 5, "hello"},
+		{"hello world", 8, "hello..."},
+		{"hello world", 5, "he..."},
+		{"hi", 3, "hi"},
+		{"hello", 3, "hel"},
+		{"", 10, ""},
+	}
+
+	for _, tt := range tests {
+		got := truncateString(tt.s, tt.maxLen)
+		if got != tt.want {
+			t.Errorf("truncateString(%q, %d) = %q, want %q", tt.s, tt.maxLen, got, tt.want)
+		}
+	}
+}
+
+func TestFixListFlagValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "--list with positional args",
+			args:    []string{"--list", "123"},
+			wantErr: "--list cannot be used with positional job IDs",
+		},
+		{
+			name:    "--list with --batch",
+			args:    []string{"--list", "--batch"},
+			wantErr: "--list and --batch are mutually exclusive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := fixCmd()
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
+			}
+		})
 	}
 }
