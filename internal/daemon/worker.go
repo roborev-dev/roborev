@@ -291,6 +291,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		} else {
 			reviewPrompt = job.Prompt
 		}
+	} else if job.IsTaskJob() {
+		// Task job with missing prompt - likely a daemon version mismatch where
+		// the prompt wasn't stored or loaded. Fail with a clear error instead of
+		// trying to git log on an analysis type name like "complexity".
+		err = fmt.Errorf("task job %d has no stored prompt (git_ref=%q); restart the daemon with 'roborev daemon restart'", job.ID, job.GitRef)
 	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
 		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent)
