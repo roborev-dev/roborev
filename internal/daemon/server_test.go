@@ -2606,31 +2606,42 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 		name          string
 		requestAgent  string
 		mockBinaries  []string // binary names to place in PATH
-		expectedAgent string
+		expectedAgent string   // expected agent stored in job
+		expectedCode  int      // expected HTTP status code
 	}{
 		{
 			name:          "explicit test agent preserved",
 			requestAgent:  "test",
 			mockBinaries:  nil,
 			expectedAgent: "test",
+			expectedCode:  http.StatusCreated,
 		},
 		{
-			name:          "unavailable codex falls back to claude-code",
+			name:          "unavailable codex preserved when fallback exists",
 			requestAgent:  "codex",
 			mockBinaries:  []string{"claude"},
-			expectedAgent: "claude-code",
+			expectedAgent: "codex",
+			expectedCode:  http.StatusCreated,
 		},
 		{
-			name:          "default agent falls back when codex not installed",
+			name:          "default codex preserved when fallback exists",
 			requestAgent:  "",
 			mockBinaries:  []string{"claude"},
-			expectedAgent: "claude-code",
+			expectedAgent: "codex",
+			expectedCode:  http.StatusCreated,
 		},
 		{
 			name:          "explicit codex kept when available",
 			requestAgent:  "codex",
 			mockBinaries:  []string{"codex"},
 			expectedAgent: "codex",
+			expectedCode:  http.StatusCreated,
+		},
+		{
+			name:         "no agents available returns 503",
+			requestAgent: "codex",
+			mockBinaries: nil,
+			expectedCode: http.StatusServiceUnavailable,
 		},
 	}
 
@@ -2662,8 +2673,12 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 
 			server.handleEnqueue(w, req)
 
-			if w.Code != http.StatusCreated {
-				t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+			if w.Code != tt.expectedCode {
+				t.Fatalf("Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
+			}
+
+			if tt.expectedCode != http.StatusCreated {
+				return
 			}
 
 			var job storage.ReviewJob

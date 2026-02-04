@@ -451,9 +451,12 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent for review workflow at this reasoning level
 	agentName := config.ResolveAgentForWorkflow(req.Agent, repoRoot, s.configWatcher.Config(), "review", reasoning)
 
-	// Validate agent is available, fall back if not
-	if resolved, err := agent.GetAvailable(agentName); err == nil {
-		agentName = resolved.Name()
+	// Validate at least one agent is available (fail fast instead of queuing a doomed job).
+	// We don't overwrite agentName here — the worker re-resolves availability at execution
+	// time via agent.GetAvailable, so the requested agent is preserved for later resolution.
+	if _, err := agent.GetAvailable(agentName); err != nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("no review agent available: %v", err))
+		return
 	}
 
 	// Resolve model for review workflow at this reasoning level
