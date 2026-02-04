@@ -855,6 +855,21 @@ func TestParseVerdict(t *testing.T) {
 			want:   "P",
 		},
 		{
+			name:   "severity label value hyphen separator",
+			output: "Severity - High\nLocation: file.go\nProblem: Bug found.",
+			want:   "F",
+		},
+		{
+			name:   "markdown legend header not a finding",
+			output: "No issues found.\n\n**Severity levels:**\n- **High** - immediate action required.\n- **Medium** - should be addressed.\n- **Low** - minor concern.",
+			want:   "P",
+		},
+		{
+			name:   "markdown legend header with severity label not a finding",
+			output: "No issues found.\n\n**Severity levels:**\nSeverity: High - immediate action required.\nSeverity: Low - minor concern.",
+			want:   "P",
+		},
+		{
 			name:   "exclamation then error",
 			output: "No issues found! Error in tests.",
 			want:   "F",

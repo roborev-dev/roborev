@@ -163,8 +163,13 @@ func hasSeverityLabel(output string) bool {
 		if strings.HasPrefix(checkText, "severity") {
 			rest := checkText[len("severity"):]
 			rest = strings.TrimSpace(rest)
-			if len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
-				strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–")) {
+			hasSep := len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
+				strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–"))
+			// Accept hyphen-minus when followed by space (mirrors the severity-word branch)
+			if !hasSep && len(rest) > 1 && rest[0] == '-' && rest[1] == ' ' {
+				hasSep = true
+			}
+			if hasSep {
 				// Skip separator and whitespace
 				rest = strings.TrimLeft(rest, ":-–—| ")
 				rest = strings.TrimSpace(rest)
@@ -191,6 +196,10 @@ func isLegendEntry(lines []string, i int) bool {
 		if len(prev) == 0 {
 			continue
 		}
+
+		// Strip markdown and list markers so bolded headers like
+		// "**Severity levels:**" are recognized the same as plain text.
+		prev = stripMarkdown(stripListMarker(prev))
 
 		// Check for legend header patterns (ends with ":" and contains indicator word)
 		if strings.HasSuffix(prev, ":") || strings.HasSuffix(prev, "：") {
