@@ -3345,9 +3345,17 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 	addr := ""
 	if job.Addressed != nil {
 		if *job.Addressed {
-			addr = "true"
+			if selected {
+				addr = "true"
+			} else {
+				addr = tuiAddressedStyle.Render("true")
+			}
 		} else {
-			addr = "false"
+			if selected {
+				addr = "false"
+			} else {
+				addr = tuiQueuedStyle.Render("false")
+			}
 		}
 	}
 
