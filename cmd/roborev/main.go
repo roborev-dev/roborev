@@ -56,6 +56,7 @@ func main() {
 	rootCmd.AddCommand(initCmd())
 	rootCmd.AddCommand(reviewCmd())
 	rootCmd.AddCommand(statusCmd())
+	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(showCmd())
 	rootCmd.AddCommand(commentCmd())
 	rootCmd.AddCommand(respondCmd()) // hidden alias for backward compatibility
@@ -1221,9 +1222,123 @@ func statusCmd() *cobra.Command {
 	}
 }
 
+func listCmd() *cobra.Command {
+	var (
+		branch     string
+		repoPath   string
+		limit      int
+		status     string
+		jsonOutput bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List review jobs",
+		Long: `List review jobs with optional filtering.
+
+By default, lists jobs for the current repo and branch.
+
+Examples:
+  roborev list                        # Jobs for current repo/branch
+  roborev list --json                 # Output as JSON
+  roborev list --branch main          # Jobs for main branch
+  roborev list --status done          # Only completed jobs
+  roborev list --limit 5              # Show at most 5 jobs`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("daemon not running: %w", err)
+			}
+
+			addr := getDaemonAddr()
+
+			// Auto-resolve repo and branch from cwd
+			if repoPath == "" || branch == "" {
+				if root, err := git.GetRepoRoot("."); err == nil {
+					if repoPath == "" {
+						repoPath = root
+					}
+					if branch == "" {
+						branch = git.GetCurrentBranch(root)
+					}
+				}
+			}
+
+			// Build query URL
+			params := url.Values{}
+			if repoPath != "" {
+				params.Set("repo", repoPath)
+			}
+			if branch != "" {
+				params.Set("branch", branch)
+				params.Set("branch_include_empty", "true")
+			}
+			if status != "" {
+				params.Set("status", status)
+			}
+			params.Set("limit", strconv.Itoa(limit))
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Get(addr + "/api/jobs?" + params.Encode())
+			if err != nil {
+				return fmt.Errorf("failed to connect to daemon (is it running?)")
+			}
+			defer resp.Body.Close()
+
+			if jsonOutput {
+				// Raw JSON passthrough
+				_, err := io.Copy(os.Stdout, resp.Body)
+				return err
+			}
+
+			var jobsResp struct {
+				Jobs    []storage.ReviewJob `json:"jobs"`
+				HasMore bool               `json:"has_more"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+				return fmt.Errorf("failed to parse response: %w", err)
+			}
+
+			if len(jobsResp.Jobs) == 0 {
+				fmt.Println("No jobs found.")
+				return nil
+			}
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintf(w, "ID\tSHA\tRepo\tAgent\tStatus\tTime\n")
+			for _, j := range jobsResp.Jobs {
+				elapsed := ""
+				if j.StartedAt != nil {
+					if j.FinishedAt != nil {
+						elapsed = j.FinishedAt.Sub(*j.StartedAt).Round(time.Second).String()
+					} else {
+						elapsed = time.Since(*j.StartedAt).Round(time.Second).String() + "..."
+					}
+				}
+				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
+					j.ID, shortRef(j.GitRef), j.RepoName, j.Agent, j.Status, elapsed)
+			}
+			w.Flush()
+
+			if jobsResp.HasMore {
+				fmt.Println("(more results available, use --limit to increase)")
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch)")
+	cmd.Flags().StringVar(&repoPath, "repo", "", "filter by repo path (default: current repo)")
+	cmd.Flags().IntVar(&limit, "limit", 50, "max number of jobs to return")
+	cmd.Flags().StringVar(&status, "status", "", "filter by status (queued, running, done, failed)")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	return cmd
+}
+
 func showCmd() *cobra.Command {
 	var forceJobID bool
 	var showPrompt bool
+	var jsonOutput bool
 
 	cmd := &cobra.Command{
 		Use:   "show [job_id|sha]",
@@ -1318,6 +1433,12 @@ Examples:
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
+			if jsonOutput {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(&review)
+			}
+
 			// Avoid redundant "job X (job X, ...)" output
 			if strings.HasPrefix(displayRef, "job ") {
 				fmt.Printf("Review for %s (by %s)\n", displayRef, review.Agent)
@@ -1337,6 +1458,7 @@ Examples:
 
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
 	cmd.Flags().BoolVar(&showPrompt, "prompt", false, "show the prompt sent to the agent instead of the review output")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	return cmd
 }
 
