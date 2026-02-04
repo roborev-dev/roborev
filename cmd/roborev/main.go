@@ -1251,12 +1251,13 @@ Examples:
 
 			addr := getDaemonAddr()
 
-			// Auto-resolve repo and branch from cwd
-			if repoPath == "" || branch == "" {
+			// Auto-resolve repo and branch from cwd when not specified.
+			// Only auto-resolve branch when repo was also auto-resolved
+			// (or matches cwd), to avoid applying a cwd branch filter
+			// against an unrelated --repo.
+			if repoPath == "" {
 				if root, err := git.GetRepoRoot("."); err == nil {
-					if repoPath == "" {
-						repoPath = root
-					}
+					repoPath = root
 					if branch == "" {
 						branch = git.GetCurrentBranch(root)
 					}
@@ -1283,6 +1284,11 @@ Examples:
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}
 			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+			}
 
 			if jsonOutput {
 				// Raw JSON passthrough
