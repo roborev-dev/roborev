@@ -2664,7 +2664,13 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			origPath := os.Getenv("PATH")
 			mockDir := t.TempDir()
 			for _, bin := range tt.mockBinaries {
-				if err := os.WriteFile(filepath.Join(mockDir, bin), []byte(mockScript), 0755); err != nil {
+				name := bin
+				content := mockScript
+				if runtime.GOOS == "windows" {
+					name = bin + ".cmd"
+					content = "@exit /b 0\r\n"
+				}
+				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0755); err != nil {
 					t.Fatal(err)
 				}
 			}

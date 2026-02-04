@@ -1005,14 +1005,13 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 	// Check if a review job already exists for this commit (e.g., from the
 	// post-commit hook). If so, skip enqueuing to avoid duplicates.
 	// The post-commit hook normally completes before control returns here,
-	// but under heavy load it may take longer. We retry with a generous
-	// delay to avoid creating a duplicate review.
-	if hasJobForSHA(serverAddr, sha) {
-		return nil
-	}
-	time.Sleep(10 * time.Second)
-	if hasJobForSHA(serverAddr, sha) {
-		return nil
+	// but under heavy load it may take longer. Poll with short intervals
+	// up to a max wait to avoid both unnecessary delays and duplicates.
+	for range 10 {
+		if hasJobForSHA(serverAddr, sha) {
+			return nil
+		}
+		time.Sleep(1 * time.Second)
 	}
 
 	branchName := git.GetCurrentBranch(repoPath)
