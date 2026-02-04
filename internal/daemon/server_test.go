@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -2588,16 +2589,25 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 	testutil.InitTestGitRepo(t, repoDir)
 	headSHA := testutil.GetHeadSHA(t, repoDir)
 
-	// Create an isolated dir containing only a symlink to git.
+	// Create an isolated dir containing only a wrapper for git.
 	// We can't just use git's parent dir because it may contain real agent
 	// binaries (e.g. codex, claude) that would defeat the PATH isolation.
+	// Symlinks don't work reliably on Windows, so we use wrapper scripts.
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal("git not found in PATH")
 	}
 	gitOnlyDir := t.TempDir()
-	if err := os.Symlink(gitPath, filepath.Join(gitOnlyDir, "git")); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		wrapper := fmt.Sprintf("@\"%s\" %%*\r\n", gitPath)
+		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' \"$@\"\n", gitPath)
+		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	mockScript := "#!/bin/sh\nexit 0\n"
