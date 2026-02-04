@@ -830,6 +830,31 @@ func TestParseVerdict(t *testing.T) {
 			want:   "F",
 		},
 		{
+			name:   "severity label value format high",
+			output: "- **Severity**: High\n- **Location**: file.go\n- **Problem**: Bug found.",
+			want:   "F",
+		},
+		{
+			name:   "severity label value format low",
+			output: "- **Severity**: Low\n- **Problem**: Minor style issue.",
+			want:   "F",
+		},
+		{
+			name:   "severity label value with no issues in other file",
+			output: "- **Severity**: High\n- **Problem**: Bug found.\n\n- **No issues found** in test_file.go.",
+			want:   "F",
+		},
+		{
+			name:   "severity label value plain text",
+			output: "Severity: High\nLocation: file.go\nProblem: Bug found.",
+			want:   "F",
+		},
+		{
+			name:   "severity label value in legend is not finding",
+			output: "No issues found.\n\nSeverity levels:\nSeverity: High - immediate action required.\nSeverity: Low - minor concern.",
+			want:   "P",
+		},
+		{
 			name:   "exclamation then error",
 			output: "No issues found! Error in tests.",
 			want:   "F",

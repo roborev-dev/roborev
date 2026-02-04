@@ -115,6 +115,9 @@ func hasSeverityLabel(output string) bool {
 			checkText = strings.TrimSpace(checkText)
 		}
 
+		// Strip markdown formatting (bold, headers) before checking
+		checkText = stripMarkdown(checkText)
+
 		// Check if text starts with a severity word
 		for _, sev := range severities {
 			if !strings.HasPrefix(checkText, sev) {
@@ -154,6 +157,25 @@ func hasSeverityLabel(output string) bool {
 			}
 
 			return true
+		}
+
+		// Check for "severity: <level>" pattern (e.g., "**Severity**: High")
+		if strings.HasPrefix(checkText, "severity") {
+			rest := checkText[len("severity"):]
+			rest = strings.TrimSpace(rest)
+			if len(rest) > 0 && (rest[0] == ':' || rest[0] == '|' ||
+				strings.HasPrefix(rest, "—") || strings.HasPrefix(rest, "–")) {
+				// Skip separator and whitespace
+				rest = strings.TrimLeft(rest, ":-–—| ")
+				rest = strings.TrimSpace(rest)
+				for _, sev := range severities {
+					if strings.HasPrefix(rest, sev) {
+						if !isLegendEntry(lines, i) {
+							return true
+						}
+					}
+				}
+			}
 		}
 	}
 	return false
