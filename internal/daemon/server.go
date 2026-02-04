@@ -451,6 +451,11 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent for review workflow at this reasoning level
 	agentName := config.ResolveAgentForWorkflow(req.Agent, repoRoot, s.configWatcher.Config(), "review", reasoning)
 
+	// Validate agent is available, fall back if not
+	if resolved, err := agent.GetAvailable(agentName); err == nil {
+		agentName = resolved.Name()
+	}
+
 	// Resolve model for review workflow at this reasoning level
 	model := config.ResolveModelForWorkflow(req.Model, repoRoot, s.configWatcher.Config(), "review", reasoning)
 

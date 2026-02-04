@@ -2582,6 +2582,102 @@ func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
 }
 
 // TestHandleJobOutput_MissingJobID tests that missing job_id returns 400.
+func TestHandleEnqueueAgentAvailability(t *testing.T) {
+	// Shared read-only git repo created once (all subtests use different servers for DB isolation)
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	testutil.InitTestGitRepo(t, repoDir)
+	headSHA := testutil.GetHeadSHA(t, repoDir)
+
+	// Create an isolated dir containing only a symlink to git.
+	// We can't just use git's parent dir because it may contain real agent
+	// binaries (e.g. codex, claude) that would defeat the PATH isolation.
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal("git not found in PATH")
+	}
+	gitOnlyDir := t.TempDir()
+	if err := os.Symlink(gitPath, filepath.Join(gitOnlyDir, "git")); err != nil {
+		t.Fatal(err)
+	}
+
+	mockScript := "#!/bin/sh\nexit 0\n"
+
+	tests := []struct {
+		name          string
+		requestAgent  string
+		mockBinaries  []string // binary names to place in PATH
+		expectedAgent string
+	}{
+		{
+			name:          "explicit test agent preserved",
+			requestAgent:  "test",
+			mockBinaries:  nil,
+			expectedAgent: "test",
+		},
+		{
+			name:          "unavailable codex falls back to claude-code",
+			requestAgent:  "codex",
+			mockBinaries:  []string{"claude"},
+			expectedAgent: "claude-code",
+		},
+		{
+			name:          "default agent falls back when codex not installed",
+			requestAgent:  "",
+			mockBinaries:  []string{"claude"},
+			expectedAgent: "claude-code",
+		},
+		{
+			name:          "explicit codex kept when available",
+			requestAgent:  "codex",
+			mockBinaries:  []string{"codex"},
+			expectedAgent: "codex",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Each subtest gets its own server/DB to avoid SHA dedup conflicts
+			server, _, _ := newTestServer(t)
+
+			// Isolate PATH: only mock binaries + git (no real agent CLIs)
+			origPath := os.Getenv("PATH")
+			mockDir := t.TempDir()
+			for _, bin := range tt.mockBinaries {
+				if err := os.WriteFile(filepath.Join(mockDir, bin), []byte(mockScript), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			os.Setenv("PATH", mockDir+string(os.PathListSeparator)+gitOnlyDir)
+			t.Cleanup(func() { os.Setenv("PATH", origPath) })
+
+			reqData := map[string]string{
+				"repo_path":  repoDir,
+				"commit_sha": headSHA,
+			}
+			if tt.requestAgent != "" {
+				reqData["agent"] = tt.requestAgent
+			}
+			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
+			w := httptest.NewRecorder()
+
+			server.handleEnqueue(w, req)
+
+			if w.Code != http.StatusCreated {
+				t.Fatalf("Expected 201, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var job storage.ReviewJob
+			if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
+				t.Fatalf("Failed to decode response: %v", err)
+			}
+
+			if job.Agent != tt.expectedAgent {
+				t.Errorf("Expected agent %q, got %q", tt.expectedAgent, job.Agent)
+			}
+		})
+	}
+}
+
 func TestHandleJobOutput_MissingJobID(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
