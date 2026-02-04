@@ -1013,6 +1013,9 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 		}
 		time.Sleep(1 * time.Second)
 	}
+	if hasJobForSHA(serverAddr, sha) {
+		return nil
+	}
 
 	branchName := git.GetCurrentBranch(repoPath)
 
