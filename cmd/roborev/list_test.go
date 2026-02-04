@@ -95,18 +95,12 @@ func TestListCommand(t *testing.T) {
 			}
 		})
 
-		var parsed struct {
-			Jobs    []storage.ReviewJob `json:"jobs"`
-			HasMore bool               `json:"has_more"`
-		}
+		var parsed []storage.ReviewJob
 		if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 			t.Fatalf("json output not valid JSON: %v\noutput: %s", err, output)
 		}
-		if len(parsed.Jobs) != 2 {
-			t.Errorf("expected 2 jobs, got %d", len(parsed.Jobs))
-		}
-		if !parsed.HasMore {
-			t.Errorf("expected has_more=true")
+		if len(parsed) != 2 {
+			t.Errorf("expected 2 jobs, got %d", len(parsed))
 		}
 	})
 

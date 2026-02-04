@@ -1290,18 +1290,18 @@ Examples:
 				return fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 			}
 
-			if jsonOutput {
-				// Raw JSON passthrough
-				_, err := io.Copy(os.Stdout, resp.Body)
-				return err
-			}
-
 			var jobsResp struct {
 				Jobs    []storage.ReviewJob `json:"jobs"`
 				HasMore bool               `json:"has_more"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
+			}
+
+			if jsonOutput {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(jobsResp.Jobs)
 			}
 
 			if len(jobsResp.Jobs) == 0 {
