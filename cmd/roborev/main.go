@@ -1251,17 +1251,15 @@ Examples:
 
 			addr := getDaemonAddr()
 
-			// Auto-resolve repo and branch from cwd when not specified.
-			// Only auto-resolve branch when repo was also auto-resolved
-			// (or matches cwd), to avoid applying a cwd branch filter
-			// against an unrelated --repo.
+			// Auto-resolve repo from cwd when not specified.
 			if repoPath == "" {
 				if root, err := git.GetRepoRoot("."); err == nil {
 					repoPath = root
-					if branch == "" {
-						branch = git.GetCurrentBranch(root)
-					}
 				}
+			}
+			// Auto-resolve branch from the target repo when not specified.
+			if branch == "" && repoPath != "" {
+				branch = git.GetCurrentBranch(repoPath)
 			}
 
 			// Build query URL

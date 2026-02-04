@@ -246,7 +246,7 @@ func TestListCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit --repo skips branch auto-resolve from cwd", func(t *testing.T) {
+	t.Run("explicit --repo to non-git path sends no branch", func(t *testing.T) {
 		var receivedQuery string
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
@@ -260,7 +260,7 @@ func TestListCommand(t *testing.T) {
 		}))
 		t.Cleanup(cleanup)
 
-		// cwd is in a git repo with a branch, but --repo points elsewhere
+		// cwd is in a git repo with a branch, but --repo points to a non-git path
 		repo := newTestGitRepo(t)
 		repo.CommitFile("file.txt", "content", "initial")
 		chdir(t, repo.Dir)
@@ -274,10 +274,41 @@ func TestListCommand(t *testing.T) {
 		})
 
 		if strings.Contains(receivedQuery, "branch=") {
-			t.Errorf("expected no branch param when --repo is explicit, got: %s", receivedQuery)
+			t.Errorf("expected no branch param when --repo is non-git path, got: %s", receivedQuery)
 		}
 		if !strings.Contains(receivedQuery, "repo=%2Fsome%2Fother%2Frepo") {
 			t.Errorf("expected explicit repo in query, got: %s", receivedQuery)
+		}
+	})
+
+	t.Run("explicit --repo to cwd repo still auto-resolves branch", func(t *testing.T) {
+		var receivedQuery string
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				receivedQuery = r.URL.RawQuery
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+				return
+			}
+		}))
+		t.Cleanup(cleanup)
+
+		repo := newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial")
+		chdir(t, repo.Dir)
+
+		captureStdout(t, func() {
+			cmd := listCmd()
+			cmd.SetArgs([]string{"--repo", repo.Dir})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+
+		if !strings.Contains(receivedQuery, "branch=") {
+			t.Errorf("expected branch param when --repo is a valid git repo, got: %s", receivedQuery)
 		}
 	})
 }
