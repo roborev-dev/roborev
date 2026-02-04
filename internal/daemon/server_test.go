@@ -2627,17 +2627,17 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			expectedCode:  http.StatusCreated,
 		},
 		{
-			name:          "unavailable codex preserved when fallback exists",
+			name:          "unavailable codex falls back to claude-code",
 			requestAgent:  "codex",
 			mockBinaries:  []string{"claude"},
-			expectedAgent: "codex",
+			expectedAgent: "claude-code",
 			expectedCode:  http.StatusCreated,
 		},
 		{
-			name:          "default codex preserved when fallback exists",
+			name:          "default agent falls back when codex not installed",
 			requestAgent:  "",
 			mockBinaries:  []string{"claude"},
-			expectedAgent: "codex",
+			expectedAgent: "claude-code",
 			expectedCode:  http.StatusCreated,
 		},
 		{
