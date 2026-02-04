@@ -309,8 +309,8 @@ func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
 
 	repo := testutil.NewTestRepo(t)
 
-	// Write an old-style hook (no version marker, has &)
-	oldHook := "#!/bin/sh\n# roborev post-commit hook - auto-reviews every commit\nROBOREV=\"/usr/local/bin/roborev\"\n\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
+	// Write a realistic old-style hook (no version marker, has &, includes if/fi block)
+	oldHook := "#!/bin/sh\n# roborev post-commit hook - auto-reviews every commit\nROBOREV=\"/usr/local/bin/roborev\"\nif [ ! -x \"$ROBOREV\" ]; then\n    ROBOREV=$(command -v roborev 2>/dev/null)\n    [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ] && exit 0\nfi\n\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
 	repo.WriteHook(oldHook)
 
 	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
@@ -335,6 +335,13 @@ func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
 	if strings.Contains(contentStr, "2>/dev/null &") {
 		t.Error("upgraded hook should not have backgrounded enqueue")
 	}
+	if !strings.Contains(contentStr, "2>/dev/null\n") {
+		t.Error("upgraded hook should still have enqueue line (without &)")
+	}
+	// Verify the if/fi block is preserved intact (no stray fi)
+	if !strings.Contains(contentStr, "if [ ! -x") {
+		t.Error("upgraded hook should preserve the if block")
+	}
 }
 
 func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
@@ -349,7 +356,7 @@ func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
 
 	repo := testutil.NewTestRepo(t)
 
-	oldHook := "#!/bin/sh\necho 'my custom hook'\n# roborev post-commit hook - auto-reviews every commit\nROBOREV=\"/usr/local/bin/roborev\"\n\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
+	oldHook := "#!/bin/sh\necho 'my custom hook'\n# roborev post-commit hook - auto-reviews every commit\nROBOREV=\"/usr/local/bin/roborev\"\nif [ ! -x \"$ROBOREV\" ]; then\n    ROBOREV=$(command -v roborev 2>/dev/null)\n    [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ] && exit 0\nfi\n\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
 	repo.WriteHook(oldHook)
 
 	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
@@ -373,6 +380,57 @@ func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
 	}
 	if !strings.Contains(contentStr, "hook v2") {
 		t.Error("upgrade should contain version marker")
+	}
+	if strings.Contains(contentStr, "2>/dev/null &") {
+		t.Error("upgrade should remove trailing &")
+	}
+}
+
+func TestInitCmdRepairsStrayFi(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	repo := testutil.NewTestRepo(t)
+
+	// Real mangled hook from the field: blank line after shebang, stray fi,
+	// marker appended at bottom without "roborev" in the comment line
+	mangledHook := "#!/bin/sh\n\nfi\n\nROBOREV=\"/usr/local/bin/roborev\"\nif [ ! -x \"$ROBOREV\" ]; then\n    ROBOREV=$(command -v roborev 2>/dev/null)\n    [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ] && exit 0\nfi\n\"$ROBOREV\" enqueue --quiet 2>/dev/null\n# post-commit hook v2\n"
+	repo.WriteHook(mangledHook)
+
+	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
+	defer repo.Chdir()()
+
+	initCommand := initCmd()
+	initCommand.SetArgs([]string{"--agent", "test"})
+	err := initCommand.Execute()
+	if err != nil {
+		t.Fatalf("init command failed: %v", err)
+	}
+
+	content, err := os.ReadFile(repo.HookPath)
+	if err != nil {
+		t.Fatalf("Failed to read hook: %v", err)
+	}
+
+	contentStr := string(content)
+	// Count fi — should be exactly 1 (from the valid if/fi block)
+	fiCount := 0
+	for _, line := range strings.Split(contentStr, "\n") {
+		if strings.TrimSpace(line) == "fi" {
+			fiCount++
+		}
+	}
+	if fiCount != 1 {
+		t.Errorf("expected 1 fi after repair, got %d\nhook content:\n%s", fiCount, contentStr)
+	}
+	if !strings.Contains(contentStr, hookVersionMarker) {
+		t.Error("repaired hook should still contain version marker")
 	}
 }
 
