@@ -386,54 +386,6 @@ func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
 	}
 }
 
-func TestInitCmdRepairsStrayFi(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	repo := testutil.NewTestRepo(t)
-
-	// Real mangled hook from the field: blank line after shebang, stray fi,
-	// marker appended at bottom without "roborev" in the comment line
-	mangledHook := "#!/bin/sh\n\nfi\n\nROBOREV=\"/usr/local/bin/roborev\"\nif [ ! -x \"$ROBOREV\" ]; then\n    ROBOREV=$(command -v roborev 2>/dev/null)\n    [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ] && exit 0\nfi\n\"$ROBOREV\" enqueue --quiet 2>/dev/null\n# post-commit hook v2\n"
-	repo.WriteHook(mangledHook)
-
-	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
-	defer repo.Chdir()()
-
-	initCommand := initCmd()
-	initCommand.SetArgs([]string{"--agent", "test"})
-	err := initCommand.Execute()
-	if err != nil {
-		t.Fatalf("init command failed: %v", err)
-	}
-
-	content, err := os.ReadFile(repo.HookPath)
-	if err != nil {
-		t.Fatalf("Failed to read hook: %v", err)
-	}
-
-	contentStr := string(content)
-	// Count fi — should be exactly 1 (from the valid if/fi block)
-	fiCount := 0
-	for _, line := range strings.Split(contentStr, "\n") {
-		if strings.TrimSpace(line) == "fi" {
-			fiCount++
-		}
-	}
-	if fiCount != 1 {
-		t.Errorf("expected 1 fi after repair, got %d\nhook content:\n%s", fiCount, contentStr)
-	}
-	if !strings.Contains(contentStr, hookVersionMarker) {
-		t.Error("repaired hook should still contain version marker")
-	}
-}
-
 func TestHookNeedsUpgrade(t *testing.T) {
 	t.Run("outdated hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)

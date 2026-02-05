@@ -343,15 +343,7 @@ func initCmd() *cobra.Command {
 					// Append to existing hook
 					hookContent = existingStr + "\n" + hookContent
 				} else if strings.Contains(existingStr, hookVersionMarker) {
-					// Check for stray "fi" left by a previous buggy upgrade
-					if repaired, ok := removeStrayFi(existingStr); ok {
-						if err := os.WriteFile(hookPath, []byte(repaired), 0755); err != nil {
-							return fmt.Errorf("repair hook: %w", err)
-						}
-						fmt.Println("  Repaired post-commit hook (removed stray fi)")
-					} else {
-						fmt.Println("  Hook already installed")
-					}
+					fmt.Println("  Hook already installed")
 					goto startDaemon
 				} else {
 					// Upgrade: try patching in place first (preserves hook structure)
@@ -2835,30 +2827,6 @@ func hookNeedsUpgrade(repoPath string) bool {
 	}
 	s := string(content)
 	return strings.Contains(strings.ToLower(s), "roborev") && !strings.Contains(s, hookVersionMarker)
-}
-
-// removeStrayFi detects and removes a bare "fi" line that appears before any
-// "if" line — an artifact of a previous buggy upgrade that stripped the if block
-// but left the closing fi. Returns the repaired content and true if a fix was made.
-func removeStrayFi(content string) (string, bool) {
-	lines := strings.Split(content, "\n")
-	seenIf := false
-	strayIdx := -1
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "if[") {
-			seenIf = true
-		}
-		if trimmed == "fi" && !seenIf {
-			strayIdx = i
-			break
-		}
-	}
-	if strayIdx == -1 {
-		return content, false
-	}
-	lines = append(lines[:strayIdx], lines[strayIdx+1:]...)
-	return strings.Join(lines, "\n"), true
 }
 
 func generateHookContent() string {
