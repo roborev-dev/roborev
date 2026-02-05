@@ -2661,6 +2661,28 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	}
 }
 
+func TestTUIQueueJumpToTop(t *testing.T) {
+	m := newTuiModel("http://localhost")
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
+	}
+	m.selectedIdx = 2
+	m.selectedJobID = 3
+	m.currentView = tuiViewQueue
+
+	m2, _ := pressKey(m, 'g')
+
+	if m2.selectedIdx != 0 {
+		t.Errorf("Expected selectedIdx=0 after jump to top, got %d", m2.selectedIdx)
+	}
+	if m2.selectedJobID != 1 {
+		t.Errorf("Expected selectedJobID=1 after jump to top, got %d", m2.selectedJobID)
+	}
+}
+
 func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 	// Test that jobs refresh during review navigation doesn't reset selection
 	// This tests the race condition fix: user navigates to job 3, but jobs refresh
