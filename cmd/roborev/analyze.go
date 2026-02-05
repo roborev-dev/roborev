@@ -742,10 +742,12 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
 	model = config.ResolveModelForWorkflow(model, repoPath, cfg, "fix", reasoning)
 
-	a, err := agent.GetAvailable(agentName)
+	baseURL := config.ResolveOllamaBaseURL(cfg)
+	a, err := agent.GetAvailableWithOllamaBaseURL(agentName, baseURL)
 	if err != nil {
 		return fmt.Errorf("get agent: %w", err)
 	}
+	a = agent.WithOllamaBaseURL(a, baseURL)
 
 	// Configure agent: agentic mode, with model and reasoning
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)

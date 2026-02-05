@@ -309,8 +309,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
 	}
 
-	// Get the agent (falls back to available agent if preferred not installed)
-	baseAgent, err := agent.GetAvailable(job.Agent)
+	// Get the agent (falls back to available agent if preferred not installed).
+	// Pass resolved Ollama base URL so availability is checked against the configured server.
+	baseAgent, err := agent.GetAvailableWithOllamaBaseURL(job.Agent, config.ResolveOllamaBaseURL(cfg))
 	if err != nil {
 		log.Printf("[%s] Error getting agent: %v", workerID, err)
 		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))

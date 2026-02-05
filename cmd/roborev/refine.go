@@ -784,12 +784,11 @@ func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel
 		return agent.WithOllamaBaseURL(a, baseURL), nil
 	}
 
-	baseAgent, err := agent.GetAvailable(resolvedAgent)
+	baseURL := config.ResolveOllamaBaseURL(cfg)
+	baseAgent, err := agent.GetAvailableWithOllamaBaseURL(resolvedAgent, baseURL)
 	if err != nil {
 		return nil, err
 	}
 	a := baseAgent.WithReasoning(reasoningLevel).WithModel(model)
-	// Configure Ollama-specific settings (BaseURL from config)
-	baseURL := config.ResolveOllamaBaseURL(cfg)
 	return agent.WithOllamaBaseURL(a, baseURL), nil
 }

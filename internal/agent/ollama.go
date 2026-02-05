@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -31,9 +32,11 @@ type OllamaAgent struct {
 	Reasoning ReasoningLevel // Phase 1: no-op
 	Agentic   bool           // Phase 1: no-op, always read-only
 
-	mu        sync.Mutex
-	lastCheck time.Time
-	available bool
+	mu         sync.Mutex
+	lastCheck  time.Time
+	available  bool
+	clientOnce sync.Once
+	client     *http.Client // IPv4-only client; lazily initialized
 }
 
 // NewOllamaAgent creates a new Ollama agent. If baseURL is empty, uses http://localhost:11434.
@@ -93,6 +96,25 @@ func (a *OllamaAgent) WithBaseURL(baseURL string) Agent {
 	}
 }
 
+// httpClient returns an HTTP client that uses IPv4 only (tcp4), to avoid "no route to host"
+// when the default dialer prefers or tries IPv6 on dual-stack systems.
+func (a *OllamaAgent) httpClient() *http.Client {
+	a.clientOnce.Do(func() {
+		dialer := &net.Dialer{}
+		a.client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return dialer.DialContext(ctx, "tcp4", addr)
+				},
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		}
+	})
+	return a.client
+}
+
 // IsAvailable reports whether the Ollama server is reachable (HTTP health check to /api/tags, 30s TTL).
 func (a *OllamaAgent) IsAvailable() bool {
 	a.mu.Lock()
@@ -110,7 +132,7 @@ func (a *OllamaAgent) IsAvailable() bool {
 		a.updateAvailability(false)
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.httpClient().Do(req)
 	if err != nil {
 		a.updateAvailability(false)
 		return false
@@ -251,7 +273,7 @@ func (a *OllamaAgent) doChatRequest(ctx context.Context, urlStr string, body []b
 		return nil, fmt.Errorf("ollama request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.httpClient().Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -473,16 +495,24 @@ func classifyNetworkError(err error, baseURL string) string {
 		if errors.As(err, &dnsErr) {
 			return fmt.Sprintf("ollama DNS error: cannot resolve hostname %s (%s)", dnsErr.Name, dnsErr.Err)
 		}
-		// Check for connection refused
+		// Check for connection refused and other common errors
 		if urlErr.Err != nil {
-			if strings.Contains(urlErr.Err.Error(), "connection refused") {
+			errStr := urlErr.Err.Error()
+			if strings.Contains(errStr, "connection refused") {
 				return fmt.Sprintf("ollama connection refused: server not running at %s (start with: ollama serve)", baseURL)
 			}
-			if strings.Contains(urlErr.Err.Error(), "no such host") {
+			if strings.Contains(errStr, "no such host") {
 				return fmt.Sprintf("ollama DNS error: cannot resolve hostname for %s", baseURL)
 			}
-			if strings.Contains(urlErr.Err.Error(), "network is unreachable") {
+			if strings.Contains(errStr, "network is unreachable") {
 				return fmt.Sprintf("ollama network unreachable: cannot reach %s", baseURL)
+			}
+			if strings.Contains(errStr, "no route to host") {
+				msg := fmt.Sprintf("ollama no route to host: cannot reach %s", baseURL)
+				if runtime.GOOS == "darwin" {
+					msg += " (if curl to this URL works from the same machine, check System Settings > Privacy & Security > Local Network and allow your terminal/IDE, or run roborev from Terminal.app; the binary may need outbound local network access)"
+				}
+				return msg
 			}
 		}
 		// Generic url.Error
