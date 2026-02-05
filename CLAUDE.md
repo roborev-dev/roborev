@@ -14,7 +14,7 @@ After making any Go code changes, always run `go fmt ./...` and `go vet ./...` b
 
 ## Git Workflow
 
-When committing changes, always stage ALL modified files (including formatting, generated files, and ancillary changes). Run `git diff` and `git status` before committing to ensure nothing is left unstaged.
+Always commit after completing each piece of work — do not wait to be asked. When committing changes, always stage ALL modified files (including formatting, generated files, and ancillary changes). Run `git diff` and `git status` before committing to ensure nothing is left unstaged.
 
 ## Architecture
 

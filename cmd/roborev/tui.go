@@ -3088,7 +3088,7 @@ func (m tuiModel) renderQueueView() string {
 		}
 	} else {
 		// Calculate ID column width based on max ID
-		idWidth := 2 // minimum width
+		idWidth := 5 // minimum width (fits "JobID" header)
 		for _, job := range visibleJobList {
 			w := len(fmt.Sprintf("%d", job.ID))
 			if w > idWidth {
