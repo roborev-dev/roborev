@@ -356,9 +356,9 @@ func TestOutputWriter_SmallMaxLine(t *testing.T) {
 		expectLen   int
 		expectNoEll bool // true if no ellipsis expected
 	}{
-		{"maxLine=3", 3, "abcdefgh", 3, true},   // No room for ellipsis
-		{"maxLine=4", 4, "abcdefgh", 4, false},  // Just enough: 1 char + "..."
-		{"maxLine=5", 5, "abcdefgh", 5, false},  // 2 chars + "..."
+		{"maxLine=3", 3, "abcdefgh", 3, true},           // No room for ellipsis
+		{"maxLine=4", 4, "abcdefgh", 4, false},          // Just enough: 1 char + "..."
+		{"maxLine=5", 5, "abcdefgh", 5, false},          // 2 chars + "..."
 		{"maxLine=10", 10, "abcdefghijklmn", 10, false}, // 7 chars + "..."
 	}
 

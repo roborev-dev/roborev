@@ -54,14 +54,14 @@ type mockDaemonClient struct {
 	// Track calls for assertions
 	addressedJobIDs []int64
 	addedComments   []addedComment
-	enqueuedReviews  []enqueuedReview
+	enqueuedReviews []enqueuedReview
 
 	// Auto-incrementing review ID counter for WithReview
 	nextReviewID int64
 
 	// Configurable errors for testing error paths
-	markAddressedErr   error
-	getReviewBySHAErr  error
+	markAddressedErr  error
+	getReviewBySHAErr error
 }
 
 type addedComment struct {
@@ -1082,39 +1082,39 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 
 func TestResolveReasoningWithFast(t *testing.T) {
 	tests := []struct {
-		name                  string
-		reasoning             string
-		fast                  bool
+		name                   string
+		reasoning              string
+		fast                   bool
 		reasoningExplicitlySet bool
-		want                  string
+		want                   string
 	}{
 		{
-			name:                  "fast flag sets reasoning to fast",
-			reasoning:             "",
-			fast:                  true,
+			name:                   "fast flag sets reasoning to fast",
+			reasoning:              "",
+			fast:                   true,
 			reasoningExplicitlySet: false,
-			want:                  "fast",
+			want:                   "fast",
 		},
 		{
-			name:                  "explicit reasoning takes precedence over fast",
-			reasoning:             "thorough",
-			fast:                  true,
+			name:                   "explicit reasoning takes precedence over fast",
+			reasoning:              "thorough",
+			fast:                   true,
 			reasoningExplicitlySet: true,
-			want:                  "thorough",
+			want:                   "thorough",
 		},
 		{
-			name:                  "no fast flag preserves reasoning",
-			reasoning:             "standard",
-			fast:                  false,
+			name:                   "no fast flag preserves reasoning",
+			reasoning:              "standard",
+			fast:                   false,
 			reasoningExplicitlySet: true,
-			want:                  "standard",
+			want:                   "standard",
 		},
 		{
-			name:                  "no flags returns empty",
-			reasoning:             "",
-			fast:                  false,
+			name:                   "no flags returns empty",
+			reasoning:              "",
+			fast:                   false,
 			reasoningExplicitlySet: false,
-			want:                  "",
+			want:                   "",
 		},
 	}
 

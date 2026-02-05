@@ -300,10 +300,10 @@ func Status() []AgentStatus {
 	}
 
 	type agentDef struct {
-		agent    Agent
+		agent     Agent
 		configDir string
-		embedFS  embed.FS
-		embedDir string
+		embedFS   embed.FS
+		embedDir  string
 	}
 
 	agents := []agentDef{

@@ -342,12 +342,12 @@ func (db *DB) FindRepo(identifier string) (*Repo, error) {
 
 // RepoStats contains statistics for a single repo
 type RepoStats struct {
-	Repo          *Repo
-	TotalJobs     int
-	QueuedJobs    int
-	RunningJobs   int
-	CompletedJobs int
-	FailedJobs    int
+	Repo               *Repo
+	TotalJobs          int
+	QueuedJobs         int
+	RunningJobs        int
+	CompletedJobs      int
+	FailedJobs         int
 	PassedReviews      int
 	FailedReviews      int
 	AddressedReviews   int

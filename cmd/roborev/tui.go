@@ -16,17 +16,17 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
-	"github.com/spf13/cobra"
-	"github.com/atotto/clipboard"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/update"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/spf13/cobra"
 )
 
 // Tick intervals for adaptive polling
@@ -113,26 +113,26 @@ type branchFilterItem struct {
 }
 
 type tuiModel struct {
-	serverAddr    string
-	daemonVersion string
-	client        *http.Client
-	jobs            []storage.ReviewJob
-	status          storage.DaemonStatus
-	selectedIdx     int
-	selectedJobID   int64 // Track selected job by ID to maintain position on refresh
-	currentView     tuiView
-	currentReview      *storage.Review
-	currentResponses   []storage.Response // Responses for current review (fetched with review)
-	currentBranch      string             // Cached branch name for current review (computed on load)
-	reviewScroll       int
-	promptScroll    int
-	promptFromQueue bool // true if prompt view was entered from queue (not review)
-	width           int
-	height          int
-	err               error
-	updateAvailable   string // Latest version if update available, empty if up to date
-	updateIsDevBuild  bool   // True if running a dev build
-	versionMismatch   bool   // True if daemon version doesn't match TUI version
+	serverAddr       string
+	daemonVersion    string
+	client           *http.Client
+	jobs             []storage.ReviewJob
+	status           storage.DaemonStatus
+	selectedIdx      int
+	selectedJobID    int64 // Track selected job by ID to maintain position on refresh
+	currentView      tuiView
+	currentReview    *storage.Review
+	currentResponses []storage.Response // Responses for current review (fetched with review)
+	currentBranch    string             // Cached branch name for current review (computed on load)
+	reviewScroll     int
+	promptScroll     int
+	promptFromQueue  bool // true if prompt view was entered from queue (not review)
+	width            int
+	height           int
+	err              error
+	updateAvailable  string // Latest version if update available, empty if up to date
+	updateIsDevBuild bool   // True if running a dev build
+	versionMismatch  bool   // True if daemon version doesn't match TUI version
 
 	// Pagination state
 	hasMore        bool // true if there are more jobs to load
@@ -175,7 +175,7 @@ type tuiModel struct {
 	// Pending addressed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
 	// distinguish between multiple requests for the same state (e.g., true→false→true)
-	pendingAddressed       map[int64]pendingState // job ID -> pending state
+	pendingAddressed map[int64]pendingState // job ID -> pending state
 
 	// Flash message (temporary status message shown briefly)
 	flashMessage   string
@@ -183,10 +183,10 @@ type tuiModel struct {
 	flashView      tuiView // View where flash was triggered (only show in same view)
 
 	// Track config reload notifications
-	lastConfigReloadCounter uint64 // Last known ConfigReloadCounter from daemon status
-	statusFetchedOnce       bool   // True after first successful status fetch (for flash logic)
-	pendingReviewAddressed map[int64]pendingState // review ID -> pending state (for reviews without jobs)
-	addressedSeq           uint64                 // monotonic counter for request sequencing
+	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status
+	statusFetchedOnce       bool                   // True after first successful status fetch (for flash logic)
+	pendingReviewAddressed  map[int64]pendingState // review ID -> pending state (for reviews without jobs)
+	addressedSeq            uint64                 // monotonic counter for request sequencing
 
 	// Daemon reconnection state
 	consecutiveErrors int  // Count of consecutive connection failures
@@ -249,9 +249,9 @@ type tuiReviewMsg struct {
 type tuiPromptMsg *storage.Review
 type tuiAddressedMsg bool
 type tuiAddressedResultMsg struct {
-	jobID      int64  // job ID for queue view rollback
-	reviewID   int64  // review ID for review view rollback
-	reviewView bool   // true if from review view (rollback currentReview)
+	jobID      int64 // job ID for queue view rollback
+	reviewID   int64 // review ID for review view rollback
+	reviewView bool  // true if from review view (rollback currentReview)
 	oldState   bool
 	newState   bool   // the requested state (for pendingAddressed validation)
 	seq        uint64 // request sequence number (for distinguishing same-state rapid toggles)
@@ -356,11 +356,11 @@ func newTuiModel(serverAddr string) tuiModel {
 		currentView:            tuiViewQueue,
 		width:                  80, // sensible defaults until we get WindowSizeMsg
 		height:                 24,
-		loadingJobs:            true,                           // Init() calls fetchJobs, so mark as loading
-		displayNames:           make(map[string]string),        // Cache display names to avoid disk reads on render
-		branchNames:            make(map[int64]string),         // Cache derived branch names to avoid git calls on render
-		pendingAddressed:       make(map[int64]pendingState),   // Track pending addressed changes (by job ID)
-		pendingReviewAddressed: make(map[int64]pendingState),   // Track pending addressed changes (by review ID)
+		loadingJobs:            true,                         // Init() calls fetchJobs, so mark as loading
+		displayNames:           make(map[string]string),      // Cache display names to avoid disk reads on render
+		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
+		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
+		pendingReviewAddressed: make(map[int64]pendingState), // Track pending addressed changes (by review ID)
 	}
 }
 
@@ -939,9 +939,9 @@ func (m tuiModel) fetchTailOutput(jobID int64) tea.Cmd {
 		}
 
 		var result struct {
-			JobID   int64  `json:"job_id"`
-			Status  string `json:"status"`
-			Lines   []struct {
+			JobID  int64  `json:"job_id"`
+			Status string `json:"status"`
+			Lines  []struct {
 				TS       string `json:"ts"`
 				Text     string `json:"text"`
 				LineType string `json:"line_type"`
@@ -1836,7 +1836,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tailScroll++
 				return m, nil
 			case "pgup":
-				m.tailFollow = false // Stop auto-scroll when user scrolls up
+				m.tailFollow = false         // Stop auto-scroll when user scrolls up
 				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
@@ -1858,7 +1858,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tailScroll = 0
 				return m, nil
 			case "end":
-				m.tailFollow = true // Resume auto-scroll when going to bottom
+				m.tailFollow = true          // Resume auto-scroll when going to bottom
 				visibleLines := m.height - 4 // Match renderTailView reservedLines
 				if visibleLines < 1 {
 					visibleLines = 1
@@ -2227,7 +2227,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				job := &m.jobs[m.selectedIdx]
 				if job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued {
 					oldStatus := job.Status
-					oldFinishedAt := job.FinishedAt // Save for rollback
+					oldFinishedAt := job.FinishedAt        // Save for rollback
 					job.Status = storage.JobStatusCanceled // Optimistic update
 					now := time.Now()
 					job.FinishedAt = &now // Stop elapsed time from ticking
@@ -3101,7 +3101,7 @@ func (m tuiModel) renderQueueView() string {
 
 		// Header (with 2-char prefix to align with row selector)
 		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-8s %-3s %-12s %-8s %s",
-			idWidth, "ID",
+			idWidth, "JobID",
 			colWidths.ref, "Ref",
 			colWidths.branch, "Branch",
 			colWidths.repo, "Repo",

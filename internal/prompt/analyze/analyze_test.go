@@ -8,9 +8,9 @@ import (
 
 func TestGetType(t *testing.T) {
 	tests := []struct {
-		name     string
-		want     string
-		wantNil  bool
+		name    string
+		want    string
+		wantNil bool
 	}{
 		{"test-fixtures", "test-fixtures", false},
 		{"duplication", "duplication", false},

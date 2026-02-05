@@ -69,9 +69,9 @@ var nextStubReviewID atomic.Int64
 
 func stubReview(jobID int64, agent, output string) storage.Review {
 	return storage.Review{
-		ID:    nextStubReviewID.Add(1),
-		JobID: jobID,
-		Agent: agent,
+		ID:     nextStubReviewID.Add(1),
+		JobID:  jobID,
+		Agent:  agent,
 		Output: output,
 	}
 }

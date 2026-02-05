@@ -13,16 +13,15 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"sort"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
@@ -32,6 +31,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/update"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -1280,7 +1280,7 @@ Examples:
 
 			var jobsResp struct {
 				Jobs    []storage.ReviewJob `json:"jobs"`
-				HasMore bool               `json:"has_more"`
+				HasMore bool                `json:"has_more"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
@@ -2087,9 +2087,9 @@ func skillsCmd() *cobra.Command {
 			fmt.Println("Skills:")
 			for _, s := range available {
 				fmt.Printf("\n  %s\n", s.Name)
-			if s.Description != "" {
-				fmt.Printf("  %s\n", s.Description)
-			}
+				if s.Description != "" {
+					fmt.Printf("  %s\n", s.Description)
+				}
 
 				for _, a := range agents {
 					var as *skills.AgentStatus

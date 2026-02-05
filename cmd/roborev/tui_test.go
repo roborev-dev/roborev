@@ -792,8 +792,8 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 
 	// Error result from server (reviewID must match currentReview.ID for rollback)
 	errMsg := tuiAddressedResultMsg{
-		reviewID:   42,   // Must match currentReview.ID
-		jobID:      100,  // Must match for isCurrentRequest check
+		reviewID:   42,  // Must match currentReview.ID
+		jobID:      100, // Must match for isCurrentRequest check
 		reviewView: true,
 		oldState:   false, // Was false before optimistic update
 		newState:   true,  // The requested state (matches pendingAddressed)
@@ -855,21 +855,21 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 	// User views review A, toggles addressed (optimistic update)
 	m.currentView = tuiViewReview
 	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
-	m.currentReview.Addressed = true  // Optimistic update to review
-	*m.jobs[0].Addressed = true       // Optimistic update to job in queue
-	m.pendingAddressed[100] = pendingState{newState: true, seq: 1}    // Track pending state for job A
+	m.currentReview.Addressed = true                               // Optimistic update to review
+	*m.jobs[0].Addressed = true                                    // Optimistic update to job in queue
+	m.pendingAddressed[100] = pendingState{newState: true, seq: 1} // Track pending state for job A
 
 	// User navigates to review B before error response arrives
 	m.currentReview = makeReview(99, &storage.ReviewJob{ID: 200})
 
 	// Error arrives for review A's toggle
 	errMsg := tuiAddressedResultMsg{
-		reviewID:   42,    // Review A
-		jobID:      100,   // Job A
+		reviewID:   42,  // Review A
+		jobID:      100, // Job A
 		reviewView: true,
 		oldState:   false,
-		newState:   true,  // The requested state (matches pendingAddressed)
-		seq:        1,     // Must match pending seq to be treated as current
+		newState:   true, // The requested state (matches pendingAddressed)
+		seq:        1,    // Must match pending seq to be treated as current
 		err:        fmt.Errorf("server error"),
 	}
 
@@ -2146,7 +2146,7 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 	})
 
 	t.Run("needs scrolling shows scroll info", func(t *testing.T) {
-		m.height = 9  // visibleRows = 2
+		m.height = 9            // visibleRows = 2
 		m.filterSelectedIdx = 2 // Select repo-b
 		output := m.renderFilterView()
 
@@ -2642,7 +2642,7 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
-	m.hasMore = true // More jobs available but...
+	m.hasMore = true                        // More jobs available but...
 	m.activeRepoFilter = []string{"/repo1"} // Filter is active, prevents auto-load
 
 	// Press 'down' - only job 1 matches filter, so we're at bottom
@@ -3435,11 +3435,11 @@ func TestTUIHideAddressedFiltersJobs(t *testing.T) {
 	m.hideAddressed = true
 
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(true))),  // hidden: addressed
-		makeJob(2, withAddressed(boolPtr(false))), // visible
-		makeJob(3, withStatus(storage.JobStatusFailed)),                           // hidden: failed
-		makeJob(4, withStatus(storage.JobStatusCanceled)),                         // hidden: canceled
-		makeJob(5, withAddressed(boolPtr(false))), // visible
+		makeJob(1, withAddressed(boolPtr(true))),          // hidden: addressed
+		makeJob(2, withAddressed(boolPtr(false))),         // visible
+		makeJob(3, withStatus(storage.JobStatusFailed)),   // hidden: failed
+		makeJob(4, withStatus(storage.JobStatusCanceled)), // hidden: canceled
+		makeJob(5, withAddressed(boolPtr(false))),         // visible
 	}
 
 	// Check visibility
@@ -3500,7 +3500,6 @@ func TestTUIHideAddressedRefreshRevalidatesSelection(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
-
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 		makeJob(2, withAddressed(boolPtr(false))),
@@ -3533,10 +3532,10 @@ func TestTUIHideAddressedNavigationSkipsHidden(t *testing.T) {
 	m.hideAddressed = true
 
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))), // visible
-		makeJob(2, withAddressed(boolPtr(true))),  // hidden
-		makeJob(3, withStatus(storage.JobStatusFailed)),                           // hidden
-		makeJob(4, withAddressed(boolPtr(false))), // visible
+		makeJob(1, withAddressed(boolPtr(false))),       // visible
+		makeJob(2, withAddressed(boolPtr(true))),        // hidden
+		makeJob(3, withStatus(storage.JobStatusFailed)), // hidden
+		makeJob(4, withAddressed(boolPtr(false))),       // visible
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -3559,10 +3558,10 @@ func TestTUIHideAddressedWithRepoFilter(t *testing.T) {
 	m.activeRepoFilter = []string{"/repo/a"}
 
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))), // visible: matches repo, not addressed
-		makeJob(2, withRepoPath("/repo/b"), withAddressed(boolPtr(false))), // hidden: wrong repo
-		makeJob(3, withRepoPath("/repo/a"), withAddressed(boolPtr(true))),  // hidden: addressed
-		makeJob(4, withRepoPath("/repo/a"), withStatus(storage.JobStatusFailed)),                           // hidden: failed
+		makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))),       // visible: matches repo, not addressed
+		makeJob(2, withRepoPath("/repo/b"), withAddressed(boolPtr(false))),       // hidden: wrong repo
+		makeJob(3, withRepoPath("/repo/a"), withAddressed(boolPtr(true))),        // hidden: addressed
+		makeJob(4, withRepoPath("/repo/a"), withStatus(storage.JobStatusFailed)), // hidden: failed
 	}
 
 	// Only job 1 should be visible
@@ -3579,7 +3578,6 @@ func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
-
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
@@ -3707,7 +3705,6 @@ func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
 	m.currentView = tuiViewQueue
 	m.hideAddressed = false
 
-
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -3732,7 +3729,6 @@ func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true // Already enabled
-
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
@@ -4465,9 +4461,9 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 		if r.URL.Path == "/api/review" {
 			// Return a review for a single commit (not a range or dirty)
 			review := storage.Review{
-				ID:    1,
-				JobID: 42,
-				Agent: "test",
+				ID:     1,
+				JobID:  42,
+				Agent:  "test",
 				Output: "No issues found.",
 				Job: &storage.ReviewJob{
 					ID:       42,
@@ -4548,9 +4544,9 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 		if r.URL.Path == "/api/review" {
 			// Return a review for a commit range (not a single commit)
 			review := storage.Review{
-				ID:    1,
-				JobID: 42,
-				Agent: "test",
+				ID:     1,
+				JobID:  42,
+				Agent:  "test",
 				Output: "No issues found.",
 				Job: &storage.ReviewJob{
 					ID:       42,
@@ -4629,7 +4625,6 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
 	m.hideAddressed = true
 	m.loadingJobs = false
 
-
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4655,7 +4650,6 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 	m.hideAddressed = false
 	m.loadingJobs = false
 
-
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4677,7 +4671,6 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 
 func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 	m := newTuiModel("http://localhost")
-
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
@@ -4710,7 +4703,6 @@ func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
 func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4740,7 +4732,6 @@ func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
 func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
@@ -4766,7 +4757,6 @@ func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
 
 func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
 	m := newTuiModel("http://localhost")
-
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
@@ -4797,7 +4787,6 @@ func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
 
 func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 	m := newTuiModel("http://localhost")
-
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(true))),
@@ -4835,7 +4824,6 @@ func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
 
 func TestTUIStaleErrorResponseIgnored(t *testing.T) {
 	m := newTuiModel("http://localhost")
-
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(true))),
@@ -4881,14 +4869,13 @@ func TestTUIQueueViewSameStateLateError(t *testing.T) {
 	// Same as TestTUIReviewViewSameStateLateError but for queue view using pendingAddressed
 	m := newTuiModel("http://localhost")
 
-
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 	}
 
 	// Sequence: toggle true (seq 1) → toggle false (seq 2) → toggle true (seq 3)
 	// After third toggle, state is true and pendingAddressed has seq 3
-	*m.jobs[0].Addressed = true // Optimistic update from third toggle
+	*m.jobs[0].Addressed = true                                  // Optimistic update from third toggle
 	m.pendingAddressed[1] = pendingState{newState: true, seq: 3} // Third toggle
 
 	// A late error arrives from the FIRST toggle (seq 1)
@@ -4937,7 +4924,7 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	// Error arrives for this toggle (no jobID since Job was nil)
 	errMsg := tuiAddressedResultMsg{
 		reviewID:   42,
-		jobID:      0,    // No job
+		jobID:      0, // No job
 		reviewView: true,
 		oldState:   false,
 		newState:   true, // Matches pendingReviewAddressed
@@ -4979,7 +4966,7 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 	// A stale error arrives from the earlier toggle to true
 	staleErrorMsg := tuiAddressedResultMsg{
 		reviewID:   42,
-		jobID:      0,     // No job
+		jobID:      0, // No job
 		reviewView: true,
 		oldState:   false, // What it was before the stale toggle
 		newState:   true,  // Stale: pendingReviewAddressed is false, not true
@@ -6511,7 +6498,7 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewQueue
-	m.commitMsgJobID = 1              // Set to match incoming message (normally set by 'm' key handler)
+	m.commitMsgJobID = 1               // Set to match incoming message (normally set by 'm' key handler)
 	m.commitMsgFromView = tuiViewQueue // Track where we came from
 
 	// Simulate receiving commit message content (sets view to CommitMsg)
@@ -6635,8 +6622,8 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 		{
 			name: "dirty job with DiffContent should error",
 			job: storage.ReviewJob{
-				ID:         4,
-				GitRef:     "some-ref",
+				ID:          4,
+				GitRef:      "some-ref",
 				DiffContent: func() *string { s := "diff content"; return &s }(),
 			},
 			expectError: "no commit message for uncommitted changes",
@@ -6661,8 +6648,8 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 		{
 			name: "dirty job with nil DiffContent but GitRef=dirty should error",
 			job: storage.ReviewJob{
-				ID:         7,
-				GitRef:     "dirty",
+				ID:          7,
+				GitRef:      "dirty",
 				DiffContent: nil,
 			},
 			expectError: "no commit message for uncommitted changes",

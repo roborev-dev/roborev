@@ -265,9 +265,9 @@ func TestIsLoopbackAddr(t *testing.T) {
 		{"", false},
 
 		// Bypass attempts
-		{"127.0.0.1.evil.com:80", false},    // Hostname that starts with 127
-		{"127.0.0.1@evil.com:80", false},    // Userinfo bypass
-		{"localhost.evil.com:7373", false},   // Hostname that starts with localhost
+		{"127.0.0.1.evil.com:80", false},   // Hostname that starts with 127
+		{"127.0.0.1@evil.com:80", false},   // Userinfo bypass
+		{"localhost.evil.com:7373", false}, // Hostname that starts with localhost
 		{"evil.com:7373", false},
 	}
 

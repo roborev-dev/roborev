@@ -232,10 +232,10 @@ func TestExtractBaseSemver(t *testing.T) {
 		{"abc1234-dirty", ""},
 		{"", ""},
 		// Edge cases
-		{"0", ""},           // No dots
-		{"v", ""},           // Just v
-		{"vdev", ""},        // v followed by non-digit
-		{"1.0", "1.0"},      // Two-part version
+		{"0", ""},              // No dots
+		{"v", ""},              // Just v
+		{"vdev", ""},           // v followed by non-digit
+		{"1.0", "1.0"},         // Two-part version
 		{"1.0.0.0", "1.0.0.0"}, // Four-part version
 	}
 
@@ -363,13 +363,13 @@ func TestFindAssets(t *testing.T) {
 	}
 
 	tests := []struct {
-		name              string
-		assetName         string
-		wantAssetURL      string
-		wantAssetSize     int64
-		wantChecksumsURL  string
-		wantAssetNil      bool
-		wantChecksumsNil  bool
+		name             string
+		assetName        string
+		wantAssetURL     string
+		wantAssetSize    int64
+		wantChecksumsURL string
+		wantAssetNil     bool
+		wantChecksumsNil bool
 	}{
 		{
 			name:             "find darwin_arm64 (second in list)",
@@ -393,9 +393,9 @@ func TestFindAssets(t *testing.T) {
 			wantChecksumsURL: "https://example.com/checksums",
 		},
 		{
-			name:         "asset not found",
-			assetName:    "roborev_freebsd_amd64.tar.gz",
-			wantAssetNil: true,
+			name:             "asset not found",
+			assetName:        "roborev_freebsd_amd64.tar.gz",
+			wantAssetNil:     true,
 			wantChecksumsURL: "https://example.com/checksums",
 		},
 	}

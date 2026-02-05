@@ -53,7 +53,7 @@ type Config struct {
 	FixModelFast        string `toml:"fix_model_fast"`
 	FixModelStandard    string `toml:"fix_model_standard"`
 	FixModelThorough    string `toml:"fix_model_thorough"`
-	AllowUnsafeAgents  *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
+	AllowUnsafeAgents   *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`

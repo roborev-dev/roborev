@@ -23,7 +23,7 @@ type Event struct {
 // Subscriber represents a client subscribed to events
 type Subscriber struct {
 	ID       int
-	RepoPath string         // Filter: only send events for this repo (empty = all)
+	RepoPath string // Filter: only send events for this repo (empty = all)
 	Ch       chan Event
 }
 

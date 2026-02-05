@@ -332,9 +332,9 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 type EnqueueRequest struct {
 	RepoPath     string `json:"repo_path"`
-	CommitSHA    string `json:"commit_sha,omitempty"`    // Single commit (for backwards compat)
-	GitRef       string `json:"git_ref,omitempty"`       // Single commit, range like "abc..def", or "dirty"
-	Branch       string `json:"branch,omitempty"`        // Branch name at time of job creation
+	CommitSHA    string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
+	GitRef       string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
+	Branch       string `json:"branch,omitempty"`     // Branch name at time of job creation
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
 	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews

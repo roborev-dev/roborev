@@ -55,9 +55,9 @@ type ConfigWatcher struct {
 	watcher        *fsnotify.Watcher
 	stopCh         chan struct{}
 	stopOnce       sync.Once
-	stopped        bool // True after Stop() is called
+	stopped        bool      // True after Stop() is called
 	lastReloadedAt time.Time // Time of last successful config reload
-	reloadCounter  uint64 // Monotonic counter for reload events (sub-second precision)
+	reloadCounter  uint64    // Monotonic counter for reload events (sub-second precision)
 }
 
 // NewConfigWatcher creates a new config watcher

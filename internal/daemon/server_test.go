@@ -2461,9 +2461,9 @@ func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
 	}
 
 	var resp struct {
-		JobID   int64 `json:"job_id"`
-		Status  string `json:"status"`
-		Lines   []struct {
+		JobID  int64  `json:"job_id"`
+		Status string `json:"status"`
+		Lines  []struct {
 			TS       string `json:"ts"`
 			Text     string `json:"text"`
 			LineType string `json:"line_type"`

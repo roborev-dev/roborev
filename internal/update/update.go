@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	githubAPIURL      = "https://api.github.com/repos/roborev-dev/roborev/releases/latest"
-	cacheFileName     = "update_check.json"
-	cacheDuration     = 1 * time.Hour
-	devCacheDuration  = 15 * time.Minute // Shorter cache for dev builds
+	githubAPIURL     = "https://api.github.com/repos/roborev-dev/roborev/releases/latest"
+	cacheFileName    = "update_check.json"
+	cacheDuration    = 1 * time.Hour
+	devCacheDuration = 15 * time.Minute // Shorter cache for dev builds
 )
 
 // Release represents a GitHub release

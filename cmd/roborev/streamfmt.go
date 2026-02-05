@@ -66,7 +66,8 @@ func (f *streamFormatter) Flush() {
 //
 // Claude:  {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{...}}]}}
 // Gemini:  {"type":"tool_use","tool_name":"read_file","parameters":{"file_path":"..."}}
-//          {"type":"message","role":"assistant","content":"...","delta":true}
+//
+//	{"type":"message","role":"assistant","content":"...","delta":true}
 type streamEvent struct {
 	Type string `json:"type"`
 	// Claude: nested message with content blocks

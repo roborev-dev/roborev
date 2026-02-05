@@ -702,8 +702,8 @@ func (a *fakeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	return a.reviewFn(ctx, repoPath, commitSHA, prompt, output)
 }
 func (a *fakeAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return a }
-func (a *fakeAgent) WithAgentic(agentic bool) agent.Agent                  { return a }
-func (a *fakeAgent) WithModel(model string) agent.Agent                    { return a }
+func (a *fakeAgent) WithAgentic(agentic bool) agent.Agent                 { return a }
+func (a *fakeAgent) WithModel(model string) agent.Agent                   { return a }
 
 func TestFixJobDirectUnbornHead(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
@@ -1344,11 +1344,11 @@ func TestTruncateString(t *testing.T) {
 		{"hello", 0, ""},
 		{"hello", -1, ""},
 		// Unicode handling: ensure multi-byte characters aren't split
-		{"こんにちは世界", 5, "こん..."},       // Japanese: maxLen=5, output is 2 chars + "..." = 5 runes
-		{"こんにちは", 10, "こんにちは"},          // Japanese: fits within limit
-		{"Hello 世界!", 8, "Hello..."},   // Mixed ASCII and Unicode
-		{"🎉🎊🎁🎄🎅", 3, "🎉🎊🎁"},            // Emoji: exactly 3 runes
-		{"🎉🎊🎁🎄🎅", 4, "🎉..."},            // Emoji: truncate with ellipsis
+		{"こんにちは世界", 5, "こん..."},      // Japanese: maxLen=5, output is 2 chars + "..." = 5 runes
+		{"こんにちは", 10, "こんにちは"},       // Japanese: fits within limit
+		{"Hello 世界!", 8, "Hello..."}, // Mixed ASCII and Unicode
+		{"🎉🎊🎁🎄🎅", 3, "🎉🎊🎁"},          // Emoji: exactly 3 runes
+		{"🎉🎊🎁🎄🎅", 4, "🎉..."},         // Emoji: truncate with ellipsis
 	}
 
 	for _, tt := range tests {

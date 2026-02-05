@@ -179,9 +179,9 @@ func TestNormalizeMSYSPath(t *testing.T) {
 		expected string // Expected on Windows; on other platforms we just check FromSlash behavior
 	}{
 		{"forward slash path", "C:/Users/test", "C:" + string(filepath.Separator) + "Users" + string(filepath.Separator) + "test"},
-		{"MSYS lowercase drive", "/c/Users/test", ""},    // Platform-specific expected
-		{"MSYS uppercase drive", "/C/Users/test", ""},    // Platform-specific expected
-		{"Unix absolute path", "/home/user/repo", ""},    // Platform-specific expected
+		{"MSYS lowercase drive", "/c/Users/test", ""}, // Platform-specific expected
+		{"MSYS uppercase drive", "/C/Users/test", ""}, // Platform-specific expected
+		{"Unix absolute path", "/home/user/repo", ""}, // Platform-specific expected
 		{"relative path", "some/path", "some" + string(filepath.Separator) + "path"},
 		{"with trailing newline", "C:/Users/test\n", "C:" + string(filepath.Separator) + "Users" + string(filepath.Separator) + "test"},
 	}

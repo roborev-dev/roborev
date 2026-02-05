@@ -16,12 +16,12 @@ func TestListCommand(t *testing.T) {
 	finished := now.Add(-5 * time.Second)
 	testJobs := []storage.ReviewJob{
 		{
-			ID:        1,
-			GitRef:    "abc1234567890",
-			RepoName:  "myrepo",
-			Agent:     "test",
-			Status:    storage.JobStatusDone,
-			StartedAt: &started,
+			ID:         1,
+			GitRef:     "abc1234567890",
+			RepoName:   "myrepo",
+			Agent:      "test",
+			Status:     storage.JobStatusDone,
+			StartedAt:  &started,
 			FinishedAt: &finished,
 		},
 		{
