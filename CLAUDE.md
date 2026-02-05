@@ -4,6 +4,18 @@
 
 roborev is an automatic code review daemon for git commits. It runs locally, triggered by post-commit hooks, and uses AI agents (Codex, Claude Code) to review commits in parallel.
 
+## General Workflow
+
+When a task involves multiple steps (e.g., implement + commit + PR), complete ALL steps in sequence without stopping. If creating a branch, committing, and opening a PR, finish the entire chain.
+
+## Go Development
+
+After making any Go code changes, always run `go fmt ./...` and `go vet ./...` before committing. Stage ALL resulting changes, including formatting-only files.
+
+## Git Workflow
+
+When committing changes, always stage ALL modified files (including formatting, generated files, and ancillary changes). Run `git diff` and `git status` before committing to ensure nothing is left unstaged.
+
 ## Architecture
 
 ```
@@ -81,4 +93,4 @@ CLI reads this to find the daemon. If port 7373 is busy, daemon auto-increments.
 - No emojis in code or output (except commit messages)
 - Never amend commits; always create new commits for fixes
 - Never push or pull unless explicitly asked by the user
-- Never change git branches unless explicitly asked by the user
+- **NEVER change git branches without explicit user confirmation**. Always ask before switching, creating, or checking out branches. This is non-negotiable.
