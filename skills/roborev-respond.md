@@ -1,6 +1,6 @@
 # /roborev:respond
 
-Add a response to a roborev code review.
+Add a response to document changes.
 
 ## Usage
 
@@ -10,7 +10,7 @@ Add a response to a roborev code review.
 
 ## Description
 
-Adds a response or note to a code review. Common use cases:
+Adds a response to document changes on a code review. Common use cases:
 - Documenting how findings were addressed
 - Explaining why a finding is a false positive
 - Noting that a suggestion won't be implemented (and why)

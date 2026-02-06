@@ -1,6 +1,6 @@
 # /roborev:address
 
-Address findings from a roborev code review.
+Fetch a single review and fix its findings.
 
 ## Usage
 
@@ -10,7 +10,7 @@ Address findings from a roborev code review.
 
 ## Description
 
-Fetches a code review by job ID and addresses the findings. The job ID is shown in review notifications (e.g., "Review #1019").
+Fetches a single code review by job ID and fixes its findings. The job ID is shown in review notifications (e.g., "Review #1019").
 
 ## Instructions
 
@@ -18,7 +18,7 @@ When the user invokes `/roborev:address <job_id>`:
 
 1. **Fetch the review** using the roborev CLI:
    ```bash
-   roborev show --job <job_id>
+   roborev show --job <job_id> --json
    ```
 
 2. **Check the verdict** at the top of the review output:
@@ -53,7 +53,7 @@ When the user invokes `/roborev:address <job_id>`:
 User: `/roborev:address 1019`
 
 Agent:
-1. Runs `roborev show --job 1019` to fetch the review
+1. Runs `roborev show --job 1019 --json` to fetch the review
 2. Sees verdict is Fail with 3 findings (1 high, 2 low)
 3. Reads the files mentioned in the findings
 4. Addresses the high severity finding first, then the low ones

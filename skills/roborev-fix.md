@@ -1,6 +1,6 @@
 # /roborev:fix
 
-Fix all unaddressed review findings in one pass.
+Discover and fix all unaddressed review findings in one pass.
 
 ## Usage
 
@@ -10,7 +10,7 @@ Fix all unaddressed review findings in one pass.
 
 ## Description
 
-Discovers unaddressed code reviews and fixes all their findings in a single pass. Unlike `/roborev:address` which handles one review at a time, this skill batches all outstanding findings together, groups them by file, and fixes them by severity priority.
+Discovers unaddressed code reviews and fixes all their findings in a single pass. Unlike `/roborev:address` which handles one review at a time, this skill batches all outstanding findings together, groups them by file, and fixes them by severity priority. This is the most powerful interactive skill — the agent sees all findings at once and can make coordinated fixes across related issues.
 
 If job IDs are provided, only those reviews are addressed. Otherwise, the skill checks recent commits (HEAD, HEAD~1) for failed reviews that have not been commented on.
 
@@ -23,7 +23,7 @@ When the user invokes `/roborev:fix [job_id...]`:
    - Otherwise, run `roborev show HEAD` and `roborev show HEAD~1` to find failed, unaddressed reviews
    - If no failed reviews found, inform the user
 
-2. **Fetch all reviews** using `roborev show --job <id>` for each job.
+2. **Fetch all reviews** using `roborev show --job <id> --json` for each job.
 
 3. **Parse and prioritize findings** from all reviews:
    - Collect severity, file paths, and line numbers
@@ -48,7 +48,7 @@ User: `/roborev:fix`
 Agent:
 1. Runs `roborev show HEAD` and `roborev show HEAD~1`
 2. Finds 2 failed reviews: job 1019 (2 findings) and job 1021 (1 finding)
-3. Fetches both reviews with `roborev show --job 1019` and `roborev show --job 1021`
+3. Fetches both reviews with `roborev show --job 1019 --json` and `roborev show --job 1021 --json`
 4. Fixes all 3 findings across both reviews, prioritizing by severity
 5. Runs tests to verify
 6. Records comments on both jobs

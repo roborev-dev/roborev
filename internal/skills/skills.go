@@ -72,15 +72,17 @@ func IsInstalled(agent Agent) bool {
 		skillsDir := filepath.Join(home, ".claude", "skills")
 		checkFiles = []string{
 			filepath.Join(skillsDir, "roborev-address", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
+			filepath.Join(skillsDir, "roborev-design", "SKILL.md"),
 			filepath.Join(skillsDir, "roborev-fix", "SKILL.md"),
+			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
 		}
 	case AgentCodex:
 		skillsDir := filepath.Join(home, ".codex", "skills")
 		checkFiles = []string{
 			filepath.Join(skillsDir, "roborev-address", "SKILL.md"),
-			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
+			filepath.Join(skillsDir, "roborev-design", "SKILL.md"),
 			filepath.Join(skillsDir, "roborev-fix", "SKILL.md"),
+			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
 		}
 	default:
 		return false

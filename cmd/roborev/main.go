@@ -69,6 +69,7 @@ func main() {
 	rootCmd.AddCommand(refineCmd())
 	rootCmd.AddCommand(runCmd())
 	rootCmd.AddCommand(analyzeCmd())
+	rootCmd.AddCommand(designCmd())
 	rootCmd.AddCommand(fixCmd())
 	rootCmd.AddCommand(promptCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(repoCmd())
@@ -2207,9 +2208,9 @@ This command is idempotent - running it multiple times is safe.`,
 				fmt.Println("\nSkills installed! Try:")
 				for _, agent := range installedAgents {
 					if agent == skills.AgentClaude {
-						fmt.Println("  Claude Code: /roborev:address, /roborev:respond, /roborev:fix")
+						fmt.Println("  Claude Code: /roborev:address, /roborev:respond, /roborev:fix, /roborev:design")
 					} else if agent == skills.AgentCodex {
-						fmt.Println("  Codex: $roborev:address, $roborev:respond, $roborev:fix")
+						fmt.Println("  Codex: $roborev:address, $roborev:respond, $roborev:fix, $roborev:design")
 					}
 				}
 			}
