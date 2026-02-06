@@ -82,6 +82,9 @@ type Config struct {
 
 	// Analysis settings
 	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
+
+	// UI preferences
+	HideAddressedByDefault bool `toml:"hide_addressed_by_default"`
 }
 
 // CIConfig holds configuration for the CI poller that watches GitHub PRs

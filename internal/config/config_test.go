@@ -1712,3 +1712,38 @@ func TestStripURLCredentials(t *testing.T) {
 		})
 	}
 }
+
+func TestHideAddressedDefaultPersistence(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	// Test saving preference as true
+	cfg := &Config{HideAddressedByDefault: true}
+	err := SaveGlobal(cfg)
+	if err != nil {
+		t.Fatalf("SaveGlobal failed: %v", err)
+	}
+
+	// Load and verify it persisted
+	loaded, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+	if !loaded.HideAddressedByDefault {
+		t.Error("Expected HideAddressedByDefault to be true")
+	}
+
+	// Toggle to false and verify
+	loaded.HideAddressedByDefault = false
+	err = SaveGlobal(loaded)
+	if err != nil {
+		t.Fatalf("SaveGlobal failed: %v", err)
+	}
+
+	reloaded, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+	if reloaded.HideAddressedByDefault {
+		t.Error("Expected HideAddressedByDefault to be false")
+	}
+}
