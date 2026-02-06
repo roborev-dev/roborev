@@ -458,6 +458,73 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 	return contexts, nil
 }
 
+// SystemPromptDesignReview is the base instruction for reviewing design documents
+const SystemPromptDesignReview = `You are a design reviewer. Review the design proposal shown below for:
+
+1. **Completeness**: Are goals, non-goals, success criteria, and edge cases defined?
+2. **Feasibility**: Are technical decisions grounded in the actual codebase?
+3. **Task scoping**: Are implementation stages small enough to review incrementally? Are dependencies ordered correctly?
+4. **Missing considerations**: Security, performance, backwards compatibility, error handling
+5. **Clarity**: Are decisions justified and understandable?
+
+After reviewing, provide:
+
+1. A brief summary of what the design proposes
+2. PRD findings, listed with:
+   - Severity (high/medium/low)
+   - A brief explanation of the issue and suggested improvement
+3. Task list findings, listed with:
+   - Severity (high/medium/low)
+   - A brief explanation of the issue and suggested improvement
+4. Any missing considerations not covered by the design
+5. A verdict: Pass or Fail with brief justification
+
+If you find no issues, state "No issues found." after the summary.`
+
+// BuildDesignReview constructs a prompt for reviewing design documents in a commit
+func (b *Builder) BuildDesignReview(repoPath, gitRef, agentName string) (string, error) {
+	var sb strings.Builder
+
+	// Start with design review system prompt
+	sb.WriteString(GetSystemPrompt(agentName, "design-review"))
+	sb.WriteString("\n")
+
+	// Add project-specific guidelines if configured
+	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
+	}
+
+	// Get the diff containing the design document changes
+	diff, err := git.GetDiff(repoPath, gitRef)
+	if err != nil {
+		return "", fmt.Errorf("get diff: %w", err)
+	}
+
+	sb.WriteString("## Design Document Changes\n\n")
+	sb.WriteString("The following diff contains design document changes to review.\n\n")
+
+	// Build diff section
+	var diffSection strings.Builder
+	diffSection.WriteString("### Diff\n\n")
+	diffSection.WriteString("```diff\n")
+	diffSection.WriteString(diff)
+	if !strings.HasSuffix(diff, "\n") {
+		diffSection.WriteString("\n")
+	}
+	diffSection.WriteString("```\n")
+
+	// Check if adding the diff would exceed max prompt size
+	if sb.Len()+diffSection.Len() > MaxPromptSize {
+		sb.WriteString("### Diff\n\n")
+		sb.WriteString("(Diff too large to include - please review the commit directly)\n")
+		sb.WriteString(fmt.Sprintf("View with: git show %s\n", gitRef))
+	} else {
+		sb.WriteString(diffSection.String())
+	}
+
+	return sb.String(), nil
+}
+
 // BuildSimple constructs a simpler prompt without database context
 func BuildSimple(repoPath, sha, agentName string) (string, error) {
 	b := &Builder{}

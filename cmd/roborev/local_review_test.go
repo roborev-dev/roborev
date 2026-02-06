@@ -47,6 +47,7 @@ type runOpts struct {
 	Model     string
 	Reasoning string
 	Quiet     bool
+	Design    bool
 }
 
 // run calls runLocalReview with defaults applied.
@@ -55,7 +56,7 @@ func (h *reviewHarness) run(opts runOpts) error {
 	if opts.Revision == "" {
 		opts.Revision = "HEAD"
 	}
-	return runLocalReview(h.Cmd, h.Dir, opts.Revision, opts.Diff, opts.Agent, opts.Model, opts.Reasoning, opts.Quiet)
+	return runLocalReview(h.Cmd, h.Dir, opts.Revision, opts.Diff, opts.Agent, opts.Model, opts.Reasoning, opts.Quiet, opts.Design)
 }
 
 func TestLocalReviewFlag(t *testing.T) {

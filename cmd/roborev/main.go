@@ -598,6 +598,7 @@ func reviewCmd() *cobra.Command {
 		fast       bool
 		quiet      bool
 		dirty      bool
+		design     bool
 		wait       bool
 		branch     bool
 		baseBranch string
@@ -617,6 +618,8 @@ Examples:
   roborev review abc123 def456  # Review range from abc123 to def456 (inclusive)
   roborev review --dirty      # Review uncommitted changes
   roborev review --dirty --wait  # Review uncommitted changes and wait for result
+  roborev review --design     # Review HEAD as a design document
+  roborev review --design abc123  # Review specific commit as a design document
   roborev review --branch     # Review all commits on current branch since main
   roborev review --branch --base develop  # Review branch against develop
   roborev review --since HEAD~5  # Review last 5 commits
@@ -664,6 +667,9 @@ Examples:
 			// Validate mutually exclusive options
 			if branch && dirty {
 				return fmt.Errorf("cannot use --branch with --dirty")
+			}
+			if design && dirty {
+				return fmt.Errorf("cannot use --design with --dirty")
 			}
 			if branch && since != "" {
 				return fmt.Errorf("cannot use --branch with --since")
@@ -783,11 +789,11 @@ Examples:
 
 			// Handle --local mode: run agent directly without daemon
 			if local {
-				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning, quiet)
+				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning, quiet, design)
 			}
 
-			// Make request - server will validate and resolve refs
-			reqBody, _ := json.Marshal(map[string]interface{}{
+			// Build request body
+			reqFields := map[string]interface{}{
 				"repo_path":    root,
 				"git_ref":      gitRef,
 				"branch":       branchName,
@@ -795,7 +801,19 @@ Examples:
 				"model":        model,
 				"reasoning":    reasoning,
 				"diff_content": diffContent,
-			})
+			}
+
+			// For --design, build design review prompt and send via custom_prompt
+			if design {
+				designPrompt, err := prompt.NewBuilder(nil).BuildDesignReview(root, gitRef, agent)
+				if err != nil {
+					return fmt.Errorf("build design review prompt: %w", err)
+				}
+				reqFields["custom_prompt"] = designPrompt
+				reqFields["git_ref"] = "design-review"
+			}
+
+			reqBody, _ := json.Marshal(reqFields)
 
 			resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
@@ -858,6 +876,7 @@ Examples:
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
 	cmd.Flags().BoolVar(&dirty, "dirty", false, "review uncommitted changes instead of a commit")
+	cmd.Flags().BoolVar(&design, "design", false, "review commit as a design document instead of code")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")
 	cmd.Flags().BoolVar(&branch, "branch", false, "review all changes since branch diverged from base")
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
@@ -868,7 +887,7 @@ Examples:
 }
 
 // runLocalReview runs a review directly without the daemon
-func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning string, quiet bool) error {
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning string, quiet, design bool) error {
 	// Load config
 	cfg, err := config.LoadGlobal()
 	if err != nil {
@@ -909,7 +928,9 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 
 	// Build prompt
 	var reviewPrompt string
-	if diffContent != "" {
+	if design {
+		reviewPrompt, err = prompt.NewBuilder(nil).BuildDesignReview(repoPath, gitRef, a.Name())
+	} else if diffContent != "" {
 		// Dirty review
 		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name())
 	} else {
@@ -2207,9 +2228,9 @@ This command is idempotent - running it multiple times is safe.`,
 				fmt.Println("\nSkills installed! Try:")
 				for _, agent := range installedAgents {
 					if agent == skills.AgentClaude {
-						fmt.Println("  Claude Code: /roborev:address, /roborev:respond, /roborev:fix")
+						fmt.Println("  Claude Code: /roborev:address, /roborev:design-review, /roborev:respond, /roborev:fix")
 					} else if agent == skills.AgentCodex {
-						fmt.Println("  Codex: $roborev:address, $roborev:respond, $roborev:fix")
+						fmt.Println("  Codex: $roborev:address, $roborev:design-review, $roborev:respond, $roborev:fix")
 					}
 				}
 			}

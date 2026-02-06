@@ -15,6 +15,7 @@ Skills are updated automatically when you run `roborev update`.
 | Skill | Description |
 |-------|-------------|
 | `/roborev:address <job_id>` | Fetch a review and fix its findings |
+| `/roborev:design-review <path-or-job-id>` | Review a design proposal for completeness and feasibility |
 | `/roborev:respond <job_id> [message]` | Add a response to a review |
 
 ## Example Workflow
@@ -50,5 +51,5 @@ After fixing, document what was done:
 
 | Agent | Invocation |
 |-------|------------|
-| Claude Code | `/roborev:address`, `/roborev:respond` |
-| Codex | `$roborev:address`, `$roborev:respond` |
+| Claude Code | `/roborev:address`, `/roborev:design-review`, `/roborev:respond` |
+| Codex | `$roborev:address`, `$roborev:design-review`, `$roborev:respond` |
