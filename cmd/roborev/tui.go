@@ -1926,6 +1926,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 
+		case "home", "g":
+			if m.currentView == tuiViewQueue {
+				firstVisible := m.findFirstVisibleJob()
+				if firstVisible >= 0 {
+					m.selectedIdx = firstVisible
+					m.updateSelectedJobID()
+				}
+			} else if m.currentView == tuiViewReview {
+				m.reviewScroll = 0
+			} else if m.currentView == tuiViewPrompt {
+				m.promptScroll = 0
+			} else if m.currentView == tuiViewCommitMsg {
+				m.commitMsgScroll = 0
+			}
+
 		case "up":
 			if m.currentView == tuiViewQueue {
 				// Navigate to previous visible job (respects filter)
@@ -3187,8 +3202,8 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Help (two lines)
-	helpLine1 := "↑/↓: navigate | enter: review | y: copy | m: commit msg | q: quit | ?: help"
-	helpLine2 := "f: filter | b: branch | h: hide addressed | a: toggle addressed | x: cancel"
+	helpLine1 := "↑/↓: navigate | g: top | enter: review | y: copy | m: commit msg"
+	helpLine2 := "f: filter | b: branch | h: hide addressed | a: toggle addressed | x: cancel | q: quit | ?: help"
 	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" || m.hideAddressed {
 		helpLine2 += " | esc: clear filters"
 	}
@@ -4200,6 +4215,7 @@ func (m tuiModel) renderHelpView() string {
 			keys: []struct{ key, desc string }{
 				{"↑/k", "Move up / previous review"},
 				{"↓/j", "Move down / next review"},
+				{"g/Home", "Jump to top"},
 				{"PgUp/PgDn", "Scroll by page"},
 				{"enter", "View review details"},
 				{"esc", "Go back / clear filter"},
@@ -4222,6 +4238,7 @@ func (m tuiModel) renderHelpView() string {
 			group: "Filtering",
 			keys: []struct{ key, desc string }{
 				{"f", "Filter by repository"},
+				{"b", "Filter by branch"},
 				{"h", "Toggle hide addressed"},
 			},
 		},
