@@ -364,8 +364,8 @@ func newTuiModel(serverAddr string) tuiModel {
 		currentView:            tuiViewQueue,
 		width:                  80, // sensible defaults until we get WindowSizeMsg
 		height:                 24,
-		loadingJobs:            true,                         // Init() calls fetchJobs, so mark as loading
-		hideAddressed:          hideAddressed,                // Initialize from config
+		loadingJobs:            true, // Init() calls fetchJobs, so mark as loading
+		hideAddressed:          hideAddressed,
 		displayNames:           make(map[string]string),      // Cache display names to avoid disk reads on render
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
