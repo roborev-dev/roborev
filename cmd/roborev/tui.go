@@ -348,6 +348,14 @@ func newTuiModel(serverAddr string) tuiModel {
 	if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
 		daemonVersion = info.Version
 	}
+
+	// Load hideAddressed preference from config
+	hideAddressed := false
+	if cfg, err := config.LoadGlobal(); err == nil {
+		hideAddressed = cfg.HideAddressedByDefault
+	}
+	// Note: Silently ignore config load errors - TUI should work with defaults
+
 	return tuiModel{
 		serverAddr:             serverAddr,
 		daemonVersion:          daemonVersion,
@@ -357,6 +365,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		width:                  80, // sensible defaults until we get WindowSizeMsg
 		height:                 24,
 		loadingJobs:            true,                         // Init() calls fetchJobs, so mark as loading
+		hideAddressed:          hideAddressed,                // Initialize from config
 		displayNames:           make(map[string]string),      // Cache display names to avoid disk reads on render
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
@@ -2296,6 +2305,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle hide addressed
 			if m.currentView == tuiViewQueue {
 				m.hideAddressed = !m.hideAddressed
+
+				// Persist the preference
+				cfg, err := config.LoadGlobal()
+				if err != nil {
+					// If config doesn't exist, create minimal config with just this pref
+					cfg = &config.Config{
+						HideAddressedByDefault: m.hideAddressed,
+					}
+				} else {
+					cfg.HideAddressedByDefault = m.hideAddressed
+				}
+
+				// Save config (silent failure is acceptable - toggle still works in-session)
+				_ = config.SaveGlobal(cfg)
+
 				// Update selection to first visible job immediately
 				if len(m.jobs) > 0 {
 					if m.selectedIdx < 0 || m.selectedIdx >= len(m.jobs) || !m.isJobVisible(m.jobs[m.selectedIdx]) {
