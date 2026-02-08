@@ -1391,6 +1391,28 @@ func TestInstallationIDForOwner(t *testing.T) {
 			t.Errorf("got %d, want 0", got)
 		}
 	})
+
+	t.Run("zero mapped value falls back to singular", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppInstallations:  map[string]int64{"wesm": 0},
+			GitHubAppInstallationID: 999999,
+		}
+		if got := ci.InstallationIDForOwner("wesm"); got != 999999 {
+			t.Errorf("got %d, want 999999 (fallback to singular)", got)
+		}
+	})
+
+	t.Run("case-insensitive lookup", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppInstallations: map[string]int64{"wesm": 111111},
+		}
+		if got := ci.InstallationIDForOwner("Wesm"); got != 111111 {
+			t.Errorf("got %d, want 111111 (case-insensitive)", got)
+		}
+		if got := ci.InstallationIDForOwner("WESM"); got != 111111 {
+			t.Errorf("got %d, want 111111 (case-insensitive)", got)
+		}
+	})
 }
 
 func TestGitHubAppConfigured_MultiInstall(t *testing.T) {

@@ -36,7 +36,7 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "### Review 2: Agent=gemini, Type=review") {
 		t.Error("prompt missing review 2 header")
 	}
-	if !strings.Contains(prompt, "[FAILED: timeout]") {
+	if !strings.Contains(prompt, "[FAILED]") {
 		t.Error("prompt missing failure annotation")
 	}
 
@@ -243,6 +243,29 @@ func TestGhEnvForRepo_MultiInstallationRouting(t *testing.T) {
 	}
 	if !found2 {
 		t.Error("expected roborev-dev's token for roborev-dev/other-repo")
+	}
+}
+
+func TestGhEnvForRepo_CaseInsensitiveOwner(t *testing.T) {
+	provider := &GitHubAppTokenProvider{
+		tokens: map[int64]*cachedToken{
+			111111: {token: "ghs_token_wesm", expires: time.Now().Add(1 * time.Hour)},
+		},
+	}
+	cfg := config.DefaultConfig()
+	cfg.CI.GitHubAppInstallations = map[string]int64{"wesm": 111111}
+	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
+
+	// Uppercase owner in repo should still match lowercase config key
+	env := p.ghEnvForRepo("Wesm/my-repo")
+	found := false
+	for _, e := range env {
+		if e == "GH_TOKEN=ghs_token_wesm" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected token for case-variant owner 'Wesm' matching config key 'wesm'")
 	}
 }
 
@@ -797,5 +820,110 @@ func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {
 	}
 	if !strings.Contains(out, "## roborev: Combined Review") {
 		t.Fatalf("expected combined review header, got: %q", out)
+	}
+}
+
+func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repoPath := t.TempDir()
+	if _, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git"); err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.ReviewTypes = []string{"security", "typo-type"}
+
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	p.gitFetchFn = func(context.Context, string) error { return nil }
+	p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number:      1,
+		HeadRefOid:  "head-sha",
+		BaseRefName: "main",
+	}, cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid review type")
+	}
+	if !strings.Contains(err.Error(), "invalid review_type") {
+		t.Fatalf("expected 'invalid review_type' error, got: %v", err)
+	}
+
+	// Verify no batch was created
+	hasBatch, err := db.HasCIBatch("acme/api", 1, "head-sha")
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if hasBatch {
+		t.Fatal("expected no batch for invalid review type")
+	}
+}
+
+func TestCIPollerProcessPR_EmptyReviewType(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repoPath := t.TempDir()
+	if _, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git"); err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.ReviewTypes = []string{""}
+
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	p.gitFetchFn = func(context.Context, string) error { return nil }
+	p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number:      2,
+		HeadRefOid:  "head-sha-2",
+		BaseRefName: "main",
+	}, cfg)
+	if err == nil {
+		t.Fatal("expected error for empty review type")
+	}
+	if !strings.Contains(err.Error(), "invalid review_type") {
+		t.Fatalf("expected 'invalid review_type' error, got: %v", err)
+	}
+}
+
+func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
+	reviews := []storage.BatchReviewResult{
+		{JobID: 1, Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
+	}
+	prompt := buildSynthesisPrompt(reviews)
+	if strings.Contains(prompt, "secret-token-abc123") {
+		t.Error("raw error text should not appear in synthesis prompt")
+	}
+	if !strings.Contains(prompt, "[FAILED]") {
+		t.Error("expected [FAILED] marker in synthesis prompt")
+	}
+}
+
+func TestCIPollerServerStop_StopsPoller(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.PollInterval = "1h"
+
+	p := NewCIPoller(db, NewStaticConfig(cfg), NewBroadcaster())
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	healthy, _ := p.HealthCheck()
+	if !healthy {
+		t.Fatal("expected poller to be running after Start")
+	}
+
+	// Simulate what Server.Stop does
+	p.Stop()
+
+	healthy, msg := p.HealthCheck()
+	if healthy {
+		t.Fatalf("expected poller stopped after Stop, got (%v, %q)", healthy, msg)
 	}
 }

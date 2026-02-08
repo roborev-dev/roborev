@@ -160,10 +160,14 @@ func (c *CIConfig) GitHubAppConfigured() bool {
 }
 
 // InstallationIDForOwner returns the installation ID for a GitHub owner.
-// Checks the installations map first, then falls back to the singular field.
+// Checks the installations map first (skipping non-positive values),
+// then falls back to the singular field. Owner comparison is case-insensitive.
 func (c *CIConfig) InstallationIDForOwner(owner string) int64 {
-	if id, ok := c.GitHubAppInstallations[owner]; ok {
-		return id
+	owner = strings.ToLower(owner)
+	for k, id := range c.GitHubAppInstallations {
+		if strings.ToLower(k) == owner && id > 0 {
+			return id
+		}
 	}
 	return c.GitHubAppInstallationID
 }

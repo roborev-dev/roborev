@@ -259,7 +259,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	agents := cfg.CI.ResolvedAgents()
 
 	// Validate review types to catch typos early
-	validTypes := map[string]bool{"security": true, "review": true, "general": true, "": true}
+	validTypes := map[string]bool{"security": true, "review": true, "general": true}
 	for _, rt := range reviewTypes {
 		if !validTypes[rt] {
 			return fmt.Errorf("invalid review_type %q (valid: security, review, general)", rt)
@@ -776,7 +776,7 @@ Rules:
 	for i, r := range reviews {
 		b.WriteString(fmt.Sprintf("---\n### Review %d: Agent=%s, Type=%s", i+1, r.Agent, r.ReviewType))
 		if r.Status == "failed" {
-			b.WriteString(fmt.Sprintf(" [FAILED: %s]", r.Error))
+			b.WriteString(" [FAILED]")
 		}
 		b.WriteString("\n")
 		if r.Output != "" {
