@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -26,9 +27,10 @@ type ghPR struct {
 // CIPoller polls GitHub for open PRs and enqueues security reviews.
 // It also listens for review.completed events and posts results as PR comments.
 type CIPoller struct {
-	db          *storage.DB
-	cfgGetter   ConfigGetter
-	broadcaster Broadcaster
+	db            *storage.DB
+	cfgGetter     ConfigGetter
+	broadcaster   Broadcaster
+	tokenProvider *GitHubAppTokenProvider
 
 	subID   int // broadcaster subscription ID for event listening
 	stopCh  chan struct{}
@@ -37,13 +39,33 @@ type CIPoller struct {
 	running bool
 }
 
-// NewCIPoller creates a new CI poller
+// NewCIPoller creates a new CI poller.
+// If GitHub App is configured, it initializes a token provider so gh commands
+// authenticate as the app bot instead of the user's personal account.
 func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster) *CIPoller {
-	return &CIPoller{
+	p := &CIPoller{
 		db:          db,
 		cfgGetter:   cfgGetter,
 		broadcaster: broadcaster,
 	}
+
+	cfg := cfgGetter.Config()
+	if cfg.CI.GitHubAppConfigured() {
+		pemData, err := cfg.CI.GitHubAppPrivateKeyResolved()
+		if err != nil {
+			log.Printf("CI poller: failed to load GitHub App private key: %v", err)
+		} else {
+			tp, err := NewGitHubAppTokenProvider(cfg.CI.GitHubAppID, cfg.CI.GitHubAppInstallationID, pemData)
+			if err != nil {
+				log.Printf("CI poller: failed to create GitHub App token provider: %v", err)
+			} else {
+				p.tokenProvider = tp
+				log.Printf("CI poller: GitHub App authentication enabled (app_id=%d)", cfg.CI.GitHubAppID)
+			}
+		}
+	}
+
+	return p
 }
 
 // Start begins polling for PRs
@@ -146,7 +168,7 @@ func (p *CIPoller) poll() {
 
 func (p *CIPoller) pollRepo(ghRepo string, cfg *config.Config) error {
 	// List open PRs via gh CLI
-	prs, err := listOpenPRs(ghRepo)
+	prs, err := p.listOpenPRs(ghRepo)
 	if err != nil {
 		return fmt.Errorf("list PRs: %w", err)
 	}
@@ -273,14 +295,32 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 	return nil, fmt.Errorf("no local repo found matching %q (run 'roborev init' in a local checkout)", ghRepo)
 }
 
+// ghEnv returns the environment for gh CLI commands.
+// When GitHub App auth is configured, it injects GH_TOKEN so gh authenticates as the bot.
+// Otherwise returns nil (gh uses its default auth).
+func (p *CIPoller) ghEnv() []string {
+	if p.tokenProvider == nil {
+		return nil
+	}
+	token, err := p.tokenProvider.Token()
+	if err != nil {
+		log.Printf("CI poller: failed to get GitHub App token: %v", err)
+		return nil
+	}
+	return append(os.Environ(), "GH_TOKEN="+token)
+}
+
 // listOpenPRs uses the gh CLI to list open PRs for a GitHub repo
-func listOpenPRs(ghRepo string) ([]ghPR, error) {
+func (p *CIPoller) listOpenPRs(ghRepo string) ([]ghPR, error) {
 	cmd := exec.Command("gh", "pr", "list",
 		"--repo", ghRepo,
 		"--json", "number,headRefOid,baseRefName,headRefName,title",
 		"--state", "open",
 		"--limit", "100",
 	)
+	if env := p.ghEnv(); env != nil {
+		cmd.Env = env
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -344,7 +384,7 @@ func (p *CIPoller) handleReviewCompleted(event Event) {
 
 	// Format and post the comment
 	comment := formatPRComment(review, event.Verdict)
-	if err := postPRComment(ciReview.GithubRepo, ciReview.PRNumber, comment); err != nil {
+	if err := p.postPRComment(ciReview.GithubRepo, ciReview.PRNumber, comment); err != nil {
 		log.Printf("CI poller: error posting PR comment for %s#%d: %v",
 			ciReview.GithubRepo, ciReview.PRNumber, err)
 		return
@@ -391,12 +431,15 @@ func formatPRComment(review *storage.Review, verdict string) string {
 }
 
 // postPRComment posts a comment on a GitHub PR using the gh CLI.
-func postPRComment(ghRepo string, prNumber int, body string) error {
+func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error {
 	cmd := exec.Command("gh", "pr", "comment",
 		"--repo", ghRepo,
 		fmt.Sprintf("%d", prNumber),
 		"--body", body,
 	)
+	if env := p.ghEnv(); env != nil {
+		cmd.Env = env
+	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("gh pr comment: %s: %s", err, string(out))
 	}

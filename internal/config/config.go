@@ -103,6 +103,37 @@ type CIConfig struct {
 
 	// Model overrides the model for CI reviews (empty = use workflow resolution)
 	Model string `toml:"model"`
+
+	// GitHub App authentication (optional — comments appear as bot instead of personal account)
+	GitHubAppID             int64  `toml:"github_app_id"`
+	GitHubAppPrivateKey     string `toml:"github_app_private_key"` // PEM file path or inline; supports ${ENV_VAR}
+	GitHubAppInstallationID int64  `toml:"github_app_installation_id"`
+}
+
+// GitHubAppConfigured returns true if all GitHub App fields are set.
+func (c *CIConfig) GitHubAppConfigured() bool {
+	return c.GitHubAppID != 0 && c.GitHubAppPrivateKey != "" && c.GitHubAppInstallationID != 0
+}
+
+// GitHubAppPrivateKeyResolved expands env vars in the private key value,
+// reads the file if it's a path, and returns the PEM content.
+func (c *CIConfig) GitHubAppPrivateKeyResolved() (string, error) {
+	val := os.ExpandEnv(c.GitHubAppPrivateKey)
+	if val == "" {
+		return "", fmt.Errorf("github_app_private_key is empty after expansion")
+	}
+
+	// If it looks like PEM content, return directly
+	if strings.HasPrefix(val, "-----BEGIN") {
+		return val, nil
+	}
+
+	// Otherwise treat as file path
+	data, err := os.ReadFile(val)
+	if err != nil {
+		return "", fmt.Errorf("read private key file %s: %w", val, err)
+	}
+	return string(data), nil
 }
 
 // SyncConfig holds configuration for PostgreSQL sync
