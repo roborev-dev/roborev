@@ -83,8 +83,9 @@ CREATE TABLE IF NOT EXISTS roborev.responses (
 
 CREATE INDEX IF NOT EXISTS idx_review_jobs_source ON roborev.review_jobs(source_machine_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_updated ON roborev.review_jobs(updated_at);
-CREATE INDEX IF NOT EXISTS idx_review_jobs_branch ON roborev.review_jobs(branch);
-CREATE INDEX IF NOT EXISTS idx_review_jobs_job_type ON roborev.review_jobs(job_type);
+-- Note: idx_review_jobs_branch and idx_review_jobs_job_type are created by
+-- migration code, not here (to support upgrades from older versions where
+-- those columns don't exist yet).
 CREATE INDEX IF NOT EXISTS idx_reviews_job_uuid ON roborev.reviews(job_uuid);
 CREATE INDEX IF NOT EXISTS idx_reviews_updated ON roborev.reviews(updated_at);
 CREATE INDEX IF NOT EXISTS idx_responses_job_uuid ON roborev.responses(job_uuid);

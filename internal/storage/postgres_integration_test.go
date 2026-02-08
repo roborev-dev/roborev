@@ -313,8 +313,8 @@ func TestIntegration_PullFromRemote(t *testing.T) {
 
 	remoteJobUUID := "22222222-2222-2222-2222-222222222222"
 	_, err = env.Pool.pool.Exec(env.Ctx, `
-		INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, status, agent, reasoning, source_machine_id, enqueued_at, created_at, updated_at)
-		VALUES ($1, $2, 'main', 'done', 'test', '', $3, NOW(), NOW(), NOW())
+		INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, status, agent, reasoning, job_type, review_type, source_machine_id, enqueued_at, created_at, updated_at)
+		VALUES ($1, $2, 'main', 'done', 'test', '', 'review', '', $3, NOW(), NOW(), NOW())
 	`, remoteJobUUID, pgRepoID, remoteMachineUUID)
 	if err != nil {
 		t.Fatalf("Failed to insert job: %v", err)

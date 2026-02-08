@@ -178,6 +178,10 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("create branch index: %w", err)
 		}
+		_, err = p.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_job_type ON review_jobs(job_type)`)
+		if err != nil {
+			return fmt.Errorf("create job_type index: %w", err)
+		}
 	} else if currentVersion > pgSchemaVersion {
 		return fmt.Errorf("database schema version %d is newer than supported version %d", currentVersion, pgSchemaVersion)
 	} else if currentVersion < pgSchemaVersion {
@@ -482,7 +486,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			model = COALESCE(EXCLUDED.model, review_jobs.model),
 			updated_at = NOW()
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, j.Agent, nullString(j.Model), nullString(j.Reasoning),
-		nullString(j.JobType), j.ReviewType, j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
+		defaultStr(j.JobType, "review"), j.ReviewType, j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(j.Error), j.SourceMachineID)
 	return err
 }
@@ -748,6 +752,15 @@ func nullString(s string) interface{} {
 	return s
 }
 
+// defaultStr returns s if non-empty, otherwise returns the default.
+// Used for NOT NULL columns that should never be nil.
+func defaultStr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
 // BatchUpsertReviews inserts or updates multiple reviews in a single batch operation.
 // Returns a boolean slice indicating success/failure for each item at the corresponding index.
 func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableReview) ([]bool, error) {
@@ -855,7 +868,7 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				error = EXCLUDED.error,
 				updated_at = NOW()
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, j.Agent, nullString(j.Reasoning),
-			nullString(j.JobType), j.ReviewType, j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
+			defaultStr(j.JobType, "review"), j.ReviewType, j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 			nullString(j.Prompt), j.DiffContent, nullString(j.Error), j.SourceMachineID)
 	}
 
