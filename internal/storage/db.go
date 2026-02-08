@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS ci_pr_batches (
   completed_jobs INTEGER NOT NULL DEFAULT 0,
   failed_jobs INTEGER NOT NULL DEFAULT 0,
   synthesized INTEGER NOT NULL DEFAULT 0,
+  claimed_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(github_repo, pr_number, head_sha)
 );

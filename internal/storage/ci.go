@@ -206,12 +206,11 @@ func (db *DB) GetCIBatchByJobID(jobID int64) (*CIPRBatch, error) {
 	return &batch, nil
 }
 
-// ClaimBatchForSynthesis atomically marks a batch as synthesized only if it
-// hasn't been claimed yet (CAS). Returns true if this caller won the claim.
-// Used to prevent duplicate PR comment posts when event handlers and the
-// reconciler race on the same batch.
+// ClaimBatchForSynthesis atomically marks a batch as claimed only if it
+// hasn't been claimed yet (CAS). Sets claimed_at so stale claims can be
+// detected and recovered. Returns true if this caller won the claim.
 func (db *DB) ClaimBatchForSynthesis(batchID int64) (bool, error) {
-	result, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 1 WHERE id = ? AND synthesized = 0`, batchID)
+	result, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 1, claimed_at = datetime('now') WHERE id = ? AND synthesized = 0`, batchID)
 	if err != nil {
 		return false, err
 	}
@@ -225,7 +224,7 @@ func (db *DB) ClaimBatchForSynthesis(batchID int64) (bool, error) {
 // UnclaimBatch resets the synthesized flag so the reconciler can retry.
 // Called when comment posting fails after a successful claim.
 func (db *DB) UnclaimBatch(batchID int64) error {
-	_, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 0 WHERE id = ?`, batchID)
+	_, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 0, claimed_at = NULL WHERE id = ?`, batchID)
 	return err
 }
 
@@ -239,15 +238,17 @@ func (db *DB) DeleteCIBatch(batchID int64) error {
 	return err
 }
 
-// GetStaleBatches returns unsynthesized batches where all linked jobs are
-// terminal (done/failed/canceled). This covers two cases:
-//   - Event-driven counters fell behind (dropped events, canceled jobs)
-//   - Counters are correct but comment posting failed
+// GetStaleBatches returns batches that need synthesis attention. This covers:
+//   - Unclaimed batches where all jobs are terminal (dropped events, canceled jobs)
+//   - Stale claims where the daemon crashed mid-post (claimed_at > 5 minutes ago)
 func (db *DB) GetStaleBatches() ([]CIPRBatch, error) {
 	rows, err := db.Query(`
 		SELECT b.id, b.github_repo, b.pr_number, b.head_sha, b.total_jobs, b.completed_jobs, b.failed_jobs, b.synthesized
 		FROM ci_pr_batches b
-		WHERE b.synthesized = 0
+		WHERE (
+			b.synthesized = 0
+			OR (b.synthesized = 1 AND b.claimed_at < datetime('now', '-5 minutes'))
+		)
 		AND NOT EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id

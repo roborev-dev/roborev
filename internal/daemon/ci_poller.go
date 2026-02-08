@@ -542,7 +542,16 @@ func (p *CIPoller) reconcileStaleBatches() {
 			continue
 		}
 
-		if updated.CompletedJobs+updated.FailedJobs >= updated.TotalJobs && !updated.Synthesized {
+		if updated.CompletedJobs+updated.FailedJobs >= updated.TotalJobs {
+			if updated.Synthesized {
+				// Stale claim: daemon crashed mid-post. Unclaim so
+				// postBatchResults can re-claim via CAS.
+				log.Printf("CI poller: unclaiming stale batch %d (claimed_at expired)", updated.ID)
+				if err := p.db.UnclaimBatch(updated.ID); err != nil {
+					log.Printf("CI poller: error unclaiming batch %d: %v", batch.ID, err)
+					continue
+				}
+			}
 			log.Printf("CI poller: batch %d reconciled (%d succeeded, %d failed), posting results",
 				updated.ID, updated.CompletedJobs, updated.FailedJobs)
 			p.postBatchResults(updated)
