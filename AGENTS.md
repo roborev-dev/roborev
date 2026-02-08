@@ -26,8 +26,21 @@ Runtime:
 - Prefer Go stdlib over new dependencies.
 - No emojis in code or output (commit messages are fine).
 - Never amend commits; fixes should be new commits.
-- Never push/pull or change branches unless explicitly asked.
+- Never push/pull unless explicitly asked.
+- NEVER change git branches without explicit user confirmation. Always ask before switching, creating, or checking out branches.
 - Release builds use `CGO_ENABLED=0` (SQLite requires CGO locally).
+
+## Workflow + Commits
+
+- For multi-step tasks (for example: implement + commit + PR), complete the full requested sequence without stopping partway.
+- Commit after completing each piece of work; do not wait to be asked.
+- When committing, stage ALL modified files related to the work (including formatting-only and ancillary updates).
+- Before committing, run `git diff` and `git status` to verify nothing is unintentionally left unstaged.
+
+## Go Change Requirements
+
+- After any Go code changes, run `go fmt ./...` and `go vet ./...` before committing.
+- Stage any resulting formatting or vet-driven follow-up edits as part of the same commit.
 
 ## Testing
 
