@@ -352,7 +352,16 @@ func (p *CIPoller) ghEnv() []string {
 		log.Printf("CI poller: WARNING: GitHub App token failed, falling back to default gh auth: %v", err)
 		return nil
 	}
-	return append(os.Environ(), "GH_TOKEN="+token)
+	// Filter out any existing GH_TOKEN or GITHUB_TOKEN to ensure our
+	// app token takes precedence over the user's personal token.
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	return append(env, "GH_TOKEN="+token)
 }
 
 // listOpenPRs uses the gh CLI to list open PRs for a GitHub repo

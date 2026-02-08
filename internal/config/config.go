@@ -169,6 +169,13 @@ func (c *CIConfig) GitHubAppPrivateKeyResolved() (string, error) {
 		return trimmed, nil
 	}
 
+	// Expand leading ~ to home directory
+	if strings.HasPrefix(val, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			val = home + val[1:]
+		}
+	}
+
 	// Otherwise treat as file path
 	data, err := os.ReadFile(val)
 	if err != nil {
