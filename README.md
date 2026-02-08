@@ -36,7 +36,7 @@ You catch problems while context is fresh instead of waiting for PR review.
 - **Code Analysis** - Built-in analysis types (duplication, complexity,
   refactoring, test fixtures, dead code) that agents can fix automatically.
 - **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
-  OpenCode, Cursor, and Droid.
+  OpenCode, Cursor, Droid, and Ollama.
 - **Runs Locally** - No hosted service or additional infrastructure.
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
@@ -147,6 +147,16 @@ Project-specific review instructions here.
 """
 ```
 
+**Ollama configuration example:**
+
+```toml
+agent = "ollama"
+model = "qwen2.5-coder:32b"
+
+# Optional: configure Ollama server URL (default: http://localhost:11434)
+# ollama_base_url = "http://localhost:11434"
+```
+
 See [configuration guide](https://roborev.io/configuration/) for all options.
 
 ## Hooks
@@ -188,6 +198,7 @@ See [hooks guide](https://roborev.io/guides/hooks/) for details.
 | Copilot | `npm install -g @github/copilot` |
 | OpenCode | `npm install -g opencode-ai` |
 | Cursor | [cursor.com](https://www.cursor.com/) |
+| Ollama | `ollama serve` (must be running) |
 | Droid | [factory.ai](https://factory.ai/) |
 
 roborev auto-detects installed agents.

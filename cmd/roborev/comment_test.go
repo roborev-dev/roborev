@@ -19,10 +19,13 @@ func TestCommentJobFlag(t *testing.T) {
 				var req struct {
 					JobID int64 `json:"job_id"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("decode request: %v", err)
+					return
+				}
 				receivedJobID = req.JobID
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.Response{ID: 1, JobID: &receivedJobID})
+				_ = json.NewEncoder(w).Encode(storage.Response{ID: 1, JobID: &receivedJobID})
 				return
 			}
 		}))

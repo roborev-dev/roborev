@@ -78,7 +78,7 @@ func TestSyncWriter(t *testing.T) {
 			wg.Add(1)
 			go func(n int) {
 				defer wg.Done()
-				sw.Write([]byte("x"))
+				_, _ = sw.Write([]byte("x"))
 			}(i)
 		}
 		wg.Wait()
@@ -205,6 +205,8 @@ func getAgentModel(a Agent) string {
 		return v.Model
 	case *OpenCodeAgent:
 		return v.Model
+	case *OllamaAgent:
+		return v.Model
 	default:
 		return ""
 	}
@@ -222,6 +224,7 @@ func TestAgentWithModelPersistence(t *testing.T) {
 		{"gemini", func() Agent { return NewGeminiAgent("") }, "gemini-2.5-pro", "gemini-2.5-pro"},
 		{"copilot", func() Agent { return NewCopilotAgent("") }, "gpt-4o", "gpt-4o"},
 		{"opencode", func() Agent { return NewOpenCodeAgent("") }, "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4"},
+		{"ollama", func() Agent { return NewOllamaAgent("") }, "qwen2.5-coder:32b", "qwen2.5-coder:32b"},
 	}
 
 	for _, tt := range tests {
@@ -365,4 +368,38 @@ func TestAgentReviewPassesModelFlag(t *testing.T) {
 			verifyAgentPassesFlag(t, tt.createFunc, tt.flag, tt.value)
 		})
 	}
+}
+
+func TestWithOllamaBaseURL(t *testing.T) {
+	t.Run("Ollama agent gets BaseURL configured", func(t *testing.T) {
+		ollamaAgent := NewOllamaAgent("http://localhost:11434")
+		configured := WithOllamaBaseURL(ollamaAgent, "http://custom:11434")
+		if configured == ollamaAgent {
+			t.Error("expected new agent instance")
+		}
+		ollamaAgent2, ok := configured.(*OllamaAgent)
+		if !ok {
+			t.Fatalf("expected *OllamaAgent, got %T", configured)
+		}
+		if ollamaAgent2.BaseURL != "http://custom:11434" {
+			t.Errorf("BaseURL = %q, want \"http://custom:11434\"", ollamaAgent2.BaseURL)
+		}
+	})
+
+	t.Run("non-Ollama agent is unchanged", func(t *testing.T) {
+		testAgent := NewTestAgent()
+		configured := WithOllamaBaseURL(testAgent, "http://custom:11434")
+		if configured != testAgent {
+			t.Error("expected same agent instance for non-Ollama agent")
+		}
+	})
+
+	t.Run("empty BaseURL uses default", func(t *testing.T) {
+		ollamaAgent := NewOllamaAgent("http://custom:11434")
+		configured := WithOllamaBaseURL(ollamaAgent, "")
+		ollamaAgent2 := configured.(*OllamaAgent)
+		if ollamaAgent2.BaseURL != "http://localhost:11434" {
+			t.Errorf("BaseURL = %q, want \"http://localhost:11434\"", ollamaAgent2.BaseURL)
+		}
+	})
 }

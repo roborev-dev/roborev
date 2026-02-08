@@ -314,8 +314,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
 	}
 
-	// Get the agent (falls back to available agent if preferred not installed)
-	baseAgent, err := agent.GetAvailable(job.Agent)
+	// Get the agent (falls back to available agent if preferred not installed).
+	// Pass resolved Ollama base URL so availability is checked against the configured server.
+	baseAgent, err := agent.GetAvailableWithOllamaBaseURL(job.Agent, config.ResolveOllamaBaseURL(cfg))
 	if err != nil {
 		log.Printf("[%s] Error getting agent: %v", workerID, err)
 		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
@@ -329,7 +330,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reasoning = "thorough"
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
-	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(job.Model)
+	// Resolve model from repo/global config when job has no explicit model (e.g. jobs enqueued directly via DB)
+	model := job.Model
+	if strings.TrimSpace(model) == "" {
+		model = config.ResolveModel("", job.RepoPath, cfg)
+	}
+	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(model)
+
+	// Configure Ollama-specific settings (BaseURL from config)
+	baseURL := config.ResolveOllamaBaseURL(cfg)
+	a = agent.WithOllamaBaseURL(a, baseURL)
 
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()
@@ -408,7 +418,7 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 	retried, err := wp.db.RetryJob(job.ID, maxRetries)
 	if err != nil {
 		log.Printf("[%s] Error retrying job: %v", workerID, err)
-		wp.db.FailJob(job.ID, errorMsg)
+		_ = wp.db.FailJob(job.ID, errorMsg)
 		wp.broadcastFailed(job, agentName, errorMsg)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
@@ -421,7 +431,7 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 		log.Printf("[%s] Job %d queued for retry (%d/%d)", workerID, job.ID, retryCount, maxRetries)
 	} else {
 		log.Printf("[%s] Job %d failed after %d retries", workerID, job.ID, maxRetries)
-		wp.db.FailJob(job.ID, errorMsg)
+		_ = wp.db.FailJob(job.ID, errorMsg)
 		wp.broadcastFailed(job, agentName, errorMsg)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed after %d retries: %s", job.ID, maxRetries, errorMsg), job.ID)

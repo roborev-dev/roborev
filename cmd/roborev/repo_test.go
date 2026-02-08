@@ -44,7 +44,7 @@ func chdir(t *testing.T, dir string) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("Failed to chdir: %v", err)
 	}
-	t.Cleanup(func() { os.Chdir(orig) })
+	t.Cleanup(func() { _ = os.Chdir(orig) })
 }
 
 // makeDir creates a subdirectory under parent and returns its path.
@@ -90,7 +90,7 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		if err := os.Chmod(orgDir, 0000); err != nil {
 			t.Fatalf("Failed to chmod: %v", err)
 		}
-		defer os.Chmod(orgDir, 0755)
+		defer func() { _ = os.Chmod(orgDir, 0755) }()
 
 		chdir(t, tmpDir)
 

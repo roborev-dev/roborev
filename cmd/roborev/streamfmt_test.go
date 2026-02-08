@@ -22,7 +22,7 @@ func newFixture(tty bool) *streamFormatterFixture {
 }
 
 func (fix *streamFormatterFixture) writeLine(s string) {
-	fix.f.Write([]byte(s + "\n"))
+	_, _ = fix.f.Write([]byte(s + "\n"))
 }
 
 func (fix *streamFormatterFixture) output() string {
@@ -85,6 +85,22 @@ func contentBlockToolUse(toolName string, input map[string]interface{}) string {
 
 func eventAssistantLegacy(content string) string {
 	return fmt.Sprintf(`{"type":"assistant","message":{"content":%s}}`, mustMarshal(content))
+}
+
+// Event builders for Ollama-style NDJSON.
+
+func eventOllamaContent(content string, done bool) string {
+	return fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":%s},"done":%t}`,
+		mustMarshal(content), done)
+}
+
+func eventOllamaToolUse(toolName string, args map[string]interface{}, done bool) string {
+	return fmt.Sprintf(`{"model":"x","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":%q,"arguments":%s}}]},"done":%t}`,
+		toolName, mustMarshal(args), done)
+}
+
+func eventOllamaDoneOnly() string {
+	return `{"model":"x","message":{"role":"assistant","content":""},"done":true}`
 }
 
 // Event builders for Gemini-style JSON.
@@ -224,10 +240,70 @@ func TestStreamFormatter_PartialWrites(t *testing.T) {
 
 	full := eventAssistantText("hello") + "\n"
 	// Write in two parts
-	fix.f.Write([]byte(full[:20]))
+	_, _ = fix.f.Write([]byte(full[:20]))
 	if fix.buf.Len() != 0 {
 		t.Errorf("partial write should buffer, got:\n%s", fix.output())
 	}
-	fix.f.Write([]byte(full[20:]))
+	_, _ = fix.f.Write([]byte(full[20:]))
 	fix.assertContains(t, "hello")
+}
+
+func TestStreamFormatter_OllamaContent(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOllamaContent("Hello", false))
+	fix.assertContains(t, "Hello")
+}
+
+func TestStreamFormatter_OllamaToolUse(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOllamaToolUse("Read", map[string]interface{}{"file_path": "main.go"}, false))
+	fix.assertContains(t, "Read   main.go")
+}
+
+func TestStreamFormatter_OllamaDoneSuppressed(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOllamaDoneOnly())
+	fix.assertEmpty(t)
+}
+
+func TestStreamFormatter_OllamaNonTTY(t *testing.T) {
+	fix := newFixture(false)
+	raw := eventOllamaContent("Hello", false)
+	fix.writeLine(raw)
+	// Non-TTY should pass through raw JSON
+	if fix.output() != raw+"\n" {
+		t.Errorf("non-TTY Ollama should pass through raw, got:\n%s", fix.output())
+	}
+}
+
+func TestStreamFormatter_OllamaMalformedInput(t *testing.T) {
+	inputs := []string{
+		`{"message":"not an object","done":false}`,
+		`{"message":{"role":"assistant","content":"x"}`,
+		`{"done":true}`,
+		`not json at all`,
+	}
+	for _, input := range inputs {
+		input := input
+		t.Run(input, func(t *testing.T) {
+			fix := newFixture(true)
+			fix.writeLine(input)
+			// Should not panic; output may be empty or suppressed
+		})
+	}
+}
+
+func TestStreamFormatter_OllamaTTYVsNonTTY(t *testing.T) {
+	raw := eventOllamaToolUse("Read", map[string]interface{}{"file_path": "pkg/foo.go"}, false)
+	// TTY: formatted
+	fixTTY := newFixture(true)
+	fixTTY.writeLine(raw)
+	fixTTY.assertContains(t, "Read   pkg/foo.go")
+	fixTTY.assertNotContains(t, "model")
+	// Non-TTY: raw passthrough
+	fixNoTTY := newFixture(false)
+	fixNoTTY.writeLine(raw)
+	if fixNoTTY.output() != raw+"\n" {
+		t.Errorf("non-TTY should pass through raw, got:\n%s", fixNoTTY.output())
+	}
 }

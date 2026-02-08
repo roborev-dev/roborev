@@ -884,11 +884,13 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	// Resolve agent using workflow-specific resolution (matches daemon behavior)
 	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "review", reasoning)
 
-	// Get the agent
-	a, err := agent.GetAvailable(agentName)
+	// Get the agent (use configured Ollama base URL when checking availability)
+	baseURL := config.ResolveOllamaBaseURL(cfg)
+	a, err := agent.GetAvailableWithOllamaBaseURL(agentName, baseURL)
 	if err != nil {
 		return fmt.Errorf("get agent: %w", err)
 	}
+	a = agent.WithOllamaBaseURL(a, baseURL)
 
 	// Resolve model using workflow-specific resolution (matches daemon behavior)
 	model = config.ResolveModelForWorkflow(model, repoPath, cfg, "review", reasoning)

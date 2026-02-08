@@ -45,7 +45,7 @@ func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func
 	// ensureDaemon from trying to restart the daemon (which would kill the test).
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/status" && r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"version": version.Version,
 			})
 			return
@@ -59,7 +59,7 @@ func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func
 	// On Windows, HOME doesn't work since os.UserHomeDir() uses USERPROFILE
 	tmpDir := t.TempDir()
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	_ = os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
 	// Write fake daemon.json
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
@@ -82,9 +82,9 @@ func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func
 	cleanup := func() {
 		ts.Close()
 		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origDataDir)
 		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
+			_ = os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 		serverAddr = origServerAddr
 	}
@@ -102,8 +102,8 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	os.Stdout = writer
 	defer func() { os.Stdout = origStdout }()
-	defer reader.Close()
-	defer writer.Close()
+	defer func() { _ = reader.Close() }()
+	defer func() { _ = writer.Close() }()
 
 	outCh := make(chan string, 1)
 	go func() {
@@ -117,7 +117,7 @@ func captureStdout(t *testing.T, fn func()) string {
 
 	fn()
 
-	writer.Close()
+	_ = writer.Close()
 	os.Stdout = origStdout
 	output := <-outCh
 	return output
@@ -210,7 +210,7 @@ func inDir(t *testing.T, dir string, fn func()) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	defer os.Chdir(orig)
+	defer func() { _ = os.Chdir(orig) }()
 	fn()
 }
 
@@ -248,14 +248,14 @@ func TestEnqueueReviewRefine(t *testing.T) {
 			}
 
 			var req map[string]string
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 
 			if req["repo_path"] != "/test/repo" || req["git_ref"] != "abc..def" {
 				t.Errorf("unexpected request body: %+v", req)
 			}
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(storage.ReviewJob{ID: 123})
+			_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: 123})
 		}))
 		defer cleanup()
 
@@ -276,7 +276,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 				return
 			}
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(`{"error":"invalid repo"}`))
+			_, _ = w.Write([]byte(`{"error":"invalid repo"}`))
 		}))
 		defer cleanup()
 
@@ -384,14 +384,14 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	repoDir, _ := setupRefineRepo(t)
 
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/status":
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-		case r.URL.Path == "/api/review":
-			json.NewEncoder(w).Encode(storage.Review{
+		switch r.URL.Path {
+		case "/api/status":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+		case "/api/review":
+			_ = json.NewEncoder(w).Encode(storage.Review{
 				ID: 1, JobID: 1, Output: "**Bug found**: fail", Addressed: false,
 			})
-		case r.URL.Path == "/api/comments":
+		case "/api/comments":
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -615,7 +615,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/status":
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"version": version.Version,
 			})
 
@@ -629,7 +629,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				review = state.reviews[sha]
 			} else if jobIDStr != "" {
 				var jobID int64
-				fmt.Sscanf(jobIDStr, "%d", &jobID)
+				_, _ = fmt.Sscanf(jobIDStr, "%d", &jobID)
 				// Find review by job ID
 				for _, rev := range state.reviews {
 					if rev.JobID == jobID {
@@ -649,19 +649,19 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			json.NewEncoder(w).Encode(reviewCopy)
+			_ = json.NewEncoder(w).Encode(reviewCopy)
 
 		case r.URL.Path == "/api/comments" && r.Method == "GET":
 			jobIDStr := r.URL.Query().Get("job_id")
 			var jobID int64
-			fmt.Sscanf(jobIDStr, "%d", &jobID)
+			_, _ = fmt.Sscanf(jobIDStr, "%d", &jobID)
 			state.mu.Lock()
 			// Copy slice under lock before encoding
 			origResponses := state.responses[jobID]
 			responses := make([]storage.Response, len(origResponses))
 			copy(responses, origResponses)
 			state.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"responses": responses,
 			})
 
@@ -671,7 +671,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				Responder string `json:"responder"`
 				Response  string `json:"response"`
 			}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			state.mu.Lock()
 			state.respondCalled = append(state.respondCalled, struct {
 				jobID     int64
@@ -689,14 +689,14 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			state.mu.Unlock()
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case r.URL.Path == "/api/review/address" && r.Method == "POST":
 			var req struct {
 				ReviewID  int64 `json:"review_id"`
 				Addressed bool  `json:"addressed"`
 			}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			state.mu.Lock()
 			if req.Addressed {
 				state.addressedIDs = append(state.addressedIDs, req.ReviewID)
@@ -717,7 +717,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				GitRef   string `json:"git_ref"`
 				Agent    string `json:"agent"`
 			}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			state.mu.Lock()
 			state.enqueuedRefs = append(state.enqueuedRefs, req.GitRef)
 
@@ -732,7 +732,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			state.mu.Unlock()
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(job)
+			_ = json.NewEncoder(w).Encode(job)
 
 		case r.URL.Path == "/api/jobs" && r.Method == "GET":
 			state.mu.Lock()
@@ -741,7 +741,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				jobs = append(jobs, *job)
 			}
 			state.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs":     jobs,
 				"has_more": false,
 			})
@@ -985,17 +985,17 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 			q := r.URL.Query()
 			if idStr := q.Get("id"); idStr != "" {
 				var jobID int64
-				fmt.Sscanf(idStr, "%d", &jobID)
+				_, _ = fmt.Sscanf(idStr, "%d", &jobID)
 				s.mu.Lock()
 				job, ok := s.jobs[jobID]
 				if !ok {
 					s.mu.Unlock()
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 					return true
 				}
 				jobCopy := *job
 				s.mu.Unlock()
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
 				return true
 			}
 			if gitRef := q.Get("git_ref"); gitRef != "" {
@@ -1027,7 +1027,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 				}
 				jobCopy := *job
 				s.mu.Unlock()
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
 				return true
 			}
 			return false // fall through to base handler
@@ -1045,7 +1045,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 			return "", err
 		}
 		if output != nil {
-			output.Write([]byte(change))
+			_, _ = output.Write([]byte(change))
 		}
 		return change, nil
 	}})
@@ -1097,12 +1097,12 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 			q := r.URL.Query()
 			if idStr := q.Get("id"); idStr != "" {
 				var jobID int64
-				fmt.Sscanf(idStr, "%d", &jobID)
+				_, _ = fmt.Sscanf(idStr, "%d", &jobID)
 				s.mu.Lock()
 				job, ok := s.jobs[jobID]
 				if !ok {
 					s.mu.Unlock()
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 					return true
 				}
 				// On first poll, job is still Running; on subsequent polls, transition to Done
@@ -1112,7 +1112,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				}
 				jobCopy := *job
 				s.mu.Unlock()
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
 				return true
 			}
 			if gitRef := q.Get("git_ref"); gitRef != "" {
@@ -1127,7 +1127,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				if job != nil {
 					jobCopy := *job
 					s.mu.Unlock()
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
 					return true
 				}
 				s.mu.Unlock()
@@ -1139,7 +1139,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 			var req struct {
 				GitRef string `json:"git_ref"`
 			}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			s.mu.Lock()
 			branchJobID := s.nextJobID
 			s.nextJobID++
@@ -1156,7 +1156,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 			jobCopy := *s.jobs[branchJobID]
 			s.mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(jobCopy)
+			_ = json.NewEncoder(w).Encode(jobCopy)
 			return true
 		},
 	})
@@ -1191,7 +1191,7 @@ func TestShowJobFlagRequiresArgument(t *testing.T) {
 	// Setup mock daemon that responds to /api/status with version info
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/status" {
-			json.NewEncoder(w).Encode(map[string]string{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]string{"version": version.Version})
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -1233,12 +1233,12 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 
 	// Isolate runtime dir to avoid writing to real ~/.roborev/daemon.json
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	_ = os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	defer func() {
 		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origDataDir)
 		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
+			_ = os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 	}()
 
@@ -1338,12 +1338,12 @@ func TestDaemonStopNotRunning(t *testing.T) {
 	// Use ROBOREV_DATA_DIR to isolate test
 	tmpDir := t.TempDir()
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	_ = os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	defer func() {
 		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origDataDir)
 		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
+			_ = os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 	}()
 
@@ -1358,12 +1358,12 @@ func TestDaemonStopInvalidPID(t *testing.T) {
 	// Use ROBOREV_DATA_DIR to isolate test
 	tmpDir := t.TempDir()
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	_ = os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	defer func() {
 		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origDataDir)
 		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
+			_ = os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 	}()
 
@@ -1394,12 +1394,12 @@ func TestDaemonStopCorruptedFile(t *testing.T) {
 	// Use ROBOREV_DATA_DIR to isolate test
 	tmpDir := t.TempDir()
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	_ = os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	defer func() {
 		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origDataDir)
 		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
+			_ = os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 	}()
 
@@ -1425,12 +1425,12 @@ func TestDaemonStopTruncatedFile(t *testing.T) {
 	// Use ROBOREV_DATA_DIR to isolate test
 	tmpDir := t.TempDir()
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	_ = os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	defer func() {
 		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origDataDir)
 		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
+			_ = os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 	}()
 
@@ -1463,12 +1463,12 @@ func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
 	// Use ROBOREV_DATA_DIR to isolate test
 	tmpDir := t.TempDir()
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	_ = os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	defer func() {
 		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origDataDir)
 		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
+			_ = os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 	}()
 
@@ -1485,12 +1485,12 @@ func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
 		t.Fatalf("chmod daemon.json: %v", err)
 	}
 	// Restore permission for cleanup
-	defer os.Chmod(daemonPath, 0644)
+	defer func() { _ = os.Chmod(daemonPath, 0644) }()
 
 	// Probe whether chmod 0000 actually blocks reads on this filesystem
 	// (some filesystems like Windows or certain ACL-based systems may not enforce this)
 	if f, probeErr := os.Open(daemonPath); probeErr == nil {
-		f.Close()
+		_ = f.Close()
 		t.Skip("filesystem does not enforce chmod 0000 read restrictions")
 	}
 

@@ -258,8 +258,8 @@ func TestLocalReviewSkipsDaemon(t *testing.T) {
 	h := newReviewHarness(t)
 
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", t.TempDir())
-	defer os.Setenv("HOME", origHome)
+	_ = os.Setenv("HOME", t.TempDir())
+	defer func() { _ = os.Setenv("HOME", origHome) }()
 
 	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
 	if err != nil {

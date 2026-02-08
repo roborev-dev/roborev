@@ -66,6 +66,10 @@ type Config struct {
 	// Hooks configuration
 	Hooks []HookConfig `toml:"hooks"`
 
+	// Ollama configuration
+	OllamaBaseURL string `toml:"ollama_base_url"` // Default: "http://localhost:11434"
+	OllamaModel   string `toml:"ollama_model"`    // Default: "" (require explicit)
+
 	// Sync configuration for PostgreSQL
 	Sync SyncConfig `toml:"sync"`
 
@@ -204,6 +208,8 @@ func DefaultConfig() *Config {
 		CodexCmd:           "codex",
 		ClaudeCodeCmd:      "claude",
 		CursorCmd:          "agent",
+		OllamaBaseURL:      "http://localhost:11434",
+		OllamaModel:        "",
 	}
 }
 
@@ -608,6 +614,25 @@ func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string
 		}
 	}
 	return strings.TrimSpace(v)
+}
+
+// ResolveOllamaBaseURL determines which Ollama base URL to use based on config priority:
+// 1. Global config (ollama_base_url in config.toml)
+// 2. OLLAMA_HOST environment variable (same as ollama CLI uses)
+// 3. Default ("http://localhost:11434")
+func ResolveOllamaBaseURL(globalCfg *Config) string {
+	if globalCfg != nil && strings.TrimSpace(globalCfg.OllamaBaseURL) != "" {
+		return strings.TrimSpace(globalCfg.OllamaBaseURL)
+	}
+	if s := strings.TrimSpace(os.Getenv("OLLAMA_HOST")); s != "" {
+		s = strings.Trim(s, "'\"")
+		if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+			return strings.TrimSuffix(s, "/")
+		}
+		// Bare "host:port" -> assume http
+		return "http://" + s
+	}
+	return "http://localhost:11434"
 }
 
 // SaveGlobal saves the global configuration

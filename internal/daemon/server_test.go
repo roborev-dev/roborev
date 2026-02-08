@@ -2677,6 +2677,13 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			os.Setenv("PATH", mockDir+string(os.PathListSeparator)+gitOnlyDir)
 			t.Cleanup(func() { os.Setenv("PATH", origPath) })
 
+			// When expecting 503 (no agents available), skip if a fallback agent (e.g. ollama) is reachable in this environment.
+			if tt.expectedCode == http.StatusServiceUnavailable {
+				if a, err := agent.GetAvailableWithOllamaBaseURL(tt.requestAgent, ""); err == nil && a != nil {
+					t.Skipf("skipping: agent %q is available in this environment (e.g. ollama at localhost)", a.Name())
+				}
+			}
+
 			reqData := map[string]string{
 				"repo_path":  repoDir,
 				"commit_sha": headSHA,

@@ -157,7 +157,7 @@ func mockReviewDaemon(t *testing.T, review storage.Review) func() string {
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/review" && r.Method == "GET" {
 			receivedQuery = r.URL.RawQuery
-			json.NewEncoder(w).Encode(review)
+			_ = json.NewEncoder(w).Encode(review)
 			return
 		}
 	}))
@@ -240,7 +240,7 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 			id := atomic.AddInt64(&jobID, 1)
 			atomic.AddInt32(&state.EnqueueCount, 1)
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(storage.ReviewJob{
+			_ = json.NewEncoder(w).Encode(storage.ReviewJob{
 				ID:     id,
 				Agent:  opts.Agent,
 				Status: storage.JobStatusQueued,
@@ -257,7 +257,7 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 			if count >= opts.DoneAfterPolls {
 				status = storage.JobStatusDone
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs": []storage.ReviewJob{{
 					ID:     atomic.LoadInt64(&jobID),
 					Status: status,
@@ -270,7 +270,7 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 			if output == "" {
 				output = "review output"
 			}
-			json.NewEncoder(w).Encode(storage.Review{
+			_ = json.NewEncoder(w).Encode(storage.Review{
 				JobID:  atomic.LoadInt64(&jobID),
 				Agent:  opts.Agent,
 				Output: output,

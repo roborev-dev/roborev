@@ -378,7 +378,7 @@ func TestWaitForAnalysisJob(t *testing.T) {
 				switch {
 				case strings.HasPrefix(r.URL.Path, "/api/jobs"):
 					if resp.notFound {
-						json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []interface{}{}})
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []interface{}{}})
 						return
 					}
 					job := storage.ReviewJob{
@@ -386,10 +386,10 @@ func TestWaitForAnalysisJob(t *testing.T) {
 						Status: storage.JobStatus(resp.status),
 						Error:  resp.errMsg,
 					}
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
 
 				case strings.HasPrefix(r.URL.Path, "/api/review"):
-					json.NewEncoder(w).Encode(storage.Review{
+					_ = json.NewEncoder(w).Encode(storage.Review{
 						JobID:  42,
 						Output: resp.review,
 					})
@@ -433,7 +433,7 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 			ID:     42,
 			Status: storage.JobStatusQueued,
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
 	}))
 	defer ts.Close()
 
@@ -481,7 +481,10 @@ func TestMarkJobAddressed(t *testing.T) {
 				}
 
 				var req map[string]interface{}
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("decode request: %v", err)
+					return
+				}
 				gotJobID = int64(req["job_id"].(float64))
 				gotAddressed = req["addressed"].(bool)
 
@@ -513,7 +516,9 @@ func TestMarkJobAddressed(t *testing.T) {
 
 func TestRunFixAgent(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755)
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
 
 	cmd, output := newTestCmd(t)
 
@@ -734,7 +739,10 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 		JobIDStart: 42,
 		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
 			var req map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&req)
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode request: %v", err)
+				return
+			}
 
 			if req["agentic"] != true {
 				t.Error("agentic should be true for analysis")
@@ -744,7 +752,7 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 			}
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(storage.ReviewJob{
+			_ = json.NewEncoder(w).Encode(storage.ReviewJob{
 				ID:     42,
 				Agent:  "test",
 				Status: storage.JobStatusQueued,
