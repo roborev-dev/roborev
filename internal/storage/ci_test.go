@@ -379,7 +379,9 @@ func TestFinalizeBatch_PreventsStaleRepost(t *testing.T) {
 
 	// Verify claimed_at is set after claim
 	var claimedBefore sql.NullString
-	db.QueryRow(`SELECT claimed_at FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&claimedBefore)
+	if err := db.QueryRow(`SELECT claimed_at FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&claimedBefore); err != nil {
+		t.Fatalf("scan claimed_at before finalize: %v", err)
+	}
 	if !claimedBefore.Valid {
 		t.Fatal("expected claimed_at to be set after claim")
 	}
@@ -391,14 +393,18 @@ func TestFinalizeBatch_PreventsStaleRepost(t *testing.T) {
 
 	// Verify claimed_at is cleared after finalize
 	var claimedAfter sql.NullString
-	db.QueryRow(`SELECT claimed_at FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&claimedAfter)
+	if err := db.QueryRow(`SELECT claimed_at FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&claimedAfter); err != nil {
+		t.Fatalf("scan claimed_at after finalize: %v", err)
+	}
 	if claimedAfter.Valid {
 		t.Fatalf("expected claimed_at to be NULL after finalize, got %q", claimedAfter.String)
 	}
 
 	// Verify synthesized is still 1
 	var synthesized int
-	db.QueryRow(`SELECT synthesized FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&synthesized)
+	if err := db.QueryRow(`SELECT synthesized FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&synthesized); err != nil {
+		t.Fatalf("scan synthesized after finalize: %v", err)
+	}
 	if synthesized != 1 {
 		t.Fatalf("expected synthesized=1 after finalize, got %d", synthesized)
 	}
