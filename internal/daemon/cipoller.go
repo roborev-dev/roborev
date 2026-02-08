@@ -23,12 +23,14 @@ type ghPR struct {
 	Title       string `json:"title"`
 }
 
-// CIPoller polls GitHub for open PRs and enqueues security reviews
+// CIPoller polls GitHub for open PRs and enqueues security reviews.
+// It also listens for review.completed events and posts results as PR comments.
 type CIPoller struct {
 	db          *storage.DB
 	cfgGetter   ConfigGetter
 	broadcaster Broadcaster
 
+	subID   int // broadcaster subscription ID for event listening
 	stopCh  chan struct{}
 	doneCh  chan struct{}
 	mu      sync.Mutex
@@ -72,6 +74,13 @@ func (p *CIPoller) Start() error {
 
 	go p.run(stopCh, doneCh, interval)
 
+	// Subscribe to events for PR comment posting
+	if p.broadcaster != nil {
+		subID, eventCh := p.broadcaster.Subscribe("")
+		p.subID = subID
+		go p.listenForEvents(stopCh, eventCh)
+	}
+
 	return nil
 }
 
@@ -89,6 +98,10 @@ func (p *CIPoller) Stop() {
 
 	close(stopCh)
 	<-doneCh
+
+	if p.broadcaster != nil && p.subID != 0 {
+		p.broadcaster.Unsubscribe(p.subID)
+	}
 }
 
 // HealthCheck returns whether the CI poller is healthy
@@ -288,6 +301,104 @@ func gitFetch(repoPath string) error {
 	cmd := exec.Command("git", "-C", repoPath, "fetch", "--quiet")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %s", err, string(out))
+	}
+	return nil
+}
+
+// listenForEvents subscribes to broadcaster events and posts PR comments
+// when CI-triggered reviews complete.
+func (p *CIPoller) listenForEvents(stopCh chan struct{}, eventCh <-chan Event) {
+	for {
+		select {
+		case <-stopCh:
+			return
+		case event, ok := <-eventCh:
+			if !ok {
+				return
+			}
+			if event.Type == "review.completed" {
+				p.handleReviewCompleted(event)
+			}
+		}
+	}
+}
+
+// handleReviewCompleted checks if a completed review was CI-triggered
+// and posts the results as a PR comment.
+func (p *CIPoller) handleReviewCompleted(event Event) {
+	ciReview, err := p.db.GetCIReviewByJobID(event.JobID)
+	if err != nil {
+		log.Printf("CI poller: error checking CI review for job %d: %v", event.JobID, err)
+		return
+	}
+	if ciReview == nil {
+		return // Not a CI-triggered review
+	}
+
+	// Get the full review output
+	review, err := p.db.GetReviewByJobID(event.JobID)
+	if err != nil {
+		log.Printf("CI poller: error getting review for job %d: %v", event.JobID, err)
+		return
+	}
+
+	// Format and post the comment
+	comment := formatPRComment(review, event.Verdict)
+	if err := postPRComment(ciReview.GithubRepo, ciReview.PRNumber, comment); err != nil {
+		log.Printf("CI poller: error posting PR comment for %s#%d: %v",
+			ciReview.GithubRepo, ciReview.PRNumber, err)
+		return
+	}
+
+	log.Printf("CI poller: posted review comment on %s#%d (job %d, verdict=%s)",
+		ciReview.GithubRepo, ciReview.PRNumber, event.JobID, event.Verdict)
+}
+
+// formatPRComment formats a review result as a GitHub PR comment in markdown.
+func formatPRComment(review *storage.Review, verdict string) string {
+	var b strings.Builder
+
+	// Header with verdict
+	switch verdict {
+	case "P":
+		b.WriteString("## roborev: Pass\n\n")
+		b.WriteString("No issues found.\n")
+	case "F":
+		b.WriteString("## roborev: Fail\n\n")
+	default:
+		b.WriteString("## roborev: Review Complete\n\n")
+	}
+
+	// Include review output (truncated if very long)
+	output := review.Output
+	const maxLen = 60000 // GitHub comment limit is ~65536
+	if len(output) > maxLen {
+		output = output[:maxLen] + "\n\n...(truncated)"
+	}
+
+	if verdict != "P" && output != "" {
+		b.WriteString("<details>\n<summary>Review findings</summary>\n\n")
+		b.WriteString(output)
+		b.WriteString("\n\n</details>\n")
+	}
+
+	if review.Job != nil {
+		b.WriteString(fmt.Sprintf("\n---\n*Review type: %s | Agent: %s | Job: %d*\n",
+			review.Job.ReviewType, review.Job.Agent, review.Job.ID))
+	}
+
+	return b.String()
+}
+
+// postPRComment posts a comment on a GitHub PR using the gh CLI.
+func postPRComment(ghRepo string, prNumber int, body string) error {
+	cmd := exec.Command("gh", "pr", "comment",
+		"--repo", ghRepo,
+		fmt.Sprintf("%d", prNumber),
+		"--body", body,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gh pr comment: %s: %s", err, string(out))
 	}
 	return nil
 }
