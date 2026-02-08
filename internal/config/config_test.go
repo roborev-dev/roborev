@@ -1393,6 +1393,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 		// Use a fake HOME so we don't touch the real home directory
 		fakeHome := t.TempDir()
 		t.Setenv("HOME", fakeHome)
+		t.Setenv("USERPROFILE", fakeHome) // Windows compatibility
 
 		fakePem := filepath.Join(fakeHome, ".roborev", "test.pem")
 		if err := os.MkdirAll(filepath.Dir(fakePem), 0700); err != nil {

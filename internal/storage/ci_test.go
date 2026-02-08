@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"sync"
 	"testing"
 )
@@ -376,9 +377,30 @@ func TestFinalizeBatch_PreventsStaleRepost(t *testing.T) {
 		t.Fatal("expected claim to succeed")
 	}
 
+	// Verify claimed_at is set after claim
+	var claimedBefore sql.NullString
+	db.QueryRow(`SELECT claimed_at FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&claimedBefore)
+	if !claimedBefore.Valid {
+		t.Fatal("expected claimed_at to be set after claim")
+	}
+
 	// Finalize after successful post
 	if err := db.FinalizeBatch(batch.ID); err != nil {
 		t.Fatalf("FinalizeBatch: %v", err)
+	}
+
+	// Verify claimed_at is cleared after finalize
+	var claimedAfter sql.NullString
+	db.QueryRow(`SELECT claimed_at FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&claimedAfter)
+	if claimedAfter.Valid {
+		t.Fatalf("expected claimed_at to be NULL after finalize, got %q", claimedAfter.String)
+	}
+
+	// Verify synthesized is still 1
+	var synthesized int
+	db.QueryRow(`SELECT synthesized FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&synthesized)
+	if synthesized != 1 {
+		t.Fatalf("expected synthesized=1 after finalize, got %d", synthesized)
 	}
 
 	// Finalized batch should NOT appear in stale batches
