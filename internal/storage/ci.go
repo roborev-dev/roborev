@@ -211,3 +211,92 @@ func (db *DB) MarkBatchSynthesized(batchID int64) error {
 	_, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 1 WHERE id = ?`, batchID)
 	return err
 }
+
+// DeleteCIBatch removes a batch and its job links. Used to clean up
+// after a partial enqueue failure so the next poll can retry.
+func (db *DB) DeleteCIBatch(batchID int64) error {
+	if _, err := db.Exec(`DELETE FROM ci_pr_batch_jobs WHERE batch_id = ?`, batchID); err != nil {
+		return err
+	}
+	_, err := db.Exec(`DELETE FROM ci_pr_batches WHERE id = ?`, batchID)
+	return err
+}
+
+// GetStaleBatches returns batches where all linked jobs are terminal
+// (done/failed/canceled) but the batch hasn't been synthesized and
+// completed_jobs+failed_jobs < total_jobs (i.e., events were missed).
+func (db *DB) GetStaleBatches() ([]CIPRBatch, error) {
+	rows, err := db.Query(`
+		SELECT b.id, b.github_repo, b.pr_number, b.head_sha, b.total_jobs, b.completed_jobs, b.failed_jobs, b.synthesized
+		FROM ci_pr_batches b
+		WHERE b.synthesized = 0
+		AND b.completed_jobs + b.failed_jobs < b.total_jobs
+		AND NOT EXISTS (
+			SELECT 1 FROM ci_pr_batch_jobs bj
+			JOIN review_jobs j ON j.id = bj.job_id
+			WHERE bj.batch_id = b.id
+			AND j.status NOT IN ('done', 'failed', 'canceled')
+		)
+		AND EXISTS (
+			SELECT 1 FROM ci_pr_batch_jobs bj WHERE bj.batch_id = b.id
+		)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var batches []CIPRBatch
+	for rows.Next() {
+		var b CIPRBatch
+		var synthesized int
+		if err := rows.Scan(&b.ID, &b.GithubRepo, &b.PRNumber, &b.HeadSHA, &b.TotalJobs, &b.CompletedJobs, &b.FailedJobs, &synthesized); err != nil {
+			return nil, err
+		}
+		b.Synthesized = synthesized != 0
+		batches = append(batches, b)
+	}
+	return batches, rows.Err()
+}
+
+// ReconcileBatch corrects the completed/failed counts for a batch by
+// counting actual job statuses from the database.
+func (db *DB) ReconcileBatch(batchID int64) (*CIPRBatch, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// Count actual terminal statuses from linked jobs
+	var completed, failed int
+	err = tx.QueryRow(`
+		SELECT
+			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status IN ('failed', 'canceled') THEN 1 ELSE 0 END), 0)
+		FROM ci_pr_batch_jobs bj
+		JOIN review_jobs j ON j.id = bj.job_id
+		WHERE bj.batch_id = ?`, batchID).Scan(&completed, &failed)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec(`UPDATE ci_pr_batches SET completed_jobs = ?, failed_jobs = ? WHERE id = ?`,
+		completed, failed, batchID)
+	if err != nil {
+		return nil, err
+	}
+
+	var batch CIPRBatch
+	var synthesized int
+	err = tx.QueryRow(`SELECT id, github_repo, pr_number, head_sha, total_jobs, completed_jobs, failed_jobs, synthesized FROM ci_pr_batches WHERE id = ?`,
+		batchID).Scan(&batch.ID, &batch.GithubRepo, &batch.PRNumber, &batch.HeadSHA, &batch.TotalJobs, &batch.CompletedJobs, &batch.FailedJobs, &synthesized)
+	if err != nil {
+		return nil, err
+	}
+	batch.Synthesized = synthesized != 0
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &batch, nil
+}

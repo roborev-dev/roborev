@@ -172,6 +172,11 @@ func (p *CIPoller) poll(ctx context.Context) {
 			log.Printf("CI poller: error polling %s: %v", ghRepo, err)
 		}
 	}
+
+	// Reconcile stale batches where events may have been dropped.
+	// This catches batches where all jobs are terminal but the event-driven
+	// counters fell behind (e.g., broadcaster dropped events, or canceled jobs).
+	p.reconcileStaleBatches()
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
@@ -240,7 +245,8 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return fmt.Errorf("create CI batch: %w", err)
 	}
 
-	// Enqueue jobs for each review_type x agent combination
+	// Enqueue jobs for each review_type x agent combination.
+	// If any enqueue fails, delete the batch so the next poll can retry.
 	for _, rt := range reviewTypes {
 		for _, ag := range agents {
 			job, err := p.db.EnqueueJob(storage.EnqueueOpts{
@@ -252,10 +258,16 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 				ReviewType: rt,
 			})
 			if err != nil {
+				if delErr := p.db.DeleteCIBatch(batch.ID); delErr != nil {
+					log.Printf("CI poller: failed to clean up batch %d: %v", batch.ID, delErr)
+				}
 				return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, ag, err)
 			}
 
 			if err := p.db.RecordBatchJob(batch.ID, job.ID); err != nil {
+				if delErr := p.db.DeleteCIBatch(batch.ID); delErr != nil {
+					log.Printf("CI poller: failed to clean up batch %d: %v", batch.ID, delErr)
+				}
 				return fmt.Errorf("record batch job: %w", err)
 			}
 
@@ -387,7 +399,7 @@ func (p *CIPoller) listenForEvents(stopCh chan struct{}, eventCh <-chan Event) {
 			switch event.Type {
 			case "review.completed":
 				p.handleReviewCompleted(event)
-			case "review.failed":
+			case "review.failed", "review.canceled":
 				p.handleReviewFailed(event)
 			}
 		}
@@ -481,6 +493,36 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 		updated.ID, updated.CompletedJobs, updated.FailedJobs)
 
 	p.postBatchResults(updated)
+}
+
+// reconcileStaleBatches finds batches where all linked jobs are terminal
+// but the event-driven counters are behind (due to dropped events or
+// unhandled terminal states), corrects the counts from DB state, and
+// triggers synthesis if the batch is now complete.
+func (p *CIPoller) reconcileStaleBatches() {
+	batches, err := p.db.GetStaleBatches()
+	if err != nil {
+		log.Printf("CI poller: error checking stale batches: %v", err)
+		return
+	}
+
+	for _, batch := range batches {
+		log.Printf("CI poller: reconciling stale batch %d for %s#%d (counters: %d+%d/%d)",
+			batch.ID, batch.GithubRepo, batch.PRNumber,
+			batch.CompletedJobs, batch.FailedJobs, batch.TotalJobs)
+
+		updated, err := p.db.ReconcileBatch(batch.ID)
+		if err != nil {
+			log.Printf("CI poller: error reconciling batch %d: %v", batch.ID, err)
+			continue
+		}
+
+		if updated.CompletedJobs+updated.FailedJobs >= updated.TotalJobs && !updated.Synthesized {
+			log.Printf("CI poller: batch %d reconciled (%d succeeded, %d failed), posting results",
+				updated.ID, updated.CompletedJobs, updated.FailedJobs)
+			p.postBatchResults(updated)
+		}
+	}
 }
 
 // postBatchResults gathers all review outputs for a batch and posts a combined PR comment.
