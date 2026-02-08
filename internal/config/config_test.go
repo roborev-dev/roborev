@@ -1358,6 +1358,85 @@ func TestResolvedAgents(t *testing.T) {
 	})
 }
 
+func TestInstallationIDForOwner(t *testing.T) {
+	t.Run("map lookup", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppInstallations: map[string]int64{
+				"wesm":        111111,
+				"roborev-dev": 222222,
+			},
+			GitHubAppInstallationID: 999999,
+		}
+		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
+			t.Errorf("got %d, want 111111", got)
+		}
+		if got := ci.InstallationIDForOwner("roborev-dev"); got != 222222 {
+			t.Errorf("got %d, want 222222", got)
+		}
+	})
+
+	t.Run("falls back to singular", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppInstallations:  map[string]int64{"wesm": 111111},
+			GitHubAppInstallationID: 999999,
+		}
+		if got := ci.InstallationIDForOwner("unknown-org"); got != 999999 {
+			t.Errorf("got %d, want 999999", got)
+		}
+	})
+
+	t.Run("zero when unset", func(t *testing.T) {
+		ci := CIConfig{}
+		if got := ci.InstallationIDForOwner("wesm"); got != 0 {
+			t.Errorf("got %d, want 0", got)
+		}
+	})
+}
+
+func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
+	t.Run("configured with map only", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppID:            12345,
+			GitHubAppPrivateKey:    "~/.roborev/app.pem",
+			GitHubAppInstallations: map[string]int64{"wesm": 111111},
+		}
+		if !ci.GitHubAppConfigured() {
+			t.Error("expected GitHubAppConfigured() == true with map only")
+		}
+	})
+
+	t.Run("configured with singular only", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppID:             12345,
+			GitHubAppPrivateKey:     "~/.roborev/app.pem",
+			GitHubAppInstallationID: 111111,
+		}
+		if !ci.GitHubAppConfigured() {
+			t.Error("expected GitHubAppConfigured() == true with singular only")
+		}
+	})
+
+	t.Run("not configured without any installation", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppID:         12345,
+			GitHubAppPrivateKey: "~/.roborev/app.pem",
+		}
+		if ci.GitHubAppConfigured() {
+			t.Error("expected GitHubAppConfigured() == false without any installation ID")
+		}
+	})
+
+	t.Run("not configured without private key", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppID:             12345,
+			GitHubAppInstallationID: 111111,
+		}
+		if ci.GitHubAppConfigured() {
+			t.Error("expected GitHubAppConfigured() == false without private key")
+		}
+	})
+}
+
 func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	// Create a temp PEM file
 	dir := t.TempDir()

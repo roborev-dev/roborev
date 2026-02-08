@@ -77,7 +77,7 @@ func TestParsePrivateKey_Invalid(t *testing.T) {
 
 func TestSignJWT_Structure(t *testing.T) {
 	_, pemData := generateTestKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, 67890, pemData)
+	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestSignJWT_Structure(t *testing.T) {
 
 func TestTokenCaching(t *testing.T) {
 	_, pemData := generateTestKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, 67890, pemData)
+	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -180,9 +180,9 @@ func TestTokenCaching(t *testing.T) {
 	tp.baseURL = srv.URL
 
 	// First call should hit the server
-	token1, err := tp.Token()
+	token1, err := tp.TokenForInstallation(67890)
 	if err != nil {
-		t.Fatalf("first Token(): %v", err)
+		t.Fatalf("first TokenForInstallation(): %v", err)
 	}
 	if token1 != "ghs_test_token_123" {
 		t.Errorf("expected ghs_test_token_123, got %s", token1)
@@ -192,9 +192,9 @@ func TestTokenCaching(t *testing.T) {
 	}
 
 	// Second call should use cache
-	token2, err := tp.Token()
+	token2, err := tp.TokenForInstallation(67890)
 	if err != nil {
-		t.Fatalf("second Token(): %v", err)
+		t.Fatalf("second TokenForInstallation(): %v", err)
 	}
 	if token2 != token1 {
 		t.Error("expected cached token")
@@ -206,7 +206,7 @@ func TestTokenCaching(t *testing.T) {
 
 func TestTokenRefreshOnExpiry(t *testing.T) {
 	_, pemData := generateTestKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, 67890, pemData)
+	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -224,15 +224,17 @@ func TestTokenRefreshOnExpiry(t *testing.T) {
 
 	tp.baseURL = srv.URL
 
-	// Manually set an expired cached token
+	// Manually set an expired cached token for installation 67890
 	tp.mu.Lock()
-	tp.token = "ghs_old"
-	tp.expires = time.Now().Add(2 * time.Minute) // Within 5 min buffer → should refresh
+	tp.tokens[int64(67890)] = &cachedToken{
+		token:   "ghs_old",
+		expires: time.Now().Add(2 * time.Minute), // Within 5 min buffer → should refresh
+	}
 	tp.mu.Unlock()
 
-	token, err := tp.Token()
+	token, err := tp.TokenForInstallation(67890)
 	if err != nil {
-		t.Fatalf("Token(): %v", err)
+		t.Fatalf("TokenForInstallation(): %v", err)
 	}
 	if token != "ghs_refreshed" {
 		t.Errorf("expected refreshed token, got %s", token)
@@ -244,7 +246,7 @@ func TestTokenRefreshOnExpiry(t *testing.T) {
 
 func TestTokenExchangeError(t *testing.T) {
 	_, pemData := generateTestKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, 67890, pemData)
+	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -257,11 +259,89 @@ func TestTokenExchangeError(t *testing.T) {
 
 	tp.baseURL = srv.URL
 
-	_, err = tp.Token()
+	_, err = tp.TokenForInstallation(67890)
 	if err == nil {
 		t.Fatal("expected error on 401")
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("expected 401 in error, got: %v", err)
+	}
+}
+
+func TestTokenCaching_MultipleInstallations(t *testing.T) {
+	_, pemData := generateTestKey(t)
+	tp, err := NewGitHubAppTokenProvider(12345, pemData)
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		// Return a token that encodes which installation was requested
+		var token string
+		if strings.Contains(r.URL.Path, "/111/") {
+			token = "ghs_token_for_111"
+		} else if strings.Contains(r.URL.Path, "/222/") {
+			token = "ghs_token_for_222"
+		} else {
+			token = "ghs_unknown"
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"token":      token,
+			"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+		})
+	}))
+	defer srv.Close()
+
+	tp.baseURL = srv.URL
+
+	// Get token for installation 111
+	token1, err := tp.TokenForInstallation(111)
+	if err != nil {
+		t.Fatalf("TokenForInstallation(111): %v", err)
+	}
+	if token1 != "ghs_token_for_111" {
+		t.Errorf("expected ghs_token_for_111, got %s", token1)
+	}
+	if callCount != 1 {
+		t.Errorf("expected 1 server call, got %d", callCount)
+	}
+
+	// Get token for installation 222
+	token2, err := tp.TokenForInstallation(222)
+	if err != nil {
+		t.Fatalf("TokenForInstallation(222): %v", err)
+	}
+	if token2 != "ghs_token_for_222" {
+		t.Errorf("expected ghs_token_for_222, got %s", token2)
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 server calls, got %d", callCount)
+	}
+
+	// Re-request installation 111 — should be cached
+	token1b, err := tp.TokenForInstallation(111)
+	if err != nil {
+		t.Fatalf("TokenForInstallation(111) cached: %v", err)
+	}
+	if token1b != "ghs_token_for_111" {
+		t.Errorf("expected cached ghs_token_for_111, got %s", token1b)
+	}
+	if callCount != 2 {
+		t.Errorf("expected still 2 server calls (cached), got %d", callCount)
+	}
+
+	// Re-request installation 222 — should be cached
+	token2b, err := tp.TokenForInstallation(222)
+	if err != nil {
+		t.Fatalf("TokenForInstallation(222) cached: %v", err)
+	}
+	if token2b != "ghs_token_for_222" {
+		t.Errorf("expected cached ghs_token_for_222, got %s", token2b)
+	}
+	if callCount != 2 {
+		t.Errorf("expected still 2 server calls (cached), got %d", callCount)
 	}
 }

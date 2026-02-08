@@ -73,7 +73,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		if err != nil {
 			log.Printf("CI poller: failed to load GitHub App private key: %v", err)
 		} else {
-			tp, err := NewGitHubAppTokenProvider(cfg.CI.GitHubAppID, cfg.CI.GitHubAppInstallationID, pemData)
+			tp, err := NewGitHubAppTokenProvider(cfg.CI.GitHubAppID, pemData)
 			if err != nil {
 				log.Printf("CI poller: failed to create GitHub App token provider: %v", err)
 			} else {
@@ -374,16 +374,25 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 	return nil, fmt.Errorf("no local repo found matching %q (run 'roborev init' in a local checkout)", ghRepo)
 }
 
-// ghEnv returns the environment for gh CLI commands.
-// When GitHub App auth is configured, it injects GH_TOKEN so gh authenticates as the bot.
-// Otherwise returns nil (gh uses its default auth).
-func (p *CIPoller) ghEnv() []string {
+// ghEnvForRepo returns the environment for gh CLI commands targeting a specific repo.
+// It resolves the installation ID for the repo's owner and injects GH_TOKEN.
+// Returns nil if no token provider, no installation ID for the owner, or on error
+// (gh uses its default auth in those cases).
+func (p *CIPoller) ghEnvForRepo(ghRepo string) []string {
 	if p.tokenProvider == nil {
 		return nil
 	}
-	token, err := p.tokenProvider.Token()
+	// Extract owner from "owner/repo"
+	owner, _, _ := strings.Cut(ghRepo, "/")
+	cfg := p.cfgGetter.Config()
+	installationID := cfg.CI.InstallationIDForOwner(owner)
+	if installationID == 0 {
+		log.Printf("CI poller: no installation ID for owner %q, using default gh auth", owner)
+		return nil
+	}
+	token, err := p.tokenProvider.TokenForInstallation(installationID)
 	if err != nil {
-		log.Printf("CI poller: WARNING: GitHub App token failed, falling back to default gh auth: %v", err)
+		log.Printf("CI poller: WARNING: GitHub App token failed for %q, falling back to default gh auth: %v", owner, err)
 		return nil
 	}
 	// Filter out any existing GH_TOKEN or GITHUB_TOKEN to ensure our
@@ -406,7 +415,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 		"--state", "open",
 		"--limit", "100",
 	)
-	if env := p.ghEnv(); env != nil {
+	if env := p.ghEnvForRepo(ghRepo); env != nil {
 		cmd.Env = env
 	}
 	out, err := cmd.Output()
@@ -900,7 +909,7 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 		fmt.Sprintf("%d", prNumber),
 		"--body", body,
 	)
-	if env := p.ghEnv(); env != nil {
+	if env := p.ghEnvForRepo(ghRepo); env != nil {
 		cmd.Env = env
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {

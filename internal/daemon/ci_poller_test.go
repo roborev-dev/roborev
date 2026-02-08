@@ -148,19 +148,22 @@ func TestFormatAllFailedComment(t *testing.T) {
 	}
 }
 
-func TestGhEnv_FiltersExistingTokens(t *testing.T) {
+func TestGhEnvForRepo_FiltersExistingTokens(t *testing.T) {
 	// Set up a CIPoller with a pre-cached token (avoids JWT/API calls)
 	provider := &GitHubAppTokenProvider{
-		token:   "ghs_app_token_123",
-		expires: time.Now().Add(1 * time.Hour),
+		tokens: map[int64]*cachedToken{
+			111111: {token: "ghs_app_token_123", expires: time.Now().Add(1 * time.Hour)},
+		},
 	}
-	p := &CIPoller{tokenProvider: provider}
+	cfg := config.DefaultConfig()
+	cfg.CI.GitHubAppInstallationID = 111111
+	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
 
 	// Plant GH_TOKEN and GITHUB_TOKEN in env
 	t.Setenv("GH_TOKEN", "personal_token")
 	t.Setenv("GITHUB_TOKEN", "another_personal_token")
 
-	env := p.ghEnv()
+	env := p.ghEnvForRepo("acme/api")
 
 	// Should contain our app token
 	found := false
@@ -180,10 +183,66 @@ func TestGhEnv_FiltersExistingTokens(t *testing.T) {
 	}
 }
 
-func TestGhEnv_NilProvider(t *testing.T) {
+func TestGhEnvForRepo_NilProvider(t *testing.T) {
 	p := &CIPoller{tokenProvider: nil}
-	if env := p.ghEnv(); env != nil {
+	if env := p.ghEnvForRepo("acme/api"); env != nil {
 		t.Errorf("expected nil env when no token provider, got %v", env)
+	}
+}
+
+func TestGhEnvForRepo_UnknownOwner(t *testing.T) {
+	// Token provider exists but no installation ID for the owner
+	provider := &GitHubAppTokenProvider{
+		tokens: make(map[int64]*cachedToken),
+	}
+	cfg := config.DefaultConfig()
+	cfg.CI.GitHubAppInstallations = map[string]int64{"known-org": 111111}
+	// No singular fallback
+	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
+
+	env := p.ghEnvForRepo("unknown-org/repo")
+	if env != nil {
+		t.Errorf("expected nil env for unknown owner, got %v", env)
+	}
+}
+
+func TestGhEnvForRepo_MultiInstallationRouting(t *testing.T) {
+	// Two installations cached, verify correct one is used per repo
+	provider := &GitHubAppTokenProvider{
+		tokens: map[int64]*cachedToken{
+			111111: {token: "ghs_token_wesm", expires: time.Now().Add(1 * time.Hour)},
+			222222: {token: "ghs_token_org", expires: time.Now().Add(1 * time.Hour)},
+		},
+	}
+	cfg := config.DefaultConfig()
+	cfg.CI.GitHubAppInstallations = map[string]int64{
+		"wesm":        111111,
+		"roborev-dev": 222222,
+	}
+	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
+
+	// Check wesm repo uses wesm installation token
+	env1 := p.ghEnvForRepo("wesm/my-repo")
+	found1 := false
+	for _, e := range env1 {
+		if e == "GH_TOKEN=ghs_token_wesm" {
+			found1 = true
+		}
+	}
+	if !found1 {
+		t.Error("expected wesm's token for wesm/my-repo")
+	}
+
+	// Check roborev-dev repo uses org installation token
+	env2 := p.ghEnvForRepo("roborev-dev/other-repo")
+	found2 := false
+	for _, e := range env2 {
+		if e == "GH_TOKEN=ghs_token_org" {
+			found2 = true
+		}
+	}
+	if !found2 {
+		t.Error("expected roborev-dev's token for roborev-dev/other-repo")
 	}
 }
 

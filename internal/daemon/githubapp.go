@@ -15,45 +15,52 @@ import (
 	"time"
 )
 
+// cachedToken holds a cached installation access token with its expiry.
+type cachedToken struct {
+	token   string
+	expires time.Time
+}
+
 // GitHubAppTokenProvider obtains GitHub installation access tokens
-// using GitHub App JWT authentication. It caches the token and
-// refreshes it when within 5 minutes of expiry. Thread-safe.
+// using GitHub App JWT authentication. It caches tokens per installation
+// and refreshes them when within 5 minutes of expiry. Thread-safe.
 type GitHubAppTokenProvider struct {
-	appID          int64
-	installationID int64
-	key            *rsa.PrivateKey
+	appID int64
+	key   *rsa.PrivateKey
 
 	// baseURL overrides the GitHub API base URL for testing.
 	// Empty string means https://api.github.com.
 	baseURL string
 
-	mu      sync.Mutex
-	token   string
-	expires time.Time
+	mu     sync.Mutex
+	tokens map[int64]*cachedToken // installation_id → cached token
 }
 
 // NewGitHubAppTokenProvider creates a token provider from the given PEM data.
 // Supports both PKCS1 and PKCS8 private key formats.
-func NewGitHubAppTokenProvider(appID, installationID int64, pemData string) (*GitHubAppTokenProvider, error) {
+func NewGitHubAppTokenProvider(appID int64, pemData string) (*GitHubAppTokenProvider, error) {
 	key, err := parsePrivateKey([]byte(pemData))
 	if err != nil {
 		return nil, fmt.Errorf("parse private key: %w", err)
 	}
 	return &GitHubAppTokenProvider{
-		appID:          appID,
-		installationID: installationID,
-		key:            key,
+		appID:  appID,
+		key:    key,
+		tokens: make(map[int64]*cachedToken),
 	}, nil
 }
 
-// Token returns a valid installation access token, refreshing if needed.
-func (p *GitHubAppTokenProvider) Token() (string, error) {
+// TokenForInstallation returns a valid access token for the given installation,
+// refreshing if needed.
+func (p *GitHubAppTokenProvider) TokenForInstallation(installationID int64) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Return cached token if still valid (with 5 minute buffer)
-	if p.token != "" && time.Now().Before(p.expires.Add(-5*time.Minute)) {
-		return p.token, nil
+	if ct, ok := p.tokens[installationID]; ok {
+		if time.Now().Before(ct.expires.Add(-5 * time.Minute)) {
+			return ct.token, nil
+		}
 	}
 
 	jwt, err := p.signJWT()
@@ -61,14 +68,13 @@ func (p *GitHubAppTokenProvider) Token() (string, error) {
 		return "", fmt.Errorf("sign JWT: %w", err)
 	}
 
-	token, expires, err := p.exchangeToken(jwt)
+	token, expires, err := p.exchangeToken(jwt, installationID)
 	if err != nil {
 		return "", fmt.Errorf("exchange token: %w", err)
 	}
 
-	p.token = token
-	p.expires = expires
-	return p.token, nil
+	p.tokens[installationID] = &cachedToken{token: token, expires: expires}
+	return token, nil
 }
 
 // signJWT creates an RS256-signed JWT for GitHub App authentication.
@@ -97,13 +103,13 @@ type installationTokenResponse struct {
 }
 
 // exchangeToken exchanges a JWT for an installation access token.
-func (p *GitHubAppTokenProvider) exchangeToken(jwt string) (string, time.Time, error) {
+func (p *GitHubAppTokenProvider) exchangeToken(jwt string, installationID int64) (string, time.Time, error) {
 	baseURL := p.baseURL
 	if baseURL == "" {
 		baseURL = "https://api.github.com"
 	}
 
-	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", baseURL, p.installationID)
+	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", baseURL, installationID)
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		return "", time.Time{}, err

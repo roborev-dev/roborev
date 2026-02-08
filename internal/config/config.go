@@ -123,6 +123,9 @@ type CIConfig struct {
 	GitHubAppID             int64  `toml:"github_app_id"`
 	GitHubAppPrivateKey     string `toml:"github_app_private_key"` // PEM file path or inline; supports ${ENV_VAR}
 	GitHubAppInstallationID int64  `toml:"github_app_installation_id"`
+
+	// Multi-installation: map of owner → installation_id
+	GitHubAppInstallations map[string]int64 `toml:"github_app_installations"`
 }
 
 // ResolvedReviewTypes returns the list of review types to use.
@@ -149,9 +152,20 @@ func (c *CIConfig) ResolvedAgents() []string {
 	return []string{""}
 }
 
-// GitHubAppConfigured returns true if all GitHub App fields are set.
+// GitHubAppConfigured returns true if GitHub App authentication can be used.
+// Requires app ID, private key, and at least one installation ID (singular or map).
 func (c *CIConfig) GitHubAppConfigured() bool {
-	return c.GitHubAppID != 0 && c.GitHubAppPrivateKey != "" && c.GitHubAppInstallationID != 0
+	return c.GitHubAppID != 0 && c.GitHubAppPrivateKey != "" &&
+		(c.GitHubAppInstallationID != 0 || len(c.GitHubAppInstallations) > 0)
+}
+
+// InstallationIDForOwner returns the installation ID for a GitHub owner.
+// Checks the installations map first, then falls back to the singular field.
+func (c *CIConfig) InstallationIDForOwner(owner string) int64 {
+	if id, ok := c.GitHubAppInstallations[owner]; ok {
+		return id
+	}
+	return c.GitHubAppInstallationID
 }
 
 // GitHubAppPrivateKeyResolved expands env vars in the private key value,
