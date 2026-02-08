@@ -14,12 +14,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 5
+const pgSchemaVersion = 4
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v5.sql
+//go:embed schemas/postgres_v4.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -225,12 +225,10 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("migrate to v4 (add job_type index): %w", err)
 			}
-		}
-		if currentVersion < 5 {
-			// Migration 4->5: Add review_type column to review_jobs
+			// Add review_type column
 			_, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS review_type TEXT NOT NULL DEFAULT ''`)
 			if err != nil {
-				return fmt.Errorf("migrate to v5 (add review_type column): %w", err)
+				return fmt.Errorf("migrate to v4 (add review_type column): %w", err)
 			}
 		}
 		// Update version

@@ -1,5 +1,5 @@
 -- PostgreSQL schema version 4
--- Added job_type column to review_jobs for explicit job classification.
+-- Added job_type and review_type columns to review_jobs.
 -- Note: Version is managed by EnsureSchema(), not this file.
 
 CREATE SCHEMA IF NOT EXISTS roborev;
@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS roborev.review_jobs (
   model TEXT,
   reasoning TEXT,
   job_type TEXT NOT NULL DEFAULT 'review',
+  review_type TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL CHECK(status IN ('done', 'failed', 'canceled')),
   agentic BOOLEAN DEFAULT FALSE,
   enqueued_at TIMESTAMP WITH TIME ZONE NOT NULL,
