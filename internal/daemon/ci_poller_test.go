@@ -81,7 +81,7 @@ func TestFormatRawBatchComment(t *testing.T) {
 	if !strings.Contains(comment, "Agent: gemini | Type: review | Status: failed") {
 		t.Error("missing second review summary")
 	}
-	if !strings.Contains(comment, "**Error:** timeout") {
+	if !strings.Contains(comment, "**Error:** Review failed. Check daemon logs for details.") {
 		t.Error("missing error for failed review")
 	}
 }
@@ -137,11 +137,14 @@ func TestFormatAllFailedComment(t *testing.T) {
 	if !strings.Contains(comment, "All review jobs in this batch failed") {
 		t.Error("missing failure message")
 	}
-	if !strings.Contains(comment, "**codex** (security): timeout") {
+	if !strings.Contains(comment, "**codex** (security): failed") {
 		t.Error("missing first failure detail")
 	}
-	if !strings.Contains(comment, "**gemini** (review): api error") {
+	if !strings.Contains(comment, "**gemini** (review): failed") {
 		t.Error("missing second failure detail")
+	}
+	if !strings.Contains(comment, "Check daemon logs for error details.") {
+		t.Error("missing log reference")
 	}
 }
 

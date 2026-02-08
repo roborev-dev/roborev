@@ -187,6 +187,11 @@ func (s *Server) Stop() error {
 		log.Printf("HTTP server shutdown error: %v", err)
 	}
 
+	// Stop CI poller
+	if s.ciPoller != nil {
+		s.ciPoller.Stop()
+	}
+
 	// Stop worker pool
 	s.workerPool.Stop()
 

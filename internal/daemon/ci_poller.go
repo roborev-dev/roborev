@@ -257,6 +257,15 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	// Resolve review types and agents from config
 	reviewTypes := cfg.CI.ResolvedReviewTypes()
 	agents := cfg.CI.ResolvedAgents()
+
+	// Validate review types to catch typos early
+	validTypes := map[string]bool{"security": true, "review": true, "general": true, "": true}
+	for _, rt := range reviewTypes {
+		if !validTypes[rt] {
+			return fmt.Errorf("invalid review_type %q (valid: security, review, general)", rt)
+		}
+	}
+
 	totalJobs := len(reviewTypes) * len(agents)
 
 	// Create batch
@@ -814,7 +823,7 @@ func formatRawBatchComment(reviews []storage.BatchReviewResult) string {
 		summary := fmt.Sprintf("Agent: %s | Type: %s | Status: %s", r.Agent, r.ReviewType, r.Status)
 		b.WriteString(fmt.Sprintf("<details>\n<summary>%s</summary>\n\n", summary))
 		if r.Status == "failed" {
-			b.WriteString(fmt.Sprintf("**Error:** %s\n", r.Error))
+			b.WriteString("**Error:** Review failed. Check daemon logs for details.\n")
 		} else if r.Output != "" {
 			output := r.Output
 			const maxLen = 15000
@@ -838,8 +847,10 @@ func formatAllFailedComment(reviews []storage.BatchReviewResult) string {
 	b.WriteString("All review jobs in this batch failed.\n\n")
 
 	for _, r := range reviews {
-		b.WriteString(fmt.Sprintf("- **%s** (%s): %s\n", r.Agent, r.ReviewType, r.Error))
+		b.WriteString(fmt.Sprintf("- **%s** (%s): failed\n", r.Agent, r.ReviewType))
 	}
+
+	b.WriteString("\nCheck daemon logs for error details.")
 
 	return b.String()
 }
