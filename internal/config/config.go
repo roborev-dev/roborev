@@ -77,8 +77,32 @@ type Config struct {
 	// Sync configuration for PostgreSQL
 	Sync SyncConfig `toml:"sync"`
 
+	// CI poller configuration
+	CI CIConfig `toml:"ci"`
+
 	// Analysis settings
 	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
+}
+
+// CIConfig holds configuration for the CI poller that watches GitHub PRs
+type CIConfig struct {
+	// Enabled enables the CI poller
+	Enabled bool `toml:"enabled"`
+
+	// PollInterval is how often to poll for PRs (e.g., "5m", "10m"). Default: 5m
+	PollInterval string `toml:"poll_interval"`
+
+	// Repos is the list of GitHub repos to poll in "owner/repo" format
+	Repos []string `toml:"repos"`
+
+	// ReviewType is the review type to use for CI reviews (default: "security")
+	ReviewType string `toml:"review_type"`
+
+	// Agent overrides the agent for CI reviews (empty = use workflow resolution)
+	Agent string `toml:"agent"`
+
+	// Model overrides the model for CI reviews (empty = use workflow resolution)
+	Model string `toml:"model"`
 }
 
 // SyncConfig holds configuration for PostgreSQL sync

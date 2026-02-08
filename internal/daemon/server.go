@@ -29,6 +29,7 @@ type Server struct {
 	workerPool    *WorkerPool
 	httpServer    *http.Server
 	syncWorker    *storage.SyncWorker
+	ciPoller      *CIPoller
 	hookRunner    *HookRunner
 	errorLog      *ErrorLog
 	startTime     time.Time
@@ -202,9 +203,24 @@ func (s *Server) Stop() error {
 	return nil
 }
 
+// ConfigWatcher returns the server's config watcher (for use by external components)
+func (s *Server) ConfigWatcher() *ConfigWatcher {
+	return s.configWatcher
+}
+
+// Broadcaster returns the server's event broadcaster (for use by external components)
+func (s *Server) Broadcaster() Broadcaster {
+	return s.broadcaster
+}
+
 // SetSyncWorker sets the sync worker for triggering manual syncs
 func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 	s.syncWorker = sw
+}
+
+// SetCIPoller sets the CI poller for status reporting
+func (s *Server) SetCIPoller(cp *CIPoller) {
+	s.ciPoller = cp
 }
 
 // handleSyncNow triggers an immediate sync cycle

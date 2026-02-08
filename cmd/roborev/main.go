@@ -546,6 +546,22 @@ func daemonRunCmd() *cobra.Command {
 				server.SetSyncWorker(syncWorker)
 			}
 
+			// Start CI poller if enabled
+			var ciPoller *daemon.CIPoller
+			if cfg.CI.Enabled {
+				ciPoller = daemon.NewCIPoller(db, server.ConfigWatcher(), server.Broadcaster())
+				if err := ciPoller.Start(); err != nil {
+					log.Printf("Warning: failed to start CI poller: %v", err)
+				} else {
+					interval := cfg.CI.PollInterval
+					if interval == "" {
+						interval = "5m"
+					}
+					log.Printf("CI poller started (interval: %s, repos: %v)", interval, cfg.CI.Repos)
+				}
+				server.SetCIPoller(ciPoller)
+			}
+
 			// Handle shutdown signals
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt)
@@ -558,6 +574,9 @@ func daemonRunCmd() *cobra.Command {
 				sig := <-sigCh
 				log.Printf("Received signal %v, shutting down...", sig)
 				cancel() // Cancel context to stop config watcher
+				if ciPoller != nil {
+					ciPoller.Stop()
+				}
 				if syncWorker != nil {
 					// Final push before shutdown to ensure local changes are synced
 					if err := syncWorker.FinalPush(); err != nil {
