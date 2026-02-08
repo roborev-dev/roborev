@@ -41,12 +41,13 @@ func (h *reviewHarness) writeConfig(content string) {
 
 // runOpts holds optional parameters for runLocalReview, with sensible defaults.
 type runOpts struct {
-	Revision  string
-	Diff      string
-	Agent     string
-	Model     string
-	Reasoning string
-	Quiet     bool
+	Revision   string
+	Diff       string
+	Agent      string
+	Model      string
+	Reasoning  string
+	ReviewType string
+	Quiet      bool
 }
 
 // run calls runLocalReview with defaults applied.
@@ -55,7 +56,7 @@ func (h *reviewHarness) run(opts runOpts) error {
 	if opts.Revision == "" {
 		opts.Revision = "HEAD"
 	}
-	return runLocalReview(h.Cmd, h.Dir, opts.Revision, opts.Diff, opts.Agent, opts.Model, opts.Reasoning, opts.Quiet)
+	return runLocalReview(h.Cmd, h.Dir, opts.Revision, opts.Diff, opts.Agent, opts.Model, opts.Reasoning, opts.ReviewType, opts.Quiet)
 }
 
 func TestLocalReviewFlag(t *testing.T) {

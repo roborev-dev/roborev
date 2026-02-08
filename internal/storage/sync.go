@@ -233,6 +233,7 @@ type SyncableJob struct {
 	Model           string
 	Reasoning       string
 	JobType         string
+	ReviewType      string
 	Status          string
 	Agentic         bool
 	EnqueuedAt      time.Time
@@ -252,7 +253,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
-			j.git_ref, j.agent, COALESCE(j.model, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), j.status, j.agentic,
+			j.git_ref, j.agent, COALESCE(j.model, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), j.status, j.agentic,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
 			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''),
 			j.source_machine_id, j.updated_at
@@ -287,7 +288,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		err := rows.Scan(
 			&j.ID, &j.UUID, &j.RepoID, &j.RepoIdentity,
 			&commitID, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &commitTimestamp,
-			&j.GitRef, &j.Agent, &j.Model, &j.Reasoning, &j.JobType, &j.Status, &j.Agentic,
+			&j.GitRef, &j.Agent, &j.Model, &j.Reasoning, &j.JobType, &j.ReviewType, &j.Status, &j.Agentic,
 			&enqueuedAt, &startedAt, &finishedAt,
 			&j.Prompt, &diffContent, &j.Error,
 			&j.SourceMachineID, &updatedAt,
@@ -531,10 +532,10 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := db.Exec(`
 		INSERT INTO review_jobs (
-			uuid, repo_id, commit_id, git_ref, agent, model, reasoning, job_type, status, agentic,
+			uuid, repo_id, commit_id, git_ref, agent, model, reasoning, job_type, review_type, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error,
 			source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			finished_at = excluded.finished_at,
@@ -543,7 +544,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			updated_at = excluded.updated_at,
 			synced_at = ?
 	`, j.UUID, repoID, commitID, j.GitRef, j.Agent, nullStr(j.Model), j.Reasoning, j.JobType,
-		j.Status, j.Agentic, j.EnqueuedAt.Format(time.RFC3339),
+		j.ReviewType, j.Status, j.Agentic, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(j.Error),
 		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)

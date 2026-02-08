@@ -810,7 +810,7 @@ Examples:
 
 			// Handle --local mode: run agent directly without daemon
 			if local {
-				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning, quiet)
+				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning, reviewType, quiet)
 			}
 
 			// Make request - server will validate and resolve refs
@@ -897,7 +897,7 @@ Examples:
 }
 
 // runLocalReview runs a review directly without the daemon
-func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning string, quiet bool) error {
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning, reviewType string, quiet bool) error {
 	// Load config
 	cfg, err := config.LoadGlobal()
 	if err != nil {
@@ -910,8 +910,14 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 		return fmt.Errorf("invalid reasoning: %w", err)
 	}
 
+	// Map review_type to config workflow (matches daemon behavior)
+	workflow := "review"
+	if reviewType != "" && reviewType != "general" {
+		workflow = reviewType
+	}
+
 	// Resolve agent using workflow-specific resolution (matches daemon behavior)
-	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "review", reasoning)
+	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, workflow, reasoning)
 
 	// Get the agent
 	a, err := agent.GetAvailable(agentName)
@@ -920,7 +926,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	}
 
 	// Resolve model using workflow-specific resolution (matches daemon behavior)
-	model = config.ResolveModelForWorkflow(model, repoPath, cfg, "review", reasoning)
+	model = config.ResolveModelForWorkflow(model, repoPath, cfg, workflow, reasoning)
 
 	// Configure agent with model and reasoning
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
@@ -940,9 +946,9 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	var reviewPrompt string
 	if diffContent != "" {
 		// Dirty review
-		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name(), "")
+		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name(), reviewType)
 	} else {
-		reviewPrompt, err = prompt.NewBuilder(nil).Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name(), "")
+		reviewPrompt, err = prompt.NewBuilder(nil).Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name(), reviewType)
 	}
 	if err != nil {
 		return fmt.Errorf("build prompt: %w", err)

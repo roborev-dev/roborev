@@ -691,10 +691,10 @@ func parseSQLiteTime(s string) time.Time {
 }
 
 // EnqueueOpts contains options for creating any type of review job.
-// The job type is inferred from which fields are set:
-//   - CommitID > 0 → "review" (single commit)
-//   - DiffContent != "" → "dirty" (uncommitted changes)
+// The job type is inferred from which fields are set (in priority order):
 //   - Prompt != "" → "task" (custom prompt job)
+//   - DiffContent != "" → "dirty" (uncommitted changes)
+//   - CommitID > 0 → "review" (single commit)
 //   - otherwise → "range" (commit range)
 type EnqueueOpts struct {
 	RepoID       int64

@@ -34,11 +34,12 @@ type CIPoller struct {
 	broadcaster   Broadcaster
 	tokenProvider *GitHubAppTokenProvider
 
-	subID   int // broadcaster subscription ID for event listening
-	stopCh  chan struct{}
-	doneCh  chan struct{}
-	mu      sync.Mutex
-	running bool
+	subID      int // broadcaster subscription ID for event listening
+	stopCh     chan struct{}
+	doneCh     chan struct{}
+	cancelFunc context.CancelFunc // cancels the context for external commands
+	mu         sync.Mutex
+	running    bool
 }
 
 // NewCIPoller creates a new CI poller.
@@ -89,21 +90,24 @@ func (p *CIPoller) Start() error {
 		interval = 5 * time.Minute
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	p.stopCh = make(chan struct{})
 	p.doneCh = make(chan struct{})
+	p.cancelFunc = cancel
 	p.running = true
 
 	stopCh := p.stopCh
 	doneCh := p.doneCh
 
-	go p.run(stopCh, doneCh, interval)
-
-	// Subscribe to events for PR comment posting
+	// Subscribe to events before starting poll to avoid missing early completions
 	if p.broadcaster != nil {
 		subID, eventCh := p.broadcaster.Subscribe("")
 		p.subID = subID
 		go p.listenForEvents(stopCh, eventCh)
 	}
+
+	go p.run(ctx, stopCh, doneCh, interval)
 
 	return nil
 }
@@ -117,9 +121,11 @@ func (p *CIPoller) Stop() {
 	}
 	stopCh := p.stopCh
 	doneCh := p.doneCh
+	cancel := p.cancelFunc
 	p.running = false
 	p.mu.Unlock()
 
+	cancel() // Cancel context for external commands
 	close(stopCh)
 	<-doneCh
 
@@ -139,11 +145,11 @@ func (p *CIPoller) HealthCheck() (bool, string) {
 	return true, "running"
 }
 
-func (p *CIPoller) run(stopCh, doneCh chan struct{}, interval time.Duration) {
+func (p *CIPoller) run(ctx context.Context, stopCh, doneCh chan struct{}, interval time.Duration) {
 	defer close(doneCh)
 
 	// Poll immediately on start
-	p.poll()
+	p.poll(ctx)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -154,36 +160,36 @@ func (p *CIPoller) run(stopCh, doneCh chan struct{}, interval time.Duration) {
 			log.Println("CI poller stopped")
 			return
 		case <-ticker.C:
-			p.poll()
+			p.poll(ctx)
 		}
 	}
 }
 
-func (p *CIPoller) poll() {
+func (p *CIPoller) poll(ctx context.Context) {
 	cfg := p.cfgGetter.Config()
 	for _, ghRepo := range cfg.CI.Repos {
-		if err := p.pollRepo(ghRepo, cfg); err != nil {
+		if err := p.pollRepo(ctx, ghRepo, cfg); err != nil {
 			log.Printf("CI poller: error polling %s: %v", ghRepo, err)
 		}
 	}
 }
 
-func (p *CIPoller) pollRepo(ghRepo string, cfg *config.Config) error {
+func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
 	// List open PRs via gh CLI
-	prs, err := p.listOpenPRs(ghRepo)
+	prs, err := p.listOpenPRs(ctx, ghRepo)
 	if err != nil {
 		return fmt.Errorf("list PRs: %w", err)
 	}
 
 	for _, pr := range prs {
-		if err := p.processPR(ghRepo, pr, cfg); err != nil {
+		if err := p.processPR(ctx, ghRepo, pr, cfg); err != nil {
 			log.Printf("CI poller: error processing %s#%d: %v", ghRepo, pr.Number, err)
 		}
 	}
 	return nil
 }
 
-func (p *CIPoller) processPR(ghRepo string, pr ghPR, cfg *config.Config) error {
+func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *config.Config) error {
 	// Check if already reviewed at this HEAD SHA (batch takes priority over legacy)
 	hasBatch, err := p.db.HasCIBatch(ghRepo, pr.Number, pr.HeadRefOid)
 	if err != nil {
@@ -209,7 +215,7 @@ func (p *CIPoller) processPR(ghRepo string, pr ghPR, cfg *config.Config) error {
 	}
 
 	// Fetch latest refs
-	if err := gitFetch(repo.RootPath); err != nil {
+	if err := gitFetchCtx(ctx, repo.RootPath); err != nil {
 		return fmt.Errorf("git fetch: %w", err)
 	}
 
@@ -279,7 +285,7 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 
 	for _, pattern := range patterns {
 		repo, err := p.db.GetRepoByIdentity(pattern)
-		if err == nil {
+		if err == nil && repo != nil {
 			return repo, nil
 		}
 	}
@@ -326,15 +332,15 @@ func (p *CIPoller) ghEnv() []string {
 	}
 	token, err := p.tokenProvider.Token()
 	if err != nil {
-		log.Printf("CI poller: failed to get GitHub App token: %v", err)
+		log.Printf("CI poller: WARNING: GitHub App token failed, falling back to default gh auth: %v", err)
 		return nil
 	}
 	return append(os.Environ(), "GH_TOKEN="+token)
 }
 
 // listOpenPRs uses the gh CLI to list open PRs for a GitHub repo
-func (p *CIPoller) listOpenPRs(ghRepo string) ([]ghPR, error) {
-	cmd := exec.Command("gh", "pr", "list",
+func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
 		"--repo", ghRepo,
 		"--json", "number,headRefOid,baseRefName,headRefName,title",
 		"--state", "open",
@@ -358,9 +364,9 @@ func (p *CIPoller) listOpenPRs(ghRepo string) ([]ghPR, error) {
 	return prs, nil
 }
 
-// gitFetch runs git fetch in the repo to get latest refs
-func gitFetch(repoPath string) error {
-	cmd := exec.Command("git", "-C", repoPath, "fetch", "--quiet")
+// gitFetchCtx runs git fetch in the repo with context for cancellation.
+func gitFetchCtx(ctx context.Context, repoPath string) error {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %s", err, string(out))
 	}
@@ -701,7 +707,9 @@ func formatPRComment(review *storage.Review, verdict string) string {
 
 // postPRComment posts a comment on a GitHub PR using the gh CLI.
 func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error {
-	cmd := exec.Command("gh", "pr", "comment",
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "comment",
 		"--repo", ghRepo,
 		fmt.Sprintf("%d", prNumber),
 		"--body", body,

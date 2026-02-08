@@ -163,8 +163,10 @@ func (c *CIConfig) GitHubAppPrivateKeyResolved() (string, error) {
 	}
 
 	// If it looks like PEM content, return directly
-	if strings.HasPrefix(val, "-----BEGIN") {
-		return val, nil
+	// TrimSpace handles leading whitespace/newlines in inline PEM content
+	trimmed := strings.TrimSpace(val)
+	if strings.HasPrefix(trimmed, "-----BEGIN") {
+		return trimmed, nil
 	}
 
 	// Otherwise treat as file path
