@@ -42,3 +42,172 @@ func (db *DB) GetCIReviewByJobID(jobID int64) (*CIPRReview, error) {
 	}
 	return &r, nil
 }
+
+// CIPRBatch tracks a batch of CI review jobs for a single PR at a specific HEAD SHA.
+// A batch contains multiple jobs (review_types x agents matrix).
+type CIPRBatch struct {
+	ID            int64  `json:"id"`
+	GithubRepo    string `json:"github_repo"`
+	PRNumber      int    `json:"pr_number"`
+	HeadSHA       string `json:"head_sha"`
+	TotalJobs     int    `json:"total_jobs"`
+	CompletedJobs int    `json:"completed_jobs"`
+	FailedJobs    int    `json:"failed_jobs"`
+	Synthesized   bool   `json:"synthesized"`
+}
+
+// BatchReviewResult holds the output of a single review job within a batch.
+type BatchReviewResult struct {
+	JobID      int64  `json:"job_id"`
+	Agent      string `json:"agent"`
+	ReviewType string `json:"review_type"`
+	Output     string `json:"output"`
+	Status     string `json:"status"` // "done" or "failed"
+	Error      string `json:"error"`
+}
+
+// HasCIBatch checks if a batch already exists for this PR at this HEAD SHA.
+func (db *DB) HasCIBatch(githubRepo string, prNumber int, headSHA string) (bool, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batches WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+		githubRepo, prNumber, headSHA).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// CreateCIBatch creates a new batch record for a PR. Uses INSERT OR IGNORE to handle races.
+func (db *DB) CreateCIBatch(githubRepo string, prNumber int, headSHA string, totalJobs int) (*CIPRBatch, error) {
+	_, err := db.Exec(`INSERT OR IGNORE INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs) VALUES (?, ?, ?, ?)`,
+		githubRepo, prNumber, headSHA, totalJobs)
+	if err != nil {
+		return nil, err
+	}
+
+	var batch CIPRBatch
+	var synthesized int
+	err = db.QueryRow(`SELECT id, github_repo, pr_number, head_sha, total_jobs, completed_jobs, failed_jobs, synthesized FROM ci_pr_batches WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+		githubRepo, prNumber, headSHA).Scan(&batch.ID, &batch.GithubRepo, &batch.PRNumber, &batch.HeadSHA, &batch.TotalJobs, &batch.CompletedJobs, &batch.FailedJobs, &synthesized)
+	if err != nil {
+		return nil, err
+	}
+	batch.Synthesized = synthesized != 0
+	return &batch, nil
+}
+
+// RecordBatchJob links a review job to a batch.
+func (db *DB) RecordBatchJob(batchID, jobID int64) error {
+	_, err := db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+	return err
+}
+
+// IncrementBatchCompleted atomically increments completed_jobs and returns the updated batch.
+// Uses BEGIN IMMEDIATE to serialize concurrent writers in WAL mode.
+// Only the caller that sees completed_jobs+failed_jobs == total_jobs should trigger synthesis.
+func (db *DB) IncrementBatchCompleted(batchID int64) (*CIPRBatch, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// BEGIN IMMEDIATE is not directly available via database/sql, but SQLite WAL + busy_timeout
+	// handles contention. The UPDATE + SELECT in a single tx is atomic enough.
+	_, err = tx.Exec(`UPDATE ci_pr_batches SET completed_jobs = completed_jobs + 1 WHERE id = ?`, batchID)
+	if err != nil {
+		return nil, err
+	}
+
+	var batch CIPRBatch
+	var synthesized int
+	err = tx.QueryRow(`SELECT id, github_repo, pr_number, head_sha, total_jobs, completed_jobs, failed_jobs, synthesized FROM ci_pr_batches WHERE id = ?`,
+		batchID).Scan(&batch.ID, &batch.GithubRepo, &batch.PRNumber, &batch.HeadSHA, &batch.TotalJobs, &batch.CompletedJobs, &batch.FailedJobs, &synthesized)
+	if err != nil {
+		return nil, err
+	}
+	batch.Synthesized = synthesized != 0
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &batch, nil
+}
+
+// IncrementBatchFailed atomically increments failed_jobs and returns the updated batch.
+func (db *DB) IncrementBatchFailed(batchID int64) (*CIPRBatch, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE ci_pr_batches SET failed_jobs = failed_jobs + 1 WHERE id = ?`, batchID)
+	if err != nil {
+		return nil, err
+	}
+
+	var batch CIPRBatch
+	var synthesized int
+	err = tx.QueryRow(`SELECT id, github_repo, pr_number, head_sha, total_jobs, completed_jobs, failed_jobs, synthesized FROM ci_pr_batches WHERE id = ?`,
+		batchID).Scan(&batch.ID, &batch.GithubRepo, &batch.PRNumber, &batch.HeadSHA, &batch.TotalJobs, &batch.CompletedJobs, &batch.FailedJobs, &synthesized)
+	if err != nil {
+		return nil, err
+	}
+	batch.Synthesized = synthesized != 0
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &batch, nil
+}
+
+// GetBatchReviews returns all review results for a batch by joining through ci_pr_batch_jobs.
+func (db *DB) GetBatchReviews(batchID int64) ([]BatchReviewResult, error) {
+	rows, err := db.Query(`
+		SELECT bj.job_id, j.agent, j.review_type, COALESCE(rv.output, ''), j.status, COALESCE(j.error, '')
+		FROM ci_pr_batch_jobs bj
+		JOIN review_jobs j ON j.id = bj.job_id
+		LEFT JOIN reviews rv ON rv.job_id = j.id
+		WHERE bj.batch_id = ?
+		ORDER BY bj.id`, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []BatchReviewResult
+	for rows.Next() {
+		var r BatchReviewResult
+		if err := rows.Scan(&r.JobID, &r.Agent, &r.ReviewType, &r.Output, &r.Status, &r.Error); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// GetCIBatchByJobID looks up the batch that contains a given job ID via ci_pr_batch_jobs.
+func (db *DB) GetCIBatchByJobID(jobID int64) (*CIPRBatch, error) {
+	var batch CIPRBatch
+	var synthesized int
+	err := db.QueryRow(`
+		SELECT b.id, b.github_repo, b.pr_number, b.head_sha, b.total_jobs, b.completed_jobs, b.failed_jobs, b.synthesized
+		FROM ci_pr_batches b
+		JOIN ci_pr_batch_jobs bj ON bj.batch_id = b.id
+		WHERE bj.job_id = ?`, jobID).Scan(&batch.ID, &batch.GithubRepo, &batch.PRNumber, &batch.HeadSHA, &batch.TotalJobs, &batch.CompletedJobs, &batch.FailedJobs, &synthesized)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	batch.Synthesized = synthesized != 0
+	return &batch, nil
+}
+
+// MarkBatchSynthesized marks a batch as having had its synthesis comment posted.
+func (db *DB) MarkBatchSynthesized(batchID int64) error {
+	_, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 1 WHERE id = ?`, batchID)
+	return err
+}

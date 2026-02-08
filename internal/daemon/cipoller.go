@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -182,7 +184,16 @@ func (p *CIPoller) pollRepo(ghRepo string, cfg *config.Config) error {
 }
 
 func (p *CIPoller) processPR(ghRepo string, pr ghPR, cfg *config.Config) error {
-	// Check if already reviewed at this HEAD SHA
+	// Check if already reviewed at this HEAD SHA (batch takes priority over legacy)
+	hasBatch, err := p.db.HasCIBatch(ghRepo, pr.Number, pr.HeadRefOid)
+	if err != nil {
+		return fmt.Errorf("check CI batch: %w", err)
+	}
+	if hasBatch {
+		return nil
+	}
+
+	// Also check legacy single-review table for backward compatibility
 	reviewed, err := p.db.HasCIReview(ghRepo, pr.Number, pr.HeadRefOid)
 	if err != nil {
 		return fmt.Errorf("check CI review: %w", err)
@@ -212,32 +223,43 @@ func (p *CIPoller) processPR(ghRepo string, pr ghPR, cfg *config.Config) error {
 	// Build git ref for range review
 	gitRef := mergeBase + ".." + pr.HeadRefOid
 
-	// Determine review type
-	reviewType := cfg.CI.ReviewType
-	if reviewType == "" {
-		reviewType = "security"
-	}
+	// Resolve review types and agents from config
+	reviewTypes := cfg.CI.ResolvedReviewTypes()
+	agents := cfg.CI.ResolvedAgents()
+	totalJobs := len(reviewTypes) * len(agents)
 
-	// Enqueue range review
-	job, err := p.db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:     repo.ID,
-		GitRef:     gitRef,
-		Agent:      cfg.CI.Agent,
-		Model:      cfg.CI.Model,
-		Reasoning:  "thorough",
-		ReviewType: reviewType,
-	})
+	// Create batch
+	batch, err := p.db.CreateCIBatch(ghRepo, pr.Number, pr.HeadRefOid, totalJobs)
 	if err != nil {
-		return fmt.Errorf("enqueue job: %w", err)
+		return fmt.Errorf("create CI batch: %w", err)
 	}
 
-	// Record the CI review
-	if err := p.db.RecordCIReview(ghRepo, pr.Number, pr.HeadRefOid, job.ID); err != nil {
-		return fmt.Errorf("record CI review: %w", err)
+	// Enqueue jobs for each review_type x agent combination
+	for _, rt := range reviewTypes {
+		for _, ag := range agents {
+			job, err := p.db.EnqueueJob(storage.EnqueueOpts{
+				RepoID:     repo.ID,
+				GitRef:     gitRef,
+				Agent:      ag,
+				Model:      cfg.CI.Model,
+				Reasoning:  "thorough",
+				ReviewType: rt,
+			})
+			if err != nil {
+				return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, ag, err)
+			}
+
+			if err := p.db.RecordBatchJob(batch.ID, job.ID); err != nil {
+				return fmt.Errorf("record batch job: %w", err)
+			}
+
+			log.Printf("CI poller: enqueued job %d for %s#%d (type=%s, agent=%s, range=%s)",
+				job.ID, ghRepo, pr.Number, rt, ag, gitRef)
+		}
 	}
 
-	log.Printf("CI poller: enqueued job %d for %s#%d (HEAD=%s, range=%s)",
-		job.ID, ghRepo, pr.Number, pr.HeadRefOid[:8], gitRef)
+	log.Printf("CI poller: created batch %d for %s#%d (HEAD=%s, %d jobs)",
+		batch.ID, ghRepo, pr.Number, pr.HeadRefOid[:8], totalJobs)
 
 	return nil
 }
@@ -346,7 +368,7 @@ func gitFetch(repoPath string) error {
 }
 
 // listenForEvents subscribes to broadcaster events and posts PR comments
-// when CI-triggered reviews complete.
+// when CI-triggered reviews complete or fail.
 func (p *CIPoller) listenForEvents(stopCh chan struct{}, eventCh <-chan Event) {
 	for {
 		select {
@@ -356,16 +378,31 @@ func (p *CIPoller) listenForEvents(stopCh chan struct{}, eventCh <-chan Event) {
 			if !ok {
 				return
 			}
-			if event.Type == "review.completed" {
+			switch event.Type {
+			case "review.completed":
 				p.handleReviewCompleted(event)
+			case "review.failed":
+				p.handleReviewFailed(event)
 			}
 		}
 	}
 }
 
-// handleReviewCompleted checks if a completed review was CI-triggered
-// and posts the results as a PR comment.
+// handleReviewCompleted checks if a completed review is part of a batch
+// and posts results when the batch is complete.
 func (p *CIPoller) handleReviewCompleted(event Event) {
+	// Try batch flow first
+	batch, err := p.db.GetCIBatchByJobID(event.JobID)
+	if err != nil {
+		log.Printf("CI poller: error checking CI batch for job %d: %v", event.JobID, err)
+		return
+	}
+	if batch != nil {
+		p.handleBatchJobDone(batch, event.JobID, true)
+		return
+	}
+
+	// Fall back to legacy single-review flow
 	ciReview, err := p.db.GetCIReviewByJobID(event.JobID)
 	if err != nil {
 		log.Printf("CI poller: error checking CI review for job %d: %v", event.JobID, err)
@@ -392,6 +429,238 @@ func (p *CIPoller) handleReviewCompleted(event Event) {
 
 	log.Printf("CI poller: posted review comment on %s#%d (job %d, verdict=%s)",
 		ciReview.GithubRepo, ciReview.PRNumber, event.JobID, event.Verdict)
+}
+
+// handleReviewFailed handles a failed review job that may be part of a batch.
+func (p *CIPoller) handleReviewFailed(event Event) {
+	batch, err := p.db.GetCIBatchByJobID(event.JobID)
+	if err != nil {
+		log.Printf("CI poller: error checking CI batch for failed job %d: %v", event.JobID, err)
+		return
+	}
+	if batch == nil {
+		return // Not part of a batch
+	}
+	p.handleBatchJobDone(batch, event.JobID, false)
+}
+
+// handleBatchJobDone processes a completed or failed job within a batch.
+// When all jobs are done, it posts the combined results.
+func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, success bool) {
+	var updated *storage.CIPRBatch
+	var err error
+	if success {
+		updated, err = p.db.IncrementBatchCompleted(batch.ID)
+	} else {
+		updated, err = p.db.IncrementBatchFailed(batch.ID)
+	}
+	if err != nil {
+		log.Printf("CI poller: error updating batch %d for job %d: %v", batch.ID, jobID, err)
+		return
+	}
+
+	// Check if all jobs are done
+	if updated.CompletedJobs+updated.FailedJobs < updated.TotalJobs {
+		log.Printf("CI poller: batch %d progress: %d/%d completed, %d failed (job %d)",
+			updated.ID, updated.CompletedJobs, updated.TotalJobs, updated.FailedJobs, jobID)
+		return
+	}
+
+	// Guard against duplicate synthesis
+	if updated.Synthesized {
+		return
+	}
+
+	log.Printf("CI poller: batch %d complete (%d succeeded, %d failed), posting results",
+		updated.ID, updated.CompletedJobs, updated.FailedJobs)
+
+	p.postBatchResults(updated)
+}
+
+// postBatchResults gathers all review outputs for a batch and posts a combined PR comment.
+func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
+	reviews, err := p.db.GetBatchReviews(batch.ID)
+	if err != nil {
+		log.Printf("CI poller: error getting batch reviews for batch %d: %v", batch.ID, err)
+		return
+	}
+
+	var comment string
+	successCount := 0
+	for _, r := range reviews {
+		if r.Status == "done" {
+			successCount++
+		}
+	}
+
+	if batch.TotalJobs == 1 && successCount == 1 {
+		// Single job batch — use legacy format (no synthesis needed)
+		review, err := p.db.GetReviewByJobID(reviews[0].JobID)
+		if err != nil {
+			log.Printf("CI poller: error getting review for job %d: %v", reviews[0].JobID, err)
+			return
+		}
+		verdict := ""
+		if review.Job != nil && review.Job.Verdict != nil {
+			verdict = *review.Job.Verdict
+		}
+		comment = formatPRComment(review, verdict)
+	} else if successCount == 0 {
+		// All jobs failed — post raw error comment
+		comment = formatAllFailedComment(reviews)
+	} else {
+		// Multiple jobs — try synthesis
+		cfg := p.cfgGetter.Config()
+		synthesized, err := p.synthesizeBatchResults(batch, reviews, cfg)
+		if err != nil {
+			log.Printf("CI poller: synthesis failed for batch %d: %v (falling back to raw)", batch.ID, err)
+			comment = formatRawBatchComment(reviews)
+		} else {
+			comment = synthesized
+		}
+	}
+
+	if err := p.postPRComment(batch.GithubRepo, batch.PRNumber, comment); err != nil {
+		log.Printf("CI poller: error posting batch comment for %s#%d: %v",
+			batch.GithubRepo, batch.PRNumber, err)
+		return
+	}
+
+	if err := p.db.MarkBatchSynthesized(batch.ID); err != nil {
+		log.Printf("CI poller: error marking batch %d synthesized: %v", batch.ID, err)
+	}
+
+	log.Printf("CI poller: posted batch comment on %s#%d (batch %d, %d reviews)",
+		batch.GithubRepo, batch.PRNumber, batch.ID, len(reviews))
+}
+
+// synthesizeBatchResults uses an LLM agent to combine multiple review outputs.
+func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []storage.BatchReviewResult, cfg *config.Config) (string, error) {
+	synthesisAgent, err := agent.GetAvailable(cfg.CI.SynthesisAgent)
+	if err != nil {
+		return "", fmt.Errorf("get synthesis agent: %w", err)
+	}
+
+	if cfg.CI.SynthesisModel != "" {
+		synthesisAgent = synthesisAgent.WithModel(cfg.CI.SynthesisModel)
+	}
+
+	prompt := buildSynthesisPrompt(reviews)
+
+	// Use empty commit SHA since this is synthesis, not a repo review
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	output, err := synthesisAgent.Review(ctx, "", "", prompt, nil)
+	if err != nil {
+		return "", fmt.Errorf("synthesis review: %w", err)
+	}
+
+	return formatSynthesizedComment(output, reviews), nil
+}
+
+// buildSynthesisPrompt creates the prompt for the synthesis agent.
+func buildSynthesisPrompt(reviews []storage.BatchReviewResult) string {
+	var b strings.Builder
+	b.WriteString(`You are combining multiple code review outputs into a single GitHub PR comment.
+Rules:
+- Deduplicate findings reported by multiple agents
+- Organize by severity (Critical > High > Medium > Low)
+- Preserve file/line references
+- If all agents agree code is clean, say so concisely
+- Start with a one-line summary verdict
+- Use markdown formatting
+- No preamble about yourself
+
+`)
+
+	for i, r := range reviews {
+		b.WriteString(fmt.Sprintf("---\n### Review %d: Agent=%s, Type=%s", i+1, r.Agent, r.ReviewType))
+		if r.Status == "failed" {
+			b.WriteString(fmt.Sprintf(" [FAILED: %s]", r.Error))
+		}
+		b.WriteString("\n")
+		if r.Output != "" {
+			b.WriteString(r.Output)
+		} else if r.Status == "failed" {
+			b.WriteString("(no output — review failed)")
+		}
+		b.WriteString("\n\n")
+	}
+
+	return b.String()
+}
+
+// formatSynthesizedComment wraps synthesized output with header and metadata.
+func formatSynthesizedComment(output string, reviews []storage.BatchReviewResult) string {
+	var b strings.Builder
+	b.WriteString("## roborev: Combined Review\n\n")
+	b.WriteString(output)
+
+	// Build metadata
+	agentSet := make(map[string]struct{})
+	typeSet := make(map[string]struct{})
+	for _, r := range reviews {
+		if r.Agent != "" {
+			agentSet[r.Agent] = struct{}{}
+		}
+		if r.ReviewType != "" {
+			typeSet[r.ReviewType] = struct{}{}
+		}
+	}
+	var agents, types []string
+	for a := range agentSet {
+		agents = append(agents, a)
+	}
+	for t := range typeSet {
+		types = append(types, t)
+	}
+
+	b.WriteString(fmt.Sprintf("\n\n---\n*Synthesized from %d reviews (agents: %s | types: %s)*\n",
+		len(reviews), strings.Join(agents, ", "), strings.Join(types, ", ")))
+
+	return b.String()
+}
+
+// formatRawBatchComment formats all review outputs as separate details blocks.
+// Used as a fallback when synthesis fails.
+func formatRawBatchComment(reviews []storage.BatchReviewResult) string {
+	var b strings.Builder
+	b.WriteString("## roborev: Combined Review\n\n")
+	b.WriteString("> Synthesis unavailable. Showing raw review outputs.\n\n")
+
+	for _, r := range reviews {
+		summary := fmt.Sprintf("Agent: %s | Type: %s | Status: %s", r.Agent, r.ReviewType, r.Status)
+		b.WriteString(fmt.Sprintf("<details>\n<summary>%s</summary>\n\n", summary))
+		if r.Status == "failed" {
+			b.WriteString(fmt.Sprintf("**Error:** %s\n", r.Error))
+		} else if r.Output != "" {
+			output := r.Output
+			const maxLen = 15000
+			if len(output) > maxLen {
+				output = output[:maxLen] + "\n\n...(truncated)"
+			}
+			b.WriteString(output)
+		} else {
+			b.WriteString("(no output)")
+		}
+		b.WriteString("\n\n</details>\n\n")
+	}
+
+	return b.String()
+}
+
+// formatAllFailedComment formats a comment when every job in a batch failed.
+func formatAllFailedComment(reviews []storage.BatchReviewResult) string {
+	var b strings.Builder
+	b.WriteString("## roborev: Review Failed\n\n")
+	b.WriteString("All review jobs in this batch failed.\n\n")
+
+	for _, r := range reviews {
+		b.WriteString(fmt.Sprintf("- **%s** (%s): %s\n", r.Agent, r.ReviewType, r.Error))
+	}
+
+	return b.String()
 }
 
 // formatPRComment formats a review result as a GitHub PR comment in markdown.

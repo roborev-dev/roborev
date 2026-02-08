@@ -168,4 +168,3 @@ func base64URLDecode(s string) ([]byte, error) {
 	// RawURLEncoding handles no-padding; also handle padded input
 	return base64.RawURLEncoding.DecodeString(s)
 }
-

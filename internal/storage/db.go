@@ -82,10 +82,32 @@ CREATE TABLE IF NOT EXISTS ci_pr_reviews (
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
+CREATE TABLE IF NOT EXISTS ci_pr_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  github_repo TEXT NOT NULL,
+  pr_number INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  total_jobs INTEGER NOT NULL,
+  completed_jobs INTEGER NOT NULL DEFAULT 0,
+  failed_jobs INTEGER NOT NULL DEFAULT 0,
+  synthesized INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(github_repo, pr_number, head_sha)
+);
+
+CREATE TABLE IF NOT EXISTS ci_pr_batch_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES ci_pr_batches(id),
+  job_id INTEGER NOT NULL REFERENCES review_jobs(id),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_repo ON review_jobs(repo_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_git_ref ON review_jobs(git_ref);
 CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
+CREATE INDEX IF NOT EXISTS idx_ci_pr_batch_jobs_batch ON ci_pr_batch_jobs(batch_id);
+CREATE INDEX IF NOT EXISTS idx_ci_pr_batch_jobs_job ON ci_pr_batch_jobs(job_id);
 `
 
 type DB struct {
