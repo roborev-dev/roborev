@@ -222,15 +222,15 @@ func (db *DB) DeleteCIBatch(batchID int64) error {
 	return err
 }
 
-// GetStaleBatches returns batches where all linked jobs are terminal
-// (done/failed/canceled) but the batch hasn't been synthesized and
-// completed_jobs+failed_jobs < total_jobs (i.e., events were missed).
+// GetStaleBatches returns unsynthesized batches where all linked jobs are
+// terminal (done/failed/canceled). This covers two cases:
+//   - Event-driven counters fell behind (dropped events, canceled jobs)
+//   - Counters are correct but comment posting failed
 func (db *DB) GetStaleBatches() ([]CIPRBatch, error) {
 	rows, err := db.Query(`
 		SELECT b.id, b.github_repo, b.pr_number, b.head_sha, b.total_jobs, b.completed_jobs, b.failed_jobs, b.synthesized
 		FROM ci_pr_batches b
 		WHERE b.synthesized = 0
-		AND b.completed_jobs + b.failed_jobs < b.total_jobs
 		AND NOT EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj
 			JOIN review_jobs j ON j.id = bj.job_id

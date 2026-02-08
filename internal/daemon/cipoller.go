@@ -219,9 +219,14 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return fmt.Errorf("find local repo for %s: %w", ghRepo, err)
 	}
 
-	// Fetch latest refs
+	// Fetch latest refs and the PR head (which may come from a fork
+	// and not be reachable via a normal fetch).
 	if err := gitFetchCtx(ctx, repo.RootPath); err != nil {
 		return fmt.Errorf("git fetch: %w", err)
+	}
+	if err := gitFetchPRHead(ctx, repo.RootPath, pr.Number); err != nil {
+		log.Printf("CI poller: warning: could not fetch PR head for %s#%d: %v", ghRepo, pr.Number, err)
+		// Continue anyway — head commit may already be available from a normal fetch
 	}
 
 	// Determine merge base
@@ -379,6 +384,17 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 // gitFetchCtx runs git fetch in the repo with context for cancellation.
 func gitFetchCtx(ctx context.Context, repoPath string) error {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %s", err, string(out))
+	}
+	return nil
+}
+
+// gitFetchPRHead fetches the head commit for a GitHub PR. This is needed
+// for fork-based PRs where the head commit isn't in the normal fetch refs.
+func gitFetchPRHead(ctx context.Context, repoPath string, prNumber int) error {
+	ref := fmt.Sprintf("pull/%d/head", prNumber)
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "origin", ref, "--quiet")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %s", err, string(out))
 	}
