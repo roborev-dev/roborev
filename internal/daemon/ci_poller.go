@@ -34,6 +34,15 @@ type CIPoller struct {
 	broadcaster   Broadcaster
 	tokenProvider *GitHubAppTokenProvider
 
+	// Test seams for mocking side effects (gh/git/LLM) in unit tests.
+	// Nil means use the real implementation.
+	listOpenPRsFn    func(context.Context, string) ([]ghPR, error)
+	gitFetchFn       func(context.Context, string) error
+	gitFetchPRHeadFn func(context.Context, string, int) error
+	mergeBaseFn      func(string, string, string) (string, error)
+	postPRCommentFn  func(string, int, string) error
+	synthesizeFn     func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
+
 	subID      int // broadcaster subscription ID for event listening
 	stopCh     chan struct{}
 	doneCh     chan struct{}
@@ -51,6 +60,12 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		cfgGetter:   cfgGetter,
 		broadcaster: broadcaster,
 	}
+	p.listOpenPRsFn = p.listOpenPRs
+	p.gitFetchFn = gitFetchCtx
+	p.gitFetchPRHeadFn = gitFetchPRHead
+	p.mergeBaseFn = gitpkg.GetMergeBase
+	p.postPRCommentFn = p.postPRComment
+	p.synthesizeFn = p.synthesizeBatchResults
 
 	cfg := cfgGetter.Config()
 	if cfg.CI.GitHubAppConfigured() {
@@ -181,7 +196,7 @@ func (p *CIPoller) poll(ctx context.Context) {
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
 	// List open PRs via gh CLI
-	prs, err := p.listOpenPRs(ctx, ghRepo)
+	prs, err := p.callListOpenPRs(ctx, ghRepo)
 	if err != nil {
 		return fmt.Errorf("list PRs: %w", err)
 	}
@@ -221,17 +236,17 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 	// Fetch latest refs and the PR head (which may come from a fork
 	// and not be reachable via a normal fetch).
-	if err := gitFetchCtx(ctx, repo.RootPath); err != nil {
+	if err := p.callGitFetch(ctx, repo.RootPath); err != nil {
 		return fmt.Errorf("git fetch: %w", err)
 	}
-	if err := gitFetchPRHead(ctx, repo.RootPath, pr.Number); err != nil {
+	if err := p.callGitFetchPRHead(ctx, repo.RootPath, pr.Number); err != nil {
 		log.Printf("CI poller: warning: could not fetch PR head for %s#%d: %v", ghRepo, pr.Number, err)
 		// Continue anyway — head commit may already be available from a normal fetch
 	}
 
 	// Determine merge base
 	baseRef := "origin/" + pr.BaseRefName
-	mergeBase, err := gitpkg.GetMergeBase(repo.RootPath, baseRef, pr.HeadRefOid)
+	mergeBase, err := p.callMergeBase(repo.RootPath, baseRef, pr.HeadRefOid)
 	if err != nil {
 		return fmt.Errorf("merge-base %s %s: %w", baseRef, pr.HeadRefOid, err)
 	}
@@ -464,7 +479,7 @@ func (p *CIPoller) handleReviewCompleted(event Event) {
 
 	// Format and post the comment
 	comment := formatPRComment(review, event.Verdict)
-	if err := p.postPRComment(ciReview.GithubRepo, ciReview.PRNumber, comment); err != nil {
+	if err := p.callPostPRComment(ciReview.GithubRepo, ciReview.PRNumber, comment); err != nil {
 		log.Printf("CI poller: error posting PR comment for %s#%d: %v",
 			ciReview.GithubRepo, ciReview.PRNumber, err)
 		return
@@ -607,7 +622,7 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	} else {
 		// Multiple jobs — try synthesis
 		cfg := p.cfgGetter.Config()
-		synthesized, err := p.synthesizeBatchResults(batch, reviews, cfg)
+		synthesized, err := p.callSynthesize(batch, reviews, cfg)
 		if err != nil {
 			log.Printf("CI poller: synthesis failed for batch %d: %v (falling back to raw)", batch.ID, err)
 			comment = formatRawBatchComment(reviews)
@@ -616,7 +631,7 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 		}
 	}
 
-	if err := p.postPRComment(batch.GithubRepo, batch.PRNumber, comment); err != nil {
+	if err := p.callPostPRComment(batch.GithubRepo, batch.PRNumber, comment); err != nil {
 		log.Printf("CI poller: error posting batch comment for %s#%d: %v",
 			batch.GithubRepo, batch.PRNumber, err)
 		// Release claim so reconciler can retry
@@ -664,6 +679,48 @@ func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []st
 	}
 
 	return formatSynthesizedComment(output, reviews), nil
+}
+
+func (p *CIPoller) callListOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
+	if p.listOpenPRsFn != nil {
+		return p.listOpenPRsFn(ctx, ghRepo)
+	}
+	return p.listOpenPRs(ctx, ghRepo)
+}
+
+func (p *CIPoller) callGitFetch(ctx context.Context, repoPath string) error {
+	if p.gitFetchFn != nil {
+		return p.gitFetchFn(ctx, repoPath)
+	}
+	return gitFetchCtx(ctx, repoPath)
+}
+
+func (p *CIPoller) callGitFetchPRHead(ctx context.Context, repoPath string, prNumber int) error {
+	if p.gitFetchPRHeadFn != nil {
+		return p.gitFetchPRHeadFn(ctx, repoPath, prNumber)
+	}
+	return gitFetchPRHead(ctx, repoPath, prNumber)
+}
+
+func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, error) {
+	if p.mergeBaseFn != nil {
+		return p.mergeBaseFn(repoPath, baseRef, headRef)
+	}
+	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
+}
+
+func (p *CIPoller) callPostPRComment(ghRepo string, prNumber int, body string) error {
+	if p.postPRCommentFn != nil {
+		return p.postPRCommentFn(ghRepo, prNumber, body)
+	}
+	return p.postPRComment(ghRepo, prNumber, body)
+}
+
+func (p *CIPoller) callSynthesize(batch *storage.CIPRBatch, reviews []storage.BatchReviewResult, cfg *config.Config) (string, error) {
+	if p.synthesizeFn != nil {
+		return p.synthesizeFn(batch, reviews, cfg)
+	}
+	return p.synthesizeBatchResults(batch, reviews, cfg)
 }
 
 // buildSynthesisPrompt creates the prompt for the synthesis agent.
