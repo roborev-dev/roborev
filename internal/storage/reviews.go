@@ -12,14 +12,14 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var addressed int
 	var job ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type,
+		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type,
 		       rp.root_path, rp.name, c.subject
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
@@ -28,7 +28,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		WHERE rv.job_id = ?
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
-		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr,
+		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
 		return nil, err
@@ -50,6 +50,9 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	}
 	if jobTypeStr.Valid {
 		job.JobType = jobTypeStr.String
+	}
+	if reviewTypeStr.Valid {
+		job.ReviewType = reviewTypeStr.String
 	}
 	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	if startedAt.Valid {
@@ -86,7 +89,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var addressed int
 	var job ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 
@@ -94,7 +97,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type,
+		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type,
 		       rp.root_path, rp.name, c.subject
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
@@ -105,7 +108,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		LIMIT 1
 	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
-		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr,
+		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
 		return nil, err
@@ -126,6 +129,9 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	}
 	if jobTypeStr.Valid {
 		job.JobType = jobTypeStr.String
+	}
+	if reviewTypeStr.Valid {
+		job.ReviewType = reviewTypeStr.String
 	}
 
 	r.CreatedAt = parseSQLiteTime(createdAt)

@@ -29,31 +29,39 @@ type Config struct {
 	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
 
 	// Workflow-specific agent/model configuration
-	ReviewAgent         string `toml:"review_agent"`
-	ReviewAgentFast     string `toml:"review_agent_fast"`
-	ReviewAgentStandard string `toml:"review_agent_standard"`
-	ReviewAgentThorough string `toml:"review_agent_thorough"`
-	RefineAgent         string `toml:"refine_agent"`
-	RefineAgentFast     string `toml:"refine_agent_fast"`
-	RefineAgentStandard string `toml:"refine_agent_standard"`
-	RefineAgentThorough string `toml:"refine_agent_thorough"`
-	ReviewModel         string `toml:"review_model"`
-	ReviewModelFast     string `toml:"review_model_fast"`
-	ReviewModelStandard string `toml:"review_model_standard"`
-	ReviewModelThorough string `toml:"review_model_thorough"`
-	RefineModel         string `toml:"refine_model"`
-	RefineModelFast     string `toml:"refine_model_fast"`
-	RefineModelStandard string `toml:"refine_model_standard"`
-	RefineModelThorough string `toml:"refine_model_thorough"`
-	FixAgent            string `toml:"fix_agent"`
-	FixAgentFast        string `toml:"fix_agent_fast"`
-	FixAgentStandard    string `toml:"fix_agent_standard"`
-	FixAgentThorough    string `toml:"fix_agent_thorough"`
-	FixModel            string `toml:"fix_model"`
-	FixModelFast        string `toml:"fix_model_fast"`
-	FixModelStandard    string `toml:"fix_model_standard"`
-	FixModelThorough    string `toml:"fix_model_thorough"`
-	AllowUnsafeAgents   *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
+	ReviewAgent           string `toml:"review_agent"`
+	ReviewAgentFast       string `toml:"review_agent_fast"`
+	ReviewAgentStandard   string `toml:"review_agent_standard"`
+	ReviewAgentThorough   string `toml:"review_agent_thorough"`
+	RefineAgent           string `toml:"refine_agent"`
+	RefineAgentFast       string `toml:"refine_agent_fast"`
+	RefineAgentStandard   string `toml:"refine_agent_standard"`
+	RefineAgentThorough   string `toml:"refine_agent_thorough"`
+	ReviewModel           string `toml:"review_model"`
+	ReviewModelFast       string `toml:"review_model_fast"`
+	ReviewModelStandard   string `toml:"review_model_standard"`
+	ReviewModelThorough   string `toml:"review_model_thorough"`
+	RefineModel           string `toml:"refine_model"`
+	RefineModelFast       string `toml:"refine_model_fast"`
+	RefineModelStandard   string `toml:"refine_model_standard"`
+	RefineModelThorough   string `toml:"refine_model_thorough"`
+	FixAgent              string `toml:"fix_agent"`
+	FixAgentFast          string `toml:"fix_agent_fast"`
+	FixAgentStandard      string `toml:"fix_agent_standard"`
+	FixAgentThorough      string `toml:"fix_agent_thorough"`
+	FixModel              string `toml:"fix_model"`
+	FixModelFast          string `toml:"fix_model_fast"`
+	FixModelStandard      string `toml:"fix_model_standard"`
+	FixModelThorough      string `toml:"fix_model_thorough"`
+	SecurityAgent         string `toml:"security_agent"`
+	SecurityAgentFast     string `toml:"security_agent_fast"`
+	SecurityAgentStandard string `toml:"security_agent_standard"`
+	SecurityAgentThorough string `toml:"security_agent_thorough"`
+	SecurityModel         string `toml:"security_model"`
+	SecurityModelFast     string `toml:"security_model_fast"`
+	SecurityModelStandard string `toml:"security_model_standard"`
+	SecurityModelThorough string `toml:"security_model_thorough"`
+	AllowUnsafeAgents     *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
@@ -161,30 +169,38 @@ type RepoConfig struct {
 	FixReasoning       string   `toml:"fix_reasoning"`    // Reasoning level for fix: thorough, standard, fast
 
 	// Workflow-specific agent/model configuration
-	ReviewAgent         string `toml:"review_agent"`
-	ReviewAgentFast     string `toml:"review_agent_fast"`
-	ReviewAgentStandard string `toml:"review_agent_standard"`
-	ReviewAgentThorough string `toml:"review_agent_thorough"`
-	RefineAgent         string `toml:"refine_agent"`
-	RefineAgentFast     string `toml:"refine_agent_fast"`
-	RefineAgentStandard string `toml:"refine_agent_standard"`
-	RefineAgentThorough string `toml:"refine_agent_thorough"`
-	ReviewModel         string `toml:"review_model"`
-	ReviewModelFast     string `toml:"review_model_fast"`
-	ReviewModelStandard string `toml:"review_model_standard"`
-	ReviewModelThorough string `toml:"review_model_thorough"`
-	RefineModel         string `toml:"refine_model"`
-	RefineModelFast     string `toml:"refine_model_fast"`
-	RefineModelStandard string `toml:"refine_model_standard"`
-	RefineModelThorough string `toml:"refine_model_thorough"`
-	FixAgent            string `toml:"fix_agent"`
-	FixAgentFast        string `toml:"fix_agent_fast"`
-	FixAgentStandard    string `toml:"fix_agent_standard"`
-	FixAgentThorough    string `toml:"fix_agent_thorough"`
-	FixModel            string `toml:"fix_model"`
-	FixModelFast        string `toml:"fix_model_fast"`
-	FixModelStandard    string `toml:"fix_model_standard"`
-	FixModelThorough    string `toml:"fix_model_thorough"`
+	ReviewAgent           string `toml:"review_agent"`
+	ReviewAgentFast       string `toml:"review_agent_fast"`
+	ReviewAgentStandard   string `toml:"review_agent_standard"`
+	ReviewAgentThorough   string `toml:"review_agent_thorough"`
+	RefineAgent           string `toml:"refine_agent"`
+	RefineAgentFast       string `toml:"refine_agent_fast"`
+	RefineAgentStandard   string `toml:"refine_agent_standard"`
+	RefineAgentThorough   string `toml:"refine_agent_thorough"`
+	ReviewModel           string `toml:"review_model"`
+	ReviewModelFast       string `toml:"review_model_fast"`
+	ReviewModelStandard   string `toml:"review_model_standard"`
+	ReviewModelThorough   string `toml:"review_model_thorough"`
+	RefineModel           string `toml:"refine_model"`
+	RefineModelFast       string `toml:"refine_model_fast"`
+	RefineModelStandard   string `toml:"refine_model_standard"`
+	RefineModelThorough   string `toml:"refine_model_thorough"`
+	FixAgent              string `toml:"fix_agent"`
+	FixAgentFast          string `toml:"fix_agent_fast"`
+	FixAgentStandard      string `toml:"fix_agent_standard"`
+	FixAgentThorough      string `toml:"fix_agent_thorough"`
+	FixModel              string `toml:"fix_model"`
+	FixModelFast          string `toml:"fix_model_fast"`
+	FixModelStandard      string `toml:"fix_model_standard"`
+	FixModelThorough      string `toml:"fix_model_thorough"`
+	SecurityAgent         string `toml:"security_agent"`
+	SecurityAgentFast     string `toml:"security_agent_fast"`
+	SecurityAgentStandard string `toml:"security_agent_standard"`
+	SecurityAgentThorough string `toml:"security_agent_thorough"`
+	SecurityModel         string `toml:"security_model"`
+	SecurityModelFast     string `toml:"security_model_fast"`
+	SecurityModelStandard string `toml:"security_model_standard"`
+	SecurityModelThorough string `toml:"security_model_thorough"`
 
 	// Hooks configuration (per-repo)
 	Hooks []HookConfig `toml:"hooks"`
@@ -515,6 +531,14 @@ func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) stri
 			v = r.FixAgentThorough
 		case "fix_":
 			v = r.FixAgent
+		case "security_fast":
+			v = r.SecurityAgentFast
+		case "security_standard":
+			v = r.SecurityAgentStandard
+		case "security_thorough":
+			v = r.SecurityAgentThorough
+		case "security_":
+			v = r.SecurityAgent
 		}
 	} else {
 		switch workflow + "_" + level {
@@ -542,6 +566,14 @@ func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) stri
 			v = r.FixModelThorough
 		case "fix_":
 			v = r.FixModel
+		case "security_fast":
+			v = r.SecurityModelFast
+		case "security_standard":
+			v = r.SecurityModelStandard
+		case "security_thorough":
+			v = r.SecurityModelThorough
+		case "security_":
+			v = r.SecurityModel
 		}
 	}
 	return strings.TrimSpace(v)
@@ -578,6 +610,14 @@ func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string
 			v = g.FixAgentThorough
 		case "fix_":
 			v = g.FixAgent
+		case "security_fast":
+			v = g.SecurityAgentFast
+		case "security_standard":
+			v = g.SecurityAgentStandard
+		case "security_thorough":
+			v = g.SecurityAgentThorough
+		case "security_":
+			v = g.SecurityAgent
 		}
 	} else {
 		switch workflow + "_" + level {
@@ -605,6 +645,14 @@ func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string
 			v = g.FixModelThorough
 		case "fix_":
 			v = g.FixModel
+		case "security_fast":
+			v = g.SecurityModelFast
+		case "security_standard":
+			v = g.SecurityModelStandard
+		case "security_thorough":
+			v = g.SecurityModelThorough
+		case "security_":
+			v = g.SecurityModel
 		}
 	}
 	return strings.TrimSpace(v)

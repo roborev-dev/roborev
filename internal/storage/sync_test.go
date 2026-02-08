@@ -114,7 +114,7 @@ func TestBackfillSourceMachineID(t *testing.T) {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
 
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test", "", "thorough")
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test", Reasoning: "thorough"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -617,11 +617,11 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 		}
 
 		// Create two jobs with UUIDs
-		job1, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test", "", "thorough")
+		job1, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test", Reasoning: "thorough"})
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
-		job2, err := db.EnqueueJob(repo.ID, commit.ID, "def456", "", "test", "", "quick")
+		job2, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "def456", Agent: "test", Reasoning: "quick"})
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -1204,7 +1204,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 	}
 
 	// Create a job and complete it
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "sync-test-sha", "", "test", "", "thorough")
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "sync-test-sha", Agent: "test", Reasoning: "thorough"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -1281,7 +1281,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		job2, err := db.EnqueueJob(repo.ID, commit2.ID, "mixed-format-sha", "", "test", "", "thorough")
+		job2, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "mixed-format-sha", Agent: "test", Reasoning: "thorough"})
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -1367,7 +1367,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		job3, err := tzDB.EnqueueJob(tzRepo.ID, commit3.ID, "tz-test-sha", "", "test", "", "thorough")
+		job3, err := tzDB.EnqueueJob(EnqueueOpts{RepoID: tzRepo.ID, CommitID: commit3.ID, GitRef: "tz-test-sha", Agent: "test", Reasoning: "thorough"})
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -1440,7 +1440,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "review-sync-sha", "", "test", "", "thorough")
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "review-sync-sha", Agent: "test", Reasoning: "thorough"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -1595,7 +1595,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		tzJob, err := tzDB.EnqueueJob(tzRepo.ID, tzCommit.ID, "tz-review-sha", "", "test", "", "thorough")
+		tzJob, err := tzDB.EnqueueJob(EnqueueOpts{RepoID: tzRepo.ID, CommitID: tzCommit.ID, GitRef: "tz-review-sha", Agent: "test", Reasoning: "thorough"})
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -1683,7 +1683,7 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	}
 
 	// Create a job-based response (should be synced)
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "legacy-resp-sha", "", "test", "", "thorough")
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "legacy-resp-sha", Agent: "test", Reasoning: "thorough"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -1790,7 +1790,7 @@ func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "parent-job-sha", "", "test", "", "thorough")
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "parent-job-sha", Agent: "test", Reasoning: "thorough"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -2082,7 +2082,7 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 	if err != nil {
 		h.t.Fatalf("Failed to create commit: %v", err)
 	}
-	job, err := h.db.EnqueueJob(h.repo.ID, commit.ID, sha, "", "test", "", "thorough")
+	job, err := h.db.EnqueueJob(EnqueueOpts{RepoID: h.repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", Reasoning: "thorough"})
 	if err != nil {
 		h.t.Fatalf("Failed to enqueue job: %v", err)
 	}

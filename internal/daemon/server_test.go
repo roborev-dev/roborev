@@ -200,7 +200,7 @@ func TestHandleListRepos(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", ""); err != nil {
+		if _, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"}); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -212,7 +212,7 @@ func TestHandleListRepos(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", ""); err != nil {
+		if _, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"}); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -278,12 +278,12 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		sha := "repo1sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
+		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	}
 	for i := 0; i < 2; i++ {
 		sha := "repo2sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
+		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	}
 
 	// Set branches: repo1 jobs 1,2 = main, job 3 = feature; repo2 jobs 4,5 = main
@@ -363,12 +363,12 @@ func TestHandleListBranches(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		sha := "repo1sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", "")
+		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	}
 	for i := 0; i < 2; i++ {
 		sha := "repo2sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", "")
+		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	}
 
 	// Set branches: jobs 1,2,4 = main, job 3 = feature, job 5 = no branch
@@ -504,7 +504,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo1.ID, commit.ID, sha, "", "test", "", ""); err != nil {
+		if _, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"}); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -516,7 +516,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		if _, err := db.EnqueueJob(repo2.ID, commit.ID, sha, "", "test", "", ""); err != nil {
+		if _, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"}); err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 	}
@@ -777,7 +777,7 @@ func TestHandleCancelJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "canceltest", "", "test", "", "")
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "canceltest", Agent: "test"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -852,7 +852,7 @@ func TestHandleCancelJob(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		job2, err := db.EnqueueJob(repo.ID, commit2.ID, "cancelrunning", "", "test", "", "")
+		job2, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "cancelrunning", Agent: "test"})
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -894,7 +894,7 @@ func TestListJobsPagination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
-		_, err = db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("sha%d", i), "", "test", "", "")
+		_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: fmt.Sprintf("sha%d", i), Agent: "test"})
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -1016,7 +1016,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	refs := []string{"abc123", "def456", "abc123..def456"}
 	for _, ref := range refs {
 		commit, _ := db.GetOrCreateCommit(repo.ID, ref, "A", "S", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, ref, "", "codex", "", "")
+		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: ref, Agent: "codex"})
 	}
 
 	t.Run("git_ref filter returns matching job", func(t *testing.T) {
@@ -1081,12 +1081,12 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo("/tmp/repo-addr-filter")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "aaa", "A", "S", time.Now())
-	job1, _ := db.EnqueueJob(repo.ID, commit.ID, "aaa", "main", "codex", "", "")
+	job1, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "aaa", Branch: "main", Agent: "codex"})
 	db.ClaimJob("w")
 	db.CompleteJob(job1.ID, "codex", "", "output1")
 
 	commit2, _ := db.GetOrCreateCommit(repo.ID, "bbb", "A", "S2", time.Now())
-	job2, _ := db.EnqueueJob(repo.ID, commit2.ID, "bbb", "main", "codex", "", "")
+	job2, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "bbb", Branch: "main", Agent: "codex"})
 	db.ClaimJob("w")
 	db.CompleteJob(job2.ID, "codex", "", "output2")
 	db.MarkReviewAddressedByJobID(job2.ID, true)
@@ -1588,7 +1588,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun failed job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-failed", "", "test", "", "")
+		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-failed", Agent: "test"})
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "some error")
 
@@ -1612,7 +1612,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun canceled job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-canceled", "", "test", "", "")
+		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-canceled", Agent: "test"})
 		db.CancelJob(job.ID)
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
@@ -1635,7 +1635,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun done job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-done", "", "test", "", "")
+		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-done", Agent: "test"})
 		// Claim and complete job
 		var claimed *storage.ReviewJob
 		for {
@@ -1670,7 +1670,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(repo.ID, commit.ID, "rerun-queued", "", "test", "", "")
+		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-queued", Agent: "test"})
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()
@@ -2281,7 +2281,7 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a job
-			job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
+			job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test-agent"})
 			if err != nil {
 				t.Fatalf("EnqueueJob failed: %v", err)
 			}
@@ -2355,7 +2355,7 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test-agent"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -2439,7 +2439,7 @@ func TestHandleJobOutput_PollingRunningJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test-agent"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -2496,7 +2496,7 @@ func TestHandleJobOutput_PollingCompletedJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test-agent"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -2546,7 +2546,7 @@ func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := db.EnqueueJob(repo.ID, commit.ID, "abc123", "", "test-agent", "", "")
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test-agent"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}

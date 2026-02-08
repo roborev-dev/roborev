@@ -200,7 +200,7 @@ func CreateTestJobs(t *testing.T, db *storage.DB, repo *storage.Repo, count int,
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
 		}
 
-		job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "", agent, "", "")
+		job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Agent: agent})
 		if err != nil {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
@@ -220,7 +220,7 @@ func CreateTestJobWithSHA(t *testing.T, db *storage.DB, repo *storage.Repo, sha,
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
 
-	job, err := db.EnqueueJob(repo.ID, commit.ID, sha, "", agent, "", "")
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Agent: agent})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -336,7 +336,7 @@ func CreateCompletedReview(t *testing.T, db *storage.DB, repoID int64, sha, agen
 		t.Fatalf("Failed to create commit: %v", err)
 	}
 
-	job, err := db.EnqueueJob(repoID, commit.ID, sha, "", agent, "", "")
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repoID, CommitID: commit.ID, GitRef: sha, Agent: agent})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}

@@ -183,7 +183,7 @@ func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			job, err := db.EnqueueRangeJob(repo.ID, tt.gitRef, "", "codex", tt.model, "thorough")
+			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: tt.gitRef, Agent: "codex", Model: tt.model, Reasoning: "thorough"})
 			if err != nil {
 				t.Fatalf("EnqueueRangeJob failed: %v", err)
 			}

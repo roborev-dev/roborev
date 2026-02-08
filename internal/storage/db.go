@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   retry_count INTEGER NOT NULL DEFAULT 0,
   diff_content TEXT,
   output_prefix TEXT,
-  job_type TEXT NOT NULL DEFAULT 'review'
+  job_type TEXT NOT NULL DEFAULT 'review',
+  review_type TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -522,6 +523,18 @@ func (db *DB) migrate() error {
 		_, err = db.Exec(`UPDATE review_jobs SET job_type = 'task' WHERE commit_id IS NULL AND diff_content IS NULL AND git_ref != 'dirty' AND git_ref NOT LIKE '%..%' AND git_ref != '' AND job_type = 'review'`)
 		if err != nil {
 			return fmt.Errorf("backfill job_type task: %w", err)
+		}
+	}
+
+	// Migration: add review_type column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'review_type'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check review_type column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN review_type TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("add review_type column: %w", err)
 		}
 	}
 

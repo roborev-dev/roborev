@@ -133,7 +133,7 @@ func TestBuildPromptWithPreviousReviews(t *testing.T) {
 
 	// Build prompt with 5 previous commits context
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 5, "")
+	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 5, "", "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 
 	// Build prompt for commit 6 with context from previous 5 commits
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 5, "")
+	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 5, "", "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestBuildPromptWithNoParentCommits(t *testing.T) {
 
 	// Build prompt - should work even with no parent commits
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(tmpDir, sha, 0, 5, "")
+	prompt, err := builder.Build(tmpDir, sha, 0, 5, "", "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestPromptContainsExpectedFormat(t *testing.T) {
 	testutil.CreateCompletedReview(t, db, repo.ID, commits[4], "test", "Found 1 issue:\n1. pkg/cache/store.go:112 - Race condition")
 
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 3, "")
+	prompt, err := builder.Build(repoPath, commits[5], repo.ID, 3, "", "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestBuildPromptWithPreviousAttempts(t *testing.T) {
 
 	// Build prompt - should include previous attempts for the same commit
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, targetSHA, repo.ID, 0, "")
+	prompt, err := builder.Build(repoPath, targetSHA, repo.ID, 0, "", "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -514,7 +514,7 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 
 	// Build prompt for a new review of the same commit
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(repoPath, targetSHA, repo.ID, 0, "")
+	prompt, err := builder.Build(repoPath, targetSHA, repo.ID, 0, "", "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}

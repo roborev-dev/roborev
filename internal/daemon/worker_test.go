@@ -54,7 +54,7 @@ func (c *workerTestContext) createJob(t *testing.T, sha string) *storage.ReviewJ
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := c.DB.EnqueueJob(c.Repo.ID, commit.ID, sha, "", "test", "", "")
+	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		sha := "concurrentsha" + string(rune('0'+i))
 		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(repo.ID, commit.ID, sha, "", "test", "", "")
+		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	}
 
 	broadcaster := NewBroadcaster()

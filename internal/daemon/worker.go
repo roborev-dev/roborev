@@ -298,10 +298,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		err = fmt.Errorf("task job %d has no stored prompt (git_ref=%q); restart the daemon with 'roborev daemon restart'", job.ID, job.GitRef)
 	} else if job.DiffContent != nil {
 		// Dirty job - use pre-captured diff
-		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent)
+		reviewPrompt, err = wp.promptBuilder.BuildDirty(job.RepoPath, *job.DiffContent, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	} else {
 		// Normal job - build prompt from git ref
-		reviewPrompt, err = wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent)
+		reviewPrompt, err = wp.promptBuilder.Build(job.RepoPath, job.GitRef, job.RepoID, cfg.ReviewContextCount, job.Agent, job.ReviewType)
 	}
 	if err != nil {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)

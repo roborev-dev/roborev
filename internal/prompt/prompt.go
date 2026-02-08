@@ -122,21 +122,27 @@ func NewBuilder(db *storage.DB) *Builder {
 	return &Builder{db: db}
 }
 
-// Build constructs a review prompt for a commit or range with context from previous reviews
-func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int, agentName string) (string, error) {
+// Build constructs a review prompt for a commit or range with context from previous reviews.
+// reviewType selects the system prompt variant (e.g., "security"); empty or "general" uses the default.
+func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
 	if git.IsRange(gitRef) {
-		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName)
+		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType)
 	}
-	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName)
+	return b.buildSinglePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType)
 }
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
 // The diff is provided directly since it was captured at enqueue time.
-func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int, agentName string) (string, error) {
+// reviewType selects the system prompt variant (e.g., "security"); empty or "general" uses the default.
+func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
 	var sb strings.Builder
 
 	// Start with system prompt for dirty changes
-	sb.WriteString(GetSystemPrompt(agentName, "dirty"))
+	promptType := "dirty"
+	if reviewType != "" && reviewType != "general" {
+		promptType = reviewType
+	}
+	sb.WriteString(GetSystemPrompt(agentName, promptType))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -191,11 +197,15 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 }
 
 // buildSinglePrompt constructs a prompt for a single commit
-func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName string) (string, error) {
+func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
 	var sb strings.Builder
 
 	// Start with system prompt
-	sb.WriteString(GetSystemPrompt(agentName, "review"))
+	promptType := "review"
+	if reviewType != "" && reviewType != "general" {
+		promptType = reviewType
+	}
+	sb.WriteString(GetSystemPrompt(agentName, promptType))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -268,11 +278,15 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 }
 
 // buildRangePrompt constructs a prompt for a commit range
-func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName string) (string, error) {
+func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
 	var sb strings.Builder
 
 	// Start with system prompt for ranges
-	sb.WriteString(GetSystemPrompt(agentName, "range"))
+	promptType := "range"
+	if reviewType != "" && reviewType != "general" {
+		promptType = reviewType
+	}
+	sb.WriteString(GetSystemPrompt(agentName, promptType))
 	sb.WriteString("\n")
 
 	// Add project-specific guidelines if configured
@@ -461,8 +475,31 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 // BuildSimple constructs a simpler prompt without database context
 func BuildSimple(repoPath, sha, agentName string) (string, error) {
 	b := &Builder{}
-	return b.Build(repoPath, sha, 0, 0, agentName)
+	return b.Build(repoPath, sha, 0, 0, agentName, "")
 }
+
+// SystemPromptSecurity is the instruction for security-focused reviews
+const SystemPromptSecurity = `You are a security code reviewer. Analyze the code changes shown below with a security-first mindset. Focus on:
+
+1. **Injection vulnerabilities**: SQL injection, command injection, XSS, template injection, LDAP injection, header injection
+2. **Authentication & authorization**: Missing auth checks, privilege escalation, insecure session handling, broken access control
+3. **Credential exposure**: Hardcoded secrets, API keys, passwords, tokens in source code or logs
+4. **Path traversal**: Unsanitized file paths, directory traversal via user input, symlink attacks
+5. **Unsafe patterns**: Unsafe deserialization, insecure random number generation, missing input validation, buffer overflows
+6. **Dependency concerns**: Known vulnerable dependencies, typosquatting risks, pinning issues
+7. **CI/CD security**: Workflow injection via pull_request_target, script injection via untrusted inputs, excessive permissions
+8. **Data handling**: Sensitive data in logs, missing encryption, insecure data storage, PII exposure
+9. **Concurrency issues**: Race conditions leading to security bypasses, TOCTOU vulnerabilities
+10. **Error handling**: Information leakage via error messages, missing error checks on security-critical operations
+
+For each finding, provide:
+- Severity (critical/high/medium/low)
+- File and line reference
+- Description of the vulnerability
+- Suggested remediation
+
+If you find no security issues, state "No issues found." after the summary.
+Do not report code quality or style issues unless they have security implications.`
 
 // SystemPromptAddress is the instruction for addressing review findings
 const SystemPromptAddress = `You are a code assistant. Your task is to address the findings from a code review.

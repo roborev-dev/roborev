@@ -595,6 +595,7 @@ func reviewCmd() *cobra.Command {
 		agent      string
 		model      string
 		reasoning  string
+		reviewType string
 		fast       bool
 		quiet      bool
 		dirty      bool
@@ -621,6 +622,8 @@ Examples:
   roborev review --branch --base develop  # Review branch against develop
   roborev review --since HEAD~5  # Review last 5 commits
   roborev review --since abc123  # Review commits since abc123 (exclusive)
+  roborev review --type security   # Security-focused review of HEAD
+  roborev review --branch --type security  # Security review of branch
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// In quiet mode, suppress cobra's error output (hook uses &, so exit code doesn't matter)
@@ -676,6 +679,11 @@ Examples:
 			}
 			if since != "" && len(args) > 0 {
 				return fmt.Errorf("cannot specify commits with --since")
+			}
+
+			// Validate --type flag
+			if reviewType != "" && reviewType != "security" {
+				return fmt.Errorf("invalid --type %q (valid: security)", reviewType)
 			}
 
 			var gitRef string
@@ -794,6 +802,7 @@ Examples:
 				"agent":        agent,
 				"model":        model,
 				"reasoning":    reasoning,
+				"review_type":  reviewType,
 				"diff_content": diffContent,
 			})
 
@@ -863,6 +872,7 @@ Examples:
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
 	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
+	cmd.Flags().StringVar(&reviewType, "type", "", "review type (e.g., security) — changes system prompt")
 
 	return cmd
 }
@@ -911,9 +921,9 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	var reviewPrompt string
 	if diffContent != "" {
 		// Dirty review
-		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name())
+		reviewPrompt, err = prompt.NewBuilder(nil).BuildDirty(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name(), "")
 	} else {
-		reviewPrompt, err = prompt.NewBuilder(nil).Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name())
+		reviewPrompt, err = prompt.NewBuilder(nil).Build(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name(), "")
 	}
 	if err != nil {
 		return fmt.Errorf("build prompt: %w", err)

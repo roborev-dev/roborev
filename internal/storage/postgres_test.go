@@ -841,7 +841,7 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := sqliteDB.EnqueueJob(repo.ID, commit.ID, "test-sha", "", "test", "", "thorough")
+	job, err := sqliteDB.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "test-sha", Agent: "test", Reasoning: "thorough"})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}

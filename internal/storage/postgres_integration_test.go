@@ -140,7 +140,7 @@ func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt
 	if err != nil {
 		return nil, nil, fmt.Errorf("GetOrCreateCommit failed: %w", err)
 	}
-	job, err := db.EnqueueJob(repoID, commit.ID, sha, "", "test", "", "")
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	if err != nil {
 		return nil, nil, fmt.Errorf("EnqueueJob failed: %w", err)
 	}
@@ -346,7 +346,7 @@ func TestIntegration_FinalPush(t *testing.T) {
 	repo, _ := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush.git")
 
 	for i := 0; i < 150; i++ {
-		job, err := db.EnqueueRangeJob(repo.ID, "HEAD", "", "test", "", "")
+		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 		if err != nil {
 			t.Fatalf("EnqueueRangeJob %d failed: %v", i, err)
 		}
@@ -1045,7 +1045,7 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create commit %d: %v", i, err)
 		}
-		job, err := db.EnqueueJob(repo.ID, commit.ID, fmt.Sprintf("commit%03d", i), "", "test", "", "")
+		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: fmt.Sprintf("commit%03d", i), Agent: "test"})
 		if err != nil {
 			t.Fatalf("Failed to enqueue job %d: %v", i, err)
 		}

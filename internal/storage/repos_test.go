@@ -15,7 +15,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	t.Run("creates job with custom prompt", func(t *testing.T) {
 		customPrompt := "Explain the architecture of this codebase"
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID:    repo.ID,
 			Agent:     "claude-code",
 			Reasoning: "thorough",
@@ -40,7 +40,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("defaults reasoning to thorough", func(t *testing.T) {
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID: repo.ID,
 			Agent:  "codex",
 			Prompt: "test prompt",
@@ -63,7 +63,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		customPrompt := "Find security issues in the codebase"
-		mustEnqueuePromptJob(t, db, PromptJobOptions{
+		mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID:    repo.ID,
 			Agent:     "claude-code",
 			Reasoning: "standard",
@@ -87,7 +87,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		repo := createRepo(t, db, "/tmp/agentic-test")
 
 		// Enqueue with agentic=true
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID:  repo.ID,
 			Agent:   "claude-code",
 			Prompt:  "Test agentic prompt",
@@ -123,7 +123,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		repo := createRepo(t, db, "/tmp/agentic-default-test")
 
 		// Enqueue with agentic=false
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID:    repo.ID,
 			Agent:     "codex",
 			Reasoning: "standard",
@@ -149,7 +149,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		repo := createRepo(t, db, "/tmp/output-prefix-test")
 
 		outputPrefix := "## Test Analysis\n\n**Files:**\n- file1.go\n- file2.go\n\n---\n\n"
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID:       repo.ID,
 			Agent:        "test",
 			Prompt:       "Test prompt",
@@ -183,7 +183,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 		repo := createRepo(t, db, "/tmp/empty-prefix-test")
 
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID:       repo.ID,
 			Agent:        "test",
 			Prompt:       "Test prompt",
@@ -216,7 +216,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 		repo := createRepo(t, db, "/tmp/label-test")
 
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID: repo.ID,
 			Agent:  "test",
 			Prompt: "Test prompt",
@@ -250,7 +250,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 		repo := createRepo(t, db, "/tmp/empty-label-test")
 
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID: repo.ID,
 			Agent:  "test",
 			Prompt: "Test prompt",
@@ -268,7 +268,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 		repo := createRepo(t, db, "/tmp/run-label-test")
 
-		job := mustEnqueuePromptJob(t, db, PromptJobOptions{
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID: repo.ID,
 			Agent:  "test",
 			Prompt: "Test prompt",
@@ -588,7 +588,7 @@ func TestGetRepoStats(t *testing.T) {
 		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
 
 		// Create a prompt job with output that contains verdict-like text
-		promptJob := mustEnqueuePromptJob(t, db, PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
+		promptJob := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		claimJob(t, db, "worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
@@ -901,7 +901,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		repo := createRepo(t, db, "/tmp/verdict-prompt-test")
 
 		// Create a prompt job and complete it with output containing verdict-like text
-		promptJob := mustEnqueuePromptJob(t, db, PromptJobOptions{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
+		promptJob := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		claimJob(t, db, "worker-1")
 		// Output that would normally be parsed as FAIL
 		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")
