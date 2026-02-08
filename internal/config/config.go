@@ -160,16 +160,26 @@ func (c *CIConfig) GitHubAppConfigured() bool {
 }
 
 // InstallationIDForOwner returns the installation ID for a GitHub owner.
-// Checks the installations map first (skipping non-positive values),
+// Checks the normalized installations map first (skipping non-positive values),
 // then falls back to the singular field. Owner comparison is case-insensitive.
 func (c *CIConfig) InstallationIDForOwner(owner string) int64 {
-	owner = strings.ToLower(owner)
-	for k, id := range c.GitHubAppInstallations {
-		if strings.ToLower(k) == owner && id > 0 {
-			return id
-		}
+	if id, ok := c.GitHubAppInstallations[strings.ToLower(owner)]; ok && id > 0 {
+		return id
 	}
 	return c.GitHubAppInstallationID
+}
+
+// NormalizeInstallations lowercases all keys in GitHubAppInstallations
+// so lookups are case-insensitive via direct map access.
+func (c *CIConfig) NormalizeInstallations() {
+	if len(c.GitHubAppInstallations) == 0 {
+		return
+	}
+	normalized := make(map[string]int64, len(c.GitHubAppInstallations))
+	for k, v := range c.GitHubAppInstallations {
+		normalized[strings.ToLower(k)] = v
+	}
+	c.GitHubAppInstallations = normalized
 }
 
 // GitHubAppPrivateKeyResolved expands env vars in the private key value,
@@ -377,6 +387,8 @@ func LoadGlobalFrom(path string) (*Config, error) {
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		return nil, err
 	}
+
+	cfg.CI.NormalizeInstallations()
 
 	return cfg, nil
 }

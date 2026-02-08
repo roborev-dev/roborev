@@ -1402,17 +1402,86 @@ func TestInstallationIDForOwner(t *testing.T) {
 		}
 	})
 
-	t.Run("case-insensitive lookup", func(t *testing.T) {
+	t.Run("case-insensitive lookup after normalization", func(t *testing.T) {
 		ci := CIConfig{
-			GitHubAppInstallations: map[string]int64{"wesm": 111111},
+			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
 		}
-		if got := ci.InstallationIDForOwner("Wesm"); got != 111111 {
-			t.Errorf("got %d, want 111111 (case-insensitive)", got)
+		ci.NormalizeInstallations()
+		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
+			t.Errorf("got %d, want 111111", got)
 		}
 		if got := ci.InstallationIDForOwner("WESM"); got != 111111 {
-			t.Errorf("got %d, want 111111 (case-insensitive)", got)
+			t.Errorf("got %d, want 111111", got)
+		}
+		if got := ci.InstallationIDForOwner("roborev-dev"); got != 222222 {
+			t.Errorf("got %d, want 222222", got)
 		}
 	})
+}
+
+func TestNormalizeInstallations(t *testing.T) {
+	t.Run("lowercases keys", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
+		}
+		ci.NormalizeInstallations()
+		if _, ok := ci.GitHubAppInstallations["wesm"]; !ok {
+			t.Error("expected lowercase key 'wesm' after normalization")
+		}
+		if _, ok := ci.GitHubAppInstallations["roborev-dev"]; !ok {
+			t.Error("expected lowercase key 'roborev-dev' after normalization")
+		}
+		if _, ok := ci.GitHubAppInstallations["Wesm"]; ok {
+			t.Error("original mixed-case key 'Wesm' should not exist after normalization")
+		}
+	})
+
+	t.Run("noop on nil map", func(t *testing.T) {
+		ci := CIConfig{}
+		ci.NormalizeInstallations() // should not panic
+	})
+
+	t.Run("case-colliding keys last-write wins", func(t *testing.T) {
+		ci := CIConfig{
+			GitHubAppInstallations: map[string]int64{"wesm": 111111, "Wesm": 222222},
+		}
+		ci.NormalizeInstallations()
+		// Both collapse to "wesm" — one wins (deterministic since both overwrite same key)
+		if _, ok := ci.GitHubAppInstallations["wesm"]; !ok {
+			t.Error("expected key 'wesm' after normalization")
+		}
+		if len(ci.GitHubAppInstallations) != 1 {
+			t.Errorf("expected 1 key after collapsing, got %d", len(ci.GitHubAppInstallations))
+		}
+	})
+}
+
+func TestLoadGlobalFrom_NormalizesInstallations(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(`
+[ci]
+github_app_id = 12345
+github_app_private_key = "~/.roborev/app.pem"
+
+[ci.github_app_installations]
+Wesm = 111111
+RoboRev-Dev = 222222
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadGlobalFrom(configPath)
+	if err != nil {
+		t.Fatalf("LoadGlobalFrom: %v", err)
+	}
+
+	if got := cfg.CI.InstallationIDForOwner("wesm"); got != 111111 {
+		t.Errorf("got %d, want 111111 for normalized 'wesm'", got)
+	}
+	if got := cfg.CI.InstallationIDForOwner("roborev-dev"); got != 222222 {
+		t.Errorf("got %d, want 222222 for normalized 'roborev-dev'", got)
+	}
 }
 
 func TestGitHubAppConfigured_MultiInstall(t *testing.T) {

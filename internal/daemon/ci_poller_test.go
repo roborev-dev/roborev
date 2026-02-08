@@ -902,28 +902,3 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 		t.Error("expected [FAILED] marker in synthesis prompt")
 	}
 }
-
-func TestCIPollerServerStop_StopsPoller(t *testing.T) {
-	db := testutil.OpenTestDB(t)
-	cfg := config.DefaultConfig()
-	cfg.CI.Enabled = true
-	cfg.CI.PollInterval = "1h"
-
-	p := NewCIPoller(db, NewStaticConfig(cfg), NewBroadcaster())
-	if err := p.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-
-	healthy, _ := p.HealthCheck()
-	if !healthy {
-		t.Fatal("expected poller to be running after Start")
-	}
-
-	// Simulate what Server.Stop does
-	p.Stop()
-
-	healthy, msg := p.HealthCheck()
-	if healthy {
-		t.Fatalf("expected poller stopped after Stop, got (%v, %q)", healthy, msg)
-	}
-}

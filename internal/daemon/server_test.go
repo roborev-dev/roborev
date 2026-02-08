@@ -2721,3 +2721,31 @@ func TestHandleJobOutput_MissingJobID(t *testing.T) {
 		t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestServerStop_StopsCIPoller(t *testing.T) {
+	server, db, _ := newTestServer(t)
+
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.PollInterval = "1h"
+
+	poller := NewCIPoller(db, NewStaticConfig(cfg), server.Broadcaster())
+	if err := poller.Start(); err != nil {
+		t.Fatalf("Start poller: %v", err)
+	}
+
+	healthy, _ := poller.HealthCheck()
+	if !healthy {
+		t.Fatal("expected poller running after Start")
+	}
+
+	server.SetCIPoller(poller)
+	if err := server.Stop(); err != nil {
+		t.Fatalf("Server.Stop: %v", err)
+	}
+
+	healthy, msg := poller.HealthCheck()
+	if healthy {
+		t.Fatalf("expected poller stopped after Server.Stop, got (%v, %q)", healthy, msg)
+	}
+}
