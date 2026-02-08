@@ -228,6 +228,13 @@ func (db *DB) UnclaimBatch(batchID int64) error {
 	return err
 }
 
+// FinalizeBatch clears claimed_at after a successful post. The batch stays
+// synthesized=1 but with claimed_at=NULL, so GetStaleBatches won't re-pick it.
+func (db *DB) FinalizeBatch(batchID int64) error {
+	_, err := db.Exec(`UPDATE ci_pr_batches SET claimed_at = NULL WHERE id = ?`, batchID)
+	return err
+}
+
 // DeleteCIBatch removes a batch and its job links. Used to clean up
 // after a partial enqueue failure so the next poll can retry.
 func (db *DB) DeleteCIBatch(batchID int64) error {
@@ -247,7 +254,7 @@ func (db *DB) GetStaleBatches() ([]CIPRBatch, error) {
 		FROM ci_pr_batches b
 		WHERE (
 			b.synthesized = 0
-			OR (b.synthesized = 1 AND b.claimed_at < datetime('now', '-5 minutes'))
+			OR (b.synthesized = 1 AND b.claimed_at IS NOT NULL AND b.claimed_at < datetime('now', '-5 minutes'))
 		)
 		AND NOT EXISTS (
 			SELECT 1 FROM ci_pr_batch_jobs bj

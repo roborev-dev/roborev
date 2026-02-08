@@ -347,3 +347,99 @@ func TestClaimBatchForSynthesis(t *testing.T) {
 		t.Error("expected claim after unclaim to succeed")
 	}
 }
+
+func TestFinalizeBatch_PreventsStaleRepost(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	batch, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
+
+	// Create a linked job so the batch qualifies for GetStaleBatches
+	_, err := db.Exec(`INSERT INTO repos (root_path, name) VALUES ('/tmp/test', 'test')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, prompt, status, agent, review_type) VALUES (1, 'sha1', 'p', 'done', 'test', 'security')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jobID int64
+	db.QueryRow(`SELECT last_insert_rowid()`).Scan(&jobID)
+	db.RecordBatchJob(batch.ID, jobID)
+
+	// Claim the batch (simulates postBatchResults starting)
+	claimed, err := db.ClaimBatchForSynthesis(batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claimed {
+		t.Fatal("expected claim to succeed")
+	}
+
+	// Finalize after successful post
+	if err := db.FinalizeBatch(batch.ID); err != nil {
+		t.Fatalf("FinalizeBatch: %v", err)
+	}
+
+	// Finalized batch should NOT appear in stale batches
+	stale, err := db.GetStaleBatches()
+	if err != nil {
+		t.Fatalf("GetStaleBatches: %v", err)
+	}
+	for _, b := range stale {
+		if b.ID == batch.ID {
+			t.Error("finalized batch should not appear in stale batches")
+		}
+	}
+
+	// Re-claiming a finalized batch should fail (synthesized=1)
+	claimed, err = db.ClaimBatchForSynthesis(batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed {
+		t.Error("should not be able to re-claim a finalized batch")
+	}
+}
+
+func TestGetStaleBatches_StaleClaim(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	batch, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
+
+	// Create a linked terminal job
+	_, err := db.Exec(`INSERT INTO repos (root_path, name) VALUES ('/tmp/test', 'test')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, prompt, status, agent, review_type) VALUES (1, 'sha1', 'p', 'done', 'test', 'security')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jobID int64
+	db.QueryRow(`SELECT last_insert_rowid()`).Scan(&jobID)
+	db.RecordBatchJob(batch.ID, jobID)
+
+	// Claim the batch, then backdate claimed_at to simulate a stale claim
+	db.ClaimBatchForSynthesis(batch.ID)
+	_, err = db.Exec(`UPDATE ci_pr_batches SET claimed_at = datetime('now', '-10 minutes') WHERE id = ?`, batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := db.GetStaleBatches()
+	if err != nil {
+		t.Fatalf("GetStaleBatches: %v", err)
+	}
+
+	found := false
+	for _, b := range stale {
+		if b.ID == batch.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("stale claimed batch should appear in GetStaleBatches")
+	}
+}

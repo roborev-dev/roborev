@@ -1390,18 +1390,19 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	})
 
 	t.Run("tilde path expands to home", func(t *testing.T) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			t.Skip("cannot determine home dir")
-		}
-		// Create a file under home that we can read
-		tmpPem := filepath.Join(home, ".roborev-test-key.pem")
-		if err := os.WriteFile(tmpPem, []byte(pemContent), 0600); err != nil {
+		// Use a fake HOME so we don't touch the real home directory
+		fakeHome := t.TempDir()
+		t.Setenv("HOME", fakeHome)
+
+		fakePem := filepath.Join(fakeHome, ".roborev", "test.pem")
+		if err := os.MkdirAll(filepath.Dir(fakePem), 0700); err != nil {
 			t.Fatal(err)
 		}
-		defer os.Remove(tmpPem)
+		if err := os.WriteFile(fakePem, []byte(pemContent), 0600); err != nil {
+			t.Fatal(err)
+		}
 
-		ci := CIConfig{GitHubAppPrivateKey: "~/.roborev-test-key.pem"}
+		ci := CIConfig{GitHubAppPrivateKey: "~/.roborev/test.pem"}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
 			t.Fatalf("tilde expansion failed: %v", err)

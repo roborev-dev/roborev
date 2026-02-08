@@ -571,6 +571,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add claimed_at column to ci_pr_batches if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_batches') WHERE name = 'claimed_at'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check claimed_at column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE ci_pr_batches ADD COLUMN claimed_at TIMESTAMP`)
+		if err != nil {
+			return fmt.Errorf("add claimed_at column: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err

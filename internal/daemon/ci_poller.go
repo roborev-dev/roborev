@@ -624,6 +624,12 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 		return
 	}
 
+	// Clear claimed_at to mark as successfully posted. This prevents
+	// GetStaleBatches from re-picking this batch after the 5-min timeout.
+	if err := p.db.FinalizeBatch(batch.ID); err != nil {
+		log.Printf("CI poller: warning: failed to finalize batch %d: %v", batch.ID, err)
+	}
+
 	log.Printf("CI poller: posted batch comment on %s#%d (batch %d, %d reviews)",
 		batch.GithubRepo, batch.PRNumber, batch.ID, len(reviews))
 }
