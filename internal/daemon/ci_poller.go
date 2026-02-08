@@ -266,7 +266,20 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	// Enqueue jobs for each review_type x agent combination.
-	// If any enqueue fails, delete the batch so the next poll can retry.
+	// If any enqueue fails, cancel already-created jobs and delete the batch
+	// so the next poll can retry cleanly.
+	var createdJobIDs []int64
+	rollback := func(reason string) {
+		for _, jid := range createdJobIDs {
+			if err := p.db.CancelJob(jid); err != nil {
+				log.Printf("CI poller: failed to cancel orphan job %d: %v", jid, err)
+			}
+		}
+		if err := p.db.DeleteCIBatch(batch.ID); err != nil {
+			log.Printf("CI poller: failed to clean up batch %d: %v", batch.ID, err)
+		}
+	}
+
 	for _, rt := range reviewTypes {
 		for _, ag := range agents {
 			job, err := p.db.EnqueueJob(storage.EnqueueOpts{
@@ -278,16 +291,13 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 				ReviewType: rt,
 			})
 			if err != nil {
-				if delErr := p.db.DeleteCIBatch(batch.ID); delErr != nil {
-					log.Printf("CI poller: failed to clean up batch %d: %v", batch.ID, delErr)
-				}
+				rollback("enqueue failed")
 				return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, ag, err)
 			}
+			createdJobIDs = append(createdJobIDs, job.ID)
 
 			if err := p.db.RecordBatchJob(batch.ID, job.ID); err != nil {
-				if delErr := p.db.DeleteCIBatch(batch.ID); delErr != nil {
-					log.Printf("CI poller: failed to clean up batch %d: %v", batch.ID, delErr)
-				}
+				rollback("record batch job failed")
 				return fmt.Errorf("record batch job: %w", err)
 			}
 
@@ -540,6 +550,13 @@ func (p *CIPoller) handleBatchJobDone(batch *storage.CIPRBatch, jobID int64, suc
 // unhandled terminal states), corrects the counts from DB state, and
 // triggers synthesis if the batch is now complete.
 func (p *CIPoller) reconcileStaleBatches() {
+	// Clean up empty batches left by daemon crashes during enqueue.
+	if n, err := p.db.DeleteEmptyBatches(); err != nil {
+		log.Printf("CI poller: error cleaning empty batches: %v", err)
+	} else if n > 0 {
+		log.Printf("CI poller: cleaned up %d empty batches", n)
+	}
+
 	batches, err := p.db.GetStaleBatches()
 	if err != nil {
 		log.Printf("CI poller: error checking stale batches: %v", err)

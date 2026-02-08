@@ -110,6 +110,7 @@ func (p *GitHubAppTokenProvider) exchangeToken(jwt string) (string, time.Time, e
 	}
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "roborev")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)

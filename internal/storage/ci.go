@@ -245,6 +245,23 @@ func (db *DB) DeleteCIBatch(batchID int64) error {
 	return err
 }
 
+// DeleteEmptyBatches removes batches with no linked jobs that are older than
+// 1 minute. These are left behind when the daemon crashes between CreateCIBatch
+// and RecordBatchJob. The age threshold avoids racing with in-progress enqueues.
+func (db *DB) DeleteEmptyBatches() (int, error) {
+	result, err := db.Exec(`
+		DELETE FROM ci_pr_batches
+		WHERE NOT EXISTS (
+			SELECT 1 FROM ci_pr_batch_jobs bj WHERE bj.batch_id = ci_pr_batches.id
+		)
+		AND created_at < datetime('now', '-1 minute')`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}
+
 // GetStaleBatches returns batches that need synthesis attention. This covers:
 //   - Unclaimed batches where all jobs are terminal (dropped events, canceled jobs)
 //   - Stale claims where the daemon crashed mid-post (claimed_at > 5 minutes ago)
