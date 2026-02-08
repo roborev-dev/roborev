@@ -1358,6 +1358,68 @@ func TestResolvedAgents(t *testing.T) {
 	})
 }
 
+func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
+	// Create a temp PEM file
+	dir := t.TempDir()
+	pemFile := filepath.Join(dir, "test.pem")
+	pemContent := "-----BEGIN RSA PRIVATE KEY-----\nfakekey\n-----END RSA PRIVATE KEY-----"
+	if err := os.WriteFile(pemFile, []byte(pemContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("inline PEM returned directly", func(t *testing.T) {
+		ci := CIConfig{GitHubAppPrivateKey: pemContent}
+		got, err := ci.GitHubAppPrivateKeyResolved()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != pemContent {
+			t.Errorf("got %q, want inline PEM", got)
+		}
+	})
+
+	t.Run("absolute path reads file", func(t *testing.T) {
+		ci := CIConfig{GitHubAppPrivateKey: pemFile}
+		got, err := ci.GitHubAppPrivateKeyResolved()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != pemContent {
+			t.Errorf("got %q, want %q", got, pemContent)
+		}
+	})
+
+	t.Run("tilde path expands to home", func(t *testing.T) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skip("cannot determine home dir")
+		}
+		// Create a file under home that we can read
+		tmpPem := filepath.Join(home, ".roborev-test-key.pem")
+		if err := os.WriteFile(tmpPem, []byte(pemContent), 0600); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(tmpPem)
+
+		ci := CIConfig{GitHubAppPrivateKey: "~/.roborev-test-key.pem"}
+		got, err := ci.GitHubAppPrivateKeyResolved()
+		if err != nil {
+			t.Fatalf("tilde expansion failed: %v", err)
+		}
+		if got != pemContent {
+			t.Errorf("got %q, want %q", got, pemContent)
+		}
+	})
+
+	t.Run("empty after expansion returns error", func(t *testing.T) {
+		ci := CIConfig{GitHubAppPrivateKey: ""}
+		_, err := ci.GitHubAppPrivateKeyResolved()
+		if err == nil {
+			t.Error("expected error for empty key")
+		}
+	})
+}
+
 func TestStripURLCredentials(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -3,6 +3,7 @@ package daemon
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
 )
@@ -137,6 +138,45 @@ func TestFormatAllFailedComment(t *testing.T) {
 	}
 	if !strings.Contains(comment, "**gemini** (review): api error") {
 		t.Error("missing second failure detail")
+	}
+}
+
+func TestGhEnv_FiltersExistingTokens(t *testing.T) {
+	// Set up a CIPoller with a pre-cached token (avoids JWT/API calls)
+	provider := &GitHubAppTokenProvider{
+		token:   "ghs_app_token_123",
+		expires: time.Now().Add(1 * time.Hour),
+	}
+	p := &CIPoller{tokenProvider: provider}
+
+	// Plant GH_TOKEN and GITHUB_TOKEN in env
+	t.Setenv("GH_TOKEN", "personal_token")
+	t.Setenv("GITHUB_TOKEN", "another_personal_token")
+
+	env := p.ghEnv()
+
+	// Should contain our app token
+	found := false
+	for _, e := range env {
+		if e == "GH_TOKEN=ghs_app_token_123" {
+			found = true
+		}
+		if strings.HasPrefix(e, "GITHUB_TOKEN=") {
+			t.Error("GITHUB_TOKEN should have been filtered out")
+		}
+		if strings.HasPrefix(e, "GH_TOKEN=personal_token") {
+			t.Error("original GH_TOKEN should have been filtered out")
+		}
+	}
+	if !found {
+		t.Error("expected GH_TOKEN=ghs_app_token_123 in env")
+	}
+}
+
+func TestGhEnv_NilProvider(t *testing.T) {
+	p := &CIPoller{tokenProvider: nil}
+	if env := p.ghEnv(); env != nil {
+		t.Errorf("expected nil env when no token provider, got %v", env)
 	}
 }
 
