@@ -164,6 +164,11 @@ func TestTokenCaching(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 
+		// Verify User-Agent is set
+		if ua := r.Header.Get("User-Agent"); ua != "roborev" {
+			t.Errorf("expected User-Agent 'roborev', got %q", ua)
+		}
+
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"token":      "ghs_test_token_123",

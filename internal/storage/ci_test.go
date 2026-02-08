@@ -471,3 +471,67 @@ func TestGetStaleBatches_StaleClaim(t *testing.T) {
 		t.Error("stale claimed batch should appear in GetStaleBatches")
 	}
 }
+
+func TestDeleteEmptyBatches(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Create an empty batch and backdate it so it's eligible for cleanup
+	emptyOld, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha-old", 2)
+	_, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes') WHERE id = ?`, emptyOld.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an empty batch that's recent (should NOT be deleted)
+	_, _ = db.CreateCIBatch("myorg/myrepo", 2, "sha-recent", 1)
+
+	// Create a non-empty batch that's old (should NOT be deleted)
+	nonEmpty, _ := db.CreateCIBatch("myorg/myrepo", 3, "sha-nonempty", 1)
+	_, err = db.Exec(`INSERT INTO repos (root_path, name) VALUES ('/tmp/test', 'test')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, prompt, status, agent, review_type) VALUES (1, 'sha1', 'p', 'queued', 'test', 'security')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jobID int64
+	if err := db.QueryRow(`SELECT last_insert_rowid()`).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecordBatchJob(nonEmpty.ID, jobID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes') WHERE id = ?`, nonEmpty.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Run cleanup
+	n, err := db.DeleteEmptyBatches()
+	if err != nil {
+		t.Fatalf("DeleteEmptyBatches: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 deleted, got %d", n)
+	}
+
+	// Old empty batch should be gone
+	has, _ := db.HasCIBatch("myorg/myrepo", 1, "sha-old")
+	if has {
+		t.Error("old empty batch should have been deleted")
+	}
+
+	// Recent empty batch should still exist
+	has, _ = db.HasCIBatch("myorg/myrepo", 2, "sha-recent")
+	if !has {
+		t.Error("recent empty batch should NOT have been deleted")
+	}
+
+	// Non-empty batch should still exist
+	has, _ = db.HasCIBatch("myorg/myrepo", 3, "sha-nonempty")
+	if !has {
+		t.Error("non-empty batch should NOT have been deleted")
+	}
+}

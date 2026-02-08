@@ -269,7 +269,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	// If any enqueue fails, cancel already-created jobs and delete the batch
 	// so the next poll can retry cleanly.
 	var createdJobIDs []int64
-	rollback := func(reason string) {
+	rollback := func() {
 		for _, jid := range createdJobIDs {
 			if err := p.db.CancelJob(jid); err != nil {
 				log.Printf("CI poller: failed to cancel orphan job %d: %v", jid, err)
@@ -291,13 +291,13 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 				ReviewType: rt,
 			})
 			if err != nil {
-				rollback("enqueue failed")
+				rollback()
 				return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, ag, err)
 			}
 			createdJobIDs = append(createdJobIDs, job.ID)
 
 			if err := p.db.RecordBatchJob(batch.ID, job.ID); err != nil {
-				rollback("record batch job failed")
+				rollback()
 				return fmt.Errorf("record batch job: %w", err)
 			}
 
