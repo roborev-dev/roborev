@@ -477,34 +477,36 @@ func TestDeleteEmptyBatches(t *testing.T) {
 	defer db.Close()
 
 	// Create an empty batch and backdate it so it's eligible for cleanup
-	emptyOld, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha-old", 2)
-	_, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes') WHERE id = ?`, emptyOld.ID)
+	emptyOld, err := db.CreateCIBatch("myorg/myrepo", 1, "sha-old", 2)
 	if err != nil {
+		t.Fatalf("CreateCIBatch (old empty): %v", err)
+	}
+	if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes') WHERE id = ?`, emptyOld.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create an empty batch that's recent (should NOT be deleted)
-	_, _ = db.CreateCIBatch("myorg/myrepo", 2, "sha-recent", 1)
+	if _, err := db.CreateCIBatch("myorg/myrepo", 2, "sha-recent", 1); err != nil {
+		t.Fatalf("CreateCIBatch (recent empty): %v", err)
+	}
 
 	// Create a non-empty batch that's old (should NOT be deleted)
-	nonEmpty, _ := db.CreateCIBatch("myorg/myrepo", 3, "sha-nonempty", 1)
-	_, err = db.Exec(`INSERT INTO repos (root_path, name) VALUES ('/tmp/test', 'test')`)
+	nonEmpty, err := db.CreateCIBatch("myorg/myrepo", 3, "sha-nonempty", 1)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("CreateCIBatch (non-empty): %v", err)
 	}
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, prompt, status, agent, review_type) VALUES (1, 'sha1', 'p', 'queued', 'test', 'security')`)
+	repo, err := db.GetOrCreateRepo(t.TempDir())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
-	var jobID int64
-	if err := db.QueryRow(`SELECT last_insert_rowid()`).Scan(&jobID); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.RecordBatchJob(nonEmpty.ID, jobID); err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes') WHERE id = ?`, nonEmpty.ID)
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "a..b", Agent: "test", ReviewType: "security"})
 	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if err := db.RecordBatchJob(nonEmpty.ID, job.ID); err != nil {
+		t.Fatalf("RecordBatchJob: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes') WHERE id = ?`, nonEmpty.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -518,19 +520,28 @@ func TestDeleteEmptyBatches(t *testing.T) {
 	}
 
 	// Old empty batch should be gone
-	has, _ := db.HasCIBatch("myorg/myrepo", 1, "sha-old")
+	has, err := db.HasCIBatch("myorg/myrepo", 1, "sha-old")
+	if err != nil {
+		t.Fatalf("HasCIBatch (old empty): %v", err)
+	}
 	if has {
 		t.Error("old empty batch should have been deleted")
 	}
 
 	// Recent empty batch should still exist
-	has, _ = db.HasCIBatch("myorg/myrepo", 2, "sha-recent")
+	has, err = db.HasCIBatch("myorg/myrepo", 2, "sha-recent")
+	if err != nil {
+		t.Fatalf("HasCIBatch (recent empty): %v", err)
+	}
 	if !has {
 		t.Error("recent empty batch should NOT have been deleted")
 	}
 
 	// Non-empty batch should still exist
-	has, _ = db.HasCIBatch("myorg/myrepo", 3, "sha-nonempty")
+	has, err = db.HasCIBatch("myorg/myrepo", 3, "sha-nonempty")
+	if err != nil {
+		t.Fatalf("HasCIBatch (non-empty): %v", err)
+	}
 	if !has {
 		t.Error("non-empty batch should NOT have been deleted")
 	}
