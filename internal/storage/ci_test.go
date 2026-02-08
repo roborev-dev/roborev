@@ -308,7 +308,7 @@ func TestGetCIBatchByJobID(t *testing.T) {
 	}
 }
 
-func TestMarkBatchSynthesized(t *testing.T) {
+func TestClaimBatchForSynthesis(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -317,17 +317,33 @@ func TestMarkBatchSynthesized(t *testing.T) {
 		t.Error("expected Synthesized=false initially")
 	}
 
-	if err := db.MarkBatchSynthesized(batch.ID); err != nil {
-		t.Fatalf("MarkBatchSynthesized: %v", err)
+	// First claim should succeed
+	claimed, err := db.ClaimBatchForSynthesis(batch.ID)
+	if err != nil {
+		t.Fatalf("ClaimBatchForSynthesis: %v", err)
+	}
+	if !claimed {
+		t.Error("expected first claim to succeed")
 	}
 
-	// Read back
-	var synthesized int
-	err := db.QueryRow(`SELECT synthesized FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&synthesized)
+	// Second claim should fail (already claimed)
+	claimed, err = db.ClaimBatchForSynthesis(batch.ID)
 	if err != nil {
-		t.Fatalf("query: %v", err)
+		t.Fatalf("ClaimBatchForSynthesis (second): %v", err)
 	}
-	if synthesized != 1 {
-		t.Errorf("got synthesized=%d, want 1", synthesized)
+	if claimed {
+		t.Error("expected second claim to fail")
+	}
+
+	// Unclaim and reclaim should work
+	if err := db.UnclaimBatch(batch.ID); err != nil {
+		t.Fatalf("UnclaimBatch: %v", err)
+	}
+	claimed, err = db.ClaimBatchForSynthesis(batch.ID)
+	if err != nil {
+		t.Fatalf("ClaimBatchForSynthesis (after unclaim): %v", err)
+	}
+	if !claimed {
+		t.Error("expected claim after unclaim to succeed")
 	}
 }

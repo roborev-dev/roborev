@@ -542,10 +542,23 @@ func (p *CIPoller) reconcileStaleBatches() {
 }
 
 // postBatchResults gathers all review outputs for a batch and posts a combined PR comment.
+// Uses CAS to atomically claim the batch before posting, preventing duplicate comments
+// when event handlers and the reconciler race on the same batch.
 func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
+	// Atomically claim this batch. If another goroutine already claimed it, skip.
+	claimed, err := p.db.ClaimBatchForSynthesis(batch.ID)
+	if err != nil {
+		log.Printf("CI poller: error claiming batch %d for synthesis: %v", batch.ID, err)
+		return
+	}
+	if !claimed {
+		return
+	}
+
 	reviews, err := p.db.GetBatchReviews(batch.ID)
 	if err != nil {
 		log.Printf("CI poller: error getting batch reviews for batch %d: %v", batch.ID, err)
+		p.unclaimBatch(batch.ID)
 		return
 	}
 
@@ -562,6 +575,7 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 		review, err := p.db.GetReviewByJobID(reviews[0].JobID)
 		if err != nil {
 			log.Printf("CI poller: error getting review for job %d: %v", reviews[0].JobID, err)
+			p.unclaimBatch(batch.ID)
 			return
 		}
 		verdict := ""
@@ -587,15 +601,20 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	if err := p.postPRComment(batch.GithubRepo, batch.PRNumber, comment); err != nil {
 		log.Printf("CI poller: error posting batch comment for %s#%d: %v",
 			batch.GithubRepo, batch.PRNumber, err)
+		// Release claim so reconciler can retry
+		p.unclaimBatch(batch.ID)
 		return
-	}
-
-	if err := p.db.MarkBatchSynthesized(batch.ID); err != nil {
-		log.Printf("CI poller: error marking batch %d synthesized: %v", batch.ID, err)
 	}
 
 	log.Printf("CI poller: posted batch comment on %s#%d (batch %d, %d reviews)",
 		batch.GithubRepo, batch.PRNumber, batch.ID, len(reviews))
+}
+
+// unclaimBatch resets the synthesized flag so the batch can be retried.
+func (p *CIPoller) unclaimBatch(batchID int64) {
+	if err := p.db.UnclaimBatch(batchID); err != nil {
+		log.Printf("CI poller: error unclaiming batch %d: %v", batchID, err)
+	}
 }
 
 // synthesizeBatchResults uses an LLM agent to combine multiple review outputs.

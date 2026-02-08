@@ -206,9 +206,26 @@ func (db *DB) GetCIBatchByJobID(jobID int64) (*CIPRBatch, error) {
 	return &batch, nil
 }
 
-// MarkBatchSynthesized marks a batch as having had its synthesis comment posted.
-func (db *DB) MarkBatchSynthesized(batchID int64) error {
-	_, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 1 WHERE id = ?`, batchID)
+// ClaimBatchForSynthesis atomically marks a batch as synthesized only if it
+// hasn't been claimed yet (CAS). Returns true if this caller won the claim.
+// Used to prevent duplicate PR comment posts when event handlers and the
+// reconciler race on the same batch.
+func (db *DB) ClaimBatchForSynthesis(batchID int64) (bool, error) {
+	result, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 1 WHERE id = ? AND synthesized = 0`, batchID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+// UnclaimBatch resets the synthesized flag so the reconciler can retry.
+// Called when comment posting fails after a successful claim.
+func (db *DB) UnclaimBatch(batchID int64) error {
+	_, err := db.Exec(`UPDATE ci_pr_batches SET synthesized = 0 WHERE id = ?`, batchID)
 	return err
 }
 
