@@ -293,6 +293,7 @@ func restartDaemon() error {
 
 func initCmd() *cobra.Command {
 	var agent string
+	var noDaemon bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -301,7 +302,7 @@ func initCmd() *cobra.Command {
   - Creates ~/.roborev/ global config directory
   - Creates .roborev.toml in repo (if --agent specified)
   - Installs post-commit hook
-  - Starts the daemon`,
+  - Starts the daemon (unless --no-daemon)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("Initializing roborev...")
 
@@ -392,8 +393,15 @@ func initCmd() *cobra.Command {
 			fmt.Printf("  Installed post-commit hook\n")
 
 		startDaemon:
-			// 5. Start daemon
-			if err := ensureDaemon(); err != nil {
+			// 5. Start daemon (or just register if --no-daemon)
+			if noDaemon {
+				// Try to register with an already-running daemon, but don't start one
+				if err := registerRepo(root); err != nil {
+					fmt.Println("  Daemon not running (use 'roborev daemon start' or systemctl)")
+				} else {
+					fmt.Println("  Repo registered with running daemon")
+				}
+			} else if err := ensureDaemon(); err != nil {
 				fmt.Printf("  Warning: %v\n", err)
 				fmt.Println("  Run 'roborev daemon start' to start manually")
 			} else {
@@ -419,6 +427,7 @@ func initCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&agent, "agent", "", "default agent (codex, claude-code, gemini, copilot, opencode, cursor)")
+	cmd.Flags().BoolVar(&noDaemon, "no-daemon", false, "skip auto-starting daemon (useful with systemd/launchd)")
 
 	return cmd
 }
