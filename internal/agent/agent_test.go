@@ -219,7 +219,7 @@ func TestAgentWithModelPersistence(t *testing.T) {
 	}{
 		{"codex", func() Agent { return NewCodexAgent("") }, "o3", "o3"},
 		{"claude", func() Agent { return NewClaudeAgent("") }, "opus", "opus"},
-		{"gemini", func() Agent { return NewGeminiAgent("") }, "gemini-2.5-pro", "gemini-2.5-pro"},
+		{"gemini", func() Agent { return NewGeminiAgent("") }, "gemini-3-pro-preview", "gemini-3-pro-preview"},
 		{"copilot", func() Agent { return NewCopilotAgent("") }, "gpt-4o", "gpt-4o"},
 		{"opencode", func() Agent { return NewOpenCodeAgent("") }, "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4"},
 	}
@@ -306,7 +306,7 @@ func TestAgentBuildArgsWithModel(t *testing.T) {
 			buildFn: func(model string) []string {
 				return (&GeminiAgent{Model: model}).buildArgs(false)
 			},
-			flag: "-m", model: "gemini-2.5-pro", wantFlag: true,
+			flag: "-m", model: "gemini-3-pro-preview", wantFlag: true,
 		},
 		{
 			name: "gemini without model",
