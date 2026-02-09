@@ -285,10 +285,10 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	// Validate review types to catch typos early
-	validTypes := map[string]bool{"security": true, "review": true, "general": true}
+	validTypes := map[string]bool{"security": true, "design": true, "review": true, "general": true}
 	for _, rt := range reviewTypes {
 		if !validTypes[rt] {
-			return fmt.Errorf("invalid review_type %q (valid: security, review, general)", rt)
+			return fmt.Errorf("invalid review_type %q (valid: security, design, review, general)", rt)
 		}
 	}
 
