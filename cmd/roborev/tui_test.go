@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -3747,6 +3748,44 @@ func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
 	// No command should be returned when disabling (no need to refetch)
 	if cmd != nil {
 		t.Error("No command should be returned when disabling hideAddressed")
+	}
+}
+
+func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	// Write malformed TOML that LoadGlobal will fail to parse
+	malformed := []byte(`this is not valid toml {{{`)
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, malformed, 0644); err != nil {
+		t.Fatalf("write malformed config: %v", err)
+	}
+
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+
+	// Toggle hide addressed ON
+	m2, _ := pressKey(m, 'h')
+
+	// In-session toggle should still work
+	if !m2.hideAddressed {
+		t.Error("hideAddressed should be true after pressing 'h'")
+	}
+
+	// Malformed config file must not have been overwritten
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(got) != string(malformed) {
+		t.Errorf("malformed config was overwritten:\n  before: %q\n  after:  %q", malformed, got)
+	}
+
+	// Toggle back OFF — still works in-session
+	m3, _ := pressKey(m2, 'h')
+	if m3.hideAddressed {
+		t.Error("hideAddressed should be false after pressing 'h' again")
 	}
 }
 
