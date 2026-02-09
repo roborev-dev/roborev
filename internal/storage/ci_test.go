@@ -633,12 +633,12 @@ func TestCancelSupersededBatches(t *testing.T) {
 	}
 
 	// Cancel superseded batches for a new HEAD
-	canceled, err := db.CancelSupersededBatches("owner/repo", 1, "newsha")
+	canceledIDs, err := db.CancelSupersededBatches("owner/repo", 1, "newsha")
 	if err != nil {
 		t.Fatalf("CancelSupersededBatches: %v", err)
 	}
-	if canceled != 2 {
-		t.Errorf("canceled = %d, want 2", canceled)
+	if len(canceledIDs) != 2 {
+		t.Errorf("len(canceledIDs) = %d, want 2", len(canceledIDs))
 	}
 
 	// Old batch should be deleted
@@ -669,11 +669,11 @@ func TestCancelSupersededBatches(t *testing.T) {
 	}
 
 	// No-op when no superseded batches exist
-	canceled, err = db.CancelSupersededBatches("owner/repo", 1, "newsha")
+	canceledIDs, err = db.CancelSupersededBatches("owner/repo", 1, "newsha")
 	if err != nil {
 		t.Fatalf("CancelSupersededBatches no-op: %v", err)
 	}
-	if canceled != 0 {
-		t.Errorf("expected 0 canceled on no-op, got %d", canceled)
+	if len(canceledIDs) != 0 {
+		t.Errorf("expected 0 canceled on no-op, got %d", len(canceledIDs))
 	}
 }

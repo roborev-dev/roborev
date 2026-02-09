@@ -306,15 +306,15 @@ func (db *DB) DeleteCIBatch(batchID int64) error {
 
 // CancelSupersededBatches cancels jobs and removes batches for a PR that have
 // been superseded by a new HEAD SHA. Only affects unsynthesized batches (where
-// the comment hasn't been posted yet). Returns the number of jobs canceled.
-func (db *DB) CancelSupersededBatches(githubRepo string, prNumber int, newHeadSHA string) (int, error) {
+// the comment hasn't been posted yet). Returns the IDs of jobs that were canceled.
+func (db *DB) CancelSupersededBatches(githubRepo string, prNumber int, newHeadSHA string) ([]int64, error) {
 	// Find unsynthesized batches for this PR with a different head_sha
 	rows, err := db.Query(`
 		SELECT id FROM ci_pr_batches
 		WHERE github_repo = ? AND pr_number = ? AND head_sha != ? AND synthesized = 0`,
 		githubRepo, prNumber, newHeadSHA)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -322,40 +322,40 @@ func (db *DB) CancelSupersededBatches(githubRepo string, prNumber int, newHeadSH
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			return 0, err
+			return nil, err
 		}
 		batchIDs = append(batchIDs, id)
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if len(batchIDs) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
-	canceled := 0
+	var canceledIDs []int64
 	for _, batchID := range batchIDs {
 		// Cancel linked jobs that are still queued or running
 		jobIDs, err := db.GetBatchJobIDs(batchID)
 		if err != nil {
-			return canceled, fmt.Errorf("get jobs for batch %d: %w", batchID, err)
+			return canceledIDs, fmt.Errorf("get jobs for batch %d: %w", batchID, err)
 		}
 		for _, jid := range jobIDs {
 			if err := db.CancelJob(jid); err != nil {
 				if err == sql.ErrNoRows {
 					continue // already terminal
 				}
-				return canceled, fmt.Errorf("cancel job %d: %w", jid, err)
+				return canceledIDs, fmt.Errorf("cancel job %d: %w", jid, err)
 			}
-			canceled++
+			canceledIDs = append(canceledIDs, jid)
 		}
 		// Delete the batch and its job links
 		if err := db.DeleteCIBatch(batchID); err != nil {
-			return canceled, fmt.Errorf("delete batch %d: %w", batchID, err)
+			return canceledIDs, fmt.Errorf("delete batch %d: %w", batchID, err)
 		}
 	}
 
-	return canceled, nil
+	return canceledIDs, nil
 }
 
 // DeleteEmptyBatches removes batches with no linked jobs that are older than

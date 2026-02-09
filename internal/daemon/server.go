@@ -224,9 +224,14 @@ func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 	s.syncWorker = sw
 }
 
-// SetCIPoller sets the CI poller for status reporting
+// SetCIPoller sets the CI poller for status reporting and wires up
+// the worker pool cancellation callback so the poller can kill running
+// processes when superseding stale batches.
 func (s *Server) SetCIPoller(cp *CIPoller) {
 	s.ciPoller = cp
+	cp.jobCancelFn = func(jobID int64) {
+		s.workerPool.CancelJob(jobID)
+	}
 }
 
 // handleSyncNow triggers an immediate sync cycle

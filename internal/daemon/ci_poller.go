@@ -45,6 +45,7 @@ type CIPoller struct {
 	postPRCommentFn  func(string, int, string) error
 	synthesizeFn     func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
 	agentResolverFn  func(name string) (string, error) // returns resolved agent name
+	jobCancelFn      func(jobID int64)                 // kills running worker process (optional)
 
 	subID      int // broadcaster subscription ID for event listening
 	stopCh     chan struct{}
@@ -295,11 +296,21 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 	// Cancel any in-progress batches for this PR at an older HEAD SHA.
 	// When a PR gets a new push, work on the old HEAD is wasted.
-	if canceled, err := p.db.CancelSupersededBatches(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
+	if canceledIDs, err := p.db.CancelSupersededBatches(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
 		log.Printf("CI poller: error canceling superseded batches for %s#%d: %v", ghRepo, pr.Number, err)
-	} else if canceled > 0 {
+	} else if len(canceledIDs) > 0 {
+		headShort := pr.HeadRefOid
+		if len(headShort) > 8 {
+			headShort = headShort[:8]
+		}
 		log.Printf("CI poller: canceled %d superseded jobs for %s#%d (new HEAD=%s)",
-			canceled, ghRepo, pr.Number, pr.HeadRefOid[:8])
+			len(canceledIDs), ghRepo, pr.Number, headShort)
+		// Also kill running worker processes so they stop consuming compute.
+		if p.jobCancelFn != nil {
+			for _, jid := range canceledIDs {
+				p.jobCancelFn(jid)
+			}
+		}
 	}
 
 	// Create batch — only the creator proceeds to enqueue (prevents race)
