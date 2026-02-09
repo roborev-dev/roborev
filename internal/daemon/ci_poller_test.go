@@ -1129,3 +1129,67 @@ func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
 		)
 	})
 }
+
+func TestResolveMinSeverity(t *testing.T) {
+	t.Run("empty global, no repo config", func(t *testing.T) {
+		got := resolveMinSeverity("", t.TempDir(), "acme/api")
+		if got != "" {
+			t.Errorf("got %q, want empty", got)
+		}
+	})
+
+	t.Run("global value used when no repo config", func(t *testing.T) {
+		got := resolveMinSeverity("high", t.TempDir(), "acme/api")
+		if got != "high" {
+			t.Errorf("got %q, want high", got)
+		}
+	})
+
+	t.Run("repo override takes precedence over global", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(dir+"/.roborev.toml", []byte("[ci]\nmin_severity = \"critical\"\n"), 0644)
+		got := resolveMinSeverity("low", dir, "acme/api")
+		if got != "critical" {
+			t.Errorf("got %q, want critical (repo override)", got)
+		}
+	})
+
+	t.Run("invalid repo value falls back to global", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(dir+"/.roborev.toml", []byte("[ci]\nmin_severity = \"bogus\"\n"), 0644)
+		got := resolveMinSeverity("medium", dir, "acme/api")
+		if got != "medium" {
+			t.Errorf("got %q, want medium (fallback to global)", got)
+		}
+	})
+
+	t.Run("invalid global value returns empty", func(t *testing.T) {
+		got := resolveMinSeverity("bogus", t.TempDir(), "acme/api")
+		if got != "" {
+			t.Errorf("got %q, want empty (invalid global ignored)", got)
+		}
+	})
+
+	t.Run("empty repo override uses global", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(dir+"/.roborev.toml", []byte("[ci]\nreasoning = \"fast\"\n"), 0644)
+		got := resolveMinSeverity("high", dir, "acme/api")
+		if got != "high" {
+			t.Errorf("got %q, want high (repo has no min_severity)", got)
+		}
+	})
+
+	t.Run("empty repoPath skips repo config", func(t *testing.T) {
+		got := resolveMinSeverity("medium", "", "acme/api")
+		if got != "medium" {
+			t.Errorf("got %q, want medium", got)
+		}
+	})
+
+	t.Run("global value is case-normalized", func(t *testing.T) {
+		got := resolveMinSeverity("HIGH", t.TempDir(), "acme/api")
+		if got != "high" {
+			t.Errorf("got %q, want high (normalized)", got)
+		}
+	})
+}

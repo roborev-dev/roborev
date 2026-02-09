@@ -825,9 +825,40 @@ func (p *CIPoller) resolveRepoForBatch(batch *storage.CIPRBatch) *storage.Repo {
 	}
 	repo, err := p.findLocalRepo(batch.GithubRepo)
 	if err != nil {
+		log.Printf("CI poller: could not resolve local repo for %s: %v (per-repo overrides will not apply)", batch.GithubRepo, err)
 		return nil
 	}
 	return repo
+}
+
+// resolveMinSeverity determines the effective min_severity for synthesis.
+// Priority: per-repo .roborev.toml [ci] min_severity > global [ci] min_severity > "" (no filter).
+// Invalid values are logged and skipped.
+func resolveMinSeverity(globalMinSeverity, repoPath, ghRepo string) string {
+	minSeverity := globalMinSeverity
+
+	// Try per-repo override
+	if repoPath != "" {
+		repoCfg, err := config.LoadRepoConfig(repoPath)
+		if err != nil {
+			log.Printf("CI poller: failed to load repo config from %s: %v (using global min_severity)", repoPath, err)
+		} else if repoCfg != nil {
+			if s := strings.TrimSpace(repoCfg.CI.MinSeverity); s != "" {
+				if normalized, err := config.NormalizeMinSeverity(s); err == nil {
+					minSeverity = normalized
+				} else {
+					log.Printf("CI poller: invalid min_severity %q in repo config for %s, using global", s, ghRepo)
+				}
+			}
+		}
+	}
+
+	// Normalize (handles the global value or already-normalized repo value)
+	if normalized, err := config.NormalizeMinSeverity(minSeverity); err == nil {
+		return normalized
+	}
+	log.Printf("CI poller: invalid global min_severity %q, ignoring", minSeverity)
+	return ""
 }
 
 // synthesizeBatchResults uses an LLM agent to combine multiple review outputs.
@@ -844,27 +875,11 @@ func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []st
 	// Resolve repo for per-repo overrides and as the working directory
 	// for the synthesis agent (agents like codex require a git repo).
 	var repoPath string
-	minSeverity := cfg.CI.MinSeverity
 	if repo := p.resolveRepoForBatch(batch); repo != nil {
 		repoPath = repo.RootPath
-		if repoCfg, err := config.LoadRepoConfig(repo.RootPath); err == nil && repoCfg != nil {
-			if s := strings.TrimSpace(repoCfg.CI.MinSeverity); s != "" {
-				if normalized, err := config.NormalizeMinSeverity(s); err == nil {
-					minSeverity = normalized
-				} else {
-					log.Printf("CI poller: invalid min_severity %q in repo config for %s, using global", s, batch.GithubRepo)
-				}
-			}
-		}
-	}
-	// Normalize global value if no repo override was applied
-	if normalized, err := config.NormalizeMinSeverity(minSeverity); err == nil {
-		minSeverity = normalized
-	} else {
-		log.Printf("CI poller: invalid global min_severity %q, ignoring", minSeverity)
-		minSeverity = ""
 	}
 
+	minSeverity := resolveMinSeverity(cfg.CI.MinSeverity, repoPath, batch.GithubRepo)
 	prompt := buildSynthesisPrompt(reviews, minSeverity)
 
 	// Run synthesis from the repo's checkout directory so agents that
