@@ -3804,6 +3804,47 @@ func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 	}
 }
 
+func TestTUIHideAddressedValidConfigNotMutated(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	// Write a valid config with the hide-addressed default enabled
+	validConfig := []byte("hide_addressed_by_default = true\n")
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, validConfig, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+
+	// Verify the default was loaded
+	if !m.hideAddressed {
+		t.Fatal("hideAddressed should be true from config")
+	}
+
+	// Toggle hide addressed OFF
+	m2, _ := pressKey(m, 'h')
+	if m2.hideAddressed {
+		t.Error("hideAddressed should be false after pressing 'h'")
+	}
+
+	// Toggle hide addressed back ON
+	m3, _ := pressKey(m2, 'h')
+	if !m3.hideAddressed {
+		t.Error("hideAddressed should be true after pressing 'h' again")
+	}
+
+	// Valid config file must not have been mutated by either toggle
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(got) != string(validConfig) {
+		t.Errorf("valid config was mutated:\n  before: %q\n  after:  %q", validConfig, got)
+	}
+}
+
 func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.jobs = []storage.ReviewJob{
