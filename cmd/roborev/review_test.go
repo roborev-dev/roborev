@@ -23,12 +23,12 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			var req struct {
 				GitRef string `json:"git_ref"`
 			}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			receivedSHA = req.GitRef
 
 			job := storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"}
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(job)
+			_ = json.NewEncoder(w).Encode(job)
 			return
 		}
 	}))
@@ -95,7 +95,7 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		if r.URL.Path == "/api/enqueue" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"skipped": true,
 				"reason":  "branch \"wip\" is excluded from reviews",
 			})
@@ -151,18 +151,18 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 			if r.URL.Path == "/api/enqueue" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(job)
+				_ = json.NewEncoder(w).Encode(job)
 				return
 			}
 			if r.URL.Path == "/api/jobs" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
 				return
 			}
 			if r.URL.Path == "/api/review" {
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
+				_ = json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
 				return
 			}
 		}))
@@ -191,18 +191,18 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 			if r.URL.Path == "/api/enqueue" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(job)
+				_ = json.NewEncoder(w).Encode(job)
 				return
 			}
 			if r.URL.Path == "/api/jobs" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
 				return
 			}
 			if r.URL.Path == "/api/review" {
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling"})
+				_ = json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling"})
 				return
 			}
 		}))
@@ -246,14 +246,14 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 			if r.URL.Path == "/api/enqueue" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(job)
+				_ = json.NewEncoder(w).Encode(job)
 				return
 			}
 			if r.URL.Path == "/api/jobs" {
 				callCount++
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "future_status"}
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jobs":     []storage.ReviewJob{job},
 					"has_more": false,
 				})
@@ -286,7 +286,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 			if r.URL.Path == "/api/enqueue" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(job)
+				_ = json.NewEncoder(w).Encode(job)
 				return
 			}
 			if r.URL.Path == "/api/jobs" {
@@ -304,7 +304,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 				}
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatus(status)}
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jobs":     []storage.ReviewJob{job},
 					"has_more": false,
 				})
@@ -312,7 +312,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 			}
 			if r.URL.Path == "/api/review" {
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(storage.Review{
+				_ = json.NewEncoder(w).Encode(storage.Review{
 					ID:     1,
 					JobID:  1,
 					Agent:  "test",
@@ -351,7 +351,7 @@ func TestReviewSinceFlag(t *testing.T) {
 				}
 				gitRefChan <- req.GitRef
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
+				_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
 				return
 			}
 		}))
@@ -380,7 +380,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with invalid ref fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -401,7 +401,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with no commits ahead fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -422,7 +422,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since and branch are mutually exclusive", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -442,7 +442,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since and dirty are mutually exclusive", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -462,7 +462,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with positional args fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -484,7 +484,7 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch and dirty are mutually exclusive", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -504,7 +504,7 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch with positional args fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -524,7 +524,7 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch on default branch fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -546,7 +546,7 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch with no commits fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -573,10 +573,10 @@ func TestReviewBranchFlag(t *testing.T) {
 				var req struct {
 					GitRef string `json:"git_ref"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
+				_ = json.NewDecoder(r.Body).Decode(&req)
 				receivedGitRef = req.GitRef
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
+				_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
 				return
 			}
 		}))
@@ -620,7 +620,7 @@ func TestReviewFastFlag(t *testing.T) {
 				}
 				reasoningChan <- req.Reasoning
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test"})
+				_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test"})
 				return
 			}
 		}))
@@ -659,7 +659,7 @@ func TestReviewFastFlag(t *testing.T) {
 				}
 				reasoningChan <- req.Reasoning
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test"})
+				_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test"})
 				return
 			}
 		}))

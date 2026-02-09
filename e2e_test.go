@@ -31,7 +31,7 @@ func TestE2EEnqueueAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open test DB: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Create a mock server
 	cfg := config.DefaultConfig()
@@ -52,7 +52,7 @@ func TestE2EEnqueueAndReview(t *testing.T) {
 			MaxWorkers:    4,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(status)
+		_ = json.NewEncoder(w).Encode(status)
 	})
 
 	ts := httptest.NewServer(mux)
@@ -63,7 +63,7 @@ func TestE2EEnqueueAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -90,7 +90,7 @@ func TestDatabaseIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open test DB: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Simulate full workflow
 	repo, err := db.GetOrCreateRepo("/tmp/test-repo")

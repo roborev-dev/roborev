@@ -296,10 +296,12 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	agentName := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
 	modelStr := config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "fix", reasoning)
 
-	a, err := agent.GetAvailable(agentName)
+	baseURL := config.ResolveOllamaBaseURL(cfg)
+	a, err := agent.GetAvailableWithOllamaBaseURL(agentName, baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("get agent: %w", err)
 	}
+	a = agent.WithOllamaBaseURL(a, baseURL)
 
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a = a.WithAgentic(true).WithReasoning(reasoningLevel)

@@ -318,7 +318,7 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 	// daemon subprocess (which hangs on CI).
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return empty for all queries — we only care about argument routing
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"jobs":     []interface{}{},
 			"has_more": false,
 		})
@@ -349,7 +349,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 			if q.Get("addressed") != "false" {
 				t.Errorf("expected addressed=false, got %q", q.Get("addressed"))
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
 			})
@@ -360,11 +360,16 @@ func TestRunFixUnaddressed(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
-		os.Chdir(tmpDir)
-		defer os.Chdir(oldWd)
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
 
-		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
+		err = runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -382,7 +387,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 				q := r.URL.Query()
 				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
 					if unaddressedCalls.Add(1) == 1 {
-						json.NewEncoder(w).Encode(map[string]interface{}{
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{
 							"jobs": []storage.ReviewJob{
 								{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 								{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
@@ -390,13 +395,13 @@ func TestRunFixUnaddressed(t *testing.T) {
 							"has_more": false,
 						})
 					} else {
-						json.NewEncoder(w).Encode(map[string]interface{}{
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{
 							"jobs":     []storage.ReviewJob{},
 							"has_more": false,
 						})
 					}
 				} else {
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
@@ -405,7 +410,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 				}
 			case "/api/review":
 				reviewCalls.Add(1)
-				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
+				_ = json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
 			case "/api/comment":
 				w.WriteHeader(http.StatusCreated)
 			case "/api/review/address":
@@ -421,11 +426,16 @@ func TestRunFixUnaddressed(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
-		os.Chdir(tmpDir)
-		defer os.Chdir(oldWd)
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
 
-		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		err = runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -446,7 +456,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 			if r.URL.Path == "/api/jobs" && r.URL.Query().Get("addressed") == "false" {
 				gotBranch = r.URL.Query().Get("branch")
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
 			})
@@ -457,11 +467,16 @@ func TestRunFixUnaddressed(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
-		os.Chdir(tmpDir)
-		defer os.Chdir(oldWd)
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
 
-		runFixUnaddressed(cmd, "feature-branch", false, fixOptions{agentName: "test"})
+		_ = runFixUnaddressed(cmd, "feature-branch", false, fixOptions{agentName: "test"})
 		if gotBranch != "feature-branch" {
 			t.Errorf("expected branch=feature-branch, got %q", gotBranch)
 		}
@@ -471,7 +486,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
 				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte("db error"))
+				_, _ = w.Write([]byte("db error"))
 			}
 		}))
 		defer cleanup()
@@ -480,11 +495,16 @@ func TestRunFixUnaddressed(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
-		os.Chdir(tmpDir)
-		defer os.Chdir(oldWd)
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
 
-		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
+		err = runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
 		if err == nil {
 			t.Fatal("expected error on server failure")
 		}
@@ -506,7 +526,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 				if q.Get("addressed") == "false" {
 					if unaddressedCalls.Add(1) == 1 {
 						// Return newest first (as the API does)
-						json.NewEncoder(w).Encode(map[string]interface{}{
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{
 							"jobs": []storage.ReviewJob{
 								{ID: 30, Status: storage.JobStatusDone, Agent: "test"},
 								{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
@@ -515,13 +535,13 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 							"has_more": false,
 						})
 					} else {
-						json.NewEncoder(w).Encode(map[string]interface{}{
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{
 							"jobs":     []storage.ReviewJob{},
 							"has_more": false,
 						})
 					}
 				} else {
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
@@ -529,7 +549,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 					})
 				}
 			case "/api/review":
-				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
+				_ = json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
 			case "/api/comment":
 				w.WriteHeader(http.StatusCreated)
 			case "/api/review/address":
@@ -549,11 +569,16 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
-		os.Chdir(tmpDir)
-		defer os.Chdir(oldWd)
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
 
-		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		err = runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -571,11 +596,16 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&output)
 
-		oldWd, _ := os.Getwd()
-		os.Chdir(tmpDir)
-		defer os.Chdir(oldWd)
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
 
-		err := runFixUnaddressed(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
+		err = runFixUnaddressed(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -598,7 +628,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 				switch n {
 				case 1:
 					// First query: return batch 1
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
@@ -606,7 +636,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 					})
 				case 2:
 					// Second query: new job appeared
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
 						"jobs": []storage.ReviewJob{
 							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
@@ -615,14 +645,14 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 					})
 				default:
 					// Third query: no new jobs
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
 						"jobs":     []storage.ReviewJob{},
 						"has_more": false,
 					})
 				}
 			} else {
 				// Individual job fetch
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jobs": []storage.ReviewJob{
 						{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 					},
@@ -630,7 +660,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 				})
 			}
 		case "/api/review":
-			json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
+			_ = json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
 		case "/api/comment":
 			w.WriteHeader(http.StatusCreated)
 		case "/api/review/address":
@@ -645,11 +675,16 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetOut(&output)
 
-	oldWd, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(oldWd)
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
 
-	err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+	err = runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -679,15 +714,15 @@ func initTestGitRepo(t *testing.T) string {
 	} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = tmpDir
-		cmd.Run()
+		_ = cmd.Run()
 	}
-	os.WriteFile(filepath.Join(tmpDir, "f.txt"), []byte("x"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "f.txt"), []byte("x"), 0644)
 	cmd := exec.Command("git", "add", ".")
 	cmd.Dir = tmpDir
-	cmd.Run()
+	_ = cmd.Run()
 	cmd = exec.Command("git", "commit", "-m", "init")
 	cmd.Dir = tmpDir
-	cmd.Run()
+	_ = cmd.Run()
 	return tmpDir
 }
 
@@ -1048,13 +1083,13 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/jobs":
 			// Return an existing job — hook already fired
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs": []map[string]interface{}{{"id": 42}},
 			})
 		case "/api/enqueue":
 			enqueueCalls.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
 		}
 	}))
 	defer ts.Close()
@@ -1081,19 +1116,19 @@ func TestEnqueueIfNeededSkipsWhenJobAppearsAfterWait(t *testing.T) {
 			n := jobCheckCalls.Add(1)
 			if n == 1 {
 				// First check: no jobs yet
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jobs": []map[string]interface{}{},
 				})
 			} else {
 				// Second check: hook has fired
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jobs": []map[string]interface{}{{"id": 42}},
 				})
 			}
 		case "/api/enqueue":
 			enqueueCalls.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
 		}
 	}))
 	defer ts.Close()
@@ -1119,13 +1154,13 @@ func TestEnqueueIfNeededEnqueuesWhenNoJobExists(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/jobs":
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs": []map[string]interface{}{},
 			})
 		case "/api/enqueue":
 			enqueueCalls.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
 		}
 	}))
 	defer ts.Close()

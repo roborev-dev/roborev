@@ -223,6 +223,34 @@ func TestStripANSI(t *testing.T) {
 	}
 }
 
+func TestNormalizeOllamaOutput_ToolLine(t *testing.T) {
+	line := "[Tool: Read]"
+	result := NormalizeOllamaOutput(line)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Text != line {
+		t.Errorf("text = %q, want %q", result.Text, line)
+	}
+	if result.Type != "tool" {
+		t.Errorf("type = %q, want \"tool\"", result.Type)
+	}
+}
+
+func TestNormalizeOllamaOutput_GenericFallback(t *testing.T) {
+	line := "Some plain output"
+	result := NormalizeOllamaOutput(line)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Text != line {
+		t.Errorf("text = %q, want %q", result.Text, line)
+	}
+	if result.Type != "text" {
+		t.Errorf("type = %q, want \"text\"", result.Type)
+	}
+}
+
 func TestIsToolCallJSON(t *testing.T) {
 	cases := []struct {
 		input    string

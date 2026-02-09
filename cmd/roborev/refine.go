@@ -239,7 +239,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 	resolvedModel := config.ResolveModelForWorkflow(modelStr, repoPath, cfg, "refine", resolvedReasoning)
 
 	// Get the agent with configured reasoning level and model
-	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel)
+	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel, cfg)
 	if err != nil {
 		return fmt.Errorf("no agent available: %w", err)
 	}
@@ -452,7 +452,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		if git.IsWorkingTreeClean(worktreePath) {
 			cleanupWorktree()
 			fmt.Println("Agent made no changes - skipping this review")
-			client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings")
+			_ = client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings")
 			skippedReviews[currentFailedReview.ID] = true
 			currentFailedReview = nil
 			continue
@@ -474,7 +474,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", shortSHA(newCommit), output)
-		client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText)
+		_ = client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText)
 
 		// Mark old review as addressed
 		if err := client.MarkReviewAddressed(currentFailedReview.JobID); err != nil {
@@ -621,7 +621,7 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	// Create the worktree (without --recurse-submodules for compatibility with older git)
 	cmd := exec.Command("git", "-C", repoPath, "worktree", "add", "--detach", worktreeDir, "HEAD")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		os.RemoveAll(worktreeDir)
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git worktree add: %w: %s", err, out)
 	}
 
@@ -634,7 +634,7 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	cmd = exec.Command("git", initArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git submodule update: %w: %s", err, out)
 	}
 
@@ -646,7 +646,7 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	cmd = exec.Command("git", updateArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git submodule update: %w: %s", err, out)
 	}
 
@@ -658,7 +658,7 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 
 	cleanup := func() {
 		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = os.RemoveAll(worktreeDir)
 	}
 
 	return worktreeDir, cleanup, nil
@@ -772,18 +772,23 @@ func applyWorktreeChanges(repoPath, worktreePath string) error {
 	return nil
 }
 
-func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string) (agent.Agent, error) {
+func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string, cfg *config.Config) (agent.Agent, error) {
 	if resolvedAgent == "codex" && agent.IsAvailable("codex") {
 		baseAgent, err := agent.Get("codex")
 		if err != nil {
 			return nil, err
 		}
-		return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
+		a := baseAgent.WithReasoning(reasoningLevel).WithModel(model)
+		// Configure Ollama-specific settings (BaseURL from config)
+		baseURL := config.ResolveOllamaBaseURL(cfg)
+		return agent.WithOllamaBaseURL(a, baseURL), nil
 	}
 
-	baseAgent, err := agent.GetAvailable(resolvedAgent)
+	baseURL := config.ResolveOllamaBaseURL(cfg)
+	baseAgent, err := agent.GetAvailableWithOllamaBaseURL(resolvedAgent, baseURL)
 	if err != nil {
 		return nil, err
 	}
-	return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
+	a := baseAgent.WithReasoning(reasoningLevel).WithModel(model)
+	return agent.WithOllamaBaseURL(a, baseURL), nil
 }

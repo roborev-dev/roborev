@@ -31,12 +31,12 @@ func setupTuiTestEnv(t *testing.T) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	_ = os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	t.Cleanup(func() {
 		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origDataDir)
 		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
+			_ = os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 	})
 }
@@ -131,24 +131,12 @@ func withRepoName(name string) func(*storage.ReviewJob) {
 	return func(j *storage.ReviewJob) { j.RepoName = name }
 }
 
-func withFinishedAt(t *time.Time) func(*storage.ReviewJob) {
-	return func(j *storage.ReviewJob) { j.FinishedAt = t }
-}
-
 func withEnqueuedAt(t time.Time) func(*storage.ReviewJob) {
 	return func(j *storage.ReviewJob) { j.EnqueuedAt = t }
 }
 
-func withModel(model string) func(*storage.ReviewJob) {
-	return func(j *storage.ReviewJob) { j.Model = model }
-}
-
 func withError(err string) func(*storage.ReviewJob) {
 	return func(j *storage.ReviewJob) { j.Error = err }
-}
-
-func withVerdict(v string) func(*storage.ReviewJob) {
-	return func(j *storage.ReviewJob) { j.Verdict = &v }
 }
 
 // makeReview creates a storage.Review linked to the given job.
@@ -168,16 +156,8 @@ func withReviewOutput(output string) func(*storage.Review) {
 	return func(r *storage.Review) { r.Output = output }
 }
 
-func withReviewAddressed(addressed bool) func(*storage.Review) {
-	return func(r *storage.Review) { r.Addressed = addressed }
-}
-
 func withReviewAgent(agent string) func(*storage.Review) {
 	return func(r *storage.Review) { r.Agent = agent }
-}
-
-func withReviewPrompt(prompt string) func(*storage.Review) {
-	return func(r *storage.Review) { r.Prompt = prompt }
 }
 
 func TestTUIFetchJobsSuccess(t *testing.T) {
@@ -186,7 +166,7 @@ func TestTUIFetchJobsSuccess(t *testing.T) {
 			t.Errorf("Expected /api/jobs, got %s", r.URL.Path)
 		}
 		jobs := []storage.ReviewJob{{ID: 1, GitRef: "abc123", Agent: "test"}}
-		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": jobs})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": jobs})
 	})
 	cmd := m.fetchJobs()
 	msg := cmd()
@@ -251,14 +231,14 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
 		var req map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req["job_id"].(float64) != 100 {
 			t.Errorf("Expected job_id 100, got %v", req["job_id"])
 		}
 		if req["addressed"].(bool) != true {
 			t.Errorf("Expected addressed true, got %v", req["addressed"])
 		}
-		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 	})
 	cmd := m.addressReview(42, 100, true, false, 1) // reviewID=42, jobID=100, newState=true, oldState=false
 	msg := cmd()
@@ -298,11 +278,11 @@ func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/review/address" {
 			var req map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			if req["job_id"].(float64) != 1 {
 				t.Errorf("Expected job_id 1, got %v", req["job_id"])
 			}
-			json.NewEncoder(w).Encode(map[string]bool{"success": true})
+			_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 		} else {
 			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -497,7 +477,7 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 		if req.Addressed != true {
 			t.Errorf("Expected addressed=true, got %v", req.Addressed)
 		}
-		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 	})
 	cmd := m.addressReviewInBackground(42, true, false, 1) // jobID=42, newState=true, oldState=false
 	msg := cmd()
@@ -574,7 +554,7 @@ func TestTUIHTTPTimeout(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		// Delay much longer than client timeout to avoid flaky timing on fast machines
 		time.Sleep(500 * time.Millisecond)
-		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
 	})
 	// Override with short timeout for test (10x shorter than server delay)
 	m.client.Timeout = 50 * time.Millisecond
@@ -960,11 +940,11 @@ func TestTUICancelJobSuccess(t *testing.T) {
 		var req struct {
 			JobID int64 `json:"job_id"`
 		}
-		json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.JobID != 42 {
 			t.Errorf("Expected job_id=42, got %d", req.JobID)
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 	})
 	oldFinishedAt := time.Now().Add(-1 * time.Hour)
 	cmd := m.cancelJob(42, storage.JobStatusRunning, &oldFinishedAt)
@@ -991,7 +971,7 @@ func TestTUICancelJobSuccess(t *testing.T) {
 func TestTUICancelJobNotFound(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 	})
 	cmd := m.cancelJob(99, storage.JobStatusQueued, nil)
 	msg := cmd()
@@ -4471,7 +4451,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 					RepoPath: "/test/repo",
 				},
 			}
-			json.NewEncoder(w).Encode(review)
+			_ = json.NewEncoder(w).Encode(review)
 			return
 		}
 
@@ -4481,14 +4461,14 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 
 			if jobID != "" {
 				// Job ID query returns empty responses
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"responses": []storage.Response{},
 				})
 				return
 			}
 			if sha != "" {
 				// SHA fallback query returns legacy responses
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"responses": []storage.Response{
 						{ID: 1, Responder: "user", Response: "Legacy response from SHA lookup"},
 					},
@@ -4554,13 +4534,13 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 					RepoPath: "/test/repo",
 				},
 			}
-			json.NewEncoder(w).Encode(review)
+			_ = json.NewEncoder(w).Encode(review)
 			return
 		}
 
 		if r.URL.Path == "/api/comments" {
 			// Return empty responses for job_id
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"responses": []storage.Response{},
 			})
 			return
@@ -5768,7 +5748,7 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 			Agent:  "test",
 			Output: "Review content for clipboard",
 		}
-		json.NewEncoder(w).Encode(review)
+		_ = json.NewEncoder(w).Encode(review)
 	})
 
 	// Execute fetchReviewAndCopy
@@ -5823,7 +5803,7 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 			Agent:  "test",
 			Output: "", // Empty output
 		}
-		json.NewEncoder(w).Encode(review)
+		_ = json.NewEncoder(w).Encode(review)
 	})
 
 	cmd := m.fetchReviewAndCopy(123, nil)
@@ -5892,7 +5872,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 			Agent:  "test",
 			Output: "Review content",
 		}
-		json.NewEncoder(w).Encode(review)
+		_ = json.NewEncoder(w).Encode(review)
 	})
 
 	// Fetch succeeds but clipboard write fails
@@ -5929,7 +5909,7 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 			Output: "Review content",
 			// Job is intentionally nil
 		}
-		json.NewEncoder(w).Encode(review)
+		_ = json.NewEncoder(w).Encode(review)
 	})
 
 	// Pass a job parameter - this should be injected when review.Job is nil

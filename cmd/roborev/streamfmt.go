@@ -9,7 +9,7 @@ import (
 )
 
 // streamFormatter wraps an io.Writer to transform raw NDJSON stream output
-// from Claude into compact, human-readable progress lines.
+// from Claude, Gemini, and Ollama into compact, human-readable progress lines.
 //
 // In TTY mode, tool calls are shown as one-line summaries:
 //
@@ -88,6 +88,23 @@ type contentBlock struct {
 	Input json.RawMessage `json:"input,omitempty"`
 }
 
+// ollamaStreamEvent represents Ollama's NDJSON chat stream format.
+// Ollama uses {"model":"...","message":{"role":"assistant","content":"...","tool_calls":[...]},"done":bool}
+// with no "type" field.
+type ollamaStreamEvent struct {
+	Message struct {
+		Role      string `json:"role"`
+		Content   string `json:"content"`
+		ToolCalls []struct {
+			Function struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"function"`
+		} `json:"tool_calls,omitempty"`
+	} `json:"message"`
+	Done bool `json:"done"`
+}
+
 // geminiToolNames maps Gemini tool names to display names.
 var geminiToolNames = map[string]string{
 	"read_file":         "Read",
@@ -136,7 +153,55 @@ func (f *streamFormatter) processLine(line string) {
 	case "result", "tool_result", "init":
 		// Suppress
 	default:
+		// Ollama format: no "type" field, has "done" and "message"
+		if f.tryProcessOllamaEvent(line) {
+			return
+		}
 		// Suppress system, user, and other events
+	}
+}
+
+// tryProcessOllamaEvent attempts to parse line as Ollama NDJSON and process it.
+// Returns true if the line was handled as Ollama; false otherwise (fall through to suppress).
+func (f *streamFormatter) tryProcessOllamaEvent(line string) bool {
+	if !strings.Contains(line, `"done"`) {
+		return false
+	}
+	var oev ollamaStreamEvent
+	if err := json.Unmarshal([]byte(line), &oev); err != nil {
+		return false
+	}
+	f.processOllamaEvent(oev)
+	return true
+}
+
+// processOllamaEvent handles Ollama NDJSON stream chunks.
+func (f *streamFormatter) processOllamaEvent(oev ollamaStreamEvent) {
+	// Suppress done-only chunks with no content or tool calls.
+	// Message is a value struct; unmarshal yields zero-value if missing, so no nil check needed.
+	if oev.Done && oev.Message.Content == "" && len(oev.Message.ToolCalls) == 0 {
+		return
+	}
+	if oev.Message.Content != "" {
+		f.writef("%s", oev.Message.Content)
+		if len(oev.Message.ToolCalls) > 0 || oev.Done {
+			f.writef("\n")
+		}
+	}
+	for _, tc := range oev.Message.ToolCalls {
+		if tc.Function.Name == "" {
+			continue
+		}
+		var argsJSON json.RawMessage
+		if len(tc.Function.Arguments) > 0 {
+			b, err := json.Marshal(tc.Function.Arguments)
+			if err != nil {
+				f.writef("%-6s\n", tc.Function.Name)
+				continue
+			}
+			argsJSON = b
+		}
+		f.formatToolUse(tc.Function.Name, argsJSON)
 	}
 }
 

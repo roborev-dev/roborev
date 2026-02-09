@@ -243,7 +243,7 @@ func TestShowPromptResult(t *testing.T) {
 	t.Run("handles server error", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("internal error"))
+			_, _ = w.Write([]byte("internal error"))
 		}))
 		t.Cleanup(server.Close)
 
@@ -288,7 +288,7 @@ func TestRunLabelFlag(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/enqueue" {
 					var req map[string]interface{}
-					json.NewDecoder(r.Body).Decode(&req)
+					_ = json.NewDecoder(r.Body).Decode(&req)
 					receivedRef = req["git_ref"].(string)
 
 					w.WriteHeader(http.StatusCreated)
@@ -318,7 +318,7 @@ func TestRunLabelFlag(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if receivedRef != tt.expectedRef {
 				t.Errorf("Expected git_ref %q, got %q", tt.expectedRef, receivedRef)
