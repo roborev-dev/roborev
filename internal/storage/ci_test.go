@@ -577,3 +577,54 @@ func TestDeleteEmptyBatches(t *testing.T) {
 		t.Error("non-empty batch should NOT have been deleted")
 	}
 }
+
+func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-cancel")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	// Create and complete a job
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "a..b", Agent: "test", ReviewType: "security",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	// Transition to done
+	if _, err := db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID); err != nil {
+		t.Fatalf("set done: %v", err)
+	}
+
+	// CancelJob on a terminal job should return sql.ErrNoRows
+	err = db.CancelJob(job.ID)
+	if err == nil {
+		t.Fatal("expected error for terminal job")
+	}
+	if err != sql.ErrNoRows {
+		t.Fatalf("expected sql.ErrNoRows, got: %v", err)
+	}
+
+	// CancelJob on a queued job should succeed
+	job2, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "c..d", Agent: "test", ReviewType: "security",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if err := db.CancelJob(job2.ID); err != nil {
+		t.Fatalf("CancelJob on queued job: %v", err)
+	}
+
+	// Verify it was actually canceled
+	var status string
+	if err := db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, job2.ID).Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != "canceled" {
+		t.Errorf("status = %q, want canceled", status)
+	}
+}

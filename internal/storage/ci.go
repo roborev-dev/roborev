@@ -88,7 +88,7 @@ func (db *DB) HasCIBatch(githubRepo string, prNumber int, headSHA string) (bool,
 // (batch, false) if the batch already existed (another poller won the race).
 // Only the creator (created==true) should proceed to enqueue jobs.
 func (db *DB) CreateCIBatch(githubRepo string, prNumber int, headSHA string, totalJobs int) (*CIPRBatch, bool, error) {
-	result, err := db.Exec(`INSERT OR IGNORE INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs) VALUES (?, ?, ?, ?)`,
+	result, err := db.Exec(`INSERT OR IGNORE INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		githubRepo, prNumber, headSHA, totalJobs)
 	if err != nil {
 		return nil, false, err

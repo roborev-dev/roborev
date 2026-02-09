@@ -2683,6 +2683,57 @@ func TestJobTypeBackfill(t *testing.T) {
 	}
 }
 
+func TestMigrationUpdatedAtColumn(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "old_batches.db")
+
+	// Create a raw DB with ci_pr_batches missing the updated_at column.
+	// Include claimed_at since that migration runs earlier.
+	rawDB, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("open raw DB: %v", err)
+	}
+	_, err = rawDB.Exec(`
+		CREATE TABLE ci_pr_batches (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			github_repo TEXT NOT NULL,
+			pr_number INTEGER NOT NULL,
+			head_sha TEXT NOT NULL,
+			total_jobs INTEGER NOT NULL,
+			completed_jobs INTEGER NOT NULL DEFAULT 0,
+			failed_jobs INTEGER NOT NULL DEFAULT 0,
+			synthesized INTEGER NOT NULL DEFAULT 0,
+			claimed_at TIMESTAMP,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(github_repo, pr_number, head_sha)
+		);
+		INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs, created_at)
+			VALUES ('acme/api', 1, 'sha1', 2, '2025-06-01 12:00:00');
+	`)
+	if err != nil {
+		rawDB.Close()
+		t.Fatalf("create old schema: %v", err)
+	}
+	rawDB.Close()
+
+	// Open() runs migrations — should add updated_at and backfill
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() failed: %v", err)
+	}
+	defer db.Close()
+
+	// Verify column exists and was backfilled from created_at
+	var updatedAt sql.NullString
+	err = db.QueryRow(`SELECT updated_at FROM ci_pr_batches WHERE id = 1`).Scan(&updatedAt)
+	if err != nil {
+		t.Fatalf("query updated_at: %v", err)
+	}
+	if !updatedAt.Valid || updatedAt.String == "" {
+		t.Error("updated_at should be backfilled, got NULL/empty")
+	}
+}
+
 // createJobChain creates a repo, commit, and enqueued job, returning all three.
 func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit, *ReviewJob) {
 	t.Helper()
