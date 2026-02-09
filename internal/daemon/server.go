@@ -77,6 +77,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
 	mux.HandleFunc("/api/job/update-branch", s.handleUpdateJobBranch)
 	mux.HandleFunc("/api/repos", s.handleListRepos)
+	mux.HandleFunc("/api/repos/register", s.handleRegisterRepo)
 	mux.HandleFunc("/api/branches", s.handleListBranches)
 	mux.HandleFunc("/api/review", s.handleGetReview)
 	mux.HandleFunc("/api/review/address", s.handleAddressReview)
@@ -765,6 +766,45 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		"repos":       repos,
 		"total_count": totalCount,
 	})
+}
+
+func (s *Server) handleRegisterRepo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req struct {
+		RepoPath string `json:"repo_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.RepoPath == "" {
+		writeError(w, http.StatusBadRequest, "repo_path is required")
+		return
+	}
+
+	// Resolve to main repo root (handles worktrees)
+	repoRoot, err := git.GetMainRepoRoot(req.RepoPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("not a git repository: %v", err))
+		return
+	}
+
+	// Resolve repo identity for sync
+	repoIdentity := config.ResolveRepoIdentity(repoRoot, nil)
+
+	// Persist (idempotent — UNIQUE on root_path)
+	repo, err := s.db.GetOrCreateRepo(repoRoot, repoIdentity)
+	if err != nil {
+		s.writeInternalError(w, fmt.Sprintf("register repo: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, repo)
 }
 
 func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {

@@ -95,6 +95,25 @@ func getDaemonAddr() string {
 	return serverAddr
 }
 
+// registerRepo tells the daemon to persist a repo to the DB so that the
+// CI poller (and other components) can find it after a daemon restart.
+func registerRepo(repoPath string) error {
+	body, err := json.Marshal(map[string]string{"repo_path": repoPath})
+	if err != nil {
+		return err
+	}
+	resp, err := http.Post(getDaemonAddr()+"/api/repos/register", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, msg)
+	}
+	return nil
+}
+
 // ensureDaemon checks if daemon is running, starts it if not
 // If daemon is running but has different version, restart it
 func ensureDaemon() error {
@@ -378,6 +397,11 @@ func initCmd() *cobra.Command {
 				fmt.Println("  Run 'roborev daemon start' to start manually")
 			} else {
 				fmt.Println("  Daemon is running")
+				if err := registerRepo(root); err != nil {
+					fmt.Printf("  Warning: failed to register repo: %v\n", err)
+				} else {
+					fmt.Println("  Repo registered")
+				}
 			}
 
 			// 5. Success message

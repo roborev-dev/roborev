@@ -1716,6 +1716,116 @@ func TestHandleRerunJob(t *testing.T) {
 	})
 }
 
+func TestHandleRegisterRepo(t *testing.T) {
+	t.Run("GET returns 405", func(t *testing.T) {
+		server, _, _ := newTestServer(t)
+		req := httptest.NewRequest(http.MethodGet, "/api/repos/register", nil)
+		w := httptest.NewRecorder()
+		server.handleRegisterRepo(w, req)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Expected 405, got %d", w.Code)
+		}
+	})
+
+	t.Run("empty body returns 400", func(t *testing.T) {
+		server, _, _ := newTestServer(t)
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", map[string]string{})
+		w := httptest.NewRecorder()
+		server.handleRegisterRepo(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("non-git path returns 400", func(t *testing.T) {
+		server, _, _ := newTestServer(t)
+		plainDir := t.TempDir()
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", map[string]string{
+			"repo_path": plainDir,
+		})
+		w := httptest.NewRecorder()
+		server.handleRegisterRepo(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("valid git repo returns 200 and persists", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		repoDir := filepath.Join(tmpDir, "testrepo")
+		testutil.InitTestGitRepo(t, repoDir)
+
+		// Add a remote so identity resolves to something meaningful
+		remoteCmd := exec.Command("git", "-C", repoDir, "remote", "add", "origin", "https://github.com/test/testrepo.git")
+		if out, err := remoteCmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add failed: %v\n%s", err, out)
+		}
+
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", map[string]string{
+			"repo_path": repoDir,
+		})
+		w := httptest.NewRecorder()
+		server.handleRegisterRepo(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var repo storage.Repo
+		if err := json.NewDecoder(w.Body).Decode(&repo); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+		if repo.ID == 0 {
+			t.Error("Expected non-zero repo ID")
+		}
+		if repo.Identity == "" {
+			t.Error("Expected non-empty identity")
+		}
+
+		// Verify repo is in the DB
+		repos, err := db.ListRepos()
+		if err != nil {
+			t.Fatalf("ListRepos: %v", err)
+		}
+		if len(repos) != 1 {
+			t.Fatalf("Expected 1 repo in DB, got %d", len(repos))
+		}
+	})
+
+	t.Run("idempotent", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		repoDir := filepath.Join(tmpDir, "testrepo")
+		testutil.InitTestGitRepo(t, repoDir)
+
+		body := map[string]string{"repo_path": repoDir}
+
+		// First call
+		req1 := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", body)
+		w1 := httptest.NewRecorder()
+		server.handleRegisterRepo(w1, req1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("First call: expected 200, got %d: %s", w1.Code, w1.Body.String())
+		}
+
+		// Second call
+		req2 := testutil.MakeJSONRequest(t, http.MethodPost, "/api/repos/register", body)
+		w2 := httptest.NewRecorder()
+		server.handleRegisterRepo(w2, req2)
+		if w2.Code != http.StatusOK {
+			t.Fatalf("Second call: expected 200, got %d: %s", w2.Code, w2.Body.String())
+		}
+
+		// Still only one repo in DB
+		repos, err := db.ListRepos()
+		if err != nil {
+			t.Fatalf("ListRepos: %v", err)
+		}
+		if len(repos) != 1 {
+			t.Fatalf("Expected 1 repo in DB after two calls, got %d", len(repos))
+		}
+	})
+}
+
 func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
