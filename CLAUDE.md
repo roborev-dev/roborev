@@ -85,6 +85,10 @@ Daemon writes runtime info to `~/.roborev/daemon.json`:
 
 CLI reads this to find the daemon. If port 7373 is busy, daemon auto-increments.
 
+## Design Constraints
+
+- **Daemon tasks must not modify the git working tree.** Background jobs (reviews, CI polling, synthesis) are read-only with respect to the user's repo checkout. They read source files and write results to the database only. CLI commands like `roborev fix` run synchronously in the foreground and may modify files, but nothing enqueued to the worker pool should touch the working tree. If we need background tasks that produce file changes in the future, they should operate in isolated git worktrees — that is a separate initiative.
+
 ## Style Preferences
 
 - Keep it simple, no over-engineering
