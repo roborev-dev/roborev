@@ -2662,25 +2662,66 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 }
 
 func TestTUIQueueJumpToTop(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	t.Run("unfiltered queue", func(t *testing.T) {
+		m := newTuiModel("http://localhost")
+		m.jobs = []storage.ReviewJob{
+			makeJob(1),
+			makeJob(2),
+			makeJob(3),
+		}
+		m.selectedIdx = 2
+		m.selectedJobID = 3
+		m.currentView = tuiViewQueue
 
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2),
-		makeJob(3),
-	}
-	m.selectedIdx = 2
-	m.selectedJobID = 3
-	m.currentView = tuiViewQueue
+		m2, _ := pressKey(m, 'g')
 
-	m2, _ := pressKey(m, 'g')
+		if m2.selectedIdx != 0 {
+			t.Errorf("Expected selectedIdx=0 after jump to top, got %d", m2.selectedIdx)
+		}
+		if m2.selectedJobID != 1 {
+			t.Errorf("Expected selectedJobID=1 after jump to top, got %d", m2.selectedJobID)
+		}
+	})
 
-	if m2.selectedIdx != 0 {
-		t.Errorf("Expected selectedIdx=0 after jump to top, got %d", m2.selectedIdx)
-	}
-	if m2.selectedJobID != 1 {
-		t.Errorf("Expected selectedJobID=1 after jump to top, got %d", m2.selectedJobID)
-	}
+	t.Run("with active filter skips hidden jobs", func(t *testing.T) {
+		m := newTuiModel("http://localhost")
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withRepoPath("/repo/alpha")),
+			makeJob(2, withRepoPath("/repo/beta")),
+			makeJob(3, withRepoPath("/repo/beta")),
+		}
+		m.activeRepoFilter = []string{"/repo/beta"}
+		m.selectedIdx = 2
+		m.selectedJobID = 3
+		m.currentView = tuiViewQueue
+
+		m2, _ := pressKey(m, 'g')
+
+		// Job 1 is filtered out; first visible is job 2 at index 1
+		if m2.selectedIdx != 1 {
+			t.Errorf("Expected selectedIdx=1 (first visible), got %d", m2.selectedIdx)
+		}
+		if m2.selectedJobID != 2 {
+			t.Errorf("Expected selectedJobID=2 (first visible), got %d", m2.selectedJobID)
+		}
+	})
+
+	t.Run("empty queue is no-op", func(t *testing.T) {
+		m := newTuiModel("http://localhost")
+		m.jobs = []storage.ReviewJob{}
+		m.selectedIdx = 0
+		m.selectedJobID = 0
+		m.currentView = tuiViewQueue
+
+		m2, _ := pressKey(m, 'g')
+
+		if m2.selectedIdx != 0 {
+			t.Errorf("Expected selectedIdx unchanged at 0, got %d", m2.selectedIdx)
+		}
+		if m2.selectedJobID != 0 {
+			t.Errorf("Expected selectedJobID unchanged at 0, got %d", m2.selectedJobID)
+		}
+	})
 }
 
 func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
