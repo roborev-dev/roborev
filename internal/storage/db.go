@@ -572,36 +572,6 @@ func (db *DB) migrate() error {
 		}
 	}
 
-	// Migration: add claimed_at column to ci_pr_batches if missing
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_batches') WHERE name = 'claimed_at'`).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("check claimed_at column: %w", err)
-	}
-	if count == 0 {
-		_, err = db.Exec(`ALTER TABLE ci_pr_batches ADD COLUMN claimed_at TIMESTAMP`)
-		if err != nil {
-			return fmt.Errorf("add claimed_at column: %w", err)
-		}
-	}
-
-	// Migration: add updated_at column to ci_pr_batches if missing.
-	// SQLite ALTER TABLE ADD COLUMN does not allow non-constant defaults
-	// like CURRENT_TIMESTAMP, so add without default and backfill.
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_batches') WHERE name = 'updated_at'`).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("check updated_at column: %w", err)
-	}
-	if count == 0 {
-		_, err = db.Exec(`ALTER TABLE ci_pr_batches ADD COLUMN updated_at TIMESTAMP`)
-		if err != nil {
-			return fmt.Errorf("add updated_at column: %w", err)
-		}
-		_, err = db.Exec(`UPDATE ci_pr_batches SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL`)
-		if err != nil {
-			return fmt.Errorf("backfill updated_at: %w", err)
-		}
-	}
-
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err
