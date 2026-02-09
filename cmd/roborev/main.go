@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -105,6 +107,25 @@ type registerRepoError struct {
 
 func (e *registerRepoError) Error() string {
 	return fmt.Sprintf("server returned %d: %s", e.StatusCode, e.Body)
+}
+
+// isTransportError returns true if err indicates a transport-level failure
+// (connection refused, timeout, DNS resolution, etc.) where the daemon is
+// likely not reachable. Returns false for malformed URLs, TLS config errors,
+// and other non-transport url.Error cases that deserve explicit reporting.
+func isTransportError(err error) bool {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return false
+	}
+	// Check if the underlying error is a net-level transport failure
+	var opErr *net.OpError
+	if errors.As(urlErr.Err, &opErr) {
+		return true
+	}
+	// Also catch net.Error (timeout interface) that isn't wrapped in OpError
+	var netErr net.Error
+	return errors.As(urlErr.Err, &netErr)
 }
 
 // registerRepo tells the daemon to persist a repo to the DB so that the
@@ -411,7 +432,7 @@ func initCmd() *cobra.Command {
 				// Try to register with an already-running daemon, but don't start one
 				if err := registerRepo(root); err != nil {
 					initIncomplete = true
-					if isConnectionError(err) {
+					if isTransportError(err) {
 						fmt.Println("  Daemon not running (use 'roborev daemon start' or systemctl)")
 					} else {
 						fmt.Printf("  Warning: failed to register repo: %v\n", err)
@@ -420,11 +441,13 @@ func initCmd() *cobra.Command {
 					fmt.Println("  Repo registered with running daemon")
 				}
 			} else if err := ensureDaemon(); err != nil {
+				initIncomplete = true
 				fmt.Printf("  Warning: %v\n", err)
 				fmt.Println("  Run 'roborev daemon start' to start manually")
 			} else {
 				fmt.Println("  Daemon is running")
 				if err := registerRepo(root); err != nil {
+					initIncomplete = true
 					fmt.Printf("  Warning: failed to register repo: %v\n", err)
 				} else {
 					fmt.Println("  Repo registered")

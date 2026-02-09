@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -423,35 +425,45 @@ func TestHookNeedsUpgrade(t *testing.T) {
 	})
 }
 
-func TestIsConnectionError(t *testing.T) {
-	t.Run("url.Error is connection error", func(t *testing.T) {
+func TestIsTransportError(t *testing.T) {
+	t.Run("url.Error wrapping OpError is transport error", func(t *testing.T) {
 		err := &url.Error{Op: "Post", URL: "http://127.0.0.1:7373", Err: &net.OpError{
 			Op: "dial", Net: "tcp", Err: errors.New("connection refused"),
 		}}
-		if !isConnectionError(err) {
-			t.Error("expected url.Error to be classified as connection error")
+		if !isTransportError(err) {
+			t.Error("expected url.Error+OpError to be classified as transport error")
 		}
 	})
 
-	t.Run("registerRepoError is not connection error", func(t *testing.T) {
+	t.Run("url.Error without OpError is not transport error", func(t *testing.T) {
+		// e.g. malformed URL, TLS config error
+		err := &url.Error{Op: "Post", URL: "http://127.0.0.1:7373", Err: errors.New("some non-transport error")}
+		if isTransportError(err) {
+			t.Error("expected url.Error without net.OpError to NOT be transport error")
+		}
+	})
+
+	t.Run("registerRepoError is not transport error", func(t *testing.T) {
 		err := &registerRepoError{StatusCode: 500, Body: "internal error"}
-		if isConnectionError(err) {
-			t.Error("expected registerRepoError to NOT be classified as connection error")
+		if isTransportError(err) {
+			t.Error("expected registerRepoError to NOT be transport error")
 		}
 	})
 
-	t.Run("plain error is not connection error", func(t *testing.T) {
+	t.Run("plain error is not transport error", func(t *testing.T) {
 		err := fmt.Errorf("something else")
-		if isConnectionError(err) {
-			t.Error("expected plain error to NOT be classified as connection error")
+		if isTransportError(err) {
+			t.Error("expected plain error to NOT be transport error")
 		}
 	})
 
-	t.Run("wrapped url.Error is connection error", func(t *testing.T) {
-		inner := &url.Error{Op: "Post", URL: "http://127.0.0.1:7373", Err: errors.New("timeout")}
+	t.Run("wrapped url.Error with OpError is transport error", func(t *testing.T) {
+		inner := &url.Error{Op: "Post", URL: "http://127.0.0.1:7373", Err: &net.OpError{
+			Op: "dial", Net: "tcp", Err: errors.New("connection refused"),
+		}}
 		err := fmt.Errorf("register failed: %w", inner)
-		if !isConnectionError(err) {
-			t.Error("expected wrapped url.Error to be classified as connection error")
+		if !isTransportError(err) {
+			t.Error("expected wrapped url.Error+OpError to be transport error")
 		}
 	})
 }
@@ -469,5 +481,121 @@ func TestRegisterRepoError(t *testing.T) {
 	}
 	if regErr.StatusCode != 500 {
 		t.Errorf("expected StatusCode 500, got %d", regErr.StatusCode)
+	}
+}
+
+// initNoDaemonSetup prepares the environment for init --no-daemon tests:
+// isolated HOME, fake roborev binary, and chdir to a test repo.
+// Returns the repo path and a cleanup function.
+func initNoDaemonSetup(t *testing.T) string {
+	t.Helper()
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(tmpHome, ".roborev"))
+
+	repo := testutil.NewTestRepo(t)
+	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
+	t.Cleanup(repo.Chdir())
+
+	return repo.Root
+}
+
+func TestInitNoDaemon_ConnectionError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+	initNoDaemonSetup(t)
+
+	// Point to a port that's definitely not listening
+	oldAddr := serverAddr
+	serverAddr = "http://127.0.0.1:1" // port 1 won't have a daemon
+	defer func() { serverAddr = oldAddr }()
+
+	output := captureStdout(t, func() {
+		cmd := initCmd()
+		cmd.SetArgs([]string{"--no-daemon"})
+		_ = cmd.Execute()
+	})
+
+	if !strings.Contains(output, "Daemon not running") {
+		t.Errorf("expected 'Daemon not running' for connection error, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Setup incomplete") {
+		t.Errorf("expected 'Setup incomplete' banner, got:\n%s", output)
+	}
+	if strings.Contains(output, "Ready!") {
+		t.Errorf("should not show 'Ready!' on connection failure, got:\n%s", output)
+	}
+}
+
+func TestInitNoDaemon_ServerError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+	initNoDaemonSetup(t)
+
+	// Spin up a test server that returns 500
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		w.Write([]byte("database locked"))
+	}))
+	defer ts.Close()
+
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	output := captureStdout(t, func() {
+		cmd := initCmd()
+		cmd.SetArgs([]string{"--no-daemon"})
+		_ = cmd.Execute()
+	})
+
+	if !strings.Contains(output, "Warning: failed to register repo") {
+		t.Errorf("expected server error warning, got:\n%s", output)
+	}
+	if !strings.Contains(output, "500") {
+		t.Errorf("expected status code 500 in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Setup incomplete") {
+		t.Errorf("expected 'Setup incomplete' banner, got:\n%s", output)
+	}
+	if strings.Contains(output, "Ready!") {
+		t.Errorf("should not show 'Ready!' on server error, got:\n%s", output)
+	}
+}
+
+func TestInitNoDaemon_Success(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+	initNoDaemonSetup(t)
+
+	// Spin up a test server that returns 200
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	output := captureStdout(t, func() {
+		cmd := initCmd()
+		cmd.SetArgs([]string{"--no-daemon"})
+		_ = cmd.Execute()
+	})
+
+	if !strings.Contains(output, "Repo registered with running daemon") {
+		t.Errorf("expected success registration message, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Ready!") {
+		t.Errorf("expected 'Ready!' banner on success, got:\n%s", output)
+	}
+	if strings.Contains(output, "Setup incomplete") {
+		t.Errorf("should not show 'Setup incomplete' on success, got:\n%s", output)
 	}
 }
