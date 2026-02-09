@@ -113,6 +113,10 @@ type CIConfig struct {
 	// SynthesisModel overrides the model used for synthesis.
 	SynthesisModel string `toml:"synthesis_model"`
 
+	// MinSeverity filters out findings below this severity level during synthesis.
+	// Valid values: critical, high, medium, low. Empty means no filter (include all).
+	MinSeverity string `toml:"min_severity"`
+
 	// GitHub App authentication (optional — comments appear as bot instead of personal account)
 	GitHubAppID             int64  `toml:"github_app_id"`
 	GitHubAppPrivateKey     string `toml:"github_app_private_key"` // PEM file path or inline; supports ${ENV_VAR}
@@ -293,6 +297,9 @@ type RepoCIConfig struct {
 
 	// Reasoning overrides the reasoning level for CI reviews (thorough, standard, fast).
 	Reasoning string `toml:"reasoning"`
+
+	// MinSeverity overrides the minimum severity filter for CI synthesis.
+	MinSeverity string `toml:"min_severity"`
 }
 
 // RepoConfig holds per-repo overrides
@@ -499,6 +506,23 @@ func NormalizeReasoning(value string) (string, error) {
 		return "fast", nil
 	default:
 		return "", fmt.Errorf("invalid reasoning level: %q", value)
+	}
+}
+
+// NormalizeMinSeverity validates and normalizes a minimum severity level string.
+// Returns the canonical form (critical, high, medium, low) or an error if invalid.
+// Returns empty string (no error) for empty input.
+func NormalizeMinSeverity(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "", nil
+	}
+
+	switch normalized {
+	case "critical", "high", "medium", "low":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid min_severity level: %q (valid: critical, high, medium, low)", value)
 	}
 }
 

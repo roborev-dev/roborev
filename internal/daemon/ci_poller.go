@@ -817,6 +817,19 @@ func (p *CIPoller) unclaimBatch(batchID int64) {
 	}
 }
 
+// resolveRepoForBatch looks up the local repo associated with a batch's GitHub repo.
+// Returns nil if the repo can't be found (synthesis proceeds without per-repo overrides).
+func (p *CIPoller) resolveRepoForBatch(batch *storage.CIPRBatch) *storage.Repo {
+	if p.db == nil || batch.GithubRepo == "" {
+		return nil
+	}
+	repo, err := p.findLocalRepo(batch.GithubRepo)
+	if err != nil {
+		return nil
+	}
+	return repo
+}
+
 // synthesizeBatchResults uses an LLM agent to combine multiple review outputs.
 func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []storage.BatchReviewResult, cfg *config.Config) (string, error) {
 	synthesisAgent, err := agent.GetAvailable(cfg.CI.SynthesisAgent)
@@ -828,7 +841,28 @@ func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []st
 		synthesisAgent = synthesisAgent.WithModel(cfg.CI.SynthesisModel)
 	}
 
-	prompt := buildSynthesisPrompt(reviews)
+	// Resolve minSeverity: per-repo override > global CI config
+	minSeverity := cfg.CI.MinSeverity
+	if repo := p.resolveRepoForBatch(batch); repo != nil {
+		if repoCfg, err := config.LoadRepoConfig(repo.RootPath); err == nil && repoCfg != nil {
+			if s := strings.TrimSpace(repoCfg.CI.MinSeverity); s != "" {
+				if normalized, err := config.NormalizeMinSeverity(s); err == nil {
+					minSeverity = normalized
+				} else {
+					log.Printf("CI poller: invalid min_severity %q in repo config for %s, using global", s, batch.GithubRepo)
+				}
+			}
+		}
+	}
+	// Normalize global value if no repo override was applied
+	if normalized, err := config.NormalizeMinSeverity(minSeverity); err == nil {
+		minSeverity = normalized
+	} else {
+		log.Printf("CI poller: invalid global min_severity %q, ignoring", minSeverity)
+		minSeverity = ""
+	}
+
+	prompt := buildSynthesisPrompt(reviews, minSeverity)
 
 	// Use empty commit SHA since this is synthesis, not a repo review
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -884,8 +918,16 @@ func (p *CIPoller) callSynthesize(batch *storage.CIPRBatch, reviews []storage.Ba
 	return p.synthesizeBatchResults(batch, reviews, cfg)
 }
 
+// severityAbove maps a minimum severity to the instruction describing which levels to include.
+var severityAbove = map[string]string{
+	"critical": "Only include Critical findings.",
+	"high":     "Only include High and Critical findings.",
+	"medium":   "Only include Medium, High, and Critical findings.",
+}
+
 // buildSynthesisPrompt creates the prompt for the synthesis agent.
-func buildSynthesisPrompt(reviews []storage.BatchReviewResult) string {
+// When minSeverity is non-empty (and not "low"), a filtering instruction is appended.
+func buildSynthesisPrompt(reviews []storage.BatchReviewResult, minSeverity string) string {
 	var b strings.Builder
 	b.WriteString(`You are combining multiple code review outputs into a single GitHub PR comment.
 Rules:
@@ -896,8 +938,13 @@ Rules:
 - Start with a one-line summary verdict
 - Use markdown formatting
 - No preamble about yourself
-
 `)
+
+	if instruction, ok := severityAbove[minSeverity]; ok {
+		b.WriteString("- Omit findings below " + minSeverity + " severity. " + instruction + "\n")
+	}
+
+	b.WriteString("\n")
 
 	// Truncate per-review output to avoid blowing the synthesis agent's context window.
 	const maxPerReview = 15000

@@ -1342,6 +1342,37 @@ func TestResolvedAgents(t *testing.T) {
 	})
 }
 
+func TestNormalizeMinSeverity(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"", "", false},
+		{"critical", "critical", false},
+		{"high", "high", false},
+		{"medium", "medium", false},
+		{"low", "low", false},
+		{"CRITICAL", "critical", false},
+		{"  High  ", "high", false},
+		{"Medium", "medium", false},
+		{"invalid", "", true},
+		{"thorough", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run("input_"+tt.input, func(t *testing.T) {
+			got, err := NormalizeMinSeverity(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("NormalizeMinSeverity(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("NormalizeMinSeverity(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRepoCIConfig(t *testing.T) {
 	t.Run("parses agents and review_types", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `

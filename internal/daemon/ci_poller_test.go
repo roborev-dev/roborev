@@ -109,7 +109,7 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 		{JobID: 3, Agent: "codex", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	prompt := buildSynthesisPrompt(reviews)
+	prompt := buildSynthesisPrompt(reviews, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
@@ -1002,7 +1002,7 @@ func TestBuildSynthesisPrompt_TruncatesLargeOutputs(t *testing.T) {
 		{JobID: 1, Agent: "codex", ReviewType: "security", Output: largeOutput, Status: "done"},
 	}
 
-	prompt := buildSynthesisPrompt(reviews)
+	prompt := buildSynthesisPrompt(reviews, "")
 
 	if len(prompt) > 16500 { // 15k truncated + headers/instructions
 		t.Errorf("synthesis prompt too large (%d chars), expected truncation", len(prompt))
@@ -1055,11 +1055,55 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	reviews := []storage.BatchReviewResult{
 		{JobID: 1, Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
 	}
-	prompt := buildSynthesisPrompt(reviews)
+	prompt := buildSynthesisPrompt(reviews, "")
 	if strings.Contains(prompt, "secret-token-abc123") {
 		t.Error("raw error text should not appear in synthesis prompt")
 	}
 	if !strings.Contains(prompt, "[FAILED]") {
 		t.Error("expected [FAILED] marker in synthesis prompt")
 	}
+}
+
+func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
+	reviews := []storage.BatchReviewResult{
+		{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
+	}
+
+	t.Run("no filter when empty", func(t *testing.T) {
+		prompt := buildSynthesisPrompt(reviews, "")
+		if strings.Contains(prompt, "Omit findings below") {
+			t.Error("expected no severity filter instruction when minSeverity is empty")
+		}
+	})
+
+	t.Run("no filter when low", func(t *testing.T) {
+		prompt := buildSynthesisPrompt(reviews, "low")
+		if strings.Contains(prompt, "Omit findings below") {
+			t.Error("expected no severity filter instruction when minSeverity is low")
+		}
+	})
+
+	t.Run("filter for medium", func(t *testing.T) {
+		prompt := buildSynthesisPrompt(reviews, "medium")
+		assertContainsAll(t, prompt, "prompt",
+			"Omit findings below medium severity",
+			"Only include Medium, High, and Critical findings.",
+		)
+	})
+
+	t.Run("filter for high", func(t *testing.T) {
+		prompt := buildSynthesisPrompt(reviews, "high")
+		assertContainsAll(t, prompt, "prompt",
+			"Omit findings below high severity",
+			"Only include High and Critical findings.",
+		)
+	})
+
+	t.Run("filter for critical", func(t *testing.T) {
+		prompt := buildSynthesisPrompt(reviews, "critical")
+		assertContainsAll(t, prompt, "prompt",
+			"Omit findings below critical severity",
+			"Only include Critical findings.",
+		)
+	})
 }
