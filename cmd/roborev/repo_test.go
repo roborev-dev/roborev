@@ -53,7 +53,9 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	t.Run("resolves dot to git root", func(t *testing.T) {
 		tmpDir := newTestGitRepo(t).Dir
 		subDir := filepath.Join(tmpDir, "sub", "dir")
-		os.MkdirAll(subDir, 0755)
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
 		chdir(t, subDir)
 
 		result := resolveRepoIdentifier(".")
@@ -65,7 +67,9 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	t.Run("resolves relative path to git root", func(t *testing.T) {
 		tmpDir := newTestGitRepo(t).Dir
 		subDir := filepath.Join(tmpDir, "sub")
-		os.MkdirAll(subDir, 0755)
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
 		chdir(t, subDir)
 
 		result := resolveRepoIdentifier("./")
@@ -77,7 +81,9 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	t.Run("resolves absolute path to git root", func(t *testing.T) {
 		tmpDir := newTestGitRepo(t).Dir
 		subDir := filepath.Join(tmpDir, "sub", "dir")
-		os.MkdirAll(subDir, 0755)
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
 
 		result := resolveRepoIdentifier(subDir)
 		if result != tmpDir {
@@ -102,7 +108,9 @@ func TestResolveRepoIdentifier(t *testing.T) {
 	t.Run("dotdot resolves correctly", func(t *testing.T) {
 		tmpDir := newTestGitRepo(t).Dir
 		subDir := filepath.Join(tmpDir, "a", "b", "c")
-		os.MkdirAll(subDir, 0755)
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
 		chdir(t, subDir)
 
 		result := resolveRepoIdentifier("..")

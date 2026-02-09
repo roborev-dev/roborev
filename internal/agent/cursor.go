@@ -46,6 +46,9 @@ func (a *CursorAgent) WithAgentic(agentic bool) Agent {
 }
 
 func (a *CursorAgent) WithModel(model string) Agent {
+	if model == "" {
+		return a
+	}
 	return &CursorAgent{
 		Command:   a.Command,
 		Model:     model,

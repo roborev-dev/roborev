@@ -50,6 +50,9 @@ func (a *OpenCodeAgent) WithAgentic(agentic bool) Agent {
 
 // WithModel returns a copy of the agent configured to use the specified model.
 func (a *OpenCodeAgent) WithModel(model string) Agent {
+	if model == "" {
+		return a
+	}
 	return &OpenCodeAgent{
 		Command:   a.Command,
 		Model:     model,

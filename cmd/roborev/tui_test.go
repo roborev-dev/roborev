@@ -3406,11 +3406,26 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 	}
 }
 
+func TestTUIHideAddressedDefaultFromConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	m := newTuiModel("http://localhost")
+	if !m.hideAddressed {
+		t.Error("hideAddressed should be true when config sets hide_addressed_by_default = true")
+	}
+}
+
 func TestTUIHideAddressedToggle(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 
-	// Initial state: hideAddressed is false
+	// Initial state: hideAddressed is false (TestMain isolates from real config)
 	if m.hideAddressed {
 		t.Error("hideAddressed should be false initially")
 	}

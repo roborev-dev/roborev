@@ -48,6 +48,9 @@ func (a *CopilotAgent) WithAgentic(agentic bool) Agent {
 
 // WithModel returns a copy of the agent configured to use the specified model.
 func (a *CopilotAgent) WithModel(model string) Agent {
+	if model == "" {
+		return a
+	}
 	return &CopilotAgent{
 		Command:   a.Command,
 		Model:     model,

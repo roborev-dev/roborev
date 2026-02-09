@@ -255,6 +255,38 @@ func TestAgentWithModelPersistence(t *testing.T) {
 	}
 }
 
+func TestWithModelEmptyPreservesDefault(t *testing.T) {
+	tests := []struct {
+		name         string
+		newAgent     func() Agent
+		defaultModel string
+	}{
+		{"codex", func() Agent { return NewCodexAgent("") }, ""},
+		{"claude", func() Agent { return NewClaudeAgent("") }, ""},
+		{"gemini", func() Agent { return NewGeminiAgent("") }, "gemini-3-pro-preview"},
+		{"copilot", func() Agent { return NewCopilotAgent("") }, ""},
+		{"opencode", func() Agent { return NewOpenCodeAgent("") }, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := tt.newAgent()
+			b := a.WithModel("")
+			if got := getAgentModel(b); got != tt.defaultModel {
+				t.Errorf("WithModel(\"\") changed model from %q to %q", tt.defaultModel, got)
+			}
+		})
+
+		t.Run(tt.name+"/explicit then empty preserves explicit", func(t *testing.T) {
+			a := tt.newAgent().WithModel("custom-model")
+			b := a.WithModel("")
+			if got := getAgentModel(b); got != "custom-model" {
+				t.Errorf("WithModel(\"\") after WithModel(\"custom-model\"): got %q, want %q", got, "custom-model")
+			}
+		})
+	}
+}
+
 // containsSequence checks if args contains needle1 immediately followed by needle2
 func containsSequence(args []string, needle1, needle2 string) bool {
 	for i := 0; i < len(args)-1; i++ {

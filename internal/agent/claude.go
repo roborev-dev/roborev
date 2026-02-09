@@ -55,6 +55,9 @@ func (a *ClaudeAgent) WithAgentic(agentic bool) Agent {
 
 // WithModel returns a copy of the agent configured to use the specified model.
 func (a *ClaudeAgent) WithModel(model string) Agent {
+	if model == "" {
+		return a
+	}
 	return &ClaudeAgent{
 		Command:   a.Command,
 		Model:     model,

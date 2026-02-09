@@ -50,6 +50,9 @@ func (a *CodexAgent) WithAgentic(agentic bool) Agent {
 
 // WithModel returns a copy of the agent configured to use the specified model.
 func (a *CodexAgent) WithModel(model string) Agent {
+	if model == "" {
+		return a
+	}
 	return &CodexAgent{
 		Command:   a.Command,
 		Model:     model,

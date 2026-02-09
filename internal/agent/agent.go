@@ -54,6 +54,7 @@ type Agent interface {
 	WithAgentic(agentic bool) Agent
 
 	// WithModel returns a copy of the agent configured to use the specified model.
+	// If model is empty, the agent is returned unchanged (preserving any built-in default).
 	// Agents that don't support model selection may return themselves unchanged.
 	// For opencode, the model format is "provider/model" (e.g., "anthropic/claude-sonnet-4-20250514").
 	WithModel(model string) Agent

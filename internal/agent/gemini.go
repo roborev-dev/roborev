@@ -65,6 +65,9 @@ func (a *GeminiAgent) WithAgentic(agentic bool) Agent {
 
 // WithModel returns a copy of the agent configured to use the specified model.
 func (a *GeminiAgent) WithModel(model string) Agent {
+	if model == "" {
+		return a
+	}
 	return &GeminiAgent{
 		Command:   a.Command,
 		Model:     model,
