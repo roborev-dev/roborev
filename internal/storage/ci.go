@@ -67,9 +67,15 @@ type BatchReviewResult struct {
 }
 
 // HasCIBatch checks if a batch already exists for this PR at this HEAD SHA.
+// Only returns true if the batch has at least one linked job — an empty batch
+// (from a crash between CreateCIBatch and RecordBatchJob) is treated as absent
+// so the recovery path in processPR can clean it up.
 func (db *DB) HasCIBatch(githubRepo string, prNumber int, headSHA string) (bool, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batches WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM ci_pr_batches b
+		WHERE b.github_repo = ? AND b.pr_number = ? AND b.head_sha = ?
+		AND EXISTS (SELECT 1 FROM ci_pr_batch_jobs bj WHERE bj.batch_id = b.id)`,
 		githubRepo, prNumber, headSHA).Scan(&count)
 	if err != nil {
 		return false, err
@@ -100,6 +106,13 @@ func (db *DB) CreateCIBatch(githubRepo string, prNumber int, headSHA string, tot
 	}
 	batch.Synthesized = synthesized != 0
 	return &batch, created, nil
+}
+
+// CountBatchJobs returns the number of jobs linked to a batch.
+func (db *DB) CountBatchJobs(batchID int64) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batch_jobs WHERE batch_id = ?`, batchID).Scan(&count)
+	return count, err
 }
 
 // RecordBatchJob links a review job to a batch.

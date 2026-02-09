@@ -102,7 +102,8 @@ func registerRepo(repoPath string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(getDaemonAddr()+"/api/repos/register", "application/json", bytes.NewReader(body))
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(getDaemonAddr()+"/api/repos/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

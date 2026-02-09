@@ -274,8 +274,32 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return fmt.Errorf("create CI batch: %w", err)
 	}
 	if !created {
-		// Another poller already created this batch and is enqueuing jobs
-		return nil
+		// Batch already exists — check if it's fully populated.
+		// If the creator crashed mid-enqueue, the batch may have fewer
+		// linked jobs than expected. Clean it up so we can retry.
+		linked, err := p.db.CountBatchJobs(batch.ID)
+		if err != nil {
+			return fmt.Errorf("count batch jobs: %w", err)
+		}
+		if linked < batch.TotalJobs {
+			log.Printf("CI poller: batch %d has %d/%d linked jobs (incomplete), cleaning up for retry",
+				batch.ID, linked, batch.TotalJobs)
+			if err := p.db.DeleteCIBatch(batch.ID); err != nil {
+				return fmt.Errorf("clean up incomplete batch: %w", err)
+			}
+			// Re-create the batch — this time we're the creator
+			batch, created, err = p.db.CreateCIBatch(ghRepo, pr.Number, pr.HeadRefOid, totalJobs)
+			if err != nil {
+				return fmt.Errorf("re-create CI batch: %w", err)
+			}
+			if !created {
+				// Another poller beat us again — let them handle it
+				return nil
+			}
+		} else {
+			// Fully populated batch — nothing to do
+			return nil
+		}
 	}
 
 	// Enqueue jobs for each review_type x agent combination.
@@ -364,7 +388,14 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 
 	for _, pattern := range patterns {
 		repo, err := p.db.GetRepoByIdentityCaseInsensitive(pattern)
-		if err == nil && repo != nil {
+		if err != nil {
+			// Propagate ambiguity errors (e.g., multiple repos with same identity)
+			if strings.Contains(err.Error(), "multiple repos") {
+				return nil, fmt.Errorf("ambiguous repo match for %q: %w", ghRepo, err)
+			}
+			continue // Other errors (DB issues) — try next pattern
+		}
+		if repo != nil {
 			return repo, nil
 		}
 	}

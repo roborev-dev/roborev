@@ -890,6 +890,95 @@ func TestCIPollerProcessPR_EmptyReviewType(t *testing.T) {
 	}
 }
 
+func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repoPath := t.TempDir()
+	_, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.ReviewTypes = []string{"security"}
+	cfg.CI.Agents = []string{"codex"}
+
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	p.gitFetchFn = func(context.Context, string) error { return nil }
+	p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	// Simulate a crashed creator: batch exists but no linked jobs
+	batch, created, err := db.CreateCIBatch("acme/api", 50, "head-sha-50", 1)
+	if err != nil {
+		t.Fatalf("CreateCIBatch: %v", err)
+	}
+	if !created {
+		t.Fatal("expected to create batch")
+	}
+	_ = batch
+
+	// processPR should detect the incomplete batch, clean it up, and re-create
+	err = p.processPR(context.Background(), "acme/api", ghPR{
+		Number:      50,
+		HeadRefOid:  "head-sha-50",
+		BaseRefName: "main",
+	}, cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	// Should have a batch with 1 linked job now
+	jobs, err := db.ListJobs("", repoPath, 0, 0, storage.WithGitRef("base-sha..head-sha-50"))
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job after recovery, got %d", len(jobs))
+	}
+}
+
+func TestCIPollerFindLocalRepo_AmbiguousRepoError(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+
+	// Create two repos with the same identity (different local paths)
+	if _, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		"/tmp/clone1", "api", "https://github.com/acme/api.git"); err != nil {
+		t.Fatalf("insert repo1: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		"/tmp/clone2", "api", "https://github.com/acme/api.git"); err != nil {
+		t.Fatalf("insert repo2: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	_, err := p.findLocalRepo("acme/api")
+	if err == nil {
+		t.Fatal("expected error for ambiguous repo match")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("expected ambiguity error, got: %v", err)
+	}
+}
+
+func TestBuildSynthesisPrompt_TruncatesLargeOutputs(t *testing.T) {
+	largeOutput := strings.Repeat("x", 20000)
+	reviews := []storage.BatchReviewResult{
+		{JobID: 1, Agent: "codex", ReviewType: "security", Output: largeOutput, Status: "done"},
+	}
+
+	prompt := buildSynthesisPrompt(reviews)
+
+	if len(prompt) > 16500 { // 15k truncated + headers/instructions
+		t.Errorf("synthesis prompt too large (%d chars), expected truncation", len(prompt))
+	}
+	if !strings.Contains(prompt, "...(truncated)") {
+		t.Error("expected truncation marker in synthesis prompt")
+	}
+}
+
 func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	reviews := []storage.BatchReviewResult{
 		{JobID: 1, Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},

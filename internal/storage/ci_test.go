@@ -64,9 +64,32 @@ func TestHasCIBatch(t *testing.T) {
 		t.Error("expected false before creation")
 	}
 
-	_, _, err = db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
+	// Create batch — HasCIBatch requires linked jobs, so create one
+	repo, err := db.GetOrCreateRepo("/tmp/test-repo-hasbatch")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
+	}
+
+	// Empty batch (no linked jobs) should return false
+	has, err = db.HasCIBatch("myorg/myrepo", 1, "sha1")
+	if err != nil {
+		t.Fatalf("HasCIBatch (empty): %v", err)
+	}
+	if has {
+		t.Error("expected false for batch with no linked jobs")
+	}
+
+	// Link a job — now HasCIBatch should return true
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc..def", Agent: "test", ReviewType: "security"})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if err := db.RecordBatchJob(batch.ID, job.ID); err != nil {
+		t.Fatalf("RecordBatchJob: %v", err)
 	}
 
 	has, err = db.HasCIBatch("myorg/myrepo", 1, "sha1")
@@ -74,7 +97,7 @@ func TestHasCIBatch(t *testing.T) {
 		t.Fatalf("HasCIBatch: %v", err)
 	}
 	if !has {
-		t.Error("expected true after creation")
+		t.Error("expected true after linking a job")
 	}
 
 	// Different SHA should be false
@@ -534,12 +557,14 @@ func TestDeleteEmptyBatches(t *testing.T) {
 		t.Error("old empty batch should have been deleted")
 	}
 
-	// Recent empty batch should still exist
-	has, err = db.HasCIBatch("myorg/myrepo", 2, "sha-recent")
-	if err != nil {
-		t.Fatalf("HasCIBatch (recent empty): %v", err)
+	// Recent empty batch should still exist in DB (HasCIBatch requires linked
+	// jobs, so check via direct query)
+	var recentCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batches WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+		"myorg/myrepo", 2, "sha-recent").Scan(&recentCount); err != nil {
+		t.Fatalf("count recent batch: %v", err)
 	}
-	if !has {
+	if recentCount != 1 {
 		t.Error("recent empty batch should NOT have been deleted")
 	}
 

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // GetOrCreateRepo finds or creates a repo by its root path.
@@ -49,26 +48,41 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 		return nil, err
 	}
 
-	// Create new
+	// Create new — use INSERT OR IGNORE to handle concurrent inserts on the
+	// same root_path (UNIQUE constraint). If the row already exists, re-read it.
 	name := filepath.Base(absPath)
-	var result sql.Result
 	if repoIdentity != "" {
-		result, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`, absPath, name, repoIdentity)
+		_, err = db.Exec(`INSERT OR IGNORE INTO repos (root_path, name, identity) VALUES (?, ?, ?)`, absPath, name, repoIdentity)
 	} else {
-		result, err = db.Exec(`INSERT INTO repos (root_path, name) VALUES (?, ?)`, absPath, name)
+		_, err = db.Exec(`INSERT OR IGNORE INTO repos (root_path, name) VALUES (?, ?)`, absPath, name)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	id, _ := result.LastInsertId()
-	return &Repo{
-		ID:        id,
-		RootPath:  absPath,
-		Name:      name,
-		Identity:  repoIdentity,
-		CreatedAt: time.Now(),
-	}, nil
+	// Re-read to get the actual row (whether we just created it or it was
+	// concurrently created by another caller).
+	var created Repo
+	var createdAtStr string
+	var idNullable sql.NullString
+	err = db.QueryRow(`SELECT id, root_path, name, identity, created_at FROM repos WHERE root_path = ?`, absPath).
+		Scan(&created.ID, &created.RootPath, &created.Name, &idNullable, &createdAtStr)
+	if err != nil {
+		return nil, fmt.Errorf("re-read repo after insert: %w", err)
+	}
+	created.Identity = idNullable.String
+	created.CreatedAt = parseSQLiteTime(createdAtStr)
+
+	// Update identity if provided and not already set
+	if repoIdentity != "" && created.Identity == "" {
+		_, err = db.Exec(`UPDATE repos SET identity = ? WHERE id = ?`, repoIdentity, created.ID)
+		if err != nil {
+			return nil, fmt.Errorf("update identity: %w", err)
+		}
+		created.Identity = repoIdentity
+	}
+
+	return &created, nil
 }
 
 // GetRepoByPath returns a repo by its path

@@ -1406,7 +1406,9 @@ func TestInstallationIDForOwner(t *testing.T) {
 		ci := CIConfig{
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
 		}
-		ci.NormalizeInstallations()
+		if err := ci.NormalizeInstallations(); err != nil {
+			t.Fatalf("NormalizeInstallations: %v", err)
+		}
 		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
 			t.Errorf("got %d, want 111111", got)
 		}
@@ -1424,7 +1426,9 @@ func TestNormalizeInstallations(t *testing.T) {
 		ci := CIConfig{
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
 		}
-		ci.NormalizeInstallations()
+		if err := ci.NormalizeInstallations(); err != nil {
+			t.Fatalf("NormalizeInstallations: %v", err)
+		}
 		if _, ok := ci.GitHubAppInstallations["wesm"]; !ok {
 			t.Error("expected lowercase key 'wesm' after normalization")
 		}
@@ -1438,20 +1442,21 @@ func TestNormalizeInstallations(t *testing.T) {
 
 	t.Run("noop on nil map", func(t *testing.T) {
 		ci := CIConfig{}
-		ci.NormalizeInstallations() // should not panic
+		if err := ci.NormalizeInstallations(); err != nil {
+			t.Fatalf("NormalizeInstallations on nil map: %v", err)
+		}
 	})
 
-	t.Run("case-colliding keys last-write wins", func(t *testing.T) {
+	t.Run("case-colliding keys returns error", func(t *testing.T) {
 		ci := CIConfig{
 			GitHubAppInstallations: map[string]int64{"wesm": 111111, "Wesm": 222222},
 		}
-		ci.NormalizeInstallations()
-		// Both collapse to "wesm" — one wins (deterministic since both overwrite same key)
-		if _, ok := ci.GitHubAppInstallations["wesm"]; !ok {
-			t.Error("expected key 'wesm' after normalization")
+		err := ci.NormalizeInstallations()
+		if err == nil {
+			t.Fatal("expected error for case-colliding keys")
 		}
-		if len(ci.GitHubAppInstallations) != 1 {
-			t.Errorf("expected 1 key after collapsing, got %d", len(ci.GitHubAppInstallations))
+		if !strings.Contains(err.Error(), "case-colliding") {
+			t.Errorf("expected case-colliding error, got: %v", err)
 		}
 	})
 }

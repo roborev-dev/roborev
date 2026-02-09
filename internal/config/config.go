@@ -171,15 +171,21 @@ func (c *CIConfig) InstallationIDForOwner(owner string) int64 {
 
 // NormalizeInstallations lowercases all keys in GitHubAppInstallations
 // so lookups are case-insensitive via direct map access.
-func (c *CIConfig) NormalizeInstallations() {
+// Returns an error if two keys collide after lowercasing (e.g., "wesm" and "Wesm").
+func (c *CIConfig) NormalizeInstallations() error {
 	if len(c.GitHubAppInstallations) == 0 {
-		return
+		return nil
 	}
 	normalized := make(map[string]int64, len(c.GitHubAppInstallations))
 	for k, v := range c.GitHubAppInstallations {
-		normalized[strings.ToLower(k)] = v
+		lower := strings.ToLower(k)
+		if _, exists := normalized[lower]; exists {
+			return fmt.Errorf("case-colliding github_app_installations keys for %q", lower)
+		}
+		normalized[lower] = v
 	}
 	c.GitHubAppInstallations = normalized
+	return nil
 }
 
 // GitHubAppPrivateKeyResolved expands env vars in the private key value,
@@ -388,7 +394,9 @@ func LoadGlobalFrom(path string) (*Config, error) {
 		return nil, err
 	}
 
-	cfg.CI.NormalizeInstallations()
+	if err := cfg.CI.NormalizeInstallations(); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 
 	return cfg, nil
 }
