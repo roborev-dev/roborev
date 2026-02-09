@@ -1144,6 +1144,15 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		{"fix default reasoning (standard) selects level-specific", "", nil, M{"fix_agent_standard": "claude", "fix_agent": "codex"}, "fix", "standard", "claude"},
 		{"fix isolated from review", "", M{"review_agent": "claude"}, M{"default_agent": "codex"}, "fix", "fast", "codex"},
 		{"fix isolated from refine", "", M{"refine_agent": "claude"}, M{"default_agent": "codex"}, "fix", "fast", "codex"},
+
+		// Design workflow
+		{"design uses design_agent", "", M{"design_agent": "claude"}, nil, "design", "fast", "claude"},
+		{"design level-specific", "", M{"design_agent": "codex", "design_agent_fast": "claude"}, nil, "design", "fast", "claude"},
+		{"design falls back to generic agent", "", M{"agent": "claude"}, nil, "design", "fast", "claude"},
+		{"design falls back to global design_agent", "", nil, M{"design_agent": "claude"}, "design", "fast", "claude"},
+		{"design global level-specific", "", nil, M{"design_agent": "codex", "design_agent_thorough": "claude"}, "design", "thorough", "claude"},
+		{"design isolated from review", "", M{"review_agent": "claude"}, M{"default_agent": "codex"}, "design", "fast", "codex"},
+		{"design isolated from security", "", M{"security_agent": "claude"}, M{"default_agent": "codex"}, "design", "fast", "codex"},
 	}
 
 	for _, tt := range tests {
@@ -1196,6 +1205,12 @@ func TestResolveModelForWorkflow(t *testing.T) {
 		{"fix level-specific model", "", M{"fix_model": "gpt-4", "fix_model_fast": "claude-3"}, nil, "fix", "fast", "claude-3"},
 		{"fix falls back to generic model", "", M{"model": "gpt-4"}, nil, "fix", "fast", "gpt-4"},
 		{"fix isolated from review model", "", M{"review_model": "gpt-4"}, nil, "fix", "fast", ""},
+
+		// Design workflow
+		{"design uses design_model", "", M{"design_model": "gpt-4"}, nil, "design", "fast", "gpt-4"},
+		{"design level-specific model", "", M{"design_model": "gpt-4", "design_model_fast": "claude-3"}, nil, "design", "fast", "claude-3"},
+		{"design falls back to generic model", "", M{"model": "gpt-4"}, nil, "design", "fast", "gpt-4"},
+		{"design isolated from review model", "", M{"review_model": "gpt-4"}, nil, "design", "fast", ""},
 	}
 
 	for _, tt := range tests {
@@ -1301,6 +1316,22 @@ func buildGlobalConfig(cfg map[string]string) *Config {
 			c.FixModelStandard = v
 		case "fix_model_thorough":
 			c.FixModelThorough = v
+		case "design_agent":
+			c.DesignAgent = v
+		case "design_agent_fast":
+			c.DesignAgentFast = v
+		case "design_agent_standard":
+			c.DesignAgentStandard = v
+		case "design_agent_thorough":
+			c.DesignAgentThorough = v
+		case "design_model":
+			c.DesignModel = v
+		case "design_model_fast":
+			c.DesignModelFast = v
+		case "design_model_standard":
+			c.DesignModelStandard = v
+		case "design_model_thorough":
+			c.DesignModelThorough = v
 		}
 	}
 	return c
@@ -1745,5 +1776,20 @@ func TestHideAddressedDefaultPersistence(t *testing.T) {
 	}
 	if reloaded.HideAddressedByDefault {
 		t.Error("Expected HideAddressedByDefault to be false")
+	}
+}
+
+func TestIsDefaultReviewType(t *testing.T) {
+	defaults := []string{"", "default", "general", "review"}
+	for _, rt := range defaults {
+		if !IsDefaultReviewType(rt) {
+			t.Errorf("expected %q to be default review type", rt)
+		}
+	}
+	nonDefaults := []string{"security", "design", "bogus"}
+	for _, rt := range nonDefaults {
+		if IsDefaultReviewType(rt) {
+			t.Errorf("expected %q to NOT be default review type", rt)
+		}
 	}
 }

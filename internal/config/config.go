@@ -507,6 +507,13 @@ func GetDisplayName(repoPath string) string {
 	return repoCfg.DisplayName
 }
 
+// IsDefaultReviewType returns true if the review type represents the standard
+// (non-specialized) code review. The canonical name is "default"; "general"
+// and "review" are accepted as backward-compatible aliases.
+func IsDefaultReviewType(rt string) bool {
+	return rt == "" || rt == "default" || rt == "general" || rt == "review"
+}
+
 // NormalizeReasoning validates and normalizes a reasoning level string.
 // Returns the canonical form (thorough, standard, fast) or an error if invalid.
 // Returns empty string (no error) for empty input.
