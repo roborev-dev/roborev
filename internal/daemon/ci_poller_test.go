@@ -363,8 +363,8 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.CI.Enabled = true
-	cfg.CI.ReviewType = "security"
-	cfg.CI.Agent = "codex"
+	cfg.CI.ReviewTypes = []string{"security"}
+	cfg.CI.Agents = []string{"codex"}
 
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 	p.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {

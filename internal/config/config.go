@@ -95,22 +95,16 @@ type CIConfig struct {
 	// Repos is the list of GitHub repos to poll in "owner/repo" format
 	Repos []string `toml:"repos"`
 
-	// ReviewType is the review type to use for CI reviews (default: "security")
-	ReviewType string `toml:"review_type"`
+	// ReviewTypes is the list of review types to run for each PR (e.g., ["security", "review"]).
+	// Defaults to ["security"] if empty.
+	ReviewTypes []string `toml:"review_types"`
 
-	// Agent overrides the agent for CI reviews (empty = use workflow resolution)
-	Agent string `toml:"agent"`
+	// Agents is the list of agents to run for each PR (e.g., ["codex", "gemini"]).
+	// Defaults to auto-detection if empty.
+	Agents []string `toml:"agents"`
 
 	// Model overrides the model for CI reviews (empty = use workflow resolution)
 	Model string `toml:"model"`
-
-	// ReviewTypes is a list of review types to run for each PR (e.g., ["security", "review"]).
-	// If set, overrides the singular ReviewType field.
-	ReviewTypes []string `toml:"review_types"`
-
-	// Agents is a list of agents to run for each PR (e.g., ["codex", "gemini"]).
-	// If set, overrides the singular Agent field.
-	Agents []string `toml:"agents"`
 
 	// SynthesisAgent is the agent used to synthesize multiple review outputs into one comment.
 	// Defaults to the first available agent.
@@ -129,25 +123,19 @@ type CIConfig struct {
 }
 
 // ResolvedReviewTypes returns the list of review types to use.
-// Falls back to the singular ReviewType field, then defaults to ["security"].
+// Defaults to ["security"] if empty.
 func (c *CIConfig) ResolvedReviewTypes() []string {
 	if len(c.ReviewTypes) > 0 {
 		return c.ReviewTypes
-	}
-	if c.ReviewType != "" {
-		return []string{c.ReviewType}
 	}
 	return []string{"security"}
 }
 
 // ResolvedAgents returns the list of agents to use.
-// Falls back to the singular Agent field, then defaults to [""] (empty = workflow resolution).
+// Defaults to [""] (empty = auto-detect) if empty.
 func (c *CIConfig) ResolvedAgents() []string {
 	if len(c.Agents) > 0 {
 		return c.Agents
-	}
-	if c.Agent != "" {
-		return []string{c.Agent}
 	}
 	return []string{""}
 }

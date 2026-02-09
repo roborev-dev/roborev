@@ -1307,19 +1307,11 @@ func buildGlobalConfig(cfg map[string]string) *Config {
 }
 
 func TestResolvedReviewTypes(t *testing.T) {
-	t.Run("array takes precedence", func(t *testing.T) {
-		ci := CIConfig{ReviewTypes: []string{"security", "review"}, ReviewType: "security"}
+	t.Run("uses configured types", func(t *testing.T) {
+		ci := CIConfig{ReviewTypes: []string{"security", "review"}}
 		got := ci.ResolvedReviewTypes()
 		if len(got) != 2 || got[0] != "security" || got[1] != "review" {
 			t.Errorf("got %v, want [security review]", got)
-		}
-	})
-
-	t.Run("falls back to singular", func(t *testing.T) {
-		ci := CIConfig{ReviewType: "review"}
-		got := ci.ResolvedReviewTypes()
-		if len(got) != 1 || got[0] != "review" {
-			t.Errorf("got %v, want [review]", got)
 		}
 	})
 
@@ -1333,23 +1325,15 @@ func TestResolvedReviewTypes(t *testing.T) {
 }
 
 func TestResolvedAgents(t *testing.T) {
-	t.Run("array takes precedence", func(t *testing.T) {
-		ci := CIConfig{Agents: []string{"codex", "gemini"}, Agent: "codex"}
+	t.Run("uses configured agents", func(t *testing.T) {
+		ci := CIConfig{Agents: []string{"codex", "gemini"}}
 		got := ci.ResolvedAgents()
 		if len(got) != 2 || got[0] != "codex" || got[1] != "gemini" {
 			t.Errorf("got %v, want [codex gemini]", got)
 		}
 	})
 
-	t.Run("falls back to singular", func(t *testing.T) {
-		ci := CIConfig{Agent: "gemini"}
-		got := ci.ResolvedAgents()
-		if len(got) != 1 || got[0] != "gemini" {
-			t.Errorf("got %v, want [gemini]", got)
-		}
-	})
-
-	t.Run("defaults to empty string", func(t *testing.T) {
+	t.Run("defaults to auto-detect", func(t *testing.T) {
 		ci := CIConfig{}
 		got := ci.ResolvedAgents()
 		if len(got) != 1 || got[0] != "" {
