@@ -205,6 +205,8 @@ func getAgentModel(a Agent) string {
 		return v.Model
 	case *OpenCodeAgent:
 		return v.Model
+	case *CursorAgent:
+		return v.Model
 	default:
 		return ""
 	}
@@ -222,6 +224,7 @@ func TestAgentWithModelPersistence(t *testing.T) {
 		{"gemini", func() Agent { return NewGeminiAgent("") }, "gemini-3-pro-preview", "gemini-3-pro-preview"},
 		{"copilot", func() Agent { return NewCopilotAgent("") }, "gpt-4o", "gpt-4o"},
 		{"opencode", func() Agent { return NewOpenCodeAgent("") }, "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4"},
+		{"cursor", func() Agent { return NewCursorAgent("") }, "claude-sonnet-4", "claude-sonnet-4"},
 	}
 
 	for _, tt := range tests {
@@ -266,6 +269,7 @@ func TestWithModelEmptyPreservesDefault(t *testing.T) {
 		{"gemini", func() Agent { return NewGeminiAgent("") }, "gemini-3-pro-preview"},
 		{"copilot", func() Agent { return NewCopilotAgent("") }, ""},
 		{"opencode", func() Agent { return NewOpenCodeAgent("") }, ""},
+		{"cursor", func() Agent { return NewCursorAgent("") }, ""},
 	}
 
 	for _, tt := range tests {

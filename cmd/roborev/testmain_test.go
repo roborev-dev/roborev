@@ -14,8 +14,8 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(tmpDir)
-
 	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(tmpDir)
+	os.Exit(code)
 }
