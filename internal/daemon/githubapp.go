@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -88,7 +89,7 @@ func (p *GitHubAppTokenProvider) signJWT() (string, error) {
 
 	sigInput := header + "." + payload
 	h := sha256.Sum256([]byte(sigInput))
-	sig, err := rsa.SignPKCS1v15(nil, p.key, crypto.SHA256, h[:])
+	sig, err := rsa.SignPKCS1v15(rand.Reader, p.key, crypto.SHA256, h[:])
 	if err != nil {
 		return "", err
 	}

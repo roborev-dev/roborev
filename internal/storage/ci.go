@@ -1,6 +1,9 @@
 package storage
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // CIPRReview tracks which PRs have been reviewed at which HEAD SHA
 type CIPRReview struct {
@@ -299,6 +302,60 @@ func (db *DB) DeleteCIBatch(batchID int64) error {
 	}
 	_, err := db.Exec(`DELETE FROM ci_pr_batches WHERE id = ?`, batchID)
 	return err
+}
+
+// CancelSupersededBatches cancels jobs and removes batches for a PR that have
+// been superseded by a new HEAD SHA. Only affects unsynthesized batches (where
+// the comment hasn't been posted yet). Returns the number of jobs canceled.
+func (db *DB) CancelSupersededBatches(githubRepo string, prNumber int, newHeadSHA string) (int, error) {
+	// Find unsynthesized batches for this PR with a different head_sha
+	rows, err := db.Query(`
+		SELECT id FROM ci_pr_batches
+		WHERE github_repo = ? AND pr_number = ? AND head_sha != ? AND synthesized = 0`,
+		githubRepo, prNumber, newHeadSHA)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var batchIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		batchIDs = append(batchIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(batchIDs) == 0 {
+		return 0, nil
+	}
+
+	canceled := 0
+	for _, batchID := range batchIDs {
+		// Cancel linked jobs that are still queued or running
+		jobIDs, err := db.GetBatchJobIDs(batchID)
+		if err != nil {
+			return canceled, fmt.Errorf("get jobs for batch %d: %w", batchID, err)
+		}
+		for _, jid := range jobIDs {
+			if err := db.CancelJob(jid); err != nil {
+				if err == sql.ErrNoRows {
+					continue // already terminal
+				}
+				return canceled, fmt.Errorf("cancel job %d: %w", jid, err)
+			}
+			canceled++
+		}
+		// Delete the batch and its job links
+		if err := db.DeleteCIBatch(batchID); err != nil {
+			return canceled, fmt.Errorf("delete batch %d: %w", batchID, err)
+		}
+	}
+
+	return canceled, nil
 }
 
 // DeleteEmptyBatches removes batches with no linked jobs that are older than

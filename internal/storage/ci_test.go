@@ -601,3 +601,79 @@ func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
 		t.Errorf("status = %q, want canceled", status)
 	}
 }
+
+func TestCancelSupersededBatches(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-supersede")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	// Create an old batch with linked jobs
+	oldBatch := mustCreateCIBatch(t, db, "owner/repo", 1, "oldsha", 2)
+	job1 := mustEnqueueReviewJob(t, db, repo.ID, "base..oldsha", "test", "security")
+	job2 := mustEnqueueReviewJob(t, db, repo.ID, "base..oldsha", "test", "review")
+	if err := db.RecordBatchJob(oldBatch.ID, job1.ID); err != nil {
+		t.Fatalf("RecordBatchJob: %v", err)
+	}
+	if err := db.RecordBatchJob(oldBatch.ID, job2.ID); err != nil {
+		t.Fatalf("RecordBatchJob: %v", err)
+	}
+
+	// Create a synthesized (already posted) batch — should NOT be canceled
+	doneBatch := mustCreateCIBatch(t, db, "owner/repo", 1, "donesha", 1)
+	doneJob := mustEnqueueReviewJob(t, db, repo.ID, "base..donesha", "test", "security")
+	if err := db.RecordBatchJob(doneBatch.ID, doneJob.ID); err != nil {
+		t.Fatalf("RecordBatchJob: %v", err)
+	}
+	if _, err := db.ClaimBatchForSynthesis(doneBatch.ID); err != nil {
+		t.Fatalf("ClaimBatchForSynthesis: %v", err)
+	}
+
+	// Cancel superseded batches for a new HEAD
+	canceled, err := db.CancelSupersededBatches("owner/repo", 1, "newsha")
+	if err != nil {
+		t.Fatalf("CancelSupersededBatches: %v", err)
+	}
+	if canceled != 2 {
+		t.Errorf("canceled = %d, want 2", canceled)
+	}
+
+	// Old batch should be deleted
+	has, err := db.HasCIBatch("owner/repo", 1, "oldsha")
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if has {
+		t.Error("old batch should have been deleted")
+	}
+
+	// Jobs should be canceled
+	var status string
+	if err := db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, job1.ID).Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != "canceled" {
+		t.Errorf("job1 status = %q, want canceled", status)
+	}
+
+	// Synthesized batch should still exist
+	has, err = db.HasCIBatch("owner/repo", 1, "donesha")
+	if err != nil {
+		t.Fatalf("HasCIBatch done: %v", err)
+	}
+	if !has {
+		t.Error("synthesized batch should NOT have been canceled")
+	}
+
+	// No-op when no superseded batches exist
+	canceled, err = db.CancelSupersededBatches("owner/repo", 1, "newsha")
+	if err != nil {
+		t.Fatalf("CancelSupersededBatches no-op: %v", err)
+	}
+	if canceled != 0 {
+		t.Errorf("expected 0 canceled on no-op, got %d", canceled)
+	}
+}

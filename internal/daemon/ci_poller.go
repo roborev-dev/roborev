@@ -292,6 +292,15 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 	totalJobs := len(reviewTypes) * len(agents)
 
+	// Cancel any in-progress batches for this PR at an older HEAD SHA.
+	// When a PR gets a new push, work on the old HEAD is wasted.
+	if canceled, err := p.db.CancelSupersededBatches(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
+		log.Printf("CI poller: error canceling superseded batches for %s#%d: %v", ghRepo, pr.Number, err)
+	} else if canceled > 0 {
+		log.Printf("CI poller: canceled %d superseded jobs for %s#%d (new HEAD=%s)",
+			canceled, ghRepo, pr.Number, pr.HeadRefOid[:8])
+	}
+
 	// Create batch — only the creator proceeds to enqueue (prevents race)
 	batch, created, err := p.db.CreateCIBatch(ghRepo, pr.Number, pr.HeadRefOid, totalJobs)
 	if err != nil {
@@ -1100,7 +1109,13 @@ func formatPRComment(review *storage.Review, verdict string) string {
 }
 
 // postPRComment posts a comment on a GitHub PR using the gh CLI.
+// Truncates the body to stay within GitHub's ~65536 character limit.
 func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error {
+	const maxCommentLen = 60000 // leave headroom below GitHub's ~65536 limit
+	if len(body) > maxCommentLen {
+		body = body[:maxCommentLen] + "\n\n...(truncated — comment exceeded size limit)"
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", "pr", "comment",
