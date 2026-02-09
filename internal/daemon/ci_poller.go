@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -293,14 +295,19 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			}
 			log.Printf("CI poller: batch %d has %d/%d linked jobs (stale incomplete), cleaning up for retry",
 				batch.ID, linked, batch.TotalJobs)
-			// Cancel any already-linked jobs before deleting the batch
+			// Cancel any already-linked jobs before deleting the batch.
+			// Abort reclaim on real DB errors (sql.ErrNoRows means the
+			// job is already terminal, which is fine).
 			jobIDs, err := p.db.GetBatchJobIDs(batch.ID)
 			if err != nil {
 				return fmt.Errorf("get batch job IDs: %w", err)
 			}
 			for _, jid := range jobIDs {
 				if err := p.db.CancelJob(jid); err != nil {
-					log.Printf("CI poller: failed to cancel orphan job %d: %v", jid, err)
+					if errors.Is(err, sql.ErrNoRows) {
+						continue // already terminal
+					}
+					return fmt.Errorf("cancel orphan job %d: %w", jid, err)
 				}
 			}
 			if err := p.db.DeleteCIBatch(batch.ID); err != nil {

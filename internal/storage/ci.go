@@ -115,11 +115,13 @@ func (db *DB) CountBatchJobs(batchID int64) (int, error) {
 	return count, err
 }
 
-// IsBatchStale reports whether a batch was created more than 1 minute ago.
-// Used to distinguish a crashed creator from one that is still actively enqueuing.
+// IsBatchStale reports whether a batch has had no activity for more than
+// 1 minute. Staleness is based on updated_at (bumped by each RecordBatchJob)
+// rather than created_at, so legitimately slow creators are not reclaimed
+// while they are still making progress.
 func (db *DB) IsBatchStale(batchID int64) (bool, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batches WHERE id = ? AND created_at < datetime('now', '-1 minute')`,
+	err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batches WHERE id = ? AND COALESCE(updated_at, created_at) < datetime('now', '-1 minute')`,
 		batchID).Scan(&count)
 	if err != nil {
 		return false, err
@@ -145,9 +147,14 @@ func (db *DB) GetBatchJobIDs(batchID int64) ([]int64, error) {
 	return ids, rows.Err()
 }
 
-// RecordBatchJob links a review job to a batch.
+// RecordBatchJob links a review job to a batch and bumps the batch's
+// updated_at timestamp as a heartbeat so staleness detection is based on
+// inactivity rather than age from creation.
 func (db *DB) RecordBatchJob(batchID, jobID int64) error {
-	_, err := db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
+	if _, err := db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID); err != nil {
+		return err
+	}
+	_, err := db.Exec(`UPDATE ci_pr_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, batchID)
 	return err
 }
 

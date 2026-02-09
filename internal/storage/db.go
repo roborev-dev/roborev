@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS ci_pr_batches (
   synthesized INTEGER NOT NULL DEFAULT 0,
   claimed_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
@@ -580,6 +581,23 @@ func (db *DB) migrate() error {
 		_, err = db.Exec(`ALTER TABLE ci_pr_batches ADD COLUMN claimed_at TIMESTAMP`)
 		if err != nil {
 			return fmt.Errorf("add claimed_at column: %w", err)
+		}
+	}
+
+	// Migration: add updated_at column to ci_pr_batches if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_batches') WHERE name = 'updated_at'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check updated_at column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE ci_pr_batches ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`)
+		if err != nil {
+			return fmt.Errorf("add updated_at column: %w", err)
+		}
+		// Backfill existing rows
+		_, err = db.Exec(`UPDATE ci_pr_batches SET updated_at = created_at WHERE updated_at IS NULL`)
+		if err != nil {
+			return fmt.Errorf("backfill updated_at: %w", err)
 		}
 	}
 

@@ -918,8 +918,8 @@ func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 			t.Fatal("expected to create batch")
 		}
 
-		// Backdate the batch so it appears stale (>1 minute old)
-		if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-2 minutes') WHERE id = ?`, batch.ID); err != nil {
+		// Backdate the batch so it appears stale (no activity for >1 minute)
+		if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes'), updated_at = datetime('now', '-2 minutes') WHERE id = ?`, batch.ID); err != nil {
 			t.Fatalf("backdate batch: %v", err)
 		}
 
@@ -942,8 +942,7 @@ func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 		}
 	})
 
-	t.Run("IsBatchStale and GetBatchJobIDs helpers", func(t *testing.T) {
-		// Directly test the staleness and job ID helpers used by recovery
+	t.Run("staleness uses updated_at heartbeat", func(t *testing.T) {
 		db := testutil.OpenTestDB(t)
 		repoPath := t.TempDir()
 		repo, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git")
@@ -965,8 +964,8 @@ func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 			t.Error("fresh batch should not be stale")
 		}
 
-		// Backdate to make it stale
-		if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-2 minutes') WHERE id = ?`, batch.ID); err != nil {
+		// Backdate both timestamps to make it stale
+		if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes'), updated_at = datetime('now', '-2 minutes') WHERE id = ?`, batch.ID); err != nil {
 			t.Fatalf("backdate batch: %v", err)
 		}
 		stale, err = db.IsBatchStale(batch.ID)
@@ -974,10 +973,10 @@ func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 			t.Fatalf("IsBatchStale: %v", err)
 		}
 		if !stale {
-			t.Error("backdated batch should be stale")
+			t.Error("batch with old updated_at should be stale")
 		}
 
-		// Link a job and verify GetBatchJobIDs
+		// RecordBatchJob bumps updated_at, making it fresh again
 		job, err := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID: repo.ID, GitRef: "a..b", Agent: "codex", ReviewType: "security",
 		})
@@ -987,6 +986,15 @@ func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 		if err := db.RecordBatchJob(batch.ID, job.ID); err != nil {
 			t.Fatalf("RecordBatchJob: %v", err)
 		}
+		stale, err = db.IsBatchStale(batch.ID)
+		if err != nil {
+			t.Fatalf("IsBatchStale after RecordBatchJob: %v", err)
+		}
+		if stale {
+			t.Error("batch should not be stale after RecordBatchJob heartbeat")
+		}
+
+		// Verify GetBatchJobIDs
 		ids, err := db.GetBatchJobIDs(batch.ID)
 		if err != nil {
 			t.Fatalf("GetBatchJobIDs: %v", err)
