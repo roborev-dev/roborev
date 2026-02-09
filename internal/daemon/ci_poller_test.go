@@ -433,7 +433,7 @@ func TestCIPollerHandleBatchJobDone_PartialBatchDoesNotPost(t *testing.T) {
 	cfg.CI.Enabled = true
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	batch, err := db.CreateCIBatch("acme/api", 1, "sha", 2)
+	batch, _, err := db.CreateCIBatch("acme/api", 1, "sha", 2)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestCIPollerHandleBatchJobDone_CompleteBatchPostsAndFinalizes(t *testing.T)
 	cfg.CI.Enabled = true
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	batch, err := db.CreateCIBatch("acme/api", 2, "sha", 1)
+	batch, _, err := db.CreateCIBatch("acme/api", 2, "sha", 1)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -537,7 +537,7 @@ func TestCIPollerReconcileStaleBatches_PostsCanceledJobsAsFailed(t *testing.T) {
 	cfg.CI.Enabled = true
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	batch, err := db.CreateCIBatch("acme/api", 9, "sha", 1)
+	batch, _, err := db.CreateCIBatch("acme/api", 9, "sha", 1)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -635,7 +635,7 @@ func TestCIPollerHandleReviewFailed_BatchPath(t *testing.T) {
 	cfg.CI.Enabled = true
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	batch, err := db.CreateCIBatch("acme/api", 13, "head-sha", 1)
+	batch, _, err := db.CreateCIBatch("acme/api", 13, "head-sha", 1)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -680,7 +680,7 @@ func TestCIPollerPostBatchResults_SynthesisPathUsesMock(t *testing.T) {
 	cfg.CI.Enabled = true
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	batch, err := db.CreateCIBatch("acme/api", 14, "head-sha", 2)
+	batch, _, err := db.CreateCIBatch("acme/api", 14, "head-sha", 2)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -747,7 +747,7 @@ func TestCIPollerPostBatchResults_PostFailureUnclaimsBatch(t *testing.T) {
 	cfg.CI.Enabled = true
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	batch, err := db.CreateCIBatch("acme/api", 15, "head-sha", 1)
+	batch, _, err := db.CreateCIBatch("acme/api", 15, "head-sha", 1)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}

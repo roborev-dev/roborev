@@ -77,23 +77,29 @@ func (db *DB) HasCIBatch(githubRepo string, prNumber int, headSHA string) (bool,
 	return count > 0, nil
 }
 
-// CreateCIBatch creates a new batch record for a PR. Uses INSERT OR IGNORE to handle races.
-func (db *DB) CreateCIBatch(githubRepo string, prNumber int, headSHA string, totalJobs int) (*CIPRBatch, error) {
-	_, err := db.Exec(`INSERT OR IGNORE INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs) VALUES (?, ?, ?, ?)`,
+// CreateCIBatch creates a new batch record for a PR. Uses INSERT OR IGNORE to
+// handle races. Returns (batch, true) if this caller created the batch, or
+// (batch, false) if the batch already existed (another poller won the race).
+// Only the creator (created==true) should proceed to enqueue jobs.
+func (db *DB) CreateCIBatch(githubRepo string, prNumber int, headSHA string, totalJobs int) (*CIPRBatch, bool, error) {
+	result, err := db.Exec(`INSERT OR IGNORE INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs) VALUES (?, ?, ?, ?)`,
 		githubRepo, prNumber, headSHA, totalJobs)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+
+	affected, _ := result.RowsAffected()
+	created := affected > 0
 
 	var batch CIPRBatch
 	var synthesized int
 	err = db.QueryRow(`SELECT id, github_repo, pr_number, head_sha, total_jobs, completed_jobs, failed_jobs, synthesized FROM ci_pr_batches WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
 		githubRepo, prNumber, headSHA).Scan(&batch.ID, &batch.GithubRepo, &batch.PRNumber, &batch.HeadSHA, &batch.TotalJobs, &batch.CompletedJobs, &batch.FailedJobs, &synthesized)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	batch.Synthesized = synthesized != 0
-	return &batch, nil
+	return &batch, created, nil
 }
 
 // RecordBatchJob links a review job to a batch.

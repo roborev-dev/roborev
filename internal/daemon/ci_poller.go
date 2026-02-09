@@ -268,10 +268,14 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 	totalJobs := len(reviewTypes) * len(agents)
 
-	// Create batch
-	batch, err := p.db.CreateCIBatch(ghRepo, pr.Number, pr.HeadRefOid, totalJobs)
+	// Create batch — only the creator proceeds to enqueue (prevents race)
+	batch, created, err := p.db.CreateCIBatch(ghRepo, pr.Number, pr.HeadRefOid, totalJobs)
 	if err != nil {
 		return fmt.Errorf("create CI batch: %w", err)
+	}
+	if !created {
+		// Another poller already created this batch and is enqueuing jobs
+		return nil
 	}
 
 	// Enqueue jobs for each review_type x agent combination.
@@ -290,18 +294,36 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	for _, rt := range reviewTypes {
+		// Map review_type to workflow name (same as handleEnqueue)
+		workflow := "review"
+		if rt != "" && rt != "general" {
+			workflow = rt
+		}
+
 		for _, ag := range agents {
+			// Resolve agent through workflow config when not explicitly set
+			resolvedAgent := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, "thorough")
+			if resolved, err := agent.GetAvailable(resolvedAgent); err != nil {
+				rollback()
+				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
+			} else {
+				resolvedAgent = resolved.Name()
+			}
+
+			// Resolve model through workflow config when not explicitly set
+			resolvedModel := config.ResolveModelForWorkflow(cfg.CI.Model, repo.RootPath, cfg, workflow, "thorough")
+
 			job, err := p.db.EnqueueJob(storage.EnqueueOpts{
 				RepoID:     repo.ID,
 				GitRef:     gitRef,
-				Agent:      ag,
-				Model:      cfg.CI.Model,
+				Agent:      resolvedAgent,
+				Model:      resolvedModel,
 				Reasoning:  "thorough",
 				ReviewType: rt,
 			})
 			if err != nil {
 				rollback()
-				return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, ag, err)
+				return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, resolvedAgent, err)
 			}
 			createdJobIDs = append(createdJobIDs, job.ID)
 
@@ -311,31 +333,37 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			}
 
 			log.Printf("CI poller: enqueued job %d for %s#%d (type=%s, agent=%s, range=%s)",
-				job.ID, ghRepo, pr.Number, rt, ag, gitRef)
+				job.ID, ghRepo, pr.Number, rt, resolvedAgent, gitRef)
 		}
 	}
 
+	headShort := pr.HeadRefOid
+	if len(headShort) > 8 {
+		headShort = headShort[:8]
+	}
 	log.Printf("CI poller: created batch %d for %s#%d (HEAD=%s, %d jobs)",
-		batch.ID, ghRepo, pr.Number, pr.HeadRefOid[:8], totalJobs)
+		batch.ID, ghRepo, pr.Number, headShort, totalJobs)
 
 	return nil
 }
 
 // findLocalRepo finds the local repo that corresponds to a GitHub "owner/repo" identifier.
 // It looks for repos whose identity contains the owner/repo pattern.
+// Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
 func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
-	// Try common identity patterns:
+	// Try common identity patterns (case-insensitive via DB query):
 	// - git@github.com:owner/repo.git
 	// - https://github.com/owner/repo.git
 	// - https://github.com/owner/repo
+	lower := strings.ToLower(ghRepo)
 	patterns := []string{
-		"git@github.com:" + ghRepo + ".git",
-		"https://github.com/" + ghRepo + ".git",
-		"https://github.com/" + ghRepo,
+		"git@github.com:" + lower + ".git",
+		"https://github.com/" + lower + ".git",
+		"https://github.com/" + lower,
 	}
 
 	for _, pattern := range patterns {
-		repo, err := p.db.GetRepoByIdentity(pattern)
+		repo, err := p.db.GetRepoByIdentityCaseInsensitive(pattern)
 		if err == nil && repo != nil {
 			return repo, nil
 		}
@@ -345,7 +373,8 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 	return p.findRepoByPartialIdentity(ghRepo)
 }
 
-// findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern
+// findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern.
+// Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
 func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, error) {
 	rows, err := p.db.Query(`SELECT id, root_path, name, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
 	if err != nil {
@@ -353,8 +382,8 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 	}
 	defer rows.Close()
 
-	// Normalize the search pattern: owner/repo (without .git)
-	needle := strings.TrimSuffix(ghRepo, ".git")
+	// Normalize the search pattern: owner/repo (without .git), lowercased
+	needle := strings.ToLower(strings.TrimSuffix(ghRepo, ".git"))
 
 	for rows.Next() {
 		var repo storage.Repo
@@ -362,9 +391,9 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 		if err := rows.Scan(&repo.ID, &repo.RootPath, &repo.Name, &identity); err != nil {
 			continue
 		}
-		// Check if identity contains the owner/repo pattern
+		// Check if identity contains the owner/repo pattern (case-insensitive)
 		// Strip .git suffix for comparison
-		normalized := strings.TrimSuffix(identity, ".git")
+		normalized := strings.ToLower(strings.TrimSuffix(identity, ".git"))
 		if strings.HasSuffix(normalized, "/"+needle) || strings.HasSuffix(normalized, ":"+needle) {
 			repo.Identity = identity
 			return &repo, nil
@@ -773,6 +802,9 @@ Rules:
 
 `)
 
+	// Truncate per-review output to avoid blowing the synthesis agent's context window.
+	const maxPerReview = 15000
+
 	for i, r := range reviews {
 		b.WriteString(fmt.Sprintf("---\n### Review %d: Agent=%s, Type=%s", i+1, r.Agent, r.ReviewType))
 		if r.Status == "failed" {
@@ -780,7 +812,11 @@ Rules:
 		}
 		b.WriteString("\n")
 		if r.Output != "" {
-			b.WriteString(r.Output)
+			output := r.Output
+			if len(output) > maxPerReview {
+				output = output[:maxPerReview] + "\n\n...(truncated)"
+			}
+			b.WriteString(output)
 		} else if r.Status == "failed" {
 			b.WriteString("(no output — review failed)")
 		}

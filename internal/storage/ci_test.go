@@ -10,9 +10,12 @@ func TestCreateCIBatch(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	batch, err := db.CreateCIBatch("myorg/myrepo", 42, "abc123", 4)
+	batch, created, err := db.CreateCIBatch("myorg/myrepo", 42, "abc123", 4)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
+	}
+	if !created {
+		t.Error("expected created=true for new batch")
 	}
 	if batch.ID == 0 {
 		t.Error("expected non-zero batch ID")
@@ -36,10 +39,13 @@ func TestCreateCIBatch(t *testing.T) {
 		t.Error("expected Synthesized=false")
 	}
 
-	// Duplicate insert should return the same batch (INSERT OR IGNORE)
-	batch2, err := db.CreateCIBatch("myorg/myrepo", 42, "abc123", 4)
+	// Duplicate insert should return the same batch but created=false
+	batch2, created2, err := db.CreateCIBatch("myorg/myrepo", 42, "abc123", 4)
 	if err != nil {
 		t.Fatalf("CreateCIBatch duplicate: %v", err)
+	}
+	if created2 {
+		t.Error("expected created=false for duplicate batch")
 	}
 	if batch2.ID != batch.ID {
 		t.Errorf("duplicate CreateCIBatch returned different ID: %d vs %d", batch2.ID, batch.ID)
@@ -58,7 +64,7 @@ func TestHasCIBatch(t *testing.T) {
 		t.Error("expected false before creation")
 	}
 
-	_, err = db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
+	_, _, err = db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -90,7 +96,7 @@ func TestRecordBatchJob(t *testing.T) {
 		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
 
-	batch, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
+	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -133,7 +139,7 @@ func TestIncrementBatchCompleted(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	batch, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 3)
+	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 3)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -159,7 +165,7 @@ func TestIncrementBatchFailed(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	batch, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 3)
+	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 3)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -187,7 +193,7 @@ func TestIncrementBatchConcurrent(t *testing.T) {
 	defer db.Close()
 
 	n := 10
-	batch, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", n)
+	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", n)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -230,7 +236,7 @@ func TestGetBatchReviews(t *testing.T) {
 		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
 
-	batch, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
+	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
 	if err != nil {
 		t.Fatalf("CreateCIBatch: %v", err)
 	}
@@ -284,7 +290,7 @@ func TestGetCIBatchByJobID(t *testing.T) {
 	defer db.Close()
 
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-	batch, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
+	batch, _, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
 	job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc..def", Agent: "codex", ReviewType: "security"})
 	db.RecordBatchJob(batch.ID, job.ID)
 
@@ -313,7 +319,7 @@ func TestClaimBatchForSynthesis(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	batch, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
+	batch, _, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
 	if batch.Synthesized {
 		t.Error("expected Synthesized=false initially")
 	}
@@ -353,7 +359,7 @@ func TestFinalizeBatch_PreventsStaleRepost(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	batch, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
+	batch, _, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
 
 	// Create a linked job so the batch qualifies for GetStaleBatches
 	_, err := db.Exec(`INSERT INTO repos (root_path, name) VALUES ('/tmp/test', 'test')`)
@@ -434,7 +440,7 @@ func TestGetStaleBatches_StaleClaim(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	batch, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
+	batch, _, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
 
 	// Create a linked terminal job
 	_, err := db.Exec(`INSERT INTO repos (root_path, name) VALUES ('/tmp/test', 'test')`)
@@ -477,7 +483,7 @@ func TestDeleteEmptyBatches(t *testing.T) {
 	defer db.Close()
 
 	// Create an empty batch and backdate it so it's eligible for cleanup
-	emptyOld, err := db.CreateCIBatch("myorg/myrepo", 1, "sha-old", 2)
+	emptyOld, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha-old", 2)
 	if err != nil {
 		t.Fatalf("CreateCIBatch (old empty): %v", err)
 	}
@@ -486,12 +492,12 @@ func TestDeleteEmptyBatches(t *testing.T) {
 	}
 
 	// Create an empty batch that's recent (should NOT be deleted)
-	if _, err := db.CreateCIBatch("myorg/myrepo", 2, "sha-recent", 1); err != nil {
+	if _, _, err := db.CreateCIBatch("myorg/myrepo", 2, "sha-recent", 1); err != nil {
 		t.Fatalf("CreateCIBatch (recent empty): %v", err)
 	}
 
 	// Create a non-empty batch that's old (should NOT be deleted)
-	nonEmpty, err := db.CreateCIBatch("myorg/myrepo", 3, "sha-nonempty", 1)
+	nonEmpty, _, err := db.CreateCIBatch("myorg/myrepo", 3, "sha-nonempty", 1)
 	if err != nil {
 		t.Fatalf("CreateCIBatch (non-empty): %v", err)
 	}

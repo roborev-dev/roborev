@@ -217,6 +217,45 @@ func (db *DB) GetRepoByIdentity(identity string) (*Repo, error) {
 	return &r, nil
 }
 
+// GetRepoByIdentityCaseInsensitive is like GetRepoByIdentity but uses
+// case-insensitive comparison. Used by the CI poller since GitHub
+// owner/repo names are case-insensitive.
+func (db *DB) GetRepoByIdentityCaseInsensitive(identity string) (*Repo, error) {
+	rows, err := db.Query(`
+		SELECT id, root_path, name, created_at, identity
+		FROM repos WHERE LOWER(identity) = LOWER(?)
+	`, identity)
+	if err != nil {
+		return nil, fmt.Errorf("query repo by identity (ci): %w", err)
+	}
+	defer rows.Close()
+
+	var r Repo
+	var count int
+	for rows.Next() {
+		count++
+		if count > 1 {
+			return nil, fmt.Errorf("multiple repos found with identity %q", identity)
+		}
+		var createdAt string
+		var identityVal sql.NullString
+		if err := rows.Scan(&r.ID, &r.RootPath, &r.Name, &createdAt, &identityVal); err != nil {
+			return nil, fmt.Errorf("scan repo: %w", err)
+		}
+		r.CreatedAt = parseSQLiteTime(createdAt)
+		if identityVal.Valid {
+			r.Identity = identityVal.String
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get repo by identity (ci): %w", err)
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	return &r, nil
+}
+
 // SyncableJob contains job data needed for sync
 type SyncableJob struct {
 	ID              int64
