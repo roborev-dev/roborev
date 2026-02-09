@@ -939,8 +939,12 @@ func stripURLCredentials(rawURL string) string {
 		return rawURL
 	}
 
-	// If there's no scheme, it's likely an SSH URL (git@...) - return as-is
+	// If there's no scheme, it's likely an SCP-style URL (git@host:repo.git).
+	// Strip any credentials (user:pass@host:repo → host:repo).
 	if parsed.Scheme == "" {
+		if at := strings.Index(rawURL, "@"); at >= 0 {
+			return rawURL[at+1:]
+		}
 		return rawURL
 	}
 
