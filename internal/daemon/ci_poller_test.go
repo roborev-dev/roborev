@@ -891,51 +891,156 @@ func TestCIPollerProcessPR_EmptyReviewType(t *testing.T) {
 }
 
 func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
-	db := testutil.OpenTestDB(t)
-	repoPath := t.TempDir()
-	_, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo: %v", err)
-	}
+	t.Run("stale empty batch is recovered", func(t *testing.T) {
+		db := testutil.OpenTestDB(t)
+		repoPath := t.TempDir()
+		_, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo: %v", err)
+		}
 
-	cfg := config.DefaultConfig()
-	cfg.CI.Enabled = true
-	cfg.CI.ReviewTypes = []string{"security"}
-	cfg.CI.Agents = []string{"codex"}
+		cfg := config.DefaultConfig()
+		cfg.CI.Enabled = true
+		cfg.CI.ReviewTypes = []string{"security"}
+		cfg.CI.Agents = []string{"codex"}
 
-	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
-	p.gitFetchFn = func(context.Context, string) error { return nil }
-	p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
-	p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+		p.gitFetchFn = func(context.Context, string) error { return nil }
+		p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+		p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	// Simulate a crashed creator: batch exists but no linked jobs
-	batch, created, err := db.CreateCIBatch("acme/api", 50, "head-sha-50", 1)
-	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
-	}
-	if !created {
-		t.Fatal("expected to create batch")
-	}
-	_ = batch
+		// Simulate a crashed creator: batch exists but no linked jobs
+		batch, created, err := db.CreateCIBatch("acme/api", 50, "head-sha-50", 1)
+		if err != nil {
+			t.Fatalf("CreateCIBatch: %v", err)
+		}
+		if !created {
+			t.Fatal("expected to create batch")
+		}
 
-	// processPR should detect the incomplete batch, clean it up, and re-create
-	err = p.processPR(context.Background(), "acme/api", ghPR{
-		Number:      50,
-		HeadRefOid:  "head-sha-50",
-		BaseRefName: "main",
-	}, cfg)
-	if err != nil {
-		t.Fatalf("processPR: %v", err)
-	}
+		// Backdate the batch so it appears stale (>1 minute old)
+		if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-2 minutes') WHERE id = ?`, batch.ID); err != nil {
+			t.Fatalf("backdate batch: %v", err)
+		}
 
-	// Should have a batch with 1 linked job now
-	jobs, err := db.ListJobs("", repoPath, 0, 0, storage.WithGitRef("base-sha..head-sha-50"))
-	if err != nil {
-		t.Fatalf("ListJobs: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Fatalf("expected 1 job after recovery, got %d", len(jobs))
-	}
+		err = p.processPR(context.Background(), "acme/api", ghPR{
+			Number:      50,
+			HeadRefOid:  "head-sha-50",
+			BaseRefName: "main",
+		}, cfg)
+		if err != nil {
+			t.Fatalf("processPR: %v", err)
+		}
+
+		// Should have a batch with 1 linked job now
+		jobs, err := db.ListJobs("", repoPath, 0, 0, storage.WithGitRef("base-sha..head-sha-50"))
+		if err != nil {
+			t.Fatalf("ListJobs: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Fatalf("expected 1 job after recovery, got %d", len(jobs))
+		}
+	})
+
+	t.Run("IsBatchStale and GetBatchJobIDs helpers", func(t *testing.T) {
+		// Directly test the staleness and job ID helpers used by recovery
+		db := testutil.OpenTestDB(t)
+		repoPath := t.TempDir()
+		repo, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo: %v", err)
+		}
+
+		batch, _, err := db.CreateCIBatch("acme/api", 51, "head-sha-51", 2)
+		if err != nil {
+			t.Fatalf("CreateCIBatch: %v", err)
+		}
+
+		// Fresh batch is not stale
+		stale, err := db.IsBatchStale(batch.ID)
+		if err != nil {
+			t.Fatalf("IsBatchStale: %v", err)
+		}
+		if stale {
+			t.Error("fresh batch should not be stale")
+		}
+
+		// Backdate to make it stale
+		if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-2 minutes') WHERE id = ?`, batch.ID); err != nil {
+			t.Fatalf("backdate batch: %v", err)
+		}
+		stale, err = db.IsBatchStale(batch.ID)
+		if err != nil {
+			t.Fatalf("IsBatchStale: %v", err)
+		}
+		if !stale {
+			t.Error("backdated batch should be stale")
+		}
+
+		// Link a job and verify GetBatchJobIDs
+		job, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID: repo.ID, GitRef: "a..b", Agent: "codex", ReviewType: "security",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+		if err := db.RecordBatchJob(batch.ID, job.ID); err != nil {
+			t.Fatalf("RecordBatchJob: %v", err)
+		}
+		ids, err := db.GetBatchJobIDs(batch.ID)
+		if err != nil {
+			t.Fatalf("GetBatchJobIDs: %v", err)
+		}
+		if len(ids) != 1 || ids[0] != job.ID {
+			t.Fatalf("GetBatchJobIDs = %v, want [%d]", ids, job.ID)
+		}
+	})
+
+	t.Run("fresh incomplete batch is skipped", func(t *testing.T) {
+		db := testutil.OpenTestDB(t)
+		repoPath := t.TempDir()
+		_, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo: %v", err)
+		}
+
+		cfg := config.DefaultConfig()
+		cfg.CI.Enabled = true
+		cfg.CI.ReviewTypes = []string{"security"}
+		cfg.CI.Agents = []string{"codex"}
+
+		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+		p.gitFetchFn = func(context.Context, string) error { return nil }
+		p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+		p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+		// Create a fresh (not stale) incomplete batch
+		_, created, err := db.CreateCIBatch("acme/api", 52, "head-sha-52", 1)
+		if err != nil {
+			t.Fatalf("CreateCIBatch: %v", err)
+		}
+		if !created {
+			t.Fatal("expected to create batch")
+		}
+
+		err = p.processPR(context.Background(), "acme/api", ghPR{
+			Number:      52,
+			HeadRefOid:  "head-sha-52",
+			BaseRefName: "main",
+		}, cfg)
+		if err != nil {
+			t.Fatalf("processPR: %v", err)
+		}
+
+		// No new jobs should have been created — the fresh batch was skipped
+		jobs, err := db.ListJobs("", repoPath, 0, 0, storage.WithGitRef("base-sha..head-sha-52"))
+		if err != nil {
+			t.Fatalf("ListJobs: %v", err)
+		}
+		if len(jobs) != 0 {
+			t.Fatalf("expected 0 jobs (fresh batch skipped), got %d", len(jobs))
+		}
+	})
 }
 
 func TestCIPollerFindLocalRepo_AmbiguousRepoError(t *testing.T) {
@@ -957,6 +1062,33 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoError(t *testing.T) {
 	_, err := p.findLocalRepo("acme/api")
 	if err == nil {
 		t.Fatal("expected error for ambiguous repo match")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("expected ambiguity error, got: %v", err)
+	}
+}
+
+func TestCIPollerFindLocalRepo_PartialIdentityAmbiguity(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+
+	// Create two repos with identities that DON'T match the exact patterns
+	// tried by findLocalRepo (which only checks github.com), so they fall
+	// through to partial suffix matching where both match "acme/widgets"
+	if _, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git"); err != nil {
+		t.Fatalf("insert repo1: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		"/tmp/clone-ghe2", "widgets", "https://ghe.corp.com/acme/widgets"); err != nil {
+		t.Fatalf("insert repo2: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	_, err := p.findLocalRepo("acme/widgets")
+	if err == nil {
+		t.Fatal("expected error for ambiguous partial repo match")
 	}
 	if !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("expected ambiguity error, got: %v", err)

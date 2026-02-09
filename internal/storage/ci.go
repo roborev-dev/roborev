@@ -115,6 +115,36 @@ func (db *DB) CountBatchJobs(batchID int64) (int, error) {
 	return count, err
 }
 
+// IsBatchStale reports whether a batch was created more than 1 minute ago.
+// Used to distinguish a crashed creator from one that is still actively enqueuing.
+func (db *DB) IsBatchStale(batchID int64) (bool, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batches WHERE id = ? AND created_at < datetime('now', '-1 minute')`,
+		batchID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// GetBatchJobIDs returns the review job IDs linked to a batch.
+func (db *DB) GetBatchJobIDs(batchID int64) ([]int64, error) {
+	rows, err := db.Query(`SELECT job_id FROM ci_pr_batch_jobs WHERE batch_id = ?`, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // RecordBatchJob links a review job to a batch.
 func (db *DB) RecordBatchJob(batchID, jobID int64) error {
 	_, err := db.Exec(`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)

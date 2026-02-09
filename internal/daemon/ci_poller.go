@@ -276,14 +276,33 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	if !created {
 		// Batch already exists — check if it's fully populated.
 		// If the creator crashed mid-enqueue, the batch may have fewer
-		// linked jobs than expected. Clean it up so we can retry.
+		// linked jobs than expected. Only reclaim stale batches (>1 min)
+		// to avoid racing with an actively enqueuing creator.
 		linked, err := p.db.CountBatchJobs(batch.ID)
 		if err != nil {
 			return fmt.Errorf("count batch jobs: %w", err)
 		}
 		if linked < batch.TotalJobs {
-			log.Printf("CI poller: batch %d has %d/%d linked jobs (incomplete), cleaning up for retry",
+			stale, err := p.db.IsBatchStale(batch.ID)
+			if err != nil {
+				return fmt.Errorf("check batch staleness: %w", err)
+			}
+			if !stale {
+				// Batch is still fresh — creator may still be enqueuing
+				return nil
+			}
+			log.Printf("CI poller: batch %d has %d/%d linked jobs (stale incomplete), cleaning up for retry",
 				batch.ID, linked, batch.TotalJobs)
+			// Cancel any already-linked jobs before deleting the batch
+			jobIDs, err := p.db.GetBatchJobIDs(batch.ID)
+			if err != nil {
+				return fmt.Errorf("get batch job IDs: %w", err)
+			}
+			for _, jid := range jobIDs {
+				if err := p.db.CancelJob(jid); err != nil {
+					log.Printf("CI poller: failed to cancel orphan job %d: %v", jid, err)
+				}
+			}
 			if err := p.db.DeleteCIBatch(batch.ID); err != nil {
 				return fmt.Errorf("clean up incomplete batch: %w", err)
 			}
@@ -406,6 +425,7 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 
 // findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
+// Returns an ambiguity error if multiple repos match.
 func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, error) {
 	rows, err := p.db.Query(`SELECT id, root_path, name, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
 	if err != nil {
@@ -416,6 +436,7 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 	// Normalize the search pattern: owner/repo (without .git), lowercased
 	needle := strings.ToLower(strings.TrimSuffix(ghRepo, ".git"))
 
+	var matches []storage.Repo
 	for rows.Next() {
 		var repo storage.Repo
 		var identity string
@@ -427,11 +448,18 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 		normalized := strings.ToLower(strings.TrimSuffix(identity, ".git"))
 		if strings.HasSuffix(normalized, "/"+needle) || strings.HasSuffix(normalized, ":"+needle) {
 			repo.Identity = identity
-			return &repo, nil
+			matches = append(matches, repo)
 		}
 	}
 
-	return nil, fmt.Errorf("no local repo found matching %q (run 'roborev init' in a local checkout)", ghRepo)
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("no local repo found matching %q (run 'roborev init' in a local checkout)", ghRepo)
+	case 1:
+		return &matches[0], nil
+	default:
+		return nil, fmt.Errorf("ambiguous repo match for %q: %d local repos match (partial identity)", ghRepo, len(matches))
+	}
 }
 
 // ghEnvForRepo returns the environment for gh CLI commands targeting a specific repo.
