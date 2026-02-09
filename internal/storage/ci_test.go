@@ -6,6 +6,55 @@ import (
 	"testing"
 )
 
+// mustCreateCIBatch creates a CI batch, failing the test on error.
+func mustCreateCIBatch(t *testing.T, db *DB, ghRepo string, prNum int, headSHA string, totalJobs int) *CIPRBatch {
+	t.Helper()
+	batch, _, err := db.CreateCIBatch(ghRepo, prNum, headSHA, totalJobs)
+	if err != nil {
+		t.Fatalf("CreateCIBatch: %v", err)
+	}
+	return batch
+}
+
+// mustEnqueueReviewJob enqueues a review job, failing the test on error.
+func mustEnqueueReviewJob(t *testing.T, db *DB, repoID int64, gitRef, agent, reviewType string) *ReviewJob {
+	t.Helper()
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repoID, GitRef: gitRef, Agent: agent, ReviewType: reviewType,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	return job
+}
+
+// mustRecordBatchJob links a job to a batch, failing the test on error.
+func mustRecordBatchJob(t *testing.T, db *DB, batchID, jobID int64) {
+	t.Helper()
+	if err := db.RecordBatchJob(batchID, jobID); err != nil {
+		t.Fatalf("RecordBatchJob: %v", err)
+	}
+}
+
+// mustCreateLinkedBatchJob creates a batch, enqueues a job, and links them.
+func mustCreateLinkedBatchJob(t *testing.T, db *DB, repoID int64, ghRepo string, prNum int, headSHA, gitRef, agent, reviewType string) (*CIPRBatch, *ReviewJob) {
+	t.Helper()
+	batch := mustCreateCIBatch(t, db, ghRepo, prNum, headSHA, 1)
+	job := mustEnqueueReviewJob(t, db, repoID, gitRef, agent, reviewType)
+	mustRecordBatchJob(t, db, batch.ID, job.ID)
+	return batch, job
+}
+
+// mustCreateLinkedTerminalJob creates a linked batch+job and sets the job to a terminal status.
+func mustCreateLinkedTerminalJob(t *testing.T, db *DB, repoID int64, ghRepo string, prNum int, headSHA, gitRef, agent, reviewType, status string) (*CIPRBatch, int64) {
+	t.Helper()
+	batch, job := mustCreateLinkedBatchJob(t, db, repoID, ghRepo, prNum, headSHA, gitRef, agent, reviewType)
+	if _, err := db.Exec(`UPDATE review_jobs SET status=? WHERE id = ?`, status, job.ID); err != nil {
+		t.Fatalf("set status %s: %v", status, err)
+	}
+	return batch, job.ID
+}
+
 func TestCreateCIBatch(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -64,15 +113,11 @@ func TestHasCIBatch(t *testing.T) {
 		t.Error("expected false before creation")
 	}
 
-	// Create batch — HasCIBatch requires linked jobs, so create one
 	repo, err := db.GetOrCreateRepo("/tmp/test-repo-hasbatch")
 	if err != nil {
 		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
-	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
-	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
-	}
+	batch := mustCreateCIBatch(t, db, "myorg/myrepo", 1, "sha1", 2)
 
 	// Empty batch (no linked jobs) should return false
 	has, err = db.HasCIBatch("myorg/myrepo", 1, "sha1")
@@ -84,13 +129,8 @@ func TestHasCIBatch(t *testing.T) {
 	}
 
 	// Link a job — now HasCIBatch should return true
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc..def", Agent: "test", ReviewType: "security"})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-	if err := db.RecordBatchJob(batch.ID, job.ID); err != nil {
-		t.Fatalf("RecordBatchJob: %v", err)
-	}
+	job := mustEnqueueReviewJob(t, db, repo.ID, "abc..def", "test", "security")
+	mustRecordBatchJob(t, db, batch.ID, job.ID)
 
 	has, err = db.HasCIBatch("myorg/myrepo", 1, "sha1")
 	if err != nil {
@@ -119,28 +159,12 @@ func TestRecordBatchJob(t *testing.T) {
 		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
 
-	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
-	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
-	}
+	batch := mustCreateCIBatch(t, db, "myorg/myrepo", 1, "sha1", 2)
+	job1 := mustEnqueueReviewJob(t, db, repo.ID, "abc..def", "codex", "security")
+	job2 := mustEnqueueReviewJob(t, db, repo.ID, "abc..def", "gemini", "review")
+	mustRecordBatchJob(t, db, batch.ID, job1.ID)
+	mustRecordBatchJob(t, db, batch.ID, job2.ID)
 
-	job1, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc..def", Agent: "codex", ReviewType: "security"})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-	job2, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc..def", Agent: "gemini", ReviewType: "review"})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-
-	if err := db.RecordBatchJob(batch.ID, job1.ID); err != nil {
-		t.Fatalf("RecordBatchJob 1: %v", err)
-	}
-	if err := db.RecordBatchJob(batch.ID, job2.ID); err != nil {
-		t.Fatalf("RecordBatchJob 2: %v", err)
-	}
-
-	// Verify via GetCIBatchByJobID
 	found, err := db.GetCIBatchByJobID(job1.ID)
 	if err != nil {
 		t.Fatalf("GetCIBatchByJobID: %v", err)
@@ -259,16 +283,11 @@ func TestGetBatchReviews(t *testing.T) {
 		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
 
-	batch, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 2)
-	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
-	}
-
-	// Create and link jobs
-	job1, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc..def", Agent: "codex", ReviewType: "security"})
-	job2, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc..def", Agent: "gemini", ReviewType: "review"})
-	db.RecordBatchJob(batch.ID, job1.ID)
-	db.RecordBatchJob(batch.ID, job2.ID)
+	batch := mustCreateCIBatch(t, db, "myorg/myrepo", 1, "sha1", 2)
+	job1 := mustEnqueueReviewJob(t, db, repo.ID, "abc..def", "codex", "security")
+	job2 := mustEnqueueReviewJob(t, db, repo.ID, "abc..def", "gemini", "review")
+	mustRecordBatchJob(t, db, batch.ID, job1.ID)
+	mustRecordBatchJob(t, db, batch.ID, job2.ID)
 
 	// Complete job1 with a review
 	db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job1.ID)
@@ -313,9 +332,7 @@ func TestGetCIBatchByJobID(t *testing.T) {
 	defer db.Close()
 
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-	batch, _, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
-	job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "abc..def", Agent: "codex", ReviewType: "security"})
-	db.RecordBatchJob(batch.ID, job.ID)
+	batch, job := mustCreateLinkedBatchJob(t, db, repo.ID, "myorg/myrepo", 1, "sha1", "abc..def", "codex", "security")
 
 	found, err := db.GetCIBatchByJobID(job.ID)
 	if err != nil {
@@ -382,20 +399,11 @@ func TestFinalizeBatch_PreventsStaleRepost(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	batch, _, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
-
-	// Create a linked job so the batch qualifies for GetStaleBatches
-	_, err := db.Exec(`INSERT INTO repos (root_path, name) VALUES ('/tmp/test', 'test')`)
+	repo, err := db.GetOrCreateRepo("/tmp/test")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, prompt, status, agent, review_type) VALUES (1, 'sha1', 'p', 'done', 'test', 'security')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var jobID int64
-	db.QueryRow(`SELECT last_insert_rowid()`).Scan(&jobID)
-	db.RecordBatchJob(batch.ID, jobID)
+	batch, _ := mustCreateLinkedTerminalJob(t, db, repo.ID, "myorg/myrepo", 1, "sha1", "sha1", "test", "security", "done")
 
 	// Claim the batch (simulates postBatchResults starting)
 	claimed, err := db.ClaimBatchForSynthesis(batch.ID)
@@ -463,20 +471,11 @@ func TestGetStaleBatches_StaleClaim(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	batch, _, _ := db.CreateCIBatch("myorg/myrepo", 1, "sha1", 1)
-
-	// Create a linked terminal job
-	_, err := db.Exec(`INSERT INTO repos (root_path, name) VALUES ('/tmp/test', 'test')`)
+	repo, err := db.GetOrCreateRepo("/tmp/test")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
-	_, err = db.Exec(`INSERT INTO review_jobs (repo_id, git_ref, prompt, status, agent, review_type) VALUES (1, 'sha1', 'p', 'done', 'test', 'security')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var jobID int64
-	db.QueryRow(`SELECT last_insert_rowid()`).Scan(&jobID)
-	db.RecordBatchJob(batch.ID, jobID)
+	batch, _ := mustCreateLinkedTerminalJob(t, db, repo.ID, "myorg/myrepo", 1, "sha1", "sha1", "test", "security", "done")
 
 	// Claim the batch, then backdate claimed_at to simulate a stale claim
 	db.ClaimBatchForSynthesis(batch.ID)
@@ -506,35 +505,20 @@ func TestDeleteEmptyBatches(t *testing.T) {
 	defer db.Close()
 
 	// Create an empty batch and backdate it so it's eligible for cleanup
-	emptyOld, _, err := db.CreateCIBatch("myorg/myrepo", 1, "sha-old", 2)
-	if err != nil {
-		t.Fatalf("CreateCIBatch (old empty): %v", err)
-	}
+	emptyOld := mustCreateCIBatch(t, db, "myorg/myrepo", 1, "sha-old", 2)
 	if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes') WHERE id = ?`, emptyOld.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create an empty batch that's recent (should NOT be deleted)
-	if _, _, err := db.CreateCIBatch("myorg/myrepo", 2, "sha-recent", 1); err != nil {
-		t.Fatalf("CreateCIBatch (recent empty): %v", err)
-	}
+	mustCreateCIBatch(t, db, "myorg/myrepo", 2, "sha-recent", 1)
 
 	// Create a non-empty batch that's old (should NOT be deleted)
-	nonEmpty, _, err := db.CreateCIBatch("myorg/myrepo", 3, "sha-nonempty", 1)
-	if err != nil {
-		t.Fatalf("CreateCIBatch (non-empty): %v", err)
-	}
 	repo, err := db.GetOrCreateRepo(t.TempDir())
 	if err != nil {
 		t.Fatalf("GetOrCreateRepo: %v", err)
 	}
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "a..b", Agent: "test", ReviewType: "security"})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-	if err := db.RecordBatchJob(nonEmpty.ID, job.ID); err != nil {
-		t.Fatalf("RecordBatchJob: %v", err)
-	}
+	nonEmpty, _ := mustCreateLinkedBatchJob(t, db, repo.ID, "myorg/myrepo", 3, "sha-nonempty", "a..b", "test", "security")
 	if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = datetime('now', '-5 minutes') WHERE id = ?`, nonEmpty.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -588,13 +572,7 @@ func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
 	}
 
 	// Create and complete a job
-	job, err := db.EnqueueJob(EnqueueOpts{
-		RepoID: repo.ID, GitRef: "a..b", Agent: "test", ReviewType: "security",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-	// Transition to done
+	job := mustEnqueueReviewJob(t, db, repo.ID, "a..b", "test", "security")
 	if _, err := db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID); err != nil {
 		t.Fatalf("set done: %v", err)
 	}
@@ -609,12 +587,7 @@ func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
 	}
 
 	// CancelJob on a queued job should succeed
-	job2, err := db.EnqueueJob(EnqueueOpts{
-		RepoID: repo.ID, GitRef: "c..d", Agent: "test", ReviewType: "security",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
+	job2 := mustEnqueueReviewJob(t, db, repo.ID, "c..d", "test", "security")
 	if err := db.CancelJob(job2.ID); err != nil {
 		t.Fatalf("CancelJob on queued job: %v", err)
 	}
