@@ -123,7 +123,7 @@ func NewBuilder(db *storage.DB) *Builder {
 }
 
 // Build constructs a review prompt for a commit or range with context from previous reviews.
-// reviewType selects the system prompt variant (e.g., "security"); empty or "general" uses the default.
+// reviewType selects the system prompt variant (e.g., "security"); empty, "default", or "general" uses the default.
 func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
 	if git.IsRange(gitRef) {
 		return b.buildRangePrompt(repoPath, gitRef, repoID, contextCount, agentName, reviewType)
@@ -133,13 +133,13 @@ func (b *Builder) Build(repoPath, gitRef string, repoID int64, contextCount int,
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
 // The diff is provided directly since it was captured at enqueue time.
-// reviewType selects the system prompt variant (e.g., "security"); empty or "general" uses the default.
+// reviewType selects the system prompt variant (e.g., "security"); empty, "default", or "general" uses the default.
 func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount int, agentName, reviewType string) (string, error) {
 	var sb strings.Builder
 
 	// Start with system prompt for dirty changes
 	promptType := "dirty"
-	if reviewType != "" && reviewType != "general" {
+	if reviewType != "" && reviewType != "default" && reviewType != "general" {
 		promptType = reviewType
 	}
 	if promptType == "design" {
@@ -205,7 +205,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 
 	// Start with system prompt
 	promptType := "review"
-	if reviewType != "" && reviewType != "general" {
+	if reviewType != "" && reviewType != "default" && reviewType != "general" {
 		promptType = reviewType
 	}
 	if promptType == "design" {
@@ -289,7 +289,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	// Start with system prompt for ranges
 	promptType := "range"
-	if reviewType != "" && reviewType != "general" {
+	if reviewType != "" && reviewType != "default" && reviewType != "general" {
 		promptType = reviewType
 	}
 	if promptType == "design" {

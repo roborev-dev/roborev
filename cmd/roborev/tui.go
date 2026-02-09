@@ -3265,7 +3265,7 @@ func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
 func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, colWidths columnWidths) string {
 	ref := shortJobRef(job)
 	// Show review type tag for non-standard review types (e.g., [security])
-	if job.ReviewType != "" && job.ReviewType != "general" {
+	if job.ReviewType != "" && job.ReviewType != "default" && job.ReviewType != "general" {
 		ref = ref + " [" + job.ReviewType + "]"
 	}
 	if len(ref) > colWidths.ref {

@@ -433,11 +433,11 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate and default review_type
-	if req.ReviewType == "" {
-		req.ReviewType = "general"
+	if req.ReviewType == "" || req.ReviewType == "general" {
+		req.ReviewType = "default"
 	}
-	if req.ReviewType != "general" && req.ReviewType != "security" && req.ReviewType != "design" {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid review_type %q (valid: general, security, design)", req.ReviewType))
+	if req.ReviewType != "default" && req.ReviewType != "security" && req.ReviewType != "design" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid review_type %q (valid: default, security, design)", req.ReviewType))
 		return
 	}
 
@@ -486,9 +486,9 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Map review_type to config workflow for agent/model resolution.
-	// "general" uses the standard "review" workflow; "security" uses "security" workflow.
+	// "default" uses the standard "review" workflow; others use their own name.
 	workflow := "review"
-	if req.ReviewType != "" && req.ReviewType != "general" {
+	if req.ReviewType != "" && req.ReviewType != "default" {
 		workflow = req.ReviewType
 	}
 

@@ -995,7 +995,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 
 	// Map review_type to config workflow (matches daemon behavior)
 	workflow := "review"
-	if reviewType != "" && reviewType != "general" {
+	if reviewType != "" && reviewType != "default" && reviewType != "general" {
 		workflow = reviewType
 	}
 
