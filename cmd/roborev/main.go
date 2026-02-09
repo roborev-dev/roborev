@@ -630,6 +630,7 @@ func daemonRunCmd() *cobra.Command {
 			var ciPoller *daemon.CIPoller
 			if cfg.CI.Enabled {
 				ciPoller = daemon.NewCIPoller(db, server.ConfigWatcher(), server.Broadcaster())
+				server.SetCIPoller(ciPoller) // wire callbacks before Start to avoid race
 				if err := ciPoller.Start(); err != nil {
 					log.Printf("Warning: failed to start CI poller: %v", err)
 				} else {
@@ -639,7 +640,6 @@ func daemonRunCmd() *cobra.Command {
 					}
 					log.Printf("CI poller started (interval: %s, repos: %v)", interval, cfg.CI.Repos)
 				}
-				server.SetCIPoller(ciPoller)
 			}
 
 			// Handle shutdown signals
