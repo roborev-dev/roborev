@@ -268,5 +268,47 @@ func TestLocalReviewSkipsDaemon(t *testing.T) {
 	}
 }
 
+func TestReviewTypeValidation(t *testing.T) {
+	h := newReviewHarness(t)
+
+	t.Run("invalid type rejected by cobra", func(t *testing.T) {
+		cmd := reviewCmd()
+		cmd.SetArgs([]string{"--local", "--type", "bogus", "--agent", "test", "--reasoning", "fast", "--repo", h.Dir})
+
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error for invalid review type")
+		}
+		if !strings.Contains(err.Error(), "invalid --type") {
+			t.Errorf("expected 'invalid --type' error, got: %v", err)
+		}
+	})
+
+	t.Run("security type accepted", func(t *testing.T) {
+		err := h.run(runOpts{Agent: "test", Reasoning: "fast", ReviewType: "security"})
+		if err != nil {
+			t.Fatalf("expected security type to be accepted, got: %v", err)
+		}
+	})
+
+	t.Run("design type accepted", func(t *testing.T) {
+		err := h.run(runOpts{Agent: "test", Reasoning: "fast", ReviewType: "design"})
+		if err != nil {
+			t.Fatalf("expected design type to be accepted, got: %v", err)
+		}
+	})
+
+	t.Run("empty type accepted as default", func(t *testing.T) {
+		err := h.run(runOpts{Agent: "test", Reasoning: "fast", ReviewType: ""})
+		if err != nil {
+			t.Fatalf("expected empty type to be accepted, got: %v", err)
+		}
+	})
+}
+
 // Ensure config package is used (for the linker)
 var _ = config.LoadGlobal

@@ -106,7 +106,7 @@ type CIConfig struct {
 	// Repos is the list of GitHub repos to poll in "owner/repo" format
 	Repos []string `toml:"repos"`
 
-	// ReviewTypes is the list of review types to run for each PR (e.g., ["security", "review"]).
+	// ReviewTypes is the list of review types to run for each PR (e.g., ["security", "default"]).
 	// Defaults to ["security"] if empty.
 	ReviewTypes []string `toml:"review_types"`
 

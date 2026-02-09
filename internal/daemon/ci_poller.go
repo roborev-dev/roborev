@@ -284,9 +284,11 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 	}
 
-	// Validate review types to catch typos early.
+	// Validate, canonicalize, and dedupe review types.
 	// Empty string is rejected here (likely a config typo); use "default" explicitly.
 	validSpecialTypes := map[string]bool{"security": true, "design": true}
+	seen := make(map[string]bool, len(reviewTypes))
+	canonical := make([]string, 0, len(reviewTypes))
 	for _, rt := range reviewTypes {
 		if rt == "" {
 			return fmt.Errorf("invalid review_type %q (valid: default, security, design)", rt)
@@ -294,7 +296,16 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		if !config.IsDefaultReviewType(rt) && !validSpecialTypes[rt] {
 			return fmt.Errorf("invalid review_type %q (valid: default, security, design)", rt)
 		}
+		// Normalize aliases to canonical "default"
+		if config.IsDefaultReviewType(rt) {
+			rt = "default"
+		}
+		if !seen[rt] {
+			seen[rt] = true
+			canonical = append(canonical, rt)
+		}
 	}
+	reviewTypes = canonical
 
 	totalJobs := len(reviewTypes) * len(agents)
 

@@ -2693,6 +2693,65 @@ func TestHandleJobOutput_StreamingCompletedJob(t *testing.T) {
 }
 
 // TestHandleJobOutput_MissingJobID tests that missing job_id returns 400.
+func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
+	tests := []struct {
+		name         string
+		reviewType   string
+		wantCode     int
+		wantStored   string // expected ReviewType on response job
+		wantErrorMsg string // substring expected in error response
+	}{
+		{name: "empty defaults to default", reviewType: "", wantCode: http.StatusCreated, wantStored: "default"},
+		{name: "general alias normalized", reviewType: "general", wantCode: http.StatusCreated, wantStored: "default"},
+		{name: "review alias normalized", reviewType: "review", wantCode: http.StatusCreated, wantStored: "default"},
+		{name: "default stored as-is", reviewType: "default", wantCode: http.StatusCreated, wantStored: "default"},
+		{name: "security stored as-is", reviewType: "security", wantCode: http.StatusCreated, wantStored: "security"},
+		{name: "design stored as-is", reviewType: "design", wantCode: http.StatusCreated, wantStored: "design"},
+		{name: "invalid type rejected", reviewType: "bogus", wantCode: http.StatusBadRequest, wantErrorMsg: "invalid review_type"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, tmpDir := newTestServer(t)
+
+			repoDir := filepath.Join(tmpDir, "repo")
+			testutil.InitTestGitRepo(t, repoDir)
+			headSHA := testutil.GetHeadSHA(t, repoDir)
+
+			reqData := map[string]string{
+				"repo_path":   repoDir,
+				"git_ref":     headSHA,
+				"agent":       "test",
+				"review_type": tt.reviewType,
+			}
+			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
+			w := httptest.NewRecorder()
+
+			server.handleEnqueue(w, req)
+
+			if w.Code != tt.wantCode {
+				t.Fatalf("status=%d, want %d; body=%s", w.Code, tt.wantCode, w.Body.String())
+			}
+
+			if tt.wantErrorMsg != "" {
+				if !strings.Contains(w.Body.String(), tt.wantErrorMsg) {
+					t.Fatalf("expected error containing %q, got %s", tt.wantErrorMsg, w.Body.String())
+				}
+				return
+			}
+
+			// Decode the job from the response to verify ReviewType
+			var job storage.ReviewJob
+			if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if job.ReviewType != tt.wantStored {
+				t.Errorf("ReviewType=%q, want %q", job.ReviewType, tt.wantStored)
+			}
+		})
+	}
+}
+
 func TestHandleEnqueueAgentAvailability(t *testing.T) {
 	// Shared read-only git repo created once (all subtests use different servers for DB isolation)
 	repoDir := filepath.Join(t.TempDir(), "repo")

@@ -369,9 +369,9 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	}
 	want := []string{
 		"codex|security",
-		"codex|review",
+		"codex|default",
 		"gemini|security",
-		"gemini|review",
+		"gemini|default",
 	}
 	for _, key := range want {
 		if !got[key] {
@@ -847,6 +847,62 @@ func TestCIPollerProcessPR_EmptyReviewType(t *testing.T) {
 	}
 }
 
+func TestCIPollerProcessPR_DesignReviewType(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"design"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 10, HeadRefOid: "design-head", BaseRefName: "main",
+	}, h.Cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..design-head"))
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+
+	if jobs[0].ReviewType != "design" {
+		t.Errorf("ReviewType=%q, want design", jobs[0].ReviewType)
+	}
+}
+
+func TestCIPollerProcessPR_AliasDeduplication(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	// All three are aliases for "default" — should be deduped to one
+	h.Cfg.CI.ReviewTypes = []string{"default", "review", "general"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 11, HeadRefOid: "dedup-head", BaseRefName: "main",
+	}, h.Cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-sha..dedup-head"))
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job (deduped from 3 aliases), got %d", len(jobs))
+	}
+	if jobs[0].ReviewType != "default" {
+		t.Errorf("ReviewType=%q, want default", jobs[0].ReviewType)
+	}
+}
+
 func TestCIPollerProcessPR_IncompleteBatchRecovery(t *testing.T) {
 	t.Run("stale empty batch is recovered", func(t *testing.T) {
 		h := newCIPollerHarness(t, "git@github.com:acme/api.git")
@@ -1065,8 +1121,8 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 	}
 
 	j := jobs[0]
-	if j.ReviewType != "review" {
-		t.Errorf("review_type=%q, want review", j.ReviewType)
+	if j.ReviewType != "default" {
+		t.Errorf("review_type=%q, want default (canonicalized from review)", j.ReviewType)
 	}
 	if j.Agent != "codex" {
 		t.Errorf("agent=%q, want codex", j.Agent)

@@ -481,14 +481,18 @@ func (b *Builder) getPreviousReviewContexts(repoPath, sha string, count int) ([]
 	return contexts, nil
 }
 
-// SystemPromptDesignReview is the base instruction for reviewing design documents
-const SystemPromptDesignReview = `You are a design reviewer. Review the design proposal shown below for:
+// SystemPromptDesignReview is the base instruction for reviewing design documents.
+// The input is a code diff (commit, range, or uncommitted changes) that is expected
+// to contain design artifacts such as PRDs, task lists, or architectural proposals.
+const SystemPromptDesignReview = `You are a design reviewer. The changes shown below are expected to contain design artifacts — PRDs, task lists, architectural proposals, or similar planning documents. Review them for:
 
 1. **Completeness**: Are goals, non-goals, success criteria, and edge cases defined?
 2. **Feasibility**: Are technical decisions grounded in the actual codebase?
 3. **Task scoping**: Are implementation stages small enough to review incrementally? Are dependencies ordered correctly?
 4. **Missing considerations**: Security, performance, backwards compatibility, error handling
 5. **Clarity**: Are decisions justified and understandable?
+
+If the changes do not appear to contain design documents, note this and review whatever design intent is evident from the code changes.
 
 After reviewing, provide:
 
