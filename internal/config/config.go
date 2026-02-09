@@ -282,6 +282,19 @@ func (c *SyncConfig) Validate() []string {
 	return warnings
 }
 
+// RepoCIConfig holds per-repo CI overrides (used by the CI poller for this repo).
+// These override the global [ci] settings when reviewing this specific repo.
+type RepoCIConfig struct {
+	// Agents overrides the list of agents for CI reviews of this repo.
+	Agents []string `toml:"agents"`
+
+	// ReviewTypes overrides the list of review types for CI reviews of this repo.
+	ReviewTypes []string `toml:"review_types"`
+
+	// Reasoning overrides the reasoning level for CI reviews (thorough, standard, fast).
+	Reasoning string `toml:"reasoning"`
+}
+
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
 	Agent              string   `toml:"agent"`
@@ -294,6 +307,9 @@ type RepoConfig struct {
 	ReviewReasoning    string   `toml:"review_reasoning"` // Reasoning level for reviews: thorough, standard, fast
 	RefineReasoning    string   `toml:"refine_reasoning"` // Reasoning level for refine: thorough, standard, fast
 	FixReasoning       string   `toml:"fix_reasoning"`    // Reasoning level for fix: thorough, standard, fast
+
+	// CI-specific overrides (used by CI poller for this repo)
+	CI RepoCIConfig `toml:"ci"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent"`
@@ -465,7 +481,10 @@ func GetDisplayName(repoPath string) string {
 	return repoCfg.DisplayName
 }
 
-func normalizeReasoning(value string) (string, error) {
+// NormalizeReasoning validates and normalizes a reasoning level string.
+// Returns the canonical form (thorough, standard, fast) or an error if invalid.
+// Returns empty string (no error) for empty input.
+func NormalizeReasoning(value string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if normalized == "" {
 		return "", nil
@@ -487,11 +506,11 @@ func normalizeReasoning(value string) (string, error) {
 // Priority: explicit > per-repo config > default (thorough)
 func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
-		return normalizeReasoning(explicit)
+		return NormalizeReasoning(explicit)
 	}
 
 	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
-		return normalizeReasoning(repoCfg.ReviewReasoning)
+		return NormalizeReasoning(repoCfg.ReviewReasoning)
 	}
 
 	return "thorough", nil // Default for reviews: deep analysis
@@ -501,11 +520,11 @@ func ResolveReviewReasoning(explicit string, repoPath string) (string, error) {
 // Priority: explicit > per-repo config > default (standard)
 func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
-		return normalizeReasoning(explicit)
+		return NormalizeReasoning(explicit)
 	}
 
 	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.RefineReasoning) != "" {
-		return normalizeReasoning(repoCfg.RefineReasoning)
+		return NormalizeReasoning(repoCfg.RefineReasoning)
 	}
 
 	return "standard", nil // Default for refine: balanced analysis
@@ -515,11 +534,11 @@ func ResolveRefineReasoning(explicit string, repoPath string) (string, error) {
 // Priority: explicit > per-repo config > default (standard)
 func ResolveFixReasoning(explicit string, repoPath string) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
-		return normalizeReasoning(explicit)
+		return NormalizeReasoning(explicit)
 	}
 
 	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.FixReasoning) != "" {
-		return normalizeReasoning(repoCfg.FixReasoning)
+		return NormalizeReasoning(repoCfg.FixReasoning)
 	}
 
 	return "standard", nil // Default for fix: balanced analysis

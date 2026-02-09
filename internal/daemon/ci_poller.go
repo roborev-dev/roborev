@@ -256,9 +256,28 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	// Build git ref for range review
 	gitRef := mergeBase + ".." + pr.HeadRefOid
 
-	// Resolve review types and agents from config
+	// Resolve review types, agents, and reasoning from config.
+	// Per-repo CI overrides take priority over global CI config.
 	reviewTypes := cfg.CI.ResolvedReviewTypes()
 	agents := cfg.CI.ResolvedAgents()
+	reasoning := "thorough"
+
+	repoCfg, _ := config.LoadRepoConfig(repo.RootPath)
+	if repoCfg != nil {
+		if len(repoCfg.CI.ReviewTypes) > 0 {
+			reviewTypes = repoCfg.CI.ReviewTypes
+		}
+		if len(repoCfg.CI.Agents) > 0 {
+			agents = repoCfg.CI.Agents
+		}
+		if repoCfg.CI.Reasoning != "" {
+			if r, err := config.NormalizeReasoning(repoCfg.CI.Reasoning); err == nil {
+				reasoning = r
+			} else {
+				log.Printf("CI poller: invalid reasoning %q in repo config for %s, using default", repoCfg.CI.Reasoning, ghRepo)
+			}
+		}
+	}
 
 	// Validate review types to catch typos early
 	validTypes := map[string]bool{"security": true, "review": true, "general": true}
@@ -352,7 +371,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 		for _, ag := range agents {
 			// Resolve agent through workflow config when not explicitly set
-			resolvedAgent := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, "thorough")
+			resolvedAgent := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, reasoning)
 			if resolved, err := agent.GetAvailable(resolvedAgent); err != nil {
 				rollback()
 				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
@@ -361,14 +380,14 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			}
 
 			// Resolve model through workflow config when not explicitly set
-			resolvedModel := config.ResolveModelForWorkflow(cfg.CI.Model, repo.RootPath, cfg, workflow, "thorough")
+			resolvedModel := config.ResolveModelForWorkflow(cfg.CI.Model, repo.RootPath, cfg, workflow, reasoning)
 
 			job, err := p.db.EnqueueJob(storage.EnqueueOpts{
 				RepoID:     repo.ID,
 				GitRef:     gitRef,
 				Agent:      resolvedAgent,
 				Model:      resolvedModel,
-				Reasoning:  "thorough",
+				Reasoning:  reasoning,
 				ReviewType: rt,
 			})
 			if err != nil {

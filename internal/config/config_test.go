@@ -1342,6 +1342,49 @@ func TestResolvedAgents(t *testing.T) {
 	})
 }
 
+func TestRepoCIConfig(t *testing.T) {
+	t.Run("parses agents and review_types", func(t *testing.T) {
+		tmpDir := newTempRepo(t, `
+agent = "codex"
+
+[ci]
+agents = ["gemini", "claude"]
+review_types = ["security", "review"]
+reasoning = "standard"
+`)
+		cfg, err := LoadRepoConfig(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadRepoConfig: %v", err)
+		}
+		if len(cfg.CI.Agents) != 2 || cfg.CI.Agents[0] != "gemini" || cfg.CI.Agents[1] != "claude" {
+			t.Errorf("got agents %v, want [gemini claude]", cfg.CI.Agents)
+		}
+		if len(cfg.CI.ReviewTypes) != 2 || cfg.CI.ReviewTypes[0] != "security" || cfg.CI.ReviewTypes[1] != "review" {
+			t.Errorf("got review_types %v, want [security review]", cfg.CI.ReviewTypes)
+		}
+		if cfg.CI.Reasoning != "standard" {
+			t.Errorf("got reasoning %q, want %q", cfg.CI.Reasoning, "standard")
+		}
+	})
+
+	t.Run("empty CI section", func(t *testing.T) {
+		tmpDir := newTempRepo(t, `agent = "codex"`)
+		cfg, err := LoadRepoConfig(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadRepoConfig: %v", err)
+		}
+		if len(cfg.CI.Agents) != 0 {
+			t.Errorf("got agents %v, want empty", cfg.CI.Agents)
+		}
+		if len(cfg.CI.ReviewTypes) != 0 {
+			t.Errorf("got review_types %v, want empty", cfg.CI.ReviewTypes)
+		}
+		if cfg.CI.Reasoning != "" {
+			t.Errorf("got reasoning %q, want empty", cfg.CI.Reasoning)
+		}
+	})
+}
+
 func TestInstallationIDForOwner(t *testing.T) {
 	t.Run("map lookup", func(t *testing.T) {
 		ci := CIConfig{

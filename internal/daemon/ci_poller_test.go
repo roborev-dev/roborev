@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1116,6 +1117,64 @@ func TestBuildSynthesisPrompt_TruncatesLargeOutputs(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "...(truncated)") {
 		t.Error("expected truncation marker in synthesis prompt")
+	}
+}
+
+func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repoPath := t.TempDir()
+	if _, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git"); err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	// Write per-repo .roborev.toml with CI overrides
+	if err := os.WriteFile(repoPath+"/.roborev.toml", []byte(`
+[ci]
+agents = ["codex"]
+review_types = ["review"]
+reasoning = "fast"
+`), 0644); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
+
+	// Global config specifies different agents/review_types
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.ReviewTypes = []string{"security", "review"}
+	cfg.CI.Agents = []string{"codex", "gemini"}
+
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	p.gitFetchFn = func(context.Context, string) error { return nil }
+	p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number:      99,
+		HeadRefOid:  "repo-override-sha",
+		BaseRefName: "main",
+	}, cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	// Per-repo overrides: 1 agent x 1 review_type = 1 job (not 2x2=4)
+	jobs, err := db.ListJobs("", repoPath, 0, 0, storage.WithGitRef("base-sha..repo-override-sha"))
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job (repo override), got %d", len(jobs))
+	}
+
+	j := jobs[0]
+	if j.ReviewType != "review" {
+		t.Errorf("review_type=%q, want review", j.ReviewType)
+	}
+	if j.Agent != "codex" {
+		t.Errorf("agent=%q, want codex", j.Agent)
+	}
+	if j.Reasoning != "fast" {
+		t.Errorf("reasoning=%q, want fast", j.Reasoning)
 	}
 }
 
