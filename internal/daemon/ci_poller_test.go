@@ -778,6 +778,28 @@ func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {
 	}
 }
 
+func TestCIPollerSynthesizeBatchResults_UsesRepoPath(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.SynthesisAgent = "test"
+	batch, job := h.seedBatchJob(t, "acme/api", 20, "sha", "a..b", "codex", "security")
+	h.markJobDoneWithReview(t, job.ID, "codex", "No issues found.")
+
+	reviews, err := h.DB.GetBatchReviews(batch.ID)
+	if err != nil {
+		t.Fatalf("GetBatchReviews: %v", err)
+	}
+
+	out, err := h.Poller.synthesizeBatchResults(batch, reviews, h.Cfg)
+	if err != nil {
+		t.Fatalf("synthesizeBatchResults: %v", err)
+	}
+	// The test agent includes "Repo: <path>" in its output.
+	// Verify the repo's root_path was passed (not empty string).
+	if !strings.Contains(out, "Repo: "+h.RepoPath) {
+		t.Errorf("expected synthesis to run with repoPath=%q, got output: %q", h.RepoPath, out)
+	}
+}
+
 func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security", "typo-type"}

@@ -397,7 +397,11 @@ func initCmd() *cobra.Command {
 			if noDaemon {
 				// Try to register with an already-running daemon, but don't start one
 				if err := registerRepo(root); err != nil {
-					fmt.Println("  Daemon not running (use 'roborev daemon start' or systemctl)")
+					if strings.Contains(err.Error(), "server returned") {
+						fmt.Printf("  Warning: failed to register repo: %v\n", err)
+					} else {
+						fmt.Println("  Daemon not running (use 'roborev daemon start' or systemctl)")
+					}
 				} else {
 					fmt.Println("  Repo registered with running daemon")
 				}

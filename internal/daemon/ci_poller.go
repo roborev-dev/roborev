@@ -841,9 +841,12 @@ func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []st
 		synthesisAgent = synthesisAgent.WithModel(cfg.CI.SynthesisModel)
 	}
 
-	// Resolve minSeverity: per-repo override > global CI config
+	// Resolve repo for per-repo overrides and as the working directory
+	// for the synthesis agent (agents like codex require a git repo).
+	var repoPath string
 	minSeverity := cfg.CI.MinSeverity
 	if repo := p.resolveRepoForBatch(batch); repo != nil {
+		repoPath = repo.RootPath
 		if repoCfg, err := config.LoadRepoConfig(repo.RootPath); err == nil && repoCfg != nil {
 			if s := strings.TrimSpace(repoCfg.CI.MinSeverity); s != "" {
 				if normalized, err := config.NormalizeMinSeverity(s); err == nil {
@@ -864,11 +867,12 @@ func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []st
 
 	prompt := buildSynthesisPrompt(reviews, minSeverity)
 
-	// Use empty commit SHA since this is synthesis, not a repo review
+	// Run synthesis from the repo's checkout directory so agents that
+	// require a git working tree (e.g. codex) don't fail.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	output, err := synthesisAgent.Review(ctx, "", "", prompt, nil)
+	output, err := synthesisAgent.Review(ctx, repoPath, "", prompt, nil)
 	if err != nil {
 		return "", fmt.Errorf("synthesis review: %w", err)
 	}
