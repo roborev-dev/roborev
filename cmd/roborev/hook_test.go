@@ -496,7 +496,7 @@ func initNoDaemonSetup(t *testing.T) string {
 	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(tmpHome, ".roborev"))
 
 	repo := testutil.NewTestRepo(t)
-	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
+	t.Cleanup(testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n"))
 	t.Cleanup(repo.Chdir())
 
 	return repo.Root
