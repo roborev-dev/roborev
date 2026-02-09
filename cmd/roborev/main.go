@@ -95,6 +95,18 @@ func getDaemonAddr() string {
 	return serverAddr
 }
 
+// registerRepoError is a server-side error from the register endpoint
+// (daemon reachable but returned non-200). Distinguished from connection
+// errors so callers can report appropriately.
+type registerRepoError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *registerRepoError) Error() string {
+	return fmt.Sprintf("server returned %d: %s", e.StatusCode, e.Body)
+}
+
 // registerRepo tells the daemon to persist a repo to the DB so that the
 // CI poller (and other components) can find it after a daemon restart.
 func registerRepo(repoPath string) error {
@@ -105,12 +117,12 @@ func registerRepo(repoPath string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Post(getDaemonAddr()+"/api/repos/register", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return err // connection error (*url.Error wrapping net.Error)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, msg)
+		return &registerRepoError{StatusCode: resp.StatusCode, Body: string(msg)}
 	}
 	return nil
 }
@@ -394,13 +406,15 @@ func initCmd() *cobra.Command {
 
 		startDaemon:
 			// 5. Start daemon (or just register if --no-daemon)
+			var initIncomplete bool
 			if noDaemon {
 				// Try to register with an already-running daemon, but don't start one
 				if err := registerRepo(root); err != nil {
-					if strings.Contains(err.Error(), "server returned") {
-						fmt.Printf("  Warning: failed to register repo: %v\n", err)
-					} else {
+					initIncomplete = true
+					if isConnectionError(err) {
 						fmt.Println("  Daemon not running (use 'roborev daemon start' or systemctl)")
+					} else {
+						fmt.Printf("  Warning: failed to register repo: %v\n", err)
 					}
 				} else {
 					fmt.Println("  Repo registered with running daemon")
@@ -419,7 +433,12 @@ func initCmd() *cobra.Command {
 
 			// 5. Success message
 			fmt.Println()
-			fmt.Println("Ready! Every commit will now be automatically reviewed.")
+			if initIncomplete {
+				fmt.Println("Setup incomplete: repo was not registered with the daemon.")
+				fmt.Println("Start the daemon and run 'roborev init' again, or register manually.")
+			} else {
+				fmt.Println("Ready! Every commit will now be automatically reviewed.")
+			}
 			fmt.Println()
 			fmt.Println("Commands:")
 			fmt.Println("  roborev status      - view queue and daemon status")

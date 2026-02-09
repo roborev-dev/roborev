@@ -1,6 +1,10 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -417,4 +421,53 @@ func TestHookNeedsUpgrade(t *testing.T) {
 			t.Error("should not flag non-roborev hook as outdated")
 		}
 	})
+}
+
+func TestIsConnectionError(t *testing.T) {
+	t.Run("url.Error is connection error", func(t *testing.T) {
+		err := &url.Error{Op: "Post", URL: "http://127.0.0.1:7373", Err: &net.OpError{
+			Op: "dial", Net: "tcp", Err: errors.New("connection refused"),
+		}}
+		if !isConnectionError(err) {
+			t.Error("expected url.Error to be classified as connection error")
+		}
+	})
+
+	t.Run("registerRepoError is not connection error", func(t *testing.T) {
+		err := &registerRepoError{StatusCode: 500, Body: "internal error"}
+		if isConnectionError(err) {
+			t.Error("expected registerRepoError to NOT be classified as connection error")
+		}
+	})
+
+	t.Run("plain error is not connection error", func(t *testing.T) {
+		err := fmt.Errorf("something else")
+		if isConnectionError(err) {
+			t.Error("expected plain error to NOT be classified as connection error")
+		}
+	})
+
+	t.Run("wrapped url.Error is connection error", func(t *testing.T) {
+		inner := &url.Error{Op: "Post", URL: "http://127.0.0.1:7373", Err: errors.New("timeout")}
+		err := fmt.Errorf("register failed: %w", inner)
+		if !isConnectionError(err) {
+			t.Error("expected wrapped url.Error to be classified as connection error")
+		}
+	})
+}
+
+func TestRegisterRepoError(t *testing.T) {
+	err := &registerRepoError{StatusCode: 500, Body: "internal server error"}
+	if err.Error() != "server returned 500: internal server error" {
+		t.Errorf("unexpected error message: %s", err.Error())
+	}
+
+	// Verify it satisfies the error interface and is distinguishable
+	var regErr *registerRepoError
+	if !errors.As(err, &regErr) {
+		t.Error("expected errors.As to match registerRepoError")
+	}
+	if regErr.StatusCode != 500 {
+		t.Errorf("expected StatusCode 500, got %d", regErr.StatusCode)
+	}
 }
