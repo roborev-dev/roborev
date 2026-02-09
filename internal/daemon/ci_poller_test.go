@@ -40,10 +40,12 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 
 // stubProcessPRGit wires up git stubs on the poller so processPR doesn't
 // call real git. mergeBaseFn returns "base-" + ref2.
+// Also stubs agent resolution so tests don't need real agents in PATH.
 func (h *ciPollerHarness) stubProcessPRGit() {
 	h.Poller.gitFetchFn = func(context.Context, string) error { return nil }
 	h.Poller.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
 	h.Poller.mergeBaseFn = func(_, _, ref2 string) (string, error) { return "base-" + ref2, nil }
+	h.Poller.agentResolverFn = func(name string) (string, error) { return name, nil }
 }
 
 // seedBatchJob creates a CI batch, enqueues a job, and links them.
@@ -319,6 +321,7 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
 	h.Poller.gitFetchFn = func(context.Context, string) error { return nil }
 	h.Poller.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+	h.Poller.agentResolverFn = func(name string) (string, error) { return name, nil }
 	h.Poller.mergeBaseFn = func(_, ref1, ref2 string) (string, error) {
 		if ref1 != "origin/main" {
 			t.Fatalf("merge-base ref1=%q, want origin/main", ref1)

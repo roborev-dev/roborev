@@ -44,6 +44,7 @@ type CIPoller struct {
 	mergeBaseFn      func(string, string, string) (string, error)
 	postPRCommentFn  func(string, int, string) error
 	synthesizeFn     func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
+	agentResolverFn  func(name string) (string, error) // returns resolved agent name
 
 	subID      int // broadcaster subscription ID for event listening
 	stopCh     chan struct{}
@@ -384,7 +385,14 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		for _, ag := range agents {
 			// Resolve agent through workflow config when not explicitly set
 			resolvedAgent := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, reasoning)
-			if resolved, err := agent.GetAvailable(resolvedAgent); err != nil {
+			if p.agentResolverFn != nil {
+				name, err := p.agentResolverFn(resolvedAgent)
+				if err != nil {
+					rollback()
+					return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
+				}
+				resolvedAgent = name
+			} else if resolved, err := agent.GetAvailable(resolvedAgent); err != nil {
 				rollback()
 				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 			} else {
