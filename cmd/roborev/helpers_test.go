@@ -26,11 +26,28 @@ type TestGitRepo struct {
 func newTestGitRepo(t *testing.T) *TestGitRepo {
 	t.Helper()
 	dir := t.TempDir()
-	r := &TestGitRepo{Dir: dir, t: t}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks: %v", err)
+	}
+	r := &TestGitRepo{Dir: resolved, t: t}
 	r.Run("init")
 	r.Run("config", "user.email", "test@test.com")
 	r.Run("config", "user.name", "Test")
 	return r
+}
+
+// chdir changes to dir and registers a t.Cleanup to restore the original directory.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
 }
 
 // Run executes a git command in the repo directory and returns trimmed output.
@@ -104,6 +121,12 @@ func createTestRepo(t *testing.T, files map[string]string) string {
 	}
 
 	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks: %v", err)
+	}
+	dir = resolved
+
 	runGit := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
