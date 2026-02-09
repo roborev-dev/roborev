@@ -2306,19 +2306,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentView == tuiViewQueue {
 				m.hideAddressed = !m.hideAddressed
 
-				// Persist the preference
-				cfg, err := config.LoadGlobal()
-				if err != nil {
-					// If config doesn't exist, create minimal config with just this pref
-					cfg = &config.Config{
-						HideAddressedByDefault: m.hideAddressed,
-					}
-				} else {
+				// Persist the preference (skip save if config can't be loaded)
+				if cfg, err := config.LoadGlobal(); err == nil {
 					cfg.HideAddressedByDefault = m.hideAddressed
+					_ = config.SaveGlobal(cfg)
 				}
-
-				// Save config (silent failure is acceptable - toggle still works in-session)
-				_ = config.SaveGlobal(cfg)
 
 				// Update selection to first visible job immediately
 				if len(m.jobs) > 0 {
