@@ -262,7 +262,10 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	agents := cfg.CI.ResolvedAgents()
 	reasoning := "thorough"
 
-	repoCfg, _ := config.LoadRepoConfig(repo.RootPath)
+	repoCfg, repoCfgErr := config.LoadRepoConfig(repo.RootPath)
+	if repoCfgErr != nil {
+		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, repoCfgErr)
+	}
 	if repoCfg != nil {
 		if len(repoCfg.CI.ReviewTypes) > 0 {
 			reviewTypes = repoCfg.CI.ReviewTypes
@@ -270,10 +273,10 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		if len(repoCfg.CI.Agents) > 0 {
 			agents = repoCfg.CI.Agents
 		}
-		if repoCfg.CI.Reasoning != "" {
-			if r, err := config.NormalizeReasoning(repoCfg.CI.Reasoning); err == nil {
+		if strings.TrimSpace(repoCfg.CI.Reasoning) != "" {
+			if r, err := config.NormalizeReasoning(repoCfg.CI.Reasoning); err == nil && r != "" {
 				reasoning = r
-			} else {
+			} else if err != nil {
 				log.Printf("CI poller: invalid reasoning %q in repo config for %s, using default", repoCfg.CI.Reasoning, ghRepo)
 			}
 		}
@@ -441,6 +444,11 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 			continue // Other errors (DB issues) — try next pattern
 		}
 		if repo != nil {
+			// Skip sync placeholders (root_path == identity) — they don't
+			// have a real checkout the poller can git-fetch or review.
+			if repo.RootPath == repo.Identity {
+				continue
+			}
 			return repo, nil
 		}
 	}
@@ -467,6 +475,10 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 		var repo storage.Repo
 		var identity string
 		if err := rows.Scan(&repo.ID, &repo.RootPath, &repo.Name, &identity); err != nil {
+			continue
+		}
+		// Skip sync placeholders (root_path == identity)
+		if repo.RootPath == identity {
 			continue
 		}
 		// Check if identity contains the owner/repo pattern (case-insensitive)

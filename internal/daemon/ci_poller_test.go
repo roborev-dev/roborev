@@ -803,6 +803,142 @@ func TestCIPollerFindLocalRepo_PartialIdentityFallback(t *testing.T) {
 	}
 }
 
+func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+
+	// Create a sync placeholder (root_path == identity)
+	identity := "git@github.com:acme/api.git"
+	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		identity, "api", identity)
+	if err != nil {
+		t.Fatalf("insert placeholder: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	// With only a placeholder, should get "no local repo found"
+	_, err = p.findLocalRepo("acme/api")
+	if err == nil {
+		t.Fatal("expected error when only placeholder exists")
+	}
+	if !strings.Contains(err.Error(), "no local repo found") {
+		t.Fatalf("expected 'no local repo found' error, got: %v", err)
+	}
+
+	// Add a real local checkout — should find it and skip the placeholder
+	repoPath := t.TempDir()
+	repo, err := db.GetOrCreateRepo(repoPath, identity)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	found, err := p.findLocalRepo("acme/api")
+	if err != nil {
+		t.Fatalf("findLocalRepo with real repo: %v", err)
+	}
+	if found.ID != repo.ID {
+		t.Errorf("found repo id %d, want %d", found.ID, repo.ID)
+	}
+	if found.RootPath != repoPath {
+		t.Errorf("found repo root_path %q, want %q", found.RootPath, repoPath)
+	}
+}
+
+func TestCIPollerProcessPR_WhitespaceReasoning(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repoPath := t.TempDir()
+	if _, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git"); err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	// Write per-repo config with whitespace-only reasoning
+	if err := os.WriteFile(repoPath+"/.roborev.toml", []byte(`
+[ci]
+reasoning = "   "
+`), 0644); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.ReviewTypes = []string{"security"}
+	cfg.CI.Agents = []string{"codex"}
+
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	p.gitFetchFn = func(context.Context, string) error { return nil }
+	p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number:      50,
+		HeadRefOid:  "whitespace-reasoning-sha",
+		BaseRefName: "main",
+	}, cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	// Whitespace reasoning should fall back to "thorough" default
+	jobs, err := db.ListJobs("", repoPath, 0, 0, storage.WithGitRef("base-sha..whitespace-reasoning-sha"))
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].Reasoning != "thorough" {
+		t.Errorf("reasoning=%q, want thorough (whitespace should fall back to default)", jobs[0].Reasoning)
+	}
+}
+
+func TestCIPollerProcessPR_InvalidReasoning(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repoPath := t.TempDir()
+	if _, err := db.GetOrCreateRepo(repoPath, "git@github.com:acme/api.git"); err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	// Write per-repo config with invalid reasoning
+	if err := os.WriteFile(repoPath+"/.roborev.toml", []byte(`
+[ci]
+reasoning = "invalid"
+`), 0644); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.ReviewTypes = []string{"security"}
+	cfg.CI.Agents = []string{"codex"}
+
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	p.gitFetchFn = func(context.Context, string) error { return nil }
+	p.gitFetchPRHeadFn = func(context.Context, string, int) error { return nil }
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number:      51,
+		HeadRefOid:  "invalid-reasoning-sha",
+		BaseRefName: "main",
+	}, cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	// Invalid reasoning should fall back to "thorough" default
+	jobs, err := db.ListJobs("", repoPath, 0, 0, storage.WithGitRef("base-sha..invalid-reasoning-sha"))
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].Reasoning != "thorough" {
+		t.Errorf("reasoning=%q, want thorough (invalid should fall back to default)", jobs[0].Reasoning)
+	}
+}
+
 func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.CI.SynthesisAgent = "test"

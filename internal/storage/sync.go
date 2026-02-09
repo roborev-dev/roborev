@@ -220,10 +220,12 @@ func (db *DB) GetRepoByIdentity(identity string) (*Repo, error) {
 // GetRepoByIdentityCaseInsensitive is like GetRepoByIdentity but uses
 // case-insensitive comparison. Used by the CI poller since GitHub
 // owner/repo names are case-insensitive.
+// Excludes sync placeholders (root_path == identity) which don't have
+// a real local checkout.
 func (db *DB) GetRepoByIdentityCaseInsensitive(identity string) (*Repo, error) {
 	rows, err := db.Query(`
 		SELECT id, root_path, name, created_at, identity
-		FROM repos WHERE LOWER(identity) = LOWER(?)
+		FROM repos WHERE LOWER(identity) = LOWER(?) AND root_path != identity
 	`, identity)
 	if err != nil {
 		return nil, fmt.Errorf("query repo by identity (ci): %w", err)
