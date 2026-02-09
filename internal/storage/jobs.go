@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"log"
 	"strings"
 	"time"
 )
@@ -673,8 +674,14 @@ func hasNotVerbPattern(prefix string) bool {
 	return false
 }
 
-// parseSQLiteTime parses a time string from SQLite which may be in different formats
+// parseSQLiteTime parses a time string from SQLite which may be in different formats.
+// Handles RFC3339 (what we write), SQLite datetime('now') format, and timezone variants.
+// Returns zero time for empty strings. Logs a warning for non-empty unrecognized formats
+// to surface driver/schema issues instead of silently producing zero times.
 func parseSQLiteTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
 	// Try RFC3339 first (what we write for started_at, finished_at)
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t
@@ -687,6 +694,7 @@ func parseSQLiteTime(s string) time.Time {
 	if t, err := time.Parse("2006-01-02T15:04:05Z07:00", s); err == nil {
 		return t
 	}
+	log.Printf("storage: warning: unrecognized time format %q", s)
 	return time.Time{}
 }
 
