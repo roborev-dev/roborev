@@ -79,8 +79,8 @@ func TestInstallClaudeWhenDirExists(t *testing.T) {
 	if claudeResult.Skipped {
 		t.Error("expected Claude NOT to be skipped when ~/.claude exists")
 	}
-	if len(claudeResult.Installed) != 4 {
-		t.Errorf("expected 4 installed skills, got %v", claudeResult.Installed)
+	if len(claudeResult.Installed) != 6 {
+		t.Errorf("expected 6 installed skills, got %v", claudeResult.Installed)
 	}
 
 	// Verify Claude skill structure (flat directories with SKILL.md)
@@ -96,6 +96,12 @@ func TestInstallClaudeWhenDirExists(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-respond", "SKILL.md")); err != nil {
 		t.Error("expected roborev-respond/SKILL.md to exist")
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-review", "SKILL.md")); err != nil {
+		t.Error("expected roborev-review/SKILL.md to exist")
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-review-branch", "SKILL.md")); err != nil {
+		t.Error("expected roborev-review-branch/SKILL.md to exist")
 	}
 }
 
@@ -117,8 +123,8 @@ func TestInstallCodexWhenDirExists(t *testing.T) {
 	if codexResult.Skipped {
 		t.Error("expected Codex NOT to be skipped when ~/.codex exists")
 	}
-	if len(codexResult.Installed) != 4 {
-		t.Errorf("expected 4 installed skills, got %v", codexResult.Installed)
+	if len(codexResult.Installed) != 6 {
+		t.Errorf("expected 6 installed skills, got %v", codexResult.Installed)
 	}
 
 	// Verify Codex skill structure (flat directories with SKILL.md)
@@ -134,6 +140,12 @@ func TestInstallCodexWhenDirExists(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-respond", "SKILL.md")); err != nil {
 		t.Error("expected roborev-respond/SKILL.md to exist")
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-review", "SKILL.md")); err != nil {
+		t.Error("expected roborev-review/SKILL.md to exist")
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "roborev-review-branch", "SKILL.md")); err != nil {
+		t.Error("expected roborev-review-branch/SKILL.md to exist")
 	}
 }
 
@@ -152,8 +164,8 @@ func TestInstallIdempotent(t *testing.T) {
 	}
 
 	claude1 := getResultForAgent(t, results1, AgentClaude)
-	if len(claude1.Installed) != 4 {
-		t.Errorf("first install: expected 4 installed, got %d", len(claude1.Installed))
+	if len(claude1.Installed) != 6 {
+		t.Errorf("first install: expected 6 installed, got %d", len(claude1.Installed))
 	}
 	if len(claude1.Updated) != 0 {
 		t.Errorf("first install: expected 0 updated, got %d", len(claude1.Updated))
@@ -169,8 +181,8 @@ func TestInstallIdempotent(t *testing.T) {
 	if len(claude2.Installed) != 0 {
 		t.Errorf("second install: expected 0 installed, got %d", len(claude2.Installed))
 	}
-	if len(claude2.Updated) != 4 {
-		t.Errorf("second install: expected 4 updated, got %d", len(claude2.Updated))
+	if len(claude2.Updated) != 6 {
+		t.Errorf("second install: expected 6 updated, got %d", len(claude2.Updated))
 	}
 }
 
@@ -273,8 +285,8 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			if len(results[0].Updated) != 1 {
 				t.Errorf("expected 1 updated (respond), got %d", len(results[0].Updated))
 			}
-			if len(results[0].Installed) != 3 {
-				t.Errorf("expected 3 installed (address, design-review, fix), got %d", len(results[0].Installed))
+			if len(results[0].Installed) != 5 {
+				t.Errorf("expected 5 installed (address, design-review, fix, review, review-branch), got %d", len(results[0].Installed))
 			}
 		}
 	})
