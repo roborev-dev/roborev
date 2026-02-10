@@ -100,6 +100,10 @@ const (
 	tuiViewTail
 )
 
+// queuePrefetchBuffer is the number of extra rows to fetch beyond what's visible,
+// providing a buffer for smooth scrolling without needing immediate pagination.
+const queuePrefetchBuffer = 10
+
 // repoFilterItem represents a repo (or group of repos with same display name) in the filter modal
 type repoFilterItem struct {
 	name      string   // Display name. Empty string means "All repos"
@@ -518,8 +522,7 @@ func (m tuiModel) tickInterval() time.Duration {
 func (m tuiModel) fetchJobs() tea.Cmd {
 	// Fetch enough to fill the visible area plus a buffer for smooth scrolling.
 	// Use minimum of 100 only before first WindowSizeMsg (when height is default 24)
-	const prefetchBuffer = 10
-	visibleRows := m.queueVisibleRows() + prefetchBuffer
+	visibleRows := m.queueVisibleRows() + queuePrefetchBuffer
 	if !m.heightDetected {
 		visibleRows = max(100, visibleRows)
 	}
@@ -2676,7 +2679,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If terminal can show more jobs than we have, re-fetch to fill screen
 		// Gate on !loadingMore and !loadingJobs to avoid race conditions
 		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) <= 1 {
-			newVisibleRows := m.queueVisibleRows() + 10
+			newVisibleRows := m.queueVisibleRows() + queuePrefetchBuffer
 			if newVisibleRows > len(m.jobs) {
 				m.loadingJobs = true
 				return m, m.fetchJobs()
