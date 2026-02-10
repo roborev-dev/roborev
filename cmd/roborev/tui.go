@@ -516,10 +516,10 @@ func (m tuiModel) tickInterval() time.Duration {
 }
 
 func (m tuiModel) fetchJobs() tea.Cmd {
-	// Calculate limit based on terminal height - fetch enough to fill the visible area
-	// Reserve 8 lines for header/footer, add buffer for safety
+	// Fetch enough to fill the visible area plus a buffer for smooth scrolling.
 	// Use minimum of 100 only before first WindowSizeMsg (when height is default 24)
-	visibleRows := m.height - 8 + 10
+	const prefetchBuffer = 10
+	visibleRows := m.queueVisibleRows() + prefetchBuffer
 	if !m.heightDetected {
 		visibleRows = max(100, visibleRows)
 	}
@@ -2668,7 +2668,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If terminal can show more jobs than we have, re-fetch to fill screen
 		// Gate on !loadingMore and !loadingJobs to avoid race conditions
 		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) <= 1 {
-			newVisibleRows := m.height - 8 + 10
+			newVisibleRows := m.queueVisibleRows() + 10
 			if newVisibleRows > len(m.jobs) {
 				m.loadingJobs = true
 				return m, m.fetchJobs()
