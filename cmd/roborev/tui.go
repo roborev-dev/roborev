@@ -118,6 +118,7 @@ type tuiModel struct {
 	daemonVersion    string
 	client           *http.Client
 	jobs             []storage.ReviewJob
+	jobStats         storage.JobStats // aggregate done/addressed/unaddressed from server
 	status           storage.DaemonStatus
 	selectedIdx      int
 	selectedJobID    int64 // Track selected job by ID to maintain position on refresh
@@ -239,8 +240,9 @@ type tuiTickMsg time.Time
 type tuiJobsMsg struct {
 	jobs    []storage.ReviewJob
 	hasMore bool
-	append  bool // true to append to existing jobs, false to replace
-	seq     int  // fetch sequence number — stale responses (seq < model.fetchSeq) are discarded
+	append  bool             // true to append to existing jobs, false to replace
+	seq     int              // fetch sequence number — stale responses (seq < model.fetchSeq) are discarded
+	stats   storage.JobStats // aggregate counts from server
 }
 type tuiStatusMsg storage.DaemonStatus
 type tuiReviewMsg struct {
@@ -366,9 +368,11 @@ func newTuiModel(serverAddr string) tuiModel {
 
 	// Auto-filter to current repo if enabled
 	var activeRepoFilter []string
+	var filterStack []string
 	if autoFilterRepo {
 		if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
 			activeRepoFilter = []string{repoRoot}
+			filterStack = []string{"repo"}
 		}
 	}
 
@@ -383,6 +387,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		loadingJobs:            true, // Init() calls fetchJobs, so mark as loading
 		hideAddressed:          hideAddressed,
 		activeRepoFilter:       activeRepoFilter,
+		filterStack:            filterStack,
 		displayNames:           make(map[string]string),      // Cache display names to avoid disk reads on render
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
@@ -566,11 +571,12 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		var result struct {
 			Jobs    []storage.ReviewJob `json:"jobs"`
 			HasMore bool                `json:"has_more"`
+			Stats   storage.JobStats    `json:"stats"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return tuiJobsErrMsg{err: err}
 		}
-		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false, seq: seq}
+		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false, seq: seq, stats: result.Stats}
 	}
 }
 
@@ -2675,6 +2681,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.consecutiveErrors = 0 // Reset on successful fetch
 
 		m.hasMore = msg.hasMore
+		if !msg.append {
+			m.jobStats = msg.stats
+		}
 
 		// Update display name cache for new jobs
 		m.updateDisplayNameCache(msg.jobs)
@@ -3207,25 +3216,31 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString(tuiTitleStyle.Render(title))
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Status line - count addressed/unaddressed from jobs
+	// Status line - use server-side aggregate counts for paginated views,
+	// fall back to client-side counting for multi-repo filters (which load all jobs)
 	var statusLine string
 	var done, addressed, unaddressed int
-	for _, job := range m.jobs {
-		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
+	if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == "(none)" {
+		// Client-side filtered views load all jobs, so count locally
+		for _, job := range m.jobs {
 			if !m.repoMatchesFilter(job.RepoPath) {
 				continue
 			}
-		}
-		if job.Status == storage.JobStatusDone {
-			done++
-			if job.Addressed != nil {
-				if *job.Addressed {
-					addressed++
-				} else {
-					unaddressed++
+			if job.Status == storage.JobStatusDone {
+				done++
+				if job.Addressed != nil {
+					if *job.Addressed {
+						addressed++
+					} else {
+						unaddressed++
+					}
 				}
 			}
 		}
+	} else {
+		done = m.jobStats.Done
+		addressed = m.jobStats.Addressed
+		unaddressed = m.jobStats.Unaddressed
 	}
 	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addressed: %d | Unaddressed: %d",

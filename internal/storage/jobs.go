@@ -1272,6 +1272,54 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 }
 
 // GetJobByID returns a job by ID with joined fields
+// JobStats holds aggregate counts for the queue status line.
+type JobStats struct {
+	Done        int `json:"done"`
+	Addressed   int `json:"addressed"`
+	Unaddressed int `json:"unaddressed"`
+}
+
+// CountJobStats returns aggregate done/addressed/unaddressed counts
+// using the same filter logic as ListJobs (repo, branch, addressed).
+func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats, error) {
+	query := `
+		SELECT
+			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.addressed = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.addressed IS NULL OR rv.addressed = 0) THEN 1 ELSE 0 END), 0)
+		FROM review_jobs j
+		JOIN repos r ON r.id = j.repo_id
+		LEFT JOIN reviews rv ON rv.job_id = j.id
+	`
+	var args []interface{}
+	var conditions []string
+
+	if repoFilter != "" {
+		conditions = append(conditions, "r.root_path = ?")
+		args = append(args, repoFilter)
+	}
+	var o listJobsOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.branch != "" {
+		if o.branchIncludeEmpty {
+			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
+		} else {
+			conditions = append(conditions, "j.branch = ?")
+		}
+		args = append(args, o.branch)
+	}
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	var stats JobStats
+	err := db.QueryRow(query, args...).Scan(&stats.Done, &stats.Addressed, &stats.Unaddressed)
+	return stats, err
+}
+
 func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var j ReviewJob
 	var enqueuedAt string
