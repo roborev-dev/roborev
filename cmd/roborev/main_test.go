@@ -1231,10 +1231,14 @@ func TestFilterGitEnv(t *testing.T) {
 		"GIT_INDEX_FILE=/some/repo/.git/index",
 		"ROBOREV_DATA_DIR=/tmp/roborev",
 		"GIT_CEILING_DIRECTORIES=/home",
-		"Git_Dir=/mixed/case",                      // Windows-style mixed case
-		"git_work_tree=/lowercase",                 // all lowercase
-		"GIT_SSH_COMMAND=ssh -i ~/.ssh/deploy_key", // auth/transport: keep
-		"GIT_ASKPASS=/usr/lib/ssh/askpass",         // auth/transport: keep
+		"Git_Dir=/mixed/case",                        // Windows-style mixed case
+		"git_work_tree=/lowercase",                   // all lowercase
+		"GIT_SSH_COMMAND=ssh -i ~/.ssh/deploy_key",   // auth/transport: keep
+		"GIT_ASKPASS=/usr/lib/ssh/askpass",           // auth/transport: keep
+		"GIT_CONFIG_PARAMETERS='core.autocrlf=true'", // config propagation: strip
+		"GIT_CONFIG_COUNT=1",                         // config propagation: strip
+		"GIT_CONFIG_KEY_0=core.autocrlf",             // numbered config: strip
+		"GIT_CONFIG_VALUE_0=true",                    // numbered config: strip
 	}
 
 	filtered := filterGitEnv(env)

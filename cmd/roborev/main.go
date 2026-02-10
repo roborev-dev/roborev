@@ -222,6 +222,16 @@ var gitRepoEnvKeys = map[string]struct{}{
 	"GIT_PREFIX":                       {},
 	"GIT_QUARANTINE_PATH":              {},
 	"GIT_DISCOVERY_ACROSS_FILESYSTEM":  {},
+	"GIT_CONFIG_PARAMETERS":            {}, // carries git -c options from parent
+	"GIT_CONFIG_COUNT":                 {}, // git 2.31+ config propagation
+}
+
+// gitRepoEnvPrefixes lists key prefixes for numbered git config propagation
+// variables (GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0, etc.) that should also
+// be stripped.
+var gitRepoEnvPrefixes = []string{
+	"GIT_CONFIG_KEY_",
+	"GIT_CONFIG_VALUE_",
 }
 
 // isGitRepoEnvKey reports whether a KEY=value entry is a git repo-context
@@ -229,8 +239,16 @@ var gitRepoEnvKeys = map[string]struct{}{
 // Uses case-insensitive comparison because Windows env vars are case-insensitive.
 func isGitRepoEnvKey(entry string) bool {
 	key, _, _ := strings.Cut(entry, "=")
-	_, ok := gitRepoEnvKeys[strings.ToUpper(key)]
-	return ok
+	upper := strings.ToUpper(key)
+	if _, ok := gitRepoEnvKeys[upper]; ok {
+		return true
+	}
+	for _, prefix := range gitRepoEnvPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // filterGitEnv returns a copy of env with git repo-context variables removed.
