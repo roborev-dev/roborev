@@ -139,8 +139,8 @@ type tuiModel struct {
 	hasMore        bool // true if there are more jobs to load
 	loadingMore    bool // true if currently loading more jobs (pagination)
 	loadingJobs    bool // true if currently loading jobs (full refresh)
-	pendingRefetch bool // true if filter changed while loading, needs refetch when done
 	heightDetected bool // true after first WindowSizeMsg (real terminal height known)
+	fetchSeq       int  // incremented on filter changes; stale fetch responses are discarded
 
 	// Repo filter modal state
 	filterRepos       []repoFilterItem // Available repos with counts
@@ -239,6 +239,7 @@ type tuiJobsMsg struct {
 	jobs    []storage.ReviewJob
 	hasMore bool
 	append  bool // true to append to existing jobs, false to replace
+	seq     int  // fetch sequence number — stale responses (seq < model.fetchSeq) are discarded
 }
 type tuiStatusMsg storage.DaemonStatus
 type tuiReviewMsg struct {
@@ -507,6 +508,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		visibleRows = max(100, visibleRows)
 	}
 	currentJobCount := len(m.jobs)
+	seq := m.fetchSeq
 
 	return func() tea.Msg {
 		// Build URL with server-side filters where possible, falling back to
@@ -564,11 +566,12 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return tuiJobsErrMsg{err: err}
 		}
-		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false}
+		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false, seq: seq}
 	}
 }
 
 func (m tuiModel) fetchMoreJobs() tea.Cmd {
+	seq := m.fetchSeq
 	return func() tea.Msg {
 		// Only fetch more when not doing client-side filtering that loads all jobs
 		if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == "(none)" {
@@ -605,7 +608,7 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return tuiPaginationErrMsg{err: err}
 		}
-		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: true}
+		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: true, seq: seq}
 	}
 }
 
@@ -1615,6 +1618,17 @@ func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 	return visible
 }
 
+// queueVisibleRows returns how many queue rows fit in the current terminal.
+func (m tuiModel) queueVisibleRows() int {
+	// Keep in sync with renderQueueView reserved lines.
+	const reservedLines = 9
+	visibleRows := m.height - reservedLines
+	if visibleRows < 3 {
+		visibleRows = 3
+	}
+	return visibleRows
+}
+
 // getVisibleSelectedIdx returns the index within visible jobs for the current selection
 // Returns -1 if selectedIdx is -1 or doesn't match any visible job
 func (m tuiModel) getVisibleSelectedIdx() int {
@@ -1755,6 +1769,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedIdx = -1
 					m.selectedJobID = 0
 					// Refetch jobs with the new filter applied at the API level
+					m.fetchSeq++
 					m.loadingJobs = true
 					return m, m.fetchJobs()
 				}
@@ -1811,14 +1826,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.branchFilterSearch = ""
 					// Branch filter changes fetch behavior (limited vs unlimited),
 					// so we need to refetch
-					m.jobs = nil
+					// Keep m.jobs so fetchJobs requests at least len(m.jobs) rows
 					m.hasMore = false
 					m.selectedIdx = -1
 					m.selectedJobID = 0
-					if m.loadingJobs || m.loadingMore {
-						m.pendingRefetch = true
-						return m, nil
-					}
+					m.fetchSeq++
 					m.loadingJobs = true
 					return m, m.fetchJobs()
 				}
@@ -2412,6 +2424,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				// Re-fetch: enabling adds server-side filter, disabling needs
 				// unfiltered data that may not be in current result set
+				m.fetchSeq++
 				return m, m.fetchJobs()
 			}
 
@@ -2519,14 +2532,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				popped := m.popFilter()
 				if popped == "repo" || popped == "branch" {
 					// Repo/branch filter changes fetch behavior, need to refetch
-					m.jobs = nil
+					// Keep m.jobs so fetchJobs requests at least len(m.jobs) rows
 					m.hasMore = false
 					m.selectedIdx = -1
 					m.selectedJobID = 0
-					if m.loadingJobs || m.loadingMore {
-						m.pendingRefetch = true
-						return m, nil
-					}
+					m.fetchSeq++
 					m.loadingJobs = true
 					return m, m.fetchJobs()
 				}
@@ -2534,16 +2544,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentView == tuiViewQueue && m.hideAddressed {
 				// Clear hide-addressed filter (no project/branch filter active)
 				m.hideAddressed = false
-				m.jobs = nil
+				// Keep m.jobs so fetchJobs requests at least len(m.jobs) rows
 				m.hasMore = false
 				m.selectedIdx = -1
 				m.selectedJobID = 0
-				// If already loading (full refresh or pagination), queue a refetch
-				// to avoid out-of-order responses mixing stale data
-				if m.loadingJobs || m.loadingMore {
-					m.pendingRefetch = true
-					return m, nil
-				}
+				m.fetchSeq++
 				m.loadingJobs = true
 				return m, m.fetchJobs()
 			} else if m.currentView == tuiViewReview {
@@ -2610,19 +2615,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiJobsMsg:
+		// Discard stale responses from before a filter change
+		if msg.seq < m.fetchSeq {
+			return m, nil
+		}
+
 		m.loadingMore = false
 		if !msg.append {
 			m.loadingJobs = false
 		}
 		m.consecutiveErrors = 0 // Reset on successful fetch
-
-		// If filter changed while this fetch was in flight, discard stale data
-		// and trigger a fresh fetch with the current filter state
-		if m.pendingRefetch {
-			m.pendingRefetch = false
-			m.loadingJobs = true
-			return m, m.fetchJobs()
-		}
 
 		m.hasMore = msg.hasMore
 
@@ -2742,6 +2744,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedIdx = -1
 				m.selectedJobID = 0
 			}
+		}
+
+		// With hide-addressed enabled we also hide failed/canceled jobs
+		// client-side, so a server page can underfill the viewport.
+		// Automatically paginate until we can fill visible rows or exhaust data.
+		if m.currentView == tuiViewQueue &&
+			m.hideAddressed &&
+			m.hasMore &&
+			!m.loadingMore &&
+			!m.loadingJobs &&
+			len(m.activeRepoFilter) <= 1 &&
+			m.activeBranchFilter != "(none)" &&
+			len(m.getVisibleJobs()) < m.queueVisibleRows() {
+			m.loadingMore = true
+			return m, m.fetchMoreJobs()
 		}
 
 	case tuiStatusMsg:
@@ -2987,13 +3004,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.consecutiveErrors++
 		}
 
-		// If filter changed while loading, retry immediately with current filter state
-		if m.pendingRefetch {
-			m.pendingRefetch = false
-			m.loadingJobs = true
-			return m, m.fetchJobs()
-		}
-
 		// Try to reconnect after consecutive connection failures
 		if m.consecutiveErrors >= 3 && !m.reconnecting {
 			m.reconnecting = true
@@ -3007,13 +3017,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Only count connection errors for reconnection
 		if isConnectionError(msg.err) {
 			m.consecutiveErrors++
-		}
-
-		// If filter changed while pagination was in flight, trigger fresh fetch
-		if m.pendingRefetch {
-			m.pendingRefetch = false
-			m.loadingJobs = true
-			return m, m.fetchJobs()
 		}
 
 		// Try to reconnect after consecutive connection failures
@@ -3169,7 +3172,7 @@ func (m tuiModel) renderQueueView() string {
 	end := 0
 
 	if len(visibleJobList) == 0 {
-		if m.loadingJobs || m.loadingMore || m.pendingRefetch {
+		if m.loadingJobs || m.loadingMore {
 			b.WriteString("Loading...")
 			b.WriteString("\x1b[K\n")
 		} else if len(m.activeRepoFilter) > 0 || m.hideAddressed {

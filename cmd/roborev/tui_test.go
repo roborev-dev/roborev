@@ -1423,8 +1423,9 @@ func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 	}
 }
 
-func TestTUIFilterEscapeWhileLoadingQueuesPendingRefetch(t *testing.T) {
-	// Test that escape while loading sets pendingRefetch instead of starting new fetch
+func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
+	// Test that escape while loading fires a new fetch immediately and
+	// increments fetchSeq so the stale response is discarded
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
@@ -1436,68 +1437,33 @@ func TestTUIFilterEscapeWhileLoadingQueuesPendingRefetch(t *testing.T) {
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
 	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
 	m.loadingJobs = true             // Already loading
+	oldSeq := m.fetchSeq
 
-	// Press Esc while loading - should set pendingRefetch, not start new fetch
+	// Press Esc while loading - should fire new fetch and bump seq
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
 	}
-	if !m2.pendingRefetch {
-		t.Error("Expected pendingRefetch to be true when escape pressed while loading")
+	if m2.fetchSeq <= oldSeq {
+		t.Error("Expected fetchSeq to be incremented")
 	}
-	if cmd != nil {
-		t.Error("Expected no command when escape pressed while loading (should queue refetch instead)")
+	if cmd == nil {
+		t.Error("Expected a fetch command when escape pressed (fetchSeq ensures stale discard)")
 	}
 
-	// Simulate jobs fetch completing - should trigger another fetch
-	m3, cmd := updateModel(t, m2, tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(2)}, hasMore: false})
+	// Simulate stale jobs fetch response arriving with old seq - should be discarded
+	m3, _ := updateModel(t, m2, tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(2)}, hasMore: false, seq: oldSeq})
 
-	if m3.pendingRefetch {
-		t.Error("Expected pendingRefetch to be cleared after jobs message")
-	}
+	// loadingJobs should still be true because stale response was discarded
 	if !m3.loadingJobs {
-		t.Error("Expected loadingJobs to be true (refetch triggered)")
-	}
-	if cmd == nil {
-		t.Error("Expected a fetch command after jobs message with pendingRefetch")
-	}
-}
-
-func TestTUIFilterEscapeWhileLoadingErrorTriggersRefetch(t *testing.T) {
-	// Test that pendingRefetch triggers a retry even when fetch fails
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
-	m.activeRepoFilter = []string{"/path/to/repo-a"}
-	m.loadingJobs = true
-	m.pendingRefetch = true // Simulates escape pressed while loading
-
-	// Simulate jobs fetch failing
-	m2, cmd := updateModel(t, m, tuiJobsErrMsg{err: fmt.Errorf("network error")})
-
-	if m2.pendingRefetch {
-		t.Error("Expected pendingRefetch to be cleared after error")
-	}
-	if !m2.loadingJobs {
-		t.Error("Expected loadingJobs to be true (refetch triggered after error)")
-	}
-	if cmd == nil {
-		t.Error("Expected a fetch command after error with pendingRefetch")
-	}
-	if m2.err == nil {
-		t.Error("Expected error to be set")
+		t.Error("Expected loadingJobs to still be true (stale response discarded)")
 	}
 }
 
 func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
-	// Test that escape while pagination is in flight queues refetch and
-	// discards stale append response
+	// Test that escape while pagination is in flight fires a new fetch and
+	// discards stale append response via fetchSeq
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
@@ -1510,78 +1476,34 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 	m.filterStack = []string{"repo"} // Push to stack so escape can pop it
 	m.loadingMore = true             // Pagination in flight
 	m.loadingJobs = false            // Not a full refresh
+	oldSeq := m.fetchSeq
 
-	// Press Esc while pagination loading - should set pendingRefetch
+	// Press Esc while pagination loading - should fire new fetch and bump seq
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
 	}
-	if !m2.pendingRefetch {
-		t.Error("Expected pendingRefetch to be true when escape pressed during pagination")
+	if m2.fetchSeq <= oldSeq {
+		t.Error("Expected fetchSeq to be incremented")
 	}
-	if cmd != nil {
-		t.Error("Expected no command when escape pressed while pagination in flight")
+	if cmd == nil {
+		t.Error("Expected a fetch command when escape pressed")
 	}
 
-	// Simulate stale pagination response arriving - should be discarded and trigger fresh fetch
-	m3, cmd := updateModel(t, m2, tuiJobsMsg{
+	// Simulate stale pagination response arriving with old seq - should be discarded
+	m3, _ := updateModel(t, m2, tuiJobsMsg{
 		jobs:    []storage.ReviewJob{makeJob(99, withRepoName("stale"))},
 		hasMore: true,
 		append:  true, // This is a pagination append
+		seq:     oldSeq,
 	})
 
-	if m3.pendingRefetch {
-		t.Error("Expected pendingRefetch to be cleared")
-	}
-	if !m3.loadingJobs {
-		t.Error("Expected loadingJobs to be true (fresh fetch triggered)")
-	}
-	if cmd == nil {
-		t.Error("Expected a fetch command after stale append discarded")
-	}
 	// Stale data should NOT have been appended
-	if len(m3.jobs) > 0 {
-		for _, job := range m3.jobs {
-			if job.ID == 99 {
-				t.Error("Stale pagination data should have been discarded, not appended")
-			}
+	for _, job := range m3.jobs {
+		if job.ID == 99 {
+			t.Error("Stale pagination data should have been discarded, not appended")
 		}
-	}
-}
-
-func TestTUIFilterEscapeWhilePaginationErrorTriggersRefetch(t *testing.T) {
-	// Test that pendingRefetch triggers a retry when pagination fails
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
-	m.activeRepoFilter = []string{"/path/to/repo-a"}
-	m.loadingMore = true
-	m.loadingJobs = false
-	m.pendingRefetch = true // Simulates escape pressed while pagination loading
-
-	// Simulate pagination fetch failing
-	m2, cmd := updateModel(t, m, tuiPaginationErrMsg{err: fmt.Errorf("network error")})
-
-	if m2.pendingRefetch {
-		t.Error("Expected pendingRefetch to be cleared after pagination error")
-	}
-	if !m2.loadingJobs {
-		t.Error("Expected loadingJobs to be true (refetch triggered after pagination error)")
-	}
-	if m2.loadingMore {
-		t.Error("Expected loadingMore to be false after pagination error")
-	}
-	if cmd == nil {
-		t.Error("Expected a fetch command after pagination error with pendingRefetch")
-	}
-	if m2.err == nil {
-		t.Error("Expected error to be set")
 	}
 }
 
@@ -3506,6 +3428,78 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 	}
 }
 
+func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.hideAddressed = true
+	m.height = 29 // queueVisibleRows = 20
+	m.loadingJobs = true
+
+	// 13 visible (done + unaddressed), 12 hidden (failed) in this page.
+	jobs := make([]storage.ReviewJob, 0, 25)
+	var id int64 = 200
+	for i := 0; i < 13; i++ {
+		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))))
+		id--
+	}
+	for i := 0; i < 12; i++ {
+		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusFailed)))
+		id--
+	}
+
+	m2, cmd := updateModel(t, m, tuiJobsMsg{
+		jobs:    jobs,
+		hasMore: true,
+		append:  false,
+	})
+
+	if got := len(m2.getVisibleJobs()); got != 13 {
+		t.Fatalf("Expected 13 visible jobs in first page, got %d", got)
+	}
+	if !m2.loadingMore {
+		t.Error("loadingMore should be true when hide-addressed page underfills viewport")
+	}
+	if cmd == nil {
+		t.Error("Expected auto-pagination command when hide-addressed page underfills viewport")
+	}
+}
+
+func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.hideAddressed = true
+	m.height = 29 // queueVisibleRows = 20
+	m.loadingJobs = true
+
+	// 20 visible rows already available (plus hidden jobs).
+	jobs := make([]storage.ReviewJob, 0, 25)
+	var id int64 = 300
+	for i := 0; i < 20; i++ {
+		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))))
+		id--
+	}
+	for i := 0; i < 5; i++ {
+		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusFailed)))
+		id--
+	}
+
+	m2, cmd := updateModel(t, m, tuiJobsMsg{
+		jobs:    jobs,
+		hasMore: true,
+		append:  false,
+	})
+
+	if got := len(m2.getVisibleJobs()); got < 20 {
+		t.Fatalf("Expected at least 20 visible jobs, got %d", got)
+	}
+	if m2.loadingMore {
+		t.Error("loadingMore should remain false when viewport is already filled")
+	}
+	if cmd != nil {
+		t.Error("Did not expect auto-pagination command when viewport is already filled")
+	}
+}
+
 func TestTUIHideAddressedDefaultFromConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
@@ -3850,9 +3844,9 @@ func TestTUIHideAddressedClearRepoFilterRefetches(t *testing.T) {
 		t.Errorf("Expected empty filter stack, got %v", m2.filterStack)
 	}
 
-	// jobs should be cleared
-	if m2.jobs != nil {
-		t.Errorf("Expected jobs to be nil after escape, got %d jobs", len(m2.jobs))
+	// jobs should be preserved (so fetchJobs limit stays large enough)
+	if len(m2.jobs) != 1 {
+		t.Errorf("Expected jobs to be preserved after escape, got %d jobs", len(m2.jobs))
 	}
 
 	// A refetch command should be returned
@@ -5351,26 +5345,6 @@ func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 	}
 	if strings.Contains(output, "No jobs matching filters") {
 		t.Error("Should not show 'No jobs matching filters' while loading")
-	}
-}
-
-func TestTUILoadingShowsForPendingRefetch(t *testing.T) {
-	// Test that "Loading..." shows when pendingRefetch is set (e.g., after escape during pagination)
-	m := newTuiModel("http://localhost")
-	m.width = 100
-	m.height = 20
-	m.jobs = []storage.ReviewJob{} // Empty after filter clear
-	m.loadingJobs = false
-	m.loadingMore = false
-	m.pendingRefetch = true // Refetch queued but not yet started
-
-	output := m.View()
-
-	if !strings.Contains(output, "Loading...") {
-		t.Error("Expected 'Loading...' message when pendingRefetch is true")
-	}
-	if strings.Contains(output, "No jobs in queue") {
-		t.Error("Should not show 'No jobs in queue' while refetch pending")
 	}
 }
 
@@ -7608,8 +7582,9 @@ func TestTUIBranchFilterTriggersRefetch(t *testing.T) {
 	if !m2.loadingJobs {
 		t.Error("loadingJobs should be true after applying branch filter")
 	}
-	if m2.jobs != nil {
-		t.Error("jobs should be cleared when applying branch filter")
+	// jobs preserved so fetchJobs limit stays large enough
+	if len(m2.jobs) != 2 {
+		t.Errorf("Expected jobs to be preserved after branch filter, got %d", len(m2.jobs))
 	}
 	if cmd == nil {
 		t.Error("Should return fetchJobs command when applying branch filter")
