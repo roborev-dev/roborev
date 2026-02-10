@@ -2701,6 +2701,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		wasLoadingMore := m.loadingMore
 		m.loadingMore = false
 		if !msg.append {
 			m.loadingJobs = false
@@ -2886,10 +2887,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		} else if !msg.append || !m.loadingMore {
-			// Only clear paginateNav when no pagination is pending.
-			// Non-append (refresh) responses should not consume intent
-			// if a pagination append is still in flight.
+		} else if !msg.append && !wasLoadingMore {
+			// Only clear paginateNav on non-append (refresh) responses when
+			// no pagination was in flight. If pagination was pending
+			// (wasLoadingMore), preserve intent for the append response.
 			m.paginateNav = 0
 		}
 
@@ -4485,35 +4486,8 @@ func (m tuiModel) renderTailView() string {
 	return b.String()
 }
 
-// helpContentLines returns the total number of lines in the help content.
-// 7 groups with headers, keys, and blank separators between groups.
-func (m tuiModel) helpContentLines() int {
-	// Queue(1+7) + Actions(1+5) + Filtering(1+4) + Review(1+9) + Prompt(1+5) + Tail(1+5) + General(1+2)
-	// Plus 6 blank separators between the 7 groups = 50
-	return 50
-}
-
-// helpMaxScroll returns the maximum scroll offset for the help view.
-func (m tuiModel) helpMaxScroll() int {
-	reservedLines := 3 // title + blank + help hint
-	visibleLines := m.height - reservedLines
-	if visibleLines < 5 {
-		visibleLines = 5
-	}
-	maxScroll := m.helpContentLines() - visibleLines
-	if maxScroll < 0 {
-		return 0
-	}
-	return maxScroll
-}
-
-func (m tuiModel) renderHelpView() string {
-	var b strings.Builder
-
-	b.WriteString(tuiTitleStyle.Render("Keyboard Shortcuts"))
-	b.WriteString("\x1b[K\n\x1b[K\n")
-
-	// Define shortcuts in groups
+// helpLines builds the help content lines from shortcut definitions.
+func helpLines() []string {
 	shortcuts := []struct {
 		group string
 		keys  []struct{ key, desc string }
@@ -4592,17 +4566,40 @@ func (m tuiModel) renderHelpView() string {
 		},
 	}
 
-	// Build all lines first, then apply scroll
-	var allLines []string
+	var lines []string
 	for i, g := range shortcuts {
-		allLines = append(allLines, "\x00group:"+g.group) // marker for group header rendering
+		lines = append(lines, "\x00group:"+g.group)
 		for _, k := range g.keys {
-			allLines = append(allLines, fmt.Sprintf("  %-14s %s", k.key, k.desc))
+			lines = append(lines, fmt.Sprintf("  %-14s %s", k.key, k.desc))
 		}
 		if i < len(shortcuts)-1 {
-			allLines = append(allLines, "") // blank line between groups
+			lines = append(lines, "")
 		}
 	}
+	return lines
+}
+
+// helpMaxScroll returns the maximum scroll offset for the help view.
+func (m tuiModel) helpMaxScroll() int {
+	reservedLines := 3 // title + blank + help hint
+	visibleLines := m.height - reservedLines
+	if visibleLines < 5 {
+		visibleLines = 5
+	}
+	maxScroll := len(helpLines()) - visibleLines
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+func (m tuiModel) renderHelpView() string {
+	var b strings.Builder
+
+	b.WriteString(tuiTitleStyle.Render("Keyboard Shortcuts"))
+	b.WriteString("\x1b[K\n\x1b[K\n")
+
+	allLines := helpLines()
 
 	// Calculate visible area: title(1) + blank(1) + help(1)
 	reservedLines := 3
