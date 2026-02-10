@@ -1992,6 +1992,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.tailScroll = 0
 				}
 				return m, tea.ClearScreen
+			case "?":
+				m.helpFromView = m.currentView
+				m.currentView = tuiViewHelp
+				m.helpScroll = 0
+				return m, nil
 			}
 			return m, nil
 		}
@@ -2274,6 +2279,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentView == tuiViewPrompt {
 				m.promptScroll += pageSize
 				return m, tea.ClearScreen
+			} else if m.currentView == tuiViewHelp {
+				m.helpScroll += pageSize
 			}
 
 		case "enter":
@@ -2836,8 +2843,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchMoreJobs()
 		}
 
-		// Auto-navigate after pagination triggered from review/prompt view
-		if m.paginateNav != 0 && m.currentView == m.paginateNav {
+		// Auto-navigate after pagination triggered from review/prompt view.
+		// Only on append (pagination) responses, not full refreshes.
+		if msg.append && m.paginateNav != 0 && m.currentView == m.paginateNav {
 			nav := m.paginateNav
 			m.paginateNav = 0
 			if nav == tuiViewReview {
@@ -3138,8 +3146,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiPaginationErrMsg:
-		// Discard stale error responses from superseded fetches
+		// Discard stale error responses from superseded fetches.
+		// Still clear pagination state so loadingMore doesn't get stuck.
 		if msg.seq < m.fetchSeq {
+			m.loadingMore = false
+			m.paginateNav = 0
 			return m, nil
 		}
 		m.err = msg.err
@@ -3249,7 +3260,10 @@ func (m tuiModel) renderQueueView() string {
 	if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == "(none)" {
 		// Client-side filtered views load all jobs, so count locally
 		for _, job := range m.jobs {
-			if !m.repoMatchesFilter(job.RepoPath) {
+			if len(m.activeRepoFilter) > 0 && !m.repoMatchesFilter(job.RepoPath) {
+				continue
+			}
+			if m.activeBranchFilter == "(none)" && job.Branch != "" {
 				continue
 			}
 			if job.Status == storage.JobStatusDone {
@@ -3625,20 +3639,17 @@ func commandLineForJob(job *storage.ReviewJob) string {
 	return stripControlChars(cmd)
 }
 
-// stripControlChars removes C0/C1 control characters (especially ANSI escape
-// sequences) from a string to prevent terminal escape injection.
+// stripControlChars removes all control characters including C0 (\x00-\x1f),
+// DEL (\x7f), and C1 (\x80-\x9f) from a string to prevent terminal escape
+// injection and line/tab spoofing in single-line display contexts.
 func stripControlChars(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		// Allow tab and newline, strip all other C0 (\x00-\x1f) and C1 (\x80-\x9f) controls
-		if r == '\t' || r == '\n' {
-			b.WriteRune(r)
-		} else if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
 			continue
-		} else {
-			b.WriteRune(r)
 		}
+		b.WriteRune(r)
 	}
 	return b.String()
 }
@@ -3873,7 +3884,7 @@ func (m tuiModel) renderPromptView() string {
 	if cmdLine := commandLineForJob(review.Job); cmdLine != "" {
 		cmdText := "Command: " + cmdLine
 		if m.width > 0 && runewidth.StringWidth(cmdText) > m.width {
-			cmdText = runewidth.Truncate(cmdText, m.width-1, "…")
+			cmdText = runewidth.Truncate(cmdText, m.width, "…")
 		}
 		b.WriteString(tuiStatusStyle.Render(cmdText))
 		b.WriteString("\x1b[K\n")
@@ -4512,16 +4523,26 @@ func (m tuiModel) renderHelpView() string {
 			},
 		},
 		{
-			group: "Review / Prompt View",
+			group: "Review View",
 			keys: []struct{ key, desc string }{
 				{"↑/↓", "Scroll content"},
 				{"←/→", "Previous / next review"},
 				{"PgUp/PgDn", "Page through content"},
-				{"p", "Toggle between review and prompt"},
+				{"p", "Switch to prompt view"},
 				{"a", "Toggle addressed"},
 				{"c", "Add comment"},
 				{"y", "Copy review to clipboard"},
 				{"m", "View commit message"},
+				{"esc/q", "Back to queue"},
+			},
+		},
+		{
+			group: "Prompt View",
+			keys: []struct{ key, desc string }{
+				{"↑/↓", "Scroll content"},
+				{"←/→", "Previous / next prompt"},
+				{"PgUp/PgDn", "Page through content"},
+				{"p", "Switch to review / back to queue"},
 				{"esc/q", "Back to queue"},
 			},
 		},
