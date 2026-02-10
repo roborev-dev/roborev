@@ -224,6 +224,10 @@ var gitRepoEnvKeys = map[string]struct{}{
 	"GIT_DISCOVERY_ACROSS_FILESYSTEM":  {},
 	"GIT_CONFIG_PARAMETERS":            {}, // carries git -c options from parent
 	"GIT_CONFIG_COUNT":                 {}, // git 2.31+ config propagation
+	"GIT_CONFIG_GLOBAL":                {}, // redirects to alternate global config
+	"GIT_CONFIG_SYSTEM":                {}, // redirects to alternate system config
+	"GIT_EXTERNAL_DIFF":                {}, // would replace diff output with external tool
+	"GIT_DIFF_OPTS":                    {}, // alters diff output format
 }
 
 // gitRepoEnvPrefixes lists key prefixes for numbered git config propagation
