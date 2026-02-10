@@ -12,12 +12,12 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var addressed int
 	var job ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr, commandLine sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 
 	err := db.QueryRow(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid,
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid, rv.command_line,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type,
 		       rp.root_path, rp.name, c.subject
@@ -26,7 +26,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		JOIN repos rp ON rp.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
-	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID,
+	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID, &commandLine,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
@@ -36,6 +36,9 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	r.Addressed = addressed != 0
 	if reviewUUID.Valid {
 		r.UUID = reviewUUID.String
+	}
+	if commandLine.Valid {
+		r.CommandLine = commandLine.String
 	}
 
 	r.CreatedAt = parseSQLiteTime(createdAt)
@@ -89,13 +92,13 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var addressed int
 	var job ReviewJob
 	var enqueuedAt string
-	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr sql.NullString
+	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr, commandLine sql.NullString
 	var commitID sql.NullInt64
 	var commitSubject sql.NullString
 
 	// Search by git_ref which contains the SHA for single commits
 	err := db.QueryRow(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid,
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid, rv.command_line,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type,
 		       rp.root_path, rp.name, c.subject
@@ -106,7 +109,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		WHERE j.git_ref = ?
 		ORDER BY rv.created_at DESC
 		LIMIT 1
-	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID,
+	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID, &commandLine,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
@@ -116,6 +119,9 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	r.Addressed = addressed != 0
 	if reviewUUID.Valid {
 		r.UUID = reviewUUID.String
+	}
+	if commandLine.Valid {
+		r.CommandLine = commandLine.String
 	}
 
 	if commitID.Valid {

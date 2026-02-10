@@ -135,7 +135,7 @@ func TestDatabaseIntegration(t *testing.T) {
 	}
 
 	// Complete the job
-	err = db.CompleteJob(job.ID, "codex", "test prompt", "This commit looks good!")
+	err = db.CompleteJob(job.ID, "codex", "test prompt", "This commit looks good!", "")
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}

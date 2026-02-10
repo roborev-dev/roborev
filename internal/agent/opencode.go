@@ -107,6 +107,16 @@ func isOpencodeToolCallLine(line string) bool {
 	return hasName && hasArgs
 }
 
+func (a *OpenCodeAgent) CommandLine() string {
+	args := []string{"run", "--format", "default"}
+	model := a.Model
+	if model == "" {
+		model = "opencode/minimax-m2.1-free"
+	}
+	args = append(args, "--model", model)
+	return a.Command + " " + strings.Join(args, " ")
+}
+
 func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	// OpenCode CLI supports a headless invocation via `opencode run [message..]`.
 	// We run it from the repo root so it can use project context, and pass the full

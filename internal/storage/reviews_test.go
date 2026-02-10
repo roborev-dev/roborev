@@ -190,7 +190,7 @@ func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 
 			// Claim job to move to running, then complete it
 			db.ClaimJob("test-worker")
-			err = db.CompleteJob(job.ID, "codex", "test prompt", "Test review output\n\n## Verdict: PASS")
+			err = db.CompleteJob(job.ID, "codex", "test prompt", "Test review output\n\n## Verdict: PASS", "")
 			if err != nil {
 				t.Fatalf("CompleteJob failed: %v", err)
 			}

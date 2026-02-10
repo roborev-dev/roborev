@@ -112,7 +112,7 @@ func TestJobLifecycle(t *testing.T) {
 	}
 
 	// Complete job
-	err = db.CompleteJob(job.ID, "codex", "test prompt", "test output")
+	err = db.CompleteJob(job.ID, "codex", "test prompt", "test output", "")
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestBranchPersistence(t *testing.T) {
 			if j == nil {
 				break
 			}
-			db.CompleteJob(j.ID, "codex", "p", "o")
+			db.CompleteJob(j.ID, "codex", "p", "o", "")
 		}
 
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "branchclaim", Branch: "release/v1", Agent: "codex"})
@@ -305,7 +305,7 @@ func TestReviewOperations(t *testing.T) {
 
 	_, _, job := createJobChain(t, db, "/tmp/test-repo", "rev123")
 	claimJob(t, db, "worker-1")
-	if err := db.CompleteJob(job.ID, "codex", "the prompt", "the review output"); err != nil {
+	if err := db.CompleteJob(job.ID, "codex", "the prompt", "the review output", ""); err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
 
@@ -333,7 +333,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-pass", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict-pass", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found. The code looks good.")
+		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found. The code looks good.", "")
 
 		review, err := db.GetReviewByJobID(job.ID)
 		if err != nil {
@@ -351,7 +351,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-empty", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict-empty", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "the prompt", "") // empty output
+		db.CompleteJob(job.ID, "codex", "the prompt", "", "") // empty output
 
 		review, err := db.GetReviewByJobID(job.ID)
 		if err != nil {
@@ -387,7 +387,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-sha", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict-sha", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found.")
+		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found.", "")
 
 		review, err := db.GetReviewByCommitSHA("verdict-sha")
 		if err != nil {
@@ -438,7 +438,7 @@ func TestMarkReviewAddressed(t *testing.T) {
 	commit, _ := db.GetOrCreateCommit(repo.ID, "addr123", "Author", "Subject", time.Now())
 	job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "addr123", Agent: "codex"})
 	db.ClaimJob("worker-1")
-	db.CompleteJob(job.ID, "codex", "prompt", "output")
+	db.CompleteJob(job.ID, "codex", "prompt", "output", "")
 
 	// Get the review
 	review, err := db.GetReviewByJobID(job.ID)
@@ -499,7 +499,7 @@ func TestMarkReviewAddressedByJobID(t *testing.T) {
 	commit, _ := db.GetOrCreateCommit(repo.ID, "jobaddr123", "Author", "Subject", time.Now())
 	job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "jobaddr123", Agent: "codex"})
 	db.ClaimJob("worker-1")
-	db.CompleteJob(job.ID, "codex", "prompt", "output")
+	db.CompleteJob(job.ID, "codex", "prompt", "output", "")
 
 	// Get the review to verify initial state
 	review, err := db.GetReviewByJobID(job.ID)
@@ -573,7 +573,7 @@ func TestJobCounts(t *testing.T) {
 	_, _ = db.ClaimJob("w1")        // Claims next
 	claimed, _ := db.ClaimJob("w1") // Should claim "done1" job now
 	if claimed != nil {
-		db.CompleteJob(claimed.ID, "codex", "p", "o")
+		db.CompleteJob(claimed.ID, "codex", "p", "o", "")
 	}
 
 	// Create a job, claim it, and fail it
@@ -744,7 +744,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 
 	// Claim, complete, then try retry (should fail - job is done)
 	_, _ = db.ClaimJob("worker-1")
-	db.CompleteJob(job.ID, "codex", "p", "o")
+	db.CompleteJob(job.ID, "codex", "p", "o", "")
 
 	retried, err = db.RetryJob(job.ID, 3)
 	if err != nil {
@@ -822,7 +822,7 @@ func TestCancelJob(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-done", "A", "S", time.Now())
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "cancel-done", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		db.CompleteJob(job.ID, "codex", "prompt", "output", "")
 
 		err := db.CancelJob(job.ID)
 		if err == nil {
@@ -849,7 +849,7 @@ func TestCancelJob(t *testing.T) {
 		db.CancelJob(job.ID)
 
 		// CompleteJob should not overwrite canceled status
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		db.CompleteJob(job.ID, "codex", "prompt", "output", "")
 
 		updated, _ := db.GetJobByID(job.ID)
 		if updated.Status != JobStatusCanceled {
@@ -1470,7 +1470,7 @@ func TestListReposWithReviewCounts(t *testing.T) {
 		// Claim and complete one job in repo1
 		claimed, _ := db.ClaimJob("worker-1")
 		if claimed != nil {
-			db.CompleteJob(claimed.ID, "codex", "prompt", "output")
+			db.CompleteJob(claimed.ID, "codex", "prompt", "output", "")
 		}
 
 		// Claim and fail another job
@@ -1589,7 +1589,7 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ClaimJob failed: %v", err)
 		}
-		if err := db.CompleteJob(claimed.ID, "codex", "prompt", "output"); err != nil {
+		if err := db.CompleteJob(claimed.ID, "codex", "prompt", "output", ""); err != nil {
 			t.Fatalf("CompleteJob failed: %v", err)
 		}
 
@@ -1739,7 +1739,7 @@ func TestListJobsWithBranchAndAddressedFilters(t *testing.T) {
 		}
 		// Complete the job so it has a review
 		db.ClaimJob("w")
-		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
+		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i), "")
 
 		// Mark first job as addressed
 		if i == 0 {
@@ -1809,7 +1809,7 @@ func TestWithBranchOrEmpty(t *testing.T) {
 			t.Fatalf("EnqueueJob failed: %v", err)
 		}
 		db.ClaimJob("w")
-		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
+		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i), "")
 	}
 
 	t.Run("WithBranch strict excludes branchless", func(t *testing.T) {
@@ -1895,9 +1895,9 @@ func TestReenqueueJob(t *testing.T) {
 				break
 			}
 			// Complete other jobs to clear them
-			db.CompleteJob(claimed.ID, "codex", "prompt", "output")
+			db.CompleteJob(claimed.ID, "codex", "prompt", "output", "")
 		}
-		db.CompleteJob(job.ID, "codex", "prompt", "output")
+		db.CompleteJob(job.ID, "codex", "prompt", "output", "")
 
 		err := db.ReenqueueJob(job.ID)
 		if err != nil {
@@ -1952,7 +1952,7 @@ func TestReenqueueJob(t *testing.T) {
 		if claimed == nil || claimed.ID != job.ID {
 			t.Fatal("Failed to claim the expected job")
 		}
-		err := isolatedDB.CompleteJob(job.ID, "codex", "first prompt", "first output")
+		err := isolatedDB.CompleteJob(job.ID, "codex", "first prompt", "first output", "")
 		if err != nil {
 			t.Fatalf("First CompleteJob failed: %v", err)
 		}
@@ -1983,7 +1983,7 @@ func TestReenqueueJob(t *testing.T) {
 		if claimed == nil || claimed.ID != job.ID {
 			t.Fatal("Failed to claim the expected job for second cycle")
 		}
-		err = isolatedDB.CompleteJob(job.ID, "codex", "second prompt", "second output")
+		err = isolatedDB.CompleteJob(job.ID, "codex", "second prompt", "second output", "")
 		if err != nil {
 			t.Fatalf("Second CompleteJob failed: %v", err)
 		}
@@ -2565,7 +2565,7 @@ func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
 	}
-	err = db.CompleteJob(job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.")
+	err = db.CompleteJob(job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.", "")
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}

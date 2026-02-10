@@ -704,6 +704,7 @@ func (a *fakeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 func (a *fakeAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return a }
 func (a *fakeAgent) WithAgentic(agentic bool) agent.Agent                 { return a }
 func (a *fakeAgent) WithModel(model string) agent.Agent                   { return a }
+func (a *fakeAgent) CommandLine() string                                  { return "" }
 
 func TestFixJobDirectUnbornHead(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

@@ -74,6 +74,12 @@ func (a *ClaudeAgent) CommandName() string {
 	return a.Command
 }
 
+func (a *ClaudeAgent) CommandLine() string {
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	args := a.buildArgs(agenticMode)
+	return a.Command + " " + strings.Join(args, " ")
+}
+
 func (a *ClaudeAgent) buildArgs(agenticMode bool) []string {
 	// Always use stdin piping + stream-json for non-interactive execution
 	// (following claude-code-action pattern from Anthropic)

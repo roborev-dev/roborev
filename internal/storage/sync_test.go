@@ -1212,7 +1212,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
 	}
-	err = db.CompleteJob(job.ID, "test", "prompt", "output")
+	err = db.CompleteJob(job.ID, "test", "prompt", "output", "")
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
@@ -1289,7 +1289,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ClaimJob failed: %v", err)
 		}
-		err = db.CompleteJob(job2.ID, "test", "prompt", "output")
+		err = db.CompleteJob(job2.ID, "test", "prompt", "output", "")
 		if err != nil {
 			t.Fatalf("CompleteJob failed: %v", err)
 		}
@@ -1375,7 +1375,7 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ClaimJob failed: %v", err)
 		}
-		err = tzDB.CompleteJob(job3.ID, "test", "prompt", "output")
+		err = tzDB.CompleteJob(job3.ID, "test", "prompt", "output", "")
 		if err != nil {
 			t.Fatalf("CompleteJob failed: %v", err)
 		}
@@ -1448,7 +1448,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
 	}
-	err = db.CompleteJob(job.ID, "test", "prompt", "output")
+	err = db.CompleteJob(job.ID, "test", "prompt", "output", "")
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
@@ -1603,7 +1603,7 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ClaimJob failed: %v", err)
 		}
-		err = tzDB.CompleteJob(tzJob.ID, "test", "prompt", "output")
+		err = tzDB.CompleteJob(tzJob.ID, "test", "prompt", "output", "")
 		if err != nil {
 			t.Fatalf("CompleteJob failed: %v", err)
 		}
@@ -1691,7 +1691,7 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
 	}
-	err = db.CompleteJob(job.ID, "test", "prompt", "output")
+	err = db.CompleteJob(job.ID, "test", "prompt", "output", "")
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
@@ -2090,7 +2090,7 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 	if err != nil {
 		h.t.Fatalf("Failed to claim job: %v", err)
 	}
-	err = h.db.CompleteJob(job.ID, "test", "prompt", "output")
+	err = h.db.CompleteJob(job.ID, "test", "prompt", "output", "")
 	if err != nil {
 		h.t.Fatalf("Failed to complete job: %v", err)
 	}

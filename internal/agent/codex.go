@@ -81,6 +81,24 @@ func (a *CodexAgent) CommandName() string {
 	return a.Command
 }
 
+func (a *CodexAgent) CommandLine() string {
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	// Show representative args (output file and repo path are runtime values)
+	args := []string{"exec"}
+	if agenticMode {
+		args = append(args, codexDangerousFlag)
+	} else {
+		args = append(args, codexAutoApproveFlag)
+	}
+	if a.Model != "" {
+		args = append(args, "-m", a.Model)
+	}
+	if effort := a.codexReasoningEffort(); effort != "" {
+		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, effort))
+	}
+	return a.Command + " " + strings.Join(args, " ")
+}
+
 func (a *CodexAgent) buildArgs(repoPath, outputFile string, agenticMode, autoApprove bool) []string {
 	args := []string{
 		"exec",

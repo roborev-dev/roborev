@@ -199,6 +199,7 @@ func (f *functionalMockAgent) Review(ctx context.Context, repoPath, commitSHA, p
 func (f *functionalMockAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return f }
 func (f *functionalMockAgent) WithAgentic(agentic bool) agent.Agent                 { return f }
 func (f *functionalMockAgent) WithModel(model string) agent.Agent                   { return f }
+func (f *functionalMockAgent) CommandLine() string                                  { return "" }
 
 // inDir changes to the given directory for the duration of fn, then restores the original directory.
 func inDir(t *testing.T, dir string, fn func()) {

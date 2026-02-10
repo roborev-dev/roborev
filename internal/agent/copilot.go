@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 )
 
 // CopilotAgent runs code reviews using the GitHub Copilot CLI
@@ -65,6 +66,15 @@ func (a *CopilotAgent) Name() string {
 
 func (a *CopilotAgent) CommandName() string {
 	return a.Command
+}
+
+func (a *CopilotAgent) CommandLine() string {
+	var args []string
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	args = append(args, "--prompt")
+	return a.Command + " " + strings.Join(args, " ")
 }
 
 func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {

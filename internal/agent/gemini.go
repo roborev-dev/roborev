@@ -84,6 +84,12 @@ func (a *GeminiAgent) CommandName() string {
 	return a.Command
 }
 
+func (a *GeminiAgent) CommandLine() string {
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	args := a.buildArgs(agenticMode)
+	return a.Command + " " + strings.Join(args, " ")
+}
+
 func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
 	// Use stream-json output for parsing, prompt via stdin
 	args := []string{"--output-format", "stream-json"}

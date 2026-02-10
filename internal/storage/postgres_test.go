@@ -849,7 +849,7 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
 	}
-	err = sqliteDB.CompleteJob(job.ID, "test", "prompt", "output")
+	err = sqliteDB.CompleteJob(job.ID, "test", "prompt", "output", "")
 	if err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}

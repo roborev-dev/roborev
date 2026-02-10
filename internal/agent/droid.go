@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 )
 
 // DroidAgent runs code reviews using Factory's Droid CLI
@@ -60,6 +61,20 @@ func (a *DroidAgent) Name() string {
 
 func (a *DroidAgent) CommandName() string {
 	return a.Command
+}
+
+func (a *DroidAgent) CommandLine() string {
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	args := []string{"exec"}
+	if agenticMode {
+		args = append(args, "--auto", "medium")
+	} else {
+		args = append(args, "--auto", "low")
+	}
+	if effort := a.droidReasoningEffort(); effort != "" {
+		args = append(args, "--reasoning-effort", effort)
+	}
+	return a.Command + " " + strings.Join(args, " ")
 }
 
 func (a *DroidAgent) buildArgs(prompt string, agenticMode bool) []string {

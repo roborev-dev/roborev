@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // CursorAgent runs code reviews using the Cursor agent CLI
@@ -63,6 +64,23 @@ func (a *CursorAgent) Name() string {
 
 func (a *CursorAgent) CommandName() string {
 	return a.Command
+}
+
+func (a *CursorAgent) CommandLine() string {
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	// Show flags without the prompt (which is a positional arg)
+	args := []string{"-p", "--output-format", "stream-json"}
+	model := a.Model
+	if model == "" {
+		model = "auto"
+	}
+	args = append(args, "--model", model)
+	if agenticMode {
+		args = append(args, "--force")
+	} else {
+		args = append(args, "--mode", "plan")
+	}
+	return a.Command + " " + strings.Join(args, " ")
 }
 
 func (a *CursorAgent) buildArgs(agenticMode bool, prompt string) []string {

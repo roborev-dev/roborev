@@ -337,6 +337,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
 	}
 
+	// Capture command line for debugging
+	commandLine := a.CommandLine()
+
 	// Broadcast started event
 	wp.broadcaster.Broadcast(Event{
 		Type:     "review.started",
@@ -381,7 +384,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Store the result (use actual agent name, not requested)
-	if err := wp.db.CompleteJob(job.ID, agentName, reviewPrompt, output); err != nil {
+	if err := wp.db.CompleteJob(job.ID, agentName, reviewPrompt, output, commandLine); err != nil {
 		log.Printf("[%s] Error storing review: %v", workerID, err)
 		return
 	}

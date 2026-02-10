@@ -1083,12 +1083,12 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 	commit, _ := db.GetOrCreateCommit(repo.ID, "aaa", "A", "S", time.Now())
 	job1, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "aaa", Branch: "main", Agent: "codex"})
 	db.ClaimJob("w")
-	db.CompleteJob(job1.ID, "codex", "", "output1")
+	db.CompleteJob(job1.ID, "codex", "", "output1", "")
 
 	commit2, _ := db.GetOrCreateCommit(repo.ID, "bbb", "A", "S2", time.Now())
 	job2, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "bbb", Branch: "main", Agent: "codex"})
 	db.ClaimJob("w")
-	db.CompleteJob(job2.ID, "codex", "", "output2")
+	db.CompleteJob(job2.ID, "codex", "", "output2", "")
 	db.MarkReviewAddressedByJobID(job2.ID, true)
 
 	t.Run("addressed=false", func(t *testing.T) {
@@ -1646,9 +1646,9 @@ func TestHandleRerunJob(t *testing.T) {
 			if claimed.ID == job.ID {
 				break
 			}
-			db.CompleteJob(claimed.ID, "test", "prompt", "output")
+			db.CompleteJob(claimed.ID, "test", "prompt", "output", "")
 		}
-		db.CompleteJob(job.ID, "test", "prompt", "output")
+		db.CompleteJob(job.ID, "test", "prompt", "output", "")
 
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
 		w := httptest.NewRecorder()

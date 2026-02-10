@@ -44,6 +44,10 @@ func (a *TestAgent) WithModel(model string) Agent {
 	return a
 }
 
+func (a *TestAgent) CommandLine() string {
+	return "test"
+}
+
 func (a *TestAgent) Name() string {
 	return "test"
 }
