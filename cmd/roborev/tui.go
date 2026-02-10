@@ -897,7 +897,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 func (m tuiModel) loadReview(jobID int64) (*storage.Review, error) {
 	var review storage.Review
 	if err := m.getJSON(fmt.Sprintf("/api/review?job_id=%d", jobID), &review); err != nil {
-		if err.Error() == "not found" {
+		if errors.Is(err, errNotFound) {
 			return nil, fmt.Errorf("no review found")
 		}
 		return nil, fmt.Errorf("fetch review: %w", err)
@@ -1182,7 +1182,7 @@ func (m tuiModel) postAddressed(jobID int64, newState bool, notFoundMsg string) 
 		"job_id":    jobID,
 		"addressed": newState,
 	}, nil)
-	if err != nil && err.Error() == "not found" {
+	if errors.Is(err, errNotFound) {
 		return fmt.Errorf("%s", notFoundMsg)
 	}
 	if err != nil {

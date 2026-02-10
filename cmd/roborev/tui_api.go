@@ -2,14 +2,38 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
 
+// errNotFound is returned by getJSON/postJSON for 404 responses.
+// Callers can detect it with errors.Is(err, errNotFound).
+var errNotFound = errors.New("not found")
+
+// readErrorBody reads a JSON error response body and returns the "error" field,
+// falling back to the raw body text or HTTP status.
+func readErrorBody(body io.Reader, status string) string {
+	data, err := io.ReadAll(io.LimitReader(body, 1024))
+	if err != nil || len(data) == 0 {
+		return status
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(data, &errResp) == nil && errResp.Error != "" {
+		return errResp.Error
+	}
+	if s := strings.TrimSpace(string(data)); s != "" {
+		return s
+	}
+	return status
+}
+
 // getJSON performs a GET request and decodes the JSON response into out.
-// Returns an error for non-200 responses, using the provided context for messages.
+// Returns errNotFound for 404 responses. Other errors include the server's message.
 func (m tuiModel) getJSON(path string, out any) error {
 	url := m.serverAddr + path
 	resp, err := m.client.Get(url)
@@ -19,10 +43,10 @@ func (m tuiModel) getJSON(path string, out any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("not found")
+		return errNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s", resp.Status)
+		return fmt.Errorf("%s", readErrorBody(resp.Body, resp.Status))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
@@ -33,7 +57,7 @@ func (m tuiModel) getJSON(path string, out any) error {
 
 // postJSON performs a POST request with a JSON body and decodes the response into out.
 // If out is nil, the response body is discarded.
-// Returns an error for non-200/201 responses.
+// Returns errNotFound for 404 responses. Other errors include the server's message.
 func (m tuiModel) postJSON(path string, in any, out any) error {
 	body, err := json.Marshal(in)
 	if err != nil {
@@ -47,10 +71,10 @@ func (m tuiModel) postJSON(path string, in any, out any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("not found")
+		return errNotFound
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("%s", resp.Status)
+		return fmt.Errorf("%s", readErrorBody(resp.Body, resp.Status))
 	}
 
 	if out != nil {

@@ -100,6 +100,12 @@ func wrapText(text string, width int) []string {
 				breakPoint = i + 1
 			}
 
+			// Ensure forward progress: if the first rune is wider than width,
+			// take at least one rune to avoid an infinite loop.
+			if breakPoint == 0 {
+				breakPoint = 1
+			}
+
 			// Try to find a space to break at (look back from breakPoint)
 			bestBreak := breakPoint
 			scanWidth := 0
