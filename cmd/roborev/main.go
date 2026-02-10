@@ -202,7 +202,6 @@ func ensureDaemon() error {
 	return startDaemon()
 }
 
-// startDaemon starts a new daemon process
 // isGitEnvKey reports whether a KEY=value entry has a GIT_* key.
 // Uses case-insensitive comparison because Windows env vars are case-insensitive.
 func isGitEnvKey(entry string) bool {
