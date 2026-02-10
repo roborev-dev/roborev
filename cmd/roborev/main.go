@@ -203,13 +203,20 @@ func ensureDaemon() error {
 }
 
 // startDaemon starts a new daemon process
+// isGitEnvKey reports whether a KEY=value entry has a GIT_* key.
+// Uses case-insensitive comparison because Windows env vars are case-insensitive.
+func isGitEnvKey(entry string) bool {
+	key, _, _ := strings.Cut(entry, "=")
+	return strings.HasPrefix(strings.ToUpper(key), "GIT_")
+}
+
 // filterGitEnv returns a copy of env with GIT_* environment variables removed.
 // Git sets variables like GIT_DIR in hook contexts; if the daemon inherits them,
 // git commands resolve HEAD from the wrong worktree/repo.
 func filterGitEnv(env []string) []string {
 	result := make([]string, 0, len(env))
 	for _, e := range env {
-		if strings.HasPrefix(e, "GIT_") {
+		if isGitEnvKey(e) {
 			continue
 		}
 		result = append(result, e)
@@ -567,15 +574,14 @@ func daemonRunCmd() *cobra.Command {
 		Short: "Run the daemon in foreground",
 		Long:  "Run the daemon in the foreground. Usually invoked by 'daemon start' in the background.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Defense-in-depth: clear git env vars that hooks may set.
+			// Defense-in-depth: clear all GIT_* env vars that hooks may set.
 			// The spawn sites (startDaemon, upgrade) filter these out, but
 			// clear them here too in case the daemon is started manually.
-			for _, key := range []string{
-				"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
-				"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-				"GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES",
-			} {
-				os.Unsetenv(key)
+			for _, e := range os.Environ() {
+				if isGitEnvKey(e) {
+					key, _, _ := strings.Cut(e, "=")
+					os.Unsetenv(key)
+				}
 			}
 
 			log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)

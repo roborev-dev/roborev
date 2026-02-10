@@ -1231,6 +1231,8 @@ func TestFilterGitEnv(t *testing.T) {
 		"GIT_INDEX_FILE=/some/repo/.git/index",
 		"ROBOREV_DATA_DIR=/tmp/roborev",
 		"GIT_CEILING_DIRECTORIES=/home",
+		"Git_Dir=/mixed/case",      // Windows-style mixed case
+		"git_work_tree=/lowercase", // all lowercase
 	}
 
 	filtered := filterGitEnv(env)
