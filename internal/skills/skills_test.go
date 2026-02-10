@@ -214,6 +214,20 @@ func TestIsInstalledClaude(t *testing.T) {
 	if !IsInstalled(AgentClaude) {
 		t.Error("expected IsInstalled=true when roborev-address/SKILL.md exists")
 	}
+
+	// Remove address, add review
+	os.RemoveAll(filepath.Join(tmpHome, ".claude", "skills", "roborev-address"))
+	createMockSkill(t, tmpHome, "claude", "roborev-review")
+	if !IsInstalled(AgentClaude) {
+		t.Error("expected IsInstalled=true when roborev-review/SKILL.md exists")
+	}
+
+	// Remove review, add review-branch
+	os.RemoveAll(filepath.Join(tmpHome, ".claude", "skills", "roborev-review"))
+	createMockSkill(t, tmpHome, "claude", "roborev-review-branch")
+	if !IsInstalled(AgentClaude) {
+		t.Error("expected IsInstalled=true when roborev-review-branch/SKILL.md exists")
+	}
 }
 
 func TestIsInstalledCodex(t *testing.T) {
@@ -236,6 +250,20 @@ func TestIsInstalledCodex(t *testing.T) {
 	createMockSkill(t, tmpHome, "codex", "roborev-respond")
 	if !IsInstalled(AgentCodex) {
 		t.Error("expected IsInstalled=true when roborev-respond/SKILL.md exists")
+	}
+
+	// Remove respond, add review
+	os.RemoveAll(filepath.Join(tmpHome, ".codex", "skills", "roborev-respond"))
+	createMockSkill(t, tmpHome, "codex", "roborev-review")
+	if !IsInstalled(AgentCodex) {
+		t.Error("expected IsInstalled=true when roborev-review/SKILL.md exists")
+	}
+
+	// Remove review, add review-branch
+	os.RemoveAll(filepath.Join(tmpHome, ".codex", "skills", "roborev-review"))
+	createMockSkill(t, tmpHome, "codex", "roborev-review-branch")
+	if !IsInstalled(AgentCodex) {
+		t.Error("expected IsInstalled=true when roborev-review-branch/SKILL.md exists")
 	}
 }
 

@@ -17,7 +17,17 @@ Request a design review for a commit and present the results.
 
 When the user invokes `/roborev:design-review [commit]`:
 
-### 1. Build the command
+### 1. Validate inputs
+
+If a commit ref is provided, verify it resolves to a valid object:
+
+```bash
+git rev-parse --verify <commit>
+```
+
+If validation fails, inform the user the ref is invalid. Do not proceed.
+
+### 2. Build the command
 
 Construct the review command:
 
@@ -27,7 +37,7 @@ roborev review [commit] --wait --type design
 
 - If no commit is specified, omit it (defaults to HEAD)
 
-### 2. Run the review in the background
+### 3. Run the review in the background
 
 Launch a background task that runs the command. This lets the user continue working while the review runs.
 
@@ -39,11 +49,11 @@ roborev review [commit] --wait --type design
 
 Tell the user that the design review has been submitted and they can continue working. You will present the results when the review completes.
 
-### 3. Present the results
+### 4. Present the results
 
 When the background task completes, read the output and present it to the user. The output contains the full review including verdict and findings.
 
-### 4. Offer next steps
+### 5. Offer next steps
 
 If the review has findings (verdict is not Pass), offer to address them:
 
