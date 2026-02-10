@@ -59,8 +59,9 @@ type Agent interface {
 	// For opencode, the model format is "provider/model" (e.g., "anthropic/claude-sonnet-4-20250514").
 	WithModel(model string) Agent
 
-	// CommandLine returns the full command line that would be used to invoke this agent
-	// (binary + flags, excluding the prompt). Useful for debugging.
+	// CommandLine returns a representative command line for this agent (binary + flags).
+	// Runtime-specific arguments (repo path, output file, prompt) are excluded.
+	// Useful for debugging which binary, model, and flags were used.
 	CommandLine() string
 }
 

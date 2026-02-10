@@ -165,6 +165,56 @@ func TestAddCommentToJobWithNoReview(t *testing.T) {
 	}
 }
 
+func TestCommandLineRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-repo")
+
+	tests := []struct {
+		name                string
+		gitRef              string
+		commandLine         string
+		expectedCommandLine string
+	}{
+		{"populated when set", "cmd111", "claude -p --verbose --model opus", "claude -p --verbose --model opus"},
+		{"empty when not set", "cmd222", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: tt.gitRef, Agent: "codex", Reasoning: "standard"})
+			if err != nil {
+				t.Fatalf("EnqueueJob failed: %v", err)
+			}
+
+			db.ClaimJob("test-worker")
+			err = db.CompleteJob(job.ID, "codex", "test prompt", "Test output\n\n## Verdict: PASS", tt.commandLine)
+			if err != nil {
+				t.Fatalf("CompleteJob failed: %v", err)
+			}
+
+			// Verify via GetReviewByJobID
+			review, err := db.GetReviewByJobID(job.ID)
+			if err != nil {
+				t.Fatalf("GetReviewByJobID failed: %v", err)
+			}
+			if review.CommandLine != tt.expectedCommandLine {
+				t.Errorf("GetReviewByJobID: expected command_line %q, got %q", tt.expectedCommandLine, review.CommandLine)
+			}
+
+			// Verify via GetReviewByCommitSHA
+			review2, err := db.GetReviewByCommitSHA(tt.gitRef)
+			if err != nil {
+				t.Fatalf("GetReviewByCommitSHA failed: %v", err)
+			}
+			if review2.CommandLine != tt.expectedCommandLine {
+				t.Errorf("GetReviewByCommitSHA: expected command_line %q, got %q", tt.expectedCommandLine, review2.CommandLine)
+			}
+		})
+	}
+}
+
 func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

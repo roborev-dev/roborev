@@ -520,9 +520,13 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 			needsAllJobs = true // Multiple repos (shared display name) - filter client-side
 		}
 
-		// Branch filter: use server-side when available
-		if m.activeBranchFilter != "" {
+		// Branch filter: use server-side for real branch names.
+		// "(none)" is a client-side sentinel for empty/NULL branches and can't be
+		// sent to the server, so it falls through to client-side filtering.
+		if m.activeBranchFilter != "" && m.activeBranchFilter != "(none)" {
 			params.Set("branch", m.activeBranchFilter)
+		} else if m.activeBranchFilter == "(none)" {
+			needsAllJobs = true
 		}
 
 		// Addressed filter: use server-side to avoid fetching all jobs
@@ -566,8 +570,8 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 func (m tuiModel) fetchMoreJobs() tea.Cmd {
 	return func() tea.Msg {
 		// Only fetch more when not doing client-side filtering that loads all jobs
-		if len(m.activeRepoFilter) > 1 {
-			return nil // Multi-repo filter loads everything
+		if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == "(none)" {
+			return nil // Multi-repo or "(none)" branch filter loads everything
 		}
 		offset := len(m.jobs)
 		params := neturl.Values{}
@@ -576,7 +580,7 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 		if len(m.activeRepoFilter) == 1 {
 			params.Set("repo", m.activeRepoFilter[0])
 		}
-		if m.activeBranchFilter != "" {
+		if m.activeBranchFilter != "" && m.activeBranchFilter != "(none)" {
 			params.Set("branch", m.activeBranchFilter)
 		}
 		if m.hideAddressed {
@@ -2053,12 +2057,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
-				} else if !m.hasMore || len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-					// Truly at the bottom - no more to load or filter prevents auto-load
+				} else if !m.hasMore || len(m.activeRepoFilter) > 1 {
+					// Truly at the bottom - no more to load or multi-repo filter prevents auto-load
 					m.flashMessage = "No older review"
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
 					m.flashView = tuiViewQueue
@@ -2078,7 +2082,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -2145,7 +2149,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.updateSelectedJobID()
 				// If we hit the end, try to load more
-				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
+				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
 				}
@@ -2367,10 +2371,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.updateSelectedJobID()
 					}
 				}
-				if m.hideAddressed {
-					// Re-fetch with server-side addressed filter
-					return m, m.fetchJobs()
-				}
+				// Re-fetch: enabling adds server-side filter, disabling needs
+				// unfiltered data that may not be in current result set
+				return m, m.fetchJobs()
 			}
 
 		case "c":
@@ -2543,7 +2546,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// If terminal can show more jobs than we have, re-fetch to fill screen
 		// Gate on !loadingMore and !loadingJobs to avoid race conditions
-		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
+		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) <= 1 {
 			newVisibleRows := m.height - 9 + 10
 			if newVisibleRows > len(m.jobs) {
 				m.loadingJobs = true
@@ -3219,7 +3222,7 @@ func (m tuiModel) renderQueueView() string {
 		if len(visibleJobList) > visibleRows || m.hasMore || m.loadingMore {
 			if m.loadingMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(visibleJobList))
-			} else if m.hasMore && len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" {
+			} else if m.hasMore && len(m.activeRepoFilter) <= 1 {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d+] scroll down to load more", start+1, end, len(visibleJobList))
 			} else if len(visibleJobList) > visibleRows {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visibleJobList))

@@ -2637,25 +2637,27 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 }
 
 func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
-	// Test flash messages at bottom when filter is active (prevents auto-load)
+	// Test flash messages at bottom when multi-repo filter is active (prevents auto-load).
+	// Single-repo filters use server-side filtering and support pagination,
+	// but multi-repo filters are client-side only so they disable pagination.
 	m := newTuiModel("http://localhost")
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoPath("/repo1")),
 		makeJob(2, withRepoPath("/repo2")),
 	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
+	m.selectedIdx = 1
+	m.selectedJobID = 2
 	m.currentView = tuiViewQueue
-	m.hasMore = true                        // More jobs available but...
-	m.activeRepoFilter = []string{"/repo1"} // Filter is active, prevents auto-load
+	m.hasMore = true                                  // More jobs available but...
+	m.activeRepoFilter = []string{"/repo1", "/repo2"} // Multi-repo filter prevents auto-load
 
-	// Press 'down' - only job 1 matches filter, so we're at bottom
+	// Press 'down' - already at last job, should hit boundary
 	m2, _ := pressSpecial(m, tea.KeyDown)
 
-	// Should show flash since filter prevents loading more
+	// Should show flash since multi-repo filter prevents loading more
 	if m2.flashMessage != "No older review" {
-		t.Errorf("Expected flash message 'No older review' with filter active, got %q", m2.flashMessage)
+		t.Errorf("Expected flash message 'No older review' with multi-repo filter active, got %q", m2.flashMessage)
 	}
 	if m2.flashView != tuiViewQueue {
 		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m2.flashView)
@@ -3839,7 +3841,7 @@ func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
 	}
 }
 
-func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
+func TestTUIHideAddressedDisableRefetches(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true // Already enabled
@@ -3858,9 +3860,9 @@ func TestTUIHideAddressedDisableNoRefetch(t *testing.T) {
 		t.Error("hideAddressed should be false after pressing 'h' to disable")
 	}
 
-	// No command should be returned when disabling (no need to refetch)
-	if cmd != nil {
-		t.Error("No command should be returned when disabling hideAddressed")
+	// Disabling triggers a refetch to get previously-filtered addressed jobs
+	if cmd == nil {
+		t.Error("Expected a refetch command when disabling hideAddressed")
 	}
 }
 
@@ -7506,15 +7508,17 @@ func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	}
 }
 
-func TestTUIWindowResizeNoLoadMoreWhenBranchFiltered(t *testing.T) {
-	// Test that window resize doesn't trigger pagination when branch filter is active
+func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
+	// Test that window resize doesn't trigger pagination when multi-repo filter is active.
+	// Single-repo and branch filters support server-side pagination,
+	// but multi-repo filters are client-side only and disable pagination.
 	m := newTuiModel("http://localhost")
 
-	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
+	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/repo1"))}
 	m.hasMore = true
 	m.loadingMore = false
 	m.loadingJobs = false
-	m.activeBranchFilter = "feature"
+	m.activeRepoFilter = []string{"/repo1", "/repo2"}
 	m.currentView = tuiViewQueue
 	m.height = 10
 
@@ -7522,10 +7526,10 @@ func TestTUIWindowResizeNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 50})
 
 	if m2.loadingMore {
-		t.Error("loadingMore should not be set when branch filter is active (window resize)")
+		t.Error("loadingMore should not be set when multi-repo filter is active (window resize)")
 	}
 	if m2.loadingJobs {
-		t.Error("loadingJobs should not be set when branch filter is active (window resize)")
+		t.Error("loadingJobs should not be set when multi-repo filter is active (window resize)")
 	}
 	// Window resize returns nil command when not triggering fetch
 	_ = cmd
