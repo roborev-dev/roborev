@@ -2918,3 +2918,103 @@ func TestServerStop_StopsCIPoller(t *testing.T) {
 		t.Fatalf("expected poller stopped after Server.Stop, got (%v, %q)", healthy, msg)
 	}
 }
+
+// TestHandleEnqueueWorktreeGitDirIsolation verifies that a leaked GIT_DIR
+// environment variable (as set by git hooks) does not cause the daemon to
+// resolve HEAD from the wrong worktree.
+//
+// Reproduces the bug reported in issue #230:
+//  1. Create a main repo with commit A
+//  2. Create a worktree and advance it to commit B
+//  3. Set GIT_DIR to point to the main repo's .git dir (simulating a hook)
+//  4. Show that handleEnqueue resolves the wrong commit (the bug)
+//  5. Clear GIT_DIR (as daemonRunCmd does at startup) and verify correct resolution
+func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping worktree test on Windows due to path differences")
+	}
+
+	tmpDir := t.TempDir()
+
+	// Create main repo with initial commit (commit A)
+	mainRepo := filepath.Join(tmpDir, "main-repo")
+	testutil.InitTestGitRepo(t, mainRepo)
+	commitA := testutil.GetHeadSHA(t, mainRepo)
+
+	// Create a worktree
+	worktreeDir := filepath.Join(tmpDir, "worktree")
+	wtCmd := exec.Command("git", "-C", mainRepo, "worktree", "add", "-b", "wt-branch", worktreeDir)
+	if out, err := wtCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add failed: %v\n%s", err, out)
+	}
+
+	// Make a new commit in the worktree so HEAD differs (commit B)
+	wtFile := filepath.Join(worktreeDir, "worktree-file.txt")
+	if err := os.WriteFile(wtFile, []byte("worktree content"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	for _, args := range [][]string{
+		{"git", "-C", worktreeDir, "add", "."},
+		{"git", "-C", worktreeDir, "commit", "-m", "worktree commit"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, out)
+		}
+	}
+	commitB := testutil.GetHeadSHA(t, worktreeDir)
+
+	if commitA == commitB {
+		t.Fatal("test setup error: commits A and B should differ")
+	}
+
+	enqueue := func(t *testing.T) storage.ReviewJob {
+		t.Helper()
+		server, _, _ := newTestServer(t)
+		reqData := map[string]string{
+			"repo_path": worktreeDir,
+			"git_ref":   "HEAD",
+			"agent":     "test",
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
+		w := httptest.NewRecorder()
+		server.handleEnqueue(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var job storage.ReviewJob
+		if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return job
+	}
+
+	t.Run("leaked GIT_DIR resolves wrong commit", func(t *testing.T) {
+		// Set GIT_DIR to the main repo's .git dir, simulating a post-commit hook.
+		// t.Setenv restores the original value after the subtest.
+		mainGitDir := filepath.Join(mainRepo, ".git")
+		t.Setenv("GIT_DIR", mainGitDir)
+
+		job := enqueue(t)
+
+		// With GIT_DIR leaked, git resolves HEAD from the main repo (commit A)
+		// instead of the worktree (commit B). This is the bug.
+		if job.GitRef != commitA {
+			t.Errorf("expected leaked GIT_DIR to resolve commit A (%s), got %s", commitA, job.GitRef)
+		}
+	})
+
+	t.Run("cleared GIT_DIR resolves correct commit", func(t *testing.T) {
+		// Simulate the daemon startup fix: clear GIT_DIR before handling requests.
+		// This is what daemonRunCmd() does with os.Unsetenv.
+		t.Setenv("GIT_DIR", "")
+		os.Unsetenv("GIT_DIR")
+
+		job := enqueue(t)
+
+		// Without GIT_DIR, git uses cmd.Dir correctly and resolves the worktree's HEAD.
+		if job.GitRef != commitB {
+			t.Errorf("expected worktree commit B (%s), got %s", commitB, job.GitRef)
+		}
+	})
+}
