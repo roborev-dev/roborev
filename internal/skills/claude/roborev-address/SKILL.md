@@ -21,17 +21,24 @@ When the user invokes `/roborev:address <job_id>`:
 
 Execute:
 ```bash
-roborev show --job <job_id>
+roborev show --job <job_id> --json
 ```
+
+The JSON output has this structure:
+- `job_id`: the job ID
+- `output`: the review text containing findings
+- `job.verdict`: `"P"` for pass, `"F"` for fail
+- `job.git_ref`: the commit SHA that was reviewed
+- `addressed`: whether this review has already been addressed
 
 ### 2. Check the verdict
 
-- If **Pass**: Inform the user no action is needed
-- If **Fail**: Continue to address the findings
+- If `job.verdict` is `"P"`: Inform the user no action is needed
+- If `job.verdict` is `"F"`: Continue to address the findings
 
 ### 3. Fix the findings
 
-Parse the findings from the output (severity, file paths, line numbers), then:
+Parse the findings from the `output` field (severity, file paths, line numbers), then:
 
 1. Read the relevant files
 2. Fix issues by priority (high severity first)
@@ -53,7 +60,7 @@ Then ask the user if they want to commit the changes.
 User: `/roborev:address 1019`
 
 Agent:
-1. Executes `roborev show --job 1019`
+1. Executes `roborev show --job 1019 --json`
 2. Sees verdict is Fail with 2 findings
 3. Reads files, fixes the issues, runs tests
 4. Executes `roborev comment --job 1019 "Fixed null check in foo.go and added error handling in bar.go"`

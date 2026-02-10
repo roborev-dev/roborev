@@ -31,15 +31,24 @@ If no unaddressed reviews are found, inform the user there is nothing to fix.
 
 ### 2. Fetch all reviews
 
-For each job ID, fetch the full review:
+For each job ID, fetch the full review as JSON:
 
 ```bash
-roborev show --job <job_id>
+roborev show --job <job_id> --json
 ```
+
+The JSON output has this structure:
+- `job_id`: the job ID
+- `output`: the review text containing findings
+- `job.verdict`: `"P"` for pass, `"F"` for fail
+- `job.git_ref`: the commit SHA that was reviewed
+- `addressed`: whether this review has already been addressed
+
+Skip any reviews where `job.verdict` is `"P"` (passing reviews have no findings to fix).
 
 ### 3. Fix all findings
 
-Parse findings from all reviews. Collect every finding with its severity, file path, and line number. Then:
+Parse findings from the `output` field of all failing reviews. Collect every finding with its severity, file path, and line number. Then:
 
 1. Group findings by file to minimize context switches
 2. Fix issues by priority (high severity first)
@@ -74,7 +83,7 @@ User: `$roborev:fix`
 
 Agent:
 1. Runs `roborev fix --unaddressed --list` and finds 2 unaddressed reviews: job 1019 and job 1021
-2. Fetches both reviews with `roborev show --job 1019` and `roborev show --job 1021`
+2. Fetches both reviews with `roborev show --job 1019 --json` and `roborev show --job 1021 --json`
 3. Fixes all 3 findings across both reviews, prioritizing by severity
 4. Runs tests to verify
 5. Records comments and marks addressed:
