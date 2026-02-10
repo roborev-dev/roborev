@@ -3816,6 +3816,56 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 	}
 }
 
+func TestTUIHideAddressedClearRepoFilterRefetches(t *testing.T) {
+	// Scenario: hide addressed enabled, then filter by repo, then press escape
+	// to clear the repo filter. Should trigger a refetch to show all unaddressed reviews.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.hideAddressed = true
+	m.activeRepoFilter = []string{"/repo/a"}
+	m.filterStack = []string{"repo"}
+	m.loadingJobs = false // Simulate that initial load has completed
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Press escape to clear the repo filter
+	m2, cmd := pressSpecial(m, tea.KeyEscape)
+
+	// Repo filter should be cleared
+	if m2.activeRepoFilter != nil {
+		t.Errorf("Expected activeRepoFilter to be nil, got %v", m2.activeRepoFilter)
+	}
+
+	// hideAddressed should still be true
+	if !m2.hideAddressed {
+		t.Error("hideAddressed should still be true after clearing repo filter")
+	}
+
+	// Filter stack should be empty
+	if len(m2.filterStack) != 0 {
+		t.Errorf("Expected empty filter stack, got %v", m2.filterStack)
+	}
+
+	// jobs should be cleared
+	if m2.jobs != nil {
+		t.Errorf("Expected jobs to be nil after escape, got %d jobs", len(m2.jobs))
+	}
+
+	// A refetch command should be returned
+	if cmd == nil {
+		t.Error("Expected a refetch command when clearing repo filter with hide-addressed active")
+	}
+
+	// loadingJobs should be set
+	if !m2.loadingJobs {
+		t.Error("loadingJobs should be set when refetching after clearing repo filter")
+	}
+}
+
 func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
