@@ -43,7 +43,7 @@ func (m tuiModel) getJSON(path string, out any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return errNotFound
+		return fmt.Errorf("%w: %s", errNotFound, readErrorBody(resp.Body, resp.Status))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s", readErrorBody(resp.Body, resp.Status))
@@ -57,7 +57,7 @@ func (m tuiModel) getJSON(path string, out any) error {
 
 // postJSON performs a POST request with a JSON body and decodes the response into out.
 // If out is nil, the response body is discarded.
-// Returns errNotFound for 404 responses. Other errors include the server's message.
+// Returns errNotFound (wrapped with server message) for 404 responses.
 func (m tuiModel) postJSON(path string, in any, out any) error {
 	body, err := json.Marshal(in)
 	if err != nil {
@@ -71,7 +71,7 @@ func (m tuiModel) postJSON(path string, in any, out any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return errNotFound
+		return fmt.Errorf("%w: %s", errNotFound, readErrorBody(resp.Body, resp.Status))
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("%s", readErrorBody(resp.Body, resp.Status))
