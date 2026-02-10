@@ -1,84 +1,69 @@
 ---
 name: roborev:design-review
-description: Review a design proposal (PRD and task list) for completeness, feasibility, and technical soundness
+description: Request a design review for a commit and present the results
 ---
 
 # roborev:design-review
 
-Review a design proposal for completeness, feasibility, and technical soundness.
+Request a design review for a commit and present the results.
 
 ## Usage
 
 ```
-$roborev:design-review <path-or-job-id>
+$roborev:design-review [commit]
 ```
 
 ## Instructions
 
-When the user invokes `$roborev:design-review <path-or-job-id>`:
+When the user invokes `$roborev:design-review [commit]`:
 
-### 1. Locate design documents
+### 1. Build the command
 
-Find the design documents to review:
-
-- If a **file path** is given, read that file directly
-- If a **job ID** is given, fetch the design output with `roborev show --job <job_id>`
-- If **no argument** is given, look for design docs in `docs/design/` and review the most recent one
-
-### 2. Review the PRD
-
-Evaluate the product requirements document for:
-
-- **Completeness**: Are goals, non-goals, success criteria, and edge cases defined?
-- **Feasibility**: Are technical decisions grounded in the actual codebase?
-- **Clarity**: Are decisions justified and understandable?
-- **Missing considerations**: Security, performance, backwards compatibility, error handling
-
-Read relevant source files to verify that the design's assumptions about the codebase are accurate.
-
-### 3. Review the task list
-
-Evaluate the implementation plan for:
-
-- **Scoping**: Are stages small enough to implement and review incrementally?
-- **Ordering**: Are dependencies correctly ordered?
-- **Coverage**: Do the tasks cover all requirements in the PRD?
-- **Testability**: Does each stage include verification steps?
-
-### 4. Output findings
-
-Present findings in a structured format:
+Construct the review command:
 
 ```
-## Design Review
-
-### Summary
-<1-2 sentence overview of the design>
-
-### PRD Findings
-- [severity] <finding description>
-  Suggestion: <how to improve>
-
-### Task List Findings
-- [severity] <finding description>
-  Suggestion: <how to improve>
-
-### Missing Considerations
-- <anything not covered by the design>
-
-### Verdict
-<Pass/Fail with brief justification>
+roborev review [commit] --wait --type design
 ```
 
-Use severity levels: **high** (blocks implementation), **medium** (should address before starting), **low** (nice to have).
+- If no commit is specified, omit it (defaults to HEAD)
+
+### 2. Run the review in the background
+
+Launch a background task that runs the command. This lets the user continue working while the review runs.
+
+Use the `Task` tool with `run_in_background: true` and `subagent_type: "Bash"`:
+
+```
+roborev review [commit] --wait --type design
+```
+
+Tell the user that the design review has been submitted and they can continue working. You will present the results when the review completes.
+
+### 3. Present the results
+
+When the background task completes, read the output and present it to the user. The output contains the full review including verdict and findings.
+
+### 4. Offer next steps
+
+If the review has findings (verdict is not Pass), offer to address them:
+
+- "Would you like me to address these findings? You can run `$roborev:address <job_id>`"
+
+Extract the job ID from the review output to include in the suggestion.
 
 ## Example
 
-User: `$roborev:design-review docs/design/auth-redesign.md`
+User: `$roborev:design-review`
 
 Agent:
-1. Reads `docs/design/auth-redesign.md`
-2. Reads relevant source files (`internal/auth/`, `internal/middleware/`) to verify assumptions
-3. Reviews PRD completeness and feasibility
-4. Reviews task list scoping and ordering
-5. Outputs structured findings with severity ratings
+1. Launches background task: `roborev review --wait --type design`
+2. Tells user: "Design review submitted for HEAD. I'll present the results when it completes."
+3. When complete, presents the review output
+4. If findings exist: "Would you like me to address these findings? Run `$roborev:address 1042`"
+
+User: `$roborev:design-review abc123`
+
+Agent:
+1. Launches background task: `roborev review abc123 --wait --type design`
+2. Tells user: "Design review submitted for abc123. I'll present the results when it completes."
+3. When complete, presents the review output
