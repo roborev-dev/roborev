@@ -4149,6 +4149,10 @@ func TestTUIRenderPromptViewWithModel(t *testing.T) {
 
 	output := m.View()
 
+	// Should contain job ID
+	if !strings.Contains(output, "#1") {
+		t.Errorf("Expected Prompt view to contain '#1', got:\n%s", output)
+	}
 	// Should contain agent with model in format "(codex: o3)"
 	if !strings.Contains(output, "(codex: o3)") {
 		t.Errorf("Expected Prompt view to contain '(codex: o3)', got:\n%s", output)

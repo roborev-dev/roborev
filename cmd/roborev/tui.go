@@ -3705,14 +3705,12 @@ func (m tuiModel) renderReviewView() string {
 func (m tuiModel) renderPromptView() string {
 	var b strings.Builder
 
-	// Clear screen and move cursor to home position to prevent artifacts on scroll
-	b.WriteString("\x1b[2J\x1b[H")
-
 	review := m.currentReview
 	if review.Job != nil {
 		ref := shortJobRef(*review.Job)
+		idStr := fmt.Sprintf("#%d ", review.Job.ID)
 		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
-		title := fmt.Sprintf("Prompt: %s (%s)", ref, agentStr)
+		title := fmt.Sprintf("Prompt %s%s (%s)", idStr, ref, agentStr)
 		b.WriteString(tuiTitleStyle.Render(title))
 	} else {
 		b.WriteString(tuiTitleStyle.Render("Prompt"))
