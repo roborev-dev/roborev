@@ -747,7 +747,10 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 			statsOpts = append(statsOpts, storage.WithBranch(branch))
 		}
 	}
-	stats, _ := s.db.CountJobStats(repo, statsOpts...)
+	stats, statsErr := s.db.CountJobStats(repo, statsOpts...)
+	if statsErr != nil {
+		log.Printf("Warning: failed to count job stats: %v", statsErr)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"jobs":     jobs,

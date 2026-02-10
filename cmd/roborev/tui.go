@@ -281,8 +281,14 @@ type tuiRerunResultMsg struct {
 	err           error
 }
 type tuiErrMsg error
-type tuiJobsErrMsg struct{ err error }       // Job fetch error (clears loadingJobs)
-type tuiPaginationErrMsg struct{ err error } // Pagination-specific error (clears loadingMore)
+type tuiJobsErrMsg struct {
+	err error
+	seq int // fetch sequence number for staleness check
+}
+type tuiPaginationErrMsg struct {
+	err error
+	seq int // fetch sequence number for staleness check
+}
 type tuiUpdateCheckMsg struct {
 	version    string // Latest version if available, empty if up to date
 	isDevBuild bool   // True if running a dev build
@@ -561,12 +567,12 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())
 		resp, err := m.client.Get(url)
 		if err != nil {
-			return tuiJobsErrMsg{err: err}
+			return tuiJobsErrMsg{err: err, seq: seq}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiJobsErrMsg{err: fmt.Errorf("fetch jobs: %s", resp.Status)}
+			return tuiJobsErrMsg{err: fmt.Errorf("fetch jobs: %s", resp.Status), seq: seq}
 		}
 
 		var result struct {
@@ -575,7 +581,7 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 			Stats   storage.JobStats    `json:"stats"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return tuiJobsErrMsg{err: err}
+			return tuiJobsErrMsg{err: err, seq: seq}
 		}
 		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false, seq: seq, stats: result.Stats}
 	}
@@ -604,12 +610,12 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())
 		resp, err := m.client.Get(url)
 		if err != nil {
-			return tuiPaginationErrMsg{err: err}
+			return tuiPaginationErrMsg{err: err, seq: seq}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiPaginationErrMsg{err: fmt.Errorf("fetch more jobs: %s", resp.Status)}
+			return tuiPaginationErrMsg{err: fmt.Errorf("fetch more jobs: %s", resp.Status), seq: seq}
 		}
 
 		var result struct {
@@ -617,7 +623,7 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 			HasMore bool                `json:"has_more"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return tuiPaginationErrMsg{err: err}
+			return tuiPaginationErrMsg{err: err, seq: seq}
 		}
 		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: true, seq: seq}
 	}
@@ -3113,6 +3119,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentView = tuiViewCommitMsg
 
 	case tuiJobsErrMsg:
+		// Discard stale error responses from superseded fetches
+		if msg.seq < m.fetchSeq {
+			return m, nil
+		}
 		m.err = msg.err
 		m.loadingJobs = false // Clear loading state so refreshes can resume
 
@@ -3128,6 +3138,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiPaginationErrMsg:
+		// Discard stale error responses from superseded fetches
+		if msg.seq < m.fetchSeq {
+			return m, nil
+		}
 		m.err = msg.err
 		m.loadingMore = false // Clear loading state so user can retry pagination
 		m.paginateNav = 0
@@ -3607,7 +3621,26 @@ func commandLineForJob(job *storage.ReviewJob) string {
 	if reasoning == "" {
 		reasoning = "thorough"
 	}
-	return a.WithReasoning(agent.ParseReasoningLevel(reasoning)).WithAgentic(job.Agentic).WithModel(job.Model).CommandLine()
+	cmd := a.WithReasoning(agent.ParseReasoningLevel(reasoning)).WithAgentic(job.Agentic).WithModel(job.Model).CommandLine()
+	return stripControlChars(cmd)
+}
+
+// stripControlChars removes C0/C1 control characters (especially ANSI escape
+// sequences) from a string to prevent terminal escape injection.
+func stripControlChars(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		// Allow tab and newline, strip all other C0 (\x00-\x1f) and C1 (\x80-\x9f) controls
+		if r == '\t' || r == '\n' {
+			b.WriteRune(r)
+		} else if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+			continue
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // wrapText wraps text to the specified width, preserving existing line breaks
