@@ -249,7 +249,10 @@ type tuiReviewMsg struct {
 	jobID      int64              // The job ID that was requested (for race condition detection)
 	branchName string             // Pre-computed branch name (empty if not applicable)
 }
-type tuiPromptMsg *storage.Review
+type tuiPromptMsg struct {
+	review *storage.Review
+	jobID  int64 // The job ID that was requested (for stale response detection)
+}
 type tuiAddressedMsg bool
 type tuiAddressedResultMsg struct {
 	jobID      int64 // job ID for queue view rollback
@@ -664,8 +667,9 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 
 	return func() tea.Msg {
 		// Build URL with optional branch filter (URL-encoded)
+		// Skip sending branch when "(none)" sentinel - it's a client-side filter
 		reposURL := serverAddr + "/api/repos"
-		if activeBranchFilter != "" {
+		if activeBranchFilter != "" && activeBranchFilter != "(none)" {
 			params := neturl.Values{}
 			params.Set("branch", activeBranchFilter)
 			reposURL += "?" + params.Encode()
@@ -973,7 +977,7 @@ func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
 		if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
 			return tuiErrMsg(err)
 		}
-		return tuiPromptMsg(&review)
+		return tuiPromptMsg{review: &review, jobID: jobID}
 	}
 }
 
@@ -1356,6 +1360,32 @@ func (m *tuiModel) findPrevViewableJob() int {
 		job := m.jobs[i]
 		if (job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed) &&
 			m.isJobVisible(job) {
+			return i
+		}
+	}
+	return -1
+}
+
+// findNextPromptableJob finds the next job that has a viewable prompt (done or running with prompt).
+// Respects active filters. Returns the index or -1 if none found.
+func (m *tuiModel) findNextPromptableJob() int {
+	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
+		job := m.jobs[i]
+		if m.isJobVisible(job) &&
+			(job.Status == storage.JobStatusDone || (job.Status == storage.JobStatusRunning && job.Prompt != "")) {
+			return i
+		}
+	}
+	return -1
+}
+
+// findPrevPromptableJob finds the previous job that has a viewable prompt (done or running with prompt).
+// Respects active filters. Returns the index or -1 if none found.
+func (m *tuiModel) findPrevPromptableJob() int {
+	for i := m.selectedIdx - 1; i >= 0; i-- {
+		job := m.jobs[i]
+		if m.isJobVisible(job) &&
+			(job.Status == storage.JobStatusDone || (job.Status == storage.JobStatusRunning && job.Prompt != "")) {
 			return i
 		}
 	}
@@ -1959,11 +1989,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentView = tuiViewQueue
 				m.currentReview = nil
 				m.reviewScroll = 0
+				m.paginateNav = 0
 				m.normalizeSelectionIfHidden()
 				return m, nil
 			}
 			if m.currentView == tuiViewPrompt {
 				// Go back to where we came from
+				m.paginateNav = 0
 				if m.promptFromQueue {
 					m.currentView = tuiViewQueue
 					m.currentReview = nil
@@ -2060,7 +2092,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.currentView == tuiViewPrompt {
 				// Navigate to previous review's prompt (lower index)
-				prevIdx := m.findPrevViewableJob()
+				prevIdx := m.findPrevPromptableJob()
 				if prevIdx >= 0 {
 					m.selectedIdx = prevIdx
 					m.updateSelectedJobID()
@@ -2148,7 +2180,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.currentView == tuiViewPrompt {
 				// Navigate to next review's prompt (higher index)
-				nextIdx := m.findNextViewableJob()
+				nextIdx := m.findNextPromptableJob()
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
@@ -2434,6 +2466,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Re-fetch: enabling adds server-side filter, disabling needs
 				// unfiltered data that may not be in current result set
 				m.fetchSeq++
+				m.loadingJobs = true
 				return m, m.fetchJobs()
 			}
 
@@ -2564,6 +2597,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentView = tuiViewQueue
 				m.currentReview = nil
 				m.reviewScroll = 0
+				m.paginateNav = 0
 				m.normalizeSelectionIfHidden()
 				// If hiding addressed, trigger refresh to ensure clean state
 				// (avoids timing issues where addressed job briefly appears)
@@ -2573,6 +2607,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.currentView == tuiViewPrompt {
 				// Go back to where we came from
+				m.paginateNav = 0
 				if m.promptFromQueue {
 					m.currentView = tuiViewQueue
 					m.currentReview = nil
@@ -2624,9 +2659,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiJobsMsg:
-		// Discard stale responses from before a filter change
+		// Discard stale responses from before a filter change.
+		// Clear loadingMore since the old pagination request is done (even though stale).
+		// Do NOT clear loadingJobs - the replacement fetch is still in flight.
 		if msg.seq < m.fetchSeq {
 			m.paginateNav = 0
+			m.loadingMore = false
 			return m, nil
 		}
 
@@ -2772,16 +2810,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Auto-navigate after pagination triggered from review/prompt view
-		if m.paginateNav != 0 {
+		if m.paginateNav != 0 && m.currentView == m.paginateNav {
 			nav := m.paginateNav
 			m.paginateNav = 0
-			nextIdx := m.findNextViewableJob()
-			if nextIdx >= 0 {
-				m.selectedIdx = nextIdx
-				m.updateSelectedJobID()
-				job := m.jobs[nextIdx]
-				if nav == tuiViewReview {
+			if nav == tuiViewReview {
+				nextIdx := m.findNextViewableJob()
+				if nextIdx >= 0 {
+					m.selectedIdx = nextIdx
+					m.updateSelectedJobID()
 					m.reviewScroll = 0
+					job := m.jobs[nextIdx]
 					if job.Status == storage.JobStatusDone {
 						return m, m.fetchReview(job.ID)
 					} else if job.Status == storage.JobStatusFailed {
@@ -2792,8 +2830,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Job:    &job,
 						}
 					}
-				} else if nav == tuiViewPrompt {
+				}
+			} else if nav == tuiViewPrompt {
+				nextIdx := m.findNextPromptableJob()
+				if nextIdx >= 0 {
+					m.selectedIdx = nextIdx
+					m.updateSelectedJobID()
 					m.promptScroll = 0
+					job := m.jobs[nextIdx]
 					if job.Status == storage.JobStatusDone {
 						return m, m.fetchReviewForPrompt(job.ID)
 					} else if job.Status == storage.JobStatusRunning && job.Prompt != "" {
@@ -2805,6 +2849,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+		} else {
+			m.paginateNav = 0
 		}
 
 	case tuiStatusMsg:
@@ -2842,8 +2888,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reviewScroll = 0
 
 	case tuiPromptMsg:
+		// Ignore stale responses from rapid navigation
+		if msg.jobID != m.selectedJobID {
+			return m, nil
+		}
 		m.consecutiveErrors = 0 // Reset on successful fetch
-		m.currentReview = msg
+		m.currentReview = msg.review
 		m.currentView = tuiViewPrompt
 		m.promptScroll = 0
 
@@ -3059,6 +3109,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiPaginationErrMsg:
 		m.err = msg.err
 		m.loadingMore = false // Clear loading state so user can retry pagination
+		m.paginateNav = 0
 
 		// Only count connection errors for reconnection
 		if isConnectionError(msg.err) {
@@ -3521,8 +3572,6 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 		styledStatus, verdict, enqueued, elapsed, addr)
 }
 
-// wrapText wraps text to the specified width, preserving existing line breaks
-// and breaking at word boundaries when possible
 // commandLineForJob computes the representative agent command line from job parameters.
 // Returns empty string if the agent is not available.
 func commandLineForJob(job *storage.ReviewJob) string {
@@ -3540,6 +3589,8 @@ func commandLineForJob(job *storage.ReviewJob) string {
 	return a.WithReasoning(agent.ParseReasoningLevel(reasoning)).WithAgentic(job.Agentic).WithModel(job.Model).CommandLine()
 }
 
+// wrapText wraps text to the specified width, preserving existing line breaks
+// and breaking at word boundaries when possible.
 func wrapText(text string, width int) []string {
 	if width <= 0 {
 		width = 100
@@ -3767,8 +3818,8 @@ func (m tuiModel) renderPromptView() string {
 	headerLines := 1
 	if cmdLine := commandLineForJob(review.Job); cmdLine != "" {
 		cmdText := "Command: " + cmdLine
-		if m.width > 0 && len(cmdText) > m.width {
-			cmdText = cmdText[:m.width-1] + "…"
+		if m.width > 0 && runewidth.StringWidth(cmdText) > m.width {
+			cmdText = runewidth.Truncate(cmdText, m.width-1, "…")
 		}
 		b.WriteString(tuiStatusStyle.Render(cmdText))
 		b.WriteString("\x1b[K\n")
