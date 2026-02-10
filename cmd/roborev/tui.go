@@ -203,6 +203,7 @@ type tuiModel struct {
 
 	// Help view state
 	helpFromView tuiView // View to return to after closing help
+	helpScroll   int     // Scroll position in help view
 
 	// Tail view state
 	tailJobID     int64      // Job being tailed
@@ -1658,7 +1659,7 @@ func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 // queueVisibleRows returns how many queue rows fit in the current terminal.
 func (m tuiModel) queueVisibleRows() int {
 	// Keep in sync with renderQueueView reserved lines.
-	const reservedLines = 9
+	const reservedLines = 8
 	visibleRows := m.height - reservedLines
 	if visibleRows < 3 {
 		visibleRows = 3
@@ -2037,6 +2038,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.promptScroll = 0
 			} else if m.currentView == tuiViewCommitMsg {
 				m.commitMsgScroll = 0
+			} else if m.currentView == tuiViewHelp {
+				m.helpScroll = 0
 			}
 
 		case "up":
@@ -2062,6 +2065,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentView == tuiViewCommitMsg {
 				if m.commitMsgScroll > 0 {
 					m.commitMsgScroll--
+				}
+			} else if m.currentView == tuiViewHelp {
+				if m.helpScroll > 0 {
+					m.helpScroll--
 				}
 			}
 
@@ -2143,6 +2150,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.promptScroll++
 			} else if m.currentView == tuiViewCommitMsg {
 				m.commitMsgScroll++
+			} else if m.currentView == tuiViewHelp {
+				m.helpScroll++
 			}
 
 		case "j", "left":
@@ -2230,6 +2239,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentView == tuiViewPrompt {
 				m.promptScroll = max(0, m.promptScroll-pageSize)
 				return m, tea.ClearScreen
+			} else if m.currentView == tuiViewHelp {
+				m.helpScroll = max(0, m.helpScroll-pageSize)
 			}
 
 		case "pgdown":
@@ -2568,9 +2579,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentView = m.helpFromView
 				return m, nil
 			}
-			if m.currentView == tuiViewQueue || m.currentView == tuiViewReview {
+			if m.currentView == tuiViewQueue || m.currentView == tuiViewReview || m.currentView == tuiViewPrompt || m.currentView == tuiViewTail {
 				m.helpFromView = m.currentView
 				m.currentView = tuiViewHelp
+				m.helpScroll = 0
 				return m, nil
 			}
 
@@ -3271,8 +3283,8 @@ func (m tuiModel) renderQueueView() string {
 	visibleSelectedIdx := m.getVisibleSelectedIdx()
 
 	// Calculate visible job range based on terminal height
-	// Reserve lines for: title(1) + status(2) + header(2) + scroll indicator(1) + status/update(1) + help(2)
-	reservedLines := 9
+	// Reserve lines for: title(1) + status(2) + header(2) + scroll indicator(1) + status/update(1) + help(1)
+	reservedLines := 8
 	visibleRows := m.height - reservedLines
 	if visibleRows < 3 {
 		visibleRows = 3 // Show at least 3 jobs
@@ -3401,15 +3413,9 @@ func (m tuiModel) renderQueueView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Help (two lines)
-	helpLine1 := "↑/↓: navigate | g: top | enter: review | y: copy | m: commit msg"
-	helpLine2 := "f: filter | b: branch | h: hide addressed | a: toggle addressed | x: cancel | q: quit | ?: help"
-	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" || m.hideAddressed {
-		helpLine2 += " | esc: clear filters"
-	}
-	b.WriteString(tuiHelpStyle.Render(helpLine1))
-	b.WriteString("\x1b[K\n") // Clear to end of line
-	b.WriteString(tuiHelpStyle.Render(helpLine2))
+	// Help
+	helpLine := "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | ?: help | q: quit"
+	b.WriteString(tuiHelpStyle.Render(helpLine))
 	b.WriteString("\x1b[K") // Clear to end of line (no newline at end)
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -3741,7 +3747,7 @@ func (m tuiModel) renderReviewView() string {
 	}
 
 	// Help text wraps at narrow terminals
-	const helpText = "↑/↓: scroll | j/k: prev/next | a: addressed | y: copy | m: commit msg | ?: help | esc/q: back"
+	const helpText = "↑/↓: scroll | ←/→: prev/next | a: addressed | y: copy | ?: help | esc: back"
 	helpLines := 1
 	if m.width > 0 && m.width < len(helpText) {
 		helpLines = (len(helpText) + m.width - 1) / m.width
@@ -3885,7 +3891,7 @@ func (m tuiModel) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	b.WriteString(tuiHelpStyle.Render("up/down: scroll | left/right: prev/next | p: back | esc/q: back"))
+	b.WriteString(tuiHelpStyle.Render("↑/↓: scroll | ←/→: prev/next | p: toggle prompt/review | ?: help | esc: back"))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -4442,27 +4448,25 @@ func (m tuiModel) renderHelpView() string {
 		keys  []struct{ key, desc string }
 	}{
 		{
-			group: "Navigation",
+			group: "Queue View",
 			keys: []struct{ key, desc string }{
-				{"↑/k", "Move up / previous review"},
-				{"↓/j", "Move down / next review"},
+				{"↑/k, ↓/j", "Navigate jobs"},
 				{"g/Home", "Jump to top"},
-				{"PgUp/PgDn", "Scroll by page"},
-				{"enter", "View review details"},
-				{"esc", "Go back / clear filter"},
-				{"q", "Quit"},
+				{"PgUp/PgDn", "Page through list"},
+				{"enter", "View review"},
+				{"p", "View prompt"},
+				{"t", "Tail running job output"},
+				{"m", "View commit message"},
 			},
 		},
 		{
 			group: "Actions",
 			keys: []struct{ key, desc string }{
-				{"a", "Mark as addressed"},
+				{"a", "Toggle addressed"},
 				{"c", "Add comment"},
-				{"t", "Tail running job output"},
-				{"x", "Cancel job"},
-				{"r", "Re-run job"},
 				{"y", "Copy review to clipboard"},
-				{"m", "Show commit message(s)"},
+				{"x", "Cancel running/queued job"},
+				{"r", "Re-run completed/failed job"},
 			},
 		},
 		{
@@ -4470,51 +4474,86 @@ func (m tuiModel) renderHelpView() string {
 			keys: []struct{ key, desc string }{
 				{"f", "Filter by repository"},
 				{"b", "Filter by branch"},
-				{"h", "Toggle hide addressed"},
+				{"h", "Toggle hide addressed/failed"},
+				{"esc", "Clear filters (one at a time)"},
 			},
 		},
 		{
-			group: "Review View",
+			group: "Review / Prompt View",
 			keys: []struct{ key, desc string }{
-				{"p", "View prompt"},
 				{"↑/↓", "Scroll content"},
 				{"←/→", "Previous / next review"},
+				{"PgUp/PgDn", "Page through content"},
+				{"p", "Toggle between review and prompt"},
+				{"a", "Toggle addressed"},
+				{"c", "Add comment"},
+				{"y", "Copy review to clipboard"},
+				{"m", "View commit message"},
+				{"esc/q", "Back to queue"},
+			},
+		},
+		{
+			group: "Tail View",
+			keys: []struct{ key, desc string }{
+				{"↑/↓", "Scroll output"},
+				{"PgUp/PgDn", "Page through output"},
+				{"g", "Toggle follow mode / jump to top"},
+				{"x", "Cancel job"},
+				{"esc/q", "Back to queue"},
+			},
+		},
+		{
+			group: "General",
+			keys: []struct{ key, desc string }{
+				{"?", "Toggle this help"},
+				{"q", "Quit (from queue view)"},
 			},
 		},
 	}
 
-	// Calculate visible area
-	// Reserve: title(1) + blank(1) + padding + help(1)
+	// Build all lines first, then apply scroll
+	var allLines []string
+	for i, g := range shortcuts {
+		allLines = append(allLines, "\x00group:"+g.group) // marker for group header rendering
+		for _, k := range g.keys {
+			allLines = append(allLines, fmt.Sprintf("  %-14s %s", k.key, k.desc))
+		}
+		if i < len(shortcuts)-1 {
+			allLines = append(allLines, "") // blank line between groups
+		}
+	}
+
+	// Calculate visible area: title(1) + blank(1) + help(1)
 	reservedLines := 3
 	visibleLines := m.height - reservedLines
 	if visibleLines < 5 {
 		visibleLines = 5
 	}
 
+	// Clamp scroll
+	maxScroll := len(allLines) - visibleLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll := m.helpScroll
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+
+	// Render visible window
+	end := scroll + visibleLines
+	if end > len(allLines) {
+		end = len(allLines)
+	}
 	linesWritten := 0
-	for _, g := range shortcuts {
-		if linesWritten >= visibleLines-2 {
-			break
+	for _, line := range allLines[scroll:end] {
+		if strings.HasPrefix(line, "\x00group:") {
+			b.WriteString(tuiSelectedStyle.Render(strings.TrimPrefix(line, "\x00group:")))
+		} else {
+			b.WriteString(line)
 		}
-		// Group header
-		b.WriteString(tuiSelectedStyle.Render(g.group))
 		b.WriteString("\x1b[K\n")
 		linesWritten++
-
-		for _, k := range g.keys {
-			if linesWritten >= visibleLines {
-				break
-			}
-			line := fmt.Sprintf("  %-12s %s", k.key, k.desc)
-			b.WriteString(line)
-			b.WriteString("\x1b[K\n")
-			linesWritten++
-		}
-		// Blank line between groups
-		if linesWritten < visibleLines {
-			b.WriteString("\x1b[K\n")
-			linesWritten++
-		}
 	}
 
 	// Pad remaining space
@@ -4523,7 +4562,8 @@ func (m tuiModel) renderHelpView() string {
 		linesWritten++
 	}
 
-	b.WriteString(tuiHelpStyle.Render("esc/q/?: close"))
+	helpHint := "↑/↓: scroll | esc/q/?: close"
+	b.WriteString(tuiHelpStyle.Render(helpHint))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen
 

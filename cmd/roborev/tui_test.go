@@ -3468,13 +3468,13 @@ func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) 
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
-	m.height = 29 // queueVisibleRows = 20
+	m.height = 29 // queueVisibleRows = 21
 	m.loadingJobs = true
 
-	// 20 visible rows already available (plus hidden jobs).
-	jobs := make([]storage.ReviewJob, 0, 25)
+	// 21 visible rows already available (plus hidden jobs).
+	jobs := make([]storage.ReviewJob, 0, 26)
 	var id int64 = 300
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 21; i++ {
 		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))))
 		id--
 	}
@@ -3489,8 +3489,8 @@ func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) 
 		append:  false,
 	})
 
-	if got := len(m2.getVisibleJobs()); got < 20 {
-		t.Fatalf("Expected at least 20 visible jobs, got %d", got)
+	if got := len(m2.getVisibleJobs()); got < 21 {
+		t.Fatalf("Expected at least 21 visible jobs, got %d", got)
 	}
 	if m2.loadingMore {
 		t.Error("loadingMore should remain false when viewport is already filled")
