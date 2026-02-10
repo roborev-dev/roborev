@@ -1675,6 +1675,14 @@ func (m tuiModel) queueVisibleRows() int {
 	return visibleRows
 }
 
+// canPaginate returns true if more jobs can be loaded via pagination.
+// False when already loading, using client-side filters that load all jobs,
+// or when there are no more jobs to fetch.
+func (m tuiModel) canPaginate() bool {
+	return m.hasMore && !m.loadingMore && !m.loadingJobs &&
+		len(m.activeRepoFilter) <= 1 && m.activeBranchFilter != "(none)"
+}
+
 // getVisibleSelectedIdx returns the index within visible jobs for the current selection
 // Returns -1 if selectedIdx is -1 or doesn't match any visible job
 func (m tuiModel) getVisibleSelectedIdx() int {
@@ -2147,7 +2155,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
+				} else if m.canPaginate() {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -2174,7 +2182,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if nextIdx >= 0 {
 					m.selectedIdx = nextIdx
 					m.updateSelectedJobID()
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
+				} else if m.canPaginate() {
 					// At bottom with more jobs available - load them
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
@@ -2197,7 +2205,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Job:    &job,
 						}
 					}
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
+				} else if m.canPaginate() {
 					m.loadingMore = true
 					m.paginateNav = tuiViewReview
 					return m, m.fetchMoreJobs()
@@ -2223,7 +2231,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Job:    &job,
 						}
 					}
-				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
+				} else if m.canPaginate() {
 					m.loadingMore = true
 					m.paginateNav = tuiViewPrompt
 					return m, m.fetchMoreJobs()
@@ -2271,7 +2279,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.updateSelectedJobID()
 				// If we hit the end, try to load more
-				if reachedEnd && m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
+				if reachedEnd && m.canPaginate() {
 					m.loadingMore = true
 					return m, m.fetchMoreJobs()
 				}
@@ -2841,11 +2849,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Automatically paginate until we can fill visible rows or exhaust data.
 		if m.currentView == tuiViewQueue &&
 			m.hideAddressed &&
-			m.hasMore &&
-			!m.loadingMore &&
-			!m.loadingJobs &&
-			len(m.activeRepoFilter) <= 1 &&
-			m.activeBranchFilter != "(none)" &&
+			m.canPaginate() &&
 			len(m.getVisibleJobs()) < m.queueVisibleRows() {
 			m.loadingMore = true
 			return m, m.fetchMoreJobs()
