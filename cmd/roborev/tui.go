@@ -2046,8 +2046,26 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.flashView = tuiViewReview
 				}
 			} else if m.currentView == tuiViewPrompt {
-				if m.promptScroll > 0 {
-					m.promptScroll--
+				// Navigate to previous review's prompt (lower index)
+				prevIdx := m.findPrevViewableJob()
+				if prevIdx >= 0 {
+					m.selectedIdx = prevIdx
+					m.updateSelectedJobID()
+					m.promptScroll = 0
+					job := m.jobs[prevIdx]
+					if job.Status == storage.JobStatusDone {
+						return m, m.fetchReviewForPrompt(job.ID)
+					} else if job.Status == storage.JobStatusRunning && job.Prompt != "" {
+						m.currentReview = &storage.Review{
+							Agent:  job.Agent,
+							Prompt: job.Prompt,
+							Job:    &job,
+						}
+					}
+				} else {
+					m.flashMessage = "No newer review"
+					m.flashExpiresAt = time.Now().Add(2 * time.Second)
+					m.flashView = tuiViewPrompt
 				}
 			}
 
@@ -2112,7 +2130,27 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.flashView = tuiViewReview
 				}
 			} else if m.currentView == tuiViewPrompt {
-				m.promptScroll++
+				// Navigate to next review's prompt (higher index)
+				nextIdx := m.findNextViewableJob()
+				if nextIdx >= 0 {
+					m.selectedIdx = nextIdx
+					m.updateSelectedJobID()
+					m.promptScroll = 0
+					job := m.jobs[nextIdx]
+					if job.Status == storage.JobStatusDone {
+						return m, m.fetchReviewForPrompt(job.ID)
+					} else if job.Status == storage.JobStatusRunning && job.Prompt != "" {
+						m.currentReview = &storage.Review{
+							Agent:  job.Agent,
+							Prompt: job.Prompt,
+							Job:    &job,
+						}
+					}
+				} else {
+					m.flashMessage = "No older review"
+					m.flashExpiresAt = time.Now().Add(2 * time.Second)
+					m.flashView = tuiViewPrompt
+				}
 			}
 
 		case "pgup":
@@ -3734,7 +3772,7 @@ func (m tuiModel) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	b.WriteString(tuiHelpStyle.Render("up/down: scroll | p: back to review | esc/q: back"))
+	b.WriteString(tuiHelpStyle.Render("up/down: scroll | left/right: prev/next | p: back | esc/q: back"))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
