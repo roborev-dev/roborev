@@ -136,11 +136,12 @@ type tuiModel struct {
 	versionMismatch  bool   // True if daemon version doesn't match TUI version
 
 	// Pagination state
-	hasMore        bool // true if there are more jobs to load
-	loadingMore    bool // true if currently loading more jobs (pagination)
-	loadingJobs    bool // true if currently loading jobs (full refresh)
-	heightDetected bool // true after first WindowSizeMsg (real terminal height known)
-	fetchSeq       int  // incremented on filter changes; stale fetch responses are discarded
+	hasMore        bool    // true if there are more jobs to load
+	loadingMore    bool    // true if currently loading more jobs (pagination)
+	loadingJobs    bool    // true if currently loading jobs (full refresh)
+	heightDetected bool    // true after first WindowSizeMsg (real terminal height known)
+	fetchSeq       int     // incremented on filter changes; stale fetch responses are discarded
+	paginateNav    tuiView // non-zero: auto-navigate in this view after pagination loads
 
 	// Repo filter modal state
 	filterRepos       []repoFilterItem // Available repos with counts
@@ -2136,6 +2137,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Job:    &job,
 						}
 					}
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
+					m.loadingMore = true
+					m.paginateNav = tuiViewReview
+					return m, m.fetchMoreJobs()
 				} else {
 					m.flashMessage = "No older review"
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
@@ -2158,6 +2163,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Job:    &job,
 						}
 					}
+				} else if m.hasMore && !m.loadingMore && !m.loadingJobs && len(m.activeRepoFilter) <= 1 {
+					m.loadingMore = true
+					m.paginateNav = tuiViewPrompt
+					return m, m.fetchMoreJobs()
 				} else {
 					m.flashMessage = "No older review"
 					m.flashExpiresAt = time.Now().Add(2 * time.Second)
@@ -2617,6 +2626,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiJobsMsg:
 		// Discard stale responses from before a filter change
 		if msg.seq < m.fetchSeq {
+			m.paginateNav = 0
 			return m, nil
 		}
 
@@ -2759,6 +2769,42 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			len(m.getVisibleJobs()) < m.queueVisibleRows() {
 			m.loadingMore = true
 			return m, m.fetchMoreJobs()
+		}
+
+		// Auto-navigate after pagination triggered from review/prompt view
+		if m.paginateNav != 0 {
+			nav := m.paginateNav
+			m.paginateNav = 0
+			nextIdx := m.findNextViewableJob()
+			if nextIdx >= 0 {
+				m.selectedIdx = nextIdx
+				m.updateSelectedJobID()
+				job := m.jobs[nextIdx]
+				if nav == tuiViewReview {
+					m.reviewScroll = 0
+					if job.Status == storage.JobStatusDone {
+						return m, m.fetchReview(job.ID)
+					} else if job.Status == storage.JobStatusFailed {
+						m.currentBranch = ""
+						m.currentReview = &storage.Review{
+							Agent:  job.Agent,
+							Output: "Job failed:\n\n" + job.Error,
+							Job:    &job,
+						}
+					}
+				} else if nav == tuiViewPrompt {
+					m.promptScroll = 0
+					if job.Status == storage.JobStatusDone {
+						return m, m.fetchReviewForPrompt(job.ID)
+					} else if job.Status == storage.JobStatusRunning && job.Prompt != "" {
+						m.currentReview = &storage.Review{
+							Agent:  job.Agent,
+							Prompt: job.Prompt,
+							Job:    &job,
+						}
+					}
+				}
+			}
 		}
 
 	case tuiStatusMsg:
