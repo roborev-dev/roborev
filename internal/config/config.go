@@ -93,6 +93,7 @@ type Config struct {
 
 	// UI preferences
 	HideAddressedByDefault bool `toml:"hide_addressed_by_default"`
+	AutoFilterRepo         bool `toml:"auto_filter_repo"`
 }
 
 // CIConfig holds configuration for the CI poller that watches GitHub PRs

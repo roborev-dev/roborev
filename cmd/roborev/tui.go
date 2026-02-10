@@ -349,12 +349,22 @@ func newTuiModel(serverAddr string) tuiModel {
 		daemonVersion = info.Version
 	}
 
-	// Load hideAddressed preference from config
+	// Load preferences from config
 	hideAddressed := false
+	autoFilterRepo := false
 	if cfg, err := config.LoadGlobal(); err == nil {
 		hideAddressed = cfg.HideAddressedByDefault
+		autoFilterRepo = cfg.AutoFilterRepo
 	}
 	// Note: Silently ignore config load errors - TUI should work with defaults
+
+	// Auto-filter to current repo if enabled
+	var activeRepoFilter []string
+	if autoFilterRepo {
+		if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
+			activeRepoFilter = []string{repoRoot}
+		}
+	}
 
 	return tuiModel{
 		serverAddr:             serverAddr,
@@ -366,6 +376,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		height:                 24,
 		loadingJobs:            true, // Init() calls fetchJobs, so mark as loading
 		hideAddressed:          hideAddressed,
+		activeRepoFilter:       activeRepoFilter,
 		displayNames:           make(map[string]string),      // Cache display names to avoid disk reads on render
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
@@ -497,30 +508,40 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 	currentJobCount := len(m.jobs)
 
 	return func() tea.Msg {
-		// Determine limit:
-		// - No limit (limit=0) when filtering to show full repo/branch/addressed history
-		// - If we've paginated beyond visible area, maintain current view size
-		// - Otherwise fetch enough to fill visible area
-		var url string
+		// Build URL with server-side filters where possible, falling back to
+		// limit=0 (no pagination) only when client-side filtering is required.
+		params := neturl.Values{}
+
+		// Repo filter: single repo can use API filter; multiple repos need client-side
+		needsAllJobs := false
 		if len(m.activeRepoFilter) == 1 {
-			// Single repo filter - use API filter
-			url = fmt.Sprintf("%s/api/jobs?limit=0&repo=%s", m.serverAddr, neturl.QueryEscape(m.activeRepoFilter[0]))
+			params.Set("repo", m.activeRepoFilter[0])
 		} else if len(m.activeRepoFilter) > 1 {
-			// Multiple repos (shared display name) - fetch all, filter client-side
-			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
-		} else if m.activeBranchFilter != "" {
-			// Fetch all jobs when filtering by branch - client-side filtering needs full dataset
-			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
-		} else if m.hideAddressed {
-			// Fetch all jobs when hiding addressed - client-side filtering needs full dataset
-			url = fmt.Sprintf("%s/api/jobs?limit=0", m.serverAddr)
+			needsAllJobs = true // Multiple repos (shared display name) - filter client-side
+		}
+
+		// Branch filter: use server-side when available
+		if m.activeBranchFilter != "" {
+			params.Set("branch", m.activeBranchFilter)
+		}
+
+		// Addressed filter: use server-side to avoid fetching all jobs
+		if m.hideAddressed {
+			params.Set("addressed", "false")
+		}
+
+		// Set limit: use pagination unless we need client-side filtering (multi-repo)
+		if needsAllJobs {
+			params.Set("limit", "0")
 		} else {
 			limit := visibleRows
 			if currentJobCount > visibleRows {
 				limit = currentJobCount // Maintain paginated view on refresh
 			}
-			url = fmt.Sprintf("%s/api/jobs?limit=%d", m.serverAddr, limit)
+			params.Set("limit", fmt.Sprintf("%d", limit))
 		}
+
+		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())
 		resp, err := m.client.Get(url)
 		if err != nil {
 			return tuiJobsErrMsg{err: err}
@@ -544,12 +565,24 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 
 func (m tuiModel) fetchMoreJobs() tea.Cmd {
 	return func() tea.Msg {
-		// Only fetch more when not filtering (filtered view loads all)
-		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-			return nil
+		// Only fetch more when not doing client-side filtering that loads all jobs
+		if len(m.activeRepoFilter) > 1 {
+			return nil // Multi-repo filter loads everything
 		}
 		offset := len(m.jobs)
-		url := fmt.Sprintf("%s/api/jobs?limit=50&offset=%d", m.serverAddr, offset)
+		params := neturl.Values{}
+		params.Set("limit", "50")
+		params.Set("offset", fmt.Sprintf("%d", offset))
+		if len(m.activeRepoFilter) == 1 {
+			params.Set("repo", m.activeRepoFilter[0])
+		}
+		if m.activeBranchFilter != "" {
+			params.Set("branch", m.activeBranchFilter)
+		}
+		if m.hideAddressed {
+			params.Set("addressed", "false")
+		}
+		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())
 		resp, err := m.client.Get(url)
 		if err != nil {
 			return tuiPaginationErrMsg{err: err}
@@ -2335,7 +2368,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				if m.hideAddressed {
-					// Fetch all jobs when enabling filter (need full dataset for client-side filtering)
+					// Re-fetch with server-side addressed filter
 					return m, m.fetchJobs()
 				}
 			}
@@ -3624,12 +3657,21 @@ func (m tuiModel) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
+	// Show command line if available (dimmed, below title)
+	headerLines := 1
+	if review.CommandLine != "" {
+		cmdLine := tuiStatusStyle.Render("Command: " + review.CommandLine)
+		b.WriteString(cmdLine)
+		b.WriteString("\x1b[K\n")
+		headerLines++
+	}
+
 	// Wrap text to terminal width minus padding
 	wrapWidth := max(20, min(m.width-4, 200))
 	lines := wrapText(review.Prompt, wrapWidth)
 
-	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)
-	visibleLines := m.height - 4
+	// Reserve: title(1) + command(0-1) + scroll indicator(1) + help(1) + margin(1)
+	visibleLines := m.height - 3 - headerLines
 	if visibleLines < 1 {
 		visibleLines = 1
 	}
