@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,7 +65,7 @@ func (m tuiModel) postJSON(path string, in any, out any) error {
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := m.client.Post(m.serverAddr+path, "application/json", strings.NewReader(string(body)))
+	resp, err := m.client.Post(m.serverAddr+path, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
