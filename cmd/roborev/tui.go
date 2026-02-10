@@ -2701,8 +2701,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		wasLoadingMore := m.loadingMore
-		m.loadingMore = false
+		// Only clear loadingMore on append (pagination complete) or when no
+		// pagination navigation is pending. Keeping loadingMore=true while
+		// paginateNav is set prevents ticks from starting new refreshes
+		// that would race and clear paginateNav.
+		if msg.append || m.paginateNav == 0 {
+			m.loadingMore = false
+		}
 		if !msg.append {
 			m.loadingJobs = false
 		}
@@ -2887,10 +2892,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		} else if !msg.append && !wasLoadingMore {
-			// Only clear paginateNav on non-append (refresh) responses when
-			// no pagination was in flight. If pagination was pending
-			// (wasLoadingMore), preserve intent for the append response.
+		} else if !msg.append && !m.loadingMore {
+			// Clear paginateNav on non-append (refresh) responses when no
+			// pagination is in flight. If loadingMore is still set (pagination
+			// pending), preserve intent for the append response.
 			m.paginateNav = 0
 		}
 

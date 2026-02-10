@@ -105,6 +105,16 @@ func TestParseVerdict(t *testing.T) {
 			output: "2. **Review Findings**: No issues found, but consider refactoring.",
 			want:   "F",
 		},
+		{
+			name:   "verdict label no space after colon",
+			output: "**Verdict**:No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "review result label no space after colon",
+			output: "**Review Result**:No issues found.",
+			want:   "P",
+		},
 		// Markdown formatting
 		{
 			name:   "bold no issues found",

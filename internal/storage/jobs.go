@@ -94,16 +94,19 @@ func stripListMarker(s string) string {
 // Handles "Review Findings: No issues found." and similar patterns.
 func stripFieldLabel(s string) string {
 	labels := []string{
-		"review findings: ",
-		"findings: ",
-		"review result: ",
-		"result: ",
-		"verdict: ",
-		"review: ",
+		"review findings",
+		"findings",
+		"review result",
+		"result",
+		"verdict",
+		"review",
 	}
 	for _, label := range labels {
 		if strings.HasPrefix(s, label) {
-			return strings.TrimSpace(s[len(label):])
+			rest := s[len(label):]
+			if len(rest) > 0 && rest[0] == ':' {
+				return strings.TrimSpace(rest[1:])
+			}
 		}
 	}
 	return s
