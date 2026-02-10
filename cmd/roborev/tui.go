@@ -548,8 +548,10 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 			needsAllJobs = true
 		}
 
-		// Addressed filter: use server-side to avoid fetching all jobs
-		if m.hideAddressed {
+		// Addressed filter: use server-side to avoid fetching all jobs.
+		// Skip for client-side filtered views (needsAllJobs) so we get
+		// all jobs for accurate client-side metrics counting.
+		if m.hideAddressed && !needsAllJobs {
 			params.Set("addressed", "false")
 		}
 
@@ -2162,7 +2164,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentView == tuiViewCommitMsg {
 				m.commitMsgScroll++
 			} else if m.currentView == tuiViewHelp {
-				m.helpScroll++
+				m.helpScroll = min(m.helpScroll+1, m.helpMaxScroll())
 			}
 
 		case "j", "left":
@@ -2280,7 +2282,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.promptScroll += pageSize
 				return m, tea.ClearScreen
 			} else if m.currentView == tuiViewHelp {
-				m.helpScroll += pageSize
+				m.helpScroll = min(m.helpScroll+pageSize, m.helpMaxScroll())
 			}
 
 		case "enter":
@@ -2884,7 +2886,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		} else {
+		} else if !msg.append || !m.loadingMore {
+			// Only clear paginateNav when no pagination is pending.
+			// Non-append (refresh) responses should not consume intent
+			// if a pagination append is still in flight.
 			m.paginateNav = 0
 		}
 
@@ -4478,6 +4483,28 @@ func (m tuiModel) renderTailView() string {
 	b.WriteString("\x1b[J") // Clear to end of screen
 
 	return b.String()
+}
+
+// helpContentLines returns the total number of lines in the help content.
+// 7 groups with headers, keys, and blank separators between groups.
+func (m tuiModel) helpContentLines() int {
+	// Queue(1+7) + Actions(1+5) + Filtering(1+4) + Review(1+9) + Prompt(1+5) + Tail(1+5) + General(1+2)
+	// Plus 6 blank separators between the 7 groups = 50
+	return 50
+}
+
+// helpMaxScroll returns the maximum scroll offset for the help view.
+func (m tuiModel) helpMaxScroll() int {
+	reservedLines := 3 // title + blank + help hint
+	visibleLines := m.height - reservedLines
+	if visibleLines < 5 {
+		visibleLines = 5
+	}
+	maxScroll := m.helpContentLines() - visibleLines
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
 }
 
 func (m tuiModel) renderHelpView() string {
