@@ -160,7 +160,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		claimJob(t, db, "test-worker")
 
 		agentOutput := "No issues found."
-		err := db.CompleteJob(job.ID, "test", "Test prompt", agentOutput, "")
+		err := db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
 		if err != nil {
 			t.Fatalf("CompleteJob failed: %v", err)
 		}
@@ -194,7 +194,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		claimJob(t, db, "test-worker")
 
 		agentOutput := "Analysis complete."
-		err := db.CompleteJob(job.ID, "test", "Test prompt", agentOutput, "")
+		err := db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
 		if err != nil {
 			t.Fatalf("CompleteJob failed: %v", err)
 		}
@@ -501,13 +501,13 @@ func TestGetRepoStats(t *testing.T) {
 
 	// Complete job1 with PASS verdict
 	claimJob(t, db, "worker-1")
-	if err := db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!", ""); err != nil {
+	if err := db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!"); err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
 
 	// Complete job2 with FAIL verdict
 	claimJob(t, db, "worker-1")
-	if err := db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: FAIL**\nIssues found.", ""); err != nil {
+	if err := db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: FAIL**\nIssues found."); err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
 
@@ -585,13 +585,13 @@ func TestGetRepoStats(t *testing.T) {
 		commit := createCommit(t, db, repo.ID, "stats-prompt-sha1")
 		job1 := enqueueJob(t, db, repo.ID, commit.ID, "stats-prompt-sha1")
 		claimJob(t, db, "worker-1")
-		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!", "")
+		db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!")
 
 		// Create a prompt job with output that contains verdict-like text
 		promptJob := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		claimJob(t, db, "worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
-		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found", "")
+		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
 
 		// Get stats - prompt job should be excluded from verdict counts
 		stats, err := db.GetRepoStats(repo.ID)
@@ -668,7 +668,7 @@ func TestDeleteRepo(t *testing.T) {
 		commit := createCommit(t, db, repo.ID, "cascade-sha")
 		job := enqueueJob(t, db, repo.ID, commit.ID, "cascade-sha")
 		claimJob(t, db, "worker-1")
-		db.CompleteJob(job.ID, "codex", "prompt", "output", "")
+		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
 		// Add a comment
 		db.AddCommentToJob(job.ID, "user", "comment")
@@ -904,7 +904,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		promptJob := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
 		claimJob(t, db, "worker-1")
 		// Output that would normally be parsed as FAIL
-		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A", "")
+		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")
 
 		// Fetch via ListJobs and check verdict is nil
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
@@ -936,7 +936,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		job := enqueueJob(t, db, repo.ID, commit.ID, "verdict-sha")
 		claimJob(t, db, "worker-1")
 		// Output that should be parsed as PASS
-		db.CompleteJob(job.ID, "codex", "prompt", "No issues found in this commit.", "")
+		db.CompleteJob(job.ID, "codex", "prompt", "No issues found in this commit.")
 
 		// Fetch via ListJobs and check verdict is set
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
@@ -974,7 +974,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		claimJob(t, db, "worker-1")
 		// Output that should be parsed as FAIL
-		db.CompleteJob(jobID, "codex", "prompt", "Found issues:\n1. Bug found", "")
+		db.CompleteJob(jobID, "codex", "prompt", "Found issues:\n1. Bug found")
 
 		// Fetch via ListJobs and check verdict IS computed (because commit_id is not NULL)
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)

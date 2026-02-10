@@ -907,7 +907,7 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 // CompleteJob marks a job as done and stores the review.
 // Only updates if job is still in 'running' state (respects cancellation).
 // If the job has an output_prefix, it will be prepended to the output.
-func (db *DB) CompleteJob(jobID int64, agent, prompt, output, commandLine string) error {
+func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
 	now := time.Now().Format(time.RFC3339)
@@ -963,8 +963,8 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output, commandLine string
 	}
 
 	// Insert review with sync columns
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, command_line, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, nullString(commandLine), reviewUUID, machineID, now)
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}

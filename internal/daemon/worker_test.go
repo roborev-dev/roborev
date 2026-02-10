@@ -261,7 +261,7 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "finish-window", "test-worker")
 
-	if err := tc.DB.CompleteJob(job.ID, "test", "prompt", "output", ""); err != nil {
+	if err := tc.DB.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
 	}
 

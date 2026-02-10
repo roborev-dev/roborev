@@ -61,8 +61,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   prompt TEXT NOT NULL,
   output TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  addressed INTEGER NOT NULL DEFAULT 0,
-  command_line TEXT
+  addressed INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS responses (
@@ -570,18 +569,6 @@ func (db *DB) migrate() error {
 		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN review_type TEXT NOT NULL DEFAULT ''`)
 		if err != nil {
 			return fmt.Errorf("add review_type column: %w", err)
-		}
-	}
-
-	// Migration: add command_line column to reviews if missing
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'command_line'`).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("check command_line column: %w", err)
-	}
-	if count == 0 {
-		_, err = db.Exec(`ALTER TABLE reviews ADD COLUMN command_line TEXT`)
-		if err != nil {
-			return fmt.Errorf("add command_line column: %w", err)
 		}
 	}
 

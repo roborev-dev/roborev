@@ -20,6 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -3435,6 +3436,23 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 
 // wrapText wraps text to the specified width, preserving existing line breaks
 // and breaking at word boundaries when possible
+// commandLineForJob computes the representative agent command line from job parameters.
+// Returns empty string if the agent is not available.
+func commandLineForJob(job *storage.ReviewJob) string {
+	if job == nil {
+		return ""
+	}
+	a, err := agent.Get(job.Agent)
+	if err != nil {
+		return ""
+	}
+	reasoning := strings.ToLower(strings.TrimSpace(job.Reasoning))
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	return a.WithReasoning(agent.ParseReasoningLevel(reasoning)).WithAgentic(job.Agentic).WithModel(job.Model).CommandLine()
+}
+
 func wrapText(text string, width int) []string {
 	if width <= 0 {
 		width = 100
@@ -3660,10 +3678,10 @@ func (m tuiModel) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Show command line if available (dimmed, below title, truncated to fit)
+	// Show command line (computed from job params, dimmed, below title, truncated to fit)
 	headerLines := 1
-	if review.CommandLine != "" {
-		cmdText := "Command: " + review.CommandLine
+	if cmdLine := commandLineForJob(review.Job); cmdLine != "" {
+		cmdText := "Command: " + cmdLine
 		if m.width > 0 && len(cmdText) > m.width {
 			cmdText = cmdText[:m.width-1] + "…"
 		}

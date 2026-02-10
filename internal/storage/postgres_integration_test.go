@@ -147,7 +147,7 @@ func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt
 	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
 		return nil, nil, fmt.Errorf("failed to set job running: %w", err)
 	}
-	if err := db.CompleteJob(job.ID, "test", prompt, output, ""); err != nil {
+	if err := db.CompleteJob(job.ID, "test", prompt, output); err != nil {
 		return nil, nil, fmt.Errorf("CompleteJob failed: %w", err)
 	}
 	review, err := db.GetReviewByJobID(job.ID)
@@ -353,7 +353,7 @@ func TestIntegration_FinalPush(t *testing.T) {
 		if _, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
 			t.Fatalf("Update job %d to running failed: %v", i, err)
 		}
-		if err = db.CompleteJob(job.ID, "test", "prompt", fmt.Sprintf("output %d", i), ""); err != nil {
+		if err = db.CompleteJob(job.ID, "test", "prompt", fmt.Sprintf("output %d", i)); err != nil {
 			t.Fatalf("CompleteJob %d failed: %v", i, err)
 		}
 	}
@@ -1052,7 +1052,7 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 		if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
 			t.Fatalf("Failed to update job status %d: %v", i, err)
 		}
-		if err := db.CompleteJob(job.ID, "test", "test prompt", fmt.Sprintf("Review output %d", i), ""); err != nil {
+		if err := db.CompleteJob(job.ID, "test", "test prompt", fmt.Sprintf("Review output %d", i)); err != nil {
 			t.Fatalf("Failed to complete job %d: %v", i, err)
 		}
 	}

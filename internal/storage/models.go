@@ -113,14 +113,13 @@ func (j ReviewJob) IsTaskJob() bool {
 }
 
 type Review struct {
-	ID          int64     `json:"id"`
-	JobID       int64     `json:"job_id"`
-	Agent       string    `json:"agent"`
-	Prompt      string    `json:"prompt"`
-	Output      string    `json:"output"`
-	CreatedAt   time.Time `json:"created_at"`
-	Addressed   bool      `json:"addressed"`
-	CommandLine string    `json:"command_line,omitempty"`
+	ID        int64     `json:"id"`
+	JobID     int64     `json:"job_id"`
+	Agent     string    `json:"agent"`
+	Prompt    string    `json:"prompt"`
+	Output    string    `json:"output"`
+	CreatedAt time.Time `json:"created_at"`
+	Addressed bool      `json:"addressed"`
 
 	// Sync fields
 	UUID               string     `json:"uuid,omitempty"`                  // Globally unique identifier for sync
