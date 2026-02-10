@@ -84,6 +84,27 @@ func TestParseVerdict(t *testing.T) {
 			output: "100. No issues found.",
 			want:   "P",
 		},
+		// Field labels in structured output
+		{
+			name:   "review findings label",
+			output: "1. **Summary**: Adds features.\n2. **Review Findings**: No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "findings label",
+			output: "**Findings**: No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "verdict label pass",
+			output: "**Verdict**: No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "review findings with caveat is fail",
+			output: "2. **Review Findings**: No issues found, but consider refactoring.",
+			want:   "F",
+		},
 		// Markdown formatting
 		{
 			name:   "bold no issues found",

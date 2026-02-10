@@ -28,6 +28,8 @@ func ParseVerdict(output string) string {
 		trimmed = stripMarkdown(trimmed)
 		// Strip leading list markers (bullets, numbers, etc.)
 		trimmed = stripListMarker(trimmed)
+		// Strip leading field label (e.g., "Review Findings: " or "Verdict: ")
+		trimmed = stripFieldLabel(trimmed)
 
 		// Check for pass indicators at start of line
 		isPass := strings.HasPrefix(trimmed, "no issues") ||
@@ -84,6 +86,25 @@ func stripListMarker(s string) string {
 			return strings.TrimSpace(s[i+1:])
 		}
 		break
+	}
+	return s
+}
+
+// stripFieldLabel removes a known leading field label from structured review output.
+// Handles "Review Findings: No issues found." and similar patterns.
+func stripFieldLabel(s string) string {
+	labels := []string{
+		"review findings: ",
+		"findings: ",
+		"review result: ",
+		"result: ",
+		"verdict: ",
+		"review: ",
+	}
+	for _, label := range labels {
+		if strings.HasPrefix(s, label) {
+			return strings.TrimSpace(s[len(label):])
+		}
 	}
 	return s
 }
