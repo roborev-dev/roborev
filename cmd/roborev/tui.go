@@ -3660,11 +3660,14 @@ func (m tuiModel) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Show command line if available (dimmed, below title)
+	// Show command line if available (dimmed, below title, truncated to fit)
 	headerLines := 1
 	if review.CommandLine != "" {
-		cmdLine := tuiStatusStyle.Render("Command: " + review.CommandLine)
-		b.WriteString(cmdLine)
+		cmdText := "Command: " + review.CommandLine
+		if m.width > 0 && len(cmdText) > m.width {
+			cmdText = cmdText[:m.width-1] + "…"
+		}
+		b.WriteString(tuiStatusStyle.Render(cmdText))
 		b.WriteString("\x1b[K\n")
 		headerLines++
 	}
