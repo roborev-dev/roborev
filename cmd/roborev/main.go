@@ -202,20 +202,44 @@ func ensureDaemon() error {
 	return startDaemon()
 }
 
-// isGitEnvKey reports whether a KEY=value entry has a GIT_* key.
-// Uses case-insensitive comparison because Windows env vars are case-insensitive.
-func isGitEnvKey(entry string) bool {
-	key, _, _ := strings.Cut(entry, "=")
-	return strings.HasPrefix(strings.ToUpper(key), "GIT_")
+// gitRepoEnvKeys lists git environment variables that bind commands to a
+// specific repository or worktree. These must be stripped when spawning the
+// daemon so it resolves refs from the repo_path in each request, not from
+// whichever hook context started it.
+//
+// Auth/transport vars (GIT_SSH_COMMAND, GIT_ASKPASS, GIT_TERMINAL_PROMPT, etc.)
+// are intentionally preserved since the daemon may need them for CI poller
+// fetches or other git transport operations.
+var gitRepoEnvKeys = map[string]struct{}{
+	"GIT_DIR":                          {},
+	"GIT_WORK_TREE":                    {},
+	"GIT_INDEX_FILE":                   {},
+	"GIT_OBJECT_DIRECTORY":             {},
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": {},
+	"GIT_COMMON_DIR":                   {},
+	"GIT_CEILING_DIRECTORIES":          {},
+	"GIT_NAMESPACE":                    {},
+	"GIT_PREFIX":                       {},
+	"GIT_QUARANTINE_PATH":              {},
+	"GIT_DISCOVERY_ACROSS_FILESYSTEM":  {},
 }
 
-// filterGitEnv returns a copy of env with GIT_* environment variables removed.
+// isGitRepoEnvKey reports whether a KEY=value entry is a git repo-context
+// variable that should be stripped from daemon environments.
+// Uses case-insensitive comparison because Windows env vars are case-insensitive.
+func isGitRepoEnvKey(entry string) bool {
+	key, _, _ := strings.Cut(entry, "=")
+	_, ok := gitRepoEnvKeys[strings.ToUpper(key)]
+	return ok
+}
+
+// filterGitEnv returns a copy of env with git repo-context variables removed.
 // Git sets variables like GIT_DIR in hook contexts; if the daemon inherits them,
 // git commands resolve HEAD from the wrong worktree/repo.
 func filterGitEnv(env []string) []string {
 	result := make([]string, 0, len(env))
 	for _, e := range env {
-		if isGitEnvKey(e) {
+		if isGitRepoEnvKey(e) {
 			continue
 		}
 		result = append(result, e)
@@ -573,11 +597,11 @@ func daemonRunCmd() *cobra.Command {
 		Short: "Run the daemon in foreground",
 		Long:  "Run the daemon in the foreground. Usually invoked by 'daemon start' in the background.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Defense-in-depth: clear all GIT_* env vars that hooks may set.
+			// Defense-in-depth: clear git repo-context env vars that hooks may set.
 			// The spawn sites (startDaemon, upgrade) filter these out, but
 			// clear them here too in case the daemon is started manually.
 			for _, e := range os.Environ() {
-				if isGitEnvKey(e) {
+				if isGitRepoEnvKey(e) {
 					key, _, _ := strings.Cut(e, "=")
 					os.Unsetenv(key)
 				}

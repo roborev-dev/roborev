@@ -1231,8 +1231,10 @@ func TestFilterGitEnv(t *testing.T) {
 		"GIT_INDEX_FILE=/some/repo/.git/index",
 		"ROBOREV_DATA_DIR=/tmp/roborev",
 		"GIT_CEILING_DIRECTORIES=/home",
-		"Git_Dir=/mixed/case",      // Windows-style mixed case
-		"git_work_tree=/lowercase", // all lowercase
+		"Git_Dir=/mixed/case",                      // Windows-style mixed case
+		"git_work_tree=/lowercase",                 // all lowercase
+		"GIT_SSH_COMMAND=ssh -i ~/.ssh/deploy_key", // auth/transport: keep
+		"GIT_ASKPASS=/usr/lib/ssh/askpass",         // auth/transport: keep
 	}
 
 	filtered := filterGitEnv(env)
@@ -1241,6 +1243,8 @@ func TestFilterGitEnv(t *testing.T) {
 		"PATH=/usr/bin",
 		"HOME=/home/user",
 		"ROBOREV_DATA_DIR=/tmp/roborev",
+		"GIT_SSH_COMMAND=ssh -i ~/.ssh/deploy_key",
+		"GIT_ASKPASS=/usr/lib/ssh/askpass",
 	}
 
 	if len(filtered) != len(want) {
