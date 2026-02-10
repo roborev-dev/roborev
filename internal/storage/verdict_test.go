@@ -115,6 +115,31 @@ func TestParseVerdict(t *testing.T) {
 			output: "**Review Result**:No issues found.",
 			want:   "P",
 		},
+		{
+			name:   "review findings label no space after colon",
+			output: "2. **Review Findings**:No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "findings label no space after colon",
+			output: "**Findings**:No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "result label no space after colon",
+			output: "**Result**:No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "review label no space after colon",
+			output: "**Review**:No issues found.",
+			want:   "P",
+		},
+		{
+			name:   "verdict label tab after colon",
+			output: "**Verdict**:\tNo issues found.",
+			want:   "P",
+		},
 		// Markdown formatting
 		{
 			name:   "bold no issues found",
