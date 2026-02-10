@@ -203,6 +203,20 @@ func ensureDaemon() error {
 }
 
 // startDaemon starts a new daemon process
+// filterGitEnv returns a copy of env with GIT_* environment variables removed.
+// Git sets variables like GIT_DIR in hook contexts; if the daemon inherits them,
+// git commands resolve HEAD from the wrong worktree/repo.
+func filterGitEnv(env []string) []string {
+	result := make([]string, 0, len(env))
+	for _, e := range env {
+		if strings.HasPrefix(e, "GIT_") {
+			continue
+		}
+		result = append(result, e)
+	}
+	return result
+}
+
 func startDaemon() error {
 	if verbose {
 		fmt.Println("Starting daemon...")
@@ -215,6 +229,7 @@ func startDaemon() error {
 	}
 
 	cmd := exec.Command(exe, "daemon", "run")
+	cmd.Env = filterGitEnv(os.Environ())
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
@@ -552,6 +567,17 @@ func daemonRunCmd() *cobra.Command {
 		Short: "Run the daemon in foreground",
 		Long:  "Run the daemon in the foreground. Usually invoked by 'daemon start' in the background.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Defense-in-depth: clear git env vars that hooks may set.
+			// The spawn sites (startDaemon, upgrade) filter these out, but
+			// clear them here too in case the daemon is started manually.
+			for _, key := range []string{
+				"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+				"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+				"GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES",
+			} {
+				os.Unsetenv(key)
+			}
+
 			log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 			log.Println("Starting roborev daemon...")
 
@@ -2500,6 +2526,7 @@ official release over a dev build.`,
 					newBinary += ".exe"
 				}
 				startCmd := exec.Command(newBinary, "daemon", "run")
+				startCmd.Env = filterGitEnv(os.Environ())
 				if err := startCmd.Start(); err != nil {
 					fmt.Printf("warning: failed to start daemon: %v\n", err)
 				} else {

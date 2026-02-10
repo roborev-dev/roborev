@@ -1219,6 +1219,39 @@ func TestShowJobFlagRequiresArgument(t *testing.T) {
 }
 
 // ============================================================================
+// filterGitEnv Tests
+// ============================================================================
+
+func TestFilterGitEnv(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin",
+		"GIT_DIR=/some/repo/.git",
+		"HOME=/home/user",
+		"GIT_WORK_TREE=/some/repo",
+		"GIT_INDEX_FILE=/some/repo/.git/index",
+		"ROBOREV_DATA_DIR=/tmp/roborev",
+		"GIT_CEILING_DIRECTORIES=/home",
+	}
+
+	filtered := filterGitEnv(env)
+
+	want := []string{
+		"PATH=/usr/bin",
+		"HOME=/home/user",
+		"ROBOREV_DATA_DIR=/tmp/roborev",
+	}
+
+	if len(filtered) != len(want) {
+		t.Fatalf("got %d entries, want %d: %v", len(filtered), len(want), filtered)
+	}
+	for i, got := range filtered {
+		if got != want[i] {
+			t.Errorf("entry %d: got %q, want %q", i, got, want[i])
+		}
+	}
+}
+
+// ============================================================================
 // Daemon Run Tests
 // ============================================================================
 
