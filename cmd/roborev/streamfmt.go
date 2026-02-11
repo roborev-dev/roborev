@@ -419,6 +419,10 @@ func writerIsTerminal(w io.Writer) bool {
 // model/subprocess output embedded in codex JSONL fields.
 func sanitizeControl(s string) string {
 	s = ansiEscapePattern.ReplaceAllString(s, "")
+	// Replace newlines/carriage returns with spaces to avoid collapsing words.
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {

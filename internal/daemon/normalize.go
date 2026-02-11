@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // ansiEscapePattern matches ANSI escape sequences (colors, cursor movement, etc.)
@@ -189,14 +190,11 @@ func NormalizeCodexOutput(line string) *OutputLine {
 		switch ev.Item.Type {
 		case "agent_message":
 			if ev.Item.Text != "" {
-				text := stripANSI(ev.Item.Text)
-				text = strings.ReplaceAll(text, "\n", " ")
-				text = strings.ReplaceAll(text, "\r", "")
-				return &OutputLine{Text: text, Type: "text"}
+				return &OutputLine{Text: sanitizeControl(ev.Item.Text), Type: "text"}
 			}
 		case "command_execution":
 			if ev.Item.Command != "" {
-				return &OutputLine{Text: "[Command: " + stripANSI(ev.Item.Command) + "]", Type: "tool"}
+				return &OutputLine{Text: "[Command: " + sanitizeControl(ev.Item.Command) + "]", Type: "tool"}
 			}
 			return &OutputLine{Text: "[Command completed]", Type: "tool"}
 		case "file_change":
@@ -208,7 +206,7 @@ func NormalizeCodexOutput(line string) *OutputLine {
 		switch ev.Item.Type {
 		case "command_execution":
 			if ev.Item.Command != "" {
-				return &OutputLine{Text: "[Command: " + stripANSI(ev.Item.Command) + "]", Type: "tool"}
+				return &OutputLine{Text: "[Command: " + sanitizeControl(ev.Item.Command) + "]", Type: "tool"}
 			}
 		}
 		return nil
@@ -270,6 +268,24 @@ func NormalizeGenericOutput(line string) *OutputLine {
 // stripANSI removes ANSI escape sequences from a string.
 func stripANSI(s string) string {
 	return ansiEscapePattern.ReplaceAllString(s, "")
+}
+
+// sanitizeControl strips ANSI escapes and non-printable control characters,
+// replacing newlines with spaces to avoid collapsing words. Used for
+// untrusted model/subprocess output that reaches terminals.
+func sanitizeControl(s string) string {
+	s = stripANSI(s)
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\t' || !unicode.IsControl(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // isToolCallJSON checks if a line is a tool call JSON object.

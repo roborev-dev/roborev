@@ -223,6 +223,30 @@ func TestNormalizeCodexOutput(t *testing.T) {
 			wantType: "text",
 		},
 		{
+			name:     "AgentMessageStripsANSI",
+			input:    `{"type":"item.completed","item":{"type":"agent_message","text":"\u001b[31mred\u001b[0m text"}}`,
+			wantText: "red text",
+			wantType: "text",
+		},
+		{
+			name:     "AgentMessageStripsControlChars",
+			input:    `{"type":"item.completed","item":{"type":"agent_message","text":"hello\u0007world"}}`,
+			wantText: "helloworld",
+			wantType: "text",
+		},
+		{
+			name:     "CommandStartedStripsANSI",
+			input:    `{"type":"item.started","item":{"type":"command_execution","command":"bash -lc \u001b[32mls\u001b[0m"}}`,
+			wantText: "[Command: bash -lc ls]",
+			wantType: "tool",
+		},
+		{
+			name:     "CommandCompletedStripsControlChars",
+			input:    `{"type":"item.completed","item":{"type":"command_execution","command":"ls\u0007\u001b[31m -la"}}`,
+			wantText: "[Command: ls -la]",
+			wantType: "tool",
+		},
+		{
 			name:     "CommandStarted",
 			input:    `{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}`,
 			wantText: "[Command: bash -lc ls]",
