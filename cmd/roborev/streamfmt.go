@@ -29,6 +29,8 @@ type streamFormatter struct {
 	codexRenderedCommandIDs map[string]struct{}
 	// Track started command text to suppress duplicate completed echoes, including mixed-ID pairs.
 	codexStartedCommands map[string]int
+	// Track started command text by ID so completed events missing command can clear started state.
+	codexStartedCommandsByID map[string]string
 }
 
 func newStreamFormatter(w io.Writer, isTTY bool) *streamFormatter {
@@ -197,12 +199,11 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 	if eventType != "item.started" && eventType != "item.completed" {
 		return false
 	}
-	if cmd == "" {
-		return false
-	}
-
 	id := strings.TrimSpace(item.ID)
 	if eventType == "item.started" {
+		if cmd == "" {
+			return false
+		}
 		if id != "" {
 			if f.codexRenderedCommandIDs == nil {
 				f.codexRenderedCommandIDs = make(map[string]struct{})
@@ -211,6 +212,10 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 				return false
 			}
 			f.codexRenderedCommandIDs[id] = struct{}{}
+			if f.codexStartedCommandsByID == nil {
+				f.codexStartedCommandsByID = make(map[string]string)
+			}
+			f.codexStartedCommandsByID[id] = cmd
 		}
 		if f.codexStartedCommands == nil {
 			f.codexStartedCommands = make(map[string]int)
@@ -219,14 +224,34 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 		return true
 	}
 
+	if cmd == "" {
+		if id != "" {
+			if startedCmd, ok := f.codexStartedCommandsByID[id]; ok {
+				f.decrementCodexStartedCommand(startedCmd)
+				delete(f.codexStartedCommandsByID, id)
+			}
+		}
+		return false
+	}
+
+	if id != "" {
+		if startedCmd, ok := f.codexStartedCommandsByID[id]; ok {
+			f.decrementCodexStartedCommand(startedCmd)
+			delete(f.codexStartedCommandsByID, id)
+			if startedCmd == cmd {
+				if f.codexRenderedCommandIDs == nil {
+					f.codexRenderedCommandIDs = make(map[string]struct{})
+				}
+				f.codexRenderedCommandIDs[id] = struct{}{}
+				return false
+			}
+		}
+	}
+
 	// Completed events should be suppressed when we've already rendered the paired
 	// started event for the same command text, even if ID presence changed.
 	if count := f.codexStartedCommands[cmd]; count > 0 {
-		if count == 1 {
-			delete(f.codexStartedCommands, cmd)
-		} else {
-			f.codexStartedCommands[cmd] = count - 1
-		}
+		f.decrementCodexStartedCommand(cmd)
 		if id != "" {
 			if f.codexRenderedCommandIDs == nil {
 				f.codexRenderedCommandIDs = make(map[string]struct{})
@@ -248,6 +273,21 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 	}
 
 	return true
+}
+
+func (f *streamFormatter) decrementCodexStartedCommand(cmd string) {
+	if cmd == "" {
+		return
+	}
+	count := f.codexStartedCommands[cmd]
+	if count <= 0 {
+		return
+	}
+	if count == 1 {
+		delete(f.codexStartedCommands, cmd)
+		return
+	}
+	f.codexStartedCommands[cmd] = count - 1
 }
 
 func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {
