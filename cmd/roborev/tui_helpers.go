@@ -132,6 +132,21 @@ func wrapText(text string, width int) []string {
 	return result
 }
 
+// markdownCache caches glamour-rendered lines for review and prompt views.
+// Stored as a pointer in tuiModel so that View() (value receiver) can update
+// the cache and have it persist across bubbletea's model copies.
+type markdownCache struct {
+	reviewLines []string
+	reviewID    int64
+	reviewWidth int
+	reviewText  string // raw input text used to produce reviewLines
+
+	promptLines []string
+	promptID    int64
+	promptWidth int
+	promptText  string // raw input text used to produce promptLines
+}
+
 // renderMarkdownLines renders markdown text using glamour and splits into lines.
 // Falls back to wrapText if glamour rendering fails.
 func renderMarkdownLines(text string, width int) []string {
@@ -147,4 +162,30 @@ func renderMarkdownLines(text string, width int) []string {
 		return wrapText(text, width)
 	}
 	return strings.Split(strings.TrimRight(out, "\n"), "\n")
+}
+
+// getReviewLines returns glamour-rendered lines for a review, using the cache
+// when the inputs (review ID, width, text) haven't changed.
+func (c *markdownCache) getReviewLines(text string, width int, reviewID int64) []string {
+	if c.reviewID == reviewID && c.reviewWidth == width && c.reviewText == text {
+		return c.reviewLines
+	}
+	c.reviewLines = renderMarkdownLines(text, width)
+	c.reviewID = reviewID
+	c.reviewWidth = width
+	c.reviewText = text
+	return c.reviewLines
+}
+
+// getPromptLines returns glamour-rendered lines for a prompt, using the cache
+// when the inputs (review ID, width, text) haven't changed.
+func (c *markdownCache) getPromptLines(text string, width int, reviewID int64) []string {
+	if c.promptID == reviewID && c.promptWidth == width && c.promptText == text {
+		return c.promptLines
+	}
+	c.promptLines = renderMarkdownLines(text, width)
+	c.promptID = reviewID
+	c.promptWidth = width
+	c.promptText = text
+	return c.promptLines
 }

@@ -217,6 +217,8 @@ type tuiModel struct {
 	tailFromView  tuiView    // View to return to
 	tailFollow    bool       // True if auto-scrolling to bottom (follow mode)
 
+	// Glamour markdown render cache (pointer so View's value receiver can update it)
+	mdCache *markdownCache
 }
 
 // pendingState tracks a pending addressed toggle with sequence number
@@ -404,6 +406,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
 		pendingReviewAddressed: make(map[int64]pendingState), // Track pending addressed changes (by review ID)
+		mdCache:                &markdownCache{},
 	}
 }
 
@@ -2362,9 +2365,9 @@ func (m tuiModel) renderReviewView() string {
 		}
 	}
 
-	// Render markdown content with glamour, falling back to plain text wrapping
+	// Render markdown content with glamour (cached), falling back to plain text wrapping
 	wrapWidth := max(20, min(m.width-4, 200))
-	lines := renderMarkdownLines(content.String(), wrapWidth)
+	lines := m.mdCache.getReviewLines(content.String(), wrapWidth, review.ID)
 
 	// Compute title line count based on actual title length
 	titleLines := 1
@@ -2473,9 +2476,9 @@ func (m tuiModel) renderPromptView() string {
 		headerLines++
 	}
 
-	// Render markdown content with glamour, falling back to plain text wrapping
+	// Render markdown content with glamour (cached), falling back to plain text wrapping
 	wrapWidth := max(20, min(m.width-4, 200))
-	lines := renderMarkdownLines(review.Prompt, wrapWidth)
+	lines := m.mdCache.getPromptLines(review.Prompt, wrapWidth, review.ID)
 
 	// Reserve: title(1) + command(0-1) + scroll indicator(1) + help(1) + margin(1)
 	visibleLines := m.height - 3 - headerLines
