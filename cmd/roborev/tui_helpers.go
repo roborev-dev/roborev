@@ -153,6 +153,7 @@ func renderMarkdownLines(text string, width int) []string {
 	r, err := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(width),
+		glamour.WithPreservedNewLines(),
 	)
 	if err != nil {
 		return wrapText(text, width)

@@ -853,7 +853,7 @@ func TestTUIRenderReviewViewNoBlankLineWithoutVerdict(t *testing.T) {
 	m.currentView = tuiViewReview
 	m.currentReview = &storage.Review{
 		ID:     10,
-		Output: "Line 1\n\nLine 2\n\nLine 3",
+		Output: "Line 1\nLine 2\nLine 3",
 		Job: &storage.ReviewJob{
 			ID:       1,
 			GitRef:   "abc1234",
@@ -897,7 +897,7 @@ func TestTUIRenderReviewViewVerdictOnLine2(t *testing.T) {
 	m.currentView = tuiViewReview
 	m.currentReview = &storage.Review{
 		ID:     10,
-		Output: "Line 1\n\nLine 2\n\nLine 3",
+		Output: "Line 1\nLine 2\nLine 3",
 		Job: &storage.ReviewJob{
 			ID:       1,
 			GitRef:   "abc1234",
@@ -1119,17 +1119,12 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 	m.width = 120
 	m.height = 10 // Small height to test calculation
 	m.currentView = tuiViewReview
-
-	// Build content: 20 markdown paragraphs separated by double newlines.
-	// Glamour renders each paragraph on its own line with blank lines between,
-	// producing 40 rendered lines total (leading blank + 20 content + 19 blanks).
-	parts := make([]string, 20)
-	for i := range parts {
-		parts[i] = fmt.Sprintf("L%d", i+1)
-	}
+	// Create 20 lines of content to ensure scrolling.
+	// Glamour with WithPreservedNewLines renders this as 21 lines
+	// (1 leading blank + 20 content lines).
 	m.currentReview = &storage.Review{
 		ID:     10,
-		Output: strings.Join(parts, "\n\n"),
+		Output: "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
 		Job: &storage.ReviewJob{
 			ID:      1,
 			GitRef:  "abc1234",
@@ -1142,11 +1137,11 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 
 	// With height=10, no verdict, wide terminal: visibleLines = 10 - 4 = 6
 	// Non-content: title (1) + location (1) + status line (1) + help (1) = 4
-	// Glamour renders 40 lines total; only 6 visible lines fit.
+	// Glamour produces 21 rendered lines; only 6 visible.
 	visibleContentLines := 6
-	totalRenderedLines := 40
+	totalRenderedLines := 21
 
-	// Count visible content lines that contain L\d+ (glamour indents them with spaces)
+	// Count content lines (glamour indents with spaces, so check trimmed)
 	contentCount := 0
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(stripANSI(line))
@@ -1155,12 +1150,11 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 		}
 	}
 
-	// We should see some content lines (exact count depends on glamour spacing)
 	if contentCount == 0 {
 		t.Error("Expected at least some content lines visible")
 	}
 
-	// Should show scroll indicator with total glamour line count
+	// Should show scroll indicator
 	expected := fmt.Sprintf("[1-%d of %d lines]", visibleContentLines, totalRenderedLines)
 	if !strings.Contains(output, expected) {
 		t.Errorf("Expected scroll indicator '%s', output: %s", expected, output)
@@ -1175,14 +1169,9 @@ func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
 	m.width = 120
 	m.height = 10 // Small height to test calculation
 	m.currentView = tuiViewReview
-
-	parts := make([]string, 20)
-	for i := range parts {
-		parts[i] = fmt.Sprintf("L%d", i+1)
-	}
 	m.currentReview = &storage.Review{
 		ID:     10,
-		Output: strings.Join(parts, "\n\n"),
+		Output: "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
 		Job: &storage.ReviewJob{
 			ID:      1,
 			GitRef:  "abc1234",
@@ -1195,8 +1184,9 @@ func TestTUIVisibleLinesCalculationWithVerdict(t *testing.T) {
 
 	// With height=10, verdict, wide terminal: visibleLines = 10 - 5 = 5
 	// Non-content: title (1) + location (1) + verdict (1) + status line (1) + help (1) = 5
+	// Glamour produces 21 rendered lines.
 	visibleContentLines := 5
-	totalRenderedLines := 40
+	totalRenderedLines := 21
 
 	expected := fmt.Sprintf("[1-%d of %d lines]", visibleContentLines, totalRenderedLines)
 	if !strings.Contains(output, expected) {
@@ -1211,14 +1201,9 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 	m.width = 50
 	m.height = 10
 	m.currentView = tuiViewReview
-
-	parts := make([]string, 20)
-	for i := range parts {
-		parts[i] = fmt.Sprintf("L%d", i+1)
-	}
 	m.currentReview = &storage.Review{
 		ID:     10,
-		Output: strings.Join(parts, "\n\n"),
+		Output: "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
 		Job: &storage.ReviewJob{
 			ID:      1,
 			GitRef:  "abc1234",
@@ -1232,10 +1217,9 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 	// With height=10, no verdict, narrow terminal (help wraps to 2 lines):
 	// visibleLines = 10 - 5 = 5
 	// Non-content: title (1) + location (1) + status line (1) + help (2) = 5
+	// Glamour produces 21 rendered lines.
 	visibleContentLines := 5
-
-	// Glamour renders 20 paragraphs into 40 lines (with width=50-4=46)
-	totalRenderedLines := 40
+	totalRenderedLines := 21
 
 	expected := fmt.Sprintf("[1-%d of %d lines]", visibleContentLines, totalRenderedLines)
 	if !strings.Contains(output, expected) {
@@ -1251,14 +1235,9 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 	m.width = 50
 	m.height = 10
 	m.currentView = tuiViewReview
-
-	parts := make([]string, 20)
-	for i := range parts {
-		parts[i] = fmt.Sprintf("L%d", i+1)
-	}
 	m.currentReview = &storage.Review{
 		ID:     10,
-		Output: strings.Join(parts, "\n\n"),
+		Output: "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
 		Job: &storage.ReviewJob{
 			ID:      1,
 			GitRef:  "abc1234",
@@ -1272,8 +1251,9 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 	// With height=10, verdict present, narrow terminal (help wraps to 2 lines):
 	// visibleLines = 10 - 6 = 4
 	// Non-content: title (1) + location (1) + verdict (1) + status line (1) + help (2) = 6
+	// Glamour produces 21 rendered lines.
 	visibleContentLines := 4
-	totalRenderedLines := 40
+	totalRenderedLines := 21
 
 	expected := fmt.Sprintf("[1-%d of %d lines]", visibleContentLines, totalRenderedLines)
 	if !strings.Contains(output, expected) {
@@ -1302,13 +1282,9 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 	m.currentView = tuiViewReview
 	m.currentBranch = "feature/very-long-branch-name"
 
-	parts := make([]string, 20)
-	for i := range parts {
-		parts[i] = fmt.Sprintf("L%d", i+1)
-	}
 	m.currentReview = &storage.Review{
 		ID:        10,
-		Output:    strings.Join(parts, "\n\n"),
+		Output:    "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10\nL11\nL12\nL13\nL14\nL15\nL16\nL17\nL18\nL19\nL20",
 		Addressed: true,
 		Agent:     "claude-code",
 		Job: &storage.ReviewJob{
@@ -1323,8 +1299,9 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 	output := m.View()
 
 	// visibleLines = 12 - 8 = 4
+	// Glamour produces 21 rendered lines.
 	visibleContentLines := 4
-	totalRenderedLines := 40
+	totalRenderedLines := 21
 
 	expected := fmt.Sprintf("[1-%d of %d lines]", visibleContentLines, totalRenderedLines)
 	if !strings.Contains(output, expected) {

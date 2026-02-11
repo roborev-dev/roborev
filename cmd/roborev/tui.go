@@ -2367,7 +2367,13 @@ func (m tuiModel) renderReviewView() string {
 
 	// Render markdown content with glamour (cached), falling back to plain text wrapping
 	wrapWidth := max(20, min(m.width-4, 200))
-	lines := m.mdCache.getReviewLines(content.String(), wrapWidth, review.ID)
+	contentStr := content.String()
+	var lines []string
+	if m.mdCache != nil {
+		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, review.ID)
+	} else {
+		lines = renderMarkdownLines(contentStr, wrapWidth)
+	}
 
 	// Compute title line count based on actual title length
 	titleLines := 1
@@ -2478,7 +2484,12 @@ func (m tuiModel) renderPromptView() string {
 
 	// Render markdown content with glamour (cached), falling back to plain text wrapping
 	wrapWidth := max(20, min(m.width-4, 200))
-	lines := m.mdCache.getPromptLines(review.Prompt, wrapWidth, review.ID)
+	var lines []string
+	if m.mdCache != nil {
+		lines = m.mdCache.getPromptLines(review.Prompt, wrapWidth, review.ID)
+	} else {
+		lines = renderMarkdownLines(review.Prompt, wrapWidth)
+	}
 
 	// Reserve: title(1) + command(0-1) + scroll indicator(1) + help(1) + margin(1)
 	visibleLines := m.height - 3 - headerLines
