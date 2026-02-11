@@ -323,6 +323,12 @@ func TestNormalizeCodexOutput(t *testing.T) {
 			wantText: "some plain text output",
 			wantType: "text",
 		},
+		{
+			name:     "NonJSONStripsControlChars",
+			input:    "text with \x07bell and \x1b[31mcolor\x1b[0m",
+			wantText: "text with bell and color",
+			wantType: "text",
+		},
 	})
 }
 

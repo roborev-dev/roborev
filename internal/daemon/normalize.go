@@ -181,8 +181,8 @@ func NormalizeCodexOutput(line string) *OutputLine {
 	}
 
 	if err := json.Unmarshal([]byte(line), &ev); err != nil {
-		// Not JSON - return as raw text
-		return &OutputLine{Text: stripANSI(line), Type: "text"}
+		// Not JSON - return as raw text with full sanitization
+		return &OutputLine{Text: sanitizeControl(line), Type: "text"}
 	}
 
 	switch ev.Type {
