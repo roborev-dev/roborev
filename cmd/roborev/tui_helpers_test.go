@@ -417,17 +417,20 @@ func TestSanitizeEscapes(t *testing.T) {
 			want:  "helloworld",
 		},
 		{
+			// Incomplete CSI without a final byte is preserved: each line
+			// is sanitized independently so there is no cross-line completion,
+			// and stripping partial CSI would also catch legitimate trailing SGR.
 			name:  "unterminated CSI at end of string preserved",
 			input: "hello\x1b[31",
 			want:  "hello\x1b[31",
 		},
 		{
-			name:  "unterminated OSC preserved (no terminator)",
+			name:  "unterminated OSC stripped (no terminator)",
 			input: "hello\x1b]0;title",
 			want:  "hello",
 		},
 		{
-			name:  "bare CSI introducer at end of string",
+			name:  "bare CSI introducer at end of string preserved",
 			input: "hello\x1b[",
 			want:  "hello\x1b[",
 		},
