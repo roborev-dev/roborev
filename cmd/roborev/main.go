@@ -77,6 +77,7 @@ func main() {
 	rootCmd.AddCommand(skillsCmd())
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(checkAgentsCmd())
+	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())
 
