@@ -11,7 +11,7 @@ func TestCodexBuildArgsUnsafeOptIn(t *testing.T) {
 	a := NewCodexAgent("codex")
 
 	// Test non-agentic mode with auto-approve
-	args := a.buildArgs("/repo", "/tmp/out", false, true)
+	args := a.buildArgs("/repo", false, true)
 	if containsString(args, codexDangerousFlag) {
 		t.Fatalf("expected no unsafe flag when agentic=false, got %v", args)
 	}
@@ -25,7 +25,7 @@ func TestCodexBuildArgsUnsafeOptIn(t *testing.T) {
 	}
 
 	// Test agentic mode (with dangerous flag, no auto-approve)
-	args = a.buildArgs("/repo", "/tmp/out", true, false)
+	args = a.buildArgs("/repo", true, false)
 	if !containsString(args, codexDangerousFlag) {
 		t.Fatalf("expected unsafe flag when agentic=true, got %v", args)
 	}
@@ -80,6 +80,80 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 	}
 	if !strings.Contains(string(args), codexAutoApproveFlag) {
 		t.Fatalf("expected %s in args, got %s", codexAutoApproveFlag, strings.TrimSpace(string(args)))
+	}
+}
+
+func TestCodexParseStreamJSON(t *testing.T) {
+	a := NewCodexAgent("codex")
+
+	t.Run("ExtractsLastAgentMessage", func(t *testing.T) {
+		input := strings.NewReader(strings.Join([]string{
+			`{"type":"thread.started","thread_id":"abc123"}`,
+			`{"type":"turn.started"}`,
+			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"First message"}}`,
+			`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Final review result"}}`,
+			`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}`,
+		}, "\n") + "\n")
+
+		result, err := a.parseStreamJSON(input, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "Final review result" {
+			t.Fatalf("expected 'Final review result', got %q", result)
+		}
+	})
+
+	t.Run("EmptyStreamReturnsEmpty", func(t *testing.T) {
+		input := strings.NewReader(`{"type":"thread.started","thread_id":"abc123"}` + "\n" +
+			`{"type":"turn.started"}` + "\n" +
+			`{"type":"turn.completed","usage":{}}` + "\n")
+
+		result, err := a.parseStreamJSON(input, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "" {
+			t.Fatalf("expected empty result, got %q", result)
+		}
+	})
+
+	t.Run("IgnoresNonMessageItems", func(t *testing.T) {
+		input := strings.NewReader(strings.Join([]string{
+			`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls"}}`,
+			`{"type":"item.completed","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls","exit_code":0}}`,
+			`{"type":"item.completed","item":{"id":"msg1","type":"agent_message","text":"Done reviewing."}}`,
+		}, "\n") + "\n")
+
+		result, err := a.parseStreamJSON(input, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "Done reviewing." {
+			t.Fatalf("expected 'Done reviewing.', got %q", result)
+		}
+	})
+
+	t.Run("StreamsToWriter", func(t *testing.T) {
+		input := strings.NewReader(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}` + "\n")
+		var buf strings.Builder
+		sw := newSyncWriter(&buf)
+
+		_, err := a.parseStreamJSON(input, sw)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(buf.String(), "agent_message") {
+			t.Fatalf("expected streamed output to contain event, got %q", buf.String())
+		}
+	})
+}
+
+func TestCodexBuildArgsIncludesJSON(t *testing.T) {
+	a := NewCodexAgent("codex")
+	args := a.buildArgs("/repo", false, true)
+	if !containsString(args, "--json") {
+		t.Fatalf("expected --json in args, got %v", args)
 	}
 }
 

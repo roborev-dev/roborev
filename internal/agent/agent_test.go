@@ -312,14 +312,14 @@ func TestAgentBuildArgsWithModel(t *testing.T) {
 		{
 			name: "codex with model",
 			buildFn: func(model string) []string {
-				return (&CodexAgent{Model: model}).buildArgs("/tmp", "/tmp/out.txt", false, true)
+				return (&CodexAgent{Model: model}).buildArgs("/tmp", false, true)
 			},
 			flag: "-m", model: "o3", wantFlag: true,
 		},
 		{
 			name: "codex without model",
 			buildFn: func(model string) []string {
-				return (&CodexAgent{Model: model}).buildArgs("/tmp", "/tmp/out.txt", false, true)
+				return (&CodexAgent{Model: model}).buildArgs("/tmp", false, true)
 			},
 			flag: "-m", model: "", wantFlag: false,
 		},
@@ -375,7 +375,7 @@ func TestAgentBuildArgsWithModel(t *testing.T) {
 
 func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
 	a := &CodexAgent{Model: "o4-mini", Reasoning: ReasoningThorough}
-	args := a.buildArgs("/tmp", "/tmp/out.txt", false, true)
+	args := a.buildArgs("/tmp", false, true)
 
 	if !containsSequence(args, "-m", "o4-mini") {
 		t.Errorf("expected -m o4-mini in args %v", args)

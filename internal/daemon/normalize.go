@@ -14,6 +14,8 @@ func GetNormalizer(agentName string) OutputNormalizer {
 	switch agentName {
 	case "claude-code":
 		return NormalizeClaudeOutput
+	case "codex":
+		return NormalizeCodexOutput
 	case "opencode":
 		return NormalizeOpenCodeOutput
 	default:
@@ -155,6 +157,69 @@ func NormalizeClaudeOutput(line string) *OutputLine {
 
 	default:
 		// Unknown type - skip to avoid noise
+		return nil
+	}
+}
+
+// NormalizeCodexOutput parses codex's --json JSONL format and extracts readable content.
+func NormalizeCodexOutput(line string) *OutputLine {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	// Try to parse as JSON
+	var ev struct {
+		Type string `json:"type"`
+		Item struct {
+			Type    string `json:"type,omitempty"`
+			Text    string `json:"text,omitempty"`
+			Command string `json:"command,omitempty"`
+			Status  string `json:"status,omitempty"`
+		} `json:"item,omitempty"`
+	}
+
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		// Not JSON - return as raw text
+		return &OutputLine{Text: stripANSI(line), Type: "text"}
+	}
+
+	switch ev.Type {
+	case "item.completed", "item.updated":
+		switch ev.Item.Type {
+		case "agent_message":
+			if ev.Item.Text != "" {
+				text := strings.ReplaceAll(ev.Item.Text, "\n", " ")
+				text = strings.ReplaceAll(text, "\r", "")
+				return &OutputLine{Text: text, Type: "text"}
+			}
+		case "command_execution":
+			if ev.Item.Command != "" {
+				return &OutputLine{Text: "[Command: " + ev.Item.Command + "]", Type: "tool"}
+			}
+			return &OutputLine{Text: "[Command completed]", Type: "tool"}
+		case "file_change":
+			return &OutputLine{Text: "[File change]", Type: "tool"}
+		}
+		return nil
+
+	case "item.started":
+		switch ev.Item.Type {
+		case "command_execution":
+			if ev.Item.Command != "" {
+				return &OutputLine{Text: "[Command: " + ev.Item.Command + "]", Type: "tool"}
+			}
+		}
+		return nil
+
+	case "thread.started", "turn.started", "turn.completed":
+		// Lifecycle events - skip
+		return nil
+
+	case "turn.failed", "error":
+		return &OutputLine{Text: "[Error in stream]", Type: "error"}
+
+	default:
 		return nil
 	}
 }

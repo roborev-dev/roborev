@@ -168,7 +168,7 @@ func TestGetNormalizer(t *testing.T) {
 	}{
 		{"claude-code", "NormalizeClaudeOutput"},
 		{"opencode", "NormalizeOpenCodeOutput"},
-		{"codex", "NormalizeGenericOutput"},
+		{"codex", "NormalizeCodexOutput"},
 		{"gemini", "NormalizeGenericOutput"},
 		{"unknown", "NormalizeGenericOutput"},
 	}
@@ -192,6 +192,12 @@ func TestGetNormalizer(t *testing.T) {
 			if result == nil || result.Text != "[Tool call]" {
 				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeOpenCodeOutput", tc.agent)
 			}
+		case "NormalizeCodexOutput":
+			// Codex normalizer parses item.completed agent_message events.
+			result := fn(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`)
+			if result == nil || result.Text != "hello" {
+				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeCodexOutput", tc.agent)
+			}
 		case "NormalizeGenericOutput":
 			// Generic normalizer treats Claude JSON as plain text, not parsed messages.
 			result := fn(`{"type":"assistant","message":{"content":"hi"}}`)
@@ -200,6 +206,79 @@ func TestGetNormalizer(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestNormalizeCodexOutput(t *testing.T) {
+	runNormalizeTests(t, NormalizeCodexOutput, []normalizeTestCase{
+		{
+			name:     "AgentMessage",
+			input:    `{"type":"item.completed","item":{"type":"agent_message","text":"Review complete."}}`,
+			wantText: "Review complete.",
+			wantType: "text",
+		},
+		{
+			name:     "AgentMessageMultiline",
+			input:    `{"type":"item.completed","item":{"type":"agent_message","text":"Line 1\nLine 2"}}`,
+			wantText: "Line 1 Line 2",
+			wantType: "text",
+		},
+		{
+			name:     "CommandStarted",
+			input:    `{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+			wantText: "[Command: bash -lc ls]",
+			wantType: "tool",
+		},
+		{
+			name:     "CommandCompleted",
+			input:    `{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+			wantText: "[Command: bash -lc ls]",
+			wantType: "tool",
+		},
+		{
+			name:     "FileChange",
+			input:    `{"type":"item.completed","item":{"type":"file_change"}}`,
+			wantText: "[File change]",
+			wantType: "tool",
+		},
+		{
+			name:    "ThreadStarted",
+			input:   `{"type":"thread.started","thread_id":"abc123"}`,
+			wantNil: true,
+		},
+		{
+			name:    "TurnStarted",
+			input:   `{"type":"turn.started"}`,
+			wantNil: true,
+		},
+		{
+			name:    "TurnCompleted",
+			input:   `{"type":"turn.completed","usage":{"input_tokens":100}}`,
+			wantNil: true,
+		},
+		{
+			name:     "TurnFailed",
+			input:    `{"type":"turn.failed","error":{"message":"something broke"}}`,
+			wantText: "[Error in stream]",
+			wantType: "error",
+		},
+		{
+			name:     "StreamError",
+			input:    `{"type":"error","message":"stream error"}`,
+			wantText: "[Error in stream]",
+			wantType: "error",
+		},
+		{
+			name:    "EmptyLine",
+			input:   "",
+			wantNil: true,
+		},
+		{
+			name:     "NonJSON",
+			input:    "some plain text output",
+			wantText: "some plain text output",
+			wantType: "text",
+		},
+	})
 }
 
 func TestStripANSI(t *testing.T) {
