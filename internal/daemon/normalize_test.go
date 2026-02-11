@@ -235,6 +235,17 @@ func TestNormalizeCodexOutput(t *testing.T) {
 			wantType: "tool",
 		},
 		{
+			name:     "CommandCompletedNoCommand",
+			input:    `{"type":"item.completed","item":{"type":"command_execution"}}`,
+			wantText: "[Command completed]",
+			wantType: "tool",
+		},
+		{
+			name:    "CommandUpdatedNoCommand",
+			input:   `{"type":"item.updated","item":{"type":"command_execution"}}`,
+			wantNil: true,
+		},
+		{
 			name:     "FileChange",
 			input:    `{"type":"item.completed","item":{"type":"file_change"}}`,
 			wantText: "[File change]",

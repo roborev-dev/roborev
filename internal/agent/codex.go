@@ -30,6 +30,9 @@ var codexAutoApproveSupport sync.Map
 // errNoCodexJSON indicates no valid codex --json events were parsed.
 var errNoCodexJSON = errors.New("no valid codex --json events parsed from output")
 
+// errCodexStreamFailed indicates codex emitted a failure event in the JSON stream.
+var errCodexStreamFailed = errors.New("codex stream reported failure")
+
 // NewCodexAgent creates a new Codex agent with standard reasoning
 func NewCodexAgent(command string) *CodexAgent {
 	if command == "" {
@@ -242,7 +245,11 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 
 // codexEvent represents a top-level event in codex's --json JSONL output.
 type codexEvent struct {
-	Type string `json:"type"`
+	Type    string `json:"type"`
+	Message string `json:"message,omitempty"`
+	Error   struct {
+		Message string `json:"message,omitempty"`
+	} `json:"error,omitempty"`
 	Item struct {
 		ID      string `json:"id,omitempty"`
 		Type    string `json:"type,omitempty"`
@@ -253,9 +260,33 @@ type codexEvent struct {
 }
 
 func isCodexEventType(eventType string) bool {
-	return strings.HasPrefix(eventType, "thread.") ||
+	return eventType == "error" ||
+		strings.HasPrefix(eventType, "thread.") ||
 		strings.HasPrefix(eventType, "turn.") ||
 		strings.HasPrefix(eventType, "item.")
+}
+
+func codexFailureEventError(ev codexEvent) error {
+	switch ev.Type {
+	case "turn.failed":
+		if ev.Error.Message != "" {
+			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Error.Message)
+		}
+		if ev.Message != "" {
+			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Message)
+		}
+		return fmt.Errorf("%w: turn failed", errCodexStreamFailed)
+	case "error":
+		if ev.Error.Message != "" {
+			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Error.Message)
+		}
+		if ev.Message != "" {
+			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Message)
+		}
+		return fmt.Errorf("%w: stream error", errCodexStreamFailed)
+	default:
+		return nil
+	}
 }
 
 // parseStreamJSON parses codex's --json JSONL output and extracts review text.
@@ -267,6 +298,7 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 	var validEventsParsed bool
 	var agentMessages []string
 	messageIndexByID := make(map[string]int)
+	var streamFailure error
 
 	for {
 		line, err := br.ReadString('\n')
@@ -285,6 +317,10 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 			if jsonErr := json.Unmarshal([]byte(trimmed), &ev); jsonErr == nil {
 				if isCodexEventType(ev.Type) {
 					validEventsParsed = true
+
+					if streamFailure == nil {
+						streamFailure = codexFailureEventError(ev)
+					}
 
 					// Collect agent_message text from completed/updated items.
 					// For messages with IDs, keep only the latest text per ID to avoid duplicates
@@ -311,6 +347,10 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 
 	if !validEventsParsed {
 		return "", errNoCodexJSON
+	}
+
+	if streamFailure != nil {
+		return "", streamFailure
 	}
 
 	if len(agentMessages) > 0 {

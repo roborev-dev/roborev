@@ -138,6 +138,42 @@ func TestCodexParseStreamJSON(t *testing.T) {
 		}
 	})
 
+	t.Run("TurnFailedReturnsError", func(t *testing.T) {
+		input := strings.NewReader(`{"type":"turn.failed","error":{"message":"something broke"}}` + "\n")
+
+		result, err := a.parseStreamJSON(input, nil)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if result != "" {
+			t.Fatalf("expected empty result on parse failure, got %q", result)
+		}
+		if !errors.Is(err, errCodexStreamFailed) {
+			t.Fatalf("expected errCodexStreamFailed, got %v", err)
+		}
+		if strings.Contains(err.Error(), "no valid codex --json events") {
+			t.Fatalf("expected stream failure error, got compatibility error: %v", err)
+		}
+	})
+
+	t.Run("ErrorEventReturnsError", func(t *testing.T) {
+		input := strings.NewReader(`{"type":"error","message":"stream error"}` + "\n")
+
+		result, err := a.parseStreamJSON(input, nil)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if result != "" {
+			t.Fatalf("expected empty result on parse failure, got %q", result)
+		}
+		if !errors.Is(err, errCodexStreamFailed) {
+			t.Fatalf("expected errCodexStreamFailed, got %v", err)
+		}
+		if errors.Is(err, errNoCodexJSON) {
+			t.Fatalf("expected stream failure error, got compatibility error: %v", err)
+		}
+	})
+
 	t.Run("IgnoresNonMessageItems", func(t *testing.T) {
 		input := strings.NewReader(strings.Join([]string{
 			`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls"}}`,

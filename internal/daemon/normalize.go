@@ -197,7 +197,10 @@ func NormalizeCodexOutput(line string) *OutputLine {
 			if ev.Item.Command != "" {
 				return &OutputLine{Text: "[Command: " + ev.Item.Command + "]", Type: "tool"}
 			}
-			return &OutputLine{Text: "[Command completed]", Type: "tool"}
+			if ev.Type == "item.completed" {
+				return &OutputLine{Text: "[Command completed]", Type: "tool"}
+			}
+			return nil
 		case "file_change":
 			return &OutputLine{Text: "[File change]", Type: "tool"}
 		}
