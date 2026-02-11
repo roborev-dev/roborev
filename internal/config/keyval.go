@@ -13,11 +13,38 @@ type KeyValue struct {
 	Value string
 }
 
-// sensitiveKeys contains keys whose values should be masked in list output.
-var sensitiveKeys = map[string]bool{
-	"anthropic_api_key":         true,
-	"sync.postgres_url":         true,
-	"ci.github_app_private_key": true,
+// sensitiveKeys is populated at init time by scanning Config and RepoConfig
+// struct tags for `sensitive:"true"`, so new sensitive fields are automatically
+// detected without maintaining a separate list.
+var sensitiveKeys map[string]bool
+
+func init() {
+	sensitiveKeys = make(map[string]bool)
+	collectSensitiveKeys(reflect.TypeOf(Config{}), "", sensitiveKeys)
+	collectSensitiveKeys(reflect.TypeOf(RepoConfig{}), "", sensitiveKeys)
+}
+
+// collectSensitiveKeys walks struct fields and records TOML keys tagged sensitive:"true".
+func collectSensitiveKeys(t reflect.Type, prefix string, out map[string]bool) {
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		tag := field.Tag.Get("toml")
+		if tag == "" {
+			continue
+		}
+		tagKey := strings.Split(tag, ",")[0]
+		fullKey := tagKey
+		if prefix != "" {
+			fullKey = prefix + "." + tagKey
+		}
+		if field.Type.Kind() == reflect.Struct {
+			collectSensitiveKeys(field.Type, fullKey, out)
+			continue
+		}
+		if field.Tag.Get("sensitive") == "true" {
+			out[fullKey] = true
+		}
+	}
 }
 
 // IsSensitiveKey returns true if the key holds a secret that should be masked.
@@ -172,7 +199,10 @@ func FindFieldByTOMLKey(v reflect.Value, key string) (reflect.Value, error) {
 		if len(parts) == 2 {
 			if fieldVal.Kind() == reflect.Ptr {
 				if fieldVal.IsNil() {
-					return reflect.Value{}, fmt.Errorf("key %q: %q is nil", key, tagName)
+					// Return the zero value of the pointed-to struct's field
+					// so callers get "" instead of an error for unset sections.
+					zeroStruct := reflect.New(fieldVal.Type().Elem()).Elem()
+					return FindFieldByTOMLKey(zeroStruct, parts[1])
 				}
 				fieldVal = fieldVal.Elem()
 			}

@@ -119,7 +119,7 @@ func configGetCmd() *cobra.Command {
 }
 
 func configSetCmd() *cobra.Command {
-	var globalFlag bool
+	var globalFlag, localFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "set <key> <value>",
@@ -128,11 +128,15 @@ func configSetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
 
+			if globalFlag && localFlag {
+				return fmt.Errorf("cannot use both --global and --local")
+			}
+
 			if globalFlag {
 				return setConfigKey(config.GlobalConfigPath(), key, value)
 			}
 
-			// Default: set in local config
+			// Default (and --local): set in local config
 			repoPath, err := findRepoRoot()
 			if err != nil {
 				return fmt.Errorf("not in a git repository (use --global for global config)")
@@ -143,6 +147,7 @@ func configSetCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&globalFlag, "global", false, "set in global config")
+	cmd.Flags().BoolVar(&localFlag, "local", false, "set in local repo config (default)")
 
 	return cmd
 }
@@ -279,13 +284,14 @@ func setConfigKey(path, key, value string) error {
 		return err
 	}
 	tmpPath := f.Name()
-	defer func() { os.Remove(tmpPath) }() // no-op if already renamed
 
 	if err := toml.NewEncoder(f).Encode(raw); err != nil {
 		f.Close()
+		os.Remove(tmpPath)
 		return err
 	}
 	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
 		return err
 	}
 
@@ -333,6 +339,8 @@ func coerceValue(validationCfg interface{}, key, rawVal string) interface{} {
 	}
 	field, err := config.FindFieldByTOMLKey(v, key)
 	if err != nil {
+		// Unreachable: key was already validated by SetConfigValue above.
+		// Fall back to raw string to avoid panicking on impossible paths.
 		return rawVal
 	}
 

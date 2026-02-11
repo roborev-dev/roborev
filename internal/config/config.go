@@ -77,7 +77,7 @@ type Config struct {
 	CursorCmd     string `toml:"cursor_cmd"`
 
 	// API keys (optional - agents use subscription auth by default)
-	AnthropicAPIKey string `toml:"anthropic_api_key"`
+	AnthropicAPIKey string `toml:"anthropic_api_key" sensitive:"true"`
 
 	// Hooks configuration
 	Hooks []HookConfig `toml:"hooks"`
@@ -132,7 +132,7 @@ type CIConfig struct {
 
 	// GitHub App authentication (optional — comments appear as bot instead of personal account)
 	GitHubAppID             int64  `toml:"github_app_id"`
-	GitHubAppPrivateKey     string `toml:"github_app_private_key"` // PEM file path or inline; supports ${ENV_VAR}
+	GitHubAppPrivateKey     string `toml:"github_app_private_key" sensitive:"true"` // PEM file path or inline; supports ${ENV_VAR}
 	GitHubAppInstallationID int64  `toml:"github_app_installation_id"`
 
 	// Multi-installation: map of owner → installation_id
@@ -232,7 +232,7 @@ type SyncConfig struct {
 
 	// PostgresURL is the connection string for PostgreSQL.
 	// Supports environment variable expansion via ${VAR} syntax.
-	PostgresURL string `toml:"postgres_url"`
+	PostgresURL string `toml:"postgres_url" sensitive:"true"`
 
 	// Interval is how often to sync (e.g., "5m", "1h"). Default: 1h
 	Interval string `toml:"interval"`
