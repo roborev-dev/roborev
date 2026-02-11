@@ -182,6 +182,24 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			t.Fatalf("expected errNoCodexJSON, got %v", err)
 		}
 	})
+
+	t.Run("JSONWithoutCodexEventTypeReturnsError", func(t *testing.T) {
+		input := strings.NewReader(strings.Join([]string{
+			`{"foo":"bar"}`,
+			`{"type":""}`,
+		}, "\n") + "\n")
+
+		result, err := a.parseStreamJSON(input, nil)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if result != "" {
+			t.Fatalf("expected empty result on parse failure, got %q", result)
+		}
+		if !errors.Is(err, errNoCodexJSON) {
+			t.Fatalf("expected errNoCodexJSON, got %v", err)
+		}
+	})
 }
 
 func TestCodexBuildArgsIncludesJSON(t *testing.T) {

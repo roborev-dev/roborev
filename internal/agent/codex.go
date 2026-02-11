@@ -252,6 +252,12 @@ type codexEvent struct {
 	} `json:"item,omitempty"`
 }
 
+func isCodexEventType(eventType string) bool {
+	return strings.HasPrefix(eventType, "thread.") ||
+		strings.HasPrefix(eventType, "turn.") ||
+		strings.HasPrefix(eventType, "item.")
+}
+
 // parseStreamJSON parses codex's --json JSONL output and extracts review text.
 // Codex emits events like thread.started, turn.started, item.completed (with agent_message),
 // and turn.completed. The agent_message items contain the actual review text.
@@ -277,20 +283,22 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 
 			var ev codexEvent
 			if jsonErr := json.Unmarshal([]byte(trimmed), &ev); jsonErr == nil {
-				validEventsParsed = true
+				if isCodexEventType(ev.Type) {
+					validEventsParsed = true
 
-				// Collect agent_message text from completed/updated items.
-				// For messages with IDs, keep only the latest text per ID to avoid duplicates
-				// from incremental updates while preserving first-seen order.
-				if (ev.Type == "item.completed" || ev.Type == "item.updated") &&
-					ev.Item.Type == "agent_message" && ev.Item.Text != "" {
-					if ev.Item.ID == "" {
-						agentMessages = append(agentMessages, ev.Item.Text)
-					} else if idx, ok := messageIndexByID[ev.Item.ID]; ok {
-						agentMessages[idx] = ev.Item.Text
-					} else {
-						messageIndexByID[ev.Item.ID] = len(agentMessages)
-						agentMessages = append(agentMessages, ev.Item.Text)
+					// Collect agent_message text from completed/updated items.
+					// For messages with IDs, keep only the latest text per ID to avoid duplicates
+					// from incremental updates while preserving first-seen order.
+					if (ev.Type == "item.completed" || ev.Type == "item.updated") &&
+						ev.Item.Type == "agent_message" && ev.Item.Text != "" {
+						if ev.Item.ID == "" {
+							agentMessages = append(agentMessages, ev.Item.Text)
+						} else if idx, ok := messageIndexByID[ev.Item.ID]; ok {
+							agentMessages[idx] = ev.Item.Text
+						} else {
+							messageIndexByID[ev.Item.ID] = len(agentMessages)
+							agentMessages = append(agentMessages, ev.Item.Text)
+						}
 					}
 				}
 			}
