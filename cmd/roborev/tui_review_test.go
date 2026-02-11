@@ -879,7 +879,7 @@ func TestTUIRenderReviewViewNoBlankLineWithoutVerdict(t *testing.T) {
 	// Content should appear after the header (no verdict line inserted)
 	foundContent := false
 	for _, line := range lines[2:] {
-		if strings.Contains(line, "Line 1") {
+		if strings.Contains(stripANSI(line), "Line 1") {
 			foundContent = true
 			break
 		}
@@ -928,7 +928,7 @@ func TestTUIRenderReviewViewVerdictOnLine2(t *testing.T) {
 	// Content should appear after verdict line
 	foundContent := false
 	for _, line := range lines[3:] {
-		if strings.Contains(line, "Line 1") {
+		if strings.Contains(stripANSI(line), "Line 1") {
 			foundContent = true
 			break
 		}
@@ -986,7 +986,7 @@ func TestTUIRenderReviewViewAddressedWithoutVerdict(t *testing.T) {
 	// Content should appear after addressed line
 	foundContent := false
 	for _, line := range lines[3:] {
-		if strings.Contains(line, "Line 1") {
+		if strings.Contains(stripANSI(line), "Line 1") {
 			foundContent = true
 			break
 		}

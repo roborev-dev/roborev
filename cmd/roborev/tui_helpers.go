@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/mattn/go-runewidth"
+	"github.com/muesli/termenv"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -135,7 +137,13 @@ func wrapText(text string, width int) []string {
 // markdownCache caches glamour-rendered lines for review and prompt views.
 // Stored as a pointer in tuiModel so that View() (value receiver) can update
 // the cache and have it persist across bubbletea's model copies.
+//
+// glamourStyle is detected once at creation time (before bubbletea takes over
+// the terminal) to avoid calling termenv.HasDarkBackground() on every render,
+// which blocks for seconds inside bubbletea's raw-mode input loop.
 type markdownCache struct {
+	glamourStyle string // "dark" or "light", detected once at init
+
 	reviewLines []string
 	reviewID    int64
 	reviewWidth int
@@ -147,11 +155,22 @@ type markdownCache struct {
 	promptText  string // raw input text used to produce promptLines
 }
 
+// newMarkdownCache creates a markdownCache, detecting terminal background
+// color now (before bubbletea enters raw mode and takes over stdin).
+func newMarkdownCache() *markdownCache {
+	style := styles.LightStyle
+	if termenv.HasDarkBackground() {
+		style = styles.DarkStyle
+	}
+	return &markdownCache{glamourStyle: style}
+}
+
 // renderMarkdownLines renders markdown text using glamour and splits into lines.
+// glamourStyle should be "dark" or "light" (pre-detected, not auto).
 // Falls back to wrapText if glamour rendering fails.
-func renderMarkdownLines(text string, width int) []string {
+func renderMarkdownLines(text string, width int, glamourStyle string) []string {
 	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle(glamourStyle),
 		glamour.WithWordWrap(width),
 		glamour.WithPreservedNewLines(),
 	)
@@ -171,7 +190,7 @@ func (c *markdownCache) getReviewLines(text string, width int, reviewID int64) [
 	if c.reviewID == reviewID && c.reviewWidth == width && c.reviewText == text {
 		return c.reviewLines
 	}
-	c.reviewLines = renderMarkdownLines(text, width)
+	c.reviewLines = renderMarkdownLines(text, width, c.glamourStyle)
 	c.reviewID = reviewID
 	c.reviewWidth = width
 	c.reviewText = text
@@ -184,7 +203,7 @@ func (c *markdownCache) getPromptLines(text string, width int, reviewID int64) [
 	if c.promptID == reviewID && c.promptWidth == width && c.promptText == text {
 		return c.promptLines
 	}
-	c.promptLines = renderMarkdownLines(text, width)
+	c.promptLines = renderMarkdownLines(text, width, c.glamourStyle)
 	c.promptID = reviewID
 	c.promptWidth = width
 	c.promptText = text

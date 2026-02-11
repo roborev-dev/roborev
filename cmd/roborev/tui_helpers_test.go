@@ -1,19 +1,22 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+var testANSIRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 	// Verify that single newlines in plain text are preserved (not collapsed into one paragraph)
-	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80)
+	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, "dark")
 
 	found := 0
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
+		trimmed := strings.TrimSpace(testANSIRegex.ReplaceAllString(line, ""))
 		if trimmed == "Line 1" || trimmed == "Line 2" || trimmed == "Line 3" {
 			found++
 		}
@@ -24,7 +27,7 @@ func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesFallsBackOnEmpty(t *testing.T) {
-	lines := renderMarkdownLines("", 80)
+	lines := renderMarkdownLines("", 80, "dark")
 	// Should not panic and should produce some output (even if empty)
 	if lines == nil {
 		t.Error("Expected non-nil result for empty input")

@@ -406,7 +406,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
 		pendingReviewAddressed: make(map[int64]pendingState), // Track pending addressed changes (by review ID)
-		mdCache:                &markdownCache{},
+		mdCache:                newMarkdownCache(),
 	}
 }
 
@@ -2372,7 +2372,7 @@ func (m tuiModel) renderReviewView() string {
 	if m.mdCache != nil {
 		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, review.ID)
 	} else {
-		lines = renderMarkdownLines(contentStr, wrapWidth)
+		lines = wrapText(contentStr, wrapWidth)
 	}
 
 	// Compute title line count based on actual title length
@@ -2488,7 +2488,7 @@ func (m tuiModel) renderPromptView() string {
 	if m.mdCache != nil {
 		lines = m.mdCache.getPromptLines(review.Prompt, wrapWidth, review.ID)
 	} else {
-		lines = renderMarkdownLines(review.Prompt, wrapWidth)
+		lines = wrapText(review.Prompt, wrapWidth)
 	}
 
 	// Reserve: title(1) + command(0-1) + scroll indicator(1) + help(1) + margin(1)
