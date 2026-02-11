@@ -2379,7 +2379,7 @@ func (m tuiModel) renderReviewView() string {
 	if m.mdCache != nil {
 		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, maxWidth, review.ID)
 	} else {
-		lines = wrapText(contentStr, wrapWidth)
+		lines = sanitizeLines(wrapText(contentStr, wrapWidth))
 	}
 
 	// Compute title line count based on actual title length
@@ -2504,7 +2504,7 @@ func (m tuiModel) renderPromptView() string {
 	if m.mdCache != nil {
 		lines = m.mdCache.getPromptLines(review.Prompt, wrapWidth, maxWidth, review.ID)
 	} else {
-		lines = wrapText(review.Prompt, wrapWidth)
+		lines = sanitizeLines(wrapText(review.Prompt, wrapWidth))
 	}
 
 	// Reserve: title(1) + command(0-1) + scroll indicator(1) + help(1) + margin(1)
