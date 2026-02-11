@@ -46,7 +46,8 @@ Runtime:
 
 - Tests should be fast and isolated; use `t.TempDir()`.
 - Use the `agent = "test"` path to avoid calling real AI agents.
-- Suggested commands: `go test ./...`, `go build ./...`, `make install`.
+- Slow integration tests use `//go:build integration` and are excluded by default.
+- Suggested commands: `go test ./...` (unit), `go test -tags integration ./...` (all), `go build ./...`, `make install`.
 
 ## Review/Refine Guidance
 

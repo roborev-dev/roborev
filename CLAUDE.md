@@ -51,12 +51,17 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 ## Commands
 
 ```bash
-go build ./...           # Build
-go test ./...            # Test
-make install             # Install to ~/.local/bin
-roborev init             # Initialize in a repo
-roborev status           # Check daemon/queue
+go build ./...                       # Build
+go test ./...                        # Test (unit tests only)
+go test -tags integration ./...      # Test (unit + integration)
+make install                         # Install to ~/.local/bin
+roborev init                         # Initialize in a repo
+roborev status                       # Check daemon/queue
 ```
+
+Slow integration tests use the `//go:build integration` tag and are excluded
+from `go test ./...` by default. They run in CI and can be run locally with
+`-tags integration`.
 
 ## Adding a New Agent
 
