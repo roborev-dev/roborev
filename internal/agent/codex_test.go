@@ -187,6 +187,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 		input := strings.NewReader(strings.Join([]string{
 			`{"foo":"bar"}`,
 			`{"type":""}`,
+			`{"type":"foo.bar"}`,
 		}, "\n") + "\n")
 
 		result, err := a.parseStreamJSON(input, nil)
