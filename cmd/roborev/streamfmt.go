@@ -31,6 +31,8 @@ type streamFormatter struct {
 	codexStartedCommands map[string]int
 	// Track started command text by ID so completed events missing command can clear started state.
 	codexStartedCommandsByID map[string]string
+	// Track started IDs per command in FIFO order for deterministic pairing.
+	codexStartedIDsByCommand map[string][]string
 }
 
 func newStreamFormatter(w io.Writer, isTTY bool) *streamFormatter {
@@ -216,6 +218,10 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 				f.codexStartedCommandsByID = make(map[string]string)
 			}
 			f.codexStartedCommandsByID[id] = cmd
+			if f.codexStartedIDsByCommand == nil {
+				f.codexStartedIDsByCommand = make(map[string][]string)
+			}
+			f.codexStartedIDsByCommand[cmd] = append(f.codexStartedIDsByCommand[cmd], id)
 		}
 		if f.codexStartedCommands == nil {
 			f.codexStartedCommands = make(map[string]int)
@@ -228,6 +234,7 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 		if id != "" {
 			if startedCmd, ok := f.codexStartedCommandsByID[id]; ok {
 				f.decrementCodexStartedCommand(startedCmd)
+				f.removeCodexStartedIDFromQueue(startedCmd, id)
 				delete(f.codexStartedCommandsByID, id)
 			}
 		}
@@ -237,6 +244,7 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 	if id != "" {
 		if startedCmd, ok := f.codexStartedCommandsByID[id]; ok {
 			f.decrementCodexStartedCommand(startedCmd)
+			f.removeCodexStartedIDFromQueue(startedCmd, id)
 			delete(f.codexStartedCommandsByID, id)
 			if startedCmd == cmd {
 				if f.codexRenderedCommandIDs == nil {
@@ -283,12 +291,31 @@ func (f *streamFormatter) consumeCodexStartedCommandIDForCommand(cmd string) {
 	if cmd == "" {
 		return
 	}
-	for id, startedCmd := range f.codexStartedCommandsByID {
-		if startedCmd != cmd {
-			continue
-		}
-		delete(f.codexStartedCommandsByID, id)
+	ids := f.codexStartedIDsByCommand[cmd]
+	if len(ids) == 0 {
 		return
+	}
+	// Pop the oldest ID (FIFO) for deterministic pairing.
+	consumed := ids[0]
+	if len(ids) == 1 {
+		delete(f.codexStartedIDsByCommand, cmd)
+	} else {
+		f.codexStartedIDsByCommand[cmd] = ids[1:]
+	}
+	delete(f.codexStartedCommandsByID, consumed)
+}
+
+// removeCodexStartedIDFromQueue removes a specific ID from the per-command FIFO.
+func (f *streamFormatter) removeCodexStartedIDFromQueue(cmd, id string) {
+	ids := f.codexStartedIDsByCommand[cmd]
+	for i, v := range ids {
+		if v == id {
+			f.codexStartedIDsByCommand[cmd] = append(ids[:i], ids[i+1:]...)
+			if len(f.codexStartedIDsByCommand[cmd]) == 0 {
+				delete(f.codexStartedIDsByCommand, cmd)
+			}
+			return
+		}
 	}
 }
 
