@@ -50,6 +50,14 @@ func (fix *streamFormatterFixture) assertEmpty(t *testing.T) {
 	}
 }
 
+func (fix *streamFormatterFixture) assertCount(t *testing.T, substr string, want int) {
+	t.Helper()
+	got := strings.Count(fix.output(), substr)
+	if got != want {
+		t.Errorf("expected output to contain %q %d time(s), got %d:\n%s", substr, want, got, fix.output())
+	}
+}
+
 // mustMarshal is like json.Marshal but panics on error.
 // Safe to use in tests where inputs are always simple map literals.
 func mustMarshal(v interface{}) []byte {
@@ -226,8 +234,11 @@ func TestStreamFormatter_CodexEvents(t *testing.T) {
 		`{"type":"thread.started","thread_id":"abc123"}`,
 		`{"type":"turn.started"}`,
 		`{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+		`{"type":"item.updated","item":{"type":"command_execution","command":"bash -lc ls"}}`,
 		`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls","exit_code":0}}`,
+		`{"type":"item.updated","item":{"type":"file_change","changes":[{"path":"main.go","kind":"update"}]}}`,
 		`{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"main.go","kind":"update"}]}}`,
+		`{"type":"item.updated","item":{"type":"agent_message","text":"draft"}}`,
 		`{"type":"item.completed","item":{"type":"agent_message","text":"I fixed the issue."}}`,
 		`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}`,
 	}
@@ -239,10 +250,29 @@ func TestStreamFormatter_CodexEvents(t *testing.T) {
 	fix.assertContains(t, "Bash   bash -lc ls")
 	fix.assertContains(t, "Edit")
 	fix.assertContains(t, "I fixed the issue.")
+	fix.assertCount(t, "Bash   bash -lc ls", 1)
+	fix.assertCount(t, "Edit", 1)
 	// Lifecycle events should be suppressed
 	fix.assertNotContains(t, "thread_id")
 	fix.assertNotContains(t, "turn.started")
 	fix.assertNotContains(t, "input_tokens")
+	fix.assertNotContains(t, "draft")
+}
+
+func TestStreamFormatter_CodexUpdatedSuppressed(t *testing.T) {
+	fix := newFixture(true)
+
+	lines := []string{
+		`{"type":"item.updated","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+		`{"type":"item.updated","item":{"type":"file_change","changes":[{"path":"main.go","kind":"update"}]}}`,
+		`{"type":"item.updated","item":{"type":"agent_message","text":"still drafting"}}`,
+	}
+
+	for _, line := range lines {
+		fix.writeLine(line)
+	}
+
+	fix.assertEmpty(t)
 }
 
 func TestStreamFormatter_CodexLifecycleSuppressed(t *testing.T) {

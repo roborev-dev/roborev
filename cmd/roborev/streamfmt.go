@@ -148,7 +148,7 @@ func (f *streamFormatter) processLine(line string) {
 		}
 	case "item.started", "item.completed", "item.updated":
 		// Codex format: item events
-		f.processCodexItem(ev.Item)
+		f.processCodexItem(ev.Type, ev.Item)
 	case "result", "tool_result", "init",
 		"thread.started", "turn.started", "turn.completed":
 		// Suppress lifecycle events
@@ -157,16 +157,22 @@ func (f *streamFormatter) processLine(line string) {
 	}
 }
 
-func (f *streamFormatter) processCodexItem(item *codexItem) {
+func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 	if item == nil {
 		return
 	}
 	switch item.Type {
 	case "agent_message":
+		if eventType != "item.completed" {
+			return
+		}
 		if text := strings.TrimSpace(item.Text); text != "" {
 			f.writef("%s\n", text)
 		}
 	case "command_execution":
+		if eventType != "item.started" {
+			return
+		}
 		if item.Command != "" {
 			cmd := item.Command
 			if len(cmd) > 80 {
@@ -175,6 +181,9 @@ func (f *streamFormatter) processCodexItem(item *codexItem) {
 			f.writef("%-6s %s\n", "Bash", cmd)
 		}
 	case "file_change":
+		if eventType != "item.completed" {
+			return
+		}
 		f.writef("%-6s\n", "Edit")
 	}
 }
