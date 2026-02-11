@@ -2366,8 +2366,9 @@ func (m tuiModel) renderReviewView() string {
 		}
 	}
 
-	// Render markdown content with glamour (cached), falling back to plain text wrapping
-	wrapWidth := max(20, min(m.width-4, 200))
+	// Render markdown content with glamour (cached), falling back to plain text wrapping.
+	// Cap at 100 so text stays readable on very wide terminals.
+	wrapWidth := max(20, min(m.width-4, 100))
 	contentStr := content.String()
 	var lines []string
 	if m.mdCache != nil {
@@ -2490,8 +2491,9 @@ func (m tuiModel) renderPromptView() string {
 		headerLines++
 	}
 
-	// Render markdown content with glamour (cached), falling back to plain text wrapping
-	wrapWidth := max(20, min(m.width-4, 200))
+	// Render markdown content with glamour (cached), falling back to plain text wrapping.
+	// Cap at 100 so text stays readable on very wide terminals.
+	wrapWidth := max(20, min(m.width-4, 100))
 	var lines []string
 	if m.mdCache != nil {
 		lines = m.mdCache.getPromptLines(review.Prompt, wrapWidth, review.ID)
@@ -2900,7 +2902,7 @@ func (m tuiModel) renderCommitMsgView() string {
 	}
 
 	// Wrap text to terminal width minus padding
-	wrapWidth := max(20, min(m.width-4, 200))
+	wrapWidth := max(20, min(m.width-4, 100))
 	lines := wrapText(m.commitMsgContent, wrapWidth)
 
 	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)

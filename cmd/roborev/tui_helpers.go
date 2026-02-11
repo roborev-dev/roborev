@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -181,9 +182,39 @@ func newMarkdownCache() *markdownCache {
 	return &markdownCache{glamourStyle: style}
 }
 
+// truncateLongLines truncates any input line exceeding maxWidth so glamour
+// won't word-wrap it. With WithPreservedNewLines each line is independent,
+// so this prevents glamour from reflowing code/diff lines into multiple
+// output lines.
+func truncateLongLines(text string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if runewidth.StringWidth(line) > maxWidth {
+			lines[i] = runewidth.Truncate(line, maxWidth, "")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// trailingPadRe matches trailing whitespace and ANSI SGR sequences.
+// Glamour pads code block lines with spaces (using background color) to fill
+// the wrap width. Stripping this padding prevents overflow on narrow terminals.
+var trailingPadRe = regexp.MustCompile(`(\s|\x1b\[[0-9;]*m)+$`)
+
+// stripTrailingPadding removes trailing whitespace and ANSI SGR codes from a
+// glamour output line, then appends a reset to ensure clean color state.
+func stripTrailingPadding(line string) string {
+	return trailingPadRe.ReplaceAllString(line, "") + "\x1b[0m"
+}
+
 // renderMarkdownLines renders markdown text using glamour and splits into lines.
 // Falls back to wrapText if glamour rendering fails.
 func renderMarkdownLines(text string, width int, glamourStyle gansi.StyleConfig) []string {
+	// Truncate long lines before glamour so they don't get word-wrapped.
+	text = truncateLongLines(text, width)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(glamourStyle),
 		glamour.WithWordWrap(width),
@@ -196,7 +227,11 @@ func renderMarkdownLines(text string, width int, glamourStyle gansi.StyleConfig)
 	if err != nil {
 		return wrapText(text, width)
 	}
-	return strings.Split(strings.TrimRight(out, "\n"), "\n")
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = stripTrailingPadding(line)
+	}
+	return lines
 }
 
 // getReviewLines returns glamour-rendered lines for a review, using the cache

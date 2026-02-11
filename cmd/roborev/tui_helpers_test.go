@@ -247,3 +247,48 @@ func TestReviewScrollPageUpAfterPageDown(t *testing.T) {
 			scrollBefore, m.reviewScroll)
 	}
 }
+
+func TestTruncateLongLines(t *testing.T) {
+	input := "short\n" +
+		"a very long line that exceeds the width by a lot and should be truncated down to size\n" +
+		"also short"
+	out := truncateLongLines(input, 20)
+	lines := strings.Split(out, "\n")
+
+	if len(lines) != 3 {
+		t.Fatalf("Expected 3 lines, got %d", len(lines))
+	}
+	if lines[0] != "short" {
+		t.Errorf("Short line should be unchanged, got %q", lines[0])
+	}
+	if len(lines[1]) > 20 {
+		t.Errorf("Long line should be truncated to <=20 chars, got %d: %q", len(lines[1]), lines[1])
+	}
+	if lines[2] != "also short" {
+		t.Errorf("Short line should be unchanged, got %q", lines[2])
+	}
+}
+
+func TestTruncateLongLinesPreservesNewlines(t *testing.T) {
+	// Ensure blank lines and structure are preserved
+	input := "line1\n\n\nline4"
+	out := truncateLongLines(input, 80)
+	if out != input {
+		t.Errorf("Expected input preserved, got %q", out)
+	}
+}
+
+func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
+	// A long diff line should be truncated by renderMarkdownLines, not wrapped
+	longLine := strings.Repeat("x", 200)
+	text := "Review:\n\n```\n" + longLine + "\n```\n"
+	width := 76
+	lines := renderMarkdownLines(text, width, styles.DarkStyleConfig)
+
+	for i, line := range lines {
+		stripped := testANSIRegex.ReplaceAllString(line, "")
+		if len(stripped) > width+10 { // small tolerance for trailing spaces
+			t.Errorf("line %d exceeds width %d: len=%d %q", i, width, len(stripped), stripped)
+		}
+	}
+}
