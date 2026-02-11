@@ -361,6 +361,25 @@ func TestStreamFormatter_CodexCommandStartedWithIDCompletedWithoutCommandClearsC
 	fix.assertCount(t, "Bash   bash -lc ls", 2)
 }
 
+func TestStreamFormatter_CodexCommandMixedIDFallbackDoesNotLeaveStaleID(t *testing.T) {
+	fix := newFixture(true)
+
+	lines := []string{
+		`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
+		`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+		`{"type":"item.started","item":{"id":"cmd_2","type":"command_execution","command":"bash -lc ls"}}`,
+		`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution"}}`,
+		`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+	}
+
+	for _, line := range lines {
+		fix.writeLine(line)
+	}
+
+	fix.assertContains(t, "Bash   bash -lc ls")
+	fix.assertCount(t, "Bash   bash -lc ls", 2)
+}
+
 func TestStreamFormatter_PartialWrites(t *testing.T) {
 	fix := newFixture(true)
 

@@ -252,6 +252,10 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 	// started event for the same command text, even if ID presence changed.
 	if count := f.codexStartedCommands[cmd]; count > 0 {
 		f.decrementCodexStartedCommand(cmd)
+		if id == "" {
+			// Keep ID->command tracking in sync when a completion is matched by command only.
+			f.consumeCodexStartedCommandIDForCommand(cmd)
+		}
 		if id != "" {
 			if f.codexRenderedCommandIDs == nil {
 				f.codexRenderedCommandIDs = make(map[string]struct{})
@@ -273,6 +277,19 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 	}
 
 	return true
+}
+
+func (f *streamFormatter) consumeCodexStartedCommandIDForCommand(cmd string) {
+	if cmd == "" {
+		return
+	}
+	for id, startedCmd := range f.codexStartedCommandsByID {
+		if startedCmd != cmd {
+			continue
+		}
+		delete(f.codexStartedCommandsByID, id)
+		return
+	}
 }
 
 func (f *streamFormatter) decrementCodexStartedCommand(cmd string) {
