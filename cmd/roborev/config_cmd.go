@@ -242,16 +242,18 @@ func setConfigKey(path, key, value string) error {
 		}
 	}
 
-	// Validate the key exists on the appropriate struct
+	// Validate the key exists on one of the config structs
 	// and convert the value to the correct type.
+	// Try both Config and RepoConfig since either key set is valid in either file.
+	globalCfg := &config.Config{}
+	repoCfg := &config.RepoConfig{}
 	var validationCfg interface{}
-	if filepath.Base(path) == "config.toml" {
-		validationCfg = &config.Config{}
+	if err := config.SetConfigValue(globalCfg, key, value); err == nil {
+		validationCfg = globalCfg
+	} else if err2 := config.SetConfigValue(repoCfg, key, value); err2 == nil {
+		validationCfg = repoCfg
 	} else {
-		validationCfg = &config.RepoConfig{}
-	}
-	if err := config.SetConfigValue(validationCfg, key, value); err != nil {
-		return err
+		return err // return the first error (unknown key)
 	}
 
 	// Now get the typed value back for storage
