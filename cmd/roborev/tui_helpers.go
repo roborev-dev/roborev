@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	gansi "github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -182,14 +183,17 @@ func newMarkdownCache() *markdownCache {
 	return &markdownCache{glamourStyle: style}
 }
 
-// truncateLongLines truncates any input line exceeding maxWidth so glamour
-// won't word-wrap it. With WithPreservedNewLines each line is independent,
-// so this prevents glamour from reflowing code/diff lines into multiple
-// output lines.
+// truncateLongLines normalizes tabs and truncates any input line exceeding
+// maxWidth so glamour won't word-wrap it. With WithPreservedNewLines each
+// line is independent, so this prevents glamour from reflowing code/diff
+// lines into multiple output lines.
 func truncateLongLines(text string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return text
 	}
+	// Expand tabs to 4 spaces. runewidth counts tabs as width 0 but
+	// terminals expand them to up to 8 columns, causing width mismatch.
+	text = strings.ReplaceAll(text, "\t", "    ")
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if runewidth.StringWidth(line) > maxWidth {
@@ -229,7 +233,13 @@ func renderMarkdownLines(text string, width int, glamourStyle gansi.StyleConfig)
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	for i, line := range lines {
-		lines[i] = stripTrailingPadding(line)
+		line = stripTrailingPadding(line)
+		// Truncate output lines that still exceed width (glamour can add
+		// indentation for block quotes, lists, etc. beyond the input width).
+		if xansi.StringWidth(line) > width {
+			line = xansi.Truncate(line, width, "")
+		}
+		lines[i] = line
 	}
 	return lines
 }
