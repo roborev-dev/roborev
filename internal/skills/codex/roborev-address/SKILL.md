@@ -35,6 +35,7 @@ The JSON output has this structure:
 
 - If `job.verdict` is `"P"`: Inform the user no action is needed
 - If `job.verdict` is `"F"`: Continue to address the findings
+- If `job.verdict` is empty or missing: Inform the user the review is not actionable (it may have errored). Do not proceed.
 
 ### 3. Fix the findings
 

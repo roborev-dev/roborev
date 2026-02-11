@@ -45,6 +45,7 @@ The JSON output has this structure:
 - `addressed`: whether this review has already been addressed
 
 Skip any reviews where `job.verdict` is `"P"` (passing reviews have no findings to fix).
+Skip any reviews where `job.verdict` is empty or missing (the review may have errored and is not actionable).
 
 ### 3. Fix all findings
 

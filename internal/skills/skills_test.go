@@ -359,6 +359,15 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		if len(results) > 0 && results[0].Agent != AgentCodex {
 			t.Errorf("expected Codex result, got %s", results[0].Agent)
 		}
+		// Should update respond (existed) and install the rest (didn't exist)
+		if len(results) > 0 {
+			if len(results[0].Updated) != 1 {
+				t.Errorf("expected 1 updated (respond), got %d", len(results[0].Updated))
+			}
+			if len(results[0].Installed) != 6 {
+				t.Errorf("expected 6 installed (address, design-review, design-review-branch, fix, review, review-branch), got %d", len(results[0].Installed))
+			}
+		}
 	})
 
 	t.Run("updates both agents when both have skills", func(t *testing.T) {
