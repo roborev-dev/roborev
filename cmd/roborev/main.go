@@ -2402,9 +2402,9 @@ This command is idempotent - running it multiple times is safe.`,
 				fmt.Println("\nSkills installed! Try:")
 				for _, agent := range installedAgents {
 					if agent == skills.AgentClaude {
-						fmt.Println("  Claude Code: /roborev:address, /roborev:design-review, /roborev:respond, /roborev:fix")
+						fmt.Println("  Claude Code: /roborev:review, /roborev:review-branch, /roborev:design-review, /roborev:design-review-branch, /roborev:address, /roborev:respond, /roborev:fix")
 					} else if agent == skills.AgentCodex {
-						fmt.Println("  Codex: $roborev:address, $roborev:design-review, $roborev:respond, $roborev:fix")
+						fmt.Println("  Codex: $roborev:review, $roborev:review-branch, $roborev:design-review, $roborev:design-review-branch, $roborev:address, $roborev:respond, $roborev:fix")
 					}
 				}
 			}

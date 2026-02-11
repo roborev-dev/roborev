@@ -19,10 +19,10 @@ When the user invokes `$roborev:review [commit] [--type security|design]`:
 
 ### 1. Validate inputs
 
-If a commit ref is provided, verify it resolves to a valid object:
+If a commit ref is provided, verify it resolves to a valid commit:
 
 ```bash
-git rev-parse --verify <commit>
+git rev-parse --verify <commit>^{commit}
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
@@ -50,7 +50,7 @@ If the review has findings (verdict is not Pass), offer to address them:
 
 - "Would you like me to address these findings? You can run `$roborev:address <job_id>`"
 
-Extract the job ID from the review output to include in the suggestion.
+Extract the job ID from the `Enqueued job <id> for ...` line in the command output to include in the suggestion.
 
 ## Example
 
@@ -64,6 +64,6 @@ Agent:
 User: `$roborev:review abc123 --type security`
 
 Agent:
-1. Validates: `git rev-parse --verify abc123`
+1. Validates: `git rev-parse --verify abc123^{commit}`
 2. Executes `roborev review abc123 --wait --type security`
 3. Presents the review output

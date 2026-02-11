@@ -50,7 +50,7 @@ If the review has findings (verdict is not Pass), offer to address them:
 
 - "Would you like me to address these findings? You can run `$roborev:address <job_id>`"
 
-Extract the job ID from the review output to include in the suggestion.
+Extract the job ID from the `Enqueued job <id> for ...` line in the command output to include in the suggestion.
 
 ## Example
 
