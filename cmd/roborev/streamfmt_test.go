@@ -384,23 +384,29 @@ func TestStreamFormatter_CodexMultiIDSameCommandDeterministicPairing(t *testing.
 	fix := newFixture(true)
 
 	// Two started events with same command text but different IDs.
-	// A command-only completion should consume the first (FIFO), leaving
-	// the second ID valid for its own ID-only completion.
+	// A command-only completion should consume the oldest ID (FIFO cmd_A),
+	// leaving cmd_B valid for its own ID-only completion.
+	// A final command-only completion with no remaining started counter
+	// must render, proving state was fully drained.
 	lines := []string{
 		`{"type":"item.started","item":{"id":"cmd_A","type":"command_execution","command":"bash -lc ls"}}`,
 		`{"type":"item.started","item":{"id":"cmd_B","type":"command_execution","command":"bash -lc ls"}}`,
-		// Command-only completion should consume cmd_A (FIFO), not cmd_B.
+		// Command-only completion consumes cmd_A (FIFO), counter 2→1.
 		`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-		// ID-only completion for cmd_B should clear state without rendering.
+		// ID-only completion for cmd_B clears remaining state, counter 1→0.
 		`{"type":"item.completed","item":{"id":"cmd_B","type":"command_execution"}}`,
+		// With all started state drained, this completion must render.
+		// If the wrong ID was consumed above, a stale counter remains and
+		// this would be suppressed instead.
+		`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
 	}
 
 	for _, line := range lines {
 		fix.writeLine(line)
 	}
 
-	// Two started renders, both completions suppressed = exactly 2 lines.
-	fix.assertCount(t, "Bash   bash -lc ls", 2)
+	// 2 started renders + 1 unpaired completion render = 3.
+	fix.assertCount(t, "Bash   bash -lc ls", 3)
 }
 
 func TestStreamFormatter_PartialWrites(t *testing.T) {
