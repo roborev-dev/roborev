@@ -3,7 +3,7 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -X github.com/roborev-dev/roborev/internal/version.Version=$(VERSION)
 
-.PHONY: build install clean test test-integration test-postgres test-all postgres-up postgres-down
+.PHONY: build install clean test test-integration test-postgres test-all postgres-up postgres-down test-postgres-ci
 
 build:
 	@mkdir -p bin
