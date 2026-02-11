@@ -214,14 +214,15 @@ func truncateLongLines(text string, maxWidth int, tabWidth int) string {
 	for i, line := range lines {
 		if fenceLen == 0 {
 			// Not inside a code block — check for opening fence.
-			if ch, n := parseFence(line); n > 0 {
+			if ch, n, _ := parseFence(line); n > 0 {
 				fenceChar = ch
 				fenceLen = n
 			}
 			continue
 		}
 		// Inside a code block — check for closing fence.
-		if ch, n := parseFence(line); n >= fenceLen && ch == fenceChar {
+		// Closing fences must have whitespace-only trailing content.
+		if ch, n, wsOnly := parseFence(line); n >= fenceLen && ch == fenceChar && wsOnly {
 			fenceLen = 0
 			continue
 		}
@@ -233,9 +234,11 @@ func truncateLongLines(text string, maxWidth int, tabWidth int) string {
 }
 
 // parseFence checks if line is a CommonMark fenced code block delimiter.
-// Returns the fence character ('`' or '~') and the run length, or 0 if
-// the line is not a valid fence. Allows 0-3 leading spaces.
-func parseFence(line string) (byte, int) {
+// Returns the fence character ('`' or '~'), the run length, and whether
+// trailing content is whitespace-only (required for closing fences).
+// Returns (0, 0, false) if the line is not a valid fence.
+// Allows 0-3 leading spaces.
+func parseFence(line string) (byte, int, bool) {
 	// Strip up to 3 leading spaces.
 	indent := 0
 	for indent < 3 && indent < len(line) && line[indent] == ' ' {
@@ -243,26 +246,26 @@ func parseFence(line string) (byte, int) {
 	}
 	rest := line[indent:]
 	if len(rest) < 3 {
-		return 0, 0
+		return 0, 0, false
 	}
 	ch := rest[0]
 	if ch != '`' && ch != '~' {
-		return 0, 0
+		return 0, 0, false
 	}
 	n := 0
 	for n < len(rest) && rest[n] == ch {
 		n++
 	}
 	if n < 3 {
-		return 0, 0
+		return 0, 0, false
 	}
-	// Closing fences must have only spaces after the fence run.
-	// Opening fences with backticks may have an info string (no backticks in it).
 	trailing := rest[n:]
+	wsOnly := strings.TrimSpace(trailing) == ""
+	// Backtick fences can't have backticks in the info string.
 	if ch == '`' && strings.ContainsRune(trailing, '`') {
-		return 0, 0 // backtick fences can't have backticks in info string
+		return 0, 0, false
 	}
-	return ch, n
+	return ch, n, wsOnly
 }
 
 // unsafeEscRe matches ANSI/terminal escape sequences that are NOT safe SGR

@@ -306,6 +306,16 @@ func TestTruncateLongLinesFenceEdgeCases(t *testing.T) {
 			input:     longLine, // no fence at all
 			wantTrunc: false,
 		},
+		{
+			name:      "closing backtick fence with info string does not close",
+			input:     "```\n" + longLine + "\n```lang",
+			wantTrunc: true, // still inside — ```lang is not a valid closer
+		},
+		{
+			name:      "closing tilde fence with text does not close",
+			input:     "~~~\n" + longLine + "\n~~~text",
+			wantTrunc: true, // still inside — ~~~text is not a valid closer
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
