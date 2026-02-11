@@ -40,8 +40,8 @@ roborev show --job <job_id> --json
 The JSON output has this structure:
 - `job_id`: the job ID
 - `output`: the review text containing findings
-- `job.verdict`: `"P"` for pass, `"F"` for fail
-- `job.git_ref`: the commit SHA that was reviewed
+- `job.verdict`: `"P"` for pass, `"F"` for fail (may be empty if the review errored)
+- `job.git_ref`: the reviewed git ref (SHA, range, or synthetic ref)
 - `addressed`: whether this review has already been addressed
 
 Skip any reviews where `job.verdict` is `"P"` (passing reviews have no findings to fix).
