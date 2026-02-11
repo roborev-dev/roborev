@@ -22,7 +22,7 @@ When the user invokes `/roborev:design-review-branch [--base <branch>]`:
 If a base branch is provided, verify it resolves to a valid ref:
 
 ```bash
-git rev-parse --verify <branch>
+git rev-parse --verify -- <branch>
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.

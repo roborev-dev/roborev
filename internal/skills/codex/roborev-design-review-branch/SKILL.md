@@ -22,7 +22,7 @@ When the user invokes `$roborev:design-review-branch [--base <branch>]`:
 If a base branch is provided, verify it resolves to a valid ref:
 
 ```bash
-git rev-parse --verify <branch>
+git rev-parse --verify -- <branch>
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
@@ -63,6 +63,6 @@ Agent:
 User: `$roborev:design-review-branch --base develop`
 
 Agent:
-1. Validates: `git rev-parse --verify develop`
+1. Validates: `git rev-parse --verify -- develop`
 2. Executes `roborev review --branch --wait --type design --base develop`
 3. Presents the review output

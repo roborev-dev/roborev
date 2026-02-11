@@ -22,7 +22,7 @@ When the user invokes `$roborev:review [commit] [--type security|design]`:
 If a commit ref is provided, verify it resolves to a valid commit:
 
 ```bash
-git rev-parse --verify <commit>^{commit}
+git rev-parse --verify -- <commit>^{commit}
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
@@ -64,6 +64,6 @@ Agent:
 User: `$roborev:review abc123 --type security`
 
 Agent:
-1. Validates: `git rev-parse --verify abc123^{commit}`
+1. Validates: `git rev-parse --verify -- abc123^{commit}`
 2. Executes `roborev review abc123 --wait --type security`
 3. Presents the review output

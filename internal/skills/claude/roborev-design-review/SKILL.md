@@ -22,7 +22,7 @@ When the user invokes `/roborev:design-review [commit]`:
 If a commit ref is provided, verify it resolves to a valid commit:
 
 ```bash
-git rev-parse --verify <commit>^{commit}
+git rev-parse --verify -- <commit>^{commit}
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
