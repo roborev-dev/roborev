@@ -302,6 +302,14 @@ func sanitizeEscapes(line string) string {
 	return line
 }
 
+// sanitizeLines applies sanitizeEscapes to every line in the slice.
+func sanitizeLines(lines []string) []string {
+	for i, line := range lines {
+		lines[i] = sanitizeEscapes(line)
+	}
+	return lines
+}
+
 // trailingPadRe matches trailing whitespace and ANSI SGR sequences.
 // Glamour pads code block lines with spaces (using background color) to fill
 // the wrap width. Stripping this padding prevents overflow on narrow terminals.
@@ -327,11 +335,11 @@ func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gans
 		glamour.WithPreservedNewLines(),
 	)
 	if err != nil {
-		return wrapText(text, wrapWidth)
+		return sanitizeLines(wrapText(text, wrapWidth))
 	}
 	out, err := r.Render(text)
 	if err != nil {
-		return wrapText(text, wrapWidth)
+		return sanitizeLines(wrapText(text, wrapWidth))
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	for i, line := range lines {
