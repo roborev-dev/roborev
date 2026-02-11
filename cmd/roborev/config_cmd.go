@@ -89,7 +89,10 @@ func configGetCmd() *cobra.Command {
 			if repoPath != "" {
 				if repoCfg, loadErr := config.LoadRepoConfig(repoPath); loadErr == nil && repoCfg != nil {
 					if config.IsConfigValueSet(repoCfg, key) {
-						val, _ := config.GetConfigValue(repoCfg, key)
+						val, err := config.GetConfigValue(repoCfg, key)
+						if err != nil {
+							return err
+						}
 						fmt.Println(val)
 						return nil
 					}
@@ -101,7 +104,10 @@ func configGetCmd() *cobra.Command {
 				return fmt.Errorf("load global config: %w", err)
 			}
 			val, err := config.GetConfigValue(cfg, key)
-			if err != nil || !config.IsConfigValueSet(cfg, key) {
+			if err != nil {
+				return err
+			}
+			if !config.IsConfigValueSet(cfg, key) {
 				return fmt.Errorf("key %q is not set", key)
 			}
 			fmt.Println(val)
