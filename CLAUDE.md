@@ -61,7 +61,8 @@ roborev status                       # Check daemon/queue
 
 Slow integration tests use the `//go:build integration` tag and are excluded
 from `go test ./...` by default. They run in CI and can be run locally with
-`-tags integration`.
+`-tags integration`. Postgres tests use `//go:build postgres` and require a
+running Postgres instance (`TEST_POSTGRES_URL` env var).
 
 ## Adding a New Agent
 

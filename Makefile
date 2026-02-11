@@ -36,11 +36,11 @@ test-integration: postgres-up
 	@echo "Waiting for postgres to be ready..."
 	@sleep 2
 	TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test" \
-		go test -tags=integration -v ./internal/storage/... -run Integration
+		go test -tags=postgres -v ./internal/storage/... -run Integration
 
 # Run all tests including integration
 test-all: test test-integration
 
 # CI target: run integration tests without managing docker (assumes postgres is running)
 test-integration-ci:
-	go test -tags=integration -v ./internal/storage/... -run Integration
+	go test -tags=postgres -v ./internal/storage/... -run Integration
