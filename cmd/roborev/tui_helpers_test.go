@@ -15,7 +15,7 @@ var testANSIRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 	// Verify that single newlines in plain text are preserved (not collapsed into one paragraph)
-	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, styles.DarkStyleConfig)
+	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, styles.DarkStyleConfig, 2)
 
 	found := 0
 	for _, line := range lines {
@@ -30,7 +30,7 @@ func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesFallsBackOnEmpty(t *testing.T) {
-	lines := renderMarkdownLines("", 80, styles.DarkStyleConfig)
+	lines := renderMarkdownLines("", 80, styles.DarkStyleConfig, 2)
 	// Should not panic and should produce some output (even if empty)
 	if lines == nil {
 		t.Error("Expected non-nil result for empty input")
@@ -159,7 +159,7 @@ func TestPromptScrollPageUpAfterPageDown(t *testing.T) {
 		width:       80,
 		height:      24,
 		currentView: tuiViewPrompt,
-		mdCache:     newMarkdownCache(),
+		mdCache:     newMarkdownCache(2),
 		currentReview: &storage.Review{
 			ID:     1,
 			Prompt: longContent,
@@ -209,7 +209,7 @@ func TestReviewScrollPageUpAfterPageDown(t *testing.T) {
 		width:       80,
 		height:      24,
 		currentView: tuiViewReview,
-		mdCache:     newMarkdownCache(),
+		mdCache:     newMarkdownCache(2),
 		currentReview: &storage.Review{
 			ID:     1,
 			Output: longContent,
@@ -252,7 +252,7 @@ func TestTruncateLongLines(t *testing.T) {
 	input := "short\n" +
 		"a very long line that exceeds the width by a lot and should be truncated down to size\n" +
 		"also short"
-	out := truncateLongLines(input, 20)
+	out := truncateLongLines(input, 20, 2)
 	lines := strings.Split(out, "\n")
 
 	if len(lines) != 3 {
@@ -272,7 +272,7 @@ func TestTruncateLongLines(t *testing.T) {
 func TestTruncateLongLinesPreservesNewlines(t *testing.T) {
 	// Ensure blank lines and structure are preserved
 	input := "line1\n\n\nline4"
-	out := truncateLongLines(input, 80)
+	out := truncateLongLines(input, 80, 2)
 	if out != input {
 		t.Errorf("Expected input preserved, got %q", out)
 	}
@@ -283,7 +283,7 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 	longLine := strings.Repeat("x", 200)
 	text := "Review:\n\n```\n" + longLine + "\n```\n"
 	width := 76
-	lines := renderMarkdownLines(text, width, styles.DarkStyleConfig)
+	lines := renderMarkdownLines(text, width, styles.DarkStyleConfig, 2)
 
 	for i, line := range lines {
 		stripped := testANSIRegex.ReplaceAllString(line, "")

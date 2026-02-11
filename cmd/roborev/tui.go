@@ -375,9 +375,13 @@ func newTuiModel(serverAddr string) tuiModel {
 	// Load preferences from config
 	hideAddressed := false
 	autoFilterRepo := false
+	tabWidth := 2
 	if cfg, err := config.LoadGlobal(); err == nil {
 		hideAddressed = cfg.HideAddressedByDefault
 		autoFilterRepo = cfg.AutoFilterRepo
+		if cfg.TabWidth > 0 {
+			tabWidth = cfg.TabWidth
+		}
 	}
 	// Note: Silently ignore config load errors - TUI should work with defaults
 
@@ -407,7 +411,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
 		pendingReviewAddressed: make(map[int64]pendingState), // Track pending addressed changes (by review ID)
-		mdCache:                newMarkdownCache(),
+		mdCache:                newMarkdownCache(tabWidth),
 	}
 }
 

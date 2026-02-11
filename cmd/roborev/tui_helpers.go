@@ -146,6 +146,7 @@ func wrapText(text string, width int) []string {
 // which blocks for seconds inside bubbletea's raw-mode input loop.
 type markdownCache struct {
 	glamourStyle gansi.StyleConfig // custom style derived from dark/light, detected once at init
+	tabWidth     int               // tab expansion width (default 2)
 
 	reviewLines []string
 	reviewID    int64
@@ -167,7 +168,7 @@ type markdownCache struct {
 // newMarkdownCache creates a markdownCache, detecting terminal background
 // color now (before bubbletea enters raw mode and takes over stdin).
 // Builds a custom style with zero margins to avoid extra padding.
-func newMarkdownCache() *markdownCache {
+func newMarkdownCache(tabWidth int) *markdownCache {
 	style := styles.LightStyleConfig
 	if termenv.HasDarkBackground() {
 		style = styles.DarkStyleConfig
@@ -180,20 +181,26 @@ func newMarkdownCache() *markdownCache {
 	// colored blocks around `backtick` content).
 	style.Code.Prefix = ""
 	style.Code.Suffix = ""
-	return &markdownCache{glamourStyle: style}
+	if tabWidth <= 0 {
+		tabWidth = 2
+	}
+	return &markdownCache{glamourStyle: style, tabWidth: tabWidth}
 }
 
 // truncateLongLines normalizes tabs and truncates any input line exceeding
 // maxWidth so glamour won't word-wrap it. With WithPreservedNewLines each
 // line is independent, so this prevents glamour from reflowing code/diff
 // lines into multiple output lines.
-func truncateLongLines(text string, maxWidth int) string {
+func truncateLongLines(text string, maxWidth int, tabWidth int) string {
 	if maxWidth <= 0 {
 		return text
 	}
-	// Expand tabs to 4 spaces. runewidth counts tabs as width 0 but
+	if tabWidth <= 0 {
+		tabWidth = 2
+	}
+	// Expand tabs to spaces. runewidth counts tabs as width 0 but
 	// terminals expand them to up to 8 columns, causing width mismatch.
-	text = strings.ReplaceAll(text, "\t", "    ")
+	text = strings.ReplaceAll(text, "\t", strings.Repeat(" ", tabWidth))
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if runewidth.StringWidth(line) > maxWidth {
@@ -216,9 +223,9 @@ func stripTrailingPadding(line string) string {
 
 // renderMarkdownLines renders markdown text using glamour and splits into lines.
 // Falls back to wrapText if glamour rendering fails.
-func renderMarkdownLines(text string, width int, glamourStyle gansi.StyleConfig) []string {
+func renderMarkdownLines(text string, width int, glamourStyle gansi.StyleConfig, tabWidth int) []string {
 	// Truncate long lines before glamour so they don't get word-wrapped.
-	text = truncateLongLines(text, width)
+	text = truncateLongLines(text, width, tabWidth)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(glamourStyle),
 		glamour.WithWordWrap(width),
@@ -250,7 +257,7 @@ func (c *markdownCache) getReviewLines(text string, width int, reviewID int64) [
 	if c.reviewID == reviewID && c.reviewWidth == width && c.reviewText == text {
 		return c.reviewLines
 	}
-	c.reviewLines = renderMarkdownLines(text, width, c.glamourStyle)
+	c.reviewLines = renderMarkdownLines(text, width, c.glamourStyle, c.tabWidth)
 	c.reviewID = reviewID
 	c.reviewWidth = width
 	c.reviewText = text
@@ -263,7 +270,7 @@ func (c *markdownCache) getPromptLines(text string, width int, reviewID int64) [
 	if c.promptID == reviewID && c.promptWidth == width && c.promptText == text {
 		return c.promptLines
 	}
-	c.promptLines = renderMarkdownLines(text, width, c.glamourStyle)
+	c.promptLines = renderMarkdownLines(text, width, c.glamourStyle, c.tabWidth)
 	c.promptID = reviewID
 	c.promptWidth = width
 	c.promptText = text

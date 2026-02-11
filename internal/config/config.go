@@ -94,6 +94,7 @@ type Config struct {
 	// UI preferences
 	HideAddressedByDefault bool `toml:"hide_addressed_by_default"`
 	AutoFilterRepo         bool `toml:"auto_filter_repo"`
+	TabWidth               int  `toml:"tab_width"` // Tab expansion width for TUI rendering (default: 2)
 }
 
 // CIConfig holds configuration for the CI poller that watches GitHub PRs
