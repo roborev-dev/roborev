@@ -32,7 +32,7 @@ Execute:
 roborev show --job <job_id> --json
 ```
 
-If the command fails, report the error to the user. Common causes: the daemon is not running, or the job ID does not exist.
+If the command fails, report the error to the user. Common causes: the daemon is not running, the job ID does not exist, or the repo is not initialized (suggest `roborev init`).
 
 The JSON output has this structure:
 - `job_id`: the job ID
@@ -64,7 +64,7 @@ Run the project's test suite to verify fixes:
 ```bash
 go test ./...
 ```
-If tests fail, fix the regressions before proceeding.
+Or whatever test command the project uses. If tests fail, fix the regressions before proceeding.
 
 ### 6. Complete the workflow
 
@@ -89,3 +89,8 @@ Agent:
 4. Reads files, fixes the issues, runs `go test ./...`
 5. Executes `roborev comment --job 1019 "Fixed null check in foo.go and added error handling in bar.go"` then `roborev address 1019`
 6. Asks: "I've addressed both findings and recorded a comment. Tests pass. Would you like me to commit these changes?"
+
+## See also
+
+- `/roborev:respond` — comment on a review and mark addressed without fixing code
+- `/roborev:fix` — batch-fix all unaddressed reviews in one pass

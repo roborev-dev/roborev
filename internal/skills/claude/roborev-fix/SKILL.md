@@ -31,7 +31,7 @@ roborev fix --unaddressed --list
 
 This prints one line per unaddressed job with its ID, commit SHA, agent, and summary. Collect the job IDs from the output.
 
-If the command fails, report the error to the user. Common causes: the daemon is not running.
+If the command fails, report the error to the user. Common causes: the daemon is not running, or the repo is not initialized (suggest `roborev init`).
 
 If no unaddressed reviews are found, inform the user there is nothing to fix.
 
@@ -122,3 +122,7 @@ Agent:
 4. Runs `go test ./...` to verify
 5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go"` then `roborev address 1019`
 6. Asks: "I've addressed 2 findings from 1 review (skipped job 1021 — already passing). Tests pass. Would you like me to commit?"
+
+## See also
+
+- `/roborev:address` — address a single review's findings

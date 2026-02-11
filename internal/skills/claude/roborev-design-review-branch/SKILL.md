@@ -57,7 +57,7 @@ Tell the user that the design review has been submitted and they can continue wo
 
 When the background task completes, read the output.
 
-If the command output contains an error (e.g., daemon not running, repo not initialized, review errored), report it to the user and suggest checking `roborev status` or re-running.
+If the command output contains an error (e.g., daemon not running, repo not initialized, review errored), report it to the user. Suggest `roborev status` to check the daemon, `roborev init` if the repo is not initialized, or re-running the review.
 
 Otherwise, present the review to the user:
 - Show the verdict prominently (Pass or Fail)
@@ -97,3 +97,9 @@ Agent:
 3. Tells user: "Design review submitted for branch (against develop). I'll present the results when it completes."
 4. When complete, presents the verdict and findings
 5. If findings exist: "Would you like me to address these findings? Run `/roborev:address 1043`"
+
+## See also
+
+- `/roborev:review-branch --type design` — equivalent, with additional `--type` flexibility
+- `/roborev:design-review` — design review a single commit
+- `/roborev:address` — fix a review's findings in code

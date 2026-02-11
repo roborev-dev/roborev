@@ -41,6 +41,7 @@ If the message contains quotes or special characters, escape them properly in th
 Both commands will output confirmation. If either fails, report the error to the user. Common causes:
 - The daemon is not running
 - The job ID does not exist
+- The repo is not initialized (suggest `roborev init`)
 - The review is already addressed (not an error, but worth noting to the user)
 
 The comment is recorded in roborev's database and the review is marked as addressed. View results with `roborev show`.
@@ -72,3 +73,7 @@ Agent action:
 roborev comment --job 1019 "The null check was a false positive" && roborev address 1019
 ```
 Then confirm: "Comment recorded and review #1019 marked as addressed."
+
+## See also
+
+- `/roborev:address` — fix a review's findings in code, then comment and mark addressed
