@@ -246,6 +246,16 @@ func TestNormalizeCodexOutput(t *testing.T) {
 			wantNil: true,
 		},
 		{
+			name:    "CommandUpdatedWithCommand",
+			input:   `{"type":"item.updated","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+			wantNil: true,
+		},
+		{
+			name:    "FileChangeUpdated",
+			input:   `{"type":"item.updated","item":{"type":"file_change"}}`,
+			wantNil: true,
+		},
+		{
 			name:     "FileChange",
 			input:    `{"type":"item.completed","item":{"type":"file_change"}}`,
 			wantText: "[File change]",

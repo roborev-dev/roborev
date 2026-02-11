@@ -275,6 +275,21 @@ func TestStreamFormatter_CodexUpdatedSuppressed(t *testing.T) {
 	fix.assertEmpty(t)
 }
 
+func TestStreamFormatter_CodexSanitizesControlChars(t *testing.T) {
+	fix := newFixture(true)
+
+	// Agent message with ANSI escape and control chars
+	fix.writeLine(`{"type":"item.completed","item":{"type":"agent_message","text":"\u001b[31mred\u001b[0m and \u0007bell"}}`)
+	fix.assertContains(t, "red and bell")
+	fix.assertNotContains(t, "\x1b")
+	fix.assertNotContains(t, "\x07")
+
+	// Command with ANSI escape
+	fix.writeLine(`{"type":"item.started","item":{"type":"command_execution","command":"bash -lc \u001b[32mls\u001b[0m"}}`)
+	fix.assertContains(t, "Bash   bash -lc ls")
+	fix.assertNotContains(t, "\x1b")
+}
+
 func TestStreamFormatter_CodexLifecycleSuppressed(t *testing.T) {
 	fix := newFixture(true)
 	fix.writeLine(`{"type":"thread.started","thread_id":"abc"}`)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 )
 
 // streamFormatter wraps an io.Writer to transform raw NDJSON stream output
@@ -177,11 +178,11 @@ func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 		if eventType != "item.completed" {
 			return
 		}
-		if text := strings.TrimSpace(item.Text); text != "" {
+		if text := strings.TrimSpace(sanitizeControl(item.Text)); text != "" {
 			f.writef("%s\n", text)
 		}
 	case "command_execution":
-		cmd := strings.TrimSpace(item.Command)
+		cmd := strings.TrimSpace(sanitizeControl(item.Command))
 		if !f.shouldRenderCodexCommand(eventType, item, cmd) {
 			return
 		}
@@ -411,6 +412,21 @@ func writerIsTerminal(w io.Writer) bool {
 		return isTerminal(f.Fd())
 	}
 	return false
+}
+
+// sanitizeControl strips ANSI escape sequences and non-printable control
+// characters from s. This prevents terminal injection from untrusted
+// model/subprocess output embedded in codex JSONL fields.
+func sanitizeControl(s string) string {
+	s = ansiEscapePattern.ReplaceAllString(s, "")
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\t' || !unicode.IsControl(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // jsonString extracts a string value from a raw JSON field.

@@ -185,22 +185,20 @@ func NormalizeCodexOutput(line string) *OutputLine {
 	}
 
 	switch ev.Type {
-	case "item.completed", "item.updated":
+	case "item.completed":
 		switch ev.Item.Type {
 		case "agent_message":
 			if ev.Item.Text != "" {
-				text := strings.ReplaceAll(ev.Item.Text, "\n", " ")
+				text := stripANSI(ev.Item.Text)
+				text = strings.ReplaceAll(text, "\n", " ")
 				text = strings.ReplaceAll(text, "\r", "")
 				return &OutputLine{Text: text, Type: "text"}
 			}
 		case "command_execution":
 			if ev.Item.Command != "" {
-				return &OutputLine{Text: "[Command: " + ev.Item.Command + "]", Type: "tool"}
+				return &OutputLine{Text: "[Command: " + stripANSI(ev.Item.Command) + "]", Type: "tool"}
 			}
-			if ev.Type == "item.completed" {
-				return &OutputLine{Text: "[Command completed]", Type: "tool"}
-			}
-			return nil
+			return &OutputLine{Text: "[Command completed]", Type: "tool"}
 		case "file_change":
 			return &OutputLine{Text: "[File change]", Type: "tool"}
 		}
@@ -210,7 +208,7 @@ func NormalizeCodexOutput(line string) *OutputLine {
 		switch ev.Item.Type {
 		case "command_execution":
 			if ev.Item.Command != "" {
-				return &OutputLine{Text: "[Command: " + ev.Item.Command + "]", Type: "tool"}
+				return &OutputLine{Text: "[Command: " + stripANSI(ev.Item.Command) + "]", Type: "tool"}
 			}
 		}
 		return nil
