@@ -268,28 +268,38 @@ func parseFence(line string) (byte, int, bool) {
 	return ch, n, wsOnly
 }
 
-// unsafeEscRe matches ANSI/terminal escape sequences that are NOT safe SGR
-// (Select Graphic Rendition) codes. SGR has the form ESC[...m where the
-// parameters are digits and semicolons. Everything else (OSC, CSI with other
-// final bytes, DCS, etc.) could be used for terminal injection attacks.
-var unsafeEscRe = regexp.MustCompile(
+// nonCSIEscRe matches non-CSI escape sequences: OSC, DCS, and bare ESC.
+var nonCSIEscRe = regexp.MustCompile(
 	// OSC: ESC ] ... (terminated by BEL or ST)
 	`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?` +
 		`|` +
 		// DCS: ESC P ... ST
 		`\x1bP[^\x1b]*(?:\x1b\\)?` +
 		`|` +
-		// CSI with non-'m' final byte (not SGR)
-		`\x1b\[[0-9;]*[^0-9;m]` +
-		`|` +
 		// Bare ESC followed by single char (e.g. ESC c for RIS)
 		`\x1b[^[\]P]`,
 )
 
+// csiRe matches all well-formed CSI sequences per ECMA-48:
+// ESC [ <parameter bytes 0x30-0x3F>* <intermediate bytes 0x20-0x2F>* <final byte 0x40-0x7E>
+var csiRe = regexp.MustCompile(`\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]`)
+
+// sgrRe matches SGR (Select Graphic Rendition) sequences specifically:
+// ESC [ <digits and semicolons only> m
+var sgrRe = regexp.MustCompile(`^\x1b\[[0-9;]*m$`)
+
 // sanitizeEscapes strips non-SGR terminal escape sequences from a line,
 // preventing untrusted content from injecting OSC/CSI/DCS control codes.
+// SGR sequences (colors/styles) are preserved.
 func sanitizeEscapes(line string) string {
-	return unsafeEscRe.ReplaceAllString(line, "")
+	line = nonCSIEscRe.ReplaceAllString(line, "")
+	line = csiRe.ReplaceAllStringFunc(line, func(seq string) string {
+		if sgrRe.MatchString(seq) {
+			return seq
+		}
+		return ""
+	})
+	return line
 }
 
 // trailingPadRe matches trailing whitespace and ANSI SGR sequences.

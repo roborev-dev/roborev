@@ -308,13 +308,13 @@ func TestTruncateLongLinesFenceEdgeCases(t *testing.T) {
 		},
 		{
 			name:      "closing backtick fence with info string does not close",
-			input:     "```\n" + longLine + "\n```lang",
-			wantTrunc: true, // still inside — ```lang is not a valid closer
+			input:     "```\n```lang\n" + longLine,
+			wantTrunc: true, // long line after invalid closer is still inside fence
 		},
 		{
 			name:      "closing tilde fence with text does not close",
-			input:     "~~~\n" + longLine + "\n~~~text",
-			wantTrunc: true, // still inside — ~~~text is not a valid closer
+			input:     "~~~\n~~~text\n" + longLine,
+			wantTrunc: true, // long line after invalid closer is still inside fence
 		},
 	}
 	for _, tt := range tests {
@@ -400,6 +400,21 @@ func TestSanitizeEscapes(t *testing.T) {
 			name:  "mixed: SGR kept, OSC stripped",
 			input: "\x1b[1mbold\x1b]0;evil\x07\x1b[0m",
 			want:  "\x1b[1mbold\x1b[0m",
+		},
+		{
+			name:  "private-mode CSI stripped (hide cursor)",
+			input: "hello\x1b[?25lworld",
+			want:  "helloworld",
+		},
+		{
+			name:  "private-mode CSI stripped (DA2)",
+			input: "hello\x1b[>0cworld",
+			want:  "helloworld",
+		},
+		{
+			name:  "CSI with intermediate byte stripped (cursor style)",
+			input: "hello\x1b[1 qworld",
+			want:  "helloworld",
 		},
 	}
 	for _, tt := range tests {
