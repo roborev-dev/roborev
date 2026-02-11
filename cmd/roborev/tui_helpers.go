@@ -183,6 +183,8 @@ func newMarkdownCache(tabWidth int) *markdownCache {
 	style.Code.Suffix = ""
 	if tabWidth <= 0 {
 		tabWidth = 2
+	} else if tabWidth > 16 {
+		tabWidth = 16
 	}
 	return &markdownCache{glamourStyle: style, tabWidth: tabWidth}
 }
@@ -197,6 +199,8 @@ func truncateLongLines(text string, maxWidth int, tabWidth int) string {
 	}
 	if tabWidth <= 0 {
 		tabWidth = 2
+	} else if tabWidth > 16 {
+		tabWidth = 16
 	}
 	// Expand tabs to spaces. runewidth counts tabs as width 0 but
 	// terminals expand them to up to 8 columns, causing width mismatch.
