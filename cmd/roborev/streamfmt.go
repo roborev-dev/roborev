@@ -62,12 +62,16 @@ func (f *streamFormatter) Flush() {
 }
 
 // streamEvent is a unified representation of stream-json events from
-// both Claude Code and Gemini CLI.
+// Claude Code, Gemini CLI, and Codex CLI.
 //
 // Claude:  {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{...}}]}}
 // Gemini:  {"type":"tool_use","tool_name":"read_file","parameters":{"file_path":"..."}}
 //
 //	{"type":"message","role":"assistant","content":"...","delta":true}
+//
+// Codex:   {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
+//
+//	{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}
 type streamEvent struct {
 	Type string `json:"type"`
 	// Claude: nested message with content blocks
@@ -79,6 +83,15 @@ type streamEvent struct {
 	Content    json.RawMessage `json:"content,omitempty"`
 	ToolName   string          `json:"tool_name,omitempty"`
 	Parameters json.RawMessage `json:"parameters,omitempty"`
+	// Codex: item events
+	Item *codexItem `json:"item,omitempty"`
+}
+
+// codexItem represents the item field in codex JSONL events.
+type codexItem struct {
+	Type    string `json:"type,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 
 type contentBlock struct {
@@ -133,10 +146,36 @@ func (f *streamFormatter) processLine(line string) {
 			}
 			f.formatToolUse(displayName, ev.Parameters)
 		}
-	case "result", "tool_result", "init":
-		// Suppress
+	case "item.started", "item.completed", "item.updated":
+		// Codex format: item events
+		f.processCodexItem(ev.Item)
+	case "result", "tool_result", "init",
+		"thread.started", "turn.started", "turn.completed":
+		// Suppress lifecycle events
 	default:
 		// Suppress system, user, and other events
+	}
+}
+
+func (f *streamFormatter) processCodexItem(item *codexItem) {
+	if item == nil {
+		return
+	}
+	switch item.Type {
+	case "agent_message":
+		if text := strings.TrimSpace(item.Text); text != "" {
+			f.writef("%s\n", text)
+		}
+	case "command_execution":
+		if item.Command != "" {
+			cmd := item.Command
+			if len(cmd) > 80 {
+				cmd = cmd[:77] + "..."
+			}
+			f.writef("%-6s %s\n", "Bash", cmd)
+		}
+	case "file_change":
+		f.writef("%-6s\n", "Edit")
 	}
 }
 

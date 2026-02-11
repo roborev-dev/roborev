@@ -219,6 +219,50 @@ func TestStreamFormatter_GeminiToolResult_Suppressed(t *testing.T) {
 	fix.assertEmpty(t)
 }
 
+func TestStreamFormatter_CodexEvents(t *testing.T) {
+	fix := newFixture(true)
+
+	lines := []string{
+		`{"type":"thread.started","thread_id":"abc123"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+		`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls","exit_code":0}}`,
+		`{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"main.go","kind":"update"}]}}`,
+		`{"type":"item.completed","item":{"type":"agent_message","text":"I fixed the issue."}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}`,
+	}
+
+	for _, line := range lines {
+		fix.writeLine(line)
+	}
+
+	fix.assertContains(t, "Bash   bash -lc ls")
+	fix.assertContains(t, "Edit")
+	fix.assertContains(t, "I fixed the issue.")
+	// Lifecycle events should be suppressed
+	fix.assertNotContains(t, "thread_id")
+	fix.assertNotContains(t, "turn.started")
+	fix.assertNotContains(t, "input_tokens")
+}
+
+func TestStreamFormatter_CodexLifecycleSuppressed(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(`{"type":"thread.started","thread_id":"abc"}`)
+	fix.writeLine(`{"type":"turn.started"}`)
+	fix.writeLine(`{"type":"turn.completed","usage":{"input_tokens":100}}`)
+	fix.assertEmpty(t)
+}
+
+func TestStreamFormatter_CodexCommandTruncation(t *testing.T) {
+	fix := newFixture(true)
+	longCmd := "bash -lc " + strings.Repeat("x", 100)
+	fix.writeLine(fmt.Sprintf(`{"type":"item.started","item":{"type":"command_execution","command":%q}}`, longCmd))
+	got := fix.output()
+	if !strings.Contains(got, "...") {
+		t.Errorf("long codex command should be truncated with ..., got:\n%s", got)
+	}
+}
+
 func TestStreamFormatter_PartialWrites(t *testing.T) {
 	fix := newFixture(true)
 
