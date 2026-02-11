@@ -81,17 +81,16 @@ func configGetCmd() *cobra.Command {
 			}
 
 			// Merged: try local first, then global
+			if !config.IsValidKey(key) {
+				return fmt.Errorf("unknown config key: %q", key)
+			}
+
 			repoPath, _ := findRepoRoot()
 			if repoPath != "" {
 				if repoCfg, loadErr := config.LoadRepoConfig(repoPath); loadErr == nil && repoCfg != nil {
-					val, getErr := config.GetConfigValue(repoCfg, key)
-					if getErr == nil && val != "" {
+					if val, getErr := config.GetConfigValue(repoCfg, key); getErr == nil && val != "" {
 						fmt.Println(val)
 						return nil
-					}
-					// If the key is valid but returned an unexpected error, report it
-					if getErr != nil && !strings.Contains(getErr.Error(), "unknown config key") {
-						return fmt.Errorf("repo config: %w", getErr)
 					}
 				}
 			}
@@ -102,7 +101,8 @@ func configGetCmd() *cobra.Command {
 			}
 			val, err := config.GetConfigValue(cfg, key)
 			if err != nil {
-				return err
+				// Key is valid (checked above) but not in Config struct — not set globally.
+				return fmt.Errorf("key %q is not set", key)
 			}
 			if val == "" {
 				return fmt.Errorf("key %q is not set", key)
@@ -269,13 +269,17 @@ func setConfigKey(path, key, value string) error {
 	}
 
 	// Set in raw map, handling dot notation for nested keys
-	if err := setRawMapKey(raw, key, coerceValue(validationCfg, key, value)); err != nil {
-		return err
-	}
+	setRawMapKey(raw, key, coerceValue(validationCfg, key, value))
 
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
+	}
+
+	// Preserve original file permissions if the file exists
+	var mode os.FileMode = 0644
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode()
 	}
 
 	// Write to temp file and rename for atomicity
@@ -295,16 +299,21 @@ func setConfigKey(path, key, value string) error {
 		return err
 	}
 
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
 	return os.Rename(tmpPath, path)
 }
 
-// setRawMapKey sets a value in a nested map using dot-separated keys
-func setRawMapKey(m map[string]interface{}, key string, value interface{}) error {
+// setRawMapKey sets a value in a nested map using dot-separated keys.
+func setRawMapKey(m map[string]interface{}, key string, value interface{}) {
 	parts := strings.Split(key, ".")
 
 	if len(parts) == 1 {
 		m[parts[0]] = value
-		return nil
+		return
 	}
 
 	// Navigate/create nested maps
@@ -327,7 +336,6 @@ func setRawMapKey(m map[string]interface{}, key string, value interface{}) error
 	}
 
 	current[parts[len(parts)-1]] = value
-	return nil
 }
 
 // coerceValue uses the typed config struct to determine the correct TOML type

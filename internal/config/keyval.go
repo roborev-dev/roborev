@@ -47,6 +47,13 @@ func collectSensitiveKeys(t reflect.Type, prefix string, out map[string]bool) {
 	}
 }
 
+// IsValidKey returns true if the key is recognized by either Config or RepoConfig.
+func IsValidKey(key string) bool {
+	_, err1 := FindFieldByTOMLKey(reflect.ValueOf(Config{}), key)
+	_, err2 := FindFieldByTOMLKey(reflect.ValueOf(RepoConfig{}), key)
+	return err1 == nil || err2 == nil
+}
+
 // IsSensitiveKey returns true if the key holds a secret that should be masked.
 func IsSensitiveKey(key string) bool {
 	return sensitiveKeys[key]

@@ -119,17 +119,13 @@ func TestSetRawMapKey(t *testing.T) {
 	m := make(map[string]interface{})
 
 	// Simple key
-	if err := setRawMapKey(m, "foo", "bar"); err != nil {
-		t.Fatalf("setRawMapKey simple: %v", err)
-	}
+	setRawMapKey(m, "foo", "bar")
 	if m["foo"] != "bar" {
 		t.Errorf("foo = %v, want bar", m["foo"])
 	}
 
 	// Nested key
-	if err := setRawMapKey(m, "a.b.c", 42); err != nil {
-		t.Fatalf("setRawMapKey nested: %v", err)
-	}
+	setRawMapKey(m, "a.b.c", 42)
 	a, ok := m["a"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("a is not a map")

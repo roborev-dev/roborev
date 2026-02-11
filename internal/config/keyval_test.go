@@ -220,3 +220,26 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestIsValidKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"default_agent", true}, // Config only
+		{"agent", true},         // RepoConfig only
+		{"max_workers", true},   // Config only
+		{"sync.enabled", true},  // nested Config
+		{"nonexistent", false},
+		{"fake.key", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got := IsValidKey(tt.key)
+			if got != tt.want {
+				t.Errorf("IsValidKey(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}
