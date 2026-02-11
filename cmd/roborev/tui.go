@@ -2371,12 +2371,13 @@ func (m tuiModel) renderReviewView() string {
 	}
 
 	// Render markdown content with glamour (cached), falling back to plain text wrapping.
-	// Cap at 100 so text stays readable on very wide terminals.
-	wrapWidth := max(20, min(m.width-4, 100))
+	// wrapWidth caps at 100 for readability; maxWidth uses actual terminal width for truncation.
+	maxWidth := max(20, m.width-4)
+	wrapWidth := min(maxWidth, 100)
 	contentStr := content.String()
 	var lines []string
 	if m.mdCache != nil {
-		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, review.ID)
+		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, maxWidth, review.ID)
 	} else {
 		lines = wrapText(contentStr, wrapWidth)
 	}
@@ -2496,11 +2497,12 @@ func (m tuiModel) renderPromptView() string {
 	}
 
 	// Render markdown content with glamour (cached), falling back to plain text wrapping.
-	// Cap at 100 so text stays readable on very wide terminals.
-	wrapWidth := max(20, min(m.width-4, 100))
+	// wrapWidth caps at 100 for readability; maxWidth uses actual terminal width for truncation.
+	maxWidth := max(20, m.width-4)
+	wrapWidth := min(maxWidth, 100)
 	var lines []string
 	if m.mdCache != nil {
-		lines = m.mdCache.getPromptLines(review.Prompt, wrapWidth, review.ID)
+		lines = m.mdCache.getPromptLines(review.Prompt, wrapWidth, maxWidth, review.ID)
 	} else {
 		lines = wrapText(review.Prompt, wrapWidth)
 	}

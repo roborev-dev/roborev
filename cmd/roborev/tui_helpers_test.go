@@ -15,7 +15,7 @@ var testANSIRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 	// Verify that single newlines in plain text are preserved (not collapsed into one paragraph)
-	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, styles.DarkStyleConfig, 2)
+	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, 80, styles.DarkStyleConfig, 2)
 
 	found := 0
 	for _, line := range lines {
@@ -30,7 +30,7 @@ func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesFallsBackOnEmpty(t *testing.T) {
-	lines := renderMarkdownLines("", 80, styles.DarkStyleConfig, 2)
+	lines := renderMarkdownLines("", 80, 80, styles.DarkStyleConfig, 2)
 	// Should not panic and should produce some output (even if empty)
 	if lines == nil {
 		t.Error("Expected non-nil result for empty input")
@@ -41,13 +41,13 @@ func TestMarkdownCacheHit(t *testing.T) {
 	c := &markdownCache{}
 
 	// First call should render
-	lines1 := c.getReviewLines("Hello\nWorld", 80, 1)
+	lines1 := c.getReviewLines("Hello\nWorld", 80, 80, 1)
 	if len(lines1) == 0 {
 		t.Fatal("Expected non-empty lines")
 	}
 
 	// Second call with same inputs should return cached result (same slice)
-	lines2 := c.getReviewLines("Hello\nWorld", 80, 1)
+	lines2 := c.getReviewLines("Hello\nWorld", 80, 80, 1)
 	if &lines1[0] != &lines2[0] {
 		t.Error("Expected cache hit to return same slice")
 	}
@@ -55,8 +55,8 @@ func TestMarkdownCacheHit(t *testing.T) {
 
 func TestMarkdownCacheInvalidatesOnTextChange(t *testing.T) {
 	c := &markdownCache{}
-	lines1 := c.getReviewLines("Hello", 80, 1)
-	lines2 := c.getReviewLines("Goodbye", 80, 1)
+	lines1 := c.getReviewLines("Hello", 80, 80, 1)
+	lines2 := c.getReviewLines("Goodbye", 80, 80, 1)
 
 	// Different text should produce different content
 	if strings.TrimSpace(lines1[len(lines1)-1]) == strings.TrimSpace(lines2[len(lines2)-1]) {
@@ -66,8 +66,8 @@ func TestMarkdownCacheInvalidatesOnTextChange(t *testing.T) {
 
 func TestMarkdownCacheInvalidatesOnWidthChange(t *testing.T) {
 	c := &markdownCache{}
-	lines1 := c.getReviewLines("Hello", 80, 1)
-	lines2 := c.getReviewLines("Hello", 40, 1)
+	lines1 := c.getReviewLines("Hello", 80, 80, 1)
+	lines2 := c.getReviewLines("Hello", 40, 40, 1)
 
 	// Same text but different width should re-render (different slice)
 	if &lines1[0] == &lines2[0] {
@@ -77,8 +77,8 @@ func TestMarkdownCacheInvalidatesOnWidthChange(t *testing.T) {
 
 func TestMarkdownCacheInvalidatesOnReviewIDChange(t *testing.T) {
 	c := &markdownCache{}
-	lines1 := c.getReviewLines("Hello", 80, 1)
-	lines2 := c.getReviewLines("Hello", 80, 2)
+	lines1 := c.getReviewLines("Hello", 80, 80, 1)
+	lines2 := c.getReviewLines("Hello", 80, 80, 2)
 
 	// Same text but different review ID should re-render
 	if &lines1[0] == &lines2[0] {
@@ -90,8 +90,8 @@ func TestMarkdownCachePromptSeparateFromReview(t *testing.T) {
 	c := &markdownCache{}
 
 	// Review and prompt caches are independent
-	reviewLines := c.getReviewLines("Review text", 80, 1)
-	promptLines := c.getPromptLines("Prompt text", 80, 1)
+	reviewLines := c.getReviewLines("Review text", 80, 80, 1)
+	promptLines := c.getPromptLines("Prompt text", 80, 80, 1)
 
 	reviewContent := strings.TrimSpace(reviewLines[len(reviewLines)-1])
 	promptContent := strings.TrimSpace(promptLines[len(promptLines)-1])
@@ -283,7 +283,7 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 	longLine := strings.Repeat("x", 200)
 	text := "Review:\n\n```\n" + longLine + "\n```\n"
 	width := 76
-	lines := renderMarkdownLines(text, width, styles.DarkStyleConfig, 2)
+	lines := renderMarkdownLines(text, width, width, styles.DarkStyleConfig, 2)
 
 	for i, line := range lines {
 		stripped := testANSIRegex.ReplaceAllString(line, "")

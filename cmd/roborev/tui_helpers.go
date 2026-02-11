@@ -226,29 +226,32 @@ func stripTrailingPadding(line string) string {
 }
 
 // renderMarkdownLines renders markdown text using glamour and splits into lines.
+// wrapWidth controls glamour's word-wrap column (capped for readability).
+// maxWidth controls line truncation (actual terminal width).
 // Falls back to wrapText if glamour rendering fails.
-func renderMarkdownLines(text string, width int, glamourStyle gansi.StyleConfig, tabWidth int) []string {
+func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gansi.StyleConfig, tabWidth int) []string {
 	// Truncate long lines before glamour so they don't get word-wrapped.
-	text = truncateLongLines(text, width, tabWidth)
+	// Use maxWidth (terminal width) so content fills the available space.
+	text = truncateLongLines(text, maxWidth, tabWidth)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(glamourStyle),
-		glamour.WithWordWrap(width),
+		glamour.WithWordWrap(wrapWidth),
 		glamour.WithPreservedNewLines(),
 	)
 	if err != nil {
-		return wrapText(text, width)
+		return wrapText(text, wrapWidth)
 	}
 	out, err := r.Render(text)
 	if err != nil {
-		return wrapText(text, width)
+		return wrapText(text, wrapWidth)
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	for i, line := range lines {
 		line = stripTrailingPadding(line)
-		// Truncate output lines that still exceed width (glamour can add
-		// indentation for block quotes, lists, etc. beyond the input width).
-		if xansi.StringWidth(line) > width {
-			line = xansi.Truncate(line, width, "")
+		// Truncate output lines that still exceed maxWidth (glamour can add
+		// indentation for block quotes, lists, etc. beyond the wrap width).
+		if xansi.StringWidth(line) > maxWidth {
+			line = xansi.Truncate(line, maxWidth, "")
 		}
 		lines[i] = line
 	}
@@ -257,26 +260,28 @@ func renderMarkdownLines(text string, width int, glamourStyle gansi.StyleConfig,
 
 // getReviewLines returns glamour-rendered lines for a review, using the cache
 // when the inputs (review ID, width, text) haven't changed.
-func (c *markdownCache) getReviewLines(text string, width int, reviewID int64) []string {
-	if c.reviewID == reviewID && c.reviewWidth == width && c.reviewText == text {
+// wrapWidth is the glamour word-wrap column; maxWidth is the truncation limit.
+func (c *markdownCache) getReviewLines(text string, wrapWidth, maxWidth int, reviewID int64) []string {
+	if c.reviewID == reviewID && c.reviewWidth == maxWidth && c.reviewText == text {
 		return c.reviewLines
 	}
-	c.reviewLines = renderMarkdownLines(text, width, c.glamourStyle, c.tabWidth)
+	c.reviewLines = renderMarkdownLines(text, wrapWidth, maxWidth, c.glamourStyle, c.tabWidth)
 	c.reviewID = reviewID
-	c.reviewWidth = width
+	c.reviewWidth = maxWidth
 	c.reviewText = text
 	return c.reviewLines
 }
 
 // getPromptLines returns glamour-rendered lines for a prompt, using the cache
 // when the inputs (review ID, width, text) haven't changed.
-func (c *markdownCache) getPromptLines(text string, width int, reviewID int64) []string {
-	if c.promptID == reviewID && c.promptWidth == width && c.promptText == text {
+// wrapWidth is the glamour word-wrap column; maxWidth is the truncation limit.
+func (c *markdownCache) getPromptLines(text string, wrapWidth, maxWidth int, reviewID int64) []string {
+	if c.promptID == reviewID && c.promptWidth == maxWidth && c.promptText == text {
 		return c.promptLines
 	}
-	c.promptLines = renderMarkdownLines(text, width, c.glamourStyle, c.tabWidth)
+	c.promptLines = renderMarkdownLines(text, wrapWidth, maxWidth, c.glamourStyle, c.tabWidth)
 	c.promptID = reviewID
-	c.promptWidth = width
+	c.promptWidth = maxWidth
 	c.promptText = text
 	return c.promptLines
 }
