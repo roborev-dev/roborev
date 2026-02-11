@@ -3082,3 +3082,44 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 		t.Errorf("expected git_ref %q, got %q", expectedRef, job.GitRef)
 	}
 }
+
+// TestHandleEnqueueRangeNonCommitObjectRejects verifies that the root-commit
+// fallback does not trigger for non-commit objects (e.g. blobs).
+func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
+	repoDir := t.TempDir()
+	testutil.InitTestGitRepo(t, repoDir)
+
+	endSHA, err := gitpkg.ResolveSHA(repoDir, "HEAD")
+	if err != nil {
+		t.Fatalf("resolve HEAD: %v", err)
+	}
+
+	// Get a blob SHA (the test.txt file created by InitTestGitRepo)
+	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD:test.txt")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("get blob SHA: %v", err)
+	}
+	blobSHA := strings.TrimSpace(string(out))
+
+	server, _, _ := newTestServer(t)
+
+	// A blob^ should not fall back to EmptyTreeSHA — it should return 400
+	rangeRef := blobSHA + "^.." + endSHA
+	reqData := map[string]string{
+		"repo_path": repoDir,
+		"git_ref":   rangeRef,
+		"agent":     "test",
+	}
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
+	w := httptest.NewRecorder()
+
+	server.handleEnqueue(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "invalid start commit") {
+		t.Errorf("expected 'invalid start commit' error, got: %s", w.Body.String())
+	}
+}

@@ -574,7 +574,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			// the range includes the root commit's changes.
 			if strings.HasSuffix(parts[0], "^") {
 				base := strings.TrimSuffix(parts[0], "^")
-				if _, resolveErr := git.ResolveSHA(gitCwd, base); resolveErr == nil {
+				if _, resolveErr := git.ResolveSHA(gitCwd, base+"^{commit}"); resolveErr == nil {
 					startSHA = git.EmptyTreeSHA
 					err = nil
 				}
