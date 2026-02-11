@@ -248,24 +248,24 @@ func TestReviewScrollPageUpAfterPageDown(t *testing.T) {
 	}
 }
 
-func TestTruncateLongLines(t *testing.T) {
-	input := "short\n" +
-		"a very long line that exceeds the width by a lot and should be truncated down to size\n" +
-		"also short"
+func TestTruncateLongLinesOnlyTruncatesCodeBlocks(t *testing.T) {
+	longLine := "a very long line that exceeds the width by a lot and should be truncated down to size"
+	input := "short\n```\n" + longLine + "\n```\n" + longLine
 	out := truncateLongLines(input, 20, 2)
 	lines := strings.Split(out, "\n")
 
-	if len(lines) != 3 {
-		t.Fatalf("Expected 3 lines, got %d", len(lines))
+	if len(lines) != 5 {
+		t.Fatalf("Expected 5 lines, got %d", len(lines))
 	}
 	if lines[0] != "short" {
 		t.Errorf("Short line should be unchanged, got %q", lines[0])
 	}
-	if len(lines[1]) > 20 {
-		t.Errorf("Long line should be truncated to <=20 chars, got %d: %q", len(lines[1]), lines[1])
+	if len(lines[2]) > 20 {
+		t.Errorf("Code block line should be truncated to <=20 chars, got %d: %q", len(lines[2]), lines[2])
 	}
-	if lines[2] != "also short" {
-		t.Errorf("Short line should be unchanged, got %q", lines[2])
+	// Prose line outside code block should be preserved intact
+	if lines[4] != longLine {
+		t.Errorf("Prose line should be preserved, got %q", lines[4])
 	}
 }
 
@@ -275,6 +275,23 @@ func TestTruncateLongLinesPreservesNewlines(t *testing.T) {
 	out := truncateLongLines(input, 80, 2)
 	if out != input {
 		t.Errorf("Expected input preserved, got %q", out)
+	}
+}
+
+func TestRenderMarkdownLinesPreservesLongProse(t *testing.T) {
+	// Long prose lines should be word-wrapped by glamour, not truncated.
+	// All words must appear in the rendered output.
+	longProse := "This is a very long prose line with important content that should be word-wrapped by glamour rather than truncated so that no information is lost from the rendered output"
+	lines := renderMarkdownLines(longProse, 60, 80, styles.DarkStyleConfig, 2)
+
+	combined := ""
+	for _, line := range lines {
+		combined += testANSIRegex.ReplaceAllString(line, "") + " "
+	}
+	for _, word := range []string{"important", "word-wrapped", "truncated", "information", "rendered"} {
+		if !strings.Contains(combined, word) {
+			t.Errorf("Expected word %q preserved in rendered output, got: %s", word, combined)
+		}
 	}
 }
 

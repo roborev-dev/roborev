@@ -189,10 +189,9 @@ func newMarkdownCache(tabWidth int) *markdownCache {
 	return &markdownCache{glamourStyle: style, tabWidth: tabWidth}
 }
 
-// truncateLongLines normalizes tabs and truncates any input line exceeding
-// maxWidth so glamour won't word-wrap it. With WithPreservedNewLines each
-// line is independent, so this prevents glamour from reflowing code/diff
-// lines into multiple output lines.
+// truncateLongLines normalizes tabs and truncates lines inside fenced code
+// blocks that exceed maxWidth, so glamour won't word-wrap them. Prose lines
+// outside code blocks are left intact for glamour to word-wrap naturally.
 func truncateLongLines(text string, maxWidth int, tabWidth int) string {
 	if maxWidth <= 0 {
 		return text
@@ -206,8 +205,13 @@ func truncateLongLines(text string, maxWidth int, tabWidth int) string {
 	// terminals expand them to up to 8 columns, causing width mismatch.
 	text = strings.ReplaceAll(text, "\t", strings.Repeat(" ", tabWidth))
 	lines := strings.Split(text, "\n")
+	inCodeBlock := false
 	for i, line := range lines {
-		if runewidth.StringWidth(line) > maxWidth {
+		if strings.HasPrefix(line, "```") {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+		if inCodeBlock && runewidth.StringWidth(line) > maxWidth {
 			lines[i] = runewidth.Truncate(line, maxWidth, "")
 		}
 	}
