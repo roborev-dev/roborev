@@ -416,6 +416,21 @@ func TestSanitizeEscapes(t *testing.T) {
 			input: "hello\x1b[1 qworld",
 			want:  "helloworld",
 		},
+		{
+			name:  "unterminated CSI at end of string preserved",
+			input: "hello\x1b[31",
+			want:  "hello\x1b[31",
+		},
+		{
+			name:  "unterminated OSC preserved (no terminator)",
+			input: "hello\x1b]0;title",
+			want:  "hello",
+		},
+		{
+			name:  "bare CSI introducer at end of string",
+			input: "hello\x1b[",
+			want:  "hello\x1b[",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
