@@ -153,6 +153,12 @@ type markdownCache struct {
 	promptID    int64
 	promptWidth int
 	promptText  string // raw input text used to produce promptLines
+
+	// Max scroll positions computed during the last render.
+	// Stored here (in the shared pointer) so key handlers can clamp
+	// scroll values even though View() uses a value receiver.
+	lastReviewMaxScroll int
+	lastPromptMaxScroll int
 }
 
 // newMarkdownCache creates a markdownCache, detecting terminal background

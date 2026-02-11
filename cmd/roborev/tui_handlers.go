@@ -482,8 +482,14 @@ func (m tuiModel) handleDownKey() (tea.Model, tea.Cmd) {
 		}
 	case tuiViewReview:
 		m.reviewScroll++
+		if m.mdCache != nil && m.reviewScroll > m.mdCache.lastReviewMaxScroll {
+			m.reviewScroll = m.mdCache.lastReviewMaxScroll
+		}
 	case tuiViewPrompt:
 		m.promptScroll++
+		if m.mdCache != nil && m.promptScroll > m.mdCache.lastPromptMaxScroll {
+			m.promptScroll = m.mdCache.lastPromptMaxScroll
+		}
 	case tuiViewCommitMsg:
 		m.commitMsgScroll++
 	case tuiViewHelp:
@@ -571,9 +577,15 @@ func (m tuiModel) handlePageUpKey() (tea.Model, tea.Cmd) {
 		}
 		m.updateSelectedJobID()
 	case tuiViewReview:
+		if m.mdCache != nil && m.reviewScroll > m.mdCache.lastReviewMaxScroll {
+			m.reviewScroll = m.mdCache.lastReviewMaxScroll
+		}
 		m.reviewScroll = max(0, m.reviewScroll-pageSize)
 		return m, tea.ClearScreen
 	case tuiViewPrompt:
+		if m.mdCache != nil && m.promptScroll > m.mdCache.lastPromptMaxScroll {
+			m.promptScroll = m.mdCache.lastPromptMaxScroll
+		}
 		m.promptScroll = max(0, m.promptScroll-pageSize)
 		return m, tea.ClearScreen
 	case tuiViewHelp:
@@ -602,9 +614,15 @@ func (m tuiModel) handlePageDownKey() (tea.Model, tea.Cmd) {
 		}
 	case tuiViewReview:
 		m.reviewScroll += pageSize
+		if m.mdCache != nil && m.reviewScroll > m.mdCache.lastReviewMaxScroll {
+			m.reviewScroll = m.mdCache.lastReviewMaxScroll
+		}
 		return m, tea.ClearScreen
 	case tuiViewPrompt:
 		m.promptScroll += pageSize
+		if m.mdCache != nil && m.promptScroll > m.mdCache.lastPromptMaxScroll {
+			m.promptScroll = m.mdCache.lastPromptMaxScroll
+		}
 		return m, tea.ClearScreen
 	case tuiViewHelp:
 		m.helpScroll = min(m.helpScroll+pageSize, m.helpMaxScroll())

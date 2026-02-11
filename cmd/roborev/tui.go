@@ -2413,6 +2413,9 @@ func (m tuiModel) renderReviewView() string {
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
+	if m.mdCache != nil {
+		m.mdCache.lastReviewMaxScroll = maxScroll
+	}
 	start := m.reviewScroll
 	if start > maxScroll {
 		start = maxScroll
@@ -2501,6 +2504,9 @@ func (m tuiModel) renderPromptView() string {
 	maxScroll := len(lines) - visibleLines
 	if maxScroll < 0 {
 		maxScroll = 0
+	}
+	if m.mdCache != nil {
+		m.mdCache.lastPromptMaxScroll = maxScroll
 	}
 	start := m.promptScroll
 	if start > maxScroll {

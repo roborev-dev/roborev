@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -141,5 +143,106 @@ func TestNilMdCacheRenderPromptView(t *testing.T) {
 	output := m.renderPromptView()
 	if !strings.Contains(output, "test prompt") {
 		t.Error("Expected output to contain prompt text")
+	}
+}
+
+func TestPromptScrollPageUpAfterPageDown(t *testing.T) {
+	// Generate enough content to require scrolling (more than terminal height)
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, fmt.Sprintf("Line %d of the prompt content", i+1))
+	}
+	longContent := strings.Join(lines, "\n")
+
+	m := tuiModel{
+		width:       80,
+		height:      24,
+		currentView: tuiViewPrompt,
+		mdCache:     newMarkdownCache(),
+		currentReview: &storage.Review{
+			ID:     1,
+			Prompt: longContent,
+			Job: &storage.ReviewJob{
+				ID:     1,
+				GitRef: "abc1234",
+			},
+		},
+	}
+
+	// First render populates the cache with maxScroll
+	m.renderPromptView()
+
+	if m.mdCache.lastPromptMaxScroll == 0 {
+		t.Fatal("Expected non-zero max scroll for long content")
+	}
+
+	// Page down several times past the end
+	for i := 0; i < 20; i++ {
+		m, _ = pressSpecial(m, tea.KeyPgDown)
+	}
+
+	// promptScroll should be clamped to maxScroll, not inflated
+	if m.promptScroll > m.mdCache.lastPromptMaxScroll {
+		t.Errorf("promptScroll %d should not exceed maxScroll %d after page-down",
+			m.promptScroll, m.mdCache.lastPromptMaxScroll)
+	}
+
+	// Now page up once should visibly scroll up
+	scrollBefore := m.promptScroll
+	m, _ = pressSpecial(m, tea.KeyPgUp)
+
+	if m.promptScroll >= scrollBefore {
+		t.Errorf("Page up should reduce scroll: before=%d, after=%d",
+			scrollBefore, m.promptScroll)
+	}
+}
+
+func TestReviewScrollPageUpAfterPageDown(t *testing.T) {
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, fmt.Sprintf("Line %d of the review output", i+1))
+	}
+	longContent := strings.Join(lines, "\n")
+
+	m := tuiModel{
+		width:       80,
+		height:      24,
+		currentView: tuiViewReview,
+		mdCache:     newMarkdownCache(),
+		currentReview: &storage.Review{
+			ID:     1,
+			Output: longContent,
+			Job: &storage.ReviewJob{
+				ID:       1,
+				GitRef:   "abc1234",
+				RepoName: "testrepo",
+			},
+		},
+	}
+
+	// First render populates the cache
+	m.renderReviewView()
+
+	if m.mdCache.lastReviewMaxScroll == 0 {
+		t.Fatal("Expected non-zero max scroll for long content")
+	}
+
+	// Page down past the end
+	for i := 0; i < 20; i++ {
+		m, _ = pressSpecial(m, tea.KeyPgDown)
+	}
+
+	if m.reviewScroll > m.mdCache.lastReviewMaxScroll {
+		t.Errorf("reviewScroll %d should not exceed maxScroll %d",
+			m.reviewScroll, m.mdCache.lastReviewMaxScroll)
+	}
+
+	// Page up should work immediately
+	scrollBefore := m.reviewScroll
+	m, _ = pressSpecial(m, tea.KeyPgUp)
+
+	if m.reviewScroll >= scrollBefore {
+		t.Errorf("Page up should reduce scroll: before=%d, after=%d",
+			scrollBefore, m.reviewScroll)
 	}
 }
