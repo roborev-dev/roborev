@@ -19,10 +19,16 @@ import (
 //
 // In non-TTY mode (piped output), raw JSON is passed through unchanged.
 type streamFormatter struct {
-	w        io.Writer
-	buf      []byte
-	isTTY    bool
+	w     io.Writer
+	buf   []byte
+	isTTY bool
+
 	writeErr error // first write error encountered during formatting
+
+	// Tracks codex command_execution items that have already been rendered.
+	codexRenderedCommandIDs map[string]struct{}
+	// For item events without IDs, track started commands to suppress duplicate completed echoes.
+	codexStartedCommands map[string]int
 }
 
 func newStreamFormatter(w io.Writer, isTTY bool) *streamFormatter {
@@ -89,6 +95,7 @@ type streamEvent struct {
 
 // codexItem represents the item field in codex JSONL events.
 type codexItem struct {
+	ID      string `json:"id,omitempty"`
 	Type    string `json:"type,omitempty"`
 	Text    string `json:"text,omitempty"`
 	Command string `json:"command,omitempty"`
@@ -170,22 +177,61 @@ func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 			f.writef("%s\n", text)
 		}
 	case "command_execution":
-		if eventType != "item.started" {
+		cmd := strings.TrimSpace(item.Command)
+		if !f.shouldRenderCodexCommand(eventType, item, cmd) {
 			return
 		}
-		if item.Command != "" {
-			cmd := item.Command
-			if len(cmd) > 80 {
-				cmd = cmd[:77] + "..."
-			}
-			f.writef("%-6s %s\n", "Bash", cmd)
+		if len(cmd) > 80 {
+			cmd = cmd[:77] + "..."
 		}
+		f.writef("%-6s %s\n", "Bash", cmd)
 	case "file_change":
 		if eventType != "item.completed" {
 			return
 		}
 		f.writef("%-6s\n", "Edit")
 	}
+}
+
+func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codexItem, cmd string) bool {
+	if eventType != "item.started" && eventType != "item.completed" {
+		return false
+	}
+	if cmd == "" {
+		return false
+	}
+
+	if id := strings.TrimSpace(item.ID); id != "" {
+		if f.codexRenderedCommandIDs == nil {
+			f.codexRenderedCommandIDs = make(map[string]struct{})
+		}
+		if _, seen := f.codexRenderedCommandIDs[id]; seen {
+			return false
+		}
+		f.codexRenderedCommandIDs[id] = struct{}{}
+		return true
+	}
+
+	if eventType == "item.started" {
+		if f.codexStartedCommands == nil {
+			f.codexStartedCommands = make(map[string]int)
+		}
+		f.codexStartedCommands[cmd]++
+		return true
+	}
+
+	// Completed command without an item ID should be shown unless we already rendered
+	// the corresponding started event for the same command text.
+	if count := f.codexStartedCommands[cmd]; count > 0 {
+		if count == 1 {
+			delete(f.codexStartedCommands, cmd)
+		} else {
+			f.codexStartedCommands[cmd] = count - 1
+		}
+		return false
+	}
+
+	return true
 }
 
 func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {
