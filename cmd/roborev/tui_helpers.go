@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/mattn/go-runewidth"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
@@ -129,4 +130,21 @@ func wrapText(text string, width int) []string {
 	}
 
 	return result
+}
+
+// renderMarkdownLines renders markdown text using glamour and splits into lines.
+// Falls back to wrapText if glamour rendering fails.
+func renderMarkdownLines(text string, width int) []string {
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return wrapText(text, width)
+	}
+	out, err := r.Render(text)
+	if err != nil {
+		return wrapText(text, width)
+	}
+	return strings.Split(strings.TrimRight(out, "\n"), "\n")
 }

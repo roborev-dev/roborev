@@ -216,6 +216,7 @@ type tuiModel struct {
 	tailStreaming bool       // True if job is still running
 	tailFromView  tuiView    // View to return to
 	tailFollow    bool       // True if auto-scrolling to bottom (follow mode)
+
 }
 
 // pendingState tracks a pending addressed toggle with sequence number
@@ -2361,9 +2362,9 @@ func (m tuiModel) renderReviewView() string {
 		}
 	}
 
-	// Wrap text to terminal width minus padding
+	// Render markdown content with glamour, falling back to plain text wrapping
 	wrapWidth := max(20, min(m.width-4, 200))
-	lines := wrapText(content.String(), wrapWidth)
+	lines := renderMarkdownLines(content.String(), wrapWidth)
 
 	// Compute title line count based on actual title length
 	titleLines := 1
@@ -2472,9 +2473,9 @@ func (m tuiModel) renderPromptView() string {
 		headerLines++
 	}
 
-	// Wrap text to terminal width minus padding
+	// Render markdown content with glamour, falling back to plain text wrapping
 	wrapWidth := max(20, min(m.width-4, 200))
-	lines := wrapText(review.Prompt, wrapWidth)
+	lines := renderMarkdownLines(review.Prompt, wrapWidth)
 
 	// Reserve: title(1) + command(0-1) + scroll indicator(1) + help(1) + margin(1)
 	visibleLines := m.height - 3 - headerLines
