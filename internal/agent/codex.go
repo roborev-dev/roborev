@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -25,6 +26,9 @@ const codexAutoApproveFlag = "--full-auto"
 
 var codexDangerousSupport sync.Map
 var codexAutoApproveSupport sync.Map
+
+// errNoCodexJSON indicates no valid codex --json events were parsed.
+var errNoCodexJSON = errors.New("no valid codex --json events parsed from output")
 
 // NewCodexAgent creates a new Codex agent with standard reasoning
 func NewCodexAgent(command string) *CodexAgent {
@@ -223,6 +227,9 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	}
 
 	if parseErr != nil {
+		if errors.Is(parseErr, errNoCodexJSON) {
+			return "", fmt.Errorf("codex CLI did not emit valid --json events; upgrade codex or check CLI compatibility: %w", errNoCodexJSON)
+		}
 		return "", parseErr
 	}
 
@@ -245,13 +252,15 @@ type codexEvent struct {
 	} `json:"item,omitempty"`
 }
 
-// parseStreamJSON parses codex's --json JSONL output and extracts the final result.
+// parseStreamJSON parses codex's --json JSONL output and extracts review text.
 // Codex emits events like thread.started, turn.started, item.completed (with agent_message),
 // and turn.completed. The agent_message items contain the actual review text.
 func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error) {
 	br := bufio.NewReader(r)
 
+	var validEventsParsed bool
 	var agentMessages []string
+	messageIndexByID := make(map[string]int)
 
 	for {
 		line, err := br.ReadString('\n')
@@ -268,10 +277,21 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 
 			var ev codexEvent
 			if jsonErr := json.Unmarshal([]byte(trimmed), &ev); jsonErr == nil {
-				// Collect agent_message text from completed items
+				validEventsParsed = true
+
+				// Collect agent_message text from completed/updated items.
+				// For messages with IDs, keep only the latest text per ID to avoid duplicates
+				// from incremental updates while preserving first-seen order.
 				if (ev.Type == "item.completed" || ev.Type == "item.updated") &&
 					ev.Item.Type == "agent_message" && ev.Item.Text != "" {
-					agentMessages = append(agentMessages, ev.Item.Text)
+					if ev.Item.ID == "" {
+						agentMessages = append(agentMessages, ev.Item.Text)
+					} else if idx, ok := messageIndexByID[ev.Item.ID]; ok {
+						agentMessages[idx] = ev.Item.Text
+					} else {
+						messageIndexByID[ev.Item.ID] = len(agentMessages)
+						agentMessages = append(agentMessages, ev.Item.Text)
+					}
 				}
 			}
 		}
@@ -281,9 +301,12 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 		}
 	}
 
+	if !validEventsParsed {
+		return "", errNoCodexJSON
+	}
+
 	if len(agentMessages) > 0 {
-		// Return the last agent message as the result (it's the final summary)
-		return agentMessages[len(agentMessages)-1], nil
+		return strings.Join(agentMessages, "\n"), nil
 	}
 
 	return "", nil

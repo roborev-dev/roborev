@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -67,6 +68,9 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 	mock := mockAgentCLI(t, MockCLIOpts{
 		HelpOutput:  "usage " + codexAutoApproveFlag,
 		CaptureArgs: true,
+		StdoutLines: []string{
+			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
+		},
 	})
 
 	a := NewCodexAgent(mock.CmdPath)
@@ -86,7 +90,7 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 func TestCodexParseStreamJSON(t *testing.T) {
 	a := NewCodexAgent("codex")
 
-	t.Run("ExtractsLastAgentMessage", func(t *testing.T) {
+	t.Run("AggregatesAgentMessages", func(t *testing.T) {
 		input := strings.NewReader(strings.Join([]string{
 			`{"type":"thread.started","thread_id":"abc123"}`,
 			`{"type":"turn.started"}`,
@@ -99,8 +103,24 @@ func TestCodexParseStreamJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if result != "Final review result" {
-			t.Fatalf("expected 'Final review result', got %q", result)
+		if result != "First message\nFinal review result" {
+			t.Fatalf("expected both messages, got %q", result)
+		}
+	})
+
+	t.Run("AggregatesByItemID", func(t *testing.T) {
+		input := strings.NewReader(strings.Join([]string{
+			`{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"Draft"}}`,
+			`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Second message"}}`,
+			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Final first message"}}`,
+		}, "\n") + "\n")
+
+		result, err := a.parseStreamJSON(input, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "Final first message\nSecond message" {
+			t.Fatalf("expected latest text per message ID, got %q", result)
 		}
 	})
 
@@ -147,6 +167,21 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			t.Fatalf("expected streamed output to contain event, got %q", buf.String())
 		}
 	})
+
+	t.Run("NoValidJSONReturnsError", func(t *testing.T) {
+		input := strings.NewReader("plain text output\nanother plain text line\n")
+
+		result, err := a.parseStreamJSON(input, nil)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if result != "" {
+			t.Fatalf("expected empty result on parse failure, got %q", result)
+		}
+		if !errors.Is(err, errNoCodexJSON) {
+			t.Fatalf("expected errNoCodexJSON, got %v", err)
+		}
+	})
 }
 
 func TestCodexBuildArgsIncludesJSON(t *testing.T) {
@@ -163,6 +198,9 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	mock := mockAgentCLI(t, MockCLIOpts{
 		HelpOutput:   "usage " + codexAutoApproveFlag,
 		CaptureStdin: true,
+		StdoutLines: []string{
+			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
+		},
 	})
 
 	a := NewCodexAgent(mock.CmdPath)
@@ -177,5 +215,23 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	}
 	if string(received) != testPrompt {
 		t.Fatalf("prompt not piped correctly via stdin\nexpected: %q\ngot: %q", testPrompt, string(received))
+	}
+}
+
+func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
+	withUnsafeAgents(t, false)
+
+	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage "+codexAutoApproveFlag+"\"; exit 0; fi\necho \"plain text output\"\nexit 0\n")
+
+	a := NewCodexAgent(cmdPath)
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "did not emit valid --json events") {
+		t.Fatalf("expected compatibility error, got %v", err)
+	}
+	if !errors.Is(err, errNoCodexJSON) {
+		t.Fatalf("expected wrapped errNoCodexJSON, got %v", err)
 	}
 }
