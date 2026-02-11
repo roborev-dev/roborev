@@ -84,11 +84,10 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 For each job that was addressed, record a summary comment and mark it as addressed:
 
 ```bash
-roborev comment --job <job_id> "<summary of changes>"
-roborev address <job_id>
+roborev comment --job <job_id> "<summary of changes>" && roborev address <job_id>
 ```
 
-The comment should briefly describe what was changed and why, referencing specific files and findings. Keep it under 2-3 sentences per review.
+The comment should briefly describe what was changed and why, referencing specific files and findings. Keep it under 2-3 sentences per review. If the message contains quotes or special characters, escape them properly in the bash command.
 
 ### 6. Ask to commit
 
@@ -107,8 +106,8 @@ Agent:
 4. Fixes all 3 findings across both reviews, grouped by file, prioritized by severity
 5. Runs `go test ./...` to verify
 6. Records comments and marks addressed:
-   - `roborev comment --job 1019 "Fixed null check and added error handling"` then `roborev address 1019`
-   - `roborev comment --job 1021 "Fixed missing validation"` then `roborev address 1021`
+   - `roborev comment --job 1019 "Fixed null check and added error handling" && roborev address 1019`
+   - `roborev comment --job 1021 "Fixed missing validation" && roborev address 1021`
 7. Asks: "I've addressed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"
 
 **Explicit job IDs:**
@@ -120,9 +119,10 @@ Agent:
 2. Job 1019 is verdict Fail with 2 findings; job 1021 is verdict Pass — skips 1021, informs user
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
-5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go"` then `roborev address 1019`
+5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go" && roborev address 1019`
 6. Asks: "I've addressed 2 findings from 1 review (skipped job 1021 — already passing). Tests pass. Would you like me to commit?"
 
 ## See also
 
 - `$roborev:address` — address a single review's findings
+- `$roborev:respond` — comment on a review and mark addressed without fixing code

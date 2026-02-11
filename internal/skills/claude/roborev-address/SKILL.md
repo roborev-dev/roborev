@@ -43,10 +43,10 @@ The JSON output has this structure:
 
 ### 3. Check the verdict
 
-- If `addressed` is `true`: Inform the user this review was already addressed. Ask if they want to proceed anyway.
-- If `job.verdict` is `"P"`: Inform the user no action is needed.
-- If `job.verdict` is `"F"`: Continue to address the findings.
+- If `job.verdict` is `"P"`: Inform the user no action is needed (passing review has no findings to fix). Stop here.
 - If `job.verdict` is empty or missing: Inform the user the review is not actionable (it may have errored). Do not proceed.
+- If `addressed` is `true`: Inform the user this review was already addressed. Ask if they want to proceed anyway.
+- If `job.verdict` is `"F"`: Continue to address the findings.
 
 ### 4. Fix the findings
 
@@ -70,11 +70,10 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 
 After fixing, **record what was done and mark the review addressed** by executing:
 ```bash
-roborev comment --job <job_id> "<summary of changes>"
-roborev address <job_id>
+roborev comment --job <job_id> "<summary of changes>" && roborev address <job_id>
 ```
 
-The comment should briefly describe what was changed and why, referencing specific files. Keep it under 2-3 sentences.
+The comment should briefly describe what was changed and why, referencing specific files. Keep it under 2-3 sentences. If the message contains quotes or special characters, escape them properly in the bash command.
 
 Then ask the user if they want to commit the changes.
 
@@ -87,7 +86,7 @@ Agent:
 2. Sees verdict is Fail with 2 findings, not yet addressed
 3. Runs `git show <git_ref>` to see the reviewed diff
 4. Reads files, fixes the issues, runs `go test ./...`
-5. Executes `roborev comment --job 1019 "Fixed null check in foo.go and added error handling in bar.go"` then `roborev address 1019`
+5. Executes `roborev comment --job 1019 "Fixed null check in foo.go and added error handling in bar.go" && roborev address 1019`
 6. Asks: "I've addressed both findings and recorded a comment. Tests pass. Would you like me to commit these changes?"
 
 ## See also
