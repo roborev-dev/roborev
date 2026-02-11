@@ -21,14 +21,28 @@ This skill requires you to **execute bash commands** to record the comment and m
 
 When the user invokes `$roborev:respond <job_id> [message]`:
 
-1. **If a message is provided**, immediately execute:
-   ```bash
-   roborev comment --job <job_id> "<message>" && roborev address <job_id>
-   ```
+### 1. Validate input
 
-2. **If no message is provided**, ask the user what they'd like to say, then execute the commands with their comment.
+If no job_id is provided, inform the user that a job ID is required. Suggest `roborev status` or `roborev fix --unaddressed --list` to find job IDs.
 
-3. **Verify success** - both commands will output confirmation. If either fails, report the error.
+### 2. Record the comment and mark addressed
+
+**If a message is provided**, immediately execute:
+```bash
+roborev comment --job <job_id> "<message>" && roborev address <job_id>
+```
+
+If the message contains quotes or special characters, escape them properly in the bash command.
+
+**If no message is provided**, ask the user what they'd like to say, then execute the commands with their comment.
+
+### 3. Verify success
+
+Both commands will output confirmation. If either fails, report the error to the user. Common causes:
+- The daemon is not running
+- The job ID does not exist
+- The repo is not initialized (suggest `roborev init`)
+- The review is already addressed (not an error, but worth noting to the user)
 
 The comment is recorded in roborev's database and the review is marked as addressed. View results with `roborev show`.
 
@@ -59,3 +73,7 @@ Agent action:
 roborev comment --job 1019 "The null check was a false positive" && roborev address 1019
 ```
 Then confirm: "Comment recorded and review #1019 marked as addressed."
+
+## See also
+
+- `$roborev:address` — fix a review's findings in code, then comment and mark addressed
