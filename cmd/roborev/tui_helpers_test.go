@@ -355,6 +355,53 @@ func TestRenderMarkdownLinesPreservesLongProse(t *testing.T) {
 	}
 }
 
+func TestSanitizeEscapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "SGR preserved",
+			input: "\x1b[31mred\x1b[0m",
+			want:  "\x1b[31mred\x1b[0m",
+		},
+		{
+			name:  "OSC stripped",
+			input: "hello\x1b]0;evil title\x07world",
+			want:  "helloworld",
+		},
+		{
+			name:  "DCS stripped",
+			input: "hello\x1bPevil\x1b\\world",
+			want:  "helloworld",
+		},
+		{
+			name:  "CSI non-SGR stripped",
+			input: "hello\x1b[2Jworld", // ED (erase display)
+			want:  "helloworld",
+		},
+		{
+			name:  "bare ESC stripped",
+			input: "hello\x1bcworld", // RIS (reset)
+			want:  "helloworld",
+		},
+		{
+			name:  "mixed: SGR kept, OSC stripped",
+			input: "\x1b[1mbold\x1b]0;evil\x07\x1b[0m",
+			want:  "\x1b[1mbold\x1b[0m",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeEscapes(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeEscapes(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 	// A long diff line should be truncated by renderMarkdownLines, not wrapped
 	longLine := strings.Repeat("x", 200)

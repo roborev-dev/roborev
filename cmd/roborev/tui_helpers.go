@@ -265,6 +265,30 @@ func parseFence(line string) (byte, int) {
 	return ch, n
 }
 
+// unsafeEscRe matches ANSI/terminal escape sequences that are NOT safe SGR
+// (Select Graphic Rendition) codes. SGR has the form ESC[...m where the
+// parameters are digits and semicolons. Everything else (OSC, CSI with other
+// final bytes, DCS, etc.) could be used for terminal injection attacks.
+var unsafeEscRe = regexp.MustCompile(
+	// OSC: ESC ] ... (terminated by BEL or ST)
+	`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?` +
+		`|` +
+		// DCS: ESC P ... ST
+		`\x1bP[^\x1b]*(?:\x1b\\)?` +
+		`|` +
+		// CSI with non-'m' final byte (not SGR)
+		`\x1b\[[0-9;]*[^0-9;m]` +
+		`|` +
+		// Bare ESC followed by single char (e.g. ESC c for RIS)
+		`\x1b[^[\]P]`,
+)
+
+// sanitizeEscapes strips non-SGR terminal escape sequences from a line,
+// preventing untrusted content from injecting OSC/CSI/DCS control codes.
+func sanitizeEscapes(line string) string {
+	return unsafeEscRe.ReplaceAllString(line, "")
+}
+
 // trailingPadRe matches trailing whitespace and ANSI SGR sequences.
 // Glamour pads code block lines with spaces (using background color) to fill
 // the wrap width. Stripping this padding prevents overflow on narrow terminals.
@@ -299,6 +323,7 @@ func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gans
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	for i, line := range lines {
 		line = stripTrailingPadding(line)
+		line = sanitizeEscapes(line)
 		// Truncate output lines that still exceed maxWidth (glamour can add
 		// indentation for block quotes, lists, etc. beyond the wrap width).
 		if xansi.StringWidth(line) > maxWidth {
