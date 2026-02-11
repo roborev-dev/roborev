@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/BurntSushi/toml"
@@ -253,14 +255,11 @@ func setConfigKey(path, key, value string) error {
 	} else if err2 := config.SetConfigValue(repoCfg, key, value); err2 == nil {
 		validationCfg = repoCfg
 	} else {
-		return err // return the first error (unknown key)
+		return err2
 	}
 
-	// Now get the typed value back for storage
-	typedVal, _ := config.GetConfigValue(validationCfg, key)
-
 	// Set in raw map, handling dot notation for nested keys
-	if err := setRawMapKey(raw, key, coerceValue(typedVal, value)); err != nil {
+	if err := setRawMapKey(raw, key, coerceValue(validationCfg, key, value)); err != nil {
 		return err
 	}
 
@@ -269,19 +268,29 @@ func setConfigKey(path, key, value string) error {
 		return err
 	}
 
-	// Write back
-	f, err := os.Create(path)
+	// Write to temp file and rename for atomicity
+	f, err := os.CreateTemp(filepath.Dir(path), ".roborev-config-*.toml")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	tmpPath := f.Name()
 
-	return toml.NewEncoder(f).Encode(raw)
+	if err := toml.NewEncoder(f).Encode(raw); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	return os.Rename(tmpPath, path)
 }
 
 // setRawMapKey sets a value in a nested map using dot-separated keys
 func setRawMapKey(m map[string]interface{}, key string, value interface{}) error {
-	parts := splitDotKey(key)
+	parts := strings.Split(key, ".")
 
 	if len(parts) == 1 {
 		m[parts[0]] = value
@@ -311,87 +320,44 @@ func setRawMapKey(m map[string]interface{}, key string, value interface{}) error
 	return nil
 }
 
-// splitDotKey splits a key on dots
-func splitDotKey(key string) []string {
-	return splitString(key, '.')
-}
-
-// coerceValue tries to convert a string to an appropriate Go type for TOML encoding
-func coerceValue(typedVal, rawVal string) interface{} {
-	// Try bool
-	if rawVal == "true" {
-		return true
+// coerceValue uses the typed config struct to determine the correct TOML type
+// for the given key's value.
+func coerceValue(validationCfg interface{}, key, rawVal string) interface{} {
+	v := reflect.ValueOf(validationCfg)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
 	}
-	if rawVal == "false" {
-		return false
+	field, err := config.FindFieldByTOMLKey(v, key)
+	if err != nil {
+		return rawVal
 	}
 
-	// Try integer
-	var n int64
-	if _, err := fmt.Sscanf(rawVal, "%d", &n); err == nil && fmt.Sprintf("%d", n) == rawVal {
-		return n
-	}
-
-	// Check for comma-separated list
-	if typedVal == rawVal && contains(rawVal, ",") {
-		parts := splitComma(rawVal)
-		result := make([]interface{}, len(parts))
-		for i, p := range parts {
-			result[i] = p
+	switch field.Kind() {
+	case reflect.Bool:
+		return field.Bool()
+	case reflect.Int, reflect.Int64:
+		return field.Int()
+	case reflect.Slice:
+		if field.Type().Elem().Kind() == reflect.String {
+			result := make([]interface{}, field.Len())
+			for i := 0; i < field.Len(); i++ {
+				result[i] = field.Index(i).String()
+			}
+			return result
 		}
-		return result
-	}
-
-	return rawVal
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+		return rawVal
+	case reflect.Ptr:
+		if field.IsNil() {
+			return rawVal
 		}
-	}
-	return false
-}
-
-func splitComma(s string) []string {
-	var result []string
-	for _, part := range splitOnComma(s) {
-		trimmed := trimSpace(part)
-		if trimmed != "" {
-			result = append(result, trimmed)
+		elem := field.Elem()
+		if elem.Kind() == reflect.Bool {
+			return elem.Bool()
 		}
+		return rawVal
+	default:
+		return rawVal
 	}
-	return result
-}
-
-func splitOnComma(s string) []string {
-	return splitString(s, ',')
-}
-
-func splitString(s string, sep byte) []string {
-	var result []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == sep {
-			result = append(result, s[start:i])
-			start = i + 1
-		}
-	}
-	result = append(result, s[start:])
-	return result
-}
-
-func trimSpace(s string) string {
-	start := 0
-	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	end := len(s)
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
 }
 
 // findRepoRoot walks up from the current directory to find a git repo root

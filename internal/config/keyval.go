@@ -51,7 +51,7 @@ func GetConfigValue(cfg interface{}, key string) (string, error) {
 		return "", fmt.Errorf("expected struct, got %s", v.Kind())
 	}
 
-	field, err := findFieldByTOMLKey(v, key)
+	field, err := FindFieldByTOMLKey(v, key)
 	if err != nil {
 		return "", err
 	}
@@ -70,7 +70,7 @@ func SetConfigValue(cfg interface{}, key string, value string) error {
 		return fmt.Errorf("expected pointer to struct, got %s", v.Kind())
 	}
 
-	field, err := findFieldByTOMLKey(v, key)
+	field, err := FindFieldByTOMLKey(v, key)
 	if err != nil {
 		return err
 	}
@@ -120,14 +120,6 @@ func MergedConfigWithOrigin(global *Config, repo *RepoConfig) []KeyValueOrigin {
 
 	var result []KeyValueOrigin
 	for _, kv := range globalKVs {
-		// Skip keys with empty/zero effective value and no repo override
-		if kv.Value == "" || kv.Value == "0" || kv.Value == "false" {
-			if repoVal, ok := repoMap[kv.Key]; ok {
-				result = append(result, KeyValueOrigin{Key: kv.Key, Value: repoVal, Origin: "local"})
-			}
-			continue
-		}
-
 		// Check if repo overrides this key
 		if repoVal, ok := repoMap[kv.Key]; ok {
 			result = append(result, KeyValueOrigin{Key: kv.Key, Value: repoVal, Origin: "local"})
@@ -156,8 +148,8 @@ func MergedConfigWithOrigin(global *Config, repo *RepoConfig) []KeyValueOrigin {
 	return result
 }
 
-// findFieldByTOMLKey locates a struct field by its TOML tag, supporting dot notation.
-func findFieldByTOMLKey(v reflect.Value, key string) (reflect.Value, error) {
+// FindFieldByTOMLKey locates a struct field by its TOML tag, supporting dot notation.
+func FindFieldByTOMLKey(v reflect.Value, key string) (reflect.Value, error) {
 	parts := strings.SplitN(key, ".", 2)
 	tagName := parts[0]
 
@@ -179,7 +171,7 @@ func findFieldByTOMLKey(v reflect.Value, key string) (reflect.Value, error) {
 		// If there's a remaining dot path, recurse into nested struct
 		if len(parts) == 2 {
 			if fieldVal.Kind() == reflect.Struct {
-				return findFieldByTOMLKey(fieldVal, parts[1])
+				return FindFieldByTOMLKey(fieldVal, parts[1])
 			}
 			return reflect.Value{}, fmt.Errorf("key %q: %q is not a nested struct", key, tagName)
 		}
