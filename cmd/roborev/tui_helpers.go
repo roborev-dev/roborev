@@ -288,9 +288,10 @@ var csiRe = regexp.MustCompile(`\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]`)
 // ESC [ <digits and semicolons only> m
 var sgrRe = regexp.MustCompile(`^\x1b\[[0-9;]*m$`)
 
-// sanitizeEscapes strips non-SGR terminal escape sequences from a line,
-// preventing untrusted content from injecting OSC/CSI/DCS control codes.
-// SGR sequences (colors/styles) are preserved.
+// sanitizeEscapes strips non-SGR terminal escape sequences and dangerous C0
+// control characters from a line, preventing untrusted content from injecting
+// OSC/CSI/DCS control codes or spoofing output via \r/\b overwrites.
+// SGR sequences (colors/styles), tabs, and newlines are preserved.
 func sanitizeEscapes(line string) string {
 	line = nonCSIEscRe.ReplaceAllString(line, "")
 	line = csiRe.ReplaceAllStringFunc(line, func(seq string) string {
@@ -299,7 +300,17 @@ func sanitizeEscapes(line string) string {
 		}
 		return ""
 	})
-	return line
+	// Strip C0 control characters (0x00-0x1F) except tab (0x09), newline
+	// (0x0A), and ESC (0x1B, already handled above). Characters like \r
+	// and \b can overwrite displayed content, enabling output spoofing.
+	var b strings.Builder
+	for _, r := range line {
+		if r < 0x20 && r != '\t' && r != '\n' && r != 0x1b {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // sanitizeLines applies sanitizeEscapes to every line in the slice.

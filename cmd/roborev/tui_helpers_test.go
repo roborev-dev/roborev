@@ -434,6 +434,31 @@ func TestSanitizeEscapes(t *testing.T) {
 			input: "hello\x1b[",
 			want:  "hello\x1b[",
 		},
+		{
+			name:  "carriage return stripped (prevents line overwrite)",
+			input: "fake\rreal",
+			want:  "fakereal",
+		},
+		{
+			name:  "backspace stripped (prevents overwrite spoofing)",
+			input: "hello\b\b\b\b\bworld",
+			want:  "helloworld",
+		},
+		{
+			name:  "BEL stripped",
+			input: "hello\aworld",
+			want:  "helloworld",
+		},
+		{
+			name:  "tab and newline preserved",
+			input: "col1\tcol2\nrow2",
+			want:  "col1\tcol2\nrow2",
+		},
+		{
+			name:  "null byte stripped",
+			input: "hello\x00world",
+			want:  "helloworld",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
