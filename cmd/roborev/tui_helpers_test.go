@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -14,7 +15,7 @@ var testANSIRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 	// Verify that single newlines in plain text are preserved (not collapsed into one paragraph)
-	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, "dark")
+	lines := renderMarkdownLines("Line 1\nLine 2\nLine 3", 80, styles.DarkStyleConfig)
 
 	found := 0
 	for _, line := range lines {
@@ -29,7 +30,7 @@ func TestRenderMarkdownLinesPreservesNewlines(t *testing.T) {
 }
 
 func TestRenderMarkdownLinesFallsBackOnEmpty(t *testing.T) {
-	lines := renderMarkdownLines("", 80, "dark")
+	lines := renderMarkdownLines("", 80, styles.DarkStyleConfig)
 	// Should not panic and should produce some output (even if empty)
 	if lines == nil {
 		t.Error("Expected non-nil result for empty input")

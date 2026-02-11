@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	gansi "github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
@@ -142,7 +143,7 @@ func wrapText(text string, width int) []string {
 // the terminal) to avoid calling termenv.HasDarkBackground() on every render,
 // which blocks for seconds inside bubbletea's raw-mode input loop.
 type markdownCache struct {
-	glamourStyle string // "dark" or "light", detected once at init
+	glamourStyle gansi.StyleConfig // custom style derived from dark/light, detected once at init
 
 	reviewLines []string
 	reviewID    int64
@@ -163,20 +164,28 @@ type markdownCache struct {
 
 // newMarkdownCache creates a markdownCache, detecting terminal background
 // color now (before bubbletea enters raw mode and takes over stdin).
+// Builds a custom style with zero margins to avoid extra padding.
 func newMarkdownCache() *markdownCache {
-	style := styles.LightStyle
+	style := styles.LightStyleConfig
 	if termenv.HasDarkBackground() {
-		style = styles.DarkStyle
+		style = styles.DarkStyleConfig
 	}
+	// Remove document and code block margins that add extra indentation.
+	zeroMargin := uint(0)
+	style.Document.Margin = &zeroMargin
+	style.CodeBlock.Margin = &zeroMargin
+	// Remove inline code prefix/suffix spaces (rendered as visible
+	// colored blocks around `backtick` content).
+	style.Code.Prefix = ""
+	style.Code.Suffix = ""
 	return &markdownCache{glamourStyle: style}
 }
 
 // renderMarkdownLines renders markdown text using glamour and splits into lines.
-// glamourStyle should be "dark" or "light" (pre-detected, not auto).
 // Falls back to wrapText if glamour rendering fails.
-func renderMarkdownLines(text string, width int, glamourStyle string) []string {
+func renderMarkdownLines(text string, width int, glamourStyle gansi.StyleConfig) []string {
 	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(glamourStyle),
+		glamour.WithStyles(glamourStyle),
 		glamour.WithWordWrap(width),
 		glamour.WithPreservedNewLines(),
 	)

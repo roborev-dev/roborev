@@ -19,6 +19,7 @@ import (
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
@@ -2427,7 +2428,11 @@ func (m tuiModel) renderReviewView() string {
 
 	linesWritten := 0
 	for i := start; i < end; i++ {
-		b.WriteString(lines[i])
+		line := lines[i]
+		if m.width > 0 {
+			line = xansi.Truncate(line, m.width, "")
+		}
+		b.WriteString(line)
 		b.WriteString("\x1b[K\n") // Clear to end of line before newline
 		linesWritten++
 	}
@@ -2519,7 +2524,11 @@ func (m tuiModel) renderPromptView() string {
 
 	linesWritten := 0
 	for i := start; i < end; i++ {
-		b.WriteString(lines[i])
+		line := lines[i]
+		if m.width > 0 {
+			line = xansi.Truncate(line, m.width, "")
+		}
+		b.WriteString(line)
 		b.WriteString("\x1b[K\n") // Clear to end of line before newline
 		linesWritten++
 	}
