@@ -27,7 +27,7 @@ type streamFormatter struct {
 
 	// Tracks codex command_execution items that have already been rendered.
 	codexRenderedCommandIDs map[string]struct{}
-	// For item events without IDs, track started commands to suppress duplicate completed echoes.
+	// Track started command text to suppress duplicate completed echoes, including mixed-ID pairs.
 	codexStartedCommands map[string]int
 }
 
@@ -201,7 +201,42 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 		return false
 	}
 
-	if id := strings.TrimSpace(item.ID); id != "" {
+	id := strings.TrimSpace(item.ID)
+	if eventType == "item.started" {
+		if id != "" {
+			if f.codexRenderedCommandIDs == nil {
+				f.codexRenderedCommandIDs = make(map[string]struct{})
+			}
+			if _, seen := f.codexRenderedCommandIDs[id]; seen {
+				return false
+			}
+			f.codexRenderedCommandIDs[id] = struct{}{}
+		}
+		if f.codexStartedCommands == nil {
+			f.codexStartedCommands = make(map[string]int)
+		}
+		f.codexStartedCommands[cmd]++
+		return true
+	}
+
+	// Completed events should be suppressed when we've already rendered the paired
+	// started event for the same command text, even if ID presence changed.
+	if count := f.codexStartedCommands[cmd]; count > 0 {
+		if count == 1 {
+			delete(f.codexStartedCommands, cmd)
+		} else {
+			f.codexStartedCommands[cmd] = count - 1
+		}
+		if id != "" {
+			if f.codexRenderedCommandIDs == nil {
+				f.codexRenderedCommandIDs = make(map[string]struct{})
+			}
+			f.codexRenderedCommandIDs[id] = struct{}{}
+		}
+		return false
+	}
+
+	if id != "" {
 		if f.codexRenderedCommandIDs == nil {
 			f.codexRenderedCommandIDs = make(map[string]struct{})
 		}
@@ -210,25 +245,6 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 		}
 		f.codexRenderedCommandIDs[id] = struct{}{}
 		return true
-	}
-
-	if eventType == "item.started" {
-		if f.codexStartedCommands == nil {
-			f.codexStartedCommands = make(map[string]int)
-		}
-		f.codexStartedCommands[cmd]++
-		return true
-	}
-
-	// Completed command without an item ID should be shown unless we already rendered
-	// the corresponding started event for the same command text.
-	if count := f.codexStartedCommands[cmd]; count > 0 {
-		if count == 1 {
-			delete(f.codexStartedCommands, cmd)
-		} else {
-			f.codexStartedCommands[cmd] = count - 1
-		}
-		return false
 	}
 
 	return true

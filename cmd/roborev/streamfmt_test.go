@@ -312,6 +312,38 @@ func TestStreamFormatter_CodexCommandCompletedFallback(t *testing.T) {
 	fix.assertCount(t, "Bash   bash -lc pwd", 1)
 }
 
+func TestStreamFormatter_CodexCommandMixedIDStartedWithoutIDCompletedWithID(t *testing.T) {
+	fix := newFixture(true)
+
+	lines := []string{
+		`{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+		`{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
+	}
+
+	for _, line := range lines {
+		fix.writeLine(line)
+	}
+
+	fix.assertContains(t, "Bash   bash -lc ls")
+	fix.assertCount(t, "Bash   bash -lc ls", 1)
+}
+
+func TestStreamFormatter_CodexCommandMixedIDStartedWithIDCompletedWithoutID(t *testing.T) {
+	fix := newFixture(true)
+
+	lines := []string{
+		`{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bash -lc ls"}}`,
+		`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
+	}
+
+	for _, line := range lines {
+		fix.writeLine(line)
+	}
+
+	fix.assertContains(t, "Bash   bash -lc ls")
+	fix.assertCount(t, "Bash   bash -lc ls", 1)
+}
+
 func TestStreamFormatter_PartialWrites(t *testing.T) {
 	fix := newFixture(true)
 
