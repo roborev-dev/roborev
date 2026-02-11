@@ -269,6 +269,66 @@ func TestTruncateLongLinesOnlyTruncatesCodeBlocks(t *testing.T) {
 	}
 }
 
+func TestTruncateLongLinesFenceEdgeCases(t *testing.T) {
+	longLine := strings.Repeat("x", 50)
+	tests := []struct {
+		name      string
+		input     string
+		wantTrunc bool // whether longLine inside the fence should be truncated
+	}{
+		{
+			name:      "tilde fence",
+			input:     "~~~\n" + longLine + "\n~~~",
+			wantTrunc: true,
+		},
+		{
+			name:      "indented fence (2 spaces)",
+			input:     "  ```\n" + longLine + "\n  ```",
+			wantTrunc: true,
+		},
+		{
+			name:      "4-backtick fence",
+			input:     "````\n" + longLine + "\n````",
+			wantTrunc: true,
+		},
+		{
+			name:      "4-backtick fence not closed by 3",
+			input:     "````\n" + longLine + "\n```",
+			wantTrunc: true, // still inside — 3 backticks can't close a 4-backtick fence
+		},
+		{
+			name:      "backtick fence with info string",
+			input:     "```diff\n" + longLine + "\n```",
+			wantTrunc: true,
+		},
+		{
+			name:      "prose with triple backtick in text not a fence",
+			input:     longLine, // no fence at all
+			wantTrunc: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := truncateLongLines(tt.input, 20, 2)
+			lines := strings.Split(out, "\n")
+			// Find the longLine (or its truncation) in the output
+			for _, line := range lines {
+				if strings.HasPrefix(line, "xxx") || line == longLine {
+					truncated := len(line) <= 20
+					if tt.wantTrunc && !truncated {
+						t.Errorf("Expected truncation inside fence, got len=%d: %q", len(line), line)
+					}
+					if !tt.wantTrunc && truncated {
+						t.Errorf("Expected no truncation outside fence, got len=%d: %q", len(line), line)
+					}
+					return
+				}
+			}
+			t.Error("Could not find long line in output")
+		})
+	}
+}
+
 func TestTruncateLongLinesPreservesNewlines(t *testing.T) {
 	// Ensure blank lines and structure are preserved
 	input := "line1\n\n\nline4"

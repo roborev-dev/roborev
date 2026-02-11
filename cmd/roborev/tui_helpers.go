@@ -192,6 +192,10 @@ func newMarkdownCache(tabWidth int) *markdownCache {
 // truncateLongLines normalizes tabs and truncates lines inside fenced code
 // blocks that exceed maxWidth, so glamour won't word-wrap them. Prose lines
 // outside code blocks are left intact for glamour to word-wrap naturally.
+//
+// Fence detection follows CommonMark rules: 0-3 spaces of indentation
+// followed by 3+ backticks or 3+ tildes. A closing fence must use the
+// same character and be at least as long as the opening fence.
 func truncateLongLines(text string, maxWidth int, tabWidth int) string {
 	if maxWidth <= 0 {
 		return text
@@ -205,17 +209,60 @@ func truncateLongLines(text string, maxWidth int, tabWidth int) string {
 	// terminals expand them to up to 8 columns, causing width mismatch.
 	text = strings.ReplaceAll(text, "\t", strings.Repeat(" ", tabWidth))
 	lines := strings.Split(text, "\n")
-	inCodeBlock := false
+	var fenceChar byte // '`' or '~' for the opening fence
+	var fenceLen int   // length of the opening fence run
 	for i, line := range lines {
-		if strings.HasPrefix(line, "```") {
-			inCodeBlock = !inCodeBlock
+		if fenceLen == 0 {
+			// Not inside a code block — check for opening fence.
+			if ch, n := parseFence(line); n > 0 {
+				fenceChar = ch
+				fenceLen = n
+			}
 			continue
 		}
-		if inCodeBlock && runewidth.StringWidth(line) > maxWidth {
+		// Inside a code block — check for closing fence.
+		if ch, n := parseFence(line); n >= fenceLen && ch == fenceChar {
+			fenceLen = 0
+			continue
+		}
+		if runewidth.StringWidth(line) > maxWidth {
 			lines[i] = runewidth.Truncate(line, maxWidth, "")
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// parseFence checks if line is a CommonMark fenced code block delimiter.
+// Returns the fence character ('`' or '~') and the run length, or 0 if
+// the line is not a valid fence. Allows 0-3 leading spaces.
+func parseFence(line string) (byte, int) {
+	// Strip up to 3 leading spaces.
+	indent := 0
+	for indent < 3 && indent < len(line) && line[indent] == ' ' {
+		indent++
+	}
+	rest := line[indent:]
+	if len(rest) < 3 {
+		return 0, 0
+	}
+	ch := rest[0]
+	if ch != '`' && ch != '~' {
+		return 0, 0
+	}
+	n := 0
+	for n < len(rest) && rest[n] == ch {
+		n++
+	}
+	if n < 3 {
+		return 0, 0
+	}
+	// Closing fences must have only spaces after the fence run.
+	// Opening fences with backticks may have an info string (no backticks in it).
+	trailing := rest[n:]
+	if ch == '`' && strings.ContainsRune(trailing, '`') {
+		return 0, 0 // backtick fences can't have backticks in info string
+	}
+	return ch, n
 }
 
 // trailingPadRe matches trailing whitespace and ANSI SGR sequences.
