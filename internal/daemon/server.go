@@ -569,8 +569,20 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		parts := strings.SplitN(gitRef, "..", 2)
 		startSHA, err := git.ResolveSHA(gitCwd, parts[0])
 		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid start commit: %v", err))
-			return
+			// If the start ref is <sha>^ and resolution failed, the commit
+			// may be the root commit (no parent). Use the empty tree SHA so
+			// the range includes the root commit's changes.
+			if strings.HasSuffix(parts[0], "^") {
+				base := strings.TrimSuffix(parts[0], "^")
+				if _, resolveErr := git.ResolveSHA(gitCwd, base); resolveErr == nil {
+					startSHA = git.EmptyTreeSHA
+					err = nil
+				}
+			}
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid start commit: %v", err))
+				return
+			}
 		}
 		endSHA, err := git.ResolveSHA(gitCwd, parts[1])
 		if err != nil {
