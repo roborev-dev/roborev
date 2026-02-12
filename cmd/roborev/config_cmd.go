@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,12 @@ const (
 	scopeLocal
 )
 
+var (
+	errNotGitRepository = errors.New("not in a git repository")
+	repoRootFromGit     = git.GetRepoRoot
+	currentWorkingDir   = os.Getwd
+)
+
 // determineScope returns the scope based on --global and --local flags.
 func determineScope(globalFlag, localFlag bool) (configScope, error) {
 	if globalFlag && localFlag {
@@ -40,16 +47,51 @@ func determineScope(globalFlag, localFlag bool) (configScope, error) {
 // repoRoot returns the git repo root for the current directory.
 // Returns ("", nil) when the repo root is optional and not found.
 func repoRoot() (string, error) {
-	return git.GetRepoRoot(".")
+	if root, err := repoRootFromGit("."); err == nil {
+		return root, nil
+	}
+
+	root, err := findRepoRoot()
+	if err != nil {
+		if errors.Is(err, errNotGitRepository) {
+			return "", nil
+		}
+		return "", err
+	}
+	return root, nil
 }
 
-// requireRepoRoot returns the git repo root or a user-facing error.
+// requireRepoRoot returns the git repo root or an actionable error.
 func requireRepoRoot() (string, error) {
 	root, err := repoRoot()
 	if err != nil {
-		return "", fmt.Errorf("not in a git repository")
+		return "", fmt.Errorf("determine repository root: %w", err)
+	}
+	if root == "" {
+		return "", errNotGitRepository
 	}
 	return root, nil
+}
+
+// findRepoRoot walks up from the current directory to find a git repo root.
+func findRepoRoot() (string, error) {
+	dir, err := currentWorkingDir()
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", errNotGitRepository
+		}
+		dir = parent
+	}
 }
 
 // getValueForScope retrieves a single config key value from the appropriate scope.
@@ -97,7 +139,11 @@ func getValueForScope(key string, scope configScope) (string, error) {
 			return "", fmt.Errorf("unknown config key: %q", key)
 		}
 		// Try local first, then global
-		if repoPath, err := repoRoot(); err == nil {
+		repoPath, err := repoRoot()
+		if err != nil {
+			return "", fmt.Errorf("determine repository root: %w", err)
+		}
+		if repoPath != "" {
 			raw, _ := config.LoadRawRepo(repoPath)
 			if raw != nil && config.IsKeyInTOMLFile(raw, key) {
 				repoCfg, err := config.LoadRepoConfig(repoPath)
@@ -182,7 +228,10 @@ func configSetCmd() *cobra.Command {
 			// Default (and --local): set in local config
 			repoPath, err := requireRepoRoot()
 			if err != nil {
-				return fmt.Errorf("not in a git repository (use --global for global config)")
+				if errors.Is(err, errNotGitRepository) {
+					return fmt.Errorf("%w (use --global for global config)", errNotGitRepository)
+				}
+				return err
 			}
 			localPath := filepath.Join(repoPath, ".roborev.toml")
 			return setConfigKey(localPath, key, value, false)
@@ -259,7 +308,11 @@ func listMergedConfig(showOrigin bool) error {
 
 	var repoCfg *config.RepoConfig
 	var rawRepo map[string]interface{}
-	if repoPath, err := repoRoot(); err == nil {
+	repoPath, err := repoRoot()
+	if err != nil {
+		return fmt.Errorf("determine repository root: %w", err)
+	}
+	if repoPath != "" {
 		repoCfg, _ = config.LoadRepoConfig(repoPath)
 		rawRepo, _ = config.LoadRawRepo(repoPath)
 	}
