@@ -29,15 +29,24 @@ func init() {
 	collectSensitiveKeys(reflect.TypeOf(RepoConfig{}), "", sensitiveKeys)
 }
 
+// getTOMLKey extracts the TOML key name from a struct field's tag.
+// Returns "" if the field has no toml tag.
+func getTOMLKey(field reflect.StructField) string {
+	tag := field.Tag.Get("toml")
+	if tag == "" {
+		return ""
+	}
+	return strings.Split(tag, ",")[0]
+}
+
 // collectSensitiveKeys walks struct fields and records TOML keys tagged sensitive:"true".
 func collectSensitiveKeys(t reflect.Type, prefix string, out map[string]bool) {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		tag := field.Tag.Get("toml")
-		if tag == "" {
+		tagKey := getTOMLKey(field)
+		if tagKey == "" {
 			continue
 		}
-		tagKey := strings.Split(tag, ",")[0]
 		fullKey := tagKey
 		if prefix != "" {
 			fullKey = prefix + "." + tagKey
@@ -195,14 +204,41 @@ func ListConfigKeys(cfg interface{}) []KeyValue {
 	return listFields(v, "")
 }
 
+// kvMap builds a map from key to formatted value for all fields in a struct.
+func kvMap(cfg interface{}) map[string]string {
+	v := reflect.ValueOf(cfg)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	m := make(map[string]string)
+	for _, kv := range listAllFields(v, "") {
+		m[kv.Key] = kv.Value
+	}
+	return m
+}
+
+// determineOrigin decides the origin label for a global config key.
+// It returns ("", false) if the key should be omitted from output.
+func determineOrigin(key, value, defaultValue string, rawGlobal map[string]interface{}) (string, bool) {
+	isDefault := defaultValue == value
+	isEmptyDefault := value == "" || value == "0" || value == "false"
+	explicitInGlobal := IsKeyInTOMLFile(rawGlobal, key)
+
+	if isEmptyDefault && !explicitInGlobal {
+		return "", false
+	}
+	if isDefault {
+		return "default", true
+	}
+	return "global", true
+}
+
 // MergedConfigWithOrigin returns all effective config values with their origin.
 // global is the loaded global config (already has defaults applied by LoadGlobal).
 // repo is the loaded repo config (nil if no .roborev.toml).
 // rawGlobal and rawRepo are raw TOML maps for detecting explicit presence of
 // false/0 values. Pass nil if not available.
 func MergedConfigWithOrigin(global *Config, repo *RepoConfig, rawGlobal, rawRepo map[string]interface{}) []KeyValueOrigin {
-	defaults := DefaultConfig()
-
 	if rawGlobal == nil {
 		rawGlobal = make(map[string]interface{})
 	}
@@ -210,43 +246,24 @@ func MergedConfigWithOrigin(global *Config, repo *RepoConfig, rawGlobal, rawRepo
 		rawRepo = make(map[string]interface{})
 	}
 
-	// Get all keys from the global config (which includes defaults)
-	globalKVs := listAllFields(reflect.ValueOf(global).Elem(), "")
-	defaultMap := make(map[string]string)
-	for _, kv := range listAllFields(reflect.ValueOf(defaults).Elem(), "") {
-		defaultMap[kv.Key] = kv.Value
-	}
-
-	// Get formatted repo values for all fields
+	defaultMap := kvMap(DefaultConfig())
 	repoValMap := make(map[string]string)
 	if repo != nil {
-		for _, kv := range listAllFields(reflect.ValueOf(repo).Elem(), "") {
-			repoValMap[kv.Key] = kv.Value
-		}
+		repoValMap = kvMap(repo)
 	}
+
+	globalKVs := listAllFields(reflect.ValueOf(global).Elem(), "")
 
 	var result []KeyValueOrigin
 	for _, kv := range globalKVs {
 		// Check if repo explicitly sets this key (via raw TOML presence)
 		if IsKeyInTOMLFile(rawRepo, kv.Key) {
-			val := repoValMap[kv.Key]
-			result = append(result, KeyValueOrigin{Key: kv.Key, Value: val, Origin: "local"})
+			result = append(result, KeyValueOrigin{Key: kv.Key, Value: repoValMap[kv.Key], Origin: "local"})
 			continue
 		}
 
-		// Skip empty/zero default values not explicitly set in global config file
-		isDefault := defaultMap[kv.Key] == kv.Value
-		isEmptyDefault := kv.Value == "" || kv.Value == "0" || kv.Value == "false"
-		explicitInGlobal := IsKeyInTOMLFile(rawGlobal, kv.Key)
-
-		if isEmptyDefault && !explicitInGlobal {
-			continue
-		}
-
-		if isDefault {
-			result = append(result, KeyValueOrigin{Key: kv.Key, Value: kv.Value, Origin: "default"})
-		} else {
-			result = append(result, KeyValueOrigin{Key: kv.Key, Value: kv.Value, Origin: "global"})
+		if origin, ok := determineOrigin(kv.Key, kv.Value, defaultMap[kv.Key], rawGlobal); ok {
+			result = append(result, KeyValueOrigin{Key: kv.Key, Value: kv.Value, Origin: origin})
 		}
 	}
 
@@ -288,13 +305,8 @@ func findFieldByTOMLKey(v reflect.Value, key string, initPointers bool) (reflect
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		tag := field.Tag.Get("toml")
-		if tag == "" {
-			continue
-		}
-		// Handle tag options like `toml:"name,omitempty"`
-		tagKey := strings.Split(tag, ",")[0]
-		if tagKey != tagName {
+		tagKey := getTOMLKey(field)
+		if tagKey == "" || tagKey != tagName {
 			continue
 		}
 
@@ -399,60 +411,28 @@ func setFieldValue(field reflect.Value, value string) error {
 	return nil
 }
 
-// listFields returns key-value pairs for all non-zero fields in a struct
+// listFields returns key-value pairs for all non-zero fields in a struct.
 func listFields(v reflect.Value, prefix string) []KeyValue {
-	var result []KeyValue
-	t := v.Type()
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		tag := field.Tag.Get("toml")
-		if tag == "" {
-			continue
-		}
-		tagKey := strings.Split(tag, ",")[0]
-
-		fullKey := tagKey
-		if prefix != "" {
-			fullKey = prefix + "." + tagKey
-		}
-
-		fieldVal := v.Field(i)
-
-		// Recurse into nested structs (but not slices of structs or maps)
-		if fieldVal.Kind() == reflect.Ptr && !fieldVal.IsNil() && fieldVal.Elem().Kind() == reflect.Struct {
-			result = append(result, listFields(fieldVal.Elem(), fullKey)...)
-			continue
-		}
-		if fieldVal.Kind() == reflect.Struct {
-			result = append(result, listFields(fieldVal, fullKey)...)
-			continue
-		}
-
-		// Skip zero values
-		if fieldVal.IsZero() {
-			continue
-		}
-
-		result = append(result, KeyValue{Key: fullKey, Value: formatValue(fieldVal)})
-	}
-
-	return result
+	return flattenStruct(v, prefix, false)
 }
 
 // listAllFields returns key-value pairs for ALL fields (including zero) in a struct.
 // Used for merged config comparison.
 func listAllFields(v reflect.Value, prefix string) []KeyValue {
+	return flattenStruct(v, prefix, true)
+}
+
+// flattenStruct walks a struct's fields recursively, building dot-separated keys
+// from TOML tags. When includeZero is false, zero-valued leaf fields are skipped.
+func flattenStruct(v reflect.Value, prefix string, includeZero bool) []KeyValue {
 	var result []KeyValue
 	t := v.Type()
 
 	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		tag := field.Tag.Get("toml")
-		if tag == "" {
+		tagKey := getTOMLKey(t.Field(i))
+		if tagKey == "" {
 			continue
 		}
-		tagKey := strings.Split(tag, ",")[0]
 
 		fullKey := tagKey
 		if prefix != "" {
@@ -463,11 +443,11 @@ func listAllFields(v reflect.Value, prefix string) []KeyValue {
 
 		// Recurse into nested structs
 		if fieldVal.Kind() == reflect.Ptr && !fieldVal.IsNil() && fieldVal.Elem().Kind() == reflect.Struct {
-			result = append(result, listAllFields(fieldVal.Elem(), fullKey)...)
+			result = append(result, flattenStruct(fieldVal.Elem(), fullKey, includeZero)...)
 			continue
 		}
 		if fieldVal.Kind() == reflect.Struct {
-			result = append(result, listAllFields(fieldVal, fullKey)...)
+			result = append(result, flattenStruct(fieldVal, fullKey, includeZero)...)
 			continue
 		}
 
@@ -476,6 +456,10 @@ func listAllFields(v reflect.Value, prefix string) []KeyValue {
 			continue
 		}
 		if fieldVal.Kind() == reflect.Slice && fieldVal.Type().Elem().Kind() == reflect.Struct {
+			continue
+		}
+
+		if !includeZero && fieldVal.IsZero() {
 			continue
 		}
 
