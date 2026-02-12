@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -708,4 +709,91 @@ func TestMergedConfigExplicitGlobalDefaultValueShowsGlobalOrigin(t *testing.T) {
 	} else if kvo.Origin != "global" {
 		t.Errorf("max_workers origin = %q, want %q", kvo.Origin, "global")
 	}
+}
+
+func TestFormatMapNilInterfaceKeys(t *testing.T) {
+	// Map with interface keys where some are nil.
+	// This previously panicked because compareKeys called Elem() on nil interfaces.
+	m := map[interface{}]string{
+		nil:   "null-val",
+		"abc": "string-val",
+		42:    "int-val",
+	}
+
+	var prev string
+	for i := 0; i < 20; i++ {
+		got := formatMap(reflect.ValueOf(m))
+		if prev != "" && got != prev {
+			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
+		}
+		prev = got
+	}
+
+	// All entries must be present (nil interface key should not panic)
+	result := formatMap(reflect.ValueOf(m))
+	for _, val := range []string{"null-val", "string-val", "int-val"} {
+		if !strings.Contains(result, val) {
+			t.Errorf("result %q missing value %q", result, val)
+		}
+	}
+	if !strings.Contains(result, "<nil>:null-val") {
+		t.Errorf("result %q missing nil key entry", result)
+	}
+}
+
+func TestFormatMapNaNFloatKeys(t *testing.T) {
+	// Map with NaN float keys. Different NaN bit patterns should produce
+	// deterministic ordering via bit-pattern comparison.
+	nan1 := math.NaN()
+	nan2 := math.Float64frombits(math.Float64bits(nan1) ^ 1) // different NaN payload
+
+	m := map[float64]string{
+		nan1: "first",
+		nan2: "second",
+		1.0:  "one",
+	}
+
+	var prev string
+	for i := 0; i < 20; i++ {
+		got := formatMap(reflect.ValueOf(m))
+		if prev != "" && got != prev {
+			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
+		}
+		prev = got
+	}
+
+	// All entries must be present
+	result := formatMap(reflect.ValueOf(m))
+	for _, val := range []string{"first", "second", "one"} {
+		if !strings.Contains(result, val) {
+			t.Errorf("result %q missing value %q", result, val)
+		}
+	}
+}
+
+func TestCompareKeysNilInterfaces(t *testing.T) {
+	// Direct unit tests for compareKeys nil-interface handling.
+	nilIface := reflect.ValueOf((*int)(nil)).Convert(reflect.TypeOf((*interface{})(nil)).Elem())
+
+	// Two nil interfaces are equal.
+	var i1, i2 interface{}
+	v1 := reflect.ValueOf(&i1).Elem()
+	v2 := reflect.ValueOf(&i2).Elem()
+	if c := compareKeys(v1, v2); c != 0 {
+		t.Errorf("compareKeys(nil, nil) = %d, want 0", c)
+	}
+
+	// nil < non-nil
+	i2 = 42
+	v2 = reflect.ValueOf(&i2).Elem()
+	if c := compareKeys(v1, v2); c != -1 {
+		t.Errorf("compareKeys(nil, 42) = %d, want -1", c)
+	}
+
+	// non-nil > nil
+	if c := compareKeys(v2, v1); c != 1 {
+		t.Errorf("compareKeys(42, nil) = %d, want 1", c)
+	}
+
+	_ = nilIface
 }

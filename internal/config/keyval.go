@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -464,20 +465,24 @@ func formatValue(v reflect.Value) string {
 }
 
 // mapEntry pairs a stringified key with its original reflect.Value for
-// collision-safe sorting (we format values from the original key, not
-// from a string-keyed intermediate map).
+// collision-safe sorting. The val field stores the map value captured
+// during iteration so we don't need to re-lookup via MapIndex (which
+// fails for NaN keys since NaN != NaN).
 type mapEntry struct {
 	str string
 	key reflect.Value
+	val reflect.Value
 }
 
 // formatMap returns a deterministic string representation of a map by sorting keys.
 func formatMap(v reflect.Value) string {
 	entries := make([]mapEntry, 0, v.Len())
-	for _, k := range v.MapKeys() {
+	iter := v.MapRange()
+	for iter.Next() {
 		entries = append(entries, mapEntry{
-			str: fmt.Sprintf("%v", k.Interface()),
-			key: k,
+			str: fmt.Sprintf("%v", iter.Key().Interface()),
+			key: iter.Key(),
+			val: iter.Value(),
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -488,7 +493,7 @@ func formatMap(v reflect.Value) string {
 	})
 	parts := make([]string, 0, len(entries))
 	for _, e := range entries {
-		parts = append(parts, e.str+":"+fmt.Sprintf("%v", v.MapIndex(e.key).Interface()))
+		parts = append(parts, e.str+":"+fmt.Sprintf("%v", e.val.Interface()))
 	}
 	return strings.Join(parts, ",")
 }
@@ -499,11 +504,25 @@ func formatMap(v reflect.Value) string {
 // or GoString() output.
 func compareKeys(a, b reflect.Value) int {
 	// Dereference interfaces to their underlying values.
-	if a.Kind() == reflect.Interface {
-		a = a.Elem()
-	}
-	if b.Kind() == reflect.Interface {
-		b = b.Elem()
+	// Nil interfaces have no underlying value; sort them before non-nil.
+	if a.Kind() == reflect.Interface || b.Kind() == reflect.Interface {
+		aNil := a.Kind() == reflect.Interface && a.IsNil()
+		bNil := b.Kind() == reflect.Interface && b.IsNil()
+		if aNil || bNil {
+			if aNil && bNil {
+				return 0
+			}
+			if aNil {
+				return -1
+			}
+			return 1
+		}
+		if a.Kind() == reflect.Interface {
+			a = a.Elem()
+		}
+		if b.Kind() == reflect.Interface {
+			b = b.Elem()
+		}
 	}
 
 	// Different concrete types: order by type string.
@@ -542,9 +561,16 @@ func compareKeys(a, b reflect.Value) int {
 		if af > bf {
 			return 1
 		}
-		// NaN handling: treat NaN as equal (sort is still deterministic
-		// because equal elements keep relative order via stable-sort below
-		// or because there's truly no distinguishable difference).
+		// Neither < nor > was true. This happens for equal values and for
+		// NaN comparisons. Fall back to bit-pattern ordering so distinct
+		// NaN payloads (or ±0) get a deterministic order.
+		ab, bb := math.Float64bits(af), math.Float64bits(bf)
+		if ab < bb {
+			return -1
+		}
+		if ab > bb {
+			return 1
+		}
 		return 0
 	case reflect.String:
 		as, bs := a.String(), b.String()
