@@ -853,7 +853,7 @@ Examples:
 				return fmt.Errorf("cannot use --since with --dirty")
 			}
 			if branch != "" && len(args) > 0 {
-				return fmt.Errorf("cannot specify commits with --branch")
+				return fmt.Errorf("cannot specify commits with --branch (to review a specific branch, use --branch=<name>)")
 			}
 			if since != "" && len(args) > 0 {
 				return fmt.Errorf("cannot specify commits with --since")

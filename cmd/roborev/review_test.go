@@ -519,6 +519,9 @@ func TestReviewBranchFlag(t *testing.T) {
 		if !strings.Contains(err.Error(), "cannot specify commits with --branch") {
 			t.Errorf("unexpected error: %v", err)
 		}
+		if !strings.Contains(err.Error(), "--branch=<name>") {
+			t.Errorf("error should suggest --branch=<name> syntax, got: %v", err)
+		}
 	})
 
 	t.Run("branch on default branch fails", func(t *testing.T) {

@@ -609,74 +609,178 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 }
 
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {
+	// Create a real git repo so GetCurrentBranch returns a known value
+	repo := newTestGitRepo(t)
+	repo.Run("checkout", "-b", "test-current")
+	repo.CommitFile("init.go", "package main", "initial")
+
+	captureBranch := func(t *testing.T) (mock *httptest.Server, gotBranch *string) {
+		t.Helper()
+		var branch string
+		ts, _ := newMockServer(t, MockServerOpts{
+			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				branch, _ = req["branch"].(string)
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
+			},
+		})
+		patchServerAddr(t, ts.URL)
+		return ts, &branch
+	}
+
 	t.Run("no branch flag uses current branch", func(t *testing.T) {
-		var gotBranch string
-		ts, _ := newMockServer(t, MockServerOpts{
-			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
-				var req map[string]interface{}
-				json.NewDecoder(r.Body).Decode(&req)
-				gotBranch, _ = req["branch"].(string)
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
-			},
-		})
-		patchServerAddr(t, ts.URL)
+		_, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob("/repo", "prompt", "", "refactor", analyzeOptions{})
+		_, err := enqueueAnalysisJob(repo.Dir, "prompt", "", "refactor", analyzeOptions{})
 		if err != nil {
 			t.Fatalf("enqueueAnalysisJob: %v", err)
 		}
-		// Without --branch, should use GetCurrentBranch result (empty for /repo which isn't a git repo)
-		// The key point is it should NOT be a named branch
-		if gotBranch == "feature-xyz" {
-			t.Error("branch should not be 'feature-xyz' without --branch flag")
+		if *gotBranch != "test-current" {
+			t.Errorf("expected branch 'test-current', got %q", *gotBranch)
 		}
 	})
 
-	t.Run("branch flag overrides current branch", func(t *testing.T) {
-		var gotBranch string
-		ts, _ := newMockServer(t, MockServerOpts{
-			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
-				var req map[string]interface{}
-				json.NewDecoder(r.Body).Decode(&req)
-				gotBranch, _ = req["branch"].(string)
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
-			},
-		})
-		patchServerAddr(t, ts.URL)
+	t.Run("branch=HEAD uses current branch", func(t *testing.T) {
+		_, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob("/repo", "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
+		_, err := enqueueAnalysisJob(repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
 		if err != nil {
 			t.Fatalf("enqueueAnalysisJob: %v", err)
 		}
-		if gotBranch != "feature-xyz" {
-			t.Errorf("expected branch 'feature-xyz', got %q", gotBranch)
+		if *gotBranch != "test-current" {
+			t.Errorf("expected branch 'test-current', got %q", *gotBranch)
 		}
 	})
 
-	t.Run("branch HEAD does not override current branch", func(t *testing.T) {
-		var gotBranch string
-		ts, _ := newMockServer(t, MockServerOpts{
-			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
-				var req map[string]interface{}
-				json.NewDecoder(r.Body).Decode(&req)
-				gotBranch, _ = req["branch"].(string)
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
-			},
-		})
-		patchServerAddr(t, ts.URL)
+	t.Run("named branch overrides current branch", func(t *testing.T) {
+		_, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob("/repo", "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
+		_, err := enqueueAnalysisJob(repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
 		if err != nil {
 			t.Fatalf("enqueueAnalysisJob: %v", err)
 		}
-		// "HEAD" means current branch, so should NOT set branch to "HEAD"
-		if gotBranch == "HEAD" {
-			t.Error("branch should not be literal 'HEAD'")
+		if *gotBranch != "feature-xyz" {
+			t.Errorf("expected branch 'feature-xyz', got %q", *gotBranch)
 		}
 	})
+}
+
+func TestGetBranchFiles(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.Run("checkout", "-b", "main")
+	repo.CommitFile("base.go", "package main", "base")
+
+	repo.Run("checkout", "-b", "feature")
+	repo.CommitFile("new.go", "package main\nfunc New() {}", "add go file")
+	repo.CommitFile("docs.md", "# Docs", "add docs")
+	repo.CommitFile("config.yml", "key: val", "add config")
+
+	cmd, _ := newTestCmd(t)
+
+	t.Run("filters to code files only", func(t *testing.T) {
+		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "HEAD",
+			baseBranch: "main",
+		})
+		if err != nil {
+			t.Fatalf("getBranchFiles: %v", err)
+		}
+		if len(files) != 1 {
+			t.Fatalf("expected 1 code file, got %d: %v", len(files), mapKeys(files))
+		}
+		if _, ok := files["new.go"]; !ok {
+			t.Errorf("expected new.go in results, got %v", mapKeys(files))
+		}
+	})
+
+	t.Run("reads from git not working tree", func(t *testing.T) {
+		// Modify working tree — should NOT affect branch analysis
+		os.WriteFile(filepath.Join(repo.Dir, "new.go"), []byte("DIRTY"), 0644)
+		defer func() {
+			repo.Run("checkout", "new.go")
+		}()
+
+		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "HEAD",
+			baseBranch: "main",
+		})
+		if err != nil {
+			t.Fatalf("getBranchFiles: %v", err)
+		}
+		content := files["new.go"]
+		if strings.Contains(content, "DIRTY") {
+			t.Error("getBranchFiles should read from git HEAD, not working tree")
+		}
+		if !strings.Contains(content, "func New()") {
+			t.Errorf("expected committed content, got %q", content)
+		}
+	})
+
+	t.Run("named branch reads from that branch", func(t *testing.T) {
+		// Switch back to main, analyze feature branch by name
+		repo.Run("checkout", "main")
+		defer repo.Run("checkout", "feature")
+
+		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "feature",
+			baseBranch: "main",
+		})
+		if err != nil {
+			t.Fatalf("getBranchFiles: %v", err)
+		}
+		if _, ok := files["new.go"]; !ok {
+			t.Errorf("expected new.go from feature branch, got %v", mapKeys(files))
+		}
+	})
+
+	t.Run("no code files returns error", func(t *testing.T) {
+		repo.Run("checkout", "-b", "docs-only", "main")
+		repo.CommitFile("readme.md", "# Hello", "add readme")
+		defer repo.Run("checkout", "feature")
+
+		_, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "HEAD",
+			baseBranch: "main",
+		})
+		if err == nil {
+			t.Fatal("expected error for no code files")
+		}
+		if !strings.Contains(err.Error(), "no code files changed") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("on base branch returns error", func(t *testing.T) {
+		repo.Run("checkout", "main")
+		defer repo.Run("checkout", "feature")
+
+		_, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "HEAD",
+			baseBranch: "main",
+		})
+		if err == nil {
+			t.Fatal("expected error when on base branch")
+		}
+		if !strings.Contains(err.Error(), "already on main") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestAnalyzeBranchSpaceSeparated(t *testing.T) {
+	// Verify that `--branch feature-xyz` (space-separated) gives a helpful error
+	// because NoOptDefVal causes "feature-xyz" to become a positional arg
+	cmd := analyzeCmd()
+	cmd.SetArgs([]string{"refactor", "--branch", "feature-xyz"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "--branch=<name>") {
+		t.Errorf("error should suggest --branch=<name> syntax, got: %v", err)
+	}
 }
 
 func TestAnalyzeJSONOutput(t *testing.T) {

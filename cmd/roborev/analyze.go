@@ -116,7 +116,7 @@ To fix an existing analysis job, use: roborev fix <job_id>
 					return fmt.Errorf("--branch requires an analysis type")
 				}
 				if len(args) > 1 {
-					return fmt.Errorf("cannot specify file patterns with --branch")
+					return fmt.Errorf("cannot specify file patterns with --branch (to analyze a specific branch, use --branch=<name>)")
 				}
 				return nil
 			}
@@ -1040,20 +1040,16 @@ func getBranchFiles(cmd *cobra.Command, repoRoot string, opts analyzeOptions) (m
 			branchLabel, len(commits), len(codeFiles), base)
 	}
 
-	// Read file contents
+	// Read file contents from git (not working tree) for consistency with the commit range
 	files := make(map[string]string, len(codeFiles))
 	for _, f := range codeFiles {
-		var content []byte
-		if targetRef == "HEAD" {
-			// Read from working tree for current branch
-			content, err = os.ReadFile(filepath.Join(repoRoot, f))
-		} else {
-			// Read from git for named branch
-			content, err = git.ReadFile(repoRoot, targetRef, f)
-		}
-		if err != nil {
-			// Skip files that no longer exist (deleted in HEAD)
-			continue
+		content, readErr := git.ReadFile(repoRoot, targetRef, f)
+		if readErr != nil {
+			// Files deleted in the target ref will fail to read — skip them
+			if strings.Contains(readErr.Error(), "does not exist") || strings.Contains(readErr.Error(), "bad object") {
+				continue
+			}
+			return nil, fmt.Errorf("read %s at %s: %w", f, targetRef, readErr)
 		}
 		files[f] = string(content)
 	}
