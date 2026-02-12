@@ -1365,7 +1365,9 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		cmd := &cobra.Command{}
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
-		_ = runFixList(cmd, "", false)
+		if err := runFixList(cmd, "", false); err != nil {
+			t.Fatalf("runFixList: %v", err)
+		}
 
 		if *receivedRepo == "" {
 			t.Fatal("expected repo param to be sent")
@@ -1384,7 +1386,9 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
-		_ = runFixUnaddressed(cmd, "", false, opts)
+		if err := runFixUnaddressed(cmd, "", false, opts); err != nil {
+			t.Fatalf("runFixUnaddressed: %v", err)
+		}
 
 		if *receivedRepo == "" {
 			t.Fatal("expected repo param to be sent")
@@ -1404,7 +1408,9 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
 		// nil jobIDs triggers discovery via queryUnaddressedJobs
-		_ = runFixBatch(cmd, nil, "", false, opts)
+		if err := runFixBatch(cmd, nil, "", false, opts); err != nil {
+			t.Fatalf("runFixBatch: %v", err)
+		}
 
 		if *receivedRepo == "" {
 			t.Fatal("expected repo param to be sent")
