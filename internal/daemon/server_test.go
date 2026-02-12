@@ -1903,6 +1903,47 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	})
 }
 
+func TestHandleEnqueueBranchFallback(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	repoDir := filepath.Join(tmpDir, "testrepo")
+	testutil.InitTestGitRepo(t, repoDir)
+
+	// Switch to a named branch
+	branchCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "my-feature")
+	if out, err := branchCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout failed: %v\n%s", err, out)
+	}
+
+	// Enqueue with empty branch field
+	reqData := map[string]string{
+		"repo_path": repoDir,
+		"git_ref":   "HEAD",
+		"agent":     "test",
+	}
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
+	w := httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var respJob storage.ReviewJob
+	if err := json.NewDecoder(w.Body).Decode(&respJob); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	// Verify the job has the detected branch, not empty
+	job, err := db.GetJobByID(respJob.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job.Branch != "my-feature" {
+		t.Errorf("expected branch %q, got %q", "my-feature", job.Branch)
+	}
+}
+
 func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 	server, _, tmpDir := newTestServer(t)
 

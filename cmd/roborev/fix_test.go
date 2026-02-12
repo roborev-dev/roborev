@@ -1323,3 +1323,46 @@ func TestFixListFlagValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryUnaddressedJobsWorktree(t *testing.T) {
+	// Verify that queryUnaddressedJobs sends the main repo path, not the
+	// worktree path, when called from a worktree directory.
+	var receivedRepoParam string
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			receivedRepoParam = r.URL.Query().Get("repo")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs":     []storage.ReviewJob{},
+				"has_more": false,
+			})
+			return
+		}
+	}))
+	t.Cleanup(cleanup)
+
+	// Create a main repo with a commit
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial")
+
+	// Create a worktree
+	worktreeDir := t.TempDir()
+	os.Remove(worktreeDir)
+	repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
+
+	chdir(t, worktreeDir)
+
+	// runFixList calls queryUnaddressedJobs internally, which uses
+	// GetMainRepoRoot to resolve the repo path for the API query.
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	_ = runFixList(cmd, "", false)
+
+	if receivedRepoParam == "" {
+		t.Fatal("expected repo param to be sent")
+	}
+	if receivedRepoParam != repo.Dir {
+		t.Errorf("expected main repo path %q, got %q", repo.Dir, receivedRepoParam)
+	}
+}

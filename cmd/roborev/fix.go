@@ -386,7 +386,7 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 	}
 
 	repoRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
+	if root, err := git.GetMainRepoRoot(workDir); err == nil {
 		repoRoot = root
 	}
 
@@ -477,7 +477,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		return fmt.Errorf("get working directory: %w", err)
 	}
 	repoRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
+	if root, err := git.GetMainRepoRoot(workDir); err == nil {
 		repoRoot = root
 	}
 
@@ -707,10 +707,15 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 	if root, err := git.GetRepoRoot(workDir); err == nil {
 		repoRoot = root
 	}
+	// Use main repo root for API queries (daemon stores jobs under main repo path)
+	apiRepoRoot := repoRoot
+	if root, err := git.GetMainRepoRoot(workDir); err == nil {
+		apiRepoRoot = root
+	}
 
 	// Discover jobs if none provided
 	if len(jobIDs) == 0 {
-		jobIDs, err = queryUnaddressedJobs(repoRoot, branch)
+		jobIDs, err = queryUnaddressedJobs(apiRepoRoot, branch)
 		if err != nil {
 			return err
 		}

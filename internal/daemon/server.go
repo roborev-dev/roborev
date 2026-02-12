@@ -468,6 +468,11 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fall back to detected branch when client didn't send one
+	if req.Branch == "" {
+		req.Branch = currentBranch
+	}
+
 	// Resolve repo identity for sync
 	repoIdentity := config.ResolveRepoIdentity(repoRoot, nil)
 

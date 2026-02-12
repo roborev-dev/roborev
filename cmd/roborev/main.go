@@ -1457,14 +1457,22 @@ Examples:
 			addr := getDaemonAddr()
 
 			// Auto-resolve repo from cwd when not specified.
-			if repoPath == "" {
+			// Use worktree root for branch detection, main repo root for API queries
+			// (daemon stores jobs under the main repo path).
+			localRepoPath := repoPath
+			if localRepoPath == "" {
 				if root, err := git.GetRepoRoot("."); err == nil {
+					localRepoPath = root
+				}
+			}
+			if repoPath == "" {
+				if root, err := git.GetMainRepoRoot("."); err == nil {
 					repoPath = root
 				}
 			}
 			// Auto-resolve branch from the target repo when not specified.
-			if branch == "" && repoPath != "" {
-				branch = git.GetCurrentBranch(repoPath)
+			if branch == "" && localRepoPath != "" {
+				branch = git.GetCurrentBranch(localRepoPath)
 			}
 
 			// Build query URL
