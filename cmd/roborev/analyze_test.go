@@ -691,3 +691,86 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 		}
 	})
 }
+
+func TestIsCodeFile(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		// Code files
+		{"main.go", true},
+		{"script.py", true},
+		{"app.js", true},
+		{"app.ts", true},
+		{"app.tsx", true},
+		{"lib.rs", true},
+		{"main.c", true},
+		{"main.cpp", true},
+		{"App.java", true},
+		{"run.sh", true},
+		{"query.sql", true},
+		{"schema.proto", true},
+
+		// Non-code files (excluded from branch analysis)
+		{"README.md", false},
+		{"notes.txt", false},
+		{"config.yml", false},
+		{"config.yaml", false},
+		{"data.json", false},
+		{"pyproject.toml", false},
+		{"index.html", false},
+		{"style.css", false},
+		{"style.scss", false},
+
+		// Not source at all
+		{"image.png", false},
+		{"binary.exe", false},
+		{".gitignore", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := isCodeFile(tt.path)
+			if got != tt.want {
+				t.Errorf("isCodeFile(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeBranchFlagValidation(t *testing.T) {
+	t.Run("branch requires analysis type", func(t *testing.T) {
+		cmd := analyzeCmd()
+		cmd.SetArgs([]string{"--branch"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "--branch requires an analysis type") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("branch cannot be combined with file patterns", func(t *testing.T) {
+		cmd := analyzeCmd()
+		cmd.SetArgs([]string{"--branch", "refactor", "*.go"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "cannot specify file patterns with --branch") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("branch with only analysis type is accepted by arg validation", func(t *testing.T) {
+		// This will fail later (no git repo, no daemon) but arg validation should pass
+		cmd := analyzeCmd()
+		cmd.SetArgs([]string{"--branch", "refactor"})
+		err := cmd.Execute()
+		// Should NOT be an arg validation error
+		if err != nil && strings.Contains(err.Error(), "requires analysis type and at least one file") {
+			t.Errorf("arg validation should pass with --branch and analysis type, got: %v", err)
+		}
+	})
+}
