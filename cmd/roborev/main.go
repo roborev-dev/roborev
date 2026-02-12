@@ -977,8 +977,12 @@ Examples:
 				gitRef = sha
 			}
 
-			// Get current branch name for tracking
+			// Get branch name for tracking. When --branch=<name> targets
+			// a different branch, use that name instead of the checked-out branch.
 			branchName := git.GetCurrentBranch(root)
+			if branch != "" && branch != "HEAD" {
+				branchName = branch
+			}
 
 			// Handle --local mode: run agent directly without daemon
 			if local {
