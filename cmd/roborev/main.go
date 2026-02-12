@@ -1469,6 +1469,12 @@ Examples:
 				if root, err := git.GetMainRepoRoot("."); err == nil {
 					repoPath = root
 				}
+			} else {
+				// Normalize explicit --repo to main repo root so worktree
+				// paths match the daemon's stored repo path.
+				if root, err := git.GetMainRepoRoot(repoPath); err == nil {
+					repoPath = root
+				}
 			}
 			// Auto-resolve branch from the target repo when not specified.
 			if branch == "" && localRepoPath != "" {

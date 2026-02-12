@@ -360,6 +360,49 @@ func TestListCommand(t *testing.T) {
 			t.Errorf("expected branch=wt-branch in query, got: %s", receivedQuery)
 		}
 	})
+
+	t.Run("explicit --repo with worktree path normalizes to main repo", func(t *testing.T) {
+		var receivedQuery string
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				receivedQuery = r.URL.RawQuery
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+				return
+			}
+		}))
+		t.Cleanup(cleanup)
+
+		// Create main repo with initial commit
+		repo := newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial")
+
+		// Create a worktree
+		worktreeDir := t.TempDir()
+		os.Remove(worktreeDir)
+		repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
+
+		// Don't chdir — pass the worktree path via --repo explicitly
+		chdir(t, repo.Dir)
+
+		captureStdout(t, func() {
+			cmd := listCmd()
+			cmd.SetArgs([]string{"--repo", worktreeDir})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+
+		// Even with --repo pointing to the worktree, repo= should be the main repo
+		if strings.Contains(receivedQuery, url.QueryEscape(worktreeDir)) {
+			t.Errorf("expected main repo path in query, but got worktree path: %s", receivedQuery)
+		}
+		if !strings.Contains(receivedQuery, url.QueryEscape(repo.Dir)) {
+			t.Errorf("expected main repo path %q in query, got: %s", repo.Dir, receivedQuery)
+		}
+	})
 }
 
 func TestShowJSONOutput(t *testing.T) {
