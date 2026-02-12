@@ -482,6 +482,9 @@ func buildOutputPrefix(analysisType string, filePaths []string) string {
 // enqueueAnalysisJob sends a job to the daemon
 func enqueueAnalysisJob(repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
 	branch := git.GetCurrentBranch(repoRoot)
+	if opts.branch != "" && opts.branch != "HEAD" {
+		branch = opts.branch
+	}
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"repo_path":     repoRoot,
 		"git_ref":       label, // Use analysis type name as the TUI label

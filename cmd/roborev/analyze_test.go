@@ -608,6 +608,77 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 	}
 }
 
+func TestEnqueueAnalysisJobBranchName(t *testing.T) {
+	t.Run("no branch flag uses current branch", func(t *testing.T) {
+		var gotBranch string
+		ts, _ := newMockServer(t, MockServerOpts{
+			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				gotBranch, _ = req["branch"].(string)
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
+			},
+		})
+		patchServerAddr(t, ts.URL)
+
+		_, err := enqueueAnalysisJob("/repo", "prompt", "", "refactor", analyzeOptions{})
+		if err != nil {
+			t.Fatalf("enqueueAnalysisJob: %v", err)
+		}
+		// Without --branch, should use GetCurrentBranch result (empty for /repo which isn't a git repo)
+		// The key point is it should NOT be a named branch
+		if gotBranch == "feature-xyz" {
+			t.Error("branch should not be 'feature-xyz' without --branch flag")
+		}
+	})
+
+	t.Run("branch flag overrides current branch", func(t *testing.T) {
+		var gotBranch string
+		ts, _ := newMockServer(t, MockServerOpts{
+			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				gotBranch, _ = req["branch"].(string)
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
+			},
+		})
+		patchServerAddr(t, ts.URL)
+
+		_, err := enqueueAnalysisJob("/repo", "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
+		if err != nil {
+			t.Fatalf("enqueueAnalysisJob: %v", err)
+		}
+		if gotBranch != "feature-xyz" {
+			t.Errorf("expected branch 'feature-xyz', got %q", gotBranch)
+		}
+	})
+
+	t.Run("branch HEAD does not override current branch", func(t *testing.T) {
+		var gotBranch string
+		ts, _ := newMockServer(t, MockServerOpts{
+			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				gotBranch, _ = req["branch"].(string)
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
+			},
+		})
+		patchServerAddr(t, ts.URL)
+
+		_, err := enqueueAnalysisJob("/repo", "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
+		if err != nil {
+			t.Fatalf("enqueueAnalysisJob: %v", err)
+		}
+		// "HEAD" means current branch, so should NOT set branch to "HEAD"
+		if gotBranch == "HEAD" {
+			t.Error("branch should not be literal 'HEAD'")
+		}
+	})
+}
+
 func TestAnalyzeJSONOutput(t *testing.T) {
 	t.Run("single analysis JSON output", func(t *testing.T) {
 		ts, _ := newMockServer(t, MockServerOpts{Agent: "test-agent"})
