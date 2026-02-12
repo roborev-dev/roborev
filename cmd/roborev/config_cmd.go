@@ -438,17 +438,26 @@ func atomicWriteConfig(path string, raw map[string]interface{}, isGlobal bool) e
 	if isGlobal {
 		dirMode = 0700
 	}
-	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return err
 	}
+	// MkdirAll is a no-op for existing dirs. Tighten global config dir
+	// in case it was created with a permissive umask.
+	if isGlobal {
+		if err := os.Chmod(dir, dirMode); err != nil {
+			return err
+		}
+	}
 
-	// Preserve original file permissions if the file exists.
-	// Default to 0600 for global config (may contain secrets), 0644 for repo config.
+	// For global config, always enforce 0600 since it may contain secrets
+	// (API keys, DB credentials). Don't inherit existing permissions — the file
+	// may have been created manually with a permissive umask (0644).
+	// For repo config, preserve existing permissions (may be tracked in git).
 	var mode os.FileMode = 0644
 	if isGlobal {
 		mode = 0600
-	}
-	if info, err := os.Stat(path); err == nil {
+	} else if info, err := os.Stat(path); err == nil {
 		mode = info.Mode()
 	}
 
