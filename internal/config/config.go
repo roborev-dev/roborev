@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -97,6 +98,85 @@ type Config struct {
 	TabWidth               int  `toml:"tab_width"` // Tab expansion width for TUI rendering (default: 2)
 }
 
+// GitHubAppConfig holds GitHub App authentication settings.
+// Extracted from CIConfig for cohesion; embedded so TOML keys remain flat under [ci].
+type GitHubAppConfig struct {
+	GitHubAppID             int64  `toml:"github_app_id"`
+	GitHubAppPrivateKey     string `toml:"github_app_private_key" sensitive:"true"` // PEM file path or inline; supports ${ENV_VAR}
+	GitHubAppInstallationID int64  `toml:"github_app_installation_id"`
+
+	// Multi-installation: map of owner → installation_id
+	GitHubAppInstallations map[string]int64 `toml:"github_app_installations"`
+}
+
+// GitHubAppConfigured returns true if GitHub App authentication can be used.
+// Requires app ID, private key, and at least one installation ID (singular or map).
+func (c *GitHubAppConfig) GitHubAppConfigured() bool {
+	return c.GitHubAppID != 0 && c.GitHubAppPrivateKey != "" &&
+		(c.GitHubAppInstallationID != 0 || len(c.GitHubAppInstallations) > 0)
+}
+
+// InstallationIDForOwner returns the installation ID for a GitHub owner.
+// Checks the normalized installations map first (skipping non-positive values),
+// then falls back to the singular field. Owner comparison is case-insensitive.
+func (c *GitHubAppConfig) InstallationIDForOwner(owner string) int64 {
+	if id, ok := c.GitHubAppInstallations[strings.ToLower(owner)]; ok && id > 0 {
+		return id
+	}
+	return c.GitHubAppInstallationID
+}
+
+// NormalizeInstallations lowercases all keys in GitHubAppInstallations
+// so lookups are case-insensitive via direct map access.
+// Returns an error if two keys collide after lowercasing (e.g., "wesm" and "Wesm").
+func (c *GitHubAppConfig) NormalizeInstallations() error {
+	if len(c.GitHubAppInstallations) == 0 {
+		return nil
+	}
+	normalized := make(map[string]int64, len(c.GitHubAppInstallations))
+	for k, v := range c.GitHubAppInstallations {
+		lower := strings.ToLower(k)
+		if _, exists := normalized[lower]; exists {
+			return fmt.Errorf("case-colliding github_app_installations keys for %q", lower)
+		}
+		normalized[lower] = v
+	}
+	c.GitHubAppInstallations = normalized
+	return nil
+}
+
+// GitHubAppPrivateKeyResolved expands env vars in the private key value,
+// reads the file if it's a path, and returns the PEM content.
+func (c *GitHubAppConfig) GitHubAppPrivateKeyResolved() (string, error) {
+	val := os.ExpandEnv(c.GitHubAppPrivateKey)
+	if val == "" {
+		return "", fmt.Errorf("github_app_private_key is empty after expansion")
+	}
+
+	// If it looks like PEM content, return directly
+	// TrimSpace handles leading whitespace/newlines in inline PEM content
+	trimmed := strings.TrimSpace(val)
+	if strings.HasPrefix(trimmed, "-----BEGIN") {
+		return trimmed, nil
+	}
+
+	// Expand leading ~ to home directory
+	if strings.HasPrefix(val, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home for github_app_private_key: %w", err)
+		}
+		val = home + val[1:]
+	}
+
+	// Otherwise treat as file path
+	data, err := os.ReadFile(val)
+	if err != nil {
+		return "", fmt.Errorf("read private key file %s: %w", val, err)
+	}
+	return string(data), nil
+}
+
 // CIConfig holds configuration for the CI poller that watches GitHub PRs
 type CIConfig struct {
 	// Enabled enables the CI poller
@@ -131,12 +211,7 @@ type CIConfig struct {
 	MinSeverity string `toml:"min_severity"`
 
 	// GitHub App authentication (optional — comments appear as bot instead of personal account)
-	GitHubAppID             int64  `toml:"github_app_id"`
-	GitHubAppPrivateKey     string `toml:"github_app_private_key" sensitive:"true"` // PEM file path or inline; supports ${ENV_VAR}
-	GitHubAppInstallationID int64  `toml:"github_app_installation_id"`
-
-	// Multi-installation: map of owner → installation_id
-	GitHubAppInstallations map[string]int64 `toml:"github_app_installations"`
+	GitHubAppConfig
 }
 
 // ResolvedReviewTypes returns the list of review types to use.
@@ -155,74 +230,6 @@ func (c *CIConfig) ResolvedAgents() []string {
 		return c.Agents
 	}
 	return []string{""}
-}
-
-// GitHubAppConfigured returns true if GitHub App authentication can be used.
-// Requires app ID, private key, and at least one installation ID (singular or map).
-func (c *CIConfig) GitHubAppConfigured() bool {
-	return c.GitHubAppID != 0 && c.GitHubAppPrivateKey != "" &&
-		(c.GitHubAppInstallationID != 0 || len(c.GitHubAppInstallations) > 0)
-}
-
-// InstallationIDForOwner returns the installation ID for a GitHub owner.
-// Checks the normalized installations map first (skipping non-positive values),
-// then falls back to the singular field. Owner comparison is case-insensitive.
-func (c *CIConfig) InstallationIDForOwner(owner string) int64 {
-	if id, ok := c.GitHubAppInstallations[strings.ToLower(owner)]; ok && id > 0 {
-		return id
-	}
-	return c.GitHubAppInstallationID
-}
-
-// NormalizeInstallations lowercases all keys in GitHubAppInstallations
-// so lookups are case-insensitive via direct map access.
-// Returns an error if two keys collide after lowercasing (e.g., "wesm" and "Wesm").
-func (c *CIConfig) NormalizeInstallations() error {
-	if len(c.GitHubAppInstallations) == 0 {
-		return nil
-	}
-	normalized := make(map[string]int64, len(c.GitHubAppInstallations))
-	for k, v := range c.GitHubAppInstallations {
-		lower := strings.ToLower(k)
-		if _, exists := normalized[lower]; exists {
-			return fmt.Errorf("case-colliding github_app_installations keys for %q", lower)
-		}
-		normalized[lower] = v
-	}
-	c.GitHubAppInstallations = normalized
-	return nil
-}
-
-// GitHubAppPrivateKeyResolved expands env vars in the private key value,
-// reads the file if it's a path, and returns the PEM content.
-func (c *CIConfig) GitHubAppPrivateKeyResolved() (string, error) {
-	val := os.ExpandEnv(c.GitHubAppPrivateKey)
-	if val == "" {
-		return "", fmt.Errorf("github_app_private_key is empty after expansion")
-	}
-
-	// If it looks like PEM content, return directly
-	// TrimSpace handles leading whitespace/newlines in inline PEM content
-	trimmed := strings.TrimSpace(val)
-	if strings.HasPrefix(trimmed, "-----BEGIN") {
-		return trimmed, nil
-	}
-
-	// Expand leading ~ to home directory
-	if strings.HasPrefix(val, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home for github_app_private_key: %w", err)
-		}
-		val = home + val[1:]
-	}
-
-	// Otherwise treat as file path
-	data, err := os.ReadFile(val)
-	if err != nil {
-		return "", fmt.Errorf("read private key file %s: %w", val, err)
-	}
-	return string(data), nil
 }
 
 // SyncConfig holds configuration for PostgreSQL sync
@@ -448,25 +455,42 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	return &cfg, nil
 }
 
+// resolve returns the first non-zero value from the candidates, or defaultVal
+// if all candidates are zero. This encapsulates the standard precedence logic
+// (explicit > repo > global > default) used throughout config resolution.
+func resolve[T comparable](defaultVal T, candidates ...T) T {
+	var zero T
+	for _, v := range candidates {
+		if v != zero {
+			return v
+		}
+	}
+	return defaultVal
+}
+
 // ResolveAgent determines which agent to use based on config priority:
 // 1. Explicit agent parameter (if non-empty)
 // 2. Per-repo config
 // 3. Global config
 // 4. Default ("codex")
 func ResolveAgent(explicit string, repoPath string, globalCfg *Config) string {
-	if explicit != "" {
-		return explicit
+	var repoVal string
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		repoVal = repoCfg.Agent
 	}
-
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.Agent != "" {
-		return repoCfg.Agent
+	var globalVal string
+	if globalCfg != nil {
+		globalVal = globalCfg.DefaultAgent
 	}
+	return resolve("codex", explicit, repoVal, globalVal)
+}
 
-	if globalCfg != nil && globalCfg.DefaultAgent != "" {
-		return globalCfg.DefaultAgent
+// clampPositive returns v if v > 0, otherwise 0.
+func clampPositive(v int) int {
+	if v > 0 {
+		return v
 	}
-
-	return "codex"
+	return 0
 }
 
 // ResolveJobTimeout determines job timeout based on config priority:
@@ -474,15 +498,15 @@ func ResolveAgent(explicit string, repoPath string, globalCfg *Config) string {
 // 2. Global config (if set and > 0)
 // 3. Default (30 minutes)
 func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.JobTimeoutMinutes > 0 {
-		return repoCfg.JobTimeoutMinutes
+	var repoVal int
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		repoVal = clampPositive(repoCfg.JobTimeoutMinutes)
 	}
-
-	if globalCfg != nil && globalCfg.JobTimeoutMinutes > 0 {
-		return globalCfg.JobTimeoutMinutes
+	var globalVal int
+	if globalCfg != nil {
+		globalVal = clampPositive(globalCfg.JobTimeoutMinutes)
 	}
-
-	return 30 // Default: 30 minutes
+	return resolve(30, repoVal, globalVal)
 }
 
 // IsBranchExcluded checks if a branch should be excluded from reviews
@@ -602,19 +626,15 @@ func ResolveFixReasoning(explicit string, repoPath string) (string, error) {
 // 3. Global config (default_model in config.toml)
 // 4. Default (empty string, agent uses its default)
 func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
-	if strings.TrimSpace(explicit) != "" {
-		return strings.TrimSpace(explicit)
+	var repoVal string
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		repoVal = strings.TrimSpace(repoCfg.Model)
 	}
-
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.Model) != "" {
-		return strings.TrimSpace(repoCfg.Model)
+	var globalVal string
+	if globalCfg != nil {
+		globalVal = strings.TrimSpace(globalCfg.DefaultModel)
 	}
-
-	if globalCfg != nil && strings.TrimSpace(globalCfg.DefaultModel) != "" {
-		return strings.TrimSpace(globalCfg.DefaultModel)
-	}
-
-	return ""
+	return resolve("", strings.TrimSpace(explicit), repoVal, globalVal)
 }
 
 // DefaultMaxPromptSize is the default maximum prompt size in bytes (200KB)
@@ -625,15 +645,15 @@ const DefaultMaxPromptSize = 200 * 1024
 // 2. Global config (default_max_prompt_size in config.toml)
 // 3. Default (200KB)
 func ResolveMaxPromptSize(repoPath string, globalCfg *Config) int {
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.MaxPromptSize > 0 {
-		return repoCfg.MaxPromptSize
+	var repoVal int
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		repoVal = clampPositive(repoCfg.MaxPromptSize)
 	}
-
-	if globalCfg != nil && globalCfg.DefaultMaxPromptSize > 0 {
-		return globalCfg.DefaultMaxPromptSize
+	var globalVal int
+	if globalCfg != nil {
+		globalVal = clampPositive(globalCfg.DefaultMaxPromptSize)
 	}
-
-	return DefaultMaxPromptSize
+	return resolve(DefaultMaxPromptSize, repoVal, globalVal)
 }
 
 // ResolveAgentForWorkflow determines which agent to use based on workflow and level.
@@ -702,194 +722,52 @@ func getWorkflowValue(repo *RepoConfig, global *Config, workflow, level string, 
 	return ""
 }
 
+// workflowFieldKey builds the TOML key for a workflow field lookup.
+// Examples: workflowFieldKey("review", "fast", true) => "review_agent_fast"
+//
+//	workflowFieldKey("review", "", true) => "review_agent"
+func workflowFieldKey(workflow, level string, isAgent bool) string {
+	kind := "model"
+	if isAgent {
+		kind = "agent"
+	}
+	if level == "" {
+		return workflow + "_" + kind
+	}
+	return workflow + "_" + kind + "_" + level
+}
+
+// lookupWorkflowField retrieves a workflow field value from any struct using
+// reflection and TOML tags. This replaces the former repoWorkflowField and
+// globalWorkflowField switch statements with a single, tag-driven lookup that
+// automatically supports new workflows/levels when fields are added.
+func lookupWorkflowField(v reflect.Value, workflow, level string, isAgent bool) string {
+	key := workflowFieldKey(workflow, level, isAgent)
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("toml")
+		if tag == "" {
+			continue
+		}
+		if strings.Split(tag, ",")[0] == key {
+			return strings.TrimSpace(v.Field(i).String())
+		}
+	}
+	return ""
+}
+
 func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) string {
 	if r == nil {
 		return ""
 	}
-	var v string
-	if isAgent {
-		switch workflow + "_" + level {
-		case "review_fast":
-			v = r.ReviewAgentFast
-		case "review_standard":
-			v = r.ReviewAgentStandard
-		case "review_thorough":
-			v = r.ReviewAgentThorough
-		case "review_":
-			v = r.ReviewAgent
-		case "refine_fast":
-			v = r.RefineAgentFast
-		case "refine_standard":
-			v = r.RefineAgentStandard
-		case "refine_thorough":
-			v = r.RefineAgentThorough
-		case "refine_":
-			v = r.RefineAgent
-		case "fix_fast":
-			v = r.FixAgentFast
-		case "fix_standard":
-			v = r.FixAgentStandard
-		case "fix_thorough":
-			v = r.FixAgentThorough
-		case "fix_":
-			v = r.FixAgent
-		case "security_fast":
-			v = r.SecurityAgentFast
-		case "security_standard":
-			v = r.SecurityAgentStandard
-		case "security_thorough":
-			v = r.SecurityAgentThorough
-		case "security_":
-			v = r.SecurityAgent
-		case "design_fast":
-			v = r.DesignAgentFast
-		case "design_standard":
-			v = r.DesignAgentStandard
-		case "design_thorough":
-			v = r.DesignAgentThorough
-		case "design_":
-			v = r.DesignAgent
-		}
-	} else {
-		switch workflow + "_" + level {
-		case "review_fast":
-			v = r.ReviewModelFast
-		case "review_standard":
-			v = r.ReviewModelStandard
-		case "review_thorough":
-			v = r.ReviewModelThorough
-		case "review_":
-			v = r.ReviewModel
-		case "refine_fast":
-			v = r.RefineModelFast
-		case "refine_standard":
-			v = r.RefineModelStandard
-		case "refine_thorough":
-			v = r.RefineModelThorough
-		case "refine_":
-			v = r.RefineModel
-		case "fix_fast":
-			v = r.FixModelFast
-		case "fix_standard":
-			v = r.FixModelStandard
-		case "fix_thorough":
-			v = r.FixModelThorough
-		case "fix_":
-			v = r.FixModel
-		case "security_fast":
-			v = r.SecurityModelFast
-		case "security_standard":
-			v = r.SecurityModelStandard
-		case "security_thorough":
-			v = r.SecurityModelThorough
-		case "security_":
-			v = r.SecurityModel
-		case "design_fast":
-			v = r.DesignModelFast
-		case "design_standard":
-			v = r.DesignModelStandard
-		case "design_thorough":
-			v = r.DesignModelThorough
-		case "design_":
-			v = r.DesignModel
-		}
-	}
-	return strings.TrimSpace(v)
+	return lookupWorkflowField(reflect.ValueOf(*r), workflow, level, isAgent)
 }
 
 func globalWorkflowField(g *Config, workflow, level string, isAgent bool) string {
 	if g == nil {
 		return ""
 	}
-	var v string
-	if isAgent {
-		switch workflow + "_" + level {
-		case "review_fast":
-			v = g.ReviewAgentFast
-		case "review_standard":
-			v = g.ReviewAgentStandard
-		case "review_thorough":
-			v = g.ReviewAgentThorough
-		case "review_":
-			v = g.ReviewAgent
-		case "refine_fast":
-			v = g.RefineAgentFast
-		case "refine_standard":
-			v = g.RefineAgentStandard
-		case "refine_thorough":
-			v = g.RefineAgentThorough
-		case "refine_":
-			v = g.RefineAgent
-		case "fix_fast":
-			v = g.FixAgentFast
-		case "fix_standard":
-			v = g.FixAgentStandard
-		case "fix_thorough":
-			v = g.FixAgentThorough
-		case "fix_":
-			v = g.FixAgent
-		case "security_fast":
-			v = g.SecurityAgentFast
-		case "security_standard":
-			v = g.SecurityAgentStandard
-		case "security_thorough":
-			v = g.SecurityAgentThorough
-		case "security_":
-			v = g.SecurityAgent
-		case "design_fast":
-			v = g.DesignAgentFast
-		case "design_standard":
-			v = g.DesignAgentStandard
-		case "design_thorough":
-			v = g.DesignAgentThorough
-		case "design_":
-			v = g.DesignAgent
-		}
-	} else {
-		switch workflow + "_" + level {
-		case "review_fast":
-			v = g.ReviewModelFast
-		case "review_standard":
-			v = g.ReviewModelStandard
-		case "review_thorough":
-			v = g.ReviewModelThorough
-		case "review_":
-			v = g.ReviewModel
-		case "refine_fast":
-			v = g.RefineModelFast
-		case "refine_standard":
-			v = g.RefineModelStandard
-		case "refine_thorough":
-			v = g.RefineModelThorough
-		case "refine_":
-			v = g.RefineModel
-		case "fix_fast":
-			v = g.FixModelFast
-		case "fix_standard":
-			v = g.FixModelStandard
-		case "fix_thorough":
-			v = g.FixModelThorough
-		case "fix_":
-			v = g.FixModel
-		case "security_fast":
-			v = g.SecurityModelFast
-		case "security_standard":
-			v = g.SecurityModelStandard
-		case "security_thorough":
-			v = g.SecurityModelThorough
-		case "security_":
-			v = g.SecurityModel
-		case "design_fast":
-			v = g.DesignModelFast
-		case "design_standard":
-			v = g.DesignModelStandard
-		case "design_thorough":
-			v = g.DesignModelThorough
-		case "design_":
-			v = g.DesignModel
-		}
-	}
-	return strings.TrimSpace(v)
+	return lookupWorkflowField(reflect.ValueOf(*g), workflow, level, isAgent)
 }
 
 // SaveGlobal saves the global configuration

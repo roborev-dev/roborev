@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1263,75 +1264,8 @@ func buildGlobalConfig(cfg map[string]string) *Config {
 	}
 	c := &Config{}
 	for k, v := range cfg {
-		switch k {
-		case "default_agent":
-			c.DefaultAgent = v
-		case "default_model":
-			c.DefaultModel = v
-		case "review_agent":
-			c.ReviewAgent = v
-		case "review_agent_fast":
-			c.ReviewAgentFast = v
-		case "review_agent_standard":
-			c.ReviewAgentStandard = v
-		case "review_agent_thorough":
-			c.ReviewAgentThorough = v
-		case "refine_agent":
-			c.RefineAgent = v
-		case "refine_agent_fast":
-			c.RefineAgentFast = v
-		case "refine_agent_standard":
-			c.RefineAgentStandard = v
-		case "refine_agent_thorough":
-			c.RefineAgentThorough = v
-		case "review_model":
-			c.ReviewModel = v
-		case "review_model_fast":
-			c.ReviewModelFast = v
-		case "review_model_standard":
-			c.ReviewModelStandard = v
-		case "review_model_thorough":
-			c.ReviewModelThorough = v
-		case "refine_model":
-			c.RefineModel = v
-		case "refine_model_fast":
-			c.RefineModelFast = v
-		case "refine_model_standard":
-			c.RefineModelStandard = v
-		case "refine_model_thorough":
-			c.RefineModelThorough = v
-		case "fix_agent":
-			c.FixAgent = v
-		case "fix_agent_fast":
-			c.FixAgentFast = v
-		case "fix_agent_standard":
-			c.FixAgentStandard = v
-		case "fix_agent_thorough":
-			c.FixAgentThorough = v
-		case "fix_model":
-			c.FixModel = v
-		case "fix_model_fast":
-			c.FixModelFast = v
-		case "fix_model_standard":
-			c.FixModelStandard = v
-		case "fix_model_thorough":
-			c.FixModelThorough = v
-		case "design_agent":
-			c.DesignAgent = v
-		case "design_agent_fast":
-			c.DesignAgentFast = v
-		case "design_agent_standard":
-			c.DesignAgentStandard = v
-		case "design_agent_thorough":
-			c.DesignAgentThorough = v
-		case "design_model":
-			c.DesignModel = v
-		case "design_model_fast":
-			c.DesignModelFast = v
-		case "design_model_standard":
-			c.DesignModelStandard = v
-		case "design_model_thorough":
-			c.DesignModelThorough = v
+		if err := SetConfigValue(c, k, v); err != nil {
+			panic(fmt.Sprintf("buildGlobalConfig: SetConfigValue(%q, %q): %v", k, v, err))
 		}
 	}
 	return c
@@ -1449,13 +1383,13 @@ reasoning = "standard"
 
 func TestInstallationIDForOwner(t *testing.T) {
 	t.Run("map lookup", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppInstallations: map[string]int64{
 				"wesm":        111111,
 				"roborev-dev": 222222,
 			},
 			GitHubAppInstallationID: 999999,
-		}
+		}}
 		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
 			t.Errorf("got %d, want 111111", got)
 		}
@@ -1465,10 +1399,10 @@ func TestInstallationIDForOwner(t *testing.T) {
 	})
 
 	t.Run("falls back to singular", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppInstallations:  map[string]int64{"wesm": 111111},
 			GitHubAppInstallationID: 999999,
-		}
+		}}
 		if got := ci.InstallationIDForOwner("unknown-org"); got != 999999 {
 			t.Errorf("got %d, want 999999", got)
 		}
@@ -1482,19 +1416,19 @@ func TestInstallationIDForOwner(t *testing.T) {
 	})
 
 	t.Run("zero mapped value falls back to singular", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppInstallations:  map[string]int64{"wesm": 0},
 			GitHubAppInstallationID: 999999,
-		}
+		}}
 		if got := ci.InstallationIDForOwner("wesm"); got != 999999 {
 			t.Errorf("got %d, want 999999 (fallback to singular)", got)
 		}
 	})
 
 	t.Run("case-insensitive lookup after normalization", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
-		}
+		}}
 		if err := ci.NormalizeInstallations(); err != nil {
 			t.Fatalf("NormalizeInstallations: %v", err)
 		}
@@ -1512,9 +1446,9 @@ func TestInstallationIDForOwner(t *testing.T) {
 
 func TestNormalizeInstallations(t *testing.T) {
 	t.Run("lowercases keys", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
-		}
+		}}
 		if err := ci.NormalizeInstallations(); err != nil {
 			t.Fatalf("NormalizeInstallations: %v", err)
 		}
@@ -1537,9 +1471,9 @@ func TestNormalizeInstallations(t *testing.T) {
 	})
 
 	t.Run("case-colliding keys returns error", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppInstallations: map[string]int64{"wesm": 111111, "Wesm": 222222},
-		}
+		}}
 		err := ci.NormalizeInstallations()
 		if err == nil {
 			t.Fatal("expected error for case-colliding keys")
@@ -1580,42 +1514,42 @@ RoboRev-Dev = 222222
 
 func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 	t.Run("configured with map only", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppID:            12345,
 			GitHubAppPrivateKey:    "~/.roborev/app.pem",
 			GitHubAppInstallations: map[string]int64{"wesm": 111111},
-		}
+		}}
 		if !ci.GitHubAppConfigured() {
 			t.Error("expected GitHubAppConfigured() == true with map only")
 		}
 	})
 
 	t.Run("configured with singular only", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppID:             12345,
 			GitHubAppPrivateKey:     "~/.roborev/app.pem",
 			GitHubAppInstallationID: 111111,
-		}
+		}}
 		if !ci.GitHubAppConfigured() {
 			t.Error("expected GitHubAppConfigured() == true with singular only")
 		}
 	})
 
 	t.Run("not configured without any installation", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppID:         12345,
 			GitHubAppPrivateKey: "~/.roborev/app.pem",
-		}
+		}}
 		if ci.GitHubAppConfigured() {
 			t.Error("expected GitHubAppConfigured() == false without any installation ID")
 		}
 	})
 
 	t.Run("not configured without private key", func(t *testing.T) {
-		ci := CIConfig{
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
 			GitHubAppID:             12345,
 			GitHubAppInstallationID: 111111,
-		}
+		}}
 		if ci.GitHubAppConfigured() {
 			t.Error("expected GitHubAppConfigured() == false without private key")
 		}
@@ -1632,7 +1566,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	}
 
 	t.Run("inline PEM returned directly", func(t *testing.T) {
-		ci := CIConfig{GitHubAppPrivateKey: pemContent}
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: pemContent}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
 			t.Fatal(err)
@@ -1643,7 +1577,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	})
 
 	t.Run("absolute path reads file", func(t *testing.T) {
-		ci := CIConfig{GitHubAppPrivateKey: pemFile}
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: pemFile}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
 			t.Fatal(err)
@@ -1667,7 +1601,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ci := CIConfig{GitHubAppPrivateKey: "~/.roborev/test.pem"}
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: "~/.roborev/test.pem"}}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
 			t.Fatalf("tilde expansion failed: %v", err)
@@ -1678,7 +1612,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	})
 
 	t.Run("empty after expansion returns error", func(t *testing.T) {
-		ci := CIConfig{GitHubAppPrivateKey: ""}
+		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: ""}}
 		_, err := ci.GitHubAppPrivateKeyResolved()
 		if err == nil {
 			t.Error("expected error for empty key")
