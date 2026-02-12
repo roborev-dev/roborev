@@ -245,7 +245,7 @@ func kvMap(cfg interface{}) map[string]string {
 // It returns ("", false) if the key should be omitted from output.
 func determineOrigin(key, value, defaultValue string, rawGlobal map[string]interface{}) (string, bool) {
 	isDefault := defaultValue == value
-	isEmptyDefault := value == "" || value == "0" || value == "false"
+	isEmptyDefault := value == "" || value == "0" || value == "false" || value == "[]"
 	explicitInGlobal := IsKeyInTOMLFile(rawGlobal, key)
 
 	if isEmptyDefault && !explicitInGlobal {
@@ -435,19 +435,29 @@ func formatValue(v reflect.Value) string {
 	}
 }
 
+// mapEntry pairs a stringified key with its original reflect.Value for
+// collision-safe sorting (we format values from the original key, not
+// from a string-keyed intermediate map).
+type mapEntry struct {
+	str string
+	key reflect.Value
+}
+
 // formatMap returns a deterministic string representation of a map by sorting keys.
 func formatMap(v reflect.Value) string {
-	keys := make([]string, 0, v.Len())
-	keyToVal := make(map[string]string, v.Len())
+	entries := make([]mapEntry, 0, v.Len())
 	for _, k := range v.MapKeys() {
-		ks := fmt.Sprintf("%v", k.Interface())
-		keys = append(keys, ks)
-		keyToVal[ks] = fmt.Sprintf("%v", v.MapIndex(k).Interface())
+		entries = append(entries, mapEntry{
+			str: fmt.Sprintf("%v", k.Interface()),
+			key: k,
+		})
 	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, k+":"+keyToVal[k])
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].str < entries[j].str
+	})
+	parts := make([]string, 0, len(entries))
+	for _, e := range entries {
+		parts = append(parts, e.str+":"+fmt.Sprintf("%v", v.MapIndex(e.key).Interface()))
 	}
 	return strings.Join(parts, ",")
 }

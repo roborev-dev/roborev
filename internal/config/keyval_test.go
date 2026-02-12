@@ -467,6 +467,23 @@ func TestMergedConfigWithOriginIncludesComplexFields(t *testing.T) {
 	}
 }
 
+func TestMergedConfigWithOriginOmitsUnsetComplexFields(t *testing.T) {
+	// When no hooks or maps are explicitly configured, merged output should
+	// not include them (they are zero-valued composites, not user-set defaults).
+	kvos := MergedConfigWithOrigin(DefaultConfig(), nil, nil, nil)
+	found := toOriginMap(kvos)
+
+	if _, ok := found["hooks"]; ok {
+		t.Error("merged output should not include unset hooks")
+	}
+	if _, ok := found["sync.repo_names"]; ok {
+		t.Error("merged output should not include unset sync.repo_names")
+	}
+	if _, ok := found["ci.github_app_installations"]; ok {
+		t.Error("merged output should not include unset ci.github_app_installations")
+	}
+}
+
 func TestFormatMapDeterministic(t *testing.T) {
 	cfg := &Config{
 		Sync: SyncConfig{
