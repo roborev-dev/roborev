@@ -228,6 +228,31 @@ func ListConfigKeys(cfg interface{}) []KeyValue {
 	return listFields(v, "")
 }
 
+// ListExplicitKeys returns key-value pairs only for keys explicitly present
+// in the raw TOML map. This avoids showing default values or dropping
+// explicit zero/false/empty values.
+func ListExplicitKeys(cfg interface{}, raw map[string]interface{}) []KeyValue {
+	if raw == nil {
+		return nil
+	}
+	v := reflect.ValueOf(cfg)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+
+	all := listAllFields(v, "")
+	var result []KeyValue
+	for _, kv := range all {
+		if IsKeyInTOMLFile(raw, kv.Key) {
+			result = append(result, kv)
+		}
+	}
+	return result
+}
+
 // kvMap builds a map from key to formatted value for all fields in a struct.
 func kvMap(cfg interface{}) map[string]string {
 	v := reflect.ValueOf(cfg)
@@ -250,6 +275,9 @@ func determineOrigin(key, value, defaultValue string, rawGlobal map[string]inter
 
 	if isEmptyDefault && !explicitInGlobal {
 		return "", false
+	}
+	if explicitInGlobal {
+		return "global", true
 	}
 	if isDefault {
 		return "default", true

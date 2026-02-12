@@ -620,3 +620,92 @@ func TestIsGlobalKey(t *testing.T) {
 		})
 	}
 }
+
+func TestListExplicitKeysOnlyIncludesRawKeys(t *testing.T) {
+	cfg := DefaultConfig()
+	// default_agent has a non-zero default ("codex" or similar) but if
+	// it's NOT in the raw TOML, it should be excluded.
+	raw := map[string]interface{}{
+		"max_workers": int64(8),
+	}
+	cfg.MaxWorkers = 8
+
+	kvs := ListExplicitKeys(cfg, raw)
+	found := toMap(kvs)
+
+	if _, ok := found["max_workers"]; !ok {
+		t.Error("expected max_workers to be listed (explicitly in TOML)")
+	}
+	if _, ok := found["default_agent"]; ok {
+		t.Error("default_agent should NOT be listed (not in raw TOML)")
+	}
+}
+
+func TestListExplicitKeysIncludesZeroValues(t *testing.T) {
+	cfg := &Config{
+		MaxWorkers: 0,
+		Sync: SyncConfig{
+			Enabled: false,
+		},
+	}
+	raw := map[string]interface{}{
+		"max_workers": int64(0),
+		"sync": map[string]interface{}{
+			"enabled": false,
+		},
+	}
+
+	kvs := ListExplicitKeys(cfg, raw)
+	found := toMap(kvs)
+
+	if got, ok := found["max_workers"]; !ok {
+		t.Error("expected max_workers to be listed (explicit zero in TOML)")
+	} else if got != "0" {
+		t.Errorf("max_workers = %q, want %q", got, "0")
+	}
+	if got, ok := found["sync.enabled"]; !ok {
+		t.Error("expected sync.enabled to be listed (explicit false in TOML)")
+	} else if got != "false" {
+		t.Errorf("sync.enabled = %q, want %q", got, "false")
+	}
+}
+
+func TestListExplicitKeysNilRaw(t *testing.T) {
+	cfg := DefaultConfig()
+	kvs := ListExplicitKeys(cfg, nil)
+	if len(kvs) != 0 {
+		t.Errorf("expected empty result for nil raw, got %d entries", len(kvs))
+	}
+}
+
+func TestDetermineOriginExplicitGlobalMatchingDefault(t *testing.T) {
+	// When a key is explicitly set in global TOML to the same value as the
+	// default, origin should be "global", not "default".
+	rawGlobal := map[string]interface{}{
+		"max_workers": int64(4),
+	}
+	origin, ok := determineOrigin("max_workers", "4", "4", rawGlobal)
+	if !ok {
+		t.Fatal("expected key to be included in output")
+	}
+	if origin != "global" {
+		t.Errorf("origin = %q, want %q", origin, "global")
+	}
+}
+
+func TestMergedConfigExplicitGlobalDefaultValueShowsGlobalOrigin(t *testing.T) {
+	global := DefaultConfig()
+	// Explicitly set max_workers to its default value (4)
+	rawGlobal := map[string]interface{}{
+		"max_workers": int64(4),
+	}
+
+	kvos := MergedConfigWithOrigin(global, nil, rawGlobal, nil)
+	found := toOriginMap(kvos)
+
+	if kvo, ok := found["max_workers"]; !ok {
+		t.Error("expected max_workers in output")
+	} else if kvo.Origin != "global" {
+		t.Errorf("max_workers origin = %q, want %q", kvo.Origin, "global")
+	}
+}

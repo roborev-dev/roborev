@@ -286,7 +286,11 @@ func listGlobalConfig() error {
 	if err != nil {
 		return fmt.Errorf("load global config: %w", err)
 	}
-	printKeyValues(config.ListConfigKeys(cfg))
+	raw, err := config.LoadRawGlobal()
+	if err != nil {
+		return fmt.Errorf("load global config: %w", err)
+	}
+	printKeyValues(config.ListExplicitKeys(cfg, raw))
 	return nil
 }
 
@@ -302,7 +306,11 @@ func listLocalConfig() error {
 	if repoCfg == nil {
 		return fmt.Errorf("no local config (.roborev.toml) found")
 	}
-	printKeyValues(config.ListConfigKeys(repoCfg))
+	raw, err := config.LoadRawRepo(repoPath)
+	if err != nil {
+		return fmt.Errorf("load repo config: %w", err)
+	}
+	printKeyValues(config.ListExplicitKeys(repoCfg, raw))
 	return nil
 }
 
