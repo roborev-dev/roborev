@@ -4,6 +4,22 @@ import (
 	"testing"
 )
 
+func toMap(kvs []KeyValue) map[string]string {
+	m := make(map[string]string, len(kvs))
+	for _, kv := range kvs {
+		m[kv.Key] = kv.Value
+	}
+	return m
+}
+
+func toOriginMap(kvos []KeyValueOrigin) map[string]KeyValueOrigin {
+	m := make(map[string]KeyValueOrigin, len(kvos))
+	for _, kvo := range kvos {
+		m[kvo.Key] = kvo
+	}
+	return m
+}
+
 func TestGetConfigValue(t *testing.T) {
 	cfg := &Config{
 		DefaultAgent:       "codex",
@@ -75,27 +91,43 @@ func TestGetConfigValueUnknownKey(t *testing.T) {
 }
 
 func TestSetConfigValue(t *testing.T) {
-	cfg := &Config{}
+	tests := []struct {
+		name   string
+		key    string
+		val    string
+		verify func(*Config) bool
+	}{
+		{
+			name:   "set string field",
+			key:    "default_agent",
+			val:    "claude-code",
+			verify: func(c *Config) bool { return c.DefaultAgent == "claude-code" },
+		},
+		{
+			name:   "set int field",
+			key:    "max_workers",
+			val:    "8",
+			verify: func(c *Config) bool { return c.MaxWorkers == 8 },
+		},
+		{
+			name:   "set nested bool",
+			key:    "sync.enabled",
+			val:    "true",
+			verify: func(c *Config) bool { return c.Sync.Enabled },
+		},
+	}
 
-	if err := SetConfigValue(cfg, "default_agent", "claude-code"); err != nil {
-		t.Fatalf("SetConfigValue error: %v", err)
-	}
-	if cfg.DefaultAgent != "claude-code" {
-		t.Errorf("DefaultAgent = %q, want %q", cfg.DefaultAgent, "claude-code")
-	}
-
-	if err := SetConfigValue(cfg, "max_workers", "8"); err != nil {
-		t.Fatalf("SetConfigValue error: %v", err)
-	}
-	if cfg.MaxWorkers != 8 {
-		t.Errorf("MaxWorkers = %d, want 8", cfg.MaxWorkers)
-	}
-
-	if err := SetConfigValue(cfg, "sync.enabled", "true"); err != nil {
-		t.Fatalf("SetConfigValue error: %v", err)
-	}
-	if !cfg.Sync.Enabled {
-		t.Error("Sync.Enabled = false, want true")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{}
+			err := SetConfigValue(cfg, tt.key, tt.val)
+			if err != nil {
+				t.Fatalf("SetConfigValue(%q, %q) error: %v", tt.key, tt.val, err)
+			}
+			if !tt.verify(cfg) {
+				t.Errorf("verification failed for key %q value %q", tt.key, tt.val)
+			}
+		})
 	}
 }
 
@@ -142,10 +174,7 @@ func TestListConfigKeys(t *testing.T) {
 		t.Fatal("expected non-empty list")
 	}
 
-	found := make(map[string]string)
-	for _, kv := range kvs {
-		found[kv.Key] = kv.Value
-	}
+	found := toMap(kvs)
 
 	if found["default_agent"] != "codex" {
 		t.Errorf("missing or wrong default_agent: %q", found["default_agent"])
@@ -165,10 +194,7 @@ func TestListConfigKeysRepo(t *testing.T) {
 	}
 
 	kvs := ListConfigKeys(cfg)
-	found := make(map[string]string)
-	for _, kv := range kvs {
-		found[kv.Key] = kv.Value
-	}
+	found := toMap(kvs)
 
 	if found["agent"] != "claude-code" {
 		t.Errorf("missing or wrong agent: %q", found["agent"])
@@ -194,10 +220,7 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 		t.Fatal("expected non-empty list")
 	}
 
-	found := make(map[string]KeyValueOrigin)
-	for _, kvo := range kvos {
-		found[kvo.Key] = kvo
-	}
+	found := toOriginMap(kvos)
 
 	// default_agent is set in global (overrides default "codex")
 	if kvo, ok := found["default_agent"]; ok {
@@ -256,10 +279,7 @@ func TestMergedConfigWithOriginLocalOverridesGlobal(t *testing.T) {
 	rawRepo := map[string]interface{}{"review_context_count": int64(10)}
 
 	kvos := MergedConfigWithOrigin(global, repo, rawGlobal, rawRepo)
-	found := make(map[string]KeyValueOrigin)
-	for _, kvo := range kvos {
-		found[kvo.Key] = kvo
-	}
+	found := toOriginMap(kvos)
 
 	// review_context_count should be overridden by local
 	if kvo, ok := found["review_context_count"]; ok {
@@ -277,19 +297,15 @@ func TestMergedConfigWithOriginShowsAllOrigins(t *testing.T) {
 
 	rawGlobal := map[string]interface{}{"default_agent": "gemini"}
 	kvos := MergedConfigWithOrigin(global, nil, rawGlobal, nil)
-
-	origins := make(map[string]string)
-	for _, kvo := range kvos {
-		origins[kvo.Key] = kvo.Origin
-	}
+	found := toOriginMap(kvos)
 
 	// default_agent was changed from default
-	if origins["default_agent"] != "global" {
-		t.Errorf("default_agent origin = %q, want global", origins["default_agent"])
+	if found["default_agent"].Origin != "global" {
+		t.Errorf("default_agent origin = %q, want global", found["default_agent"].Origin)
 	}
 	// max_workers should be at default
-	if origins["max_workers"] != "default" {
-		t.Errorf("max_workers origin = %q, want default", origins["max_workers"])
+	if found["max_workers"].Origin != "default" {
+		t.Errorf("max_workers origin = %q, want default", found["max_workers"].Origin)
 	}
 }
 
