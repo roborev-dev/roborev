@@ -427,3 +427,90 @@ func TestSetRawMapKey(t *testing.T) {
 		})
 	}
 }
+
+func TestGetValueForScopeMergedMalformedLocalConfig(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	// Write a valid global config
+	globalPath := filepath.Join(dataDir, "config.toml")
+	if err := os.WriteFile(globalPath, []byte("review_agent = \"global-agent\"\n"), 0644); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+
+	// Create repo with malformed .roborev.toml
+	repoDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0755); err != nil {
+		t.Fatalf("create .git dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("invalid toml [[["), 0644); err != nil {
+		t.Fatalf("write malformed config: %v", err)
+	}
+
+	stubRepoRootResolution(t,
+		func(path string) (string, error) { return repoDir, nil },
+		nil,
+	)
+
+	_, err := getValueForScope("review_agent", scopeMerged)
+	if err == nil {
+		t.Fatal("expected error for malformed local config")
+	}
+	if !strings.Contains(err.Error(), "load repo config") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestListMergedConfigMalformedLocalConfig(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	// Create repo with malformed .roborev.toml
+	repoDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0755); err != nil {
+		t.Fatalf("create .git dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("invalid toml [[["), 0644); err != nil {
+		t.Fatalf("write malformed config: %v", err)
+	}
+
+	stubRepoRootResolution(t,
+		func(path string) (string, error) { return repoDir, nil },
+		nil,
+	)
+
+	err := listMergedConfig(false)
+	if err == nil {
+		t.Fatal("expected error for malformed local config")
+	}
+	if !strings.Contains(err.Error(), "load repo config") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetValueForScopeMergedRepoOnlyKeyNotSet(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	// Write a valid global config (no local config)
+	globalPath := filepath.Join(dataDir, "config.toml")
+	if err := os.WriteFile(globalPath, []byte("default_agent = \"codex\"\n"), 0644); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+
+	// No repo (no .git dir)
+	workDir := t.TempDir()
+	stubRepoRootResolution(t,
+		func(path string) (string, error) { return "", fmt.Errorf("git unavailable") },
+		func() (string, error) { return workDir, nil },
+	)
+
+	// "agent" is a repo-only key — should not fall through to global config
+	_, err := getValueForScope("agent", scopeMerged)
+	if err == nil {
+		t.Fatal("expected error for repo-only key with no local config")
+	}
+	if !strings.Contains(err.Error(), "not set in local config") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

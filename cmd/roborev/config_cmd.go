@@ -144,7 +144,10 @@ func getValueForScope(key string, scope configScope) (string, error) {
 			return "", fmt.Errorf("determine repository root: %w", err)
 		}
 		if repoPath != "" {
-			raw, _ := config.LoadRawRepo(repoPath)
+			raw, err := config.LoadRawRepo(repoPath)
+			if err != nil {
+				return "", fmt.Errorf("load repo config: %w", err)
+			}
 			if raw != nil && config.IsKeyInTOMLFile(raw, key) {
 				repoCfg, err := config.LoadRepoConfig(repoPath)
 				if err != nil {
@@ -156,6 +159,10 @@ func getValueForScope(key string, scope configScope) (string, error) {
 				}
 				return val, nil
 			}
+		}
+		// Key not found in local config — check if it's a repo-only key
+		if !config.IsGlobalKey(key) {
+			return "", fmt.Errorf("key %q is not set in local config", key)
 		}
 		cfg, err := config.LoadGlobal()
 		if err != nil {
@@ -313,8 +320,14 @@ func listMergedConfig(showOrigin bool) error {
 		return fmt.Errorf("determine repository root: %w", err)
 	}
 	if repoPath != "" {
-		repoCfg, _ = config.LoadRepoConfig(repoPath)
-		rawRepo, _ = config.LoadRawRepo(repoPath)
+		repoCfg, err = config.LoadRepoConfig(repoPath)
+		if err != nil {
+			return fmt.Errorf("load repo config: %w", err)
+		}
+		rawRepo, err = config.LoadRawRepo(repoPath)
+		if err != nil {
+			return fmt.Errorf("load repo config: %w", err)
+		}
 	}
 
 	kvos := config.MergedConfigWithOrigin(cfg, repoCfg, rawGlobal, rawRepo)

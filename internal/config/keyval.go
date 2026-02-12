@@ -90,6 +90,12 @@ func IsValidKey(key string) bool {
 	return err1 == nil || err2 == nil
 }
 
+// IsGlobalKey returns true if the key belongs to the global Config struct.
+func IsGlobalKey(key string) bool {
+	_, err := FindFieldByTOMLKey(reflect.ValueOf(Config{}), key)
+	return err == nil
+}
+
 // IsSensitiveKey returns true if the key holds a secret that should be masked.
 func IsSensitiveKey(key string) bool {
 	return sensitiveKeys[key]

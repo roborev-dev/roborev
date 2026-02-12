@@ -532,3 +532,26 @@ func TestIsSensitiveKey(t *testing.T) {
 		t.Error("expected ci.github_app_id to not be sensitive")
 	}
 }
+
+func TestIsGlobalKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"default_agent", true},      // Config only
+		{"max_workers", true},        // Config only
+		{"sync.enabled", true},       // nested Config
+		{"agent", false},             // RepoConfig only
+		{"review_guidelines", false}, // RepoConfig only
+		{"nonexistent", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got := IsGlobalKey(tt.key)
+			if got != tt.want {
+				t.Errorf("IsGlobalKey(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}
