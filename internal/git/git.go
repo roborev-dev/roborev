@@ -573,6 +573,32 @@ func isBinaryContent(content []byte) bool {
 	return false
 }
 
+// GetRangeFilesChanged returns the list of files changed in a range (e.g. "mergeBase..HEAD")
+func GetRangeFilesChanged(repoPath, rangeRef string) ([]string, error) {
+	cmd := exec.Command("git", "diff", "--name-only", rangeRef)
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only: %w", err)
+	}
+
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(text, "\n")
+	var files []string
+	for _, line := range lines {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+
+	return files, nil
+}
+
 // GetRangeStart returns the start commit (first parent before range) for context lookup
 func GetRangeStart(repoPath, rangeRef string) (string, error) {
 	start, _, ok := ParseRange(rangeRef)

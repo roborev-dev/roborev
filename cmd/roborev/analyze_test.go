@@ -608,6 +608,181 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 	}
 }
 
+func TestEnqueueAnalysisJobBranchName(t *testing.T) {
+	// Create a real git repo so GetCurrentBranch returns a known value
+	repo := newTestGitRepo(t)
+	repo.Run("checkout", "-b", "test-current")
+	repo.CommitFile("init.go", "package main", "initial")
+
+	captureBranch := func(t *testing.T) (mock *httptest.Server, gotBranch *string) {
+		t.Helper()
+		var branch string
+		ts, _ := newMockServer(t, MockServerOpts{
+			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+				var req map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&req)
+				branch, _ = req["branch"].(string)
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
+			},
+		})
+		patchServerAddr(t, ts.URL)
+		return ts, &branch
+	}
+
+	t.Run("no branch flag uses current branch", func(t *testing.T) {
+		_, gotBranch := captureBranch(t)
+
+		_, err := enqueueAnalysisJob(repo.Dir, "prompt", "", "refactor", analyzeOptions{})
+		if err != nil {
+			t.Fatalf("enqueueAnalysisJob: %v", err)
+		}
+		if *gotBranch != "test-current" {
+			t.Errorf("expected branch 'test-current', got %q", *gotBranch)
+		}
+	})
+
+	t.Run("branch=HEAD uses current branch", func(t *testing.T) {
+		_, gotBranch := captureBranch(t)
+
+		_, err := enqueueAnalysisJob(repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
+		if err != nil {
+			t.Fatalf("enqueueAnalysisJob: %v", err)
+		}
+		if *gotBranch != "test-current" {
+			t.Errorf("expected branch 'test-current', got %q", *gotBranch)
+		}
+	})
+
+	t.Run("named branch overrides current branch", func(t *testing.T) {
+		_, gotBranch := captureBranch(t)
+
+		_, err := enqueueAnalysisJob(repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
+		if err != nil {
+			t.Fatalf("enqueueAnalysisJob: %v", err)
+		}
+		if *gotBranch != "feature-xyz" {
+			t.Errorf("expected branch 'feature-xyz', got %q", *gotBranch)
+		}
+	})
+}
+
+func TestGetBranchFiles(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.Run("checkout", "-b", "main")
+	repo.CommitFile("base.go", "package main", "base")
+
+	repo.Run("checkout", "-b", "feature")
+	repo.CommitFile("new.go", "package main\nfunc New() {}", "add go file")
+	repo.CommitFile("docs.md", "# Docs", "add docs")
+	repo.CommitFile("config.yml", "key: val", "add config")
+
+	cmd, _ := newTestCmd(t)
+
+	t.Run("filters to code files only", func(t *testing.T) {
+		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "HEAD",
+			baseBranch: "main",
+		})
+		if err != nil {
+			t.Fatalf("getBranchFiles: %v", err)
+		}
+		if len(files) != 1 {
+			t.Fatalf("expected 1 code file, got %d: %v", len(files), mapKeys(files))
+		}
+		if _, ok := files["new.go"]; !ok {
+			t.Errorf("expected new.go in results, got %v", mapKeys(files))
+		}
+	})
+
+	t.Run("reads from git not working tree", func(t *testing.T) {
+		// Modify working tree — should NOT affect branch analysis
+		os.WriteFile(filepath.Join(repo.Dir, "new.go"), []byte("DIRTY"), 0644)
+		defer func() {
+			repo.Run("checkout", "new.go")
+		}()
+
+		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "HEAD",
+			baseBranch: "main",
+		})
+		if err != nil {
+			t.Fatalf("getBranchFiles: %v", err)
+		}
+		content := files["new.go"]
+		if strings.Contains(content, "DIRTY") {
+			t.Error("getBranchFiles should read from git HEAD, not working tree")
+		}
+		if !strings.Contains(content, "func New()") {
+			t.Errorf("expected committed content, got %q", content)
+		}
+	})
+
+	t.Run("named branch reads from that branch", func(t *testing.T) {
+		// Switch back to main, analyze feature branch by name
+		repo.Run("checkout", "main")
+		defer repo.Run("checkout", "feature")
+
+		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "feature",
+			baseBranch: "main",
+		})
+		if err != nil {
+			t.Fatalf("getBranchFiles: %v", err)
+		}
+		if _, ok := files["new.go"]; !ok {
+			t.Errorf("expected new.go from feature branch, got %v", mapKeys(files))
+		}
+	})
+
+	t.Run("no code files returns error", func(t *testing.T) {
+		repo.Run("checkout", "-b", "docs-only", "main")
+		repo.CommitFile("readme.md", "# Hello", "add readme")
+		defer repo.Run("checkout", "feature")
+
+		_, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "HEAD",
+			baseBranch: "main",
+		})
+		if err == nil {
+			t.Fatal("expected error for no code files")
+		}
+		if !strings.Contains(err.Error(), "no code files changed") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("on base branch returns error", func(t *testing.T) {
+		repo.Run("checkout", "main")
+		defer repo.Run("checkout", "feature")
+
+		_, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+			branch:     "HEAD",
+			baseBranch: "main",
+		})
+		if err == nil {
+			t.Fatal("expected error when on base branch")
+		}
+		if !strings.Contains(err.Error(), "already on main") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestAnalyzeBranchSpaceSeparated(t *testing.T) {
+	// Verify that `--branch feature-xyz` (space-separated) gives a helpful error
+	// because NoOptDefVal causes "feature-xyz" to become a positional arg
+	cmd := analyzeCmd()
+	cmd.SetArgs([]string{"refactor", "--branch", "feature-xyz"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "--branch=<name>") {
+		t.Errorf("error should suggest --branch=<name> syntax, got: %v", err)
+	}
+}
+
 func TestAnalyzeJSONOutput(t *testing.T) {
 	t.Run("single analysis JSON output", func(t *testing.T) {
 		ts, _ := newMockServer(t, MockServerOpts{Agent: "test-agent"})
@@ -688,6 +863,89 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 		}
 		if len(result.Files) != 3 {
 			t.Errorf("expected 3 files, got %d", len(result.Files))
+		}
+	})
+}
+
+func TestIsCodeFile(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		// Code files
+		{"main.go", true},
+		{"script.py", true},
+		{"app.js", true},
+		{"app.ts", true},
+		{"app.tsx", true},
+		{"lib.rs", true},
+		{"main.c", true},
+		{"main.cpp", true},
+		{"App.java", true},
+		{"run.sh", true},
+		{"query.sql", true},
+		{"schema.proto", true},
+
+		// Non-code files (excluded from branch analysis)
+		{"README.md", false},
+		{"notes.txt", false},
+		{"config.yml", false},
+		{"config.yaml", false},
+		{"data.json", false},
+		{"pyproject.toml", false},
+		{"index.html", false},
+		{"style.css", false},
+		{"style.scss", false},
+
+		// Not source at all
+		{"image.png", false},
+		{"binary.exe", false},
+		{".gitignore", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := isCodeFile(tt.path)
+			if got != tt.want {
+				t.Errorf("isCodeFile(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeBranchFlagValidation(t *testing.T) {
+	t.Run("branch requires analysis type", func(t *testing.T) {
+		cmd := analyzeCmd()
+		cmd.SetArgs([]string{"--branch"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "--branch requires an analysis type") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("branch cannot be combined with file patterns", func(t *testing.T) {
+		cmd := analyzeCmd()
+		cmd.SetArgs([]string{"--branch", "refactor", "*.go"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "cannot specify file patterns with --branch") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("branch with only analysis type is accepted by arg validation", func(t *testing.T) {
+		// This will fail later (no git repo, no daemon) but arg validation should pass
+		cmd := analyzeCmd()
+		cmd.SetArgs([]string{"--branch", "refactor"})
+		err := cmd.Execute()
+		// Should NOT be an arg validation error
+		if err != nil && strings.Contains(err.Error(), "requires analysis type and at least one file") {
+			t.Errorf("arg validation should pass with --branch and analysis type, got: %v", err)
 		}
 	})
 }

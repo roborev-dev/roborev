@@ -1224,6 +1224,48 @@ func TestLocalBranchName(t *testing.T) {
 	}
 }
 
+func TestGetRangeFilesChanged(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+	repo.CommitFile("base.txt", "base", "base commit")
+	baseSHA := repo.HeadSHA()
+
+	// Create branch with some changes
+	repo.Run("checkout", "-b", "feature")
+	repo.CommitFile("new.go", "package main", "add go file")
+	repo.CommitFile("docs.md", "# Docs", "add docs")
+	repo.CommitFile("config.yml", "key: val", "add config")
+
+	t.Run("returns changed files in range", func(t *testing.T) {
+		files, err := GetRangeFilesChanged(repo.Dir, baseSHA+"..HEAD")
+		if err != nil {
+			t.Fatalf("GetRangeFilesChanged failed: %v", err)
+		}
+		if len(files) != 3 {
+			t.Fatalf("expected 3 files, got %d: %v", len(files), files)
+		}
+		found := map[string]bool{}
+		for _, f := range files {
+			found[f] = true
+		}
+		for _, want := range []string{"new.go", "docs.md", "config.yml"} {
+			if !found[want] {
+				t.Errorf("expected %s in changed files, got %v", want, files)
+			}
+		}
+	})
+
+	t.Run("empty range returns nil", func(t *testing.T) {
+		files, err := GetRangeFilesChanged(repo.Dir, "HEAD..HEAD")
+		if err != nil {
+			t.Fatalf("GetRangeFilesChanged failed: %v", err)
+		}
+		if len(files) != 0 {
+			t.Errorf("expected 0 files for empty range, got %d: %v", len(files), files)
+		}
+	})
+}
+
 func TestIsAncestor(t *testing.T) {
 	repo := NewTestRepo(t)
 	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")

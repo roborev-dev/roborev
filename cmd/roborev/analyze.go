@@ -38,6 +38,8 @@ func analyzeCmd() *cobra.Command {
 		fixModel   string
 		perFile    bool
 		jsonOutput bool
+		branch     string
+		baseBranch string
 	)
 
 	cmd := &cobra.Command{
@@ -80,6 +82,16 @@ Per-file mode (--per-file):
   roborev analyze refactor --per-file internal/storage/*.go
   roborev analyze complexity --per-file --wait *.go
 
+Branch mode (--branch):
+  Analyzes files changed on the current branch since diverging from the base.
+  Non-code files (.md, .yml, .json, .toml, etc.) are excluded automatically.
+  Optionally specify a branch name to analyze a different branch.
+
+  roborev analyze refactor --branch                  # Current branch vs auto-detected base
+  roborev analyze complexity --branch --per-file     # Per-file analysis of branch changes
+  roborev analyze refactor --branch=feature-xyz      # Analyze a specific branch
+  roborev analyze refactor --branch --base develop   # Compare against develop
+
 Fix mode (--fix):
   Runs analysis, then invokes an agentic agent to apply the suggested changes.
   The analysis is saved to the database and marked as addressed when complete.
@@ -96,6 +108,15 @@ To fix an existing analysis job, use: roborev fix <job_id>
 			if showPrompt {
 				if len(args) < 1 {
 					return fmt.Errorf("--show-prompt requires an analysis type")
+				}
+				return nil
+			}
+			if branch != "" {
+				if len(args) < 1 {
+					return fmt.Errorf("--branch requires an analysis type")
+				}
+				if len(args) > 1 {
+					return fmt.Errorf("cannot specify file patterns with --branch (to analyze a specific branch, use --branch=<name>)")
 				}
 				return nil
 			}
@@ -122,8 +143,14 @@ To fix an existing analysis job, use: roborev fix <job_id>
 				fixModel:   fixModel,
 				perFile:    perFile,
 				jsonOutput: jsonOutput,
+				branch:     branch,
+				baseBranch: baseBranch,
 			}
-			return runAnalysis(cmd, args[0], args[1:], opts)
+			var filePatterns []string
+			if len(args) > 1 {
+				filePatterns = args[1:]
+			}
+			return runAnalysis(cmd, args[0], filePatterns, opts)
 		},
 	}
 
@@ -139,6 +166,9 @@ To fix an existing analysis job, use: roborev fix <job_id>
 	cmd.Flags().StringVar(&fixModel, "fix-model", "", "model for fix agent (default: same as --model)")
 	cmd.Flags().BoolVar(&perFile, "per-file", false, "create one analysis job per file")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output job info as JSON for programmatic use")
+	cmd.Flags().StringVar(&branch, "branch", "", "analyze files changed on branch (default: current branch, or specify name)")
+	cmd.Flags().Lookup("branch").NoOptDefVal = "HEAD"
+	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 
 	return cmd
 }
@@ -154,6 +184,8 @@ type analyzeOptions struct {
 	fixModel   string
 	perFile    bool
 	jsonOutput bool
+	branch     string
+	baseBranch string
 }
 
 // AnalyzeResult is the JSON output format for analyze command
@@ -216,10 +248,22 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 		repoRoot = root
 	}
 
-	// Expand file patterns and read contents
-	files, err := expandAndReadFiles(workDir, repoRoot, filePatterns)
-	if err != nil {
-		return err
+	var files map[string]string
+
+	if opts.branch != "" {
+		// Branch mode: discover changed files from git
+		var err error
+		files, err = getBranchFiles(cmd, repoRoot, opts)
+		if err != nil {
+			return err
+		}
+	} else {
+		// File pattern mode
+		var err error
+		files, err = expandAndReadFiles(workDir, repoRoot, filePatterns)
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(files) == 0 {
@@ -438,6 +482,9 @@ func buildOutputPrefix(analysisType string, filePaths []string) string {
 // enqueueAnalysisJob sends a job to the daemon
 func enqueueAnalysisJob(repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
 	branch := git.GetCurrentBranch(repoRoot)
+	if opts.branch != "" && opts.branch != "HEAD" {
+		branch = opts.branch
+	}
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"repo_path":     repoRoot,
 		"git_ref":       label, // Use analysis type name as the TUI label
@@ -919,6 +966,111 @@ func expandAndReadFiles(workDir, repoRoot string, patterns []string) (map[string
 	}
 
 	return files, nil
+}
+
+// getBranchFiles discovers files changed on a branch and reads their contents.
+// When opts.branch is "HEAD", uses the current branch. Otherwise uses the named branch.
+func getBranchFiles(cmd *cobra.Command, repoRoot string, opts analyzeOptions) (map[string]string, error) {
+	// Determine which branch to analyze
+	targetRef := "HEAD"
+	branchLabel := git.GetCurrentBranch(repoRoot)
+	if opts.branch != "HEAD" {
+		targetRef = opts.branch
+		branchLabel = opts.branch
+		// Verify the ref exists
+		if _, err := git.ResolveSHA(repoRoot, targetRef); err != nil {
+			return nil, fmt.Errorf("cannot resolve branch %q: %w", opts.branch, err)
+		}
+	}
+
+	// Determine base branch
+	base := opts.baseBranch
+	if base == "" {
+		var err error
+		base, err = git.GetDefaultBranch(repoRoot)
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine base branch: %w", err)
+		}
+	}
+
+	// Validate not on base branch (only when analyzing current branch)
+	if targetRef == "HEAD" {
+		currentBranch := git.GetCurrentBranch(repoRoot)
+		if currentBranch == git.LocalBranchName(base) {
+			return nil, fmt.Errorf("already on %s - switch to a feature branch first", git.LocalBranchName(base))
+		}
+	}
+
+	// Get merge-base
+	mergeBase, err := git.GetMergeBase(repoRoot, base, targetRef)
+	if err != nil {
+		return nil, fmt.Errorf("cannot find merge-base with %s: %w", base, err)
+	}
+
+	// Validate has commits
+	rangeRef := mergeBase + ".." + targetRef
+	commits, err := git.GetRangeCommits(repoRoot, rangeRef)
+	if err != nil {
+		return nil, fmt.Errorf("cannot get commits: %w", err)
+	}
+	if len(commits) == 0 {
+		return nil, fmt.Errorf("no commits on branch since %s", base)
+	}
+
+	// Get changed files
+	changedFiles, err := git.GetRangeFilesChanged(repoRoot, rangeRef)
+	if err != nil {
+		return nil, fmt.Errorf("cannot get changed files: %w", err)
+	}
+
+	// Filter to code files only
+	var codeFiles []string
+	for _, f := range changedFiles {
+		if isCodeFile(f) {
+			codeFiles = append(codeFiles, f)
+		}
+	}
+
+	if len(codeFiles) == 0 {
+		return nil, fmt.Errorf("no code files changed on branch (found %d non-code files)", len(changedFiles))
+	}
+
+	if !opts.quiet && !opts.jsonOutput {
+		cmd.Printf("Branch %q: %d commits, %d code files changed since %s\n",
+			branchLabel, len(commits), len(codeFiles), base)
+	}
+
+	// Read file contents from git (not working tree) for consistency with the commit range
+	files := make(map[string]string, len(codeFiles))
+	for _, f := range codeFiles {
+		content, readErr := git.ReadFile(repoRoot, targetRef, f)
+		if readErr != nil {
+			// Files deleted in the target ref will fail to read — skip them
+			if strings.Contains(readErr.Error(), "does not exist") || strings.Contains(readErr.Error(), "bad object") {
+				continue
+			}
+			return nil, fmt.Errorf("read %s at %s: %w", f, targetRef, readErr)
+		}
+		files[f] = string(content)
+	}
+
+	return files, nil
+}
+
+// isCodeFile returns true if the file is a code file (stricter than isSourceFile).
+// Excludes documentation, configuration, and markup files that are typically not
+// useful for code analysis on a branch.
+func isCodeFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	codeExts := map[string]bool{
+		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true,
+		".rs": true, ".c": true, ".h": true, ".cpp": true, ".hpp": true, ".cc": true,
+		".java": true, ".kt": true, ".scala": true, ".rb": true, ".php": true,
+		".swift": true, ".m": true, ".cs": true, ".fs": true, ".vb": true,
+		".sh": true, ".bash": true, ".zsh": true, ".fish": true,
+		".sql": true, ".graphql": true, ".proto": true,
+	}
+	return codeExts[ext]
 }
 
 // isSourceFile returns true if the file looks like source code

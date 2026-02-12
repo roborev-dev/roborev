@@ -777,7 +777,7 @@ func reviewCmd() *cobra.Command {
 		quiet      bool
 		dirty      bool
 		wait       bool
-		branch     bool
+		branch     string
 		baseBranch string
 		since      string
 		local      bool
@@ -798,6 +798,7 @@ Examples:
   roborev review --type design   # Design-focused review of HEAD
   roborev review --branch     # Review all commits on current branch since main
   roborev review --branch --base develop  # Review branch against develop
+  roborev review --branch=feature-xyz     # Review a specific branch
   roborev review --since HEAD~5  # Review last 5 commits
   roborev review --since abc123  # Review commits since abc123 (exclusive)
   roborev review --type security   # Security-focused review of HEAD
@@ -843,17 +844,17 @@ Examples:
 			}
 
 			// Validate mutually exclusive options
-			if branch && dirty {
+			if branch != "" && dirty {
 				return fmt.Errorf("cannot use --branch with --dirty")
 			}
-			if branch && since != "" {
+			if branch != "" && since != "" {
 				return fmt.Errorf("cannot use --branch with --since")
 			}
 			if since != "" && dirty {
 				return fmt.Errorf("cannot use --since with --dirty")
 			}
-			if branch && len(args) > 0 {
-				return fmt.Errorf("cannot specify commits with --branch")
+			if branch != "" && len(args) > 0 {
+				return fmt.Errorf("cannot specify commits with --branch (to review a specific branch, use --branch=<name>)")
 			}
 			if since != "" && len(args) > 0 {
 				return fmt.Errorf("cannot specify commits with --since")
@@ -867,8 +868,18 @@ Examples:
 			var gitRef string
 			var diffContent string
 
-			if branch {
+			if branch != "" {
 				// Branch review - review all commits since diverging from base
+				targetRef := "HEAD"
+				targetLabel := git.GetCurrentBranch(root)
+				if branch != "HEAD" {
+					targetRef = branch
+					targetLabel = branch
+					if _, err := git.ResolveSHA(root, targetRef); err != nil {
+						return fmt.Errorf("cannot resolve branch %q: %w", branch, err)
+					}
+				}
+
 				base := baseBranch
 				if base == "" {
 					var err error
@@ -878,20 +889,23 @@ Examples:
 					}
 				}
 
-				// Validate not on base branch
-				currentBranch := git.GetCurrentBranch(root)
-				if currentBranch == git.LocalBranchName(base) {
-					return fmt.Errorf("already on %s - create a feature branch first", git.LocalBranchName(base))
+				// Validate not on base branch (only when reviewing current branch)
+				if targetRef == "HEAD" {
+					currentBranch := git.GetCurrentBranch(root)
+					if currentBranch == git.LocalBranchName(base) {
+						return fmt.Errorf("already on %s - create a feature branch first", git.LocalBranchName(base))
+					}
 				}
 
 				// Get merge-base
-				mergeBase, err := git.GetMergeBase(root, base, "HEAD")
+				mergeBase, err := git.GetMergeBase(root, base, targetRef)
 				if err != nil {
 					return fmt.Errorf("cannot find merge-base with %s: %w", base, err)
 				}
 
 				// Validate has commits
-				commits, err := git.GetCommitsSince(root, mergeBase)
+				rangeRef := mergeBase + ".." + targetRef
+				commits, err := git.GetRangeCommits(root, rangeRef)
 				if err != nil {
 					return fmt.Errorf("cannot get commits: %w", err)
 				}
@@ -899,11 +913,11 @@ Examples:
 					return fmt.Errorf("no commits on branch since %s", base)
 				}
 
-				gitRef = mergeBase + ".." + "HEAD"
+				gitRef = rangeRef
 
 				if !quiet {
 					cmd.Printf("Reviewing branch %q: %d commits since %s\n",
-						currentBranch, len(commits), base)
+						targetLabel, len(commits), base)
 				}
 			} else if since != "" {
 				// Review commits since a specific commit (exclusive)
@@ -964,8 +978,12 @@ Examples:
 				gitRef = sha
 			}
 
-			// Get current branch name for tracking
+			// Get branch name for tracking. When --branch=<name> targets
+			// a different branch, use that name instead of the checked-out branch.
 			branchName := git.GetCurrentBranch(root)
+			if branch != "" && branch != "HEAD" {
+				branchName = branch
+			}
 
 			// Handle --local mode: run agent directly without daemon
 			if local {
@@ -1048,7 +1066,8 @@ Examples:
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
 	cmd.Flags().BoolVar(&dirty, "dirty", false, "review uncommitted changes instead of a commit")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")
-	cmd.Flags().BoolVar(&branch, "branch", false, "review all changes since branch diverged from base")
+	cmd.Flags().StringVar(&branch, "branch", "", "review all changes since branch diverged from base (optionally specify branch name)")
+	cmd.Flags().Lookup("branch").NoOptDefVal = "HEAD"
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
 	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
