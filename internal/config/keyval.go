@@ -465,11 +465,15 @@ func setFieldValue(field reflect.Value, value string) error {
 		field.SetBool(b)
 	case reflect.Slice:
 		if field.Type().Elem().Kind() == reflect.String {
-			parts := strings.Split(value, ",")
-			for i := range parts {
-				parts[i] = strings.TrimSpace(parts[i])
+			if value == "" {
+				field.Set(reflect.MakeSlice(field.Type(), 0, 0))
+			} else {
+				parts := strings.Split(value, ",")
+				for i := range parts {
+					parts[i] = strings.TrimSpace(parts[i])
+				}
+				field.Set(reflect.ValueOf(parts))
 			}
-			field.Set(reflect.ValueOf(parts))
 		} else {
 			return fmt.Errorf("unsupported slice type for key")
 		}

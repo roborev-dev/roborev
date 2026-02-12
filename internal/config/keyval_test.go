@@ -214,6 +214,20 @@ func TestSetConfigValueSlice(t *testing.T) {
 	}
 }
 
+func TestSetConfigValueSliceEmpty(t *testing.T) {
+	cfg := &Config{
+		CI: CIConfig{
+			Repos: []string{"org/repo1"},
+		},
+	}
+	if err := SetConfigValue(cfg, "ci.repos", ""); err != nil {
+		t.Fatalf("SetConfigValue error: %v", err)
+	}
+	if len(cfg.CI.Repos) != 0 {
+		t.Errorf("CI.Repos = %v, want empty slice", cfg.CI.Repos)
+	}
+}
+
 func TestListConfigKeys(t *testing.T) {
 	cfg := &Config{
 		DefaultAgent: "codex",
