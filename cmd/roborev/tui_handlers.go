@@ -149,6 +149,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.currentView = tuiViewQueue
 		m.filterSearch = ""
+		m.filterBranchMode = false
 		m.hasMore = false
 		m.selectedIdx = -1
 		m.selectedJobID = 0
@@ -817,6 +818,9 @@ func (m tuiModel) handleFilterOpenKey() (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) handleBranchFilterOpenKey() (tea.Model, tea.Cmd) {
+	if m.currentView != tuiViewQueue {
+		return m, nil
+	}
 	m.filterBranchMode = true
 	return m.handleFilterOpenKey()
 }

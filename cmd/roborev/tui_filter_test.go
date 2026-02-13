@@ -1967,3 +1967,41 @@ func TestTUIFilterNoCwdNoReorder(t *testing.T) {
 		t.Errorf("Expected 'repo-c' at index 2, got '%s'", m2.filterTree[2].name)
 	}
 }
+
+func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+
+	m2, cmd := pressKey(m, 'b')
+
+	if m2.currentView != tuiViewReview {
+		t.Errorf("Expected view to remain tuiViewReview, got %d", m2.currentView)
+	}
+	if m2.filterBranchMode {
+		t.Error("Expected filterBranchMode to remain false when pressing b outside queue")
+	}
+	if cmd != nil {
+		t.Error("Expected no command when pressing b outside queue")
+	}
+}
+
+func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterBranchMode = true
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5,
+			children: []branchFilterItem{{name: "main", count: 3}}},
+	})
+	// Select the repo node (index 1 in flat list: All=0, repo-a=1, main=2)
+	m.filterSelectedIdx = 1
+
+	m2, _ := pressSpecial(m, tea.KeyEnter)
+
+	if m2.filterBranchMode {
+		t.Error("Expected filterBranchMode to be cleared on Enter")
+	}
+	if m2.currentView != tuiViewQueue {
+		t.Errorf("Expected tuiViewQueue after Enter, got %d", m2.currentView)
+	}
+}
