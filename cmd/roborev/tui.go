@@ -94,7 +94,6 @@ const (
 	tuiViewReview
 	tuiViewPrompt
 	tuiViewFilter
-	tuiViewBranchFilter
 	tuiViewComment
 	tuiViewCommitMsg
 	tuiViewHelp
@@ -116,6 +115,22 @@ type repoFilterItem struct {
 type branchFilterItem struct {
 	name  string // Branch name. Empty string means "All branches"
 	count int
+}
+
+// treeFilterNode represents a repo node in the unified tree filter
+type treeFilterNode struct {
+	name      string             // Display name
+	rootPaths []string           // Repo paths (for API calls)
+	count     int                // Total job count
+	expanded  bool               // Whether children are visible
+	children  []branchFilterItem // Branch children (lazy-loaded)
+	loading   bool               // True while branch fetch is in-flight
+}
+
+// flatFilterEntry represents a single row in the flattened tree filter view
+type flatFilterEntry struct {
+	repoIdx   int // Index into filterTree (-1 for "All")
+	branchIdx int // Index into children (-1 for repo-level)
 }
 
 type tuiModel struct {
@@ -149,15 +164,12 @@ type tuiModel struct {
 	fetchSeq       int     // incremented on filter changes; stale fetch responses are discarded
 	paginateNav    tuiView // non-zero: auto-navigate in this view after pagination loads
 
-	// Repo filter modal state
-	filterRepos       []repoFilterItem // Available repos with counts
-	filterSelectedIdx int              // Currently highlighted repo in filter list
-	filterSearch      string           // Search/filter text typed by user
-
-	// Branch filter modal state
-	filterBranches          []branchFilterItem // Available branches with counts
-	branchFilterSelectedIdx int                // Currently highlighted branch in filter list
-	branchFilterSearch      string             // Search/filter text typed by user
+	// Unified tree filter modal state
+	filterTree        []treeFilterNode  // Tree of repos (each may have branch children)
+	filterFlatList    []flatFilterEntry // Flattened visible rows for navigation
+	filterSelectedIdx int               // Currently highlighted row in flat list
+	filterSearch      string            // Search/filter text typed by user
+	filterBranchMode  bool              // True when opened via 'b' key (auto-expand repo to branches)
 
 	// Comment modal state
 	commentText     string  // The response text being typed
@@ -179,6 +191,10 @@ type tuiModel struct {
 
 	// Track if branch backfill has run this session (one-time migration)
 	branchBackfillDone bool
+
+	// Repo root and branch detected from cwd at launch (for filter sort priority)
+	cwdRepoRoot string
+	cwdBranch   string
 
 	// Pending addressed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
@@ -302,14 +318,15 @@ type tuiUpdateCheckMsg struct {
 	isDevBuild bool   // True if running a dev build
 }
 type tuiReposMsg struct {
-	repos      []repoFilterItem
-	totalCount int
+	repos []repoFilterItem
 }
 type tuiBranchesMsg struct {
-	branches       []branchFilterItem
-	totalCount     int
-	backfillCount  int // Number of branches successfully backfilled to the database
-	nullsRemaining int // Number of jobs still without branch info (for backfill gating)
+	backfillCount int // Number of branches successfully backfilled to the database
+}
+type tuiRepoBranchesMsg struct {
+	repoIdx   int                // Which repo in filterTree
+	rootPaths []string           // Repo identity (for stale message detection)
+	branches  []branchFilterItem // Branch data
 }
 type tuiCommentResultMsg struct {
 	jobID int64
@@ -385,14 +402,19 @@ func newTuiModel(serverAddr string) tuiModel {
 	}
 	// Note: Silently ignore config load errors - TUI should work with defaults
 
-	// Auto-filter to current repo if enabled
+	// Detect current repo/branch for filter sort priority
+	var cwdRepoRoot, cwdBranch string
+	if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
+		cwdRepoRoot = repoRoot
+		cwdBranch = git.GetCurrentBranch(".")
+	}
+
+	// Auto-filter to current repo if enabled (reuses detection above)
 	var activeRepoFilter []string
 	var filterStack []string
-	if autoFilterRepo {
-		if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
-			activeRepoFilter = []string{repoRoot}
-			filterStack = []string{filterTypeRepo}
-		}
+	if autoFilterRepo && cwdRepoRoot != "" {
+		activeRepoFilter = []string{cwdRepoRoot}
+		filterStack = []string{filterTypeRepo}
 	}
 
 	return tuiModel{
@@ -407,6 +429,8 @@ func newTuiModel(serverAddr string) tuiModel {
 		hideAddressed:          hideAddressed,
 		activeRepoFilter:       activeRepoFilter,
 		filterStack:            filterStack,
+		cwdRepoRoot:            cwdRepoRoot,
+		cwdBranch:              cwdBranch,
 		displayNames:           make(map[string]string),      // Cache display names to avoid disk reads on render
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
@@ -738,121 +762,22 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 		for i, name := range displayNameOrder {
 			repos[i] = *displayNameMap[name]
 		}
-		return tuiReposMsg{repos: repos, totalCount: reposResult.TotalCount}
+		return tuiReposMsg{repos: repos}
 	}
 }
 
-func (m tuiModel) fetchBranches() tea.Cmd {
-	// Capture values for use in goroutine
-	machineID := m.status.MachineID
+// fetchBranchesForRepo fetches branches for a specific repo in the tree filter.
+// Returns tuiRepoBranchesMsg with the branch data.
+func (m tuiModel) fetchBranchesForRepo(rootPaths []string, repoIdx int) tea.Cmd {
 	client := m.client
 	serverAddr := m.serverAddr
-	backfillDone := m.branchBackfillDone
-	activeRepoFilter := m.activeRepoFilter // Constrain branches by active repo filter
 
 	return func() tea.Msg {
-		var backfillCount int
-
-		// Check if backfill is needed (only if not already done this session)
-		if !backfillDone {
-			// First, check if there are any NULL branches via the API
-			resp, err := client.Get(serverAddr + "/api/branches")
-			if err != nil {
-				return tuiErrMsg(err)
-			}
-			var checkResult struct {
-				NullsRemaining int `json:"nulls_remaining"`
-			}
-			if resp.StatusCode != http.StatusOK {
-				resp.Body.Close()
-				return tuiErrMsg(fmt.Errorf("check branches for backfill: %s", resp.Status))
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&checkResult); err != nil {
-				resp.Body.Close()
-				return tuiErrMsg(fmt.Errorf("decode branches response: %w", err))
-			}
-			resp.Body.Close()
-
-			// If there are NULL branches, fetch all jobs to backfill
-			if checkResult.NullsRemaining > 0 {
-				resp, err := client.Get(serverAddr + "/api/jobs")
-				if err != nil {
-					return tuiErrMsg(err)
-				}
-				defer resp.Body.Close()
-
-				if resp.StatusCode != http.StatusOK {
-					return tuiErrMsg(fmt.Errorf("fetch jobs for backfill: %s", resp.Status))
-				}
-
-				var jobsResult struct {
-					Jobs []storage.ReviewJob `json:"jobs"`
-				}
-				if err := json.NewDecoder(resp.Body).Decode(&jobsResult); err != nil {
-					return tuiErrMsg(err)
-				}
-
-				// Find jobs that need backfill
-				type backfillJob struct {
-					id     int64
-					branch string
-				}
-				var toBackfill []backfillJob
-
-				for _, job := range jobsResult.Jobs {
-					if job.Branch != "" {
-						continue // Already has branch
-					}
-					// Mark task jobs (run, analyze, custom) or dirty jobs with no-branch sentinel
-					if job.IsTaskJob() || job.IsDirtyJob() {
-						toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branchNone})
-						continue
-					}
-					// Mark remote jobs with no-branch sentinel (can't look up)
-					if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
-						toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branchNone})
-						continue
-					}
-
-					sha := job.GitRef
-					if idx := strings.Index(sha, ".."); idx != -1 {
-						sha = sha[idx+2:]
-					}
-					branch := git.GetBranchName(job.RepoPath, sha)
-					if branch == "" {
-						branch = branchNone // Mark as attempted but not found
-					}
-					toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
-				}
-
-				// Persist to database
-				for _, bf := range toBackfill {
-					reqBody, _ := json.Marshal(map[string]interface{}{
-						"job_id": bf.id,
-						"branch": bf.branch,
-					})
-					resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
-					if err == nil {
-						if resp.StatusCode == http.StatusOK {
-							var updateResult struct {
-								Updated bool `json:"updated"`
-							}
-							if json.NewDecoder(resp.Body).Decode(&updateResult) == nil && updateResult.Updated {
-								backfillCount++
-							}
-						}
-						resp.Body.Close()
-					}
-				}
-			}
-		}
-
-		// Now fetch branches from server with optional repo filter
 		branchURL := serverAddr + "/api/branches"
-		if len(activeRepoFilter) > 0 {
+		if len(rootPaths) > 0 {
 			params := neturl.Values{}
-			for _, repoPath := range activeRepoFilter {
-				if repoPath != "" { // Skip empty paths
+			for _, repoPath := range rootPaths {
+				if repoPath != "" {
 					params.Add("repo", repoPath)
 				}
 			}
@@ -868,7 +793,7 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiErrMsg(fmt.Errorf("fetch branches: %s", resp.Status))
+			return tuiErrMsg(fmt.Errorf("fetch branches for repo: %s", resp.Status))
 		}
 
 		var branchResult struct {
@@ -876,14 +801,12 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 				Name  string `json:"name"`
 				Count int    `json:"count"`
 			} `json:"branches"`
-			TotalCount     int `json:"total_count"`
-			NullsRemaining int `json:"nulls_remaining"`
+			TotalCount int `json:"total_count"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&branchResult); err != nil {
 			return tuiErrMsg(err)
 		}
 
-		// Convert to branchFilterItem
 		branches := make([]branchFilterItem, len(branchResult.Branches))
 		for i, b := range branchResult.Branches {
 			branches[i] = branchFilterItem{
@@ -892,12 +815,115 @@ func (m tuiModel) fetchBranches() tea.Cmd {
 			}
 		}
 
-		return tuiBranchesMsg{
-			branches:       branches,
-			totalCount:     branchResult.TotalCount,
-			backfillCount:  backfillCount,
-			nullsRemaining: branchResult.NullsRemaining,
+		return tuiRepoBranchesMsg{
+			repoIdx:   repoIdx,
+			rootPaths: rootPaths,
+			branches:  branches,
 		}
+	}
+}
+
+func (m tuiModel) backfillBranches() tea.Cmd {
+	// Capture values for use in goroutine
+	machineID := m.status.MachineID
+	client := m.client
+	serverAddr := m.serverAddr
+
+	return func() tea.Msg {
+		var backfillCount int
+
+		// First, check if there are any NULL branches via the API
+		resp, err := client.Get(serverAddr + "/api/branches")
+		if err != nil {
+			return tuiErrMsg(err)
+		}
+		var checkResult struct {
+			NullsRemaining int `json:"nulls_remaining"`
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return tuiErrMsg(fmt.Errorf("check branches for backfill: %s", resp.Status))
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&checkResult); err != nil {
+			resp.Body.Close()
+			return tuiErrMsg(fmt.Errorf("decode branches response: %w", err))
+		}
+		resp.Body.Close()
+
+		// If there are NULL branches, fetch all jobs to backfill
+		if checkResult.NullsRemaining > 0 {
+			resp, err := client.Get(serverAddr + "/api/jobs")
+			if err != nil {
+				return tuiErrMsg(err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return tuiErrMsg(fmt.Errorf("fetch jobs for backfill: %s", resp.Status))
+			}
+
+			var jobsResult struct {
+				Jobs []storage.ReviewJob `json:"jobs"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&jobsResult); err != nil {
+				return tuiErrMsg(err)
+			}
+
+			// Find jobs that need backfill
+			type backfillJob struct {
+				id     int64
+				branch string
+			}
+			var toBackfill []backfillJob
+
+			for _, job := range jobsResult.Jobs {
+				if job.Branch != "" {
+					continue // Already has branch
+				}
+				// Mark task jobs (run, analyze, custom) or dirty jobs with no-branch sentinel
+				if job.IsTaskJob() || job.IsDirtyJob() {
+					toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branchNone})
+					continue
+				}
+				// Mark remote jobs with no-branch sentinel (can't look up)
+				if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
+					toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branchNone})
+					continue
+				}
+
+				sha := job.GitRef
+				if idx := strings.Index(sha, ".."); idx != -1 {
+					sha = sha[idx+2:]
+				}
+				branch := git.GetBranchName(job.RepoPath, sha)
+				if branch == "" {
+					branch = branchNone // Mark as attempted but not found
+				}
+				toBackfill = append(toBackfill, backfillJob{id: job.ID, branch: branch})
+			}
+
+			// Persist to database
+			for _, bf := range toBackfill {
+				reqBody, _ := json.Marshal(map[string]interface{}{
+					"job_id": bf.id,
+					"branch": bf.branch,
+				})
+				resp, err := client.Post(serverAddr+"/api/job/update-branch", "application/json", bytes.NewReader(reqBody))
+				if err == nil {
+					if resp.StatusCode == http.StatusOK {
+						var updateResult struct {
+							Updated bool `json:"updated"`
+						}
+						if json.NewDecoder(resp.Body).Decode(&updateResult) == nil && updateResult.Updated {
+							backfillCount++
+						}
+					}
+					resp.Body.Close()
+				}
+			}
+		}
+
+		return tuiBranchesMsg{backfillCount: backfillCount}
 	}
 }
 
@@ -1327,99 +1353,132 @@ func (m tuiModel) rerunJob(jobID int64, oldStatus storage.JobStatus, oldStartedA
 	}
 }
 
-// getVisibleFilterRepos returns repos that match the current search filter
-func (m *tuiModel) getVisibleFilterRepos() []repoFilterItem {
-	if m.filterSearch == "" {
-		return m.filterRepos
+// moveToFront moves the first element matching the predicate to position 0,
+// shifting the preceding elements down by one. No-op if no match or match is already first.
+func moveToFront[T any](items []T, match func(T) bool) {
+	for i := 1; i < len(items); i++ {
+		if match(items[i]) {
+			m := items[i]
+			copy(items[1:i+1], items[0:i])
+			items[0] = m
+			return
+		}
 	}
+}
+
+// rebuildFilterFlatList rebuilds the flat list of visible filter entries from the tree.
+// When search is active, auto-expands repos with matching branches and hides non-matching items.
+// Clamps filterSelectedIdx after rebuild.
+func (m *tuiModel) rebuildFilterFlatList() {
+	var flat []flatFilterEntry
 	search := strings.ToLower(m.filterSearch)
-	var visible []repoFilterItem
-	for _, r := range m.filterRepos {
-		// Always include "All repos" option, filter others by search
-		if r.name == "" {
-			visible = append(visible, r)
+
+	// Always include "All" as first entry
+	if search == "" || strings.Contains("all", search) {
+		flat = append(flat, flatFilterEntry{repoIdx: -1, branchIdx: -1})
+	}
+
+	for i, node := range m.filterTree {
+		repoNameMatch := search == "" ||
+			strings.Contains(strings.ToLower(node.name), search)
+		// Also check repo path basenames
+		if !repoNameMatch {
+			for _, p := range node.rootPaths {
+				if strings.Contains(strings.ToLower(filepath.Base(p)), search) {
+					repoNameMatch = true
+					break
+				}
+			}
+		}
+
+		// Check if any children match the search
+		childMatches := false
+		if search != "" && !repoNameMatch {
+			for _, child := range node.children {
+				if strings.Contains(strings.ToLower(child.name), search) {
+					childMatches = true
+					break
+				}
+			}
+		}
+
+		if !repoNameMatch && !childMatches {
 			continue
 		}
-		// Search by display name
-		if strings.Contains(strings.ToLower(r.name), search) {
-			visible = append(visible, r)
-			continue
-		}
-		// Also search by underlying repo path basenames
-		for _, p := range r.rootPaths {
-			if strings.Contains(strings.ToLower(filepath.Base(p)), search) {
-				visible = append(visible, r)
-				break
+
+		// Add repo node
+		flat = append(flat, flatFilterEntry{repoIdx: i, branchIdx: -1})
+
+		// Add children if expanded or if search matched children
+		showChildren := node.expanded || (search != "" && childMatches)
+		if showChildren && len(node.children) > 0 {
+			for j, child := range node.children {
+				if search != "" && !repoNameMatch {
+					// Only show matching children when repo didn't match
+					if !strings.Contains(strings.ToLower(child.name), search) {
+						continue
+					}
+				}
+				flat = append(flat, flatFilterEntry{repoIdx: i, branchIdx: j})
 			}
 		}
 	}
-	return visible
+
+	m.filterFlatList = flat
+
+	// Clamp selection
+	if len(flat) == 0 {
+		m.filterSelectedIdx = 0
+	} else if m.filterSelectedIdx >= len(flat) {
+		m.filterSelectedIdx = len(flat) - 1
+	}
 }
 
-// filterNavigateUp moves selection up in the filter modal
+// filterNavigateUp moves selection up in the tree filter
 func (m *tuiModel) filterNavigateUp() {
 	if m.filterSelectedIdx > 0 {
 		m.filterSelectedIdx--
 	}
 }
 
-// filterNavigateDown moves selection down in the filter modal
+// filterNavigateDown moves selection down in the tree filter
 func (m *tuiModel) filterNavigateDown() {
-	visible := m.getVisibleFilterRepos()
-	if m.filterSelectedIdx < len(visible)-1 {
+	if m.filterSelectedIdx < len(m.filterFlatList)-1 {
 		m.filterSelectedIdx++
 	}
 }
 
-// getSelectedFilterRepo returns the currently selected repo in the filter modal
-func (m *tuiModel) getSelectedFilterRepo() *repoFilterItem {
-	visible := m.getVisibleFilterRepos()
-	if m.filterSelectedIdx >= 0 && m.filterSelectedIdx < len(visible) {
-		return &visible[m.filterSelectedIdx]
+// getSelectedFilterEntry returns the currently selected flat entry, or nil
+func (m *tuiModel) getSelectedFilterEntry() *flatFilterEntry {
+	if m.filterSelectedIdx >= 0 && m.filterSelectedIdx < len(m.filterFlatList) {
+		return &m.filterFlatList[m.filterSelectedIdx]
 	}
 	return nil
 }
 
-// branchFilterNavigateUp moves selection up in the branch filter modal
-func (m *tuiModel) branchFilterNavigateUp() {
-	if m.branchFilterSelectedIdx > 0 {
-		m.branchFilterSelectedIdx--
+// filterTreeTotalCount returns the total job count across all repos in the tree
+func (m *tuiModel) filterTreeTotalCount() int {
+	total := 0
+	for _, node := range m.filterTree {
+		total += node.count
 	}
+	return total
 }
 
-// branchFilterNavigateDown moves selection down in the branch filter modal
-func (m *tuiModel) branchFilterNavigateDown() {
-	visible := m.getVisibleFilterBranches()
-	if m.branchFilterSelectedIdx < len(visible)-1 {
-		m.branchFilterSelectedIdx++
+// rootPathsMatch returns true if two rootPaths slices are identical.
+func rootPathsMatch(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
 	}
-}
-
-// getSelectedFilterBranch returns the currently selected branch in the filter modal
-func (m *tuiModel) getSelectedFilterBranch() *branchFilterItem {
-	visible := m.getVisibleFilterBranches()
-	if m.branchFilterSelectedIdx >= 0 && m.branchFilterSelectedIdx < len(visible) {
-		return &visible[m.branchFilterSelectedIdx]
-	}
-	return nil
-}
-
-// getVisibleFilterBranches returns branches that match the current search filter
-func (m *tuiModel) getVisibleFilterBranches() []branchFilterItem {
-	if m.branchFilterSearch == "" {
-		return m.filterBranches
-	}
-	searchLower := strings.ToLower(m.branchFilterSearch)
-	var visible []branchFilterItem
-	for _, b := range m.filterBranches {
-		if b.name == "" || strings.Contains(strings.ToLower(b.name), searchLower) {
-			visible = append(visible, b)
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
 	}
-	return visible
+	return true
 }
 
-// repoMatchesFilter checks if a repo path matches the active filter
+// repoMatchesFilter checks if a repo path matches the active filter.
 func (m tuiModel) repoMatchesFilter(repoPath string) bool {
 	for _, p := range m.activeRepoFilter {
 		if p == repoPath {
@@ -1714,19 +1773,115 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiReposMsg:
 		m.consecutiveErrors = 0
-		m.filterRepos = []repoFilterItem{{name: "", count: msg.totalCount}}
-		m.filterRepos = append(m.filterRepos, msg.repos...)
-		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-			for i, r := range m.filterRepos {
-				if len(r.rootPaths) == len(m.activeRepoFilter) && len(r.rootPaths) > 0 {
-					match := true
-					for j, p := range r.rootPaths {
-						if p != m.activeRepoFilter[j] {
-							match = false
+		// Build filterTree from repos (all collapsed, no children)
+		m.filterTree = make([]treeFilterNode, len(msg.repos))
+		for i, r := range msg.repos {
+			m.filterTree[i] = treeFilterNode{
+				name:      r.name,
+				rootPaths: r.rootPaths,
+				count:     r.count,
+			}
+		}
+		// Move cwd repo to first position for quick access
+		if m.cwdRepoRoot != "" && len(m.filterTree) > 1 {
+			moveToFront(m.filterTree, func(n treeFilterNode) bool {
+				for _, p := range n.rootPaths {
+					if p == m.cwdRepoRoot {
+						return true
+					}
+				}
+				return false
+			})
+		}
+		m.rebuildFilterFlatList()
+		// Pre-select active filter if any
+		if len(m.activeRepoFilter) > 0 {
+			for i, entry := range m.filterFlatList {
+				if entry.repoIdx >= 0 && entry.branchIdx == -1 {
+					node := m.filterTree[entry.repoIdx]
+					if len(node.rootPaths) == len(m.activeRepoFilter) && len(node.rootPaths) > 0 {
+						match := true
+						for j, p := range node.rootPaths {
+							if p != m.activeRepoFilter[j] {
+								match = false
+								break
+							}
+						}
+						if match {
+							m.filterSelectedIdx = i
 							break
 						}
 					}
-					if match {
+				}
+			}
+		}
+		// Auto-expand repo to branches when opened via 'b' key
+		if m.filterBranchMode && len(m.filterTree) > 0 {
+			targetIdx := 0
+			if len(m.activeRepoFilter) == 1 {
+				// Priority 1: single active repo filter
+				for i, node := range m.filterTree {
+					for _, p := range node.rootPaths {
+						if p == m.activeRepoFilter[0] {
+							targetIdx = i
+							goto foundTarget
+						}
+					}
+				}
+			}
+			if m.cwdRepoRoot != "" {
+				// Priority 2: cwd repo
+				for i, node := range m.filterTree {
+					for _, p := range node.rootPaths {
+						if p == m.cwdRepoRoot {
+							targetIdx = i
+							goto foundTarget
+						}
+					}
+				}
+			}
+			// Priority 3: first repo (targetIdx already 0)
+		foundTarget:
+			m.filterTree[targetIdx].loading = true
+			// Position cursor on the target repo while branches load
+			for i, entry := range m.filterFlatList {
+				if entry.repoIdx == targetIdx && entry.branchIdx == -1 {
+					m.filterSelectedIdx = i
+					break
+				}
+			}
+			return m, m.fetchBranchesForRepo(m.filterTree[targetIdx].rootPaths, targetIdx)
+		}
+
+	case tuiRepoBranchesMsg:
+		// Verify we're still in filter view, repoIdx is valid, and the repo identity matches
+		// (the tree may have been rebuilt while the fetch was in-flight)
+		if m.currentView == tuiViewFilter && msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
+			rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
+			m.filterTree[msg.repoIdx].children = msg.branches
+			m.filterTree[msg.repoIdx].expanded = true
+			m.filterTree[msg.repoIdx].loading = false
+			// Move cwd branch to first position if this is the cwd repo
+			if m.cwdBranch != "" && len(msg.branches) > 1 {
+				isCwdRepo := false
+				for _, p := range m.filterTree[msg.repoIdx].rootPaths {
+					if p == m.cwdRepoRoot {
+						isCwdRepo = true
+						break
+					}
+				}
+				if isCwdRepo {
+					moveToFront(m.filterTree[msg.repoIdx].children, func(b branchFilterItem) bool {
+						return b.name == m.cwdBranch
+					})
+				}
+			}
+			m.rebuildFilterFlatList()
+			// Auto-position cursor on first branch when opened via 'b' key
+			if m.filterBranchMode {
+				m.filterBranchMode = false
+				for i, entry := range m.filterFlatList {
+					if entry.repoIdx == msg.repoIdx && entry.branchIdx >= 0 {
 						m.filterSelectedIdx = i
 						break
 					}
@@ -1737,20 +1892,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiBranchesMsg:
 		m.consecutiveErrors = 0
 		m.branchBackfillDone = true
-		m.filterBranches = []branchFilterItem{{name: "", count: msg.totalCount}}
-		m.filterBranches = append(m.filterBranches, msg.branches...)
-		if m.activeBranchFilter != "" {
-			for i, b := range m.filterBranches {
-				if b.name == m.activeBranchFilter {
-					m.branchFilterSelectedIdx = i
-					break
-				}
-			}
-		}
 		if msg.backfillCount > 0 {
 			m.flashMessage = fmt.Sprintf("Backfilled branch info for %d jobs", msg.backfillCount)
 			m.flashExpiresAt = time.Now().Add(5 * time.Second)
-			m.flashView = tuiViewBranchFilter
+			m.flashView = tuiViewFilter
 		}
 
 	case tuiCommentResultMsg:
@@ -1831,9 +1976,6 @@ func (m tuiModel) View() string {
 	}
 	if m.currentView == tuiViewFilter {
 		return m.renderFilterView()
-	}
-	if m.currentView == tuiViewBranchFilter {
-		return m.renderBranchFilterView()
 	}
 	if m.currentView == tuiViewCommitMsg {
 		return m.renderCommitMsgView()
@@ -2564,131 +2706,14 @@ func (m tuiModel) renderPromptView() string {
 func (m tuiModel) renderFilterView() string {
 	var b strings.Builder
 
-	b.WriteString(tuiTitleStyle.Render("Filter by Repository"))
+	b.WriteString(tuiTitleStyle.Render("Filter"))
 	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
 
-	// Show loading state if repos haven't been fetched yet
-	if m.filterRepos == nil {
+	// Show loading state if tree hasn't been built yet
+	if m.filterTree == nil {
 		b.WriteString(tuiStatusStyle.Render("Loading repos..."))
 		b.WriteString("\x1b[K\n")
 		// Pad to fill terminal height: title(1) + blank(1) + loading(1) + padding + help(1)
-		// We've written 3 lines so far (title, blank, loading)
-		linesWritten := 3
-		for linesWritten < m.height-1 { // -1 for help line at bottom
-			b.WriteString("\x1b[K\n")
-			linesWritten++
-		}
-		b.WriteString(tuiHelpStyle.Render("esc: cancel"))
-		b.WriteString("\x1b[K")
-		b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
-		return b.String()
-	}
-
-	// Search box
-	searchDisplay := m.filterSearch
-	if searchDisplay == "" {
-		searchDisplay = tuiStatusStyle.Render("Type to search...")
-	}
-	b.WriteString(fmt.Sprintf("Search: %s", searchDisplay))
-	b.WriteString("\x1b[K\n\x1b[K\n") // Clear search and blank line
-
-	visible := m.getVisibleFilterRepos()
-
-	// Calculate visible rows
-	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(1) = 7
-	reservedLines := 7
-	visibleRows := m.height - reservedLines
-	if visibleRows < 0 {
-		visibleRows = 0
-	}
-
-	// Determine which repos to show, keeping selected item visible
-	start := 0
-	end := len(visible)
-	needsScroll := len(visible) > visibleRows && visibleRows > 0
-	if needsScroll {
-		start = m.filterSelectedIdx - visibleRows/2
-		if start < 0 {
-			start = 0
-		}
-		end = start + visibleRows
-		if end > len(visible) {
-			end = len(visible)
-			start = end - visibleRows
-			if start < 0 {
-				start = 0
-			}
-		}
-	} else if visibleRows > 0 {
-		// No scrolling needed, show all (up to visibleRows)
-		if end > visibleRows {
-			end = visibleRows
-		}
-	} else {
-		// No room for repos
-		end = 0
-	}
-
-	repoLinesWritten := 0
-	for i := start; i < end; i++ {
-		repo := visible[i]
-		var line string
-		if repo.name == "" {
-			line = fmt.Sprintf("All repos (%d)", repo.count)
-		} else {
-			// repo.name is already the display name (aggregated in fetchRepos)
-			line = fmt.Sprintf("%s (%d)", repo.name, repo.count)
-		}
-
-		if i == m.filterSelectedIdx {
-			b.WriteString(tuiSelectedStyle.Render("> " + line))
-		} else {
-			b.WriteString("  " + line)
-		}
-		b.WriteString("\x1b[K\n") // Clear to end of line before newline
-		repoLinesWritten++
-	}
-
-	if len(visible) == 0 {
-		b.WriteString(tuiStatusStyle.Render("  No matching repos"))
-		b.WriteString("\x1b[K\n")
-		repoLinesWritten++
-	} else if visibleRows == 0 {
-		b.WriteString(tuiStatusStyle.Render("  (terminal too small)"))
-		b.WriteString("\x1b[K\n")
-		repoLinesWritten++
-	}
-
-	// Pad with clear-to-end-of-line sequences to prevent ghost text
-	for repoLinesWritten < visibleRows {
-		b.WriteString("\x1b[K\n")
-		repoLinesWritten++
-	}
-
-	if needsScroll {
-		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visible))
-		b.WriteString(tuiStatusStyle.Render(scrollInfo))
-	}
-	b.WriteString("\x1b[K\n") // Clear scroll indicator line
-
-	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | esc: cancel | type to search"))
-	b.WriteString("\x1b[K") // Clear help line
-	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
-
-	return b.String()
-}
-
-func (m tuiModel) renderBranchFilterView() string {
-	var b strings.Builder
-
-	b.WriteString(tuiTitleStyle.Render("Filter by Branch"))
-	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
-
-	// Show loading state if branches haven't been fetched yet
-	if m.filterBranches == nil {
-		b.WriteString(tuiStatusStyle.Render("Loading branches..."))
-		b.WriteString("\x1b[K\n")
-		// Pad to fill terminal height
 		linesWritten := 3
 		for linesWritten < m.height-1 {
 			b.WriteString("\x1b[K\n")
@@ -2701,34 +2726,35 @@ func (m tuiModel) renderBranchFilterView() string {
 	}
 
 	// Search box
-	searchDisplay := m.branchFilterSearch
+	searchDisplay := m.filterSearch
 	if searchDisplay == "" {
 		searchDisplay = tuiStatusStyle.Render("Type to search...")
 	}
 	b.WriteString(fmt.Sprintf("Search: %s", searchDisplay))
 	b.WriteString("\x1b[K\n\x1b[K\n")
 
-	visible := m.getVisibleFilterBranches()
+	flatList := m.filterFlatList
 
 	// Calculate visible rows
+	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(1) = 7
 	reservedLines := 7
 	visibleRows := m.height - reservedLines
 	if visibleRows < 0 {
 		visibleRows = 0
 	}
 
-	// Determine which branches to show, keeping selected item visible
+	// Determine which rows to show, keeping selected item visible
 	start := 0
-	end := len(visible)
-	needsScroll := len(visible) > visibleRows && visibleRows > 0
+	end := len(flatList)
+	needsScroll := len(flatList) > visibleRows && visibleRows > 0
 	if needsScroll {
-		start = m.branchFilterSelectedIdx - visibleRows/2
+		start = m.filterSelectedIdx - visibleRows/2
 		if start < 0 {
 			start = 0
 		}
 		end = start + visibleRows
-		if end > len(visible) {
-			end = len(visible)
+		if end > len(flatList) {
+			end = len(flatList)
 			start = end - visibleRows
 			if start < 0 {
 				start = 0
@@ -2742,48 +2768,65 @@ func (m tuiModel) renderBranchFilterView() string {
 		end = 0
 	}
 
-	branchLinesWritten := 0
+	linesWritten := 0
 	for i := start; i < end; i++ {
-		branch := visible[i]
+		entry := flatList[i]
 		var line string
-		if branch.name == "" {
-			line = fmt.Sprintf("All branches (%d)", branch.count)
+
+		if entry.repoIdx == -1 {
+			// "All" row
+			line = fmt.Sprintf("  All (%d)", m.filterTreeTotalCount())
+		} else if entry.branchIdx == -1 {
+			// Repo node
+			node := m.filterTree[entry.repoIdx]
+			chevron := ">"
+			if node.expanded {
+				chevron = "v"
+			}
+			suffix := ""
+			if node.loading {
+				suffix = " ..."
+			}
+			line = fmt.Sprintf("  %s %s (%d)%s", chevron, node.name, node.count, suffix)
 		} else {
-			line = fmt.Sprintf("%s (%d)", branch.name, branch.count)
+			// Branch node (indented)
+			node := m.filterTree[entry.repoIdx]
+			branch := node.children[entry.branchIdx]
+			line = fmt.Sprintf("      %s (%d)", branch.name, branch.count)
 		}
 
-		if i == m.branchFilterSelectedIdx {
-			b.WriteString(tuiSelectedStyle.Render("> " + line))
+		if i == m.filterSelectedIdx {
+			b.WriteString(tuiSelectedStyle.Render(line))
 		} else {
-			b.WriteString("  " + line)
+			b.WriteString(line)
 		}
 		b.WriteString("\x1b[K\n")
-		branchLinesWritten++
+		linesWritten++
 	}
 
-	if len(visible) == 0 {
-		b.WriteString(tuiStatusStyle.Render("  No matching branches"))
+	if len(flatList) == 0 {
+		b.WriteString(tuiStatusStyle.Render("  No matching items"))
 		b.WriteString("\x1b[K\n")
-		branchLinesWritten++
+		linesWritten++
 	} else if visibleRows == 0 {
 		b.WriteString(tuiStatusStyle.Render("  (terminal too small)"))
 		b.WriteString("\x1b[K\n")
-		branchLinesWritten++
+		linesWritten++
 	}
 
-	// Pad with clear-to-end-of-line sequences
-	for branchLinesWritten < visibleRows {
+	// Pad with clear-to-end-of-line sequences to prevent ghost text
+	for linesWritten < visibleRows {
 		b.WriteString("\x1b[K\n")
-		branchLinesWritten++
+		linesWritten++
 	}
 
 	if needsScroll {
-		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visible))
+		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(flatList))
 		b.WriteString(tuiStatusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n")
 
-	b.WriteString(tuiHelpStyle.Render("up/down: navigate | enter: select | esc: cancel | type to search"))
+	b.WriteString(tuiHelpStyle.Render("up/down: navigate | right/left: expand/collapse | enter: select | esc: cancel | type to search"))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J")
 
@@ -3114,8 +3157,7 @@ func helpLines() []string {
 		{
 			group: "Filtering",
 			keys: []struct{ key, desc string }{
-				{"f", "Filter by repository"},
-				{"b", "Filter by branch"},
+				{"f", "Filter by repository/branch"},
 				{"h", "Toggle hide addressed/failed"},
 				{"esc", "Clear filters (one at a time)"},
 			},
