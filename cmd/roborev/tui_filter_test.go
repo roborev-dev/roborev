@@ -1201,8 +1201,9 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 
 	// Simulate receiving branches
 	m3, _ := updateModel(t, m2, tuiRepoBranchesMsg{
-		repoIdx:  0,
-		branches: []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
+		repoIdx:   0,
+		rootPaths: []string{"/path/to/repo-a"},
+		branches:  []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
 	})
 
 	if m3.filterTree[0].loading {
@@ -1797,7 +1798,8 @@ func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
 	})
 
 	msg := tuiRepoBranchesMsg{
-		repoIdx: 0,
+		repoIdx:   0,
+		rootPaths: []string{"/path/to/repo-a"},
 		branches: []branchFilterItem{
 			{name: "main", count: 3},
 			{name: "develop", count: 1},

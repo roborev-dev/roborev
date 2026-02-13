@@ -328,8 +328,9 @@ type tuiBranchesMsg struct {
 	nullsRemaining int // Number of jobs still without branch info (for backfill gating)
 }
 type tuiRepoBranchesMsg struct {
-	repoIdx  int                // Which repo in filterTree
-	branches []branchFilterItem // Branch data
+	repoIdx   int                // Which repo in filterTree
+	rootPaths []string           // Repo identity (for stale message detection)
+	branches  []branchFilterItem // Branch data
 }
 type tuiCommentResultMsg struct {
 	jobID int64
@@ -819,8 +820,9 @@ func (m tuiModel) fetchBranchesForRepo(rootPaths []string, repoIdx int) tea.Cmd 
 		}
 
 		return tuiRepoBranchesMsg{
-			repoIdx:  repoIdx,
-			branches: branches,
+			repoIdx:   repoIdx,
+			rootPaths: rootPaths,
+			branches:  branches,
 		}
 	}
 }
@@ -1417,12 +1419,6 @@ func (m *tuiModel) rebuildFilterFlatList() {
 	var flat []flatFilterEntry
 	search := strings.ToLower(m.filterSearch)
 
-	// Compute total count for "All" row
-	totalCount := 0
-	for _, node := range m.filterTree {
-		totalCount += node.count
-	}
-
 	// Always include "All" as first entry
 	if search == "" || strings.Contains("all", search) {
 		flat = append(flat, flatFilterEntry{repoIdx: -1, branchIdx: -1, depth: 0})
@@ -1516,6 +1512,19 @@ func (m *tuiModel) filterTreeTotalCount() int {
 }
 
 // repoMatchesFilter checks if a repo path matches the active filter
+// rootPathsMatch returns true if two rootPaths slices are identical.
+func rootPathsMatch(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (m tuiModel) repoMatchesFilter(repoPath string) bool {
 	for _, p := range m.activeRepoFilter {
 		if p == repoPath {
@@ -1861,8 +1870,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiRepoBranchesMsg:
-		// Verify we're still in filter view and repoIdx is valid
-		if m.currentView == tuiViewFilter && msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) {
+		// Verify we're still in filter view, repoIdx is valid, and the repo identity matches
+		// (the tree may have been rebuilt while the fetch was in-flight)
+		if m.currentView == tuiViewFilter && msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
+			rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
 			m.filterTree[msg.repoIdx].children = msg.branches
 			m.filterTree[msg.repoIdx].expanded = true
 			m.filterTree[msg.repoIdx].loading = false
