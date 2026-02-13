@@ -57,6 +57,7 @@ func main() {
 
 	rootCmd.AddCommand(initCmd())
 	rootCmd.AddCommand(reviewCmd())
+	rootCmd.AddCommand(waitCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(showCmd())
@@ -1043,7 +1044,7 @@ Examples:
 
 			// If --wait, poll until job completes and show result
 			if wait {
-				err := waitForJob(cmd, serverAddr, job.ID, quiet)
+				err := waitForJob(cmd, serverAddr, job.ID, quiet, 0)
 				// Only silence Cobra's error output for exitError (verdict-based exit codes)
 				// Keep error output for actual failures (network errors, job not found, etc.)
 				if _, isExitErr := err.(*exitError); isExitErr {
@@ -1147,9 +1148,10 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	return nil
 }
 
-// waitForJob polls until a job completes and displays the review
+// waitForJob polls until a job completes and displays the review.
+// If timeout > 0, returns exitError{3} when the deadline is exceeded.
 // Uses the provided serverAddr to ensure we poll the same daemon that received the job.
-func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) error {
+func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, timeout time.Duration) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	if !quiet {
@@ -1162,7 +1164,18 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 	unknownStatusCount := 0
 	const maxUnknownRetries = 10 // Give up after 10 consecutive unknown statuses
 
+	var deadline time.Time
+	if timeout > 0 {
+		deadline = time.Now().Add(timeout)
+	}
+
 	for {
+		if timeout > 0 && time.Now().After(deadline) {
+			if !quiet {
+				cmd.Printf(" timed out after %s!\n", timeout)
+			}
+			return &exitError{code: 3}
+		}
 		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
 		if err != nil {
 			return fmt.Errorf("failed to check job status: %w", err)
@@ -1288,6 +1301,182 @@ type exitError struct {
 
 func (e *exitError) Error() string {
 	return fmt.Sprintf("exit code %d", e.code)
+}
+
+func waitCmd() *cobra.Command {
+	var (
+		shaFlag    string
+		forceJobID bool
+		quiet      bool
+		timeout    int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "wait [job_id|sha]",
+		Short: "Wait for an existing review job to complete",
+		Long: `Wait for an already-running review job to complete, without enqueuing a new one.
+
+When using an external coding agent to perform a review-fix refinement loop,
+wait provides a token-efficient method for letting the agent wait for a roborev
+review to complete. The post-commit hook triggers the review, and the agent
+calls wait to block until the result is ready.
+
+The argument can be a job ID (numeric) or a git ref (commit SHA, branch, HEAD).
+If no argument is given, defaults to HEAD.
+
+Exit codes:
+  0  Review passed (verdict PASS)
+  1  Review failed (verdict FAIL), or job failed/canceled
+  3  Timeout exceeded (--timeout)
+  4  No job found for the given SHA or job ID
+
+Examples:
+  roborev wait                   # Wait for most recent job for HEAD
+  roborev wait abc123            # Wait for most recent job for commit
+  roborev wait 42                # Job ID (if "42" is not a valid git ref)
+  roborev wait --job 42          # Force as job ID
+  roborev wait --sha HEAD~1      # Wait for job matching HEAD~1
+  roborev wait --timeout 60      # Give up after 60 seconds`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// In quiet mode, suppress cobra's error output
+			if quiet {
+				cmd.SilenceErrors = true
+				cmd.SilenceUsage = true
+			}
+
+			// Validate: positional arg + --sha is ambiguous
+			if len(args) > 0 && shaFlag != "" {
+				return fmt.Errorf("cannot use both a positional argument and --sha")
+			}
+
+			// Ensure daemon is running (and restart if version mismatch)
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("daemon not running: %w", err)
+			}
+
+			addr := getDaemonAddr()
+
+			// Resolve the target to a job ID
+			var jobID int64
+			var displayRef string
+
+			if shaFlag != "" {
+				// --sha flag: resolve ref to SHA, look up job
+				displayRef = shaFlag
+				id, err := lookupJobBySHA(addr, shaFlag)
+				if err != nil {
+					return handleWaitLookupErr(cmd, err, displayRef, quiet)
+				}
+				jobID = id
+			} else if len(args) > 0 {
+				arg := args[0]
+				if forceJobID {
+					// --job flag: treat as job ID directly
+					id, err := strconv.ParseInt(arg, 10, 64)
+					if err != nil {
+						return fmt.Errorf("invalid job ID: %s", arg)
+					}
+					jobID = id
+				} else {
+					// Try to resolve as git ref first (handles numeric SHAs like "123456")
+					var resolvedSHA string
+					if root, err := git.GetRepoRoot("."); err == nil {
+						if resolved, err := git.ResolveSHA(root, arg); err == nil {
+							resolvedSHA = resolved
+						}
+					}
+					if resolvedSHA != "" {
+						// Valid git ref — look up job by SHA
+						displayRef = arg
+						id, err := lookupJobBySHA(addr, arg)
+						if err != nil {
+							return handleWaitLookupErr(cmd, err, displayRef, quiet)
+						}
+						jobID = id
+					} else if id, err := strconv.ParseInt(arg, 10, 64); err == nil {
+						// Not a valid git ref but numeric — treat as job ID
+						jobID = id
+					} else {
+						return fmt.Errorf("argument %q is not a valid git ref or job ID", arg)
+					}
+				}
+			} else {
+				// No arg, no --sha: default to HEAD
+				displayRef = "HEAD"
+				id, err := lookupJobBySHA(addr, "HEAD")
+				if err != nil {
+					return handleWaitLookupErr(cmd, err, displayRef, quiet)
+				}
+				jobID = id
+			}
+
+			timeoutDur := time.Duration(timeout) * time.Second
+			err := waitForJob(cmd, addr, jobID, quiet, timeoutDur)
+			if _, isExitErr := err.(*exitError); isExitErr {
+				cmd.SilenceErrors = true
+				cmd.SilenceUsage = true
+			}
+			return err
+		},
+	}
+
+	cmd.Flags().StringVar(&shaFlag, "sha", "", "git ref to find the most recent job for")
+	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
+	cmd.Flags().IntVar(&timeout, "timeout", 0, "max wait time in seconds (0 = no timeout)")
+
+	return cmd
+}
+
+// lookupJobBySHA resolves a git ref to a SHA and finds the most recent job for it.
+// Returns exitError{4} if no job is found.
+func lookupJobBySHA(addr, ref string) (int64, error) {
+	// Resolve git ref to full SHA
+	sha := ref
+	if root, err := git.GetRepoRoot("."); err == nil {
+		if resolved, err := git.ResolveSHA(root, ref); err == nil {
+			sha = resolved
+		}
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", addr, url.QueryEscape(sha)))
+	if err != nil {
+		return 0, fmt.Errorf("failed to connect to daemon: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("server error looking up job (%d): %s", resp.StatusCode, body)
+	}
+
+	var result struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("failed to parse job list: %w", err)
+	}
+
+	if len(result.Jobs) == 0 {
+		return 0, &exitError{code: 4}
+	}
+
+	return result.Jobs[0].ID, nil
+}
+
+// handleWaitLookupErr handles errors from lookupJobBySHA in the wait command.
+// For exitError{4} (not found), prints a user-facing message when not quiet.
+func handleWaitLookupErr(cmd *cobra.Command, err error, ref string, quiet bool) error {
+	if exitErr, ok := err.(*exitError); ok {
+		if exitErr.code == 4 && !quiet {
+			cmd.Printf("No job found for %s\n", ref)
+		}
+		cmd.SilenceErrors = true
+		cmd.SilenceUsage = true
+	}
+	return err
 }
 
 func statusCmd() *cobra.Command {
