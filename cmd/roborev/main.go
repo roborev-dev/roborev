@@ -311,6 +311,9 @@ func startDaemon() error {
 // ErrDaemonNotRunning indicates no daemon runtime file was found
 var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)")
 
+// errJobNotFound indicates a job ID was not found during polling
+var errJobNotFound = fmt.Errorf("job not found")
+
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
@@ -1198,7 +1201,7 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, 
 		resp.Body.Close()
 
 		if len(jobsResp.Jobs) == 0 {
-			return fmt.Errorf("job %d not found", jobID)
+			return fmt.Errorf("%w: %d", errJobNotFound, jobID)
 		}
 
 		job := jobsResp.Jobs[0]
@@ -1417,9 +1420,9 @@ Examples:
 			timeoutDur := time.Duration(timeout) * time.Second
 			err := waitForJob(cmd, addr, jobID, quiet, timeoutDur)
 			if err != nil {
-				// Map "job not found" to exit code 4 (waitForJob returns
+				// Map errJobNotFound to exit code 4 (waitForJob returns
 				// a plain error for this case to stay compatible with reviewCmd)
-				if strings.Contains(err.Error(), "not found") {
+				if errors.Is(err, errJobNotFound) {
 					if !quiet {
 						cmd.Printf("No job found for job %d\n", jobID)
 					}
@@ -1448,10 +1451,12 @@ Examples:
 // Scopes the query to the current repo to avoid cross-repo mismatch.
 // Returns exitError{4} if no job is found.
 func lookupJobBySHA(addr, ref string) (int64, error) {
-	// Resolve git ref to full SHA and get repo root
+	// Resolve git ref to full SHA and get main repo root.
+	// Use GetMainRepoRoot to match daemon storage, which always
+	// records the main repo path (not the worktree path).
 	sha := ref
 	var repoRoot string
-	if root, err := git.GetRepoRoot("."); err == nil {
+	if root, err := git.GetMainRepoRoot("."); err == nil {
 		repoRoot = root
 		if resolved, err := git.ResolveSHA(root, ref); err == nil {
 			sha = resolved
