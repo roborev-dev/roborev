@@ -1709,17 +1709,150 @@ func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
 	}
 }
 
-func TestTUIBKeyNoLongerOpensBranchFilter(t *testing.T) {
+func TestTUIBKeyOpensBranchFilter(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoName("repo-a"))}
 	m.selectedIdx = 0
 
-	// Press 'b' - should not change view (b key binding removed)
-	m2, _ := pressKey(m, 'b')
+	// Press 'b' - should open filter view with filterBranchMode set
+	m2, cmd := pressKey(m, 'b')
 
+	if m2.currentView != tuiViewFilter {
+		t.Errorf("Expected tuiViewFilter, got %d", m2.currentView)
+	}
+	if !m2.filterBranchMode {
+		t.Error("Expected filterBranchMode to be true")
+	}
+	if cmd == nil {
+		t.Error("Expected a fetch command to be returned")
+	}
+}
+
+func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterBranchMode = true
+	m.cwdRepoRoot = "/path/to/repo-b"
+
+	repos := []repoFilterItem{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
+		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
+		{name: "repo-c", rootPaths: []string{"/path/to/repo-c"}, count: 1},
+	}
+	msg := tuiReposMsg{repos: repos, totalCount: 6}
+
+	m2, cmd := updateModel(t, m, msg)
+
+	// repo-b is sorted to index 0 (cwd repo), so it should be the target
+	if !m2.filterTree[0].loading {
+		t.Error("Expected cwd repo to have loading=true")
+	}
+	if m2.filterTree[0].name != "repo-b" {
+		t.Errorf("Expected target repo to be 'repo-b', got '%s'", m2.filterTree[0].name)
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranchesForRepo command")
+	}
+}
+
+func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterBranchMode = true
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5},
+	})
+
+	msg := tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/path/to/repo-a"},
+		branches:  []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	// filterBranchMode should be cleared
+	if m2.filterBranchMode {
+		t.Error("Expected filterBranchMode to be false after branches arrived")
+	}
+	// Cursor should be on the first branch (main)
+	// Flat list: All(0), repo-a(1), main(2), dev(3)
+	if m2.filterSelectedIdx != 2 {
+		t.Errorf("Expected filterSelectedIdx=2 (first branch), got %d", m2.filterSelectedIdx)
+	}
+	if len(m2.filterFlatList) > 2 && m2.filterFlatList[2].branchIdx != 0 {
+		t.Errorf("Expected entry at idx 2 to be branchIdx=0, got %d", m2.filterFlatList[2].branchIdx)
+	}
+}
+
+func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterBranchMode = true
+	// No active filter, no cwd repo
+
+	repos := []repoFilterItem{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
+		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
+	}
+	msg := tuiReposMsg{repos: repos, totalCount: 5}
+
+	m2, cmd := updateModel(t, m, msg)
+
+	// Should expand the first repo (index 0)
+	if !m2.filterTree[0].loading {
+		t.Error("Expected first repo to have loading=true")
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranchesForRepo command")
+	}
+}
+
+func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterBranchMode = true
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", count: 1},
+	})
+
+	// Press escape to close filter
+	m2, _ := pressSpecial(m, tea.KeyEscape)
+
+	if m2.filterBranchMode {
+		t.Error("Expected filterBranchMode to be cleared on escape")
+	}
 	if m2.currentView != tuiViewQueue {
-		t.Errorf("Expected view to stay at tuiViewQueue, got %v", m2.currentView)
+		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
+	}
+}
+
+func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterBranchMode = true
+	m.activeRepoFilter = []string{"/path/to/repo-b"}
+	m.cwdRepoRoot = "/path/to/repo-a" // cwd is different from active filter
+
+	repos := []repoFilterItem{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
+		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
+	}
+	msg := tuiReposMsg{repos: repos, totalCount: 5}
+
+	m2, cmd := updateModel(t, m, msg)
+
+	// Should use active repo filter (repo-b) over cwd (repo-a)
+	// repo-a is at index 0 (cwd sorted first), repo-b at index 1
+	if !m2.filterTree[1].loading {
+		t.Error("Expected repo-b (active filter) to have loading=true")
+	}
+	if m2.filterTree[1].name != "repo-b" {
+		t.Errorf("Expected target repo to be 'repo-b', got '%s'", m2.filterTree[1].name)
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranchesForRepo command")
 	}
 }
 

@@ -73,6 +73,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.currentView = tuiViewQueue
 		m.filterSearch = ""
+		m.filterBranchMode = false
 		return m, nil
 	case "up", "k":
 		m.filterNavigateUp()
@@ -306,6 +307,8 @@ func (m tuiModel) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleTailKey2()
 	case "f":
 		return m.handleFilterOpenKey()
+	case "b":
+		return m.handleBranchFilterOpenKey()
 	case "h":
 		return m.handleHideAddressedKey()
 	case "c":
@@ -811,6 +814,11 @@ func (m tuiModel) handleFilterOpenKey() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.fetchRepos(), m.fetchBranches())
 	}
 	return m, m.fetchRepos()
+}
+
+func (m tuiModel) handleBranchFilterOpenKey() (tea.Model, tea.Cmd) {
+	m.filterBranchMode = true
+	return m.handleFilterOpenKey()
 }
 
 func (m tuiModel) handleHideAddressedKey() (tea.Model, tea.Cmd) {

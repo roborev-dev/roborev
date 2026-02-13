@@ -170,6 +170,7 @@ type tuiModel struct {
 	filterFlatList    []flatFilterEntry // Flattened visible rows for navigation
 	filterSelectedIdx int               // Currently highlighted row in flat list
 	filterSearch      string            // Search/filter text typed by user
+	filterBranchMode  bool              // True when opened via 'b' key (auto-expand repo to branches)
 
 	// Comment modal state
 	commentText     string  // The response text being typed
@@ -1868,6 +1869,43 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		// Auto-expand repo to branches when opened via 'b' key
+		if m.filterBranchMode && len(m.filterTree) > 0 {
+			targetIdx := 0
+			if len(m.activeRepoFilter) == 1 {
+				// Priority 1: single active repo filter
+				for i, node := range m.filterTree {
+					for _, p := range node.rootPaths {
+						if p == m.activeRepoFilter[0] {
+							targetIdx = i
+							goto foundTarget
+						}
+					}
+				}
+			}
+			if m.cwdRepoRoot != "" {
+				// Priority 2: cwd repo
+				for i, node := range m.filterTree {
+					for _, p := range node.rootPaths {
+						if p == m.cwdRepoRoot {
+							targetIdx = i
+							goto foundTarget
+						}
+					}
+				}
+			}
+			// Priority 3: first repo (targetIdx already 0)
+		foundTarget:
+			m.filterTree[targetIdx].loading = true
+			// Position cursor on the target repo while branches load
+			for i, entry := range m.filterFlatList {
+				if entry.repoIdx == targetIdx && entry.branchIdx == -1 {
+					m.filterSelectedIdx = i
+					break
+				}
+			}
+			return m, m.fetchBranchesForRepo(m.filterTree[targetIdx].rootPaths, targetIdx)
+		}
 
 	case tuiRepoBranchesMsg:
 		// Verify we're still in filter view, repoIdx is valid, and the repo identity matches
@@ -1902,6 +1940,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.rebuildFilterFlatList()
+			// Auto-position cursor on first branch when opened via 'b' key
+			if m.filterBranchMode {
+				m.filterBranchMode = false
+				for i, entry := range m.filterFlatList {
+					if entry.repoIdx == msg.repoIdx && entry.branchIdx >= 0 {
+						m.filterSelectedIdx = i
+						break
+					}
+				}
+			}
 		}
 
 	case tuiBranchesMsg:
