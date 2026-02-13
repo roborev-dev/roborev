@@ -811,7 +811,7 @@ func (m tuiModel) handleFilterOpenKey() (tea.Model, tea.Cmd) {
 	m.filterSearch = ""
 	m.currentView = tuiViewFilter
 	if !m.branchBackfillDone {
-		return m, tea.Batch(m.fetchRepos(), m.fetchBranches())
+		return m, tea.Batch(m.fetchRepos(), m.backfillBranches())
 	}
 	return m, m.fetchRepos()
 }

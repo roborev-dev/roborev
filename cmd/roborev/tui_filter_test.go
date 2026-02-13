@@ -57,7 +57,7 @@ func TestTUIFilterReposMsg(t *testing.T) {
 		{name: "repo-b", count: 1},
 		{name: "repo-c", count: 1},
 	}
-	msg := tuiReposMsg{repos: repos, totalCount: 4}
+	msg := tuiReposMsg{repos: repos}
 
 	m2, _ := updateModel(t, m, msg)
 
@@ -450,7 +450,7 @@ func TestTUIFilterPreselectsCurrent(t *testing.T) {
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 1},
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 1},
 	}
-	msg := tuiReposMsg{repos: repos, totalCount: 2}
+	msg := tuiReposMsg{repos: repos}
 
 	m2, _ := updateModel(t, m, msg)
 
@@ -1444,12 +1444,9 @@ func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.branchBackfillDone = false
 
-	// Receive message with no NULLs remaining
+	// Receive message with no backfills needed
 	m2, _ := updateModel(t, m, tuiBranchesMsg{
-		branches:       []branchFilterItem{{name: "main", count: 5}},
-		totalCount:     5,
-		backfillCount:  0,
-		nullsRemaining: 0,
+		backfillCount: 0,
 	})
 
 	if !m2.branchBackfillDone {
@@ -1463,12 +1460,9 @@ func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.branchBackfillDone = false
 
-	// Receive message with some NULLs remaining
+	// Receive message with some backfills performed
 	m2, _ := updateModel(t, m, tuiBranchesMsg{
-		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 3}},
-		totalCount:     8,
-		backfillCount:  2,
-		nullsRemaining: 3, // Some legacy jobs still have NULL branches
+		backfillCount: 2,
 	})
 
 	if !m2.branchBackfillDone {
@@ -1481,12 +1475,9 @@ func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.branchBackfillDone = false
 
-	// First fetch: some NULLs remain, backfillDone should be set anyway (one-time operation)
+	// First fetch: some backfills performed, backfillDone should be set (one-time operation)
 	m2, _ := updateModel(t, m, tuiBranchesMsg{
-		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 2}},
-		totalCount:     7,
-		backfillCount:  1,
-		nullsRemaining: 2,
+		backfillCount: 1,
 	})
 
 	if !m2.branchBackfillDone {
@@ -1495,10 +1486,7 @@ func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 
 	// Second fetch: branchBackfillDone stays true
 	m3, _ := updateModel(t, m2, tuiBranchesMsg{
-		branches:       []branchFilterItem{{name: "main", count: 7}},
-		totalCount:     7,
-		backfillCount:  0,
-		nullsRemaining: 0,
+		backfillCount: 0,
 	})
 
 	if !m3.branchBackfillDone {
@@ -1513,12 +1501,9 @@ func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.branchBackfillDone = true // Previously marked as done
 
-	// Receive message with NULLs (legacy jobs that weren't backfilled)
+	// Receive message with no backfills (legacy jobs already attempted)
 	m2, _ := updateModel(t, m, tuiBranchesMsg{
-		branches:       []branchFilterItem{{name: "main", count: 5}, {name: "(none)", count: 2}},
-		totalCount:     7,
-		backfillCount:  0,
-		nullsRemaining: 2,
+		backfillCount: 0,
 	})
 
 	if !m2.branchBackfillDone {
@@ -1740,7 +1725,7 @@ func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
 		{name: "repo-c", rootPaths: []string{"/path/to/repo-c"}, count: 1},
 	}
-	msg := tuiReposMsg{repos: repos, totalCount: 6}
+	msg := tuiReposMsg{repos: repos}
 
 	m2, cmd := updateModel(t, m, msg)
 
@@ -1796,7 +1781,7 @@ func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
 	}
-	msg := tuiReposMsg{repos: repos, totalCount: 5}
+	msg := tuiReposMsg{repos: repos}
 
 	m2, cmd := updateModel(t, m, msg)
 
@@ -1839,7 +1824,7 @@ func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
 	}
-	msg := tuiReposMsg{repos: repos, totalCount: 5}
+	msg := tuiReposMsg{repos: repos}
 
 	m2, cmd := updateModel(t, m, msg)
 
@@ -1902,7 +1887,7 @@ func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
 		{name: "repo-c", rootPaths: []string{"/path/to/repo-c"}, count: 1},
 	}
-	msg := tuiReposMsg{repos: repos, totalCount: 6}
+	msg := tuiReposMsg{repos: repos}
 
 	m2, _ := updateModel(t, m, msg)
 
@@ -1967,7 +1952,7 @@ func TestTUIFilterNoCwdNoReorder(t *testing.T) {
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
 		{name: "repo-c", rootPaths: []string{"/path/to/repo-c"}, count: 1},
 	}
-	msg := tuiReposMsg{repos: repos, totalCount: 6}
+	msg := tuiReposMsg{repos: repos}
 
 	m2, _ := updateModel(t, m, msg)
 
