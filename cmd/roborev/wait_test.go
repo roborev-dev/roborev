@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -350,5 +352,82 @@ func TestWaitReviewErrorNotRemappedToCode4(t *testing.T) {
 	// not a "no job found" error
 	if exitErr, ok := err.(*exitError); ok && exitErr.code == 4 {
 		t.Error("'no review found' error should not be remapped to exit code 4")
+	}
+}
+
+func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
+	setupFastPolling(t)
+
+	// Create main repo with initial commit
+	repo := newTestGitRepo(t)
+	mainSHA := repo.CommitFile("file.txt", "content", "initial on main")
+
+	// Create a worktree on a new branch with a different commit
+	worktreeDir := t.TempDir()
+	os.Remove(worktreeDir) // git worktree add needs to create it
+	repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
+
+	// Make a new commit in the worktree so HEAD differs from main
+	wtRepo := &TestGitRepo{Dir: worktreeDir, t: t}
+	wtSHA := wtRepo.CommitFile("wt-file.txt", "worktree content", "commit in worktree")
+
+	// Sanity check: SHAs should differ
+	if mainSHA == wtSHA {
+		t.Fatal("expected different SHAs for main and worktree commits")
+	}
+
+	var lookupQuery string
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			// Capture only the lookup query (has git_ref), not the poll query (has id)
+			if r.URL.Query().Get("git_ref") != "" {
+				lookupQuery = r.URL.RawQuery
+			}
+			// Return a job so we can proceed to waitForJob
+			job := storage.ReviewJob{ID: 1, GitRef: wtSHA, Agent: "test", Status: "done"}
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs":     []storage.ReviewJob{job},
+				"has_more": false,
+			})
+			return
+		}
+		if r.URL.Path == "/api/review" {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
+			return
+		}
+	}))
+	defer cleanup()
+
+	// Run wait from the worktree directory
+	chdir(t, worktreeDir)
+
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
+	err := cmd.Execute()
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if lookupQuery == "" {
+		t.Fatal("expected a lookup query with git_ref, but none was captured")
+	}
+
+	// git_ref should be the worktree's HEAD (wtSHA), not the main repo's HEAD
+	if !strings.Contains(lookupQuery, "git_ref="+url.QueryEscape(wtSHA)) {
+		t.Errorf("expected git_ref=%s (worktree HEAD) in query, got: %s", wtSHA, lookupQuery)
+	}
+	if strings.Contains(lookupQuery, "git_ref="+url.QueryEscape(mainSHA)) {
+		t.Errorf("git_ref should NOT be main repo HEAD %s, got: %s", mainSHA, lookupQuery)
+	}
+
+	// repo should be the main repo path, not the worktree path
+	if strings.Contains(lookupQuery, url.QueryEscape(worktreeDir)) {
+		t.Errorf("repo param should be main repo path, not worktree path; got: %s", lookupQuery)
+	}
+	if !strings.Contains(lookupQuery, url.QueryEscape(repo.Dir)) {
+		t.Errorf("expected repo=%s (main repo) in query, got: %s", repo.Dir, lookupQuery)
 	}
 }
