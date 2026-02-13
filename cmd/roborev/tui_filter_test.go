@@ -1757,3 +1757,93 @@ func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
 		t.Error("Expected a command to be returned")
 	}
 }
+
+func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.cwdRepoRoot = "/path/to/repo-b"
+
+	repos := []repoFilterItem{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
+		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
+		{name: "repo-c", rootPaths: []string{"/path/to/repo-c"}, count: 1},
+	}
+	msg := tuiReposMsg{repos: repos, totalCount: 6}
+
+	m2, _ := updateModel(t, m, msg)
+
+	if len(m2.filterTree) != 3 {
+		t.Fatalf("Expected 3 tree nodes, got %d", len(m2.filterTree))
+	}
+	if m2.filterTree[0].name != "repo-b" {
+		t.Errorf("Expected cwd repo 'repo-b' at index 0, got '%s'", m2.filterTree[0].name)
+	}
+	if m2.filterTree[1].name != "repo-a" {
+		t.Errorf("Expected 'repo-a' at index 1, got '%s'", m2.filterTree[1].name)
+	}
+	if m2.filterTree[2].name != "repo-c" {
+		t.Errorf("Expected 'repo-c' at index 2, got '%s'", m2.filterTree[2].name)
+	}
+}
+
+func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.cwdRepoRoot = "/path/to/repo-a"
+	m.cwdBranch = "feature"
+
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5},
+	})
+
+	msg := tuiRepoBranchesMsg{
+		repoIdx: 0,
+		branches: []branchFilterItem{
+			{name: "main", count: 3},
+			{name: "develop", count: 1},
+			{name: "feature", count: 1},
+		},
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	children := m2.filterTree[0].children
+	if len(children) != 3 {
+		t.Fatalf("Expected 3 children, got %d", len(children))
+	}
+	if children[0].name != "feature" {
+		t.Errorf("Expected cwd branch 'feature' at index 0, got '%s'", children[0].name)
+	}
+	if children[1].name != "main" {
+		t.Errorf("Expected 'main' at index 1, got '%s'", children[1].name)
+	}
+	if children[2].name != "develop" {
+		t.Errorf("Expected 'develop' at index 2, got '%s'", children[2].name)
+	}
+}
+
+func TestTUIFilterNoCwdNoReorder(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	// cwdRepoRoot and cwdBranch are empty (not in a git repo)
+
+	repos := []repoFilterItem{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
+		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
+		{name: "repo-c", rootPaths: []string{"/path/to/repo-c"}, count: 1},
+	}
+	msg := tuiReposMsg{repos: repos, totalCount: 6}
+
+	m2, _ := updateModel(t, m, msg)
+
+	// Original API order should be preserved
+	if m2.filterTree[0].name != "repo-a" {
+		t.Errorf("Expected 'repo-a' at index 0, got '%s'", m2.filterTree[0].name)
+	}
+	if m2.filterTree[1].name != "repo-b" {
+		t.Errorf("Expected 'repo-b' at index 1, got '%s'", m2.filterTree[1].name)
+	}
+	if m2.filterTree[2].name != "repo-c" {
+		t.Errorf("Expected 'repo-c' at index 2, got '%s'", m2.filterTree[2].name)
+	}
+}

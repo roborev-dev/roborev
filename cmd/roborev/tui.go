@@ -192,6 +192,10 @@ type tuiModel struct {
 	// Track if branch backfill has run this session (one-time migration)
 	branchBackfillDone bool
 
+	// Repo root and branch detected from cwd at launch (for filter sort priority)
+	cwdRepoRoot string
+	cwdBranch   string
+
 	// Pending addressed state changes (prevents flash during refresh race)
 	// Each pending entry stores the requested state and a sequence number to
 	// distinguish between multiple requests for the same state (e.g., true→false→true)
@@ -401,14 +405,19 @@ func newTuiModel(serverAddr string) tuiModel {
 	}
 	// Note: Silently ignore config load errors - TUI should work with defaults
 
-	// Auto-filter to current repo if enabled
+	// Detect current repo/branch for filter sort priority
+	var cwdRepoRoot, cwdBranch string
+	if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
+		cwdRepoRoot = repoRoot
+		cwdBranch = git.GetCurrentBranch(".")
+	}
+
+	// Auto-filter to current repo if enabled (reuses detection above)
 	var activeRepoFilter []string
 	var filterStack []string
-	if autoFilterRepo {
-		if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
-			activeRepoFilter = []string{repoRoot}
-			filterStack = []string{filterTypeRepo}
-		}
+	if autoFilterRepo && cwdRepoRoot != "" {
+		activeRepoFilter = []string{cwdRepoRoot}
+		filterStack = []string{filterTypeRepo}
 	}
 
 	return tuiModel{
@@ -423,6 +432,8 @@ func newTuiModel(serverAddr string) tuiModel {
 		hideAddressed:          hideAddressed,
 		activeRepoFilter:       activeRepoFilter,
 		filterStack:            filterStack,
+		cwdRepoRoot:            cwdRepoRoot,
+		cwdBranch:              cwdBranch,
 		displayNames:           make(map[string]string),      // Cache display names to avoid disk reads on render
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
@@ -1808,6 +1819,24 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				count:     r.count,
 			}
 		}
+		// Move cwd repo to first position for quick access
+		if m.cwdRepoRoot != "" && len(m.filterTree) > 1 {
+			for i, node := range m.filterTree {
+				if i == 0 {
+					continue
+				}
+				for _, p := range node.rootPaths {
+					if p == m.cwdRepoRoot {
+						// Shift elements down and place match at front
+						match := m.filterTree[i]
+						copy(m.filterTree[1:i+1], m.filterTree[0:i])
+						m.filterTree[0] = match
+						goto repoSorted
+					}
+				}
+			}
+		}
+	repoSorted:
 		m.rebuildFilterFlatList()
 		// Pre-select active filter if any
 		if len(m.activeRepoFilter) > 0 {
@@ -1837,6 +1866,30 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.filterTree[msg.repoIdx].children = msg.branches
 			m.filterTree[msg.repoIdx].expanded = true
 			m.filterTree[msg.repoIdx].loading = false
+			// Move cwd branch to first position if this is the cwd repo
+			if m.cwdBranch != "" && len(msg.branches) > 1 {
+				isCwdRepo := false
+				for _, p := range m.filterTree[msg.repoIdx].rootPaths {
+					if p == m.cwdRepoRoot {
+						isCwdRepo = true
+						break
+					}
+				}
+				if isCwdRepo {
+					children := m.filterTree[msg.repoIdx].children
+					for i, b := range children {
+						if i == 0 {
+							continue
+						}
+						if b.name == m.cwdBranch {
+							match := children[i]
+							copy(children[1:i+1], children[0:i])
+							children[0] = match
+							break
+						}
+					}
+				}
+			}
 			m.rebuildFilterFlatList()
 		}
 
