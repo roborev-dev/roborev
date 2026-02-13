@@ -8,6 +8,12 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+// setupFilterTree is a helper that sets filterTree and rebuilds the flat list.
+func setupFilterTree(m *tuiModel, nodes []treeFilterNode) {
+	m.filterTree = nodes
+	m.rebuildFilterFlatList()
+}
+
 func TestTUIFilterOpenModal(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
@@ -26,12 +32,12 @@ func TestTUIFilterOpenModal(t *testing.T) {
 	if m2.currentView != tuiViewFilter {
 		t.Errorf("Expected tuiViewFilter, got %d", m2.currentView)
 	}
-	// filterRepos should be nil (loading state) until async fetch completes
-	if m2.filterRepos != nil {
-		t.Errorf("Expected filterRepos=nil (loading), got %d repos", len(m2.filterRepos))
+	// filterTree should be nil (loading state) until async fetch completes
+	if m2.filterTree != nil {
+		t.Errorf("Expected filterTree=nil (loading), got %d nodes", len(m2.filterTree))
 	}
 	if m2.filterSelectedIdx != 0 {
-		t.Errorf("Expected filterSelectedIdx=0 (All repos), got %d", m2.filterSelectedIdx)
+		t.Errorf("Expected filterSelectedIdx=0, got %d", m2.filterSelectedIdx)
 	}
 	if m2.filterSearch != "" {
 		t.Errorf("Expected empty filterSearch, got '%s'", m2.filterSearch)
@@ -55,70 +61,79 @@ func TestTUIFilterReposMsg(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	// Should have: All repos (prepended), then the 3 repos from API
-	if len(m2.filterRepos) != 4 {
-		t.Fatalf("Expected 4 filter repos, got %d", len(m2.filterRepos))
+	// Should have 3 tree nodes (one per repo)
+	if len(m2.filterTree) != 3 {
+		t.Fatalf("Expected 3 tree nodes, got %d", len(m2.filterTree))
 	}
-	if m2.filterRepos[0].name != "" || m2.filterRepos[0].count != 4 {
-		t.Errorf("Expected All repos with count 4, got name='%s' count=%d", m2.filterRepos[0].name, m2.filterRepos[0].count)
+	if m2.filterTree[0].name != "repo-a" || m2.filterTree[0].count != 2 {
+		t.Errorf("Expected repo-a with count 2, got name='%s' count=%d", m2.filterTree[0].name, m2.filterTree[0].count)
 	}
-	if m2.filterRepos[1].name != "repo-a" || m2.filterRepos[1].count != 2 {
-		t.Errorf("Expected repo-a with count 2, got name='%s' count=%d", m2.filterRepos[1].name, m2.filterRepos[1].count)
+	if m2.filterTree[1].name != "repo-b" || m2.filterTree[1].count != 1 {
+		t.Errorf("Expected repo-b with count 1, got name='%s' count=%d", m2.filterTree[1].name, m2.filterTree[1].count)
 	}
-	if m2.filterRepos[2].name != "repo-b" || m2.filterRepos[2].count != 1 {
-		t.Errorf("Expected repo-b with count 1, got name='%s' count=%d", m2.filterRepos[2].name, m2.filterRepos[2].count)
+	if m2.filterTree[2].name != "repo-c" || m2.filterTree[2].count != 1 {
+		t.Errorf("Expected repo-c with count 1, got name='%s' count=%d", m2.filterTree[2].name, m2.filterTree[2].count)
 	}
-	if m2.filterRepos[3].name != "repo-c" || m2.filterRepos[3].count != 1 {
-		t.Errorf("Expected repo-c with count 1, got name='%s' count=%d", m2.filterRepos[3].name, m2.filterRepos[3].count)
+	// Flat list should have: All + 3 repos = 4 entries
+	if len(m2.filterFlatList) != 4 {
+		t.Errorf("Expected 4 flat list entries, got %d", len(m2.filterFlatList))
 	}
 }
 
 func TestTUIFilterSearch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
-	m.filterRepos = []repoFilterItem{
-		{name: "", count: 10},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-alpha", count: 5},
 		{name: "repo-beta", count: 3},
 		{name: "something-else", count: 2},
-	}
+	})
 
-	// No search - all visible
-	visible := m.getVisibleFilterRepos()
-	if len(visible) != 4 {
-		t.Errorf("No search: expected 4 visible, got %d", len(visible))
+	// No search - all visible (All + 3 repos)
+	if len(m.filterFlatList) != 4 {
+		t.Errorf("No search: expected 4 visible, got %d", len(m.filterFlatList))
 	}
 
 	// Search for "repo"
 	m.filterSearch = "repo"
-	visible = m.getVisibleFilterRepos()
-	if len(visible) != 3 { // All repos + repo-alpha + repo-beta
-		t.Errorf("Search 'repo': expected 3 visible, got %d", len(visible))
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 2 { // repo-alpha + repo-beta (All is excluded because "all" doesn't contain "repo")
+		t.Errorf("Search 'repo': expected 2 visible, got %d", len(m.filterFlatList))
 	}
 
 	// Search for "alpha"
 	m.filterSearch = "alpha"
-	visible = m.getVisibleFilterRepos()
-	if len(visible) != 2 { // All repos + repo-alpha
-		t.Errorf("Search 'alpha': expected 2 visible, got %d", len(visible))
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 1 { // repo-alpha only
+		t.Errorf("Search 'alpha': expected 1 visible, got %d", len(m.filterFlatList))
 	}
 
 	// Search for "xyz" - no matches
 	m.filterSearch = "xyz"
-	visible = m.getVisibleFilterRepos()
-	if len(visible) != 1 { // Only "All repos" always included
-		t.Errorf("Search 'xyz': expected 1 visible (All repos), got %d", len(visible))
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 0 {
+		t.Errorf("Search 'xyz': expected 0 visible, got %d", len(m.filterFlatList))
+	}
+
+	// Search for "all" - should show All row
+	m.filterSearch = "all"
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 1 { // Just All
+		t.Errorf("Search 'all': expected 1 visible, got %d", len(m.filterFlatList))
+	}
+	if m.filterFlatList[0].repoIdx != -1 {
+		t.Error("Expected the visible item to be the All entry")
 	}
 }
 
 func TestTUIFilterNavigation(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
-	m.filterRepos = []repoFilterItem{
-		{name: "", count: 10},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", count: 5},
 		{name: "repo-b", count: 3},
-	}
+	})
+	// Flat list: All, repo-a, repo-b = 3 entries
 	m.filterSelectedIdx = 0
 
 	// Navigate down
@@ -155,11 +170,11 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 		makeJob(3, withRepoName("repo-a")),
 	}
 	m.currentView = tuiViewFilter
-	m.filterRepos = []repoFilterItem{
-		{name: "", rootPaths: nil, count: 3},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 2},
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 1},
-	}
+	})
+	// Flat list: All(0), repo-a(1), repo-b(2)
 	m.filterSelectedIdx = 1 // repo-a
 
 	// Press enter to select
@@ -174,6 +189,34 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 	// Selection is invalidated until refetch completes (prevents race condition)
 	if m2.selectedIdx != -1 {
 		t.Errorf("Expected selectedIdx=-1 (invalidated pending refetch), got %d", m2.selectedIdx)
+	}
+}
+
+func TestTUIFilterSelectAll(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.activeRepoFilter = []string{"/path/to/repo-a"}
+	m.activeBranchFilter = "main"
+	m.filterStack = []string{"repo", "branch"}
+
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 2},
+	})
+	m.filterSelectedIdx = 0 // "All"
+
+	m2, _ := pressSpecial(m, tea.KeyEnter)
+
+	if m2.currentView != tuiViewQueue {
+		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
+	}
+	if len(m2.activeRepoFilter) != 0 {
+		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
+	}
+	if m2.activeBranchFilter != "" {
+		t.Errorf("Expected activeBranchFilter to be cleared, got '%s'", m2.activeBranchFilter)
+	}
+	if len(m2.filterStack) != 0 {
+		t.Errorf("Expected filterStack to be cleared, got %v", m2.filterStack)
 	}
 }
 
@@ -349,7 +392,9 @@ func TestTUIFilterEscapeCloses(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
 	m.filterSearch = "test"
-	m.filterRepos = []repoFilterItem{{name: "", count: 1}}
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", count: 1},
+	})
 
 	// Press 'esc' to close without selecting
 	m2, _ := pressSpecial(m, tea.KeyEscape)
@@ -365,10 +410,9 @@ func TestTUIFilterEscapeCloses(t *testing.T) {
 func TestTUIFilterTypingSearch(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
-	m.filterRepos = []repoFilterItem{
-		{name: "", count: 10},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", count: 5},
-	}
+	})
 	m.filterSelectedIdx = 1
 
 	// Type 'a'
@@ -410,7 +454,7 @@ func TestTUIFilterPreselectsCurrent(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	// filterRepos should be: All repos, repo-a, repo-b
+	// Flat list: All(0), repo-a(1), repo-b(2)
 	// repo-b should be at index 2, which should be pre-selected
 	if m2.filterSelectedIdx != 2 {
 		t.Errorf("Expected filterSelectedIdx=2 (repo-b), got %d", m2.filterSelectedIdx)
@@ -428,11 +472,11 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = tuiViewFilter
-	m.filterRepos = []repoFilterItem{
-		{name: "", rootPaths: nil, count: 2},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 2},
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 0}, // No jobs
-	}
+	})
+	// Flat list: All(0), repo-a(1), repo-b(2)
 	m.filterSelectedIdx = 2 // Select repo-b
 
 	// Press enter to select repo-b (triggers refetch)
@@ -476,11 +520,11 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 	}
 	m.currentView = tuiViewFilter
 	// Aggregated group: "backend" covers both backend-dev and backend-prod
-	m.filterRepos = []repoFilterItem{
-		{name: "", rootPaths: nil, count: 3},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
 		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
-	}
+	})
+	// Flat list: All(0), backend(1), frontend(2)
 	m.filterSelectedIdx = 1 // Select "backend" group
 
 	// Press enter to select
@@ -506,75 +550,61 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 
 func TestTUIFilterSearchByRepoPath(t *testing.T) {
 	m := newTuiModel("http://localhost")
-	m.filterRepos = []repoFilterItem{
-		{name: "", rootPaths: nil, count: 3},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
 		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
-	}
+	})
 
 	// Search by underlying repo path basename (not display name)
 	m.filterSearch = "backend-dev"
-	visible := m.getVisibleFilterRepos()
+	m.rebuildFilterFlatList()
 
 	// Should find the "backend" group (contains backend-dev path)
-	if len(visible) != 2 { // "All repos" + "backend"
-		t.Errorf("Expected 2 visible repos (All + backend), got %d", len(visible))
+	if len(m.filterFlatList) != 1 { // "backend" only (All doesn't match "backend-dev")
+		t.Errorf("Expected 1 visible (backend), got %d", len(m.filterFlatList))
 	}
-	if visible[1].name != "backend" {
-		t.Errorf("Expected to find 'backend' group, got '%s'", visible[1].name)
+	if len(m.filterFlatList) > 0 && m.filterFlatList[0].repoIdx != 0 {
+		t.Errorf("Expected to find 'backend' group at repoIdx 0")
 	}
 }
 
 func TestTUIFilterSearchByDisplayName(t *testing.T) {
 	m := newTuiModel("http://localhost")
-	m.filterRepos = []repoFilterItem{
-		{name: "", rootPaths: nil, count: 5},
+	setupFilterTree(&m, []treeFilterNode{
 		// Display name "My Project" differs from path basename "my-project-repo"
 		{name: "My Project", rootPaths: []string{"/home/user/my-project-repo"}, count: 2},
 		// Display name matches path basename
 		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
 		// Display name "Backend Services" differs from path basenames
 		{name: "Backend Services", rootPaths: []string{"/srv/api-server", "/srv/worker-daemon"}, count: 2},
-	}
+	})
 
 	// Search by display name (should match "My Project")
 	m.filterSearch = "my project"
-	visible := m.getVisibleFilterRepos()
-	if len(visible) != 2 { // "All repos" + "My Project"
-		t.Errorf("Search 'my project': expected 2 visible, got %d", len(visible))
-	}
-	if len(visible) > 1 && visible[1].name != "My Project" {
-		t.Errorf("Expected to find 'My Project', got '%s'", visible[1].name)
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 1 { // "My Project"
+		t.Errorf("Search 'my project': expected 1 visible, got %d", len(m.filterFlatList))
 	}
 
 	// Search by raw repo path basename (should still match "My Project")
 	m.filterSearch = "my-project-repo"
-	visible = m.getVisibleFilterRepos()
-	if len(visible) != 2 { // "All repos" + "My Project"
-		t.Errorf("Search 'my-project-repo': expected 2 visible, got %d", len(visible))
-	}
-	if len(visible) > 1 && visible[1].name != "My Project" {
-		t.Errorf("Expected to find 'My Project' via path, got '%s'", visible[1].name)
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 1 { // "My Project"
+		t.Errorf("Search 'my-project-repo': expected 1 visible, got %d", len(m.filterFlatList))
 	}
 
 	// Search by partial display name (should match "Backend Services")
 	m.filterSearch = "backend"
-	visible = m.getVisibleFilterRepos()
-	if len(visible) != 2 { // "All repos" + "Backend Services"
-		t.Errorf("Search 'backend': expected 2 visible, got %d", len(visible))
-	}
-	if len(visible) > 1 && visible[1].name != "Backend Services" {
-		t.Errorf("Expected to find 'Backend Services', got '%s'", visible[1].name)
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 1 { // "Backend Services"
+		t.Errorf("Search 'backend': expected 1 visible, got %d", len(m.filterFlatList))
 	}
 
 	// Search by path basename of grouped repo (should match "Backend Services")
 	m.filterSearch = "api-server"
-	visible = m.getVisibleFilterRepos()
-	if len(visible) != 2 { // "All repos" + "Backend Services"
-		t.Errorf("Search 'api-server': expected 2 visible, got %d", len(visible))
-	}
-	if len(visible) > 1 && visible[1].name != "Backend Services" {
-		t.Errorf("Expected to find 'Backend Services' via path, got '%s'", visible[1].name)
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 1 { // "Backend Services"
+		t.Errorf("Search 'api-server': expected 1 visible, got %d", len(m.filterFlatList))
 	}
 }
 
@@ -616,12 +646,12 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 func TestTUIFilterViewSmallTerminal(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
-	m.filterRepos = []repoFilterItem{
-		{name: "", count: 10},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", count: 5},
 		{name: "repo-b", count: 3},
 		{name: "repo-c", count: 2},
-	}
+	})
+	// Flat list: All + 3 repos = 4 entries
 	m.filterSelectedIdx = 0
 
 	t.Run("tiny terminal shows message", func(t *testing.T) {
@@ -637,7 +667,7 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 		}
 	})
 
-	t.Run("exactly reservedLines shows no repos", func(t *testing.T) {
+	t.Run("exactly reservedLines shows no items", func(t *testing.T) {
 		m.height = 7 // Exactly reservedLines, visibleRows = 0
 		output := m.renderFilterView()
 
@@ -653,23 +683,23 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 		if strings.Contains(output, "(terminal too small)") {
 			t.Error("Should not show 'terminal too small' when 1 row available")
 		}
-		// Should show exactly one repo line (All repos)
-		if !strings.Contains(output, "All repos") {
-			t.Error("Should show 'All repos' when 1 row available")
+		// Should show exactly one item (All)
+		if !strings.Contains(output, "All") {
+			t.Error("Should show 'All' when 1 row available")
 		}
-		// Should show scroll info since 4 repos > 1 visible row
+		// Should show scroll info since 4 entries > 1 visible row
 		if !strings.Contains(output, "[showing 1-1 of 4]") {
 			t.Errorf("Expected scroll info '[showing 1-1 of 4]', got: %s", output)
 		}
 	})
 
-	t.Run("fits all repos without scroll", func(t *testing.T) {
-		m.height = 15 // reservedLines(7) + 8 = visibleRows of 8, enough for 4 repos
+	t.Run("fits all items without scroll", func(t *testing.T) {
+		m.height = 15 // reservedLines(7) + 8 = visibleRows of 8, enough for 4 entries
 		output := m.renderFilterView()
 
-		// Should show all repos
-		if !strings.Contains(output, "All repos") {
-			t.Error("Should show 'All repos'")
+		// Should show all items
+		if !strings.Contains(output, "All") {
+			t.Error("Should show 'All'")
 		}
 		if !strings.Contains(output, "repo-a") {
 			t.Error("Should show 'repo-a'")
@@ -679,7 +709,7 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 		}
 		// Should NOT show scroll info
 		if strings.Contains(output, "[showing") {
-			t.Error("Should not show scroll info when all repos fit")
+			t.Error("Should not show scroll info when all items fit")
 		}
 	})
 
@@ -690,7 +720,7 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 
 		// Should show scroll info
 		if !strings.Contains(output, "[showing") {
-			t.Error("Expected scroll info when repos exceed visible rows")
+			t.Error("Expected scroll info when items exceed visible rows")
 		}
 		// Selected item (repo-b) should be visible
 		if !strings.Contains(output, "repo-b") {
@@ -702,14 +732,14 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 func TestTUIFilterViewScrollWindow(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
-	m.filterRepos = []repoFilterItem{
-		{name: "", count: 20},
+	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-1", count: 5},
 		{name: "repo-2", count: 4},
 		{name: "repo-3", count: 3},
 		{name: "repo-4", count: 2},
 		{name: "repo-5", count: 1},
-	}
+	})
+	// Flat list: All + 5 repos = 6 entries
 	m.height = 10 // visibleRows = 3
 
 	t.Run("scroll keeps selected item visible at top", func(t *testing.T) {
@@ -752,7 +782,7 @@ func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
 	m.width = 100
 	m.height = 20
 	m.currentView = tuiViewFilter
-	m.filterRepos = nil // Loading state (repos not fetched yet)
+	m.filterTree = nil // Loading state (tree not built yet)
 
 	output := m.View()
 
@@ -771,21 +801,23 @@ func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
 func TestTUIFilterBackspaceMultiByte(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
-	m.filterRepos = []repoFilterItem{{name: "", count: 10}}
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", count: 10},
+	})
 
 	// Type an emoji (multi-byte character)
 	m, _ = pressKey(m, 'a')
-	m, _ = pressKeys(m, []rune("😊"))
+	m, _ = pressKeys(m, []rune("\xf0\x9f\x98\x8a"))
 	m, _ = pressKey(m, 'b')
 
-	if m.filterSearch != "a😊b" {
-		t.Errorf("Expected filterSearch='a😊b', got %q", m.filterSearch)
+	if m.filterSearch != "a\xf0\x9f\x98\x8ab" {
+		t.Errorf("Expected filterSearch='a\\xf0\\x9f\\x98\\x8ab', got %q", m.filterSearch)
 	}
 
 	// Backspace should remove 'b'
 	m, _ = pressSpecial(m, tea.KeyBackspace)
-	if m.filterSearch != "a😊" {
-		t.Errorf("Expected filterSearch='a😊' after first backspace, got %q", m.filterSearch)
+	if m.filterSearch != "a\xf0\x9f\x98\x8a" {
+		t.Errorf("Expected filterSearch='a\\xf0\\x9f\\x98\\x8a' after first backspace, got %q", m.filterSearch)
 	}
 
 	// Backspace should remove the entire emoji, not corrupt it
@@ -1043,60 +1075,189 @@ func TestTUIFilterStackReverseOrder(t *testing.T) {
 	}
 }
 
-func TestTUIBranchFilterModalOpensWithB(t *testing.T) {
+func TestTUITreeFilterExpandCollapse(t *testing.T) {
 	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withRepoName("repo-a"), withBranch("main")),
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			children: []branchFilterItem{
+				{name: "main", count: 3},
+				{name: "feature", count: 2},
+			},
+		},
+		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 3},
+	})
+	// Flat list: All(0), repo-a(1), repo-b(2) -- both collapsed
+	if len(m.filterFlatList) != 3 {
+		t.Fatalf("Expected 3 entries initially, got %d", len(m.filterFlatList))
 	}
-	m.selectedIdx = 0
-	m.currentView = tuiViewQueue
 
-	// Press 'b' to open branch filter
-	m2, cmd := pressKey(m, 'b')
+	// Select repo-a and expand with right arrow
+	m.filterSelectedIdx = 1
+	m2, _ := pressKey(m, 'l') // right/l
 
-	if m2.currentView != tuiViewBranchFilter {
-		t.Errorf("Expected view to be tuiViewBranchFilter, got %v", m2.currentView)
+	// repo-a should now be expanded
+	if !m2.filterTree[0].expanded {
+		t.Error("Expected repo-a to be expanded after right arrow")
 	}
-	if cmd == nil {
-		t.Error("Expected fetchBranches command to be returned")
+	// Flat list: All(0), repo-a(1), main(2), feature(3), repo-b(4)
+	if len(m2.filterFlatList) != 5 {
+		t.Errorf("Expected 5 entries after expand, got %d", len(m2.filterFlatList))
+	}
+
+	// Navigate to "main" branch and collapse parent with left arrow
+	m2.filterSelectedIdx = 2   // main
+	m3, _ := pressKey(m2, 'h') // left/h
+
+	if m3.filterTree[0].expanded {
+		t.Error("Expected repo-a to be collapsed after left arrow on branch")
+	}
+	// Selection should move to parent repo
+	if len(m3.filterFlatList) != 3 {
+		t.Errorf("Expected 3 entries after collapse, got %d", len(m3.filterFlatList))
+	}
+	// Selected should be repo-a (index 1 in flat list)
+	if m3.filterSelectedIdx != 1 {
+		t.Errorf("Expected selection to move to parent (idx 1), got %d", m3.filterSelectedIdx)
 	}
 }
 
-func TestTUIBranchFilterSelectAppliesFilter(t *testing.T) {
+func TestTUITreeFilterSelectBranch(t *testing.T) {
 	m := newTuiModel("http://localhost")
-
-	m.currentView = tuiViewBranchFilter
-	m.filterBranches = []branchFilterItem{
-		{name: "main", count: 5},
-		{name: "feature", count: 3},
-		{name: "(none)", count: 2},
-	}
-	m.branchFilterSelectedIdx = 1 // Select "feature"
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			expanded:  true,
+			children: []branchFilterItem{
+				{name: "main", count: 3},
+				{name: "feature", count: 2},
+			},
+		},
+	})
+	// Flat list: All(0), repo-a(1), main(2), feature(3)
+	m.filterSelectedIdx = 3 // Select "feature" branch
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withBranch("main")),
 		makeJob(2, withBranch("feature")),
 	}
 
-	// Press Enter to select
-	m2, _ := pressSpecial(m, tea.KeyEnter)
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
+	if m2.currentView != tuiViewQueue {
+		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
+	}
+	if len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-a" {
+		t.Errorf("Expected activeRepoFilter=['/path/to/repo-a'], got %v", m2.activeRepoFilter)
+	}
 	if m2.activeBranchFilter != "feature" {
 		t.Errorf("Expected activeBranchFilter='feature', got '%s'", m2.activeBranchFilter)
 	}
-	if m2.currentView != tuiViewQueue {
-		t.Errorf("Expected view to return to queue, got %v", m2.currentView)
-	}
-	// Should be in filter stack
-	found := false
+	// Both repo and branch should be in filter stack
+	foundRepo := false
+	foundBranch := false
 	for _, f := range m2.filterStack {
+		if f == "repo" {
+			foundRepo = true
+		}
 		if f == "branch" {
-			found = true
-			break
+			foundBranch = true
 		}
 	}
-	if !found {
+	if !foundRepo {
+		t.Errorf("Expected 'repo' to be in filterStack, got %v", m2.filterStack)
+	}
+	if !foundBranch {
 		t.Errorf("Expected 'branch' to be in filterStack, got %v", m2.filterStack)
+	}
+	if cmd == nil {
+		t.Error("Expected fetchJobs command to be returned")
+	}
+}
+
+func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5},
+	})
+	// No children loaded yet
+	m.filterSelectedIdx = 1 // repo-a
+
+	// Press right to expand -- should trigger lazy load
+	m2, cmd := pressKey(m, 'l')
+
+	if !m2.filterTree[0].loading {
+		t.Error("Expected loading=true after right arrow on repo with no children")
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranchesForRepo command")
+	}
+
+	// Simulate receiving branches
+	m3, _ := updateModel(t, m2, tuiRepoBranchesMsg{
+		repoIdx:  0,
+		branches: []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
+	})
+
+	if m3.filterTree[0].loading {
+		t.Error("Expected loading=false after receiving branches")
+	}
+	if !m3.filterTree[0].expanded {
+		t.Error("Expected expanded=true after receiving branches")
+	}
+	if len(m3.filterTree[0].children) != 2 {
+		t.Errorf("Expected 2 children, got %d", len(m3.filterTree[0].children))
+	}
+	// Flat list: All(0), repo-a(1), main(2), dev(3)
+	if len(m3.filterFlatList) != 4 {
+		t.Errorf("Expected 4 flat entries after branch load, got %d", len(m3.filterFlatList))
+	}
+}
+
+func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			children: []branchFilterItem{
+				{name: "main", count: 3},
+				{name: "feature-xyz", count: 2},
+			},
+		},
+		{
+			name:      "repo-b",
+			rootPaths: []string{"/path/to/repo-b"},
+			count:     3,
+			children: []branchFilterItem{
+				{name: "main", count: 3},
+			},
+		},
+	})
+
+	// Search for "xyz" -- should auto-expand repo-a to show feature-xyz
+	m.filterSearch = "xyz"
+	m.rebuildFilterFlatList()
+
+	// Should show: repo-a (parent of matching branch), feature-xyz
+	if len(m.filterFlatList) != 2 {
+		t.Errorf("Expected 2 entries (repo-a + feature-xyz), got %d", len(m.filterFlatList))
+	}
+	if len(m.filterFlatList) >= 2 {
+		if m.filterFlatList[0].repoIdx != 0 || m.filterFlatList[0].branchIdx != -1 {
+			t.Error("Expected first entry to be repo-a")
+		}
+		if m.filterFlatList[1].repoIdx != 0 || m.filterFlatList[1].branchIdx != 1 {
+			t.Error("Expected second entry to be feature-xyz (branchIdx=1)")
+		}
 	}
 }
 
@@ -1216,17 +1377,24 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 	_ = cmd
 }
 
-func TestTUIBranchFilterTriggersRefetch(t *testing.T) {
-	// Test that applying a branch filter triggers a refetch
-	// (needed because branch filter changes fetch from limited to unlimited)
+func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
+	// Test that selecting a branch in the tree filter triggers a refetch
 	m := newTuiModel("http://localhost")
-
-	m.currentView = tuiViewBranchFilter
-	m.filterBranches = []branchFilterItem{
-		{name: "main", count: 5},
-		{name: "feature", count: 3},
-	}
-	m.branchFilterSelectedIdx = 1 // Select "feature"
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     8,
+			expanded:  true,
+			children: []branchFilterItem{
+				{name: "main", count: 5},
+				{name: "feature", count: 3},
+			},
+		},
+	})
+	// Flat list: All(0), repo-a(1), main(2), feature(3)
+	m.filterSelectedIdx = 3 // Select "feature"
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withBranch("main")),
 		makeJob(2, withBranch("feature")),
@@ -1237,14 +1405,10 @@ func TestTUIBranchFilterTriggersRefetch(t *testing.T) {
 	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
 	if !m2.loadingJobs {
-		t.Error("loadingJobs should be true after applying branch filter")
-	}
-	// jobs preserved so fetchJobs limit stays large enough
-	if len(m2.jobs) != 2 {
-		t.Errorf("Expected jobs to be preserved after branch filter, got %d", len(m2.jobs))
+		t.Error("loadingJobs should be true after selecting branch filter")
 	}
 	if cmd == nil {
-		t.Error("Should return fetchJobs command when applying branch filter")
+		t.Error("Should return fetchJobs command when selecting branch filter")
 	}
 }
 
@@ -1511,5 +1675,85 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 	_, cmd = pressKey(m, 'a')
 	if cmd != nil {
 		t.Error("Expected no command for address with no visible jobs")
+	}
+}
+
+func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			expanded:  true,
+			children: []branchFilterItem{
+				{name: "main", count: 3},
+				{name: "feature", count: 2},
+			},
+		},
+	})
+	// Flat list: All(0), repo-a(1), main(2), feature(3)
+	m.filterSelectedIdx = 1 // Select repo-a
+
+	// Press left to collapse
+	m2, _ := pressKey(m, 'h')
+
+	if m2.filterTree[0].expanded {
+		t.Error("Expected repo-a to be collapsed after left arrow on expanded repo")
+	}
+	// Flat list should be: All(0), repo-a(1)
+	if len(m2.filterFlatList) != 2 {
+		t.Errorf("Expected 2 entries after collapse, got %d", len(m2.filterFlatList))
+	}
+}
+
+func TestTUIBKeyNoLongerOpensBranchFilter(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.jobs = []storage.ReviewJob{makeJob(1, withRepoName("repo-a"))}
+	m.selectedIdx = 0
+
+	// Press 'b' - should not change view (b key binding removed)
+	m2, _ := pressKey(m, 'b')
+
+	if m2.currentView != tuiViewQueue {
+		t.Errorf("Expected view to stay at tuiViewQueue, got %v", m2.currentView)
+	}
+}
+
+func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.branchBackfillDone = false
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.selectedIdx = 0
+
+	// Press 'f' - should return batch of fetchRepos + fetchBranches
+	m2, cmd := pressKey(m, 'f')
+
+	if m2.currentView != tuiViewFilter {
+		t.Errorf("Expected tuiViewFilter, got %d", m2.currentView)
+	}
+	if cmd == nil {
+		t.Error("Expected a command to be returned")
+	}
+}
+
+func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.branchBackfillDone = true
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.selectedIdx = 0
+
+	// Press 'f' - should return only fetchRepos (no backfill needed)
+	m2, cmd := pressKey(m, 'f')
+
+	if m2.currentView != tuiViewFilter {
+		t.Errorf("Expected tuiViewFilter, got %d", m2.currentView)
+	}
+	if cmd == nil {
+		t.Error("Expected a command to be returned")
 	}
 }
