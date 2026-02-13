@@ -1511,7 +1511,6 @@ func (m *tuiModel) filterTreeTotalCount() int {
 	return total
 }
 
-// repoMatchesFilter checks if a repo path matches the active filter
 // rootPathsMatch returns true if two rootPaths slices are identical.
 func rootPathsMatch(a, b []string) bool {
 	if len(a) != len(b) {
@@ -1525,6 +1524,7 @@ func rootPathsMatch(a, b []string) bool {
 	return true
 }
 
+// repoMatchesFilter checks if a repo path matches the active filter.
 func (m tuiModel) repoMatchesFilter(repoPath string) bool {
 	for _, p := range m.activeRepoFilter {
 		if p == repoPath {
