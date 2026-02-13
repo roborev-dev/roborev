@@ -355,6 +355,35 @@ func TestWaitReviewErrorNotRemappedToCode4(t *testing.T) {
 	}
 }
 
+func TestWaitLookupNon200Response(t *testing.T) {
+	setupFastPolling(t)
+
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("database locked"))
+			return
+		}
+	}))
+	defer cleanup()
+
+	chdir(t, repo.Dir)
+
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"--sha", "HEAD"})
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatal("expected error for non-200 response")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected error to contain status code, got: %v", err)
+	}
+}
+
 func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 	setupFastPolling(t)
 
