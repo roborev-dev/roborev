@@ -1451,16 +1451,20 @@ Examples:
 // Scopes the query to the current repo to avoid cross-repo mismatch.
 // Returns exitError{4} if no job is found.
 func lookupJobBySHA(addr, ref string) (int64, error) {
-	// Resolve git ref to full SHA and get main repo root.
-	// Use GetMainRepoRoot to match daemon storage, which always
-	// records the main repo path (not the worktree path).
+	// Resolve SHA from the worktree root (where the user is working)
+	// so that refs like HEAD resolve to the correct commit.
 	sha := ref
-	var repoRoot string
-	if root, err := git.GetMainRepoRoot("."); err == nil {
-		repoRoot = root
+	if root, err := git.GetRepoRoot("."); err == nil {
 		if resolved, err := git.ResolveSHA(root, ref); err == nil {
 			sha = resolved
 		}
+	}
+
+	// Use GetMainRepoRoot for repo filtering to match daemon storage,
+	// which always records the main repo path (not the worktree path).
+	var repoRoot string
+	if root, err := git.GetMainRepoRoot("."); err == nil {
+		repoRoot = root
 	}
 
 	// Normalize repo path to handle symlinks/relative paths consistently
