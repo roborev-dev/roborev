@@ -1345,9 +1345,12 @@ Examples:
 				cmd.SilenceUsage = true
 			}
 
-			// Validate: positional arg + --sha is ambiguous
+			// Validate flag/arg combinations
 			if len(args) > 0 && shaFlag != "" {
 				return fmt.Errorf("cannot use both a positional argument and --sha")
+			}
+			if forceJobID && len(args) == 0 {
+				return fmt.Errorf("--job requires a job ID argument")
 			}
 
 			// Ensure daemon is running (and restart if version mismatch)
@@ -1413,9 +1416,21 @@ Examples:
 
 			timeoutDur := time.Duration(timeout) * time.Second
 			err := waitForJob(cmd, addr, jobID, quiet, timeoutDur)
-			if _, isExitErr := err.(*exitError); isExitErr {
-				cmd.SilenceErrors = true
-				cmd.SilenceUsage = true
+			if err != nil {
+				// Map "job not found" to exit code 4 (waitForJob returns
+				// a plain error for this case to stay compatible with reviewCmd)
+				if strings.Contains(err.Error(), "not found") {
+					if !quiet {
+						cmd.Printf("No job found for job %d\n", jobID)
+					}
+					cmd.SilenceErrors = true
+					cmd.SilenceUsage = true
+					return &exitError{code: 4}
+				}
+				if _, isExitErr := err.(*exitError); isExitErr {
+					cmd.SilenceErrors = true
+					cmd.SilenceUsage = true
+				}
 			}
 			return err
 		},
@@ -1430,18 +1445,38 @@ Examples:
 }
 
 // lookupJobBySHA resolves a git ref to a SHA and finds the most recent job for it.
+// Scopes the query to the current repo to avoid cross-repo mismatch.
 // Returns exitError{4} if no job is found.
 func lookupJobBySHA(addr, ref string) (int64, error) {
-	// Resolve git ref to full SHA
+	// Resolve git ref to full SHA and get repo root
 	sha := ref
+	var repoRoot string
 	if root, err := git.GetRepoRoot("."); err == nil {
+		repoRoot = root
 		if resolved, err := git.ResolveSHA(root, ref); err == nil {
 			sha = resolved
 		}
 	}
 
+	// Normalize repo path to handle symlinks/relative paths consistently
+	normalizedRepo := repoRoot
+	if normalizedRepo != "" {
+		if resolved, err := filepath.EvalSymlinks(normalizedRepo); err == nil {
+			normalizedRepo = resolved
+		}
+		if abs, err := filepath.Abs(normalizedRepo); err == nil {
+			normalizedRepo = abs
+		}
+	}
+
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", addr, url.QueryEscape(sha)))
+
+	// Query by git_ref and repo to avoid matching jobs from different repos
+	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", addr, url.QueryEscape(sha))
+	if normalizedRepo != "" {
+		queryURL += "&repo=" + url.QueryEscape(normalizedRepo)
+	}
+	resp, err := client.Get(queryURL)
 	if err != nil {
 		return 0, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
