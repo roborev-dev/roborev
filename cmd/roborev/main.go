@@ -311,8 +311,8 @@ func startDaemon() error {
 // ErrDaemonNotRunning indicates no daemon runtime file was found
 var ErrDaemonNotRunning = fmt.Errorf("daemon not running (no runtime file found)")
 
-// errJobNotFound indicates a job ID was not found during polling
-var errJobNotFound = fmt.Errorf("job not found")
+// ErrJobNotFound indicates a job ID was not found during polling
+var ErrJobNotFound = fmt.Errorf("job not found")
 
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
@@ -1151,9 +1151,9 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	return nil
 }
 
-// waitForJob polls until a job completes and displays the review.
-// If timeout > 0, returns exitError{3} when the deadline is exceeded.
-// Uses the provided serverAddr to ensure we poll the same daemon that received the job.
+// waitForJob polls until a job completes and displays the review
+// If timeout > 0, returns exitError{3} when the deadline is exceeded
+// Uses the provided serverAddr to ensure we poll the same daemon that received the job
 func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, timeout time.Duration) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -1201,7 +1201,7 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, 
 		resp.Body.Close()
 
 		if len(jobsResp.Jobs) == 0 {
-			return fmt.Errorf("%w: %d", errJobNotFound, jobID)
+			return fmt.Errorf("%w: %d", ErrJobNotFound, jobID)
 		}
 
 		job := jobsResp.Jobs[0]
@@ -1420,9 +1420,9 @@ Examples:
 			timeoutDur := time.Duration(timeout) * time.Second
 			err := waitForJob(cmd, addr, jobID, quiet, timeoutDur)
 			if err != nil {
-				// Map errJobNotFound to exit code 4 (waitForJob returns
+				// Map ErrJobNotFound to exit code 4 (waitForJob returns
 				// a plain error for this case to stay compatible with reviewCmd)
-				if errors.Is(err, errJobNotFound) {
+				if errors.Is(err, ErrJobNotFound) {
 					if !quiet {
 						cmd.Printf("No job found for job %d\n", jobID)
 					}
@@ -1447,9 +1447,9 @@ Examples:
 	return cmd
 }
 
-// lookupJobBySHA resolves a git ref to a SHA and finds the most recent job for it.
-// Scopes the query to the current repo to avoid cross-repo mismatch.
-// Returns exitError{4} if no job is found.
+// lookupJobBySHA resolves a git ref to a SHA and finds the most recent job for it
+// Scopes the query to the current repo to avoid cross-repo mismatch
+// Returns exitError{4} if no job is found
 func lookupJobBySHA(addr, ref string) (int64, error) {
 	// Resolve SHA from the worktree root (where the user is working)
 	// so that refs like HEAD resolve to the correct commit.
@@ -1487,13 +1487,13 @@ func lookupJobBySHA(addr, ref string) (int64, error) {
 	}
 	resp, err := client.Get(queryURL)
 	if err != nil {
-		return 0, fmt.Errorf("failed to connect to daemon: %w", err)
+		return 0, fmt.Errorf("failed to connect to daemon (is it running?)")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("server error looking up job (%d): %s", resp.StatusCode, body)
+		return 0, fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	var result struct {
@@ -1510,8 +1510,8 @@ func lookupJobBySHA(addr, ref string) (int64, error) {
 	return result.Jobs[0].ID, nil
 }
 
-// handleWaitLookupErr handles errors from lookupJobBySHA in the wait command.
-// For exitError{4} (not found), prints a user-facing message when not quiet.
+// handleWaitLookupErr handles errors from lookupJobBySHA in the wait command
+// For exitError{4} (not found), prints a user-facing message when not quiet
 func handleWaitLookupErr(cmd *cobra.Command, err error, ref string, quiet bool) error {
 	if exitErr, ok := err.(*exitError); ok {
 		if exitErr.code == 4 && !quiet {

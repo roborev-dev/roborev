@@ -78,7 +78,7 @@ func TestWaitExitCode4WhenNoJobFound(t *testing.T) {
 
 	chdir(t, repo.Dir)
 
-	t.Run("no job for SHA exits 4", func(t *testing.T) {
+	t.Run("No job for SHA exits 4", func(t *testing.T) {
 		var stdout bytes.Buffer
 		cmd := waitCmd()
 		cmd.SetOut(&stdout)
@@ -100,7 +100,7 @@ func TestWaitExitCode4WhenNoJobFound(t *testing.T) {
 		}
 	})
 
-	t.Run("no job for SHA quiet exits 4 with no output", func(t *testing.T) {
+	t.Run("No job for SHA quiet exits 4 with no output", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		cmd := waitCmd()
 		cmd.SetOut(&stdout)
