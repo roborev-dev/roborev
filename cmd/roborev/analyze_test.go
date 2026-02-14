@@ -939,12 +939,15 @@ func TestAnalyzeBranchFlagValidation(t *testing.T) {
 	})
 
 	t.Run("branch with only analysis type is accepted by arg validation", func(t *testing.T) {
-		// This will fail later (no git repo, no daemon) but arg validation should pass
+		// Validate args directly instead of cmd.Execute() which would
+		// try to connect to a daemon and waste ~3s on timeout.
 		cmd := analyzeCmd()
 		cmd.SetArgs([]string{"--branch", "refactor"})
-		err := cmd.Execute()
-		// Should NOT be an arg validation error
-		if err != nil && strings.Contains(err.Error(), "requires analysis type and at least one file") {
+		// ParseFlags + ValidateArgs exercises the Args validator without RunE
+		if err := cmd.ParseFlags([]string{"--branch"}); err != nil {
+			t.Fatalf("parse flags: %v", err)
+		}
+		if err := cmd.ValidateArgs([]string{"refactor"}); err != nil {
 			t.Errorf("arg validation should pass with --branch and analysis type, got: %v", err)
 		}
 	})

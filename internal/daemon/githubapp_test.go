@@ -9,25 +9,41 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-func generateTestKey(t *testing.T) (*rsa.PrivateKey, string) {
+// sharedTestKey generates one 2048-bit RSA key for the entire test
+// binary. Key generation is ~0.5-1s per call, and most tests only
+// need a valid key — not a unique one.
+var (
+	sharedKey     *rsa.PrivateKey
+	sharedKeyPEM  string
+	sharedKeyOnce sync.Once
+)
+
+func testKey(t *testing.T) (*rsa.PrivateKey, string) {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	sharedKeyOnce.Do(func() {
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			panic("generate test key: " + err.Error())
+		}
+		pemBytes := pem.EncodeToMemory(&pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(key),
+		})
+		sharedKey = key
+		sharedKeyPEM = string(pemBytes)
 	})
-	return key, string(pemBytes)
+	return sharedKey, sharedKeyPEM
 }
 
 func generateTestKeyPKCS8(t *testing.T) (*rsa.PrivateKey, string) {
 	t.Helper()
+	// PKCS8 parse test needs a PKCS8-encoded key specifically,
+	// so generate a fresh one (only called once).
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -44,7 +60,7 @@ func generateTestKeyPKCS8(t *testing.T) (*rsa.PrivateKey, string) {
 }
 
 func TestParsePrivateKey_PKCS1(t *testing.T) {
-	_, pemData := generateTestKey(t)
+	_, pemData := testKey(t)
 	key, err := parsePrivateKey([]byte(pemData))
 	if err != nil {
 		t.Fatalf("parse PKCS1: %v", err)
@@ -76,7 +92,7 @@ func TestParsePrivateKey_Invalid(t *testing.T) {
 }
 
 func TestSignJWT_Structure(t *testing.T) {
-	_, pemData := generateTestKey(t)
+	_, pemData := testKey(t)
 	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -143,7 +159,7 @@ func TestSignJWT_Structure(t *testing.T) {
 }
 
 func TestTokenCaching(t *testing.T) {
-	_, pemData := generateTestKey(t)
+	_, pemData := testKey(t)
 	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -205,7 +221,7 @@ func TestTokenCaching(t *testing.T) {
 }
 
 func TestTokenRefreshOnExpiry(t *testing.T) {
-	_, pemData := generateTestKey(t)
+	_, pemData := testKey(t)
 	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -245,7 +261,7 @@ func TestTokenRefreshOnExpiry(t *testing.T) {
 }
 
 func TestTokenExchangeError(t *testing.T) {
-	_, pemData := generateTestKey(t)
+	_, pemData := testKey(t)
 	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
@@ -269,7 +285,7 @@ func TestTokenExchangeError(t *testing.T) {
 }
 
 func TestTokenCaching_MultipleInstallations(t *testing.T) {
-	_, pemData := generateTestKey(t)
+	_, pemData := testKey(t)
 	tp, err := NewGitHubAppTokenProvider(12345, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
