@@ -119,7 +119,7 @@ func TestWaitInvalidPositionalArg(t *testing.T) {
 	}
 }
 
-func TestWaitExitCode4WhenNoJobFound(t *testing.T) {
+func TestWaitExitsWhenNoJobFound(t *testing.T) {
 	setupFastPolling(t)
 
 	repo := newTestGitRepo(t)
@@ -130,20 +130,20 @@ func TestWaitExitCode4WhenNoJobFound(t *testing.T) {
 
 	chdir(t, repo.Dir)
 
-	t.Run("No job for SHA exits 4", func(t *testing.T) {
+	t.Run("No job for SHA", func(t *testing.T) {
 		var stdout bytes.Buffer
 		cmd := waitCmd()
 		cmd.SetOut(&stdout)
 		cmd.SetArgs([]string{"--sha", "HEAD"})
 		err := cmd.Execute()
 
-		requireExitCode(t, err, 4)
+		requireExitCode(t, err, 1)
 		if !strings.Contains(stdout.String(), "No job found") {
 			t.Errorf("expected 'No job found' message, got: %q", stdout.String())
 		}
 	})
 
-	t.Run("No job for SHA quiet exits 4 with no output", func(t *testing.T) {
+	t.Run("No job for SHA quiet mode suppresses output", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		cmd := waitCmd()
 		cmd.SetOut(&stdout)
@@ -151,14 +151,14 @@ func TestWaitExitCode4WhenNoJobFound(t *testing.T) {
 		cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
 		err := cmd.Execute()
 
-		requireExitCode(t, err, 4)
+		requireExitCode(t, err, 1)
 		if stdout.String() != "" {
 			t.Errorf("expected no stdout in quiet mode, got: %q", stdout.String())
 		}
 	})
 }
 
-func TestWaitExitCode4WhenJobIDNotFound(t *testing.T) {
+func TestWaitExitsWhenJobIDNotFound(t *testing.T) {
 	setupFastPolling(t)
 
 	repo := newTestGitRepo(t)
@@ -175,10 +175,10 @@ func TestWaitExitCode4WhenJobIDNotFound(t *testing.T) {
 	cmd.SetArgs([]string{"--job", "99999"})
 	err := cmd.Execute()
 
-	requireExitCode(t, err, 4)
+	requireExitCode(t, err, 1)
 }
 
-func TestWaitExitCode3OnTimeout(t *testing.T) {
+func TestWaitExitsOnTimeout(t *testing.T) {
 	setupFastPolling(t)
 
 	repo := newTestGitRepo(t)
@@ -195,7 +195,7 @@ func TestWaitExitCode3OnTimeout(t *testing.T) {
 	cmd.SetArgs([]string{"--sha", "HEAD", "--timeout", "1", "--quiet"})
 	err := cmd.Execute()
 
-	requireExitCode(t, err, 3)
+	requireExitCode(t, err, 1)
 }
 
 func TestWaitPassingReview(t *testing.T) {
@@ -307,14 +307,16 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 	}
 }
 
-func TestWaitReviewErrorNotRemappedToCode4(t *testing.T) {
+func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 	setupFastPolling(t)
 
 	repo := newTestGitRepo(t)
 	sha := repo.CommitFile("file.txt", "content", "initial commit")
 
-	// Job completes but /api/review returns 404 — this should NOT become
-	// exit code 4 (which is reserved for "no job found").
+	// Job completes but /api/review returns 404. This should surface as a
+	// plain error (from showReview), not an *exitError. Both map to exit 1
+	// in practice, but the distinction matters for error reporting: plain
+	// errors print Cobra's "Error:" prefix while exitError silences it.
 	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
@@ -341,10 +343,9 @@ func TestWaitReviewErrorNotRemappedToCode4(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when review not found")
 	}
-	// This should NOT be exit code 4 — it's a "no review found" error,
-	// not a "no job found" error
-	if exitErr, ok := err.(*exitError); ok && exitErr.code == 4 {
-		t.Error("'no review found' error should not be remapped to exit code 4")
+	// Should be a plain error, not an *exitError
+	if _, ok := err.(*exitError); ok {
+		t.Error("review fetch failure should be a plain error, not exitError")
 	}
 }
 

@@ -1152,7 +1152,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 }
 
 // waitForJob polls until a job completes and displays the review
-// If timeout > 0, returns exitError{3} when the deadline is exceeded
+// If timeout > 0, returns exitError{1} when the deadline is exceeded
 // Uses the provided serverAddr to ensure we poll the same daemon that received the job
 func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, timeout time.Duration) error {
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -1177,7 +1177,7 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, 
 			if !quiet {
 				cmd.Printf(" timed out after %s!\n", timeout)
 			}
-			return &exitError{code: 3}
+			return &exitError{code: 1}
 		}
 		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
 		if err != nil {
@@ -1328,10 +1328,8 @@ The argument can be a job ID (numeric) or a git ref (commit SHA, branch, HEAD).
 If no argument is given, defaults to HEAD.
 
 Exit codes:
-  0  Review passed (verdict PASS)
-  1  Review failed (verdict FAIL), or job failed/canceled
-  3  Timeout exceeded (--timeout)
-  4  No job found for the given SHA or job ID
+  0  Review completed with verdict PASS
+  1  Any failure (FAIL verdict, timeout, no job found, job error)
 
 Examples:
   roborev wait                   # Wait for most recent job for HEAD
@@ -1415,15 +1413,15 @@ Examples:
 			timeoutDur := time.Duration(timeout) * time.Second
 			err := waitForJob(cmd, addr, jobID, quiet, timeoutDur)
 			if err != nil {
-				// Map ErrJobNotFound to exit code 4 (waitForJob returns
-				// a plain error for this case to stay compatible with reviewCmd)
+				// Map ErrJobNotFound to exit 1 with a user-facing message
+				// (waitForJob returns a plain error to stay compatible with reviewCmd)
 				if errors.Is(err, ErrJobNotFound) {
 					if !quiet {
 						cmd.Printf("No job found for job %d\n", jobID)
 					}
 					cmd.SilenceErrors = true
 					cmd.SilenceUsage = true
-					return &exitError{code: 4}
+					return &exitError{code: 1}
 				}
 				if _, isExitErr := err.(*exitError); isExitErr {
 					cmd.SilenceErrors = true
@@ -1480,7 +1478,7 @@ func resolveGitContext(ref string) (sha, repoRoot string, resolved bool) {
 }
 
 // lookupJobByRef queries the daemon for the most recent job matching the given
-// SHA, optionally scoped to a repo root. Returns exitError{4} if no job is found.
+// SHA, optionally scoped to a repo root. Returns exitError{1} if no job is found.
 func lookupJobByRef(addr, sha, repoRoot string) (int64, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -1507,7 +1505,7 @@ func lookupJobByRef(addr, sha, repoRoot string) (int64, error) {
 	}
 
 	if len(result.Jobs) == 0 {
-		return 0, &exitError{code: 4}
+		return 0, &exitError{code: 1}
 	}
 
 	return result.Jobs[0].ID, nil
@@ -1515,17 +1513,17 @@ func lookupJobByRef(addr, sha, repoRoot string) (int64, error) {
 
 // lookupJobBySHA resolves a git ref to a SHA and finds the most recent job for it.
 // Scopes the query to the current repo to avoid cross-repo mismatch.
-// Returns exitError{4} if no job is found.
+// Returns exitError{1} if no job is found.
 func lookupJobBySHA(addr, ref string) (int64, error) {
 	sha, repoRoot, _ := resolveGitContext(ref)
 	return lookupJobByRef(addr, sha, repoRoot)
 }
 
-// handleWaitLookupErr handles errors from lookupJobBySHA in the wait command
-// For exitError{4} (not found), prints a user-facing message when not quiet
+// handleWaitLookupErr handles errors from lookupJobByRef in the wait command.
+// For exitError (not found), prints a user-facing message when not quiet.
 func handleWaitLookupErr(cmd *cobra.Command, err error, ref string, quiet bool) error {
-	if exitErr, ok := err.(*exitError); ok {
-		if exitErr.code == 4 && !quiet {
+	if _, ok := err.(*exitError); ok {
+		if !quiet {
 			cmd.Printf("No job found for %s\n", ref)
 		}
 		cmd.SilenceErrors = true
