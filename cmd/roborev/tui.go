@@ -1863,16 +1863,26 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiRepoBranchesMsg:
+		// Surface errors regardless of view/staleness so connection
+		// tracking and reconnect logic always fire.
+		if msg.err != nil {
+			m.err = msg.err
+			m.filterBranchMode = false
+			// Clear loading if the tree entry is still valid
+			if msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
+				rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
+				m.filterTree[msg.repoIdx].loading = false
+			}
+			if cmd := m.handleConnectionError(msg.err); cmd != nil {
+				return m, cmd
+			}
+			return m, nil
+		}
 		// Verify we're still in filter view, repoIdx is valid, and the repo identity matches
 		// (the tree may have been rebuilt while the fetch was in-flight)
 		if m.currentView == tuiViewFilter && msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
 			rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
 			m.filterTree[msg.repoIdx].loading = false
-			if msg.err != nil {
-				m.err = msg.err
-				m.filterBranchMode = false
-				return m, nil
-			}
 			m.filterTree[msg.repoIdx].children = msg.branches
 			m.filterTree[msg.repoIdx].expanded = true
 			// Move cwd branch to first position if this is the cwd repo

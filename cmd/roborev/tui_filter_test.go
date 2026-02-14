@@ -1279,6 +1279,34 @@ func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
 	}
 }
 
+func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue // User left filter view
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			loading:   true,
+		},
+	})
+
+	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/path/to/repo-a"},
+		err:       errors.New("server error"),
+	})
+
+	// Error should still be surfaced even though we left filter view
+	if m2.err == nil {
+		t.Error("Expected error to be set even when not in filter view")
+	}
+	// Loading should still be cleared since the tree entry is valid
+	if m2.filterTree[0].loading {
+		t.Error("Expected loading=false after fetch failure from queue view")
+	}
+}
+
 func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
