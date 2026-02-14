@@ -109,11 +109,9 @@ func isOpencodeToolCallLine(line string) bool {
 
 func (a *OpenCodeAgent) CommandLine() string {
 	args := []string{"run", "--format", "default"}
-	model := a.Model
-	if model == "" {
-		model = "opencode/minimax-m2.1-free"
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
 	}
-	args = append(args, "--model", model)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
@@ -126,11 +124,9 @@ func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt 
 	//   opencode --help
 	//   opencode run --help
 	args := []string{"run", "--format", "default"}
-	model := a.Model
-	if model == "" {
-		model = "opencode/minimax-m2.1-free"
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
 	}
-	args = append(args, "--model", model)
 	args = append(args, prompt)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
