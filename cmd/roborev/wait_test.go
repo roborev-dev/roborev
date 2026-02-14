@@ -14,6 +14,46 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+// waitMockHandler builds an HTTP handler for wait command tests.
+// If job is non-nil it is returned for every /api/jobs query; otherwise an
+// empty list is returned. If review is non-nil it is served on /api/review.
+func waitMockHandler(job *storage.ReviewJob, review *storage.Review) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			var jobs []storage.ReviewJob
+			if job != nil {
+				jobs = []storage.ReviewJob{*job}
+			}
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jobs":     jobs,
+				"has_more": false,
+			})
+			return
+		}
+		if r.URL.Path == "/api/review" && review != nil {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(review)
+			return
+		}
+	}
+}
+
+// requireExitCode asserts err is an *exitError with the expected code.
+func requireExitCode(t *testing.T, err error, code int) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected exit code %d, got nil error", code)
+	}
+	exitErr, ok := err.(*exitError)
+	if !ok {
+		t.Fatalf("expected *exitError with code %d, got %T: %v", code, err, err)
+	}
+	if exitErr.code != code {
+		t.Errorf("expected exit code %d, got: %d", code, exitErr.code)
+	}
+}
+
 func TestWaitJobFlagRequiresArgument(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")
@@ -58,22 +98,34 @@ func TestWaitSHAAndPositionalArgConflict(t *testing.T) {
 	}
 }
 
+func TestWaitInvalidPositionalArg(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer cleanup()
+
+	chdir(t, repo.Dir)
+
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"not-a-ref-or-number"})
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatal("expected error for invalid argument")
+	}
+	if !strings.Contains(err.Error(), "not a valid git ref or job ID") {
+		t.Errorf("expected 'not a valid git ref or job ID' error, got: %v", err)
+	}
+}
+
 func TestWaitExitCode4WhenNoJobFound(t *testing.T) {
 	setupFastPolling(t)
 
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")
 
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs":     []storage.ReviewJob{},
-				"has_more": false,
-			})
-			return
-		}
-	}))
+	_, cleanup := setupMockDaemon(t, waitMockHandler(nil, nil))
 	defer cleanup()
 
 	chdir(t, repo.Dir)
@@ -85,16 +137,7 @@ func TestWaitExitCode4WhenNoJobFound(t *testing.T) {
 		cmd.SetArgs([]string{"--sha", "HEAD"})
 		err := cmd.Execute()
 
-		if err == nil {
-			t.Fatal("expected exit error for missing job")
-		}
-		exitErr, ok := err.(*exitError)
-		if !ok {
-			t.Fatalf("expected exitError, got: %T %v", err, err)
-		}
-		if exitErr.code != 4 {
-			t.Errorf("expected exit code 4, got: %d", exitErr.code)
-		}
+		requireExitCode(t, err, 4)
 		if !strings.Contains(stdout.String(), "No job found") {
 			t.Errorf("expected 'No job found' message, got: %q", stdout.String())
 		}
@@ -108,16 +151,7 @@ func TestWaitExitCode4WhenNoJobFound(t *testing.T) {
 		cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
 		err := cmd.Execute()
 
-		if err == nil {
-			t.Fatal("expected exit error for missing job")
-		}
-		exitErr, ok := err.(*exitError)
-		if !ok {
-			t.Fatalf("expected exitError, got: %T %v", err, err)
-		}
-		if exitErr.code != 4 {
-			t.Errorf("expected exit code 4, got: %d", exitErr.code)
-		}
+		requireExitCode(t, err, 4)
 		if stdout.String() != "" {
 			t.Errorf("expected no stdout in quiet mode, got: %q", stdout.String())
 		}
@@ -130,17 +164,7 @@ func TestWaitExitCode4WhenJobIDNotFound(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")
 
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
-			// Return empty jobs list for any query
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs":     []storage.ReviewJob{},
-				"has_more": false,
-			})
-			return
-		}
-	}))
+	_, cleanup := setupMockDaemon(t, waitMockHandler(nil, nil))
 	defer cleanup()
 
 	chdir(t, repo.Dir)
@@ -151,16 +175,7 @@ func TestWaitExitCode4WhenJobIDNotFound(t *testing.T) {
 	cmd.SetArgs([]string{"--job", "99999"})
 	err := cmd.Execute()
 
-	if err == nil {
-		t.Fatal("expected exit error for missing job ID")
-	}
-	exitErr, ok := err.(*exitError)
-	if !ok {
-		t.Fatalf("expected exitError, got: %T %v", err, err)
-	}
-	if exitErr.code != 4 {
-		t.Errorf("expected exit code 4, got: %d", exitErr.code)
-	}
+	requireExitCode(t, err, 4)
 }
 
 func TestWaitExitCode3OnTimeout(t *testing.T) {
@@ -169,46 +184,18 @@ func TestWaitExitCode3OnTimeout(t *testing.T) {
 	repo := newTestGitRepo(t)
 	sha := repo.CommitFile("file.txt", "content", "initial commit")
 
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
-			// If querying by git_ref, return the job
-			if r.URL.Query().Get("git_ref") != "" {
-				job := storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "running"}
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"jobs":     []storage.ReviewJob{job},
-					"has_more": false,
-				})
-				return
-			}
-			// If querying by id, always return running
-			job := storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "running"}
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs":     []storage.ReviewJob{job},
-				"has_more": false,
-			})
-			return
-		}
-	}))
+	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "running"}
+	_, cleanup := setupMockDaemon(t, waitMockHandler(job, nil))
 	defer cleanup()
 
 	chdir(t, repo.Dir)
 
 	cmd := waitCmd()
+	// --timeout 1 is the minimum testable value (0 means no timeout)
 	cmd.SetArgs([]string{"--sha", "HEAD", "--timeout", "1", "--quiet"})
 	err := cmd.Execute()
 
-	if err == nil {
-		t.Fatal("expected exit error for timeout")
-	}
-	exitErr, ok := err.(*exitError)
-	if !ok {
-		t.Fatalf("expected exitError, got: %T %v", err, err)
-	}
-	if exitErr.code != 3 {
-		t.Errorf("expected exit code 3 for timeout, got: %d", exitErr.code)
-	}
+	requireExitCode(t, err, 3)
 }
 
 func TestWaitPassingReview(t *testing.T) {
@@ -217,31 +204,9 @@ func TestWaitPassingReview(t *testing.T) {
 	repo := newTestGitRepo(t)
 	sha := repo.CommitFile("file.txt", "content", "initial commit")
 
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
-			if r.URL.Query().Get("git_ref") != "" {
-				job := storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"jobs":     []storage.ReviewJob{job},
-					"has_more": false,
-				})
-				return
-			}
-			job := storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs":     []storage.ReviewJob{job},
-				"has_more": false,
-			})
-			return
-		}
-		if r.URL.Path == "/api/review" {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
-			return
-		}
-	}))
+	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
+	review := &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."}
+	_, cleanup := setupMockDaemon(t, waitMockHandler(job, review))
 	defer cleanup()
 
 	chdir(t, repo.Dir)
@@ -261,18 +226,57 @@ func TestWaitFailingReview(t *testing.T) {
 	repo := newTestGitRepo(t)
 	sha := repo.CommitFile("file.txt", "content", "initial commit")
 
+	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
+	review := &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug\n2. Missing check"}
+	_, cleanup := setupMockDaemon(t, waitMockHandler(job, review))
+	defer cleanup()
+
+	chdir(t, repo.Dir)
+
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
+	err := cmd.Execute()
+
+	requireExitCode(t, err, 1)
+}
+
+func TestWaitPositionalArgAsGitRef(t *testing.T) {
+	setupFastPolling(t)
+
+	repo := newTestGitRepo(t)
+	sha := repo.CommitFile("file.txt", "content", "initial commit")
+
+	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
+	review := &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."}
+	_, cleanup := setupMockDaemon(t, waitMockHandler(job, review))
+	defer cleanup()
+
+	chdir(t, repo.Dir)
+
+	// Pass HEAD as a positional arg (not --sha flag) to exercise the
+	// git-ref-first resolution path.
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"HEAD", "--quiet"})
+	err := cmd.Execute()
+
+	if err != nil {
+		t.Errorf("expected exit 0 for positional git ref, got error: %v", err)
+	}
+}
+
+func TestWaitNumericFallbackToJobID(t *testing.T) {
+	setupFastPolling(t)
+
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	// "42" is not a valid git ref, so the wait command should fall back to
+	// treating it as a numeric job ID and query by id (not git_ref).
+	var lastJobsQuery string
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
-			if r.URL.Query().Get("git_ref") != "" {
-				job := storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"jobs":     []storage.ReviewJob{job},
-					"has_more": false,
-				})
-				return
-			}
-			job := storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
+			lastJobsQuery = r.URL.RawQuery
+			job := storage.ReviewJob{ID: 42, GitRef: "abc", Agent: "test", Status: "done"}
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"jobs":     []storage.ReviewJob{job},
@@ -282,7 +286,7 @@ func TestWaitFailingReview(t *testing.T) {
 		}
 		if r.URL.Path == "/api/review" {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug\n2. Missing check"})
+			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 42, Agent: "test", Output: "No issues found."})
 			return
 		}
 	}))
@@ -291,18 +295,15 @@ func TestWaitFailingReview(t *testing.T) {
 	chdir(t, repo.Dir)
 
 	cmd := waitCmd()
-	cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
+	cmd.SetArgs([]string{"42", "--quiet"})
 	err := cmd.Execute()
 
-	if err == nil {
-		t.Fatal("expected exit 1 for failing review")
+	if err != nil {
+		t.Errorf("expected exit 0 for numeric arg as job ID, got: %v", err)
 	}
-	exitErr, ok := err.(*exitError)
-	if !ok {
-		t.Fatalf("expected exitError, got: %T %v", err, err)
-	}
-	if exitErr.code != 1 {
-		t.Errorf("expected exit code 1, got: %d", exitErr.code)
+	// The final poll should query by id=42, not git_ref=42
+	if !strings.Contains(lastJobsQuery, "id=42") {
+		t.Errorf("expected query by id=42, got: %s", lastJobsQuery)
 	}
 }
 
@@ -312,27 +313,19 @@ func TestWaitReviewErrorNotRemappedToCode4(t *testing.T) {
 	repo := newTestGitRepo(t)
 	sha := repo.CommitFile("file.txt", "content", "initial commit")
 
+	// Job completes but /api/review returns 404 — this should NOT become
+	// exit code 4 (which is reserved for "no job found").
+	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
-			if r.URL.Query().Get("git_ref") != "" {
-				job := storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"jobs":     []storage.ReviewJob{job},
-					"has_more": false,
-				})
-				return
-			}
-			job := storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs":     []storage.ReviewJob{job},
+				"jobs":     []storage.ReviewJob{*job},
 				"has_more": false,
 			})
 			return
 		}
 		if r.URL.Path == "/api/review" {
-			// Return 404 — "no review found" should NOT become exit code 4
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
