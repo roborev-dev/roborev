@@ -81,7 +81,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.filterNavigateDown()
 		return m, nil
-	case "right", "l":
+	case "right":
 		// Expand a collapsed repo node
 		entry := m.getSelectedFilterEntry()
 		if entry != nil && entry.repoIdx >= 0 && entry.branchIdx == -1 {
@@ -99,7 +99,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case "left", "h":
+	case "left":
 		// Collapse an expanded repo, or if on a branch, collapse parent
 		entry := m.getSelectedFilterEntry()
 		if entry != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -437,6 +438,32 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 
 	if m4.filterSearch != "a" {
 		t.Errorf("Expected filterSearch='a' after backspace, got '%s'", m4.filterSearch)
+	}
+}
+
+func TestTUIFilterTypingHAndL(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "highlight",
+			rootPaths: []string{"/path/to/highlight"},
+			count:     3,
+			children:  []branchFilterItem{{name: "main", count: 3}},
+		},
+	})
+	m.filterSelectedIdx = 1
+
+	// Type 'h' - should append to search, not collapse
+	m2, _ := pressKey(m, 'h')
+	if m2.filterSearch != "h" {
+		t.Errorf("Expected filterSearch='h', got '%s'", m2.filterSearch)
+	}
+
+	// Type 'l' - should append to search, not expand
+	m3, _ := pressKey(m2, 'l')
+	if m3.filterSearch != "hl" {
+		t.Errorf("Expected filterSearch='hl', got '%s'", m3.filterSearch)
 	}
 }
 
@@ -1097,7 +1124,7 @@ func TestTUITreeFilterExpandCollapse(t *testing.T) {
 
 	// Select repo-a and expand with right arrow
 	m.filterSelectedIdx = 1
-	m2, _ := pressKey(m, 'l') // right/l
+	m2, _ := pressSpecial(m, tea.KeyRight)
 
 	// repo-a should now be expanded
 	if !m2.filterTree[0].expanded {
@@ -1109,8 +1136,8 @@ func TestTUITreeFilterExpandCollapse(t *testing.T) {
 	}
 
 	// Navigate to "main" branch and collapse parent with left arrow
-	m2.filterSelectedIdx = 2   // main
-	m3, _ := pressKey(m2, 'h') // left/h
+	m2.filterSelectedIdx = 2 // main
+	m3, _ := pressSpecial(m2, tea.KeyLeft)
 
 	if m3.filterTree[0].expanded {
 		t.Error("Expected repo-a to be collapsed after left arrow on branch")
@@ -1190,7 +1217,7 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 	m.filterSelectedIdx = 1 // repo-a
 
 	// Press right to expand -- should trigger lazy load
-	m2, cmd := pressKey(m, 'l')
+	m2, cmd := pressSpecial(m, tea.KeyRight)
 
 	if !m2.filterTree[0].loading {
 		t.Error("Expected loading=true after right arrow on repo with no children")
@@ -1218,6 +1245,37 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 	// Flat list: All(0), repo-a(1), main(2), dev(3)
 	if len(m3.filterFlatList) != 4 {
 		t.Errorf("Expected 4 flat entries after branch load, got %d", len(m3.filterFlatList))
+	}
+}
+
+func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			loading:   true,
+		},
+	})
+	m.filterSelectedIdx = 1
+
+	// Simulate a fetch failure
+	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/path/to/repo-a"},
+		err:       errors.New("connection refused"),
+	})
+
+	if m2.filterTree[0].loading {
+		t.Error("Expected loading=false after fetch failure")
+	}
+	if m2.filterTree[0].expanded {
+		t.Error("Expected expanded=false after fetch failure")
+	}
+	if m2.err == nil {
+		t.Error("Expected error to be set")
 	}
 }
 
@@ -1683,7 +1741,7 @@ func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
 	m.filterSelectedIdx = 1 // Select repo-a
 
 	// Press left to collapse
-	m2, _ := pressKey(m, 'h')
+	m2, _ := pressSpecial(m, tea.KeyLeft)
 
 	if m2.filterTree[0].expanded {
 		t.Error("Expected repo-a to be collapsed after left arrow on expanded repo")
@@ -1835,6 +1893,34 @@ func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
 	}
 	if m2.filterTree[1].name != "repo-b" {
 		t.Errorf("Expected target repo to be 'repo-b', got '%s'", m2.filterTree[1].name)
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranchesForRepo command")
+	}
+}
+
+func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.filterBranchMode = true
+	m.activeRepoFilter = []string{"/path/a", "/path/b"} // Multi-root repo
+	m.cwdRepoRoot = "/path/to/other"
+
+	repos := []repoFilterItem{
+		{name: "other", rootPaths: []string{"/path/to/other"}, count: 1},
+		{name: "multi-root", rootPaths: []string{"/path/a", "/path/b"}, count: 5},
+	}
+	msg := tuiReposMsg{repos: repos}
+
+	m2, cmd := updateModel(t, m, msg)
+
+	// Should match by full rootPaths, not just single-path
+	// other is at index 0 (cwd sorted first), multi-root at index 1
+	if !m2.filterTree[1].loading {
+		t.Error("Expected multi-root repo to have loading=true")
+	}
+	if m2.filterTree[1].name != "multi-root" {
+		t.Errorf("Expected target 'multi-root', got '%s'", m2.filterTree[1].name)
 	}
 	if cmd == nil {
 		t.Error("Expected fetchBranchesForRepo command")

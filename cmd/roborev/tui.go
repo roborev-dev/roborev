@@ -327,6 +327,7 @@ type tuiRepoBranchesMsg struct {
 	repoIdx   int                // Which repo in filterTree
 	rootPaths []string           // Repo identity (for stale message detection)
 	branches  []branchFilterItem // Branch data
+	err       error              // Non-nil on fetch failure
 }
 type tuiCommentResultMsg struct {
 	jobID int64
@@ -767,10 +768,18 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 }
 
 // fetchBranchesForRepo fetches branches for a specific repo in the tree filter.
-// Returns tuiRepoBranchesMsg with the branch data.
+// Returns tuiRepoBranchesMsg with the branch data (or err set on failure).
 func (m tuiModel) fetchBranchesForRepo(rootPaths []string, repoIdx int) tea.Cmd {
 	client := m.client
 	serverAddr := m.serverAddr
+
+	errMsg := func(err error) tuiRepoBranchesMsg {
+		return tuiRepoBranchesMsg{
+			repoIdx:   repoIdx,
+			rootPaths: rootPaths,
+			err:       err,
+		}
+	}
 
 	return func() tea.Msg {
 		branchURL := serverAddr + "/api/branches"
@@ -788,12 +797,14 @@ func (m tuiModel) fetchBranchesForRepo(rootPaths []string, repoIdx int) tea.Cmd 
 
 		resp, err := client.Get(branchURL)
 		if err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiErrMsg(fmt.Errorf("fetch branches for repo: %s", resp.Status))
+			return errMsg(
+				fmt.Errorf("fetch branches for repo: %s", resp.Status),
+			)
 		}
 
 		var branchResult struct {
@@ -804,7 +815,7 @@ func (m tuiModel) fetchBranchesForRepo(rootPaths []string, repoIdx int) tea.Cmd 
 			TotalCount int `json:"total_count"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&branchResult); err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
 
 		branches := make([]branchFilterItem, len(branchResult.Branches))
@@ -1818,14 +1829,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Auto-expand repo to branches when opened via 'b' key
 		if m.filterBranchMode && len(m.filterTree) > 0 {
 			targetIdx := 0
-			if len(m.activeRepoFilter) == 1 {
-				// Priority 1: single active repo filter
+			if len(m.activeRepoFilter) > 0 {
+				// Priority 1: active repo filter (any size)
 				for i, node := range m.filterTree {
-					for _, p := range node.rootPaths {
-						if p == m.activeRepoFilter[0] {
-							targetIdx = i
-							goto foundTarget
-						}
+					if rootPathsMatch(node.rootPaths, m.activeRepoFilter) {
+						targetIdx = i
+						goto foundTarget
 					}
 				}
 			}
@@ -1858,9 +1867,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (the tree may have been rebuilt while the fetch was in-flight)
 		if m.currentView == tuiViewFilter && msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
 			rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
+			m.filterTree[msg.repoIdx].loading = false
+			if msg.err != nil {
+				m.err = msg.err
+				m.filterBranchMode = false
+				return m, nil
+			}
 			m.filterTree[msg.repoIdx].children = msg.branches
 			m.filterTree[msg.repoIdx].expanded = true
-			m.filterTree[msg.repoIdx].loading = false
 			// Move cwd branch to first position if this is the cwd repo
 			if m.cwdBranch != "" && len(msg.branches) > 1 {
 				isCwdRepo := false
