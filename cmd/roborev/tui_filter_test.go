@@ -1511,6 +1511,46 @@ func TestTUILeftArrowCollapsesDuringSearch(t *testing.T) {
 	}
 }
 
+func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			loading:   true, // search-triggered fetch in-flight
+		},
+	})
+	m.filterSelectedIdx = 1 // repo-a
+
+	// User presses right while load is in-flight
+	m2, _ := pressSpecial(m, tea.KeyRight)
+
+	// expanded should be set so branches show when response arrives
+	if !m2.filterTree[0].expanded {
+		t.Error("Expected expanded=true after right-arrow on loading repo")
+	}
+
+	// Simulate search-triggered response (expandOnLoad=false)
+	m3, _ := updateModel(t, m2, tuiRepoBranchesMsg{
+		repoIdx:      0,
+		rootPaths:    []string{"/path/to/repo-a"},
+		branches:     []branchFilterItem{{name: "main", count: 3}},
+		expandOnLoad: false,
+	})
+
+	// User intent preserved: repo should be expanded with children visible
+	if !m3.filterTree[0].expanded {
+		t.Error("User right-arrow intent lost: expanded should be true")
+	}
+	// Flat list: All(0), repo-a(1), main(2)
+	if len(m3.filterFlatList) != 3 {
+		t.Errorf("Expected 3 flat entries (user expanded), got %d",
+			len(m3.filterFlatList))
+	}
+}
+
 func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter

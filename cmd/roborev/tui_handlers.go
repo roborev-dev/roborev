@@ -98,6 +98,10 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, m.fetchBranchesForRepo(
 						node.rootPaths, entry.repoIdx, true,
 					)
+				} else {
+					// Load in-flight (search-triggered); mark
+					// expanded so children show on arrival.
+					node.expanded = true
 				}
 			}
 		}
