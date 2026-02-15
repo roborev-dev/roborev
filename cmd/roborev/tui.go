@@ -1880,6 +1880,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.fetchBranchesForRepo(m.filterTree[targetIdx].rootPaths, targetIdx, true)
 		}
+		// If user typed search before repos loaded, kick off branch
+		// fetches now so search results include branch matches.
+		if cmd := m.fetchUnloadedBranches(); cmd != nil {
+			return m, cmd
+		}
 
 	case tuiRepoBranchesMsg:
 		// Surface errors regardless of view/staleness so connection
