@@ -1379,8 +1379,8 @@ Examples:
 							return handleWaitLookupErr(cmd, err, displayRef, quiet)
 						}
 						jobID = id
-					} else if id, err := strconv.ParseInt(arg, 10, 64); err == nil {
-						// Not a valid git ref but numeric — treat as job ID
+					} else if id, err := strconv.ParseInt(arg, 10, 64); err == nil && id > 0 {
+						// Not a valid git ref but positive numeric — treat as job ID
 						jobID = id
 					} else {
 						return fmt.Errorf("argument %q is not a valid git ref or job ID", arg)
