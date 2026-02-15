@@ -419,9 +419,6 @@ func TestWaitLookupNon200Response(t *testing.T) {
 	if !strings.Contains(err.Error(), "500 Internal Server Error") {
 		t.Errorf("expected error to contain status line, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "database locked") {
-		t.Errorf("expected error to contain response body, got: %v", err)
-	}
 }
 
 func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {

@@ -1349,16 +1349,10 @@ Examples:
 
 			// Resolve the target to a job ID
 			var jobID int64
-			var displayRef string
+			var ref string // git ref to resolve via findJobForCommit
 
 			if shaFlag != "" {
-				// --sha flag: resolve ref to SHA, look up job
-				displayRef = shaFlag
-				id, err := lookupJobBySHA(addr, shaFlag)
-				if err != nil {
-					return handleWaitLookupErr(cmd, err, displayRef, quiet)
-				}
-				jobID = id
+				ref = shaFlag
 			} else if len(args) > 0 {
 				arg := args[0]
 				if forceJobID {
@@ -1370,30 +1364,48 @@ Examples:
 					jobID = id
 				} else {
 					// Try to resolve as git ref first (handles numeric SHAs like "123456")
-					sha, repoRoot, resolved := resolveGitContext(arg)
-					if resolved {
-						// Valid git ref — look up job by resolved SHA
-						displayRef = arg
-						id, err := lookupJobByRef(addr, sha, repoRoot)
-						if err != nil {
-							return handleWaitLookupErr(cmd, err, displayRef, quiet)
+					if repoRoot, err := git.GetRepoRoot("."); err == nil {
+						if _, err := git.ResolveSHA(repoRoot, arg); err == nil {
+							ref = arg
 						}
-						jobID = id
-					} else if id, err := strconv.ParseInt(arg, 10, 64); err == nil && id > 0 {
-						// Not a valid git ref but positive numeric — treat as job ID
-						jobID = id
-					} else {
-						return fmt.Errorf("argument %q is not a valid git ref or job ID", arg)
+					}
+					if ref == "" {
+						// Not a valid git ref — try as numeric job ID
+						if id, err := strconv.ParseInt(arg, 10, 64); err == nil && id > 0 {
+							jobID = id
+						} else {
+							return fmt.Errorf("argument %q is not a valid git ref or job ID", arg)
+						}
 					}
 				}
 			} else {
-				// No arg, no --sha: default to HEAD
-				displayRef = "HEAD"
-				id, err := lookupJobBySHA(addr, "HEAD")
+				ref = "HEAD"
+			}
+
+			// If we have a ref to resolve, use findJobForCommit
+			if ref != "" && jobID == 0 {
+				repoRoot, _ := git.GetRepoRoot(".")
+				sha, err := git.ResolveSHA(repoRoot, ref)
 				if err != nil {
-					return handleWaitLookupErr(cmd, err, displayRef, quiet)
+					return fmt.Errorf("invalid git ref: %s", ref)
 				}
-				jobID = id
+				mainRoot, _ := git.GetMainRepoRoot(".")
+				if mainRoot == "" {
+					mainRoot = repoRoot
+				}
+				job, err := findJobForCommit(mainRoot, sha)
+				if err != nil {
+					return err
+				}
+				if job == nil {
+					if !quiet {
+						cmd.Printf("No job found for %s\n", ref)
+					}
+					cmd.SilenceErrors = true
+					cmd.SilenceUsage = true
+					return &exitError{code: 1}
+				}
+				jobID = job.ID
 			}
 
 			err := waitForJob(cmd, addr, jobID, quiet)
@@ -1422,102 +1434,6 @@ Examples:
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
 
 	return cmd
-}
-
-// resolveGitContext resolves a git ref to a full SHA and determines the main
-// repository root (normalized). These are the two values needed to query the
-// daemon's job list: the resolved SHA for git_ref matching and the canonical
-// repo path for scoping. resolved indicates whether the ref was successfully
-// converted to a SHA; when false, sha is the raw ref string.
-func resolveGitContext(ref string) (sha, repoRoot string, resolved bool) {
-	// Resolve SHA from the worktree root (where the user is working)
-	// so that refs like HEAD resolve to the correct commit.
-	if root, err := git.GetRepoRoot("."); err == nil {
-		if r, err := git.ResolveSHA(root, ref); err == nil {
-			sha = r
-			resolved = true
-		}
-	}
-	if !resolved {
-		sha = ref
-	}
-
-	// Use GetMainRepoRoot for repo filtering to match daemon storage,
-	// which always records the main repo path (not the worktree path).
-	if root, err := git.GetMainRepoRoot("."); err == nil {
-		repoRoot = root
-	}
-
-	// Normalize repo path to handle symlinks/relative paths consistently
-	if repoRoot != "" {
-		if r, err := filepath.EvalSymlinks(repoRoot); err == nil {
-			repoRoot = r
-		}
-		if abs, err := filepath.Abs(repoRoot); err == nil {
-			repoRoot = abs
-		}
-	}
-
-	return sha, repoRoot, resolved
-}
-
-// lookupJobByRef queries the daemon for the most recent job matching the given
-// SHA, optionally scoped to a repo root. Returns ErrJobNotFound if no job is found.
-func lookupJobByRef(addr, sha, repoRoot string) (int64, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	queryURL := fmt.Sprintf("%s/api/jobs?git_ref=%s&limit=1", addr, url.QueryEscape(sha))
-	if repoRoot != "" {
-		queryURL += "&repo=" + url.QueryEscape(repoRoot)
-	}
-	resp, err := client.Get(queryURL)
-	if err != nil {
-		return 0, fmt.Errorf("failed to connect to daemon (is it running?)")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
-	var result struct {
-		Jobs []storage.ReviewJob `json:"jobs"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, fmt.Errorf("failed to parse job list: %w", err)
-	}
-
-	if len(result.Jobs) == 0 {
-		return 0, fmt.Errorf("%w: %s", ErrJobNotFound, sha)
-	}
-
-	return result.Jobs[0].ID, nil
-}
-
-// lookupJobBySHA resolves a git ref to a SHA and finds the most recent job for it.
-// Scopes the query to the current repo to avoid cross-repo mismatch.
-// Returns ErrJobNotFound if no job is found.
-func lookupJobBySHA(addr, ref string) (int64, error) {
-	sha, repoRoot, resolved := resolveGitContext(ref)
-	if !resolved {
-		return 0, fmt.Errorf("invalid git ref: %s", ref)
-	}
-	return lookupJobByRef(addr, sha, repoRoot)
-}
-
-// handleWaitLookupErr handles errors from lookupJobByRef in the wait command.
-// For ErrJobNotFound, prints a user-facing message when not quiet and returns exitError{1}.
-func handleWaitLookupErr(cmd *cobra.Command, err error, ref string, quiet bool) error {
-	if errors.Is(err, ErrJobNotFound) {
-		if !quiet {
-			cmd.Printf("No job found for %s\n", ref)
-		}
-		cmd.SilenceErrors = true
-		cmd.SilenceUsage = true
-		return &exitError{code: 1}
-	}
-	return err
 }
 
 func statusCmd() *cobra.Command {
