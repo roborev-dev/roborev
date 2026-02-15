@@ -171,6 +171,7 @@ type tuiModel struct {
 	filterFlatList    []flatFilterEntry // Flattened visible rows for navigation
 	filterSelectedIdx int               // Currently highlighted row in flat list
 	filterSearch      string            // Search/filter text typed by user
+	filterSearchSeq   int               // Incremented on search text changes; gates stale fetchFailed
 	filterBranchMode  bool              // True when opened via 'b' key (auto-expand repo to branches)
 
 	// Comment modal state
@@ -331,6 +332,7 @@ type tuiRepoBranchesMsg struct {
 	branches     []branchFilterItem // Branch data
 	err          error              // Non-nil on fetch failure
 	expandOnLoad bool               // Set expanded=true when branches arrive
+	searchSeq    int                // Search generation; stale errors don't set fetchFailed
 }
 type tuiCommentResultMsg struct {
 	jobID int64
@@ -773,8 +775,10 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 // fetchBranchesForRepo fetches branches for a specific repo in the tree filter.
 // Returns tuiRepoBranchesMsg with the branch data (or err set on failure).
 // When expand is true, the handler sets expanded=true on the tree node.
+// searchSeq is the search generation at dispatch time; the error handler
+// uses it to avoid marking fetchFailed for stale search sessions.
 func (m tuiModel) fetchBranchesForRepo(
-	rootPaths []string, repoIdx int, expand bool,
+	rootPaths []string, repoIdx int, expand bool, searchSeq int,
 ) tea.Cmd {
 	client := m.client
 	serverAddr := m.serverAddr
@@ -785,6 +789,7 @@ func (m tuiModel) fetchBranchesForRepo(
 			rootPaths:    rootPaths,
 			err:          err,
 			expandOnLoad: expand,
+			searchSeq:    searchSeq,
 		}
 	}
 
@@ -838,6 +843,7 @@ func (m tuiModel) fetchBranchesForRepo(
 			rootPaths:    rootPaths,
 			branches:     branches,
 			expandOnLoad: expand,
+			searchSeq:    searchSeq,
 		}
 	}
 }
@@ -1878,7 +1884,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-			return m, m.fetchBranchesForRepo(m.filterTree[targetIdx].rootPaths, targetIdx, true)
+			return m, m.fetchBranchesForRepo(m.filterTree[targetIdx].rootPaths, targetIdx, true, m.filterSearchSeq)
 		}
 		// If user typed search before repos loaded, kick off branch
 		// fetches now so search results include branch matches.
@@ -1899,7 +1905,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
 				rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
 				m.filterTree[msg.repoIdx].loading = false
-				if !msg.expandOnLoad && m.filterSearch != "" {
+				if !msg.expandOnLoad && m.filterSearch != "" &&
+					msg.searchSeq == m.filterSearchSeq {
 					m.filterTree[msg.repoIdx].fetchFailed = true
 				}
 			}

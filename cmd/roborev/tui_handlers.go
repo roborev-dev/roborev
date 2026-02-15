@@ -97,7 +97,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					node.loading = true
 					node.fetchFailed = false
 					return m, m.fetchBranchesForRepo(
-						node.rootPaths, entry.repoIdx, true,
+						node.rootPaths, entry.repoIdx, true, m.filterSearchSeq,
 					)
 				} else {
 					// Load in-flight (search-triggered); mark
@@ -175,6 +175,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.filterSearch) > 0 {
 			runes := []rune(m.filterSearch)
 			m.filterSearch = string(runes[:len(runes)-1])
+			m.filterSearchSeq++
 			m.filterSelectedIdx = 0
 			m.rebuildFilterFlatList()
 		}
@@ -187,6 +188,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.filterSelectedIdx = 0
 				}
 			}
+			m.filterSearchSeq++
 			m.rebuildFilterFlatList()
 		}
 		return m, m.fetchUnloadedBranches()
@@ -224,7 +226,7 @@ func (m *tuiModel) fetchUnloadedBranches() tea.Cmd {
 		if node.children == nil && !node.loading && !node.fetchFailed {
 			node.loading = true
 			cmds = append(cmds, m.fetchBranchesForRepo(
-				node.rootPaths, i, false,
+				node.rootPaths, i, false, m.filterSearchSeq,
 			))
 			if len(cmds) >= slots {
 				break

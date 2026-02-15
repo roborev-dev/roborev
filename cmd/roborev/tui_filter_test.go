@@ -2786,3 +2786,96 @@ func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
 		t.Errorf("Expected tuiViewQueue after Enter, got %d", m2.currentView)
 	}
 }
+
+// TestTUIStaleSearchErrorIgnored verifies that an error from a
+// previous search session does not set fetchFailed in the current
+// session. Scenario: type "f" → clear → type "m" → old error
+// arrives with stale searchSeq.
+func TestTUIStaleSearchErrorIgnored(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
+		{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
+	})
+
+	// Type "f" — triggers search fetch with searchSeq=1
+	m, _ = pressKey(m, 'f')
+	staleSeq := m.filterSearchSeq
+	if staleSeq != 1 {
+		t.Fatalf("Expected filterSearchSeq=1 after typing, got %d", staleSeq)
+	}
+	// Simulate: repo-a starts loading
+	m.filterTree[0].loading = true
+
+	// Clear search (backspace) then type new search "m"
+	m, _ = pressSpecial(m, tea.KeyBackspace)
+	m, _ = pressKey(m, 'm')
+	newSeq := m.filterSearchSeq
+	if newSeq != 3 {
+		t.Fatalf("Expected filterSearchSeq=3, got %d", newSeq)
+	}
+
+	// Stale error arrives from the old "f" search session
+	m, cmd := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/a"},
+		err:       fmt.Errorf("connection refused"),
+		searchSeq: staleSeq, // Old session
+	})
+
+	if m.filterTree[0].fetchFailed {
+		t.Error(
+			"fetchFailed should not be set by a stale search error",
+		)
+	}
+	// The top-up fetch should re-enqueue repo-a in the new session
+	// (loading=true again) since it's not marked fetchFailed.
+	if cmd == nil {
+		t.Error("Expected top-up fetch cmd for repo in new session")
+	}
+}
+
+// TestTUISearchBeforeReposLoad verifies that when the user types
+// search text before repos have loaded, fetchUnloadedBranches is
+// triggered once repos arrive via tuiReposMsg.
+func TestTUISearchBeforeReposLoad(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	// No filterTree yet — repos haven't loaded
+
+	// User types search text before repos arrive
+	m, _ = pressKey(m, 'f')
+	if m.filterSearch != "f" {
+		t.Fatalf("Expected filterSearch='f', got %q", m.filterSearch)
+	}
+
+	// Repos arrive
+	m2, cmd := updateModel(t, m, tuiReposMsg{
+		repos: []repoFilterItem{
+			{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
+			{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
+		},
+	})
+
+	if len(m2.filterTree) != 2 {
+		t.Fatalf("Expected 2 repos, got %d", len(m2.filterTree))
+	}
+
+	// cmd should be non-nil (fetchUnloadedBranches triggered)
+	if cmd == nil {
+		t.Fatal("Expected fetchUnloadedBranches cmd after repos load with active search")
+	}
+
+	// At least one repo should be marked loading
+	anyLoading := false
+	for _, node := range m2.filterTree {
+		if node.loading {
+			anyLoading = true
+			break
+		}
+	}
+	if !anyLoading {
+		t.Error("Expected at least one repo to be loading after repos load with active search")
+	}
+}
