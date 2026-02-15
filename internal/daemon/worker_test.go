@@ -24,6 +24,7 @@ type workerTestContext struct {
 func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	t.Helper()
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	testutil.InitTestGitRepo(t, tmpDir)
 
 	cfg := config.DefaultConfig()
 	if workers > 0 {
@@ -83,7 +84,8 @@ func (c *workerTestContext) waitForJobStatus(t *testing.T, jobID int64, statuses
 
 func TestWorkerPoolE2E(t *testing.T) {
 	tc := newWorkerTestContext(t, 2)
-	job := tc.createJob(t, "testsha123")
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createJob(t, sha)
 
 	tc.Pool.Start()
 	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusDone, storage.JobStatusFailed)
@@ -94,7 +96,7 @@ func TestWorkerPoolE2E(t *testing.T) {
 	}
 
 	if finalJob.Status == storage.JobStatusDone {
-		review, err := tc.DB.GetReviewByCommitSHA("testsha123")
+		review, err := tc.DB.GetReviewByCommitSHA(sha)
 		if err != nil {
 			t.Fatalf("GetReviewByCommitSHA failed: %v", err)
 		}
@@ -108,55 +110,33 @@ func TestWorkerPoolE2E(t *testing.T) {
 }
 
 func TestWorkerPoolConcurrency(t *testing.T) {
-	db, tmpDir := testutil.OpenTestDBWithDir(t)
-
-	cfg := config.DefaultConfig()
-	cfg.MaxWorkers = 4
-
-	repo, _ := db.GetOrCreateRepo(tmpDir)
+	tc := newWorkerTestContext(t, 4)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
 	for i := 0; i < 5; i++ {
-		sha := "concurrentsha" + string(rune('0'+i))
-		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
+		tc.createJob(t, sha)
 	}
 
-	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 4, broadcaster, nil)
-	pool.Start()
+	tc.Pool.Start()
 
 	time.Sleep(500 * time.Millisecond)
-	activeWorkers := pool.ActiveWorkers()
+	activeWorkers := tc.Pool.ActiveWorkers()
 
-	pool.Stop()
+	tc.Pool.Stop()
 
 	t.Logf("Peak active workers: %d", activeWorkers)
 }
 
 func TestWorkerPoolCancelRunningJob(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createJob(t, "cancelsha")
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createJob(t, sha)
 
 	tc.Pool.Start()
 	defer tc.Pool.Stop()
 
-	// Wait for job to be claimed (poll quickly since running state may be brief)
-	deadline := time.Now().Add(5 * time.Second)
-	reachedRunning := false
-	for time.Now().Before(deadline) {
-		j, err := tc.DB.GetJobByID(job.ID)
-		if err != nil {
-			t.Fatalf("GetJobByID failed: %v", err)
-		}
-		if j.Status == storage.JobStatusRunning {
-			reachedRunning = true
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !reachedRunning {
-		t.Fatal("Timeout: job never reached 'running' state")
-	}
+	// Wait for job to be claimed
+	tc.waitForJobStatus(t, job.ID, storage.JobStatusRunning)
 
 	// Cancel the job
 	if err := tc.DB.CancelJob(job.ID); err != nil {
@@ -164,17 +144,13 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 	}
 	tc.Pool.CancelJob(job.ID)
 
-	time.Sleep(500 * time.Millisecond)
+	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusCanceled)
 
-	finalJob, err := tc.DB.GetJobByID(job.ID)
-	if err != nil {
-		t.Fatalf("GetJobByID failed: %v", err)
-	}
 	if finalJob.Status != storage.JobStatusCanceled {
 		t.Errorf("Expected status 'canceled', got '%s'", finalJob.Status)
 	}
 
-	_, err = tc.DB.GetReviewByJobID(job.ID)
+	_, err := tc.DB.GetReviewByJobID(job.ID)
 	if err == nil {
 		t.Error("Expected no review for canceled job, but found one")
 	}
