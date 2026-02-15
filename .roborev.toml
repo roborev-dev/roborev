@@ -1,2 +1,22 @@
 review_agent = ""
-review_guidelines = "The daemon and client evolve in lockstep, and the daemon is restarted after\nupdates and so API changes do not require backward compatibility shims, and\nwe do not expect newer clients to be able to talk to older daemons at the\npresent time.\n\nTUI overflow on very narrow terminals (e.g. 60 characters wide or less) is acceptable\nand so please omit pedantic comments on these extreme scenarios.\n"
+review_guidelines = """
+The daemon and client evolve in lockstep, and the daemon is restarted after
+updates and so API changes do not require backward compatibility shims, and
+we do not expect newer clients to be able to talk to older daemons at the
+present time.
+
+TUI overflow on very narrow terminals (e.g. 60 characters wide or less) is acceptable
+and so please omit pedantic comments on these extreme scenarios.
+
+This is a local CLI tool. The daemon runs on localhost, the database is local SQLite,
+and all displayed data (repo names, branch names, paths) originates from the user's
+own filesystem and git repos. Do not flag injection or sanitization issues for data
+that never crosses a trust boundary. Reserve injection findings for content from
+external sources (e.g. commit messages from shared repos, API responses from remote
+services).
+
+The TUI talks to the daemon over loopback HTTP. Do not flag thundering-herd or
+rate-limiting concerns for local loopback requests unless the number of concurrent
+requests scales with untrusted input or external data. A bounded number of requests
+proportional to the user's tracked repos is acceptable.
+"""
