@@ -173,7 +173,7 @@ func TestBuildCompactPrompt(t *testing.T) {
 			branch: "",
 			wantContains: []string{
 				"Verification and Consolidation Request",
-				"1 unaddressed reviews",
+				"1 unaddressed review",
 				"Job 123",
 				"Finding 1: Issue in main.go",
 				"abc123d", // short SHA
@@ -213,7 +213,7 @@ func TestBuildCompactPrompt(t *testing.T) {
 			},
 			branch: "",
 			wantContains: []string{
-				"1 unaddressed reviews",
+				"1 unaddressed review",
 			},
 			wantNotContain: []string{
 				"from branch",
@@ -274,7 +274,7 @@ func TestBuildCompactOutputPrefix(t *testing.T) {
 			branch:   "feature",
 			jobIDs:   []int64{999},
 			wantContains: []string{
-				"Verified and consolidated 1 unaddressed reviews from branch feature",
+				"Verified and consolidated 1 unaddressed review from branch feature",
 				"Original jobs: 999",
 			},
 		},

@@ -399,7 +399,11 @@ func buildCompactPrompt(jobReviews []jobReview, branch string) string {
 	sb.WriteString("   - Explain what the issue is and why it matters\n\n")
 
 	sb.WriteString("## Unaddressed Review Findings\n\n")
-	sb.WriteString(fmt.Sprintf("Below are %d unaddressed reviews", len(jobReviews)))
+	reviewWord := "review"
+	if len(jobReviews) != 1 {
+		reviewWord = "reviews"
+	}
+	sb.WriteString(fmt.Sprintf("Below are %d unaddressed %s", len(jobReviews), reviewWord))
 	if branch != "" {
 		sb.WriteString(fmt.Sprintf(" from branch %s", branch))
 	}
@@ -429,7 +433,11 @@ func buildCompactPrompt(jobReviews []jobReview, branch string) string {
 func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) string {
 	var sb strings.Builder
 	sb.WriteString("## Compact Analysis\n\n")
-	sb.WriteString(fmt.Sprintf("Verified and consolidated %d unaddressed reviews", jobCount))
+	reviewWord := "review"
+	if jobCount != 1 {
+		reviewWord = "reviews"
+	}
+	sb.WriteString(fmt.Sprintf("Verified and consolidated %d unaddressed %s", jobCount, reviewWord))
 	if branch != "" {
 		sb.WriteString(fmt.Sprintf(" from branch %s", branch))
 	}
