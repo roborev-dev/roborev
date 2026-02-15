@@ -141,6 +141,30 @@ func TestWaitArgValidation(t *testing.T) {
 	}
 }
 
+func TestWaitArgValidationWithoutDaemon(t *testing.T) {
+	// Validation errors should be returned before contacting the daemon.
+	// This test does NOT start a mock daemon.
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+	chdir(t, repo.Dir)
+
+	_, err := runWait(t, "--job", "0")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid job ID") {
+		t.Errorf("expected 'invalid job ID' error, got: %v", err)
+	}
+
+	_, err = runWait(t, "--sha", "not-a-valid-ref")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid git ref") {
+		t.Errorf("expected 'invalid git ref' error, got: %v", err)
+	}
+}
+
 func TestWaitExitsWhenNoJobFound(t *testing.T) {
 	setupFastPolling(t)
 	newWaitEnv(t, waitMockHandler(nil, nil))

@@ -1340,12 +1340,8 @@ Examples:
 				return fmt.Errorf("--job requires a job ID argument")
 			}
 
-			// Ensure daemon is running (and restart if version mismatch)
-			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
-			}
-
-			// Resolve the target to a job ID
+			// Resolve the target to a job ID (local validation first,
+			// daemon contact deferred until actually needed)
 			var jobID int64
 			var ref string // git ref to resolve via findJobForCommit
 
@@ -1380,16 +1376,27 @@ Examples:
 				ref = "HEAD"
 			}
 
-			// If we have a ref to resolve, use findJobForCommit
-			if ref != "" && jobID == 0 {
+			// Validate git ref before contacting daemon
+			var sha string
+			if ref != "" {
 				repoRoot, _ := git.GetRepoRoot(".")
-				sha, err := git.ResolveSHA(repoRoot, ref)
+				resolved, err := git.ResolveSHA(repoRoot, ref)
 				if err != nil {
 					return fmt.Errorf("invalid git ref: %s", ref)
 				}
+				sha = resolved
+			}
+
+			// All local validation passed — now ensure daemon is running
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("daemon not running: %w", err)
+			}
+
+			// If we have a ref to resolve, use findJobForCommit
+			if sha != "" && jobID == 0 {
 				mainRoot, _ := git.GetMainRepoRoot(".")
 				if mainRoot == "" {
-					mainRoot = repoRoot
+					mainRoot, _ = git.GetRepoRoot(".")
 				}
 				job, err := findJobForCommit(mainRoot, sha)
 				if err != nil {
