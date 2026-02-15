@@ -1226,11 +1226,12 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 		t.Error("Expected fetchBranchesForRepo command")
 	}
 
-	// Simulate receiving branches
+	// Simulate receiving branches (user-initiated via right-arrow)
 	m3, _ := updateModel(t, m2, tuiRepoBranchesMsg{
-		repoIdx:   0,
-		rootPaths: []string{"/path/to/repo-a"},
-		branches:  []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
+		repoIdx:      0,
+		rootPaths:    []string{"/path/to/repo-a"},
+		branches:     []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
+		expandOnLoad: true,
 	})
 
 	if m3.filterTree[0].loading {
@@ -1417,6 +1418,128 @@ func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
 		if m.filterFlatList[1].repoIdx != 0 || m.filterFlatList[1].branchIdx != 1 {
 			t.Error("Expected second entry to be feature-xyz (branchIdx=1)")
 		}
+	}
+}
+
+func TestTUISearchTriggeredLoadDoesNotExpand(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+		},
+	})
+
+	// Simulate search-triggered branch load (expandOnLoad=false)
+	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:      0,
+		rootPaths:    []string{"/path/to/repo-a"},
+		branches:     []branchFilterItem{{name: "main", count: 3}},
+		expandOnLoad: false,
+	})
+
+	if m2.filterTree[0].expanded {
+		t.Error("Search-triggered load should not set expanded=true")
+	}
+
+	// With search active, matching branches should still be visible
+	m2.filterSearch = "main"
+	m2.rebuildFilterFlatList()
+	// Should show: repo-a + main
+	if len(m2.filterFlatList) != 2 {
+		t.Errorf("Expected 2 entries during search, got %d",
+			len(m2.filterFlatList))
+	}
+
+	// Clear search — branches should hide (expanded is still false)
+	m2.filterSearch = ""
+	m2.rebuildFilterFlatList()
+	// Should show: All + repo-a (no branches)
+	if len(m2.filterFlatList) != 2 {
+		t.Errorf("Expected 2 entries after clearing search, got %d",
+			len(m2.filterFlatList))
+	}
+}
+
+func TestTUILeftArrowCollapsesDuringSearch(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			children: []branchFilterItem{
+				{name: "feature-xyz", count: 3},
+				{name: "main", count: 2},
+			},
+		},
+	})
+
+	// Search for "xyz" — repo-a auto-expands to show feature-xyz
+	m.filterSearch = "xyz"
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 2 {
+		t.Fatalf("Expected 2 entries (repo-a + feature-xyz), got %d",
+			len(m.filterFlatList))
+	}
+
+	// Select repo-a and press left to collapse
+	m.filterSelectedIdx = 0
+	m2, _ := pressSpecial(m, tea.KeyLeft)
+
+	if !m2.filterTree[0].userCollapsed {
+		t.Error("Expected userCollapsed=true after left-arrow during search")
+	}
+	// After collapse, only repo-a should show (branch hidden)
+	if len(m2.filterFlatList) != 1 {
+		t.Errorf("Expected 1 entry after collapse during search, got %d",
+			len(m2.filterFlatList))
+	}
+
+	// Right-arrow should re-expand and clear userCollapsed
+	m2.filterSelectedIdx = 0
+	m3, _ := pressSpecial(m2, tea.KeyRight)
+
+	if m3.filterTree[0].userCollapsed {
+		t.Error("Expected userCollapsed=false after right-arrow re-expand")
+	}
+	if !m3.filterTree[0].expanded {
+		t.Error("Expected expanded=true after right-arrow")
+	}
+}
+
+func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			children: []branchFilterItem{
+				{name: "feature-xyz", count: 3},
+			},
+		},
+	})
+
+	// Collapse during search
+	m.filterSearch = "xyz"
+	m.filterTree[0].userCollapsed = true
+	m.rebuildFilterFlatList()
+	// Should hide branches
+	if len(m.filterFlatList) != 1 {
+		t.Fatalf("Expected 1 entry with userCollapsed, got %d",
+			len(m.filterFlatList))
+	}
+
+	// Clear search — userCollapsed should reset
+	m.filterSearch = ""
+	m.rebuildFilterFlatList()
+	if m.filterTree[0].userCollapsed {
+		t.Error("Expected userCollapsed=false after search cleared")
 	}
 }
 
@@ -1908,9 +2031,10 @@ func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
 	})
 
 	msg := tuiRepoBranchesMsg{
-		repoIdx:   0,
-		rootPaths: []string{"/path/to/repo-a"},
-		branches:  []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
+		repoIdx:      0,
+		rootPaths:    []string{"/path/to/repo-a"},
+		branches:     []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
+		expandOnLoad: true,
 	}
 
 	m2, _ := updateModel(t, m, msg)

@@ -119,12 +119,13 @@ type branchFilterItem struct {
 
 // treeFilterNode represents a repo node in the unified tree filter
 type treeFilterNode struct {
-	name      string             // Display name
-	rootPaths []string           // Repo paths (for API calls)
-	count     int                // Total job count
-	expanded  bool               // Whether children are visible
-	children  []branchFilterItem // Branch children (lazy-loaded)
-	loading   bool               // True while branch fetch is in-flight
+	name          string             // Display name
+	rootPaths     []string           // Repo paths (for API calls)
+	count         int                // Total job count
+	expanded      bool               // Whether children are visible
+	userCollapsed bool               // User explicitly collapsed during search
+	children      []branchFilterItem // Branch children (lazy-loaded)
+	loading       bool               // True while branch fetch is in-flight
 }
 
 // flatFilterEntry represents a single row in the flattened tree filter view
@@ -324,10 +325,11 @@ type tuiBranchesMsg struct {
 	backfillCount int // Number of branches successfully backfilled to the database
 }
 type tuiRepoBranchesMsg struct {
-	repoIdx   int                // Which repo in filterTree
-	rootPaths []string           // Repo identity (for stale message detection)
-	branches  []branchFilterItem // Branch data
-	err       error              // Non-nil on fetch failure
+	repoIdx      int                // Which repo in filterTree
+	rootPaths    []string           // Repo identity (for stale message detection)
+	branches     []branchFilterItem // Branch data
+	err          error              // Non-nil on fetch failure
+	expandOnLoad bool               // Set expanded=true when branches arrive
 }
 type tuiCommentResultMsg struct {
 	jobID int64
@@ -769,7 +771,10 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 
 // fetchBranchesForRepo fetches branches for a specific repo in the tree filter.
 // Returns tuiRepoBranchesMsg with the branch data (or err set on failure).
-func (m tuiModel) fetchBranchesForRepo(rootPaths []string, repoIdx int) tea.Cmd {
+// When expand is true, the handler sets expanded=true on the tree node.
+func (m tuiModel) fetchBranchesForRepo(
+	rootPaths []string, repoIdx int, expand bool,
+) tea.Cmd {
 	client := m.client
 	serverAddr := m.serverAddr
 
@@ -827,9 +832,10 @@ func (m tuiModel) fetchBranchesForRepo(rootPaths []string, repoIdx int) tea.Cmd 
 		}
 
 		return tuiRepoBranchesMsg{
-			repoIdx:   repoIdx,
-			rootPaths: rootPaths,
-			branches:  branches,
+			repoIdx:      repoIdx,
+			rootPaths:    rootPaths,
+			branches:     branches,
+			expandOnLoad: expand,
 		}
 	}
 }
@@ -1384,6 +1390,13 @@ func (m *tuiModel) rebuildFilterFlatList() {
 	var flat []flatFilterEntry
 	search := strings.ToLower(m.filterSearch)
 
+	// Reset search-collapse state when not searching
+	if search == "" {
+		for i := range m.filterTree {
+			m.filterTree[i].userCollapsed = false
+		}
+	}
+
 	// Always include "All" as first entry
 	if search == "" || strings.Contains("all", search) {
 		flat = append(flat, flatFilterEntry{repoIdx: -1, branchIdx: -1})
@@ -1421,7 +1434,9 @@ func (m *tuiModel) rebuildFilterFlatList() {
 		flat = append(flat, flatFilterEntry{repoIdx: i, branchIdx: -1})
 
 		// Add children if expanded or if search matched children
-		showChildren := node.expanded || (search != "" && childMatches)
+		// (user can override search auto-expansion via left-arrow)
+		showChildren := node.expanded ||
+			(search != "" && childMatches && !node.userCollapsed)
 		if showChildren && len(node.children) > 0 {
 			for j, child := range node.children {
 				if search != "" && !repoNameMatch {
@@ -1859,7 +1874,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-			return m, m.fetchBranchesForRepo(m.filterTree[targetIdx].rootPaths, targetIdx)
+			return m, m.fetchBranchesForRepo(m.filterTree[targetIdx].rootPaths, targetIdx, true)
 		}
 
 	case tuiRepoBranchesMsg:
@@ -1884,7 +1899,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
 			m.filterTree[msg.repoIdx].loading = false
 			m.filterTree[msg.repoIdx].children = msg.branches
-			m.filterTree[msg.repoIdx].expanded = true
+			if msg.expandOnLoad {
+				m.filterTree[msg.repoIdx].expanded = true
+			}
 			// Move cwd branch to first position if this is the cwd repo
 			if m.cwdBranch != "" && len(msg.branches) > 1 {
 				isCwdRepo := false

@@ -87,6 +87,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if entry != nil && entry.repoIdx >= 0 && entry.branchIdx == -1 {
 			node := &m.filterTree[entry.repoIdx]
 			if !node.expanded {
+				node.userCollapsed = false
 				if len(node.children) > 0 {
 					// Already have children, just expand
 					node.expanded = true
@@ -94,7 +95,9 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else if !node.loading {
 					// Lazy-load branches
 					node.loading = true
-					return m, m.fetchBranchesForRepo(node.rootPaths, entry.repoIdx)
+					return m, m.fetchBranchesForRepo(
+						node.rootPaths, entry.repoIdx, true,
+					)
 				}
 			}
 		}
@@ -103,21 +106,28 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Collapse an expanded repo, or if on a branch, collapse parent
 		entry := m.getSelectedFilterEntry()
 		if entry != nil {
+			collapse := func(idx int) {
+				m.filterTree[idx].expanded = false
+				if m.filterSearch != "" {
+					m.filterTree[idx].userCollapsed = true
+				}
+				m.rebuildFilterFlatList()
+			}
 			if entry.branchIdx >= 0 {
 				// On a branch: collapse parent and move selection to parent
-				m.filterTree[entry.repoIdx].expanded = false
-				m.rebuildFilterFlatList()
-				// Find parent repo in flat list
+				collapse(entry.repoIdx)
 				for i, e := range m.filterFlatList {
 					if e.repoIdx == entry.repoIdx && e.branchIdx == -1 {
 						m.filterSelectedIdx = i
 						break
 					}
 				}
-			} else if entry.repoIdx >= 0 && m.filterTree[entry.repoIdx].expanded {
-				// On an expanded repo: collapse it
-				m.filterTree[entry.repoIdx].expanded = false
-				m.rebuildFilterFlatList()
+			} else if entry.repoIdx >= 0 {
+				node := &m.filterTree[entry.repoIdx]
+				if node.expanded ||
+					(m.filterSearch != "" && !node.userCollapsed) {
+					collapse(entry.repoIdx)
+				}
 			}
 		}
 		return m, nil
@@ -192,7 +202,7 @@ func (m *tuiModel) fetchUnloadedBranches() tea.Cmd {
 		if node.children == nil && !node.loading {
 			node.loading = true
 			cmds = append(cmds, m.fetchBranchesForRepo(
-				node.rootPaths, i,
+				node.rootPaths, i, false,
 			))
 		}
 	}
