@@ -369,6 +369,57 @@ func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opt
 	return &job, nil
 }
 
+// isValidConsolidatedReview checks if output looks like actual findings vs error message
+func isValidConsolidatedReview(output string) bool {
+	output = strings.TrimSpace(output)
+
+	// Check for empty output
+	if output == "" {
+		return false
+	}
+
+	// Check for common error patterns
+	errorPatterns := []string{
+		"error:",
+		"failed to",
+		"cannot",
+		"unable to",
+		"exception:",
+		"traceback",
+	}
+	lowerOutput := strings.ToLower(output)
+	for _, pattern := range errorPatterns {
+		if strings.Contains(lowerOutput, pattern) {
+			return false
+		}
+	}
+
+	// Valid if it contains "All previous findings have been addressed" (success case)
+	if strings.Contains(lowerOutput, "all previous findings have been addressed") {
+		return true
+	}
+
+	// Valid if it looks like structured review output (has severity levels or file refs)
+	hasStructure := strings.Contains(lowerOutput, "severity") ||
+		strings.Contains(lowerOutput, "critical") ||
+		strings.Contains(lowerOutput, "high") ||
+		strings.Contains(lowerOutput, "medium") ||
+		strings.Contains(lowerOutput, "low") ||
+		strings.Contains(output, ".go:") ||
+		strings.Contains(output, ".py:")
+
+	return hasStructure
+}
+
+// extractJobIDs extracts job IDs from jobReview slice
+func extractJobIDs(reviews []jobReview) []int64 {
+	ids := make([]int64, len(reviews))
+	for i, jr := range reviews {
+		ids[i] = jr.jobID
+	}
+	return ids
+}
+
 func waitForCompactJob(ctx context.Context, serverAddr string, jobID int64, output io.Writer) (*storage.Review, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	pollInterval := 1 * time.Second
