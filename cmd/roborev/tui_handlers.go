@@ -163,7 +163,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterSelectedIdx = 0
 			m.rebuildFilterFlatList()
 		}
-		return m, nil
+		return m, m.fetchUnloadedBranches()
 	default:
 		if len(msg.Runes) > 0 {
 			for _, r := range msg.Runes {
@@ -174,8 +174,32 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.rebuildFilterFlatList()
 		}
-		return m, nil
+		return m, m.fetchUnloadedBranches()
 	}
+}
+
+// fetchUnloadedBranches triggers branch fetches for repos that
+// haven't loaded branches yet while search text is active. Without
+// this, searching for a branch name only matches already-expanded
+// repos.
+func (m *tuiModel) fetchUnloadedBranches() tea.Cmd {
+	if m.filterSearch == "" {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for i := range m.filterTree {
+		node := &m.filterTree[i]
+		if node.children == nil && !node.loading {
+			node.loading = true
+			cmds = append(cmds, m.fetchBranchesForRepo(
+				node.rootPaths, i,
+			))
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // handleTailKey handles key input in the tail view.

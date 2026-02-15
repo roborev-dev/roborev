@@ -1346,6 +1346,39 @@ func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) 
 	}
 }
 
+func TestTUITreeFilterSearchTriggersLazyBranchLoad(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			// children == nil: branches not loaded yet
+		},
+		{
+			name:      "repo-b",
+			rootPaths: []string{"/path/to/repo-b"},
+			count:     3,
+			children:  []branchFilterItem{{name: "main", count: 3}},
+		},
+	})
+
+	// Type a search character — should trigger branch fetch for repo-a
+	// (which has no children) but not repo-b (already loaded)
+	m2, cmd := pressKey(m, 'f')
+
+	if !m2.filterTree[0].loading {
+		t.Error("Expected repo-a loading=true after search with unloaded branches")
+	}
+	if m2.filterTree[1].loading {
+		t.Error("Expected repo-b loading=false (branches already loaded)")
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranchesForRepo command for unloaded repo")
+	}
+}
+
 func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
