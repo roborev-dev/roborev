@@ -119,6 +119,27 @@ func TestWaitInvalidPositionalArg(t *testing.T) {
 	}
 }
 
+func TestWaitPositionalZeroIsInvalid(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer cleanup()
+
+	chdir(t, repo.Dir)
+
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"0"})
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatal("expected error for positional arg 0")
+	}
+	if !strings.Contains(err.Error(), "not a valid git ref or job ID") {
+		t.Errorf("expected 'not a valid git ref or job ID' error, got: %v", err)
+	}
+}
+
 func TestWaitInvalidSHARef(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")
