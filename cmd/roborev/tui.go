@@ -1894,7 +1894,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
 				rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
 				m.filterTree[msg.repoIdx].loading = false
-				if !msg.expandOnLoad {
+				if !msg.expandOnLoad && m.filterSearch != "" {
 					m.filterTree[msg.repoIdx].fetchFailed = true
 				}
 			}

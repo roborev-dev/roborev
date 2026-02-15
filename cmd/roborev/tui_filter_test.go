@@ -1978,6 +1978,42 @@ func TestTUIFetchFailedResetsOnSearchClear(t *testing.T) {
 	}
 }
 
+func TestTUILateErrorAfterSearchClear(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/repo-a"},
+			count:     5,
+			loading:   true, // search-triggered fetch in-flight
+		},
+	})
+
+	// User clears search while fetch is still in-flight
+	m.filterSearch = ""
+	m.rebuildFilterFlatList()
+
+	// Late error arrives after search was cleared
+	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/path/repo-a"},
+		err:       errors.New("timeout"),
+	})
+
+	// fetchFailed should NOT be set — search was already cleared
+	if m2.filterTree[0].fetchFailed {
+		t.Error("Late error after search clear should not set fetchFailed")
+	}
+
+	// Next search session should auto-fetch the repo
+	m2.filterSearch = "test"
+	cmd := m2.fetchUnloadedBranches()
+	if cmd == nil {
+		t.Error("Expected fetch cmd — repo should be eligible")
+	}
+}
+
 func TestTUIRemoveFilterFromStack(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
