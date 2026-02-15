@@ -2942,6 +2942,10 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Expected commands after reconnect")
 	}
+	// With active search, the repo should be re-queued for fetch
+	if !m2.filterTree[0].loading {
+		t.Error("Expected repo to be loading after reconnect with active search")
+	}
 
 	// Also verify: reconnect with no active search doesn't
 	// trigger branch fetches
