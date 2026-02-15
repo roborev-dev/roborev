@@ -2879,3 +2879,89 @@ func TestTUISearchBeforeReposLoad(t *testing.T) {
 		t.Error("Expected at least one repo to be loading after repos load with active search")
 	}
 }
+
+// TestTUISearchEditClearsFetchFailed verifies that changing search
+// text (non-empty → non-empty) clears fetchFailed so previously
+// failed repos are retried with the new search.
+func TestTUISearchEditClearsFetchFailed(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
+		{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
+	})
+
+	// Type "a" — triggers search fetches
+	m, _ = pressKey(m, 'a')
+	seqA := m.filterSearchSeq
+
+	// Simulate: repo-a fetch fails in this search session
+	m, _ = updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/a"},
+		err:       fmt.Errorf("timeout"),
+		searchSeq: seqA,
+	})
+	if !m.filterTree[0].fetchFailed {
+		t.Fatal("Expected fetchFailed=true after error in current session")
+	}
+
+	// User continues typing: "a" → "ab"
+	m, cmd := pressKey(m, 'b')
+
+	// fetchFailed should be cleared by the search edit
+	if m.filterTree[0].fetchFailed {
+		t.Error("fetchFailed should be cleared when search text changes")
+	}
+	// A new fetch should be dispatched for the previously failed repo
+	if cmd == nil {
+		t.Error("Expected fetch cmd for previously-failed repo after search edit")
+	}
+}
+
+// TestTUIReconnectClearsFetchFailed verifies that a successful
+// daemon reconnect clears fetchFailed and retriggers branch
+// fetches when search is active.
+func TestTUIReconnectClearsFetchFailed(t *testing.T) {
+	m := newTuiModel("http://localhost:7373")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
+	})
+	// Simulate a failed search fetch
+	m.filterSearch = "test"
+	m.filterTree[0].fetchFailed = true
+
+	m2, cmd := updateModel(t, m, tuiReconnectMsg{
+		newAddr: "http://localhost:7374",
+	})
+
+	if m2.filterTree[0].fetchFailed {
+		t.Error("fetchFailed should be cleared on reconnect")
+	}
+	if cmd == nil {
+		t.Fatal("Expected commands after reconnect")
+	}
+
+	// Also verify: reconnect with no active search doesn't
+	// trigger branch fetches
+	m3 := newTuiModel("http://localhost:7373")
+	m3.currentView = tuiViewFilter
+	setupFilterTree(&m3, []treeFilterNode{
+		{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
+	})
+	m3.filterTree[0].fetchFailed = true
+	// No filterSearch set
+
+	m4, _ := updateModel(t, m3, tuiReconnectMsg{
+		newAddr: "http://localhost:7374",
+	})
+
+	if m4.filterTree[0].fetchFailed {
+		t.Error("fetchFailed should be cleared on reconnect even without search")
+	}
+	// Repo should NOT be loading (no active search to trigger fetch)
+	if m4.filterTree[0].loading {
+		t.Error("Should not trigger branch fetch on reconnect without active search")
+	}
+}

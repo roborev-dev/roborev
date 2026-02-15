@@ -176,6 +176,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			runes := []rune(m.filterSearch)
 			m.filterSearch = string(runes[:len(runes)-1])
 			m.filterSearchSeq++
+			m.clearFetchFailed()
 			m.filterSelectedIdx = 0
 			m.rebuildFilterFlatList()
 		}
@@ -189,9 +190,18 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.filterSearchSeq++
+			m.clearFetchFailed()
 			m.rebuildFilterFlatList()
 		}
 		return m, m.fetchUnloadedBranches()
+	}
+}
+
+// clearFetchFailed resets fetchFailed on all tree nodes so that
+// changed search text retries previously failed repos.
+func (m *tuiModel) clearFetchFailed() {
+	for i := range m.filterTree {
+		m.filterTree[i].fetchFailed = false
 	}
 }
 
@@ -1289,10 +1299,7 @@ func (m tuiModel) handleReconnectMsg(msg tuiReconnectMsg) (tea.Model, tea.Cmd) {
 		if msg.version != "" {
 			m.daemonVersion = msg.version
 		}
-		// Clear fetchFailed so search-triggered loads can retry
-		for i := range m.filterTree {
-			m.filterTree[i].fetchFailed = false
-		}
+		m.clearFetchFailed()
 		m.loadingJobs = true
 		cmds := []tea.Cmd{m.fetchJobs(), m.fetchStatus()}
 		if cmd := m.fetchUnloadedBranches(); cmd != nil {
