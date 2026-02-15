@@ -172,6 +172,10 @@ func verifyAndConsolidate(ctx context.Context, cmd *cobra.Command, repoRoot stri
 		return 0, nil, fmt.Errorf("enqueue verification job: %w", err)
 	}
 
+	if !opts.quiet {
+		cmd.Printf("Enqueued consolidation job %d\n", job.ID)
+	}
+
 	// Wait for completion
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
@@ -443,37 +447,51 @@ func isValidConsolidatedReview(output string) bool {
 		return false
 	}
 
-	// Check for common error patterns
-	errorPatterns := []string{
-		"error:",
-		"failed to",
-		"cannot",
-		"unable to",
-		"exception:",
-		"traceback",
-	}
 	lowerOutput := strings.ToLower(output)
-	for _, pattern := range errorPatterns {
-		if strings.Contains(lowerOutput, pattern) {
-			return false
-		}
-	}
 
 	// Valid if it contains "All previous findings have been addressed" (success case)
 	if strings.Contains(lowerOutput, "all previous findings have been addressed") {
 		return true
 	}
 
-	// Valid if it looks like structured review output (has severity levels or file refs)
-	hasStructure := strings.Contains(lowerOutput, "severity") ||
+	// Check for common error patterns at start of lines (agent failures)
+	// Only check at line start to avoid false positives in review content
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(strings.ToLower(line))
+		if strings.HasPrefix(trimmed, "error:") ||
+			strings.HasPrefix(trimmed, "exception:") ||
+			strings.HasPrefix(trimmed, "traceback") {
+			return false
+		}
+	}
+
+	// Valid if it looks like structured review output
+	// Require both severity indicators AND structural markers for confidence
+	hasSeverity := strings.Contains(lowerOutput, "severity") ||
 		strings.Contains(lowerOutput, "critical") ||
 		strings.Contains(lowerOutput, "high") ||
 		strings.Contains(lowerOutput, "medium") ||
-		strings.Contains(lowerOutput, "low") ||
-		strings.Contains(output, ".go:") ||
-		strings.Contains(output, ".py:")
+		strings.Contains(lowerOutput, "low")
 
-	return hasStructure
+	hasStructure := strings.Contains(output, "##") || // Markdown headers
+		strings.Contains(output, "###") ||
+		strings.Contains(lowerOutput, "verified") ||
+		strings.Contains(lowerOutput, "findings") ||
+		strings.Contains(lowerOutput, "issues")
+
+	// Accept if it has both severity levels and structural elements
+	if hasSeverity && hasStructure {
+		return true
+	}
+
+	// Also accept if it has file references (even without severity markers)
+	hasFileRef := strings.Contains(output, ".go:") ||
+		strings.Contains(output, ".py:") ||
+		strings.Contains(output, ".js:") ||
+		strings.Contains(output, ".ts:")
+
+	return hasFileRef && hasStructure
 }
 
 // extractJobIDs extracts job IDs from jobReview slice
