@@ -1907,6 +1907,77 @@ func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
 	}
 }
 
+func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/repo-a"},
+			count:     5,
+			loading:   true,
+		},
+	})
+
+	// Simulate manual expand failure (expandOnLoad=true)
+	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:      0,
+		rootPaths:    []string{"/path/repo-a"},
+		err:          errors.New("connection refused"),
+		expandOnLoad: true,
+	})
+
+	// Manual failure should NOT set fetchFailed
+	if m2.filterTree[0].fetchFailed {
+		t.Error("Manual expand failure should not set fetchFailed")
+	}
+
+	// Start search — repo should be eligible for auto-fetch
+	m2.filterSearch = "test"
+	cmd := m2.fetchUnloadedBranches()
+	if cmd == nil {
+		t.Error("Expected fetch cmd — repo should be eligible after manual failure")
+	}
+	if !m2.filterTree[0].loading {
+		t.Error("Expected loading=true from search auto-fetch")
+	}
+}
+
+func TestTUIFetchFailedResetsOnSearchClear(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/repo-a"},
+			count:     5,
+		},
+	})
+	// Set fetchFailed after setup (setup clears it via rebuild)
+	m.filterTree[0].fetchFailed = true
+
+	// With search active, fetchFailed blocks auto-fetch
+	m.filterSearch = "test"
+	cmd := m.fetchUnloadedBranches()
+	if cmd != nil {
+		t.Error("Expected nil cmd — fetchFailed should block")
+	}
+
+	// Clear search → fetchFailed should reset
+	m.filterSearch = ""
+	m.rebuildFilterFlatList()
+	if m.filterTree[0].fetchFailed {
+		t.Error("Expected fetchFailed=false after search cleared")
+	}
+
+	// New search session — repo should be eligible
+	m.filterSearch = "test"
+	cmd2 := m.fetchUnloadedBranches()
+	if cmd2 == nil {
+		t.Error("Expected fetch cmd in new search session")
+	}
+}
+
 func TestTUIRemoveFilterFromStack(t *testing.T) {
 	m := newTuiModel("http://localhost")
 

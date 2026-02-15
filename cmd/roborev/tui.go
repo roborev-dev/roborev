@@ -781,9 +781,10 @@ func (m tuiModel) fetchBranchesForRepo(
 
 	errMsg := func(err error) tuiRepoBranchesMsg {
 		return tuiRepoBranchesMsg{
-			repoIdx:   repoIdx,
-			rootPaths: rootPaths,
-			err:       err,
+			repoIdx:      repoIdx,
+			rootPaths:    rootPaths,
+			err:          err,
+			expandOnLoad: expand,
 		}
 	}
 
@@ -1391,10 +1392,11 @@ func (m *tuiModel) rebuildFilterFlatList() {
 	var flat []flatFilterEntry
 	search := strings.ToLower(m.filterSearch)
 
-	// Reset search-collapse state when not searching
+	// Reset search state when not searching
 	if search == "" {
 		for i := range m.filterTree {
 			m.filterTree[i].userCollapsed = false
+			m.filterTree[i].fetchFailed = false
 		}
 	}
 
@@ -1885,11 +1887,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 			m.filterBranchMode = false
-			// Clear loading and mark failed if the tree entry is still valid
+			// Clear loading if the tree entry is still valid.
+			// Only mark fetchFailed for search-triggered loads to
+			// prevent retry loops; manual failures should not block
+			// later search auto-loading.
 			if msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
 				rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
 				m.filterTree[msg.repoIdx].loading = false
-				m.filterTree[msg.repoIdx].fetchFailed = true
+				if !msg.expandOnLoad {
+					m.filterTree[msg.repoIdx].fetchFailed = true
+				}
 			}
 			if cmd := m.handleConnectionError(msg.err); cmd != nil {
 				return m, cmd
@@ -1901,6 +1908,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (the tree may have been rebuilt while the fetch was in-flight)
 		if m.currentView == tuiViewFilter && msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
 			rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
+			m.consecutiveErrors = 0
 			m.filterTree[msg.repoIdx].loading = false
 			m.filterTree[msg.repoIdx].children = msg.branches
 			if msg.expandOnLoad {
