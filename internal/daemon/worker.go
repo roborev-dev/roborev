@@ -388,6 +388,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	log.Printf("[%s] Completed job %d", workerID, job.ID)
 
+	// For compact jobs, automatically mark source jobs as addressed
+	if job.JobType == "compact" {
+		if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
+			log.Printf("[%s] Warning: failed to mark compact source jobs: %v", workerID, err)
+		}
+	}
+
 	// Broadcast completion event
 	verdict := storage.ParseVerdict(output)
 	wp.broadcaster.Broadcast(Event{
@@ -441,4 +448,47 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		Agent:    agentName,
 		Error:    errorMsg,
 	})
+}
+
+// markCompactSourceJobs marks all source jobs as addressed for a completed compact job
+func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error {
+	// Read metadata file to get source job IDs
+	metadata, err := ReadCompactMetadata(jobID)
+	if err != nil {
+		// Metadata file not found or invalid - likely an old compact job from before this feature
+		// or the file was already deleted. Log and continue gracefully.
+		log.Printf("[%s] No compact metadata found for job %d (may be legacy job): %v", workerID, jobID, err)
+		return nil
+	}
+
+	if len(metadata.SourceJobIDs) == 0 {
+		log.Printf("[%s] No source jobs to mark for compact job %d", workerID, jobID)
+		return nil
+	}
+
+	log.Printf("[%s] Marking %d source jobs as addressed for compact job %d", workerID, len(metadata.SourceJobIDs), jobID)
+
+	// Mark each source job as addressed
+	successCount := 0
+	for _, srcJobID := range metadata.SourceJobIDs {
+		if err := wp.db.MarkReviewAddressedByJobID(srcJobID, true); err != nil {
+			log.Printf("[%s] Failed to mark job %d as addressed: %v", workerID, srcJobID, err)
+		} else {
+			log.Printf("[%s] Marked job %d as addressed", workerID, srcJobID)
+			successCount++
+		}
+	}
+
+	// Clean up metadata file after processing (best effort)
+	if err := DeleteCompactMetadata(jobID); err != nil {
+		log.Printf("[%s] Failed to delete compact metadata for job %d: %v", workerID, jobID, err)
+	} else {
+		log.Printf("[%s] Cleaned up compact metadata for job %d", workerID, jobID)
+	}
+
+	if successCount > 0 {
+		log.Printf("[%s] Successfully marked %d/%d source jobs as addressed", workerID, successCount, len(metadata.SourceJobIDs))
+	}
+
+	return nil
 }

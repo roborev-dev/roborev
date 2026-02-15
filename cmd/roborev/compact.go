@@ -333,6 +333,14 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		return err
 	}
 
+	// Store source job IDs for automatic marking when job completes
+	if err := writeCompactMetadata(consolidatedJobID, successfulJobIDs); err != nil {
+		// Log warning but don't fail - the job is already enqueued
+		if !opts.quiet {
+			cmd.Printf("Warning: failed to write compact metadata: %v\n", err)
+		}
+	}
+
 	if !opts.quiet {
 		cmd.Printf("\nEnqueued consolidation job %d\n", consolidatedJobID)
 	}
@@ -551,4 +559,39 @@ func extractJobIDs(reviews []jobReview) []int64 {
 		ids[i] = jr.jobID
 	}
 	return ids
+}
+
+// writeCompactMetadata writes source job IDs to a metadata file for later processing
+func writeCompactMetadata(consolidatedJobID int64, sourceJobIDs []int64) error {
+	metadata := struct {
+		SourceJobIDs []int64 `json:"source_job_ids"`
+	}{
+		SourceJobIDs: sourceJobIDs,
+	}
+
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
+
+	dataDir := getDataDir()
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
+
+	path := fmt.Sprintf("%s/compact-%d.json", dataDir, consolidatedJobID)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("write metadata file: %w", err)
+	}
+
+	return nil
+}
+
+// getDataDir returns the roborev data directory path
+func getDataDir() string {
+	if dir := os.Getenv("ROBOREV_DATA_DIR"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return fmt.Sprintf("%s/.roborev", home)
 }
