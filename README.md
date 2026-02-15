@@ -116,6 +116,20 @@ Available types: `test-fixtures`, `duplication`, `refactor`, `complexity`,
 Analysis jobs appear in the review queue. Use `roborev fix <id>` to
 apply findings later, or pass `--fix` to apply immediately.
 
+## Review Verification
+
+When committing frequently, reviews can accumulate unaddressed findings - some valid, some false positives due to limited context. `compact` automates verification and consolidation:
+
+```bash
+roborev compact                      # Verify and consolidate findings (background)
+roborev compact --wait               # Wait for completion
+roborev compact --branch main        # Compact jobs on main branch
+```
+
+`compact` uses an agent to verify each finding against the current codebase with wide code search, filters out false positives and already-fixed issues, consolidates related findings across multiple reviews, and creates a single consolidated review. Original jobs are marked as addressed when consolidation succeeds.
+
+This adds a quality layer between `review` and `fix`, reducing noise and making human review easier. Check progress with `roborev status` or `roborev tui`.
+
 ## Commands
 
 | Command | Description |
@@ -129,6 +143,7 @@ apply findings later, or pass `--fix` to apply immediately.
 | `roborev fix` | Fix unaddressed reviews (or specify job IDs) |
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
+| `roborev compact` | Verify and consolidate unaddressed review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev address <id>` | Mark review as addressed |
