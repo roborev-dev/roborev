@@ -1047,7 +1047,7 @@ Examples:
 
 			// If --wait, poll until job completes and show result
 			if wait {
-				err := waitForJob(cmd, serverAddr, job.ID, quiet, 0)
+				err := waitForJob(cmd, serverAddr, job.ID, quiet)
 				// Only silence Cobra's error output for exitError (verdict-based exit codes)
 				// Keep error output for actual failures (network errors, job not found, etc.)
 				if _, isExitErr := err.(*exitError); isExitErr {
@@ -1152,9 +1152,8 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 }
 
 // waitForJob polls until a job completes and displays the review
-// If timeout > 0, returns exitError{1} when the deadline is exceeded
-// Uses the provided serverAddr to ensure we poll the same daemon that received the job
-func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, timeout time.Duration) error {
+// Uses the provided serverAddr to ensure we poll the same daemon that received the job.
+func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	if !quiet {
@@ -1167,18 +1166,7 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, 
 	unknownStatusCount := 0
 	const maxUnknownRetries = 10 // Give up after 10 consecutive unknown statuses
 
-	var deadline time.Time
-	if timeout > 0 {
-		deadline = time.Now().Add(timeout)
-	}
-
 	for {
-		if timeout > 0 && time.Now().After(deadline) {
-			if !quiet {
-				cmd.Printf(" timed out after %s!\n", timeout)
-			}
-			return &exitError{code: 1}
-		}
 		resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID))
 		if err != nil {
 			return fmt.Errorf("failed to check job status: %w", err)
@@ -1311,7 +1299,6 @@ func waitCmd() *cobra.Command {
 		shaFlag    string
 		forceJobID bool
 		quiet      bool
-		timeout    int
 	)
 
 	cmd := &cobra.Command{
@@ -1329,15 +1316,14 @@ If no argument is given, defaults to HEAD.
 
 Exit codes:
   0  Review completed with verdict PASS
-  1  Any failure (FAIL verdict, timeout, no job found, job error)
+  1  Any failure (FAIL verdict, no job found, job error)
 
 Examples:
   roborev wait                   # Wait for most recent job for HEAD
   roborev wait abc123            # Wait for most recent job for commit
   roborev wait 42                # Job ID (if "42" is not a valid git ref)
   roborev wait --job 42          # Force as job ID
-  roborev wait --sha HEAD~1      # Wait for job matching HEAD~1
-  roborev wait --timeout 60      # Give up after 60 seconds`,
+  roborev wait --sha HEAD~1      # Wait for job matching HEAD~1`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// In quiet mode, suppress cobra's error output
@@ -1410,8 +1396,7 @@ Examples:
 				jobID = id
 			}
 
-			timeoutDur := time.Duration(timeout) * time.Second
-			err := waitForJob(cmd, addr, jobID, quiet, timeoutDur)
+			err := waitForJob(cmd, addr, jobID, quiet)
 			if err != nil {
 				// Map ErrJobNotFound to exit 1 with a user-facing message
 				// (waitForJob returns a plain error to stay compatible with reviewCmd)
@@ -1435,7 +1420,6 @@ Examples:
 	cmd.Flags().StringVar(&shaFlag, "sha", "", "git ref to find the most recent job for")
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
-	cmd.Flags().IntVar(&timeout, "timeout", 0, "max wait time in seconds (0 = no timeout)")
 
 	return cmd
 }

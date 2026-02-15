@@ -178,26 +178,6 @@ func TestWaitExitsWhenJobIDNotFound(t *testing.T) {
 	requireExitCode(t, err, 1)
 }
 
-func TestWaitExitsOnTimeout(t *testing.T) {
-	setupFastPolling(t)
-
-	repo := newTestGitRepo(t)
-	sha := repo.CommitFile("file.txt", "content", "initial commit")
-
-	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "running"}
-	_, cleanup := setupMockDaemon(t, waitMockHandler(job, nil))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	// --timeout 1 is the minimum testable value (0 means no timeout)
-	cmd.SetArgs([]string{"--sha", "HEAD", "--timeout", "1", "--quiet"})
-	err := cmd.Execute()
-
-	requireExitCode(t, err, 1)
-}
-
 func TestWaitPassingReview(t *testing.T) {
 	setupFastPolling(t)
 
