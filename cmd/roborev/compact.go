@@ -22,10 +22,10 @@ func compactCmd() *cobra.Command {
 		model       string
 		reasoning   string
 		quiet       bool
-		unaddressed bool
 		allBranches bool
 		branch      string
 		dryRun      bool
+		limit       int
 	)
 
 	cmd := &cobra.Command{
@@ -40,11 +40,15 @@ and creates a new consolidated review job. Original jobs are marked as addressed
 This adds a quality layer between 'review' and 'fix' to reduce false positives
 and consolidate findings from multiple reviews.
 
+Note: This operation is not atomic. Avoid running multiple compact commands
+concurrently on the same branch to prevent inconsistent state.
+
 Examples:
   roborev compact                              # Compact unaddressed jobs on current branch
   roborev compact --branch main                # Compact jobs on main branch
   roborev compact --all-branches               # Compact jobs across all branches
   roborev compact --dry-run                    # Show what would be done
+  roborev compact --limit 10                   # Process at most 10 jobs
   roborev compact --agent claude-code          # Use specific agent for verification
   roborev compact --reasoning thorough         # Use thorough reasoning level
 `,
@@ -59,10 +63,10 @@ Examples:
 				model:       model,
 				reasoning:   reasoning,
 				quiet:       quiet,
-				unaddressed: unaddressed,
 				allBranches: allBranches,
 				branch:      branch,
 				dryRun:      dryRun,
+				limit:       limit,
 			})
 		},
 	}
@@ -71,10 +75,10 @@ Examples:
 	cmd.Flags().StringVar(&model, "model", "", "model to use")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level (fast/standard/thorough)")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress progress output")
-	cmd.Flags().BoolVar(&unaddressed, "unaddressed", true, "process unaddressed jobs")
 	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include all branches")
 	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be done without executing")
+	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of jobs to compact at once")
 
 	return cmd
 }
@@ -84,10 +88,10 @@ type compactOptions struct {
 	model       string
 	reasoning   string
 	quiet       bool
-	unaddressed bool
 	allBranches bool
 	branch      string
 	dryRun      bool
+	limit       int
 }
 
 type jobReview struct {
@@ -96,13 +100,138 @@ type jobReview struct {
 	review *storage.Review
 }
 
+// fetchJobReviews fetches job and review data for all job IDs.
+// Returns successfully fetched entries and list of IDs that were processed.
+func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra.Command) ([]jobReview, []int64, error) {
+	var jobReviews []jobReview
+	var successfulJobIDs []int64
+
+	for _, jobID := range jobIDs {
+		job, err := fetchJob(ctx, serverAddr, jobID)
+		if err != nil {
+			if !quiet {
+				cmd.Printf("\nWarning: failed to fetch job %d: %v\n", jobID, err)
+			}
+			continue
+		}
+
+		review, err := fetchReview(ctx, serverAddr, jobID)
+		if err != nil {
+			if !quiet {
+				cmd.Printf("\nWarning: failed to fetch review for job %d: %v\n", jobID, err)
+			}
+			continue
+		}
+
+		successfulJobIDs = append(successfulJobIDs, jobID)
+		jobReviews = append(jobReviews, jobReview{
+			jobID:  jobID,
+			job:    job,
+			review: review,
+		})
+	}
+
+	if len(jobReviews) == 0 {
+		return nil, nil, fmt.Errorf("failed to fetch any review outputs")
+	}
+
+	return jobReviews, successfulJobIDs, nil
+}
+
+// verifyAndConsolidate sends reviews to agent for verification and consolidation.
+// Returns the consolidated job ID and validated review output.
+func verifyAndConsolidate(ctx context.Context, cmd *cobra.Command, repoRoot string, jobReviews []jobReview, branchFilter string, opts compactOptions) (int64, *storage.Review, error) {
+	// Build verification prompt
+	prompt := buildCompactPrompt(jobReviews, branchFilter)
+
+	// Resolve agent
+	agent, err := resolveFixAgent(repoRoot, fixOptions{
+		agentName: opts.agentName,
+		model:     opts.model,
+		reasoning: opts.reasoning,
+	})
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if !opts.quiet {
+		cmd.Printf("\nRunning verification agent (%s) to check findings against current codebase...\n\n", agent.Name())
+	}
+
+	// Enqueue consolidated task job
+	timestamp := time.Now().Format("20060102-150405")
+	label := fmt.Sprintf("compact-%s-%s", branchFilter, timestamp)
+	if branchFilter == "" {
+		label = fmt.Sprintf("compact-all-%s", timestamp)
+	}
+
+	outputPrefix := buildCompactOutputPrefix(len(jobReviews), branchFilter, extractJobIDs(jobReviews))
+
+	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, opts)
+	if err != nil {
+		return 0, nil, fmt.Errorf("enqueue verification job: %w", err)
+	}
+
+	// Wait for completion
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	var output io.Writer
+	if !opts.quiet {
+		output = cmd.OutOrStdout()
+	}
+
+	_, err = waitForJobCompletion(ctx, serverAddr, job.ID, output)
+	if err != nil {
+		return 0, nil, fmt.Errorf("verification failed: %w", err)
+	}
+
+	// Fetch and validate final output
+	review, err := fetchReview(ctx, serverAddr, job.ID)
+	if err != nil {
+		return 0, nil, fmt.Errorf("fetch final review: %w", err)
+	}
+
+	if !isValidConsolidatedReview(review.Output) {
+		return 0, nil, fmt.Errorf("agent produced invalid output (no findings or error message)")
+	}
+
+	return job.ID, review, nil
+}
+
+// markJobsAsAddressed marks all jobs in the list as addressed.
+// Logs warnings for failures but continues processing remaining jobs.
+func markJobsAsAddressed(jobIDs []int64, quiet bool, cmd *cobra.Command) {
+	if !quiet {
+		cmd.Print("\nMarking original jobs as addressed... ")
+	}
+
+	for _, jobID := range jobIDs {
+		if err := markJobAddressed(serverAddr, jobID); err != nil {
+			if !quiet {
+				cmd.Printf("\nWarning: failed to mark job %d as addressed: %v\n", jobID, err)
+			}
+		}
+	}
+
+	if !quiet {
+		cmd.Println("done")
+	}
+}
+
+// runCompact verifies and consolidates unaddressed review findings.
+//
+// Known limitation: This is not an atomic operation. If another process marks jobs
+// as addressed or modifies them between the initial query and the final marking step,
+// there could be inconsistent state. This is acceptable since compact is typically
+// run manually by a single user. For concurrent operations, users should coordinate
+// to avoid running multiple compact commands simultaneously on the same branch.
 func runCompact(cmd *cobra.Command, opts compactOptions) error {
-	// 1. Ensure daemon is running
+	// Setup
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
 
-	// 2. Get repo root
 	workDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
@@ -112,13 +241,12 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		repoRoot = root
 	}
 
-	// 3. Determine branch filter
 	branchFilter := opts.branch
 	if !opts.allBranches && branchFilter == "" {
 		branchFilter = git.GetCurrentBranch(repoRoot)
 	}
 
-	// 4. Query unaddressed jobs
+	// Query and limit jobs
 	jobIDs, err := queryUnaddressedJobs(repoRoot, branchFilter)
 	if err != nil {
 		return err
@@ -131,7 +259,14 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		return nil
 	}
 
-	if !opts.quiet {
+	// Apply limit
+	if opts.limit > 0 && len(jobIDs) > opts.limit {
+		if !opts.quiet {
+			cmd.Printf("Found %d unaddressed jobs, limiting to %d (use --limit to adjust)\n\n",
+				len(jobIDs), opts.limit)
+		}
+		jobIDs = jobIDs[:opts.limit]
+	} else if !opts.quiet {
 		branchMsg := ""
 		if branchFilter != "" {
 			branchMsg = fmt.Sprintf(" on branch %s", branchFilter)
@@ -139,7 +274,12 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		cmd.Printf("Found %d unaddressed job(s)%s: %v\n\n", len(jobIDs), branchMsg, jobIDs)
 	}
 
-	// 5. Dry-run: just show what would be done
+	// Warn about very large limits
+	if opts.limit > 50 && !opts.quiet {
+		cmd.Printf("Warning: --limit=%d may create a very large prompt\n\n", opts.limit)
+	}
+
+	// Dry-run early exit
 	if opts.dryRun {
 		cmd.Println("Would verify and consolidate these reviews")
 		cmd.Println("Would create 1 consolidated review job")
@@ -153,113 +293,38 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		ctx = context.Background()
 	}
 
-	// 6. Fetch review outputs
+	// Fetch review outputs
 	if !opts.quiet {
 		cmd.Print("Fetching review outputs... ")
 	}
 
-	var jobReviews []jobReview
-	for _, jobID := range jobIDs {
-		job, err := fetchJob(ctx, serverAddr, jobID)
-		if err != nil {
-			if !opts.quiet {
-				cmd.Printf("\nWarning: failed to fetch job %d: %v\n", jobID, err)
-			}
-			continue
-		}
-		review, err := fetchReview(ctx, serverAddr, jobID)
-		if err != nil {
-			if !opts.quiet {
-				cmd.Printf("\nWarning: failed to fetch review for job %d: %v\n", jobID, err)
-			}
-			continue
-		}
-		jobReviews = append(jobReviews, jobReview{
-			jobID:  jobID,
-			job:    job,
-			review: review,
-		})
-	}
-
-	if !opts.quiet {
-		cmd.Println("done")
-	}
-
-	if len(jobReviews) == 0 {
-		return fmt.Errorf("failed to fetch any review outputs")
-	}
-
-	// 7. Build verification prompt
-	prompt := buildCompactPrompt(jobReviews, branchFilter)
-
-	// 8. Resolve agent
-	agent, err := resolveFixAgent(repoRoot, fixOptions{
-		agentName: opts.agentName,
-		model:     opts.model,
-		reasoning: opts.reasoning,
-	})
+	jobReviews, successfulJobIDs, err := fetchJobReviews(ctx, jobIDs, opts.quiet, cmd)
 	if err != nil {
 		return err
 	}
 
 	if !opts.quiet {
-		cmd.Printf("\nRunning verification agent (%s) to check findings against current codebase...\n\n", agent.Name())
+		cmd.Println("done")
 	}
 
-	// 9. Enqueue consolidated task job
-	timestamp := time.Now().Format("20060102-150405")
-	label := fmt.Sprintf("compact-%s-%s", branchFilter, timestamp)
-	if branchFilter == "" {
-		label = fmt.Sprintf("compact-all-%s", timestamp)
-	}
-
-	outputPrefix := buildCompactOutputPrefix(len(jobIDs), branchFilter, jobIDs)
-
-	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, opts)
+	// Verify and consolidate
+	consolidatedJobID, _, err := verifyAndConsolidate(ctx, cmd, repoRoot, jobReviews, branchFilter, opts)
 	if err != nil {
-		return fmt.Errorf("enqueue verification job: %w", err)
-	}
-
-	// 10. Wait for completion
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-
-	var output io.Writer
-	if !opts.quiet {
-		output = cmd.OutOrStdout()
-	}
-
-	_, err = waitForCompactJob(ctx, serverAddr, job.ID, output)
-	if err != nil {
-		return fmt.Errorf("verification failed: %w", err)
+		return err
 	}
 
 	if !opts.quiet {
 		cmd.Println("\nVerification complete!")
-		cmd.Printf("\nConsolidated review created: job %d\n", job.ID)
+		cmd.Printf("\nConsolidated review created: job %d\n", consolidatedJobID)
 	}
 
-	// 11. Mark original jobs as addressed
-	if !opts.quiet {
-		cmd.Print("\nMarking original jobs as addressed... ")
-	}
+	// Mark jobs as addressed (only those successfully processed)
+	markJobsAsAddressed(successfulJobIDs, opts.quiet, cmd)
 
-	for _, jobID := range jobIDs {
-		if err := markJobAddressed(serverAddr, jobID); err != nil {
-			if !opts.quiet {
-				cmd.Printf("\nWarning: failed to mark job %d as addressed: %v\n", jobID, err)
-			}
-		}
-	}
-
-	if !opts.quiet {
-		cmd.Println("done")
-	}
-
-	// 12. Show next steps
+	// Show next steps
 	if !opts.quiet {
 		cmd.Println("\nView with: roborev tui")
-		cmd.Printf("Fix with: roborev fix %d\n", job.ID)
+		cmd.Printf("Fix with: roborev fix %d\n", consolidatedJobID)
 	}
 
 	return nil
@@ -418,117 +483,4 @@ func extractJobIDs(reviews []jobReview) []int64 {
 		ids[i] = jr.jobID
 	}
 	return ids
-}
-
-func waitForCompactJob(ctx context.Context, serverAddr string, jobID int64, output io.Writer) (*storage.Review, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	pollInterval := 1 * time.Second
-	maxInterval := 5 * time.Second
-	lastOutputLen := 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(pollInterval):
-		}
-
-		// Check job status
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/jobs?id=%d", serverAddr, jobID), nil)
-		if err != nil {
-			return nil, fmt.Errorf("create request: %w", err)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			continue // Keep polling
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			continue
-		}
-
-		var jobsResp struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-			resp.Body.Close()
-			continue
-		}
-		resp.Body.Close()
-
-		if len(jobsResp.Jobs) == 0 {
-			return nil, fmt.Errorf("job %d not found", jobID)
-		}
-
-		job := jobsResp.Jobs[0]
-
-		// Fetch partial review output for streaming progress
-		if output != nil && job.Status == storage.JobStatusRunning {
-			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
-			if err == nil {
-				reviewResp, err := client.Do(reviewReq)
-				if err == nil {
-					if reviewResp.StatusCode == http.StatusOK {
-						var review storage.Review
-						if json.NewDecoder(reviewResp.Body).Decode(&review) == nil {
-							newOutput := review.Output
-							if len(newOutput) > lastOutputLen {
-								fmt.Fprint(output, newOutput[lastOutputLen:])
-								lastOutputLen = len(newOutput)
-							}
-						}
-					}
-					reviewResp.Body.Close()
-				}
-			}
-		}
-
-		switch job.Status {
-		case storage.JobStatusDone:
-			// Fetch the final review
-			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
-			if err != nil {
-				return nil, fmt.Errorf("create review request: %w", err)
-			}
-
-			reviewResp, err := client.Do(reviewReq)
-			if err != nil {
-				return nil, fmt.Errorf("fetch review: %w", err)
-			}
-			defer reviewResp.Body.Close()
-
-			if reviewResp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(reviewResp.Body)
-				return nil, fmt.Errorf("fetch review (%d): %s", reviewResp.StatusCode, body)
-			}
-
-			var review storage.Review
-			if err := json.NewDecoder(reviewResp.Body).Decode(&review); err != nil {
-				return nil, fmt.Errorf("parse review: %w", err)
-			}
-
-			// Print any remaining output
-			if output != nil && len(review.Output) > lastOutputLen {
-				fmt.Fprint(output, review.Output[lastOutputLen:])
-			}
-
-			return &review, nil
-
-		case storage.JobStatusFailed:
-			return nil, fmt.Errorf("job failed: %s", job.Error)
-
-		case storage.JobStatusCanceled:
-			return nil, fmt.Errorf("job was canceled")
-		}
-
-		// Increase poll interval over time
-		if pollInterval < maxInterval {
-			pollInterval = pollInterval * 3 / 2
-			if pollInterval > maxInterval {
-				pollInterval = maxInterval
-			}
-		}
-	}
 }
