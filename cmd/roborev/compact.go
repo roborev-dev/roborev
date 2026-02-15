@@ -106,11 +106,15 @@ func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra
 	var jobReviews []jobReview
 	var successfulJobIDs []int64
 
-	for _, jobID := range jobIDs {
+	for i, jobID := range jobIDs {
+		if !quiet {
+			cmd.Printf("  [%d/%d] Fetching job %d... ", i+1, len(jobIDs), jobID)
+		}
+
 		job, err := fetchJob(ctx, serverAddr, jobID)
 		if err != nil {
 			if !quiet {
-				cmd.Printf("\nWarning: failed to fetch job %d: %v\n", jobID, err)
+				cmd.Printf("failed: %v\n", err)
 			}
 			continue
 		}
@@ -118,9 +122,13 @@ func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra
 		review, err := fetchReview(ctx, serverAddr, jobID)
 		if err != nil {
 			if !quiet {
-				cmd.Printf("\nWarning: failed to fetch review for job %d: %v\n", jobID, err)
+				cmd.Printf("failed: %v\n", err)
 			}
 			continue
+		}
+
+		if !quiet {
+			cmd.Printf("done\n")
 		}
 
 		successfulJobIDs = append(successfulJobIDs, jobID)
@@ -207,19 +215,21 @@ func verifyAndConsolidate(ctx context.Context, cmd *cobra.Command, repoRoot stri
 // Logs warnings for failures but continues processing remaining jobs.
 func markJobsAsAddressed(jobIDs []int64, quiet bool, cmd *cobra.Command) {
 	if !quiet {
-		cmd.Print("\nMarking original jobs as addressed... ")
+		cmd.Println("\nMarking original jobs as addressed:")
 	}
 
-	for _, jobID := range jobIDs {
+	for i, jobID := range jobIDs {
+		if !quiet {
+			cmd.Printf("  [%d/%d] Marking job %d... ", i+1, len(jobIDs), jobID)
+		}
+
 		if err := markJobAddressed(serverAddr, jobID); err != nil {
 			if !quiet {
-				cmd.Printf("\nWarning: failed to mark job %d as addressed: %v\n", jobID, err)
+				cmd.Printf("failed: %v\n", err)
 			}
+		} else if !quiet {
+			cmd.Printf("done\n")
 		}
-	}
-
-	if !quiet {
-		cmd.Println("done")
 	}
 }
 
@@ -299,16 +309,12 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 
 	// Fetch review outputs
 	if !opts.quiet {
-		cmd.Print("Fetching review outputs... ")
+		cmd.Println("Fetching review outputs:")
 	}
 
 	jobReviews, successfulJobIDs, err := fetchJobReviews(ctx, jobIDs, opts.quiet, cmd)
 	if err != nil {
 		return err
-	}
-
-	if !opts.quiet {
-		cmd.Println("done")
 	}
 
 	// Verify and consolidate
