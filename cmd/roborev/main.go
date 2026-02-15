@@ -1462,7 +1462,7 @@ func resolveGitContext(ref string) (sha, repoRoot string, resolved bool) {
 }
 
 // lookupJobByRef queries the daemon for the most recent job matching the given
-// SHA, optionally scoped to a repo root. Returns exitError{1} if no job is found.
+// SHA, optionally scoped to a repo root. Returns ErrJobNotFound if no job is found.
 func lookupJobByRef(addr, sha, repoRoot string) (int64, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -1489,7 +1489,7 @@ func lookupJobByRef(addr, sha, repoRoot string) (int64, error) {
 	}
 
 	if len(result.Jobs) == 0 {
-		return 0, &exitError{code: 1}
+		return 0, fmt.Errorf("%w: %s", ErrJobNotFound, sha)
 	}
 
 	return result.Jobs[0].ID, nil
@@ -1497,21 +1497,22 @@ func lookupJobByRef(addr, sha, repoRoot string) (int64, error) {
 
 // lookupJobBySHA resolves a git ref to a SHA and finds the most recent job for it.
 // Scopes the query to the current repo to avoid cross-repo mismatch.
-// Returns exitError{1} if no job is found.
+// Returns ErrJobNotFound if no job is found.
 func lookupJobBySHA(addr, ref string) (int64, error) {
 	sha, repoRoot, _ := resolveGitContext(ref)
 	return lookupJobByRef(addr, sha, repoRoot)
 }
 
 // handleWaitLookupErr handles errors from lookupJobByRef in the wait command.
-// For exitError (not found), prints a user-facing message when not quiet.
+// For ErrJobNotFound, prints a user-facing message when not quiet and returns exitError{1}.
 func handleWaitLookupErr(cmd *cobra.Command, err error, ref string, quiet bool) error {
-	if _, ok := err.(*exitError); ok {
+	if errors.Is(err, ErrJobNotFound) {
 		if !quiet {
 			cmd.Printf("No job found for %s\n", ref)
 		}
 		cmd.SilenceErrors = true
 		cmd.SilenceUsage = true
+		return &exitError{code: 1}
 	}
 	return err
 }
