@@ -283,8 +283,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Build the prompt (or use pre-stored prompt for task jobs)
 	var reviewPrompt string
 	var err error
-	if job.IsTaskJob() && job.Prompt != "" {
-		// Task job (run, analyze, custom) - prepend agent-specific preamble if available
+	if job.Prompt != "" {
+		// Job with custom prompt (task, compact, etc.) - prepend agent-specific preamble if available
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
 		if preamble != "" {
 			reviewPrompt = preamble + "\n" + job.Prompt
