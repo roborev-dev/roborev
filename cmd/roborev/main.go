@@ -1364,7 +1364,7 @@ Examples:
 				if forceJobID {
 					// --job flag: treat as job ID directly
 					id, err := strconv.ParseInt(arg, 10, 64)
-					if err != nil {
+					if err != nil || id <= 0 {
 						return fmt.Errorf("invalid job ID: %s", arg)
 					}
 					jobID = id
@@ -1499,7 +1499,10 @@ func lookupJobByRef(addr, sha, repoRoot string) (int64, error) {
 // Scopes the query to the current repo to avoid cross-repo mismatch.
 // Returns ErrJobNotFound if no job is found.
 func lookupJobBySHA(addr, ref string) (int64, error) {
-	sha, repoRoot, _ := resolveGitContext(ref)
+	sha, repoRoot, resolved := resolveGitContext(ref)
+	if !resolved {
+		return 0, fmt.Errorf("invalid git ref: %s", ref)
+	}
 	return lookupJobByRef(addr, sha, repoRoot)
 }
 

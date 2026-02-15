@@ -119,6 +119,48 @@ func TestWaitInvalidPositionalArg(t *testing.T) {
 	}
 }
 
+func TestWaitInvalidSHARef(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer cleanup()
+
+	chdir(t, repo.Dir)
+
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"--sha", "not-a-valid-ref"})
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatal("expected error for invalid git ref")
+	}
+	if !strings.Contains(err.Error(), "invalid git ref") {
+		t.Errorf("expected 'invalid git ref' error, got: %v", err)
+	}
+}
+
+func TestWaitJobIDRejectsNonPositive(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer cleanup()
+
+	chdir(t, repo.Dir)
+
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"--job", "0"})
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatal("expected error for --job 0")
+	}
+	if !strings.Contains(err.Error(), "invalid job ID") {
+		t.Errorf("expected 'invalid job ID' error, got: %v", err)
+	}
+}
+
 func TestWaitExitsWhenNoJobFound(t *testing.T) {
 	setupFastPolling(t)
 
