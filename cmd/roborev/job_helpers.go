@@ -20,6 +20,8 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 	pollInterval := 1 * time.Second
 	maxInterval := 5 * time.Second
 	lastOutputLen := 0
+	lastStatus := ""
+	waitDots := 0
 
 	for {
 		select {
@@ -59,6 +61,33 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 
 		job := jobsResp.Jobs[0]
 
+		// Show status progress indicator while waiting
+		if output != nil && lastStatus != string(job.Status) {
+			lastStatus = string(job.Status)
+			switch job.Status {
+			case storage.JobStatusQueued:
+				fmt.Fprint(output, "Waiting for agent to start")
+			case storage.JobStatusRunning:
+				fmt.Fprint(output, "\nAgent processing")
+			}
+			waitDots = 0
+		}
+
+		// Show dots while waiting (before any output appears)
+		if output != nil && job.Status == storage.JobStatusQueued {
+			waitDots++
+			if waitDots%2 == 0 { // Show dot every 2 seconds
+				fmt.Fprint(output, ".")
+			}
+		}
+
+		if output != nil && job.Status == storage.JobStatusRunning && lastOutputLen == 0 {
+			waitDots++
+			if waitDots%2 == 0 {
+				fmt.Fprint(output, ".")
+			}
+		}
+
 		// Stream partial output while running
 		if output != nil && job.Status == storage.JobStatusRunning {
 			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
@@ -68,6 +97,10 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 					var review storage.Review
 					if json.NewDecoder(reviewResp.Body).Decode(&review) == nil {
 						if len(review.Output) > lastOutputLen {
+							// First output - add newline after waiting dots
+							if lastOutputLen == 0 && waitDots > 0 {
+								fmt.Fprintln(output)
+							}
 							fmt.Fprint(output, review.Output[lastOutputLen:])
 							lastOutputLen = len(review.Output)
 						}
