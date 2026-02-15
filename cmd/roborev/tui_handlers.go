@@ -82,18 +82,18 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterNavigateDown()
 		return m, nil
 	case "right":
-		// Expand a collapsed repo node
+		// Expand a collapsed repo node, or retry a failed load
 		entry := m.getSelectedFilterEntry()
 		if entry != nil && entry.repoIdx >= 0 && entry.branchIdx == -1 {
 			node := &m.filterTree[entry.repoIdx]
-			if !node.expanded {
+			needsFetch := node.children == nil && !node.loading
+			if !node.expanded || needsFetch {
 				node.userCollapsed = false
 				if len(node.children) > 0 {
-					// Already have children, just expand
 					node.expanded = true
 					m.rebuildFilterFlatList()
 				} else if !node.loading {
-					// Lazy-load branches
+					node.expanded = true
 					node.loading = true
 					return m, m.fetchBranchesForRepo(
 						node.rootPaths, entry.repoIdx, true,

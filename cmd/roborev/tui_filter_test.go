@@ -1551,6 +1551,34 @@ func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
 	}
 }
 
+func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			// Simulate post-failure state: expanded=true from
+			// right-arrow during in-flight load, but children
+			// still nil after the load failed.
+			expanded: true,
+			loading:  false,
+		},
+	})
+	m.filterSelectedIdx = 1 // repo-a
+
+	// Right-arrow should retry the fetch despite expanded=true
+	m2, cmd := pressSpecial(m, tea.KeyRight)
+
+	if !m2.filterTree[0].loading {
+		t.Error("Expected loading=true for retry fetch")
+	}
+	if cmd == nil {
+		t.Error("Expected fetchBranchesForRepo command for retry")
+	}
+}
+
 func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
