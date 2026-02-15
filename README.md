@@ -126,7 +126,7 @@ roborev compact --wait               # Wait for completion
 roborev compact --branch main        # Compact jobs on main branch
 ```
 
-`compact` uses an agent to verify each finding against the current codebase with wide code search, filters out false positives and already-fixed issues, consolidates related findings across multiple reviews, and creates a single consolidated review. Original jobs are marked as addressed when consolidation succeeds.
+`compact` uses an agent to verify each finding against the current codebase. The agent searches code, filters out false positives and already-fixed issues, consolidates related findings across multiple reviews, and creates a single consolidated review. roborev automatically marks original jobs as addressed when consolidation succeeds.
 
 This adds a quality layer between `review` and `fix`, reducing noise and making human review easier. Check progress with `roborev status` or `roborev tui`.
 
