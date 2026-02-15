@@ -3,6 +3,9 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -291,4 +294,102 @@ func TestBuildCompactOutputPrefix(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWriteCompactMetadata(t *testing.T) {
+	// Save original env and restore after test
+	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
+	defer func() {
+		if origDataDir != "" {
+			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
+
+	tmpDir := t.TempDir()
+	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	t.Run("write_valid_metadata", func(t *testing.T) {
+		consolidatedJobID := int64(999)
+		sourceJobIDs := []int64{100, 200, 300}
+
+		err := writeCompactMetadata(consolidatedJobID, sourceJobIDs)
+		if err != nil {
+			t.Fatalf("writeCompactMetadata failed: %v", err)
+		}
+
+		// Verify file exists and has correct content
+		path := filepath.Join(tmpDir, "compact-999.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("Failed to read metadata file: %v", err)
+		}
+
+		var metadata struct {
+			SourceJobIDs []int64 `json:"source_job_ids"`
+		}
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			t.Fatalf("Failed to parse metadata JSON: %v", err)
+		}
+
+		if len(metadata.SourceJobIDs) != len(sourceJobIDs) {
+			t.Errorf("Expected %d source job IDs, got %d", len(sourceJobIDs), len(metadata.SourceJobIDs))
+		}
+
+		for i, id := range metadata.SourceJobIDs {
+			if id != sourceJobIDs[i] {
+				t.Errorf("SourceJobIDs[%d] = %d, want %d", i, id, sourceJobIDs[i])
+			}
+		}
+	})
+
+	t.Run("write_empty_source_ids", func(t *testing.T) {
+		consolidatedJobID := int64(888)
+		sourceJobIDs := []int64{}
+
+		// This should succeed but not write a file (will be handled after implementing validation)
+		err := writeCompactMetadata(consolidatedJobID, sourceJobIDs)
+		if err != nil {
+			t.Fatalf("writeCompactMetadata failed: %v", err)
+		}
+
+		// Verify no file was created
+		path := filepath.Join(tmpDir, "compact-888.json")
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Error("Metadata file should not be created for empty source job IDs")
+		}
+	})
+
+	t.Run("write_single_source_id", func(t *testing.T) {
+		consolidatedJobID := int64(777)
+		sourceJobIDs := []int64{42}
+
+		err := writeCompactMetadata(consolidatedJobID, sourceJobIDs)
+		if err != nil {
+			t.Fatalf("writeCompactMetadata failed: %v", err)
+		}
+
+		// Verify file exists and has correct content
+		path := filepath.Join(tmpDir, "compact-777.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("Failed to read metadata file: %v", err)
+		}
+
+		var metadata struct {
+			SourceJobIDs []int64 `json:"source_job_ids"`
+		}
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			t.Fatalf("Failed to parse metadata JSON: %v", err)
+		}
+
+		if len(metadata.SourceJobIDs) != 1 {
+			t.Errorf("Expected 1 source job ID, got %d", len(metadata.SourceJobIDs))
+		}
+
+		if metadata.SourceJobIDs[0] != 42 {
+			t.Errorf("SourceJobIDs[0] = %d, want 42", metadata.SourceJobIDs[0])
+		}
+	})
 }

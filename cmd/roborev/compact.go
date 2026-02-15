@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
@@ -334,11 +336,14 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	}
 
 	// Store source job IDs for automatic marking when job completes
+	// CRITICAL: This must succeed or source jobs will never be marked as addressed
 	if err := writeCompactMetadata(consolidatedJobID, successfulJobIDs); err != nil {
-		// Log warning but don't fail - the job is already enqueued
-		if !opts.quiet {
-			cmd.Printf("Warning: failed to write compact metadata: %v\n", err)
+		// Try to cancel the job we just created
+		if cancelErr := cancelJob(serverAddr, consolidatedJobID); cancelErr != nil {
+			// Best effort - log but don't mask the original error
+			log.Printf("Failed to cancel job %d after metadata write failure: %v", consolidatedJobID, cancelErr)
 		}
+		return fmt.Errorf("failed to write compact metadata: %w", err)
 	}
 
 	if !opts.quiet {
@@ -561,8 +566,30 @@ func extractJobIDs(reviews []jobReview) []int64 {
 	return ids
 }
 
+// cancelJob cancels a job by ID via the daemon API
+func cancelJob(serverAddr string, jobID int64) error {
+	reqBody, _ := json.Marshal(map[string]interface{}{"job_id": jobID})
+	resp, err := http.Post(serverAddr+"/api/job/cancel", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("connect to daemon: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("cancel failed: %s", body)
+	}
+
+	return nil
+}
+
 // writeCompactMetadata writes source job IDs to a metadata file for later processing
 func writeCompactMetadata(consolidatedJobID int64, sourceJobIDs []int64) error {
+	if len(sourceJobIDs) == 0 {
+		// Nothing to track - skip metadata file creation
+		return nil
+	}
+
 	metadata := struct {
 		SourceJobIDs []int64 `json:"source_job_ids"`
 	}{
@@ -574,7 +601,7 @@ func writeCompactMetadata(consolidatedJobID int64, sourceJobIDs []int64) error {
 		return fmt.Errorf("marshal metadata: %w", err)
 	}
 
-	dataDir := getDataDir()
+	dataDir := config.DataDir()
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
@@ -585,13 +612,4 @@ func writeCompactMetadata(consolidatedJobID int64, sourceJobIDs []int64) error {
 	}
 
 	return nil
-}
-
-// getDataDir returns the roborev data directory path
-func getDataDir() string {
-	if dir := os.Getenv("ROBOREV_DATA_DIR"); dir != "" {
-		return dir
-	}
-	home, _ := os.UserHomeDir()
-	return fmt.Sprintf("%s/.roborev", home)
 }

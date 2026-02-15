@@ -391,7 +391,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// For compact jobs, automatically mark source jobs as addressed
 	if job.JobType == "compact" {
 		if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
-			log.Printf("[%s] Warning: failed to mark compact source jobs: %v", workerID, err)
+			log.Printf("[%s] Warning: failed to mark compact source jobs for job %d: %v", workerID, job.ID, err)
 		}
 	}
 
@@ -474,7 +474,6 @@ func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error 
 		if err := wp.db.MarkReviewAddressedByJobID(srcJobID, true); err != nil {
 			log.Printf("[%s] Failed to mark job %d as addressed: %v", workerID, srcJobID, err)
 		} else {
-			log.Printf("[%s] Marked job %d as addressed", workerID, srcJobID)
 			successCount++
 		}
 	}
