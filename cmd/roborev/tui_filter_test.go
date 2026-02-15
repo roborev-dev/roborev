@@ -489,6 +489,26 @@ func TestTUIFilterPreselectsCurrent(t *testing.T) {
 	}
 }
 
+func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	// Active filter has paths in one order
+	m.activeRepoFilter = []string{"/path/b", "/path/a"}
+
+	// API returns same paths in different order
+	repos := []repoFilterItem{
+		{name: "other", rootPaths: []string{"/path/c"}, count: 1},
+		{name: "multi", rootPaths: []string{"/path/a", "/path/b"}, count: 2},
+	}
+	m2, _ := updateModel(t, m, tuiReposMsg{repos: repos})
+
+	// Flat list: All(0), other(1), multi(2)
+	if m2.filterSelectedIdx != 2 {
+		t.Errorf("Expected filterSelectedIdx=2 (multi), got %d",
+			m2.filterSelectedIdx)
+	}
+}
+
 func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
@@ -1773,35 +1793,44 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 	setupFilterTree(&m, nodes)
 	m.filterSearch = "test"
 
-	// First batch: 5 loading
+	// First batch: 5 loading (repos 0-4)
 	m.fetchUnloadedBranches()
 	if countLoading(&m) != maxSearchBranchFetches {
 		t.Fatalf("Expected %d loading, got %d",
 			maxSearchBranchFetches, countLoading(&m))
 	}
+	// Repos 0-4 should be loading, 5-7 should not
+	for i := 0; i < 5; i++ {
+		if !m.filterTree[i].loading {
+			t.Errorf("Expected repo-%d loading=true", i)
+		}
+	}
+	for i := 5; i < 8; i++ {
+		if m.filterTree[i].loading {
+			t.Errorf("Expected repo-%d loading=false", i)
+		}
+	}
 
-	// Complete first repo — top-up should start one more
+	// Complete repo-0 — top-up should start repo-5
 	m2, cmd := updateModel(t, m, tuiRepoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/path/repo-0"},
 		branches:  []branchFilterItem{{name: "main", count: 1}},
 	})
-	if countLoaded(&m2) != 1 {
-		t.Errorf("Expected 1 loaded, got %d", countLoaded(&m2))
-	}
-	// Should have returned a top-up command
 	if cmd == nil {
 		t.Error("Expected top-up fetch command after completion")
 	}
-	// In-flight should still be at max (4 original + 1 top-up = 5)
 	if countLoading(&m2) != maxSearchBranchFetches {
 		t.Errorf("Expected %d loading after top-up, got %d",
 			maxSearchBranchFetches, countLoading(&m2))
 	}
+	if !m2.filterTree[5].loading {
+		t.Error("Expected repo-5 to start loading via top-up")
+	}
 
-	// Complete all remaining to verify progressive drain
+	// Complete repos 1-7 one at a time, only completing in-flight ones
 	for i := 1; i < 8; i++ {
-		if m2.filterTree[i].loading || m2.filterTree[i].children == nil {
+		if m2.filterTree[i].loading {
 			m2, _ = updateModel(t, m2, tuiRepoBranchesMsg{
 				repoIdx:   i,
 				rootPaths: []string{fmt.Sprintf("/path/repo-%d", i)},
@@ -1815,6 +1844,66 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 	if countLoading(&m2) != 0 {
 		t.Errorf("Expected 0 loading after all complete, got %d",
 			countLoading(&m2))
+	}
+}
+
+func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+
+	nodes := make([]treeFilterNode, 3)
+	for i := range nodes {
+		nodes[i] = treeFilterNode{
+			name:      fmt.Sprintf("repo-%d", i),
+			rootPaths: []string{fmt.Sprintf("/path/repo-%d", i)},
+			count:     1,
+		}
+	}
+	setupFilterTree(&m, nodes)
+	m.filterSearch = "test"
+
+	// Start fetches for all 3 (under the cap)
+	m.fetchUnloadedBranches()
+	if countLoading(&m) != 3 {
+		t.Fatalf("Expected 3 loading, got %d", countLoading(&m))
+	}
+
+	// Fail repo-0
+	m2, cmd := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/path/repo-0"},
+		err:       errors.New("server error"),
+	})
+
+	if m2.filterTree[0].loading {
+		t.Error("Expected loading=false after error")
+	}
+	if !m2.filterTree[0].fetchFailed {
+		t.Error("Expected fetchFailed=true after error")
+	}
+	// Top-up should return nil — no eligible repos (1,2 in-flight,
+	// 0 failed)
+	if cmd != nil {
+		t.Error("Expected nil top-up cmd (no eligible repos to fetch)")
+	}
+
+	// Verify fetchUnloadedBranches also skips the failed repo
+	cmd2 := m2.fetchUnloadedBranches()
+	if cmd2 != nil {
+		t.Error("Expected nil cmd — failed repo should not be retried")
+	}
+
+	// User can manually retry via right-arrow
+	m2.filterSelectedIdx = 1 // repo-0 in flat list (after "All")
+	m3, cmd3 := pressSpecial(m2, tea.KeyRight)
+	if !m3.filterTree[0].loading {
+		t.Error("Expected loading=true after manual retry")
+	}
+	if m3.filterTree[0].fetchFailed {
+		t.Error("Expected fetchFailed=false after manual retry")
+	}
+	if cmd3 == nil {
+		t.Error("Expected fetch command from manual retry")
 	}
 }
 

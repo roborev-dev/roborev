@@ -126,6 +126,7 @@ type treeFilterNode struct {
 	userCollapsed bool               // User explicitly collapsed during search
 	children      []branchFilterItem // Branch children (lazy-loaded)
 	loading       bool               // True while branch fetch is in-flight
+	fetchFailed   bool               // True after a search-triggered fetch failed
 }
 
 // flatFilterEntry represents a single row in the flattened tree filter view
@@ -1835,21 +1836,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pre-select active filter if any
 		if len(m.activeRepoFilter) > 0 {
 			for i, entry := range m.filterFlatList {
-				if entry.repoIdx >= 0 && entry.branchIdx == -1 {
-					node := m.filterTree[entry.repoIdx]
-					if len(node.rootPaths) == len(m.activeRepoFilter) && len(node.rootPaths) > 0 {
-						match := true
-						for j, p := range node.rootPaths {
-							if p != m.activeRepoFilter[j] {
-								match = false
-								break
-							}
-						}
-						if match {
-							m.filterSelectedIdx = i
-							break
-						}
-					}
+				if entry.repoIdx >= 0 && entry.branchIdx == -1 &&
+					rootPathsMatch(m.filterTree[entry.repoIdx].rootPaths, m.activeRepoFilter) {
+					m.filterSelectedIdx = i
+					break
 				}
 			}
 		}
@@ -1895,10 +1885,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 			m.filterBranchMode = false
-			// Clear loading if the tree entry is still valid
+			// Clear loading and mark failed if the tree entry is still valid
 			if msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
 				rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
 				m.filterTree[msg.repoIdx].loading = false
+				m.filterTree[msg.repoIdx].fetchFailed = true
 			}
 			if cmd := m.handleConnectionError(msg.err); cmd != nil {
 				return m, cmd

@@ -95,6 +95,7 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else if !node.loading {
 					node.expanded = true
 					node.loading = true
+					node.fetchFailed = false
 					return m, m.fetchBranchesForRepo(
 						node.rootPaths, entry.repoIdx, true,
 					)
@@ -220,7 +221,7 @@ func (m *tuiModel) fetchUnloadedBranches() tea.Cmd {
 	var cmds []tea.Cmd
 	for i := range m.filterTree {
 		node := &m.filterTree[i]
-		if node.children == nil && !node.loading {
+		if node.children == nil && !node.loading && !node.fetchFailed {
 			node.loading = true
 			cmds = append(cmds, m.fetchBranchesForRepo(
 				node.rootPaths, i, false,
