@@ -1282,6 +1282,7 @@ func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
 func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue // User left filter view
+	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
 		{
 			name:      "repo-a",
@@ -1304,6 +1305,44 @@ func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
 	// Loading should still be cleared since the tree entry is valid
 	if m2.filterTree[0].loading {
 		t.Error("Expected loading=false after fetch failure from queue view")
+	}
+	// filterBranchMode should be reset on error
+	if m2.filterBranchMode {
+		t.Error("Expected filterBranchMode=false after fetch failure")
+	}
+}
+
+func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	m.consecutiveErrors = 2 // Already had 2 connection errors
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			loading:   true,
+		},
+	})
+
+	// Third connection error should trigger reconnection
+	m2, cmd := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/path/to/repo-a"},
+		err:       mockConnError("connection refused"),
+	})
+
+	if m2.consecutiveErrors != 3 {
+		t.Errorf("Expected consecutiveErrors=3, got %d", m2.consecutiveErrors)
+	}
+	if !m2.reconnecting {
+		t.Error("Expected reconnecting=true after 3 consecutive errors")
+	}
+	if cmd == nil {
+		t.Error("Expected reconnect command to be returned")
+	}
+	if m2.filterTree[0].loading {
+		t.Error("Expected loading=false after connection error")
 	}
 }
 

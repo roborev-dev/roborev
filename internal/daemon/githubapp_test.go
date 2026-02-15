@@ -20,6 +20,7 @@ import (
 var (
 	sharedKey     *rsa.PrivateKey
 	sharedKeyPEM  string
+	sharedKeyErr  error
 	sharedKeyOnce sync.Once
 )
 
@@ -28,7 +29,8 @@ func testKey(t *testing.T) (*rsa.PrivateKey, string) {
 	sharedKeyOnce.Do(func() {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
-			panic("generate test key: " + err.Error())
+			sharedKeyErr = err
+			return
 		}
 		pemBytes := pem.EncodeToMemory(&pem.Block{
 			Type:  "RSA PRIVATE KEY",
@@ -37,6 +39,9 @@ func testKey(t *testing.T) (*rsa.PrivateKey, string) {
 		sharedKey = key
 		sharedKeyPEM = string(pemBytes)
 	})
+	if sharedKeyErr != nil {
+		t.Fatalf("generate test key: %v", sharedKeyErr)
+	}
 	return sharedKey, sharedKeyPEM
 }
 
