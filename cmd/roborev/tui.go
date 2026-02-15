@@ -1491,13 +1491,25 @@ func (m *tuiModel) filterTreeTotalCount() int {
 	return total
 }
 
-// rootPathsMatch returns true if two rootPaths slices are identical.
+// rootPathsMatch returns true if two rootPaths slices contain the
+// same paths (order-independent). This handles the case where the
+// tree is rebuilt with a different path ordering while a branch
+// fetch is in-flight.
 func rootPathsMatch(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
+	if len(a) <= 1 {
+		return len(a) == 0 || a[0] == b[0]
+	}
+	as := make([]string, len(a))
+	bs := make([]string, len(b))
+	copy(as, a)
+	copy(bs, b)
+	sort.Strings(as)
+	sort.Strings(bs)
+	for i := range as {
+		if as[i] != bs[i] {
 			return false
 		}
 	}

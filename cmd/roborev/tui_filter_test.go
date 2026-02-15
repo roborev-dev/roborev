@@ -1611,6 +1611,37 @@ func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
 	}
 }
 
+func TestRootPathsMatchOrderIndependent(t *testing.T) {
+	tests := []struct {
+		name  string
+		a, b  []string
+		match bool
+	}{
+		{"both nil", nil, nil, true},
+		{"both empty", []string{}, []string{}, true},
+		{"single equal", []string{"/a"}, []string{"/a"}, true},
+		{"single differ", []string{"/a"}, []string{"/b"}, false},
+		{"same order", []string{"/a", "/b"}, []string{"/a", "/b"}, true},
+		{"diff order", []string{"/b", "/a"}, []string{"/a", "/b"}, true},
+		{"diff length", []string{"/a"}, []string{"/a", "/b"}, false},
+		{
+			"three paths reordered",
+			[]string{"/c", "/a", "/b"},
+			[]string{"/a", "/b", "/c"},
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rootPathsMatch(tt.a, tt.b)
+			if got != tt.match {
+				t.Errorf("rootPathsMatch(%v, %v) = %v, want %v",
+					tt.a, tt.b, got, tt.match)
+			}
+		})
+	}
+}
+
 func TestTUIRemoveFilterFromStack(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
