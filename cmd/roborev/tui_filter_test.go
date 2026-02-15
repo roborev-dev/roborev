@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1639,6 +1640,104 @@ func TestRootPathsMatchOrderIndependent(t *testing.T) {
 					tt.a, tt.b, got, tt.match)
 			}
 		})
+	}
+}
+
+func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "multi-root",
+			rootPaths: []string{"/path/b", "/path/a"},
+			count:     5,
+			loading:   true,
+		},
+	})
+
+	// Response carries same paths in different order — should be accepted
+	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:      0,
+		rootPaths:    []string{"/path/a", "/path/b"},
+		branches:     []branchFilterItem{{name: "main", count: 5}},
+		expandOnLoad: true,
+	})
+
+	if m2.filterTree[0].loading {
+		t.Error("Expected loading=false (message should be accepted)")
+	}
+	if len(m2.filterTree[0].children) != 1 {
+		t.Errorf("Expected 1 child, got %d", len(m2.filterTree[0].children))
+	}
+	if !m2.filterTree[0].expanded {
+		t.Error("Expected expanded=true")
+	}
+
+	// Truly different paths should be rejected (stale message)
+	m3 := newTuiModel("http://localhost")
+	m3.currentView = tuiViewFilter
+	setupFilterTree(&m3, []treeFilterNode{
+		{
+			name:      "other-repo",
+			rootPaths: []string{"/path/c"},
+			count:     3,
+			loading:   true,
+		},
+	})
+
+	m4, _ := updateModel(t, m3, tuiRepoBranchesMsg{
+		repoIdx:      0,
+		rootPaths:    []string{"/path/d"},
+		branches:     []branchFilterItem{{name: "main", count: 3}},
+		expandOnLoad: true,
+	})
+
+	// loading should still be true — message was rejected as stale
+	if !m4.filterTree[0].loading {
+		t.Error("Expected loading=true (stale message should be rejected)")
+	}
+	if m4.filterTree[0].children != nil {
+		t.Error("Expected children=nil (stale message should not apply)")
+	}
+}
+
+func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+
+	// Create more repos than maxSearchBranchFetches
+	nodes := make([]treeFilterNode, 10)
+	for i := range nodes {
+		nodes[i] = treeFilterNode{
+			name:      fmt.Sprintf("repo-%d", i),
+			rootPaths: []string{fmt.Sprintf("/path/repo-%d", i)},
+			count:     1,
+		}
+	}
+	setupFilterTree(&m, nodes)
+
+	m.filterSearch = "test"
+	cmd := m.fetchUnloadedBranches()
+
+	if cmd == nil {
+		t.Fatal("Expected command from fetchUnloadedBranches")
+	}
+
+	// Count how many repos were set to loading
+	loadingCount := 0
+	for _, node := range m.filterTree {
+		if node.loading {
+			loadingCount++
+		}
+	}
+
+	if loadingCount > maxSearchBranchFetches {
+		t.Errorf("Expected at most %d concurrent fetches, got %d",
+			maxSearchBranchFetches, loadingCount)
+	}
+	if loadingCount != maxSearchBranchFetches {
+		t.Errorf("Expected exactly %d fetches for 10 repos, got %d",
+			maxSearchBranchFetches, loadingCount)
 	}
 }
 

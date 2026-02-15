@@ -2840,12 +2840,12 @@ func (m tuiModel) renderFilterView() string {
 			if node.loading {
 				suffix = " ..."
 			}
-			line = fmt.Sprintf("  %s %s (%d)%s", chevron, node.name, node.count, suffix)
+			line = fmt.Sprintf("  %s %s (%d)%s", chevron, sanitizeForDisplay(node.name), node.count, suffix)
 		} else {
 			// Branch node (indented)
 			node := m.filterTree[entry.repoIdx]
 			branch := node.children[entry.branchIdx]
-			line = fmt.Sprintf("      %s (%d)", branch.name, branch.count)
+			line = fmt.Sprintf("      %s (%d)", sanitizeForDisplay(branch.name), branch.count)
 		}
 
 		if i == m.filterSelectedIdx {
