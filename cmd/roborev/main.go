@@ -1345,8 +1345,6 @@ Examples:
 				return fmt.Errorf("daemon not running: %w", err)
 			}
 
-			addr := getDaemonAddr()
-
 			// Resolve the target to a job ID
 			var jobID int64
 			var ref string // git ref to resolve via findJobForCommit
@@ -1408,6 +1406,7 @@ Examples:
 				jobID = job.ID
 			}
 
+			addr := getDaemonAddr()
 			err := waitForJob(cmd, addr, jobID, quiet)
 			if err != nil {
 				// Map ErrJobNotFound to exit 1 with a user-facing message
