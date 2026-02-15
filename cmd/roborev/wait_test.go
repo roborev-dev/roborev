@@ -1,7 +1,5 @@
 package main
 
-// Tests for the wait command
-
 import (
 	"bytes"
 	"encoding/json"
@@ -54,214 +52,135 @@ func requireExitCode(t *testing.T, err error, code int) {
 	}
 }
 
-func TestWaitJobFlagRequiresArgument(t *testing.T) {
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
-	var stderr bytes.Buffer
-	cmd := waitCmd()
-	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"--job"})
-	err := cmd.Execute()
-
-	if err == nil {
-		t.Fatal("expected error when --job is used without argument")
-	}
-	if !strings.Contains(err.Error(), "--job requires a job ID argument") {
-		t.Errorf("expected '--job requires a job ID argument' error, got: %v", err)
-	}
+// waitEnv holds common test fixtures for wait command tests.
+type waitEnv struct {
+	repo *TestGitRepo
+	sha  string
 }
 
-func TestWaitSHAAndPositionalArgConflict(t *testing.T) {
+// newWaitEnv creates a git repo with a commit, starts a mock daemon,
+// and chdirs into the repo. Cleanup is automatic via t.Cleanup.
+func newWaitEnv(t *testing.T, handler http.Handler) *waitEnv {
+	t.Helper()
 	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer cleanup()
-
+	sha := repo.CommitFile("file.txt", "content", "initial commit")
+	_, cleanup := setupMockDaemon(t, handler)
+	t.Cleanup(cleanup)
 	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--sha", "HEAD", "42"})
-	err := cmd.Execute()
-
-	if err == nil {
-		t.Fatal("expected error when both --sha and positional arg are given")
-	}
-	if !strings.Contains(err.Error(), "cannot use both") {
-		t.Errorf("expected 'cannot use both' error, got: %v", err)
-	}
+	return &waitEnv{repo: repo, sha: sha}
 }
 
-func TestWaitInvalidPositionalArg(t *testing.T) {
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"not-a-ref-or-number"})
-	err := cmd.Execute()
-
-	if err == nil {
-		t.Fatal("expected error for invalid argument")
-	}
-	if !strings.Contains(err.Error(), "not a valid git ref or job ID") {
-		t.Errorf("expected 'not a valid git ref or job ID' error, got: %v", err)
-	}
+// noopHandler returns an HTTP handler that does nothing.
+func noopHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 }
 
-func TestWaitPositionalZeroIsInvalid(t *testing.T) {
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
+// runWait executes the wait command with the given args and returns
+// captured stdout and the error.
+func runWait(t *testing.T, args ...string) (stdout string, err error) {
+	t.Helper()
+	var out bytes.Buffer
 	cmd := waitCmd()
-	cmd.SetArgs([]string{"0"})
-	err := cmd.Execute()
-
-	if err == nil {
-		t.Fatal("expected error for positional arg 0")
-	}
-	if !strings.Contains(err.Error(), "not a valid git ref or job ID") {
-		t.Errorf("expected 'not a valid git ref or job ID' error, got: %v", err)
-	}
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(args)
+	err = cmd.Execute()
+	return out.String(), err
 }
 
-func TestWaitInvalidSHARef(t *testing.T) {
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--sha", "not-a-valid-ref"})
-	err := cmd.Execute()
-
-	if err == nil {
-		t.Fatal("expected error for invalid git ref")
+func TestWaitArgValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "job flag without argument",
+			args:    []string{"--job"},
+			wantErr: "--job requires a job ID argument",
+		},
+		{
+			name:    "sha and positional arg conflict",
+			args:    []string{"--sha", "HEAD", "42"},
+			wantErr: "cannot use both",
+		},
+		{
+			name:    "invalid positional arg",
+			args:    []string{"not-a-ref-or-number"},
+			wantErr: "not a valid git ref or job ID",
+		},
+		{
+			name:    "positional zero is invalid",
+			args:    []string{"0"},
+			wantErr: "not a valid git ref or job ID",
+		},
+		{
+			name:    "invalid sha ref",
+			args:    []string{"--sha", "not-a-valid-ref"},
+			wantErr: "invalid git ref",
+		},
+		{
+			name:    "job flag rejects non-positive ID",
+			args:    []string{"--job", "0"},
+			wantErr: "invalid job ID",
+		},
 	}
-	if !strings.Contains(err.Error(), "invalid git ref") {
-		t.Errorf("expected 'invalid git ref' error, got: %v", err)
-	}
-}
 
-func TestWaitJobIDRejectsNonPositive(t *testing.T) {
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
+	newWaitEnv(t, noopHandler())
 
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--job", "0"})
-	err := cmd.Execute()
-
-	if err == nil {
-		t.Fatal("expected error for --job 0")
-	}
-	if !strings.Contains(err.Error(), "invalid job ID") {
-		t.Errorf("expected 'invalid job ID' error, got: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runWait(t, tc.args...)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error containing %q, got: %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 
 func TestWaitExitsWhenNoJobFound(t *testing.T) {
 	setupFastPolling(t)
-
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, waitMockHandler(nil, nil))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
+	newWaitEnv(t, waitMockHandler(nil, nil))
 
 	t.Run("No job for SHA", func(t *testing.T) {
-		var stdout bytes.Buffer
-		cmd := waitCmd()
-		cmd.SetOut(&stdout)
-		cmd.SetArgs([]string{"--sha", "HEAD"})
-		err := cmd.Execute()
-
+		stdout, err := runWait(t, "--sha", "HEAD")
 		requireExitCode(t, err, 1)
-		if !strings.Contains(stdout.String(), "No job found") {
-			t.Errorf("expected 'No job found' message, got: %q", stdout.String())
+		if !strings.Contains(stdout, "No job found") {
+			t.Errorf("expected 'No job found' message, got: %q", stdout)
 		}
 	})
 
-	t.Run("No job for SHA quiet mode suppresses output", func(t *testing.T) {
-		var stdout, stderr bytes.Buffer
-		cmd := waitCmd()
-		cmd.SetOut(&stdout)
-		cmd.SetErr(&stderr)
-		cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
-		err := cmd.Execute()
-
+	t.Run("Quiet mode suppresses output", func(t *testing.T) {
+		stdout, err := runWait(t, "--sha", "HEAD", "--quiet")
 		requireExitCode(t, err, 1)
-		if stdout.String() != "" {
-			t.Errorf("expected no stdout in quiet mode, got: %q", stdout.String())
+		if stdout != "" {
+			t.Errorf("expected no stdout in quiet mode, got: %q", stdout)
 		}
 	})
 }
 
 func TestWaitExitsWhenJobIDNotFound(t *testing.T) {
 	setupFastPolling(t)
+	newWaitEnv(t, waitMockHandler(nil, nil))
 
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, waitMockHandler(nil, nil))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
-	var stdout bytes.Buffer
-	cmd := waitCmd()
-	cmd.SetOut(&stdout)
-	cmd.SetArgs([]string{"--job", "99999"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "--job", "99999")
 	requireExitCode(t, err, 1)
 }
 
 func TestWaitJobIDPollingNon200Response(t *testing.T) {
 	setupFastPolling(t)
-
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	newWaitEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("database locked"))
 			return
 		}
 	}))
-	defer cleanup()
 
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--job", "42"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "--job", "42")
 	if err == nil {
 		t.Fatal("expected error for non-200 polling response")
 	}
@@ -272,21 +191,12 @@ func TestWaitJobIDPollingNon200Response(t *testing.T) {
 
 func TestWaitPassingReview(t *testing.T) {
 	setupFastPolling(t)
+	newWaitEnv(t, waitMockHandler(
+		&storage.ReviewJob{ID: 1, Agent: "test", Status: "done"},
+		&storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."},
+	))
 
-	repo := newTestGitRepo(t)
-	sha := repo.CommitFile("file.txt", "content", "initial commit")
-
-	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
-	review := &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."}
-	_, cleanup := setupMockDaemon(t, waitMockHandler(job, review))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "--sha", "HEAD", "--quiet")
 	if err != nil {
 		t.Errorf("expected exit 0 for passing review, got error: %v", err)
 	}
@@ -294,43 +204,25 @@ func TestWaitPassingReview(t *testing.T) {
 
 func TestWaitFailingReview(t *testing.T) {
 	setupFastPolling(t)
+	newWaitEnv(t, waitMockHandler(
+		&storage.ReviewJob{ID: 1, Agent: "test", Status: "done"},
+		&storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug\n2. Missing check"},
+	))
 
-	repo := newTestGitRepo(t)
-	sha := repo.CommitFile("file.txt", "content", "initial commit")
-
-	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
-	review := &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug\n2. Missing check"}
-	_, cleanup := setupMockDaemon(t, waitMockHandler(job, review))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "--sha", "HEAD", "--quiet")
 	requireExitCode(t, err, 1)
 }
 
 func TestWaitPositionalArgAsGitRef(t *testing.T) {
 	setupFastPolling(t)
-
-	repo := newTestGitRepo(t)
-	sha := repo.CommitFile("file.txt", "content", "initial commit")
-
-	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
-	review := &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."}
-	_, cleanup := setupMockDaemon(t, waitMockHandler(job, review))
-	defer cleanup()
-
-	chdir(t, repo.Dir)
+	newWaitEnv(t, waitMockHandler(
+		&storage.ReviewJob{ID: 1, Agent: "test", Status: "done"},
+		&storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."},
+	))
 
 	// Pass HEAD as a positional arg (not --sha flag) to exercise the
 	// git-ref-first resolution path.
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"HEAD", "--quiet"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "HEAD", "--quiet")
 	if err != nil {
 		t.Errorf("expected exit 0 for positional git ref, got error: %v", err)
 	}
@@ -362,14 +254,10 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 			return
 		}
 	}))
-	defer cleanup()
-
+	t.Cleanup(cleanup)
 	chdir(t, repo.Dir)
 
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"42", "--quiet"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "42", "--quiet")
 	if err != nil {
 		t.Errorf("expected exit 0 for numeric arg as job ID, got: %v", err)
 	}
@@ -382,19 +270,16 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 	setupFastPolling(t)
 
-	repo := newTestGitRepo(t)
-	sha := repo.CommitFile("file.txt", "content", "initial commit")
-
 	// Job completes but /api/review returns 404. This should surface as a
 	// plain error (from showReview), not an *exitError. Both map to exit 1
 	// in practice, but the distinction matters for error reporting: plain
 	// errors print Cobra's "Error:" prefix while exitError silences it.
-	job := &storage.ReviewJob{ID: 1, GitRef: sha, Agent: "test", Status: "done"}
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	job := storage.ReviewJob{ID: 1, Agent: "test", Status: "done"}
+	newWaitEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs":     []storage.ReviewJob{*job},
+				"jobs":     []storage.ReviewJob{job},
 				"has_more": false,
 			})
 			return
@@ -404,14 +289,8 @@ func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 			return
 		}
 	}))
-	defer cleanup()
 
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "--sha", "HEAD", "--quiet")
 	if err == nil {
 		t.Fatal("expected error when review not found")
 	}
@@ -423,25 +302,15 @@ func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 
 func TestWaitLookupNon200Response(t *testing.T) {
 	setupFastPolling(t)
-
-	repo := newTestGitRepo(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	newWaitEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("database locked"))
 			return
 		}
 	}))
-	defer cleanup()
 
-	chdir(t, repo.Dir)
-
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--sha", "HEAD"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "--sha", "HEAD")
 	if err == nil {
 		t.Fatal("expected error for non-200 response")
 	}
@@ -466,7 +335,6 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 	wtRepo := &TestGitRepo{Dir: worktreeDir, t: t}
 	wtSHA := wtRepo.CommitFile("wt-file.txt", "worktree content", "commit in worktree")
 
-	// Sanity check: SHAs should differ
 	if mainSHA == wtSHA {
 		t.Fatal("expected different SHAs for main and worktree commits")
 	}
@@ -478,7 +346,6 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 			if r.URL.Query().Get("git_ref") != "" {
 				lookupQuery = r.URL.RawQuery
 			}
-			// Return a job so we can proceed to waitForJob
 			job := storage.ReviewJob{ID: 1, GitRef: wtSHA, Agent: "test", Status: "done"}
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -493,15 +360,11 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 			return
 		}
 	}))
-	defer cleanup()
+	t.Cleanup(cleanup)
 
-	// Run wait from the worktree directory
 	chdir(t, worktreeDir)
 
-	cmd := waitCmd()
-	cmd.SetArgs([]string{"--sha", "HEAD", "--quiet"})
-	err := cmd.Execute()
-
+	_, err := runWait(t, "--sha", "HEAD", "--quiet")
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
