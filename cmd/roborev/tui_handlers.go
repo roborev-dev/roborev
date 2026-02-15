@@ -1287,8 +1287,16 @@ func (m tuiModel) handleReconnectMsg(msg tuiReconnectMsg) (tea.Model, tea.Cmd) {
 		if msg.version != "" {
 			m.daemonVersion = msg.version
 		}
+		// Clear fetchFailed so search-triggered loads can retry
+		for i := range m.filterTree {
+			m.filterTree[i].fetchFailed = false
+		}
 		m.loadingJobs = true
-		return m, tea.Batch(m.fetchJobs(), m.fetchStatus())
+		cmds := []tea.Cmd{m.fetchJobs(), m.fetchStatus()}
+		if cmd := m.fetchUnloadedBranches(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
 	}
 	return m, nil
 }
