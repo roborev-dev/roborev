@@ -742,6 +742,7 @@ type EnqueueOpts struct {
 	OutputPrefix string // Prefix to prepend to review output
 	Agentic      bool   // Allow file edits and command execution
 	Label        string // Display label in TUI for task jobs (default: "prompt")
+	JobType      string // Explicit job type (review/range/dirty/task/compact); inferred if empty
 }
 
 // EnqueueJob creates a new review job. The job type is inferred from opts.
@@ -751,17 +752,21 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 		reasoning = "thorough"
 	}
 
-	// Determine job type from fields
+	// Determine job type from fields (use explicit type if provided)
 	var jobType string
-	switch {
-	case opts.Prompt != "":
-		jobType = JobTypeTask
-	case opts.DiffContent != "":
-		jobType = JobTypeDirty
-	case opts.CommitID > 0:
-		jobType = JobTypeReview
-	default:
-		jobType = JobTypeRange
+	if opts.JobType != "" {
+		jobType = opts.JobType
+	} else {
+		switch {
+		case opts.Prompt != "":
+			jobType = JobTypeTask
+		case opts.DiffContent != "":
+			jobType = JobTypeDirty
+		case opts.CommitID > 0:
+			jobType = JobTypeReview
+		default:
+			jobType = JobTypeRange
+		}
 	}
 
 	// For task jobs, use Label as git_ref display value

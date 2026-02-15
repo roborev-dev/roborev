@@ -419,6 +419,7 @@ func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opt
 		"custom_prompt": prompt,
 		"output_prefix": outputPrefix,
 		"agentic":       true,
+		"job_type":      "compact",
 	})
 
 	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))

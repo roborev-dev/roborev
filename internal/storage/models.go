@@ -35,10 +35,11 @@ const (
 
 // JobType classifies what kind of work a review job represents.
 const (
-	JobTypeReview = "review" // Single commit review
-	JobTypeRange  = "range"  // Commit range review
-	JobTypeDirty  = "dirty"  // Uncommitted changes review
-	JobTypeTask   = "task"   // Run/analyze/design/custom prompt
+	JobTypeReview  = "review"  // Single commit review
+	JobTypeRange   = "range"   // Commit range review
+	JobTypeDirty   = "dirty"   // Uncommitted changes review
+	JobTypeTask    = "task"    // Run/analyze/design/custom prompt
+	JobTypeCompact = "compact" // Consolidated review verification
 )
 
 type ReviewJob struct {
@@ -89,6 +90,7 @@ func (j ReviewJob) IsDirtyJob() bool {
 
 // IsTaskJob returns true if this is a task job (run, analyze, custom label) rather than
 // a commit review or dirty review. Task jobs have pre-stored prompts and no verdicts.
+// Compact jobs are not considered task jobs since they produce P/F verdicts.
 func (j ReviewJob) IsTaskJob() bool {
 	if j.JobType != "" {
 		return j.JobType == JobTypeTask

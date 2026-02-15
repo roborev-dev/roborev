@@ -370,6 +370,7 @@ type EnqueueRequest struct {
 	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
 	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
 	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/compact)
 }
 
 type ErrorResponse struct {
@@ -547,6 +548,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			OutputPrefix: req.OutputPrefix,
 			Agentic:      req.Agentic,
 			Label:        gitRef, // Use git_ref as TUI label (run, analyze type, custom)
+			JobType:      req.JobType,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
