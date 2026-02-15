@@ -26,6 +26,7 @@ func compactCmd() *cobra.Command {
 		branch      string
 		dryRun      bool
 		limit       int
+		wait        bool
 	)
 
 	cmd := &cobra.Command{
@@ -35,7 +36,12 @@ func compactCmd() *cobra.Command {
 
 Discovers all unaddressed completed review jobs, sends them to an agent
 for verification against the current codebase, consolidates related findings,
-and creates a new consolidated review job. Original jobs are marked as addressed.
+and creates a new consolidated review job.
+
+By default, compact runs in the background. Use --wait to block until complete.
+
+When consolidation finishes successfully, original jobs are automatically marked
+as addressed. Check progress with 'roborev status' or 'roborev tui'.
 
 This adds a quality layer between 'review' and 'fix' to reduce false positives
 and consolidate findings from multiple reviews.
@@ -44,7 +50,8 @@ Note: This operation is not atomic. Avoid running multiple compact commands
 concurrently on the same branch to prevent inconsistent state.
 
 Examples:
-  roborev compact                              # Compact unaddressed jobs on current branch
+  roborev compact                              # Enqueue consolidation (background)
+  roborev compact --wait                       # Wait for completion
   roborev compact --branch main                # Compact jobs on main branch
   roborev compact --all-branches               # Compact jobs across all branches
   roborev compact --dry-run                    # Show what would be done
@@ -67,6 +74,7 @@ Examples:
 				branch:      branch,
 				dryRun:      dryRun,
 				limit:       limit,
+				wait:        wait,
 			})
 		},
 	}
@@ -79,6 +87,7 @@ Examples:
 	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be done without executing")
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of jobs to compact at once")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait for consolidation to complete and show result")
 
 	return cmd
 }
@@ -92,6 +101,7 @@ type compactOptions struct {
 	branch      string
 	dryRun      bool
 	limit       int
+	wait        bool
 }
 
 type jobReview struct {
@@ -146,9 +156,9 @@ func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra
 	return jobReviews, successfulJobIDs, nil
 }
 
-// verifyAndConsolidate sends reviews to agent for verification and consolidation.
-// Returns the consolidated job ID and validated review output.
-func verifyAndConsolidate(ctx context.Context, cmd *cobra.Command, repoRoot string, jobReviews []jobReview, branchFilter string, opts compactOptions) (int64, *storage.Review, error) {
+// enqueueConsolidation creates and enqueues a consolidation job.
+// Returns the job ID for tracking.
+func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot string, jobReviews []jobReview, branchFilter string, opts compactOptions) (int64, error) {
 	// Build verification prompt
 	prompt := buildCompactPrompt(jobReviews, branchFilter)
 
@@ -159,7 +169,7 @@ func verifyAndConsolidate(ctx context.Context, cmd *cobra.Command, repoRoot stri
 		reasoning: opts.reasoning,
 	})
 	if err != nil {
-		return 0, nil, err
+		return 0, err
 	}
 
 	if !opts.quiet {
@@ -177,14 +187,14 @@ func verifyAndConsolidate(ctx context.Context, cmd *cobra.Command, repoRoot stri
 
 	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, opts)
 	if err != nil {
-		return 0, nil, fmt.Errorf("enqueue verification job: %w", err)
+		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
 
-	if !opts.quiet {
-		cmd.Printf("Enqueued consolidation job %d\n", job.ID)
-	}
+	return job.ID, nil
+}
 
-	// Wait for completion
+// waitForConsolidation waits for a consolidation job to complete and validates output.
+func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, opts compactOptions) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
@@ -193,22 +203,22 @@ func verifyAndConsolidate(ctx context.Context, cmd *cobra.Command, repoRoot stri
 		output = cmd.OutOrStdout()
 	}
 
-	_, err = waitForJobCompletion(ctx, serverAddr, job.ID, output)
+	_, err := waitForJobCompletion(ctx, serverAddr, jobID, output)
 	if err != nil {
-		return 0, nil, fmt.Errorf("verification failed: %w", err)
+		return fmt.Errorf("verification failed: %w", err)
 	}
 
 	// Fetch and validate final output
-	review, err := fetchReview(ctx, serverAddr, job.ID)
+	review, err := fetchReview(ctx, serverAddr, jobID)
 	if err != nil {
-		return 0, nil, fmt.Errorf("fetch final review: %w", err)
+		return fmt.Errorf("fetch final review: %w", err)
 	}
 
 	if !isValidConsolidatedReview(review.Output) {
-		return 0, nil, fmt.Errorf("agent produced invalid output (no findings or error message)")
+		return fmt.Errorf("agent produced invalid output (validation failed)")
 	}
 
-	return job.ID, review, nil
+	return nil
 }
 
 // markJobsAsAddressed marks all jobs in the list as addressed.
@@ -317,8 +327,33 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		return err
 	}
 
-	// Verify and consolidate
-	consolidatedJobID, _, err := verifyAndConsolidate(ctx, cmd, repoRoot, jobReviews, branchFilter, opts)
+	// Enqueue consolidation job
+	consolidatedJobID, err := enqueueConsolidation(ctx, cmd, repoRoot, jobReviews, branchFilter, opts)
+	if err != nil {
+		return err
+	}
+
+	if !opts.quiet {
+		cmd.Printf("\nEnqueued consolidation job %d\n", consolidatedJobID)
+	}
+
+	// If --wait flag not set, return immediately (background mode)
+	if !opts.wait {
+		if !opts.quiet {
+			cmd.Println("\nConsolidation running in background.")
+			cmd.Println("\nCheck progress: roborev status")
+			cmd.Println("View results:   roborev tui")
+			cmd.Printf("Wait for job:   roborev compact --wait (or wait for job %d)\n", consolidatedJobID)
+		}
+		return nil
+	}
+
+	// Wait for completion
+	if !opts.quiet {
+		cmd.Println("\nWaiting for consolidation to complete...")
+	}
+
+	err = waitForConsolidation(ctx, cmd, consolidatedJobID, opts)
 	if err != nil {
 		return err
 	}
