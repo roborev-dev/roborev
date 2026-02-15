@@ -241,6 +241,35 @@ func TestWaitExitsWhenJobIDNotFound(t *testing.T) {
 	requireExitCode(t, err, 1)
 }
 
+func TestWaitJobIDPollingNon200Response(t *testing.T) {
+	setupFastPolling(t)
+
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("database locked"))
+			return
+		}
+	}))
+	defer cleanup()
+
+	chdir(t, repo.Dir)
+
+	cmd := waitCmd()
+	cmd.SetArgs([]string{"--job", "42"})
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatal("expected error for non-200 polling response")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected error to contain status code, got: %v", err)
+	}
+}
+
 func TestWaitPassingReview(t *testing.T) {
 	setupFastPolling(t)
 
