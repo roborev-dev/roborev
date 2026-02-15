@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +72,90 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 			got := filterOpencodeToolCallLines(tt.input)
 			if got != tt.expected {
 				t.Errorf("filterOpencodeToolCallLines(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestOpenCodeModelFlag(t *testing.T) {
+	tests := []struct {
+		name         string
+		model        string
+		wantModel    bool // true = --model should appear
+		wantContains string
+	}{
+		{
+			name:      "no model omits flag",
+			model:     "",
+			wantModel: false,
+		},
+		{
+			name:         "explicit model includes flag",
+			model:        "anthropic/claude-sonnet-4-20250514",
+			wantModel:    true,
+			wantContains: "anthropic/claude-sonnet-4-20250514",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewOpenCodeAgent("opencode")
+			a.Model = tt.model
+			cl := a.CommandLine()
+			if tt.wantModel {
+				assertContains(t, cl, "--model")
+				assertContains(t, cl, tt.wantContains)
+			} else {
+				assertNotContains(t, cl, "--model")
+			}
+		})
+	}
+}
+
+func TestOpenCodeReviewModelFlag(t *testing.T) {
+	skipIfWindows(t)
+	tests := []struct {
+		name      string
+		model     string
+		wantFlag  bool
+		wantModel string
+	}{
+		{
+			name:     "no model omits --model from args",
+			model:    "",
+			wantFlag: false,
+		},
+		{
+			name:      "explicit model passes --model to subprocess",
+			model:     "openai/gpt-4o",
+			wantFlag:  true,
+			wantModel: "openai/gpt-4o",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockAgentCLI(t, MockCLIOpts{
+				CaptureArgs: true,
+				StdoutLines: []string{"ok"},
+			})
+			a := NewOpenCodeAgent(mock.CmdPath)
+			a.Model = tt.model
+			_, err := a.Review(
+				context.Background(), t.TempDir(),
+				"abc123", "review this", nil,
+			)
+			if err != nil {
+				t.Fatalf("Review: %v", err)
+			}
+			raw, err := os.ReadFile(mock.ArgsFile)
+			if err != nil {
+				t.Fatalf("read captured args: %v", err)
+			}
+			args := strings.TrimSpace(string(raw))
+			if tt.wantFlag {
+				assertContains(t, args, "--model")
+				assertContains(t, args, tt.wantModel)
+			} else {
+				assertNotContains(t, args, "--model")
 			}
 		})
 	}
