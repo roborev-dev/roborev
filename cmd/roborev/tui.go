@@ -1903,7 +1903,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.handleConnectionError(msg.err); cmd != nil {
 				return m, cmd
 			}
-			return m, nil
+			// Top-up: fetch next batch of unloaded repos
+			return m, m.fetchUnloadedBranches()
 		}
 		// Verify we're still in filter view, repoIdx is valid, and the repo identity matches
 		// (the tree may have been rebuilt while the fetch was in-flight)
@@ -1939,6 +1940,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 				}
+			}
+			// Top-up: fetch next batch of unloaded repos
+			if cmd := m.fetchUnloadedBranches(); cmd != nil {
+				return m, cmd
 			}
 		}
 

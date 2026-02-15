@@ -192,18 +192,29 @@ func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// maxSearchBranchFetches limits how many concurrent branch fetches a
-// single search keystroke can trigger, to avoid a burst of HTTP
-// requests when many repos are tracked.
+// maxSearchBranchFetches is the maximum number of concurrent
+// search-triggered branch fetches. Counts both already in-flight
+// and newly started requests.
 const maxSearchBranchFetches = 5
 
 // fetchUnloadedBranches triggers branch fetches for repos that
 // haven't loaded branches yet while search text is active. Without
 // this, searching for a branch name only matches already-expanded
-// repos. At most maxSearchBranchFetches are started per keystroke;
-// subsequent keystrokes pick up where the previous batch left off.
+// repos. At most maxSearchBranchFetches total requests are allowed
+// in-flight at once; completions trigger top-up fetches via the
+// tuiRepoBranchesMsg handler.
 func (m *tuiModel) fetchUnloadedBranches() tea.Cmd {
 	if m.filterSearch == "" {
+		return nil
+	}
+	inFlight := 0
+	for i := range m.filterTree {
+		if m.filterTree[i].loading {
+			inFlight++
+		}
+	}
+	slots := maxSearchBranchFetches - inFlight
+	if slots <= 0 {
 		return nil
 	}
 	var cmds []tea.Cmd
@@ -214,7 +225,7 @@ func (m *tuiModel) fetchUnloadedBranches() tea.Cmd {
 			cmds = append(cmds, m.fetchBranchesForRepo(
 				node.rootPaths, i, false,
 			))
-			if len(cmds) >= maxSearchBranchFetches {
+			if len(cmds) >= slots {
 				break
 			}
 		}

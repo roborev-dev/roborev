@@ -1701,6 +1701,26 @@ func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
 	}
 }
 
+func countLoading(m *tuiModel) int {
+	n := 0
+	for _, node := range m.filterTree {
+		if node.loading {
+			n++
+		}
+	}
+	return n
+}
+
+func countLoaded(m *tuiModel) int {
+	n := 0
+	for _, node := range m.filterTree {
+		if node.children != nil {
+			n++
+		}
+	}
+	return n
+}
+
 func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewFilter
@@ -1718,26 +1738,83 @@ func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
 
 	m.filterSearch = "test"
 	cmd := m.fetchUnloadedBranches()
-
 	if cmd == nil {
 		t.Fatal("Expected command from fetchUnloadedBranches")
 	}
 
-	// Count how many repos were set to loading
-	loadingCount := 0
-	for _, node := range m.filterTree {
-		if node.loading {
-			loadingCount++
-		}
+	loading := countLoading(&m)
+	if loading != maxSearchBranchFetches {
+		t.Errorf("Expected %d loading after first batch, got %d",
+			maxSearchBranchFetches, loading)
 	}
 
-	if loadingCount > maxSearchBranchFetches {
-		t.Errorf("Expected at most %d concurrent fetches, got %d",
-			maxSearchBranchFetches, loadingCount)
+	// Second call with existing in-flight should start nothing
+	cmd2 := m.fetchUnloadedBranches()
+	if cmd2 != nil {
+		t.Error("Expected nil cmd when max already in-flight")
 	}
-	if loadingCount != maxSearchBranchFetches {
-		t.Errorf("Expected exactly %d fetches for 10 repos, got %d",
-			maxSearchBranchFetches, loadingCount)
+	if countLoading(&m) != maxSearchBranchFetches {
+		t.Error("Loading count should not change")
+	}
+}
+
+func TestTUISearchFetchProgressiveLoading(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+
+	nodes := make([]treeFilterNode, 8)
+	for i := range nodes {
+		nodes[i] = treeFilterNode{
+			name:      fmt.Sprintf("repo-%d", i),
+			rootPaths: []string{fmt.Sprintf("/path/repo-%d", i)},
+			count:     1,
+		}
+	}
+	setupFilterTree(&m, nodes)
+	m.filterSearch = "test"
+
+	// First batch: 5 loading
+	m.fetchUnloadedBranches()
+	if countLoading(&m) != maxSearchBranchFetches {
+		t.Fatalf("Expected %d loading, got %d",
+			maxSearchBranchFetches, countLoading(&m))
+	}
+
+	// Complete first repo — top-up should start one more
+	m2, cmd := updateModel(t, m, tuiRepoBranchesMsg{
+		repoIdx:   0,
+		rootPaths: []string{"/path/repo-0"},
+		branches:  []branchFilterItem{{name: "main", count: 1}},
+	})
+	if countLoaded(&m2) != 1 {
+		t.Errorf("Expected 1 loaded, got %d", countLoaded(&m2))
+	}
+	// Should have returned a top-up command
+	if cmd == nil {
+		t.Error("Expected top-up fetch command after completion")
+	}
+	// In-flight should still be at max (4 original + 1 top-up = 5)
+	if countLoading(&m2) != maxSearchBranchFetches {
+		t.Errorf("Expected %d loading after top-up, got %d",
+			maxSearchBranchFetches, countLoading(&m2))
+	}
+
+	// Complete all remaining to verify progressive drain
+	for i := 1; i < 8; i++ {
+		if m2.filterTree[i].loading || m2.filterTree[i].children == nil {
+			m2, _ = updateModel(t, m2, tuiRepoBranchesMsg{
+				repoIdx:   i,
+				rootPaths: []string{fmt.Sprintf("/path/repo-%d", i)},
+				branches:  []branchFilterItem{{name: "main", count: 1}},
+			})
+		}
+	}
+	if countLoaded(&m2) != 8 {
+		t.Errorf("Expected all 8 repos loaded, got %d", countLoaded(&m2))
+	}
+	if countLoading(&m2) != 0 {
+		t.Errorf("Expected 0 loading after all complete, got %d",
+			countLoading(&m2))
 	}
 }
 
