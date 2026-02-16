@@ -798,14 +798,11 @@ func commitWithHookRetry(
 			return sha, nil
 		}
 
-		// Only retry commit-phase failures when a pre-commit hook
-		// exists. Add-phase failures (lockfile, permissions) and
-		// commit failures without a hook are not retryable.
+		// Only retry when the pre-commit hook positively caused the
+		// failure. Add-phase errors, non-hook commit errors, and
+		// commit failures without a hook are returned immediately.
 		var commitErr *git.CommitError
-		isCommitPhase := errors.As(err, &commitErr) &&
-			commitErr.Phase == "commit"
-		if !isCommitPhase ||
-			!git.HasExecutableHook(repoPath, "pre-commit") {
+		if !errors.As(err, &commitErr) || !commitErr.HookFailed {
 			return "", err
 		}
 

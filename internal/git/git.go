@@ -703,6 +703,27 @@ func HasExecutableHook(repoPath, hookName string) bool {
 	return info.Mode()&0111 != 0
 }
 
+// isPreCommitHookFailing runs the pre-commit hook directly against
+// the current index to confirm it is actually rejecting. Returns
+// true only if the hook exists, is executable, and exits non-zero.
+func isPreCommitHookFailing(repoPath string) bool {
+	hooksPath, err := GetHooksPath(repoPath)
+	if err != nil {
+		return false
+	}
+	hookFile := filepath.Join(hooksPath, "pre-commit")
+	info, err := os.Stat(hookFile)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
+		return false
+	}
+	cmd := exec.Command(hookFile)
+	cmd.Dir = repoPath
+	return cmd.Run() != nil
+}
+
 // GetDefaultBranch detects the default branch (from origin/HEAD, or main/master locally)
 func GetDefaultBranch(repoPath string) (string, error) {
 	// Prefer origin/HEAD as the authoritative source for the default branch
@@ -764,10 +785,13 @@ func GetCommitsSince(repoPath, mergeBase string) ([]string, error) {
 // CommitError represents a failure during CreateCommit.
 // Phase distinguishes "add" failures (lockfile, permissions) from
 // "commit" failures (hooks, empty commit, identity issues).
+// HookFailed is set by probing the pre-commit hook after a commit-phase
+// failure — true means the hook is positively identified as the cause.
 type CommitError struct {
-	Phase  string // "add" or "commit"
-	Stderr string
-	Err    error
+	Phase      string // "add" or "commit"
+	HookFailed bool   // true when pre-commit hook caused the failure
+	Stderr     string
+	Err        error
 }
 
 func (e *CommitError) Error() string {
@@ -799,7 +823,10 @@ func CreateCommit(repoPath, message string) (string, error) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return "", &CommitError{
-			Phase: "commit", Stderr: stderr.String(), Err: err,
+			Phase:      "commit",
+			HookFailed: isPreCommitHookFailing(repoPath),
+			Stderr:     stderr.String(),
+			Err:        err,
 		}
 	}
 

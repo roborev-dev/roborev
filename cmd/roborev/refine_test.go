@@ -1140,21 +1140,27 @@ func TestCommitWithHookRetrySucceeds(t *testing.T) {
 
 	repoDir, _, runGit := setupTestGitRepo(t)
 
-	// Install a pre-commit hook that fails on first call, succeeds on later calls.
-	// Uses a sentinel file to track whether it has been called before.
+	// Install a pre-commit hook that fails on the first 2 calls and
+	// succeeds on the 3rd+. The hook runs twice before a retry: once
+	// by git commit, once by the hook probe. A counter file tracks calls.
 	hooksDir := filepath.Join(repoDir, ".git", "hooks")
 	if err := os.MkdirAll(hooksDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	sentinel := filepath.Join(repoDir, ".git", "hook-called")
-	hookScript := fmt.Sprintf(`#!/bin/sh
-if [ ! -f "%s" ]; then
-    touch "%s"
+	hookScript := `#!/bin/sh
+COUNT_FILE=".git/hook-count"
+COUNT=0
+if [ -f "$COUNT_FILE" ]; then
+    COUNT=$(cat "$COUNT_FILE")
+fi
+COUNT=$((COUNT + 1))
+echo "$COUNT" > "$COUNT_FILE"
+if [ "$COUNT" -le 2 ]; then
     echo "lint error: trailing whitespace" >&2
     exit 1
 fi
 exit 0
-`, sentinel, sentinel)
+`
 	hookPath := filepath.Join(hooksDir, "pre-commit")
 	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
 		t.Fatal(err)
@@ -1280,6 +1286,40 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "after 3 attempts") {
 		t.Errorf("add-phase error should not trigger retries, got: %v", err)
+	}
+}
+
+func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, _ := setupTestGitRepo(t)
+
+	// Install a passing pre-commit hook
+	hooksDir := filepath.Join(repoDir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// No changes to commit — "nothing to commit" is a commit-phase
+	// failure, but the hook passes, so HookFailed should be false.
+	testAgent := agent.NewTestAgent()
+	_, err := commitWithHookRetry(repoDir, "empty commit", testAgent, true)
+	if err == nil {
+		t.Fatal("expected error for empty commit")
+	}
+
+	// Should NOT retry despite hook being present (hook is passing)
+	if strings.Contains(err.Error(), "pre-commit hook failed") {
+		t.Errorf("non-hook commit error should not be reported as hook failure, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "after 3 attempts") {
+		t.Errorf("non-hook commit error should not trigger retries, got: %v", err)
 	}
 }
 

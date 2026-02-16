@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1295,6 +1296,15 @@ func TestCreateCommitPreCommitHookOutput(t *testing.T) {
 		t.Errorf(
 			"expected error to contain hook output, got: %v", err,
 		)
+	}
+
+	// HookFailed should be true since the hook caused the failure
+	var commitErr *CommitError
+	if !errors.As(err, &commitErr) {
+		t.Fatal("expected CommitError type")
+	}
+	if !commitErr.HookFailed {
+		t.Error("expected HookFailed=true for pre-commit hook rejection")
 	}
 }
 
