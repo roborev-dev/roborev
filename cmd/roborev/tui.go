@@ -1621,11 +1621,26 @@ func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 	return visible
 }
 
+// Queue help line constants (used by both queueVisibleRows and renderQueueView).
+const queueHelpLine1 = "x: cancel | r: rerun | t: tail | p: prompt | c: comment | y: copy | m: commit msg"
+const queueHelpLine2 = "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | ?: commands | q: quit"
+
+// queueHelpLines computes how many terminal lines the queue help
+// footer occupies, accounting for wrapping at narrow widths.
+func queueHelpLines(width int) int {
+	if width <= 0 {
+		return 2
+	}
+	h1 := (len(queueHelpLine1) + width - 1) / width
+	h2 := (len(queueHelpLine2) + width - 1) / width
+	return h1 + h2
+}
+
 // queueVisibleRows returns how many queue rows fit in the current terminal.
 func (m tuiModel) queueVisibleRows() int {
-	// Keep in sync with renderQueueView reserved lines.
-	const reservedLines = 9
-	visibleRows := m.height - reservedLines
+	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
+	reserved := 7 + queueHelpLines(m.width)
+	visibleRows := m.height - reserved
 	if visibleRows < 3 {
 		visibleRows = 3
 	}
@@ -2146,8 +2161,8 @@ func (m tuiModel) renderQueueView() string {
 	visibleSelectedIdx := m.getVisibleSelectedIdx()
 
 	// Calculate visible job range based on terminal height
-	// Reserve lines for: title(1) + status(2) + header(2) + scroll indicator(1) + status/update(1) + help(2)
-	reservedLines := 9
+	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
+	reservedLines := 7 + queueHelpLines(m.width)
 	visibleRows := m.height - reservedLines
 	if visibleRows < 3 {
 		visibleRows = 3 // Show at least 3 jobs
@@ -2277,11 +2292,9 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Help
-	helpLine1 := "x: cancel | r: rerun | t: tail | p: prompt | c: comment | y: copy | m: commit msg"
-	helpLine2 := "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | ?: commands | q: quit"
-	b.WriteString(tuiHelpStyle.Render(helpLine1))
+	b.WriteString(tuiHelpStyle.Render(queueHelpLine1))
 	b.WriteString("\x1b[K\n")
-	b.WriteString(tuiHelpStyle.Render(helpLine2))
+	b.WriteString(tuiHelpStyle.Render(queueHelpLine2))
 	b.WriteString("\x1b[K") // Clear to end of line (no newline at end)
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
