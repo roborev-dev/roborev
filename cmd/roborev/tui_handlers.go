@@ -1110,6 +1110,17 @@ func (m tuiModel) handleJobsMsg(msg tuiJobsMsg) (tea.Model, tea.Cmd) {
 	m.hasMore = msg.hasMore
 	if !msg.append {
 		m.jobStats = msg.stats
+		// Re-apply pending optimistic addressed deltas so that
+		// rollback math stays correct if an error arrives later.
+		for _, pending := range m.pendingAddressed {
+			if pending.newState {
+				m.jobStats.Addressed++
+				m.jobStats.Unaddressed--
+			} else {
+				m.jobStats.Addressed--
+				m.jobStats.Unaddressed++
+			}
+		}
 	}
 
 	m.updateDisplayNameCache(msg.jobs)

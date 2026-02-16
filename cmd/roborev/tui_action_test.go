@@ -384,6 +384,61 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 	}
 }
 
+func TestTUIAddressedRollbackAfterPollRefresh(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusDone),
+			withAddressed(boolPtr(false))),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 42
+	m.jobStats = storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1}
+	m.pendingAddressed = make(map[int64]pendingState)
+
+	// Step 1: optimistic toggle → addressed
+	result, _ := m.handleAddressedKey()
+	m = result.(tuiModel)
+	if m.jobStats.Addressed != 1 || m.jobStats.Unaddressed != 0 {
+		t.Fatalf("after toggle: Addressed=%d Unaddressed=%d",
+			m.jobStats.Addressed, m.jobStats.Unaddressed)
+	}
+
+	// Step 2: poll arrives with server truth (still unaddressed)
+	pollMsg := tuiJobsMsg{
+		jobs: []storage.ReviewJob{
+			makeJob(42, withStatus(storage.JobStatusDone),
+				withAddressed(boolPtr(false))),
+		},
+		stats: storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1},
+	}
+	m, _ = updateModel(t, m, pollMsg)
+	// Pending delta should be re-applied on top of server stats
+	if m.jobStats.Addressed != 1 || m.jobStats.Unaddressed != 0 {
+		t.Fatalf("after poll: Addressed=%d Unaddressed=%d",
+			m.jobStats.Addressed, m.jobStats.Unaddressed)
+	}
+
+	// Step 3: error arrives → rollback
+	errMsg := tuiAddressedResultMsg{
+		jobID:    42,
+		oldState: false,
+		newState: true,
+		seq:      1,
+		err:      fmt.Errorf("server error"),
+	}
+	m, _ = updateModel(t, m, errMsg)
+	if m.jobStats.Addressed != 0 {
+		t.Errorf("after rollback: expected Addressed=0, got %d",
+			m.jobStats.Addressed)
+	}
+	if m.jobStats.Unaddressed != 1 {
+		t.Errorf("after rollback: expected Unaddressed=1, got %d",
+			m.jobStats.Unaddressed)
+	}
+}
+
 func TestTUIAddressedSuccessNoRollback(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
