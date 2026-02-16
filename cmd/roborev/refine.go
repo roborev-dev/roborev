@@ -635,9 +635,9 @@ func runRefineList(
 	// worktrees resolve their own branch, not the main worktree's).
 	// Use the main repo root for daemon API queries (jobs are stored
 	// under the main repo path).
-	worktreeRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
-		worktreeRoot = root
+	worktreeRoot, err := git.GetRepoRoot(workDir)
+	if err != nil {
+		return fmt.Errorf("not in a git repository: %w", err)
 	}
 	apiRoot := worktreeRoot
 	if root, err := git.GetMainRepoRoot(workDir); err == nil {
@@ -766,6 +766,11 @@ func runRefineAllBranches(
 	}
 
 	originalBranch := git.GetCurrentBranch(repoPath)
+	// Also capture HEAD SHA for detached-HEAD restore
+	originalHEAD, err := git.ResolveSHA(repoPath, "HEAD")
+	if err != nil {
+		return fmt.Errorf("cannot resolve HEAD: %w", err)
+	}
 
 	// Query all unaddressed jobs (no branch filter)
 	jobs, err := queryUnaddressedJobs(apiRepoRoot, "")
@@ -841,7 +846,7 @@ func runRefineAllBranches(
 		}
 	}
 
-	// Restore original branch
+	// Restore original branch (or detached HEAD)
 	if originalBranch != "" {
 		if err := git.CheckoutBranch(repoPath, originalBranch); err != nil {
 			return fmt.Errorf(
@@ -850,6 +855,18 @@ func runRefineAllBranches(
 			)
 		}
 		fmt.Printf("\nRestored to branch %q\n", originalBranch)
+	} else {
+		// Detached HEAD — restore to the original commit
+		if err := git.CheckoutBranch(repoPath, originalHEAD); err != nil {
+			return fmt.Errorf(
+				"cannot restore detached HEAD %s: %w",
+				shortSHA(originalHEAD), err,
+			)
+		}
+		fmt.Printf(
+			"\nRestored to detached HEAD at %s\n",
+			shortSHA(originalHEAD),
+		)
 	}
 
 	if len(failedBranches) > 0 {

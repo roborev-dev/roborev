@@ -1403,9 +1403,13 @@ func TestRefineFlagValidation(t *testing.T) {
 						tt.wantErr, err,
 					)
 				}
-			} else if err != nil &&
-				strings.Contains(err.Error(), "mutually exclusive") {
-				t.Errorf("unexpected validation error: %v", err)
+			} else if err != nil {
+				msg := err.Error()
+				isValidationErr := strings.Contains(msg, "mutually exclusive") ||
+					strings.Contains(msg, "requires --")
+				if isValidationErr {
+					t.Errorf("unexpected flag validation error: %v", err)
+				}
 			}
 		})
 	}
