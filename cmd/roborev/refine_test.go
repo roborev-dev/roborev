@@ -1239,6 +1239,50 @@ func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
 	}
 }
 
+func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, _ := setupTestGitRepo(t)
+
+	// Install a passing pre-commit hook
+	hooksDir := filepath.Join(repoDir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a change so there's something to commit
+	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create index.lock to make git add fail (non-hook failure)
+	lockFile := filepath.Join(repoDir, ".git", "index.lock")
+	if err := os.WriteFile(lockFile, []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(lockFile)
+
+	testAgent := agent.NewTestAgent()
+	_, err := commitWithHookRetry(repoDir, "test commit", testAgent, true)
+	if err == nil {
+		t.Fatal("expected error with index.lock present")
+	}
+
+	// Should NOT retry despite hook being present (add-phase failure)
+	if strings.Contains(err.Error(), "pre-commit hook failed") {
+		t.Errorf("add-phase error should not be reported as hook failure, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "after 3 attempts") {
+		t.Errorf("add-phase error should not trigger retries, got: %v", err)
+	}
+}
+
 func TestResolveReasoningWithFast(t *testing.T) {
 	tests := []struct {
 		name                   string

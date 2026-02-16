@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -619,8 +620,8 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	}
 
 	// Create the worktree (without --recurse-submodules for compatibility with older git).
-	// Suppress hooks via core.hooksPath=/dev/null — user hooks shouldn't run in internal worktrees.
-	cmd := exec.Command("git", "-C", repoPath, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", worktreeDir, "HEAD")
+	// Suppress hooks via core.hooksPath=<null> — user hooks shouldn't run in internal worktrees.
+	cmd := exec.Command("git", "-C", repoPath, "-c", "core.hooksPath="+os.DevNull, "worktree", "add", "--detach", worktreeDir, "HEAD")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git worktree add: %w: %s", err, out)
@@ -797,7 +798,14 @@ func commitWithHookRetry(
 			return sha, nil
 		}
 
-		if !git.HasExecutableHook(repoPath, "pre-commit") {
+		// Only retry commit-phase failures when a pre-commit hook
+		// exists. Add-phase failures (lockfile, permissions) and
+		// commit failures without a hook are not retryable.
+		var commitErr *git.CommitError
+		isCommitPhase := errors.As(err, &commitErr) &&
+			commitErr.Phase == "commit"
+		if !isCommitPhase ||
+			!git.HasExecutableHook(repoPath, "pre-commit") {
 			return "", err
 		}
 

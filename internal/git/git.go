@@ -761,6 +761,23 @@ func GetCommitsSince(repoPath, mergeBase string) ([]string, error) {
 	return GetRangeCommits(repoPath, rangeRef)
 }
 
+// CommitError represents a failure during CreateCommit.
+// Phase distinguishes "add" failures (lockfile, permissions) from
+// "commit" failures (hooks, empty commit, identity issues).
+type CommitError struct {
+	Phase  string // "add" or "commit"
+	Stderr string
+	Err    error
+}
+
+func (e *CommitError) Error() string {
+	return fmt.Sprintf("git %s: %v: %s", e.Phase, e.Err, e.Stderr)
+}
+
+func (e *CommitError) Unwrap() error {
+	return e.Err
+}
+
 // CreateCommit stages all changes and creates a commit with the given message
 // Returns the SHA of the new commit
 func CreateCommit(repoPath, message string) (string, error) {
@@ -770,7 +787,9 @@ func CreateCommit(repoPath, message string) (string, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git add: %w: %s", err, stderr.String())
+		return "", &CommitError{
+			Phase: "add", Stderr: stderr.String(), Err: err,
+		}
 	}
 
 	// Create commit
@@ -779,7 +798,9 @@ func CreateCommit(repoPath, message string) (string, error) {
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git commit: %w: %s", err, stderr.String())
+		return "", &CommitError{
+			Phase: "commit", Stderr: stderr.String(), Err: err,
+		}
 	}
 
 	// Get the SHA of the new commit
