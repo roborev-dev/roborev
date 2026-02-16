@@ -10,6 +10,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // errNoStreamJSON indicates no valid stream-json events were parsed.
@@ -116,6 +117,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
+	cmd.WaitDelay = 5 * time.Second
 
 	// Pipe prompt via stdin
 	cmd.Stdin = strings.NewReader(prompt)

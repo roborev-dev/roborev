@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // CursorAgent runs code reviews using the Cursor agent CLI
@@ -83,7 +84,7 @@ func (a *CursorAgent) CommandLine() string {
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *CursorAgent) buildArgs(agenticMode bool) []string {
+func (a *CursorAgent) buildArgs(agenticMode bool, prompt string) []string {
 	// -p enables non-interactive print mode (like Claude Code's -p flag)
 	args := []string{"-p", "--output-format", "stream-json"}
 
@@ -100,18 +101,21 @@ func (a *CursorAgent) buildArgs(agenticMode bool) []string {
 		args = append(args, "--mode", "plan")
 	}
 
+	// Prompt as positional arg — cursor CLI does not support stdin piping
+	args = append(args, prompt)
+
 	return args
 }
 
 func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 
-	args := a.buildArgs(agenticMode)
+	args := a.buildArgs(agenticMode, prompt)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Env = os.Environ()
-	cmd.Stdin = strings.NewReader(prompt)
+	cmd.WaitDelay = 5 * time.Second
 
 	var stderr bytes.Buffer
 	stdoutPipe, err := cmd.StdoutPipe()

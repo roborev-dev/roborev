@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
@@ -133,6 +134,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
+	cmd.WaitDelay = 5 * time.Second
 
 	// Handle API key: use configured key if set, otherwise filter out env var
 	// to ensure Claude uses subscription auth instead of unexpected API charges
