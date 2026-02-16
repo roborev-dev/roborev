@@ -83,7 +83,7 @@ func (a *CursorAgent) CommandLine() string {
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *CursorAgent) buildArgs(agenticMode bool, prompt string) []string {
+func (a *CursorAgent) buildArgs(agenticMode bool) []string {
 	// -p enables non-interactive print mode (like Claude Code's -p flag)
 	args := []string{"-p", "--output-format", "stream-json"}
 
@@ -100,20 +100,18 @@ func (a *CursorAgent) buildArgs(agenticMode bool, prompt string) []string {
 		args = append(args, "--mode", "plan")
 	}
 
-	// Prompt is a positional argument for the agent CLI
-	args = append(args, prompt)
-
 	return args
 }
 
 func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 
-	args := a.buildArgs(agenticMode, prompt)
+	args := a.buildArgs(agenticMode)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Env = os.Environ()
+	cmd.Stdin = strings.NewReader(prompt)
 
 	var stderr bytes.Buffer
 	stdoutPipe, err := cmd.StdoutPipe()

@@ -1155,8 +1155,9 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 	cmd := exec.CommandContext(ctx, "gh", "pr", "comment",
 		"--repo", ghRepo,
 		fmt.Sprintf("%d", prNumber),
-		"--body", body,
+		"--body-file", "-",
 	)
+	cmd.Stdin = strings.NewReader(body)
 	if env := p.ghEnvForRepo(ghRepo); env != nil {
 		cmd.Env = env
 	}

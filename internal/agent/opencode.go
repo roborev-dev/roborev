@@ -127,10 +127,10 @@ func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt 
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
-	args = append(args, prompt)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
+	cmd.Stdin = strings.NewReader(prompt)
 
 	var stdout, stderr bytes.Buffer
 	if sw := newSyncWriter(output); sw != nil {

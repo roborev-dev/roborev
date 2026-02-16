@@ -3034,6 +3034,7 @@ func checkAgentsCmd() *cobra.Command {
 	var (
 		timeoutSecs int
 		agentFilter string
+		largePrompt bool
 	)
 
 	cmd := &cobra.Command{
@@ -3045,15 +3046,20 @@ For each agent found on PATH, runs a short smoke-test prompt with a timeout
 to verify the agent is actually functional.
 
 Examples:
-  roborev check-agents              # Check all agents
-  roborev check-agents --agent codex  # Check only codex
-  roborev check-agents --timeout 30   # 30 second timeout per agent`,
+  roborev check-agents                  # Check all agents
+  roborev check-agents --agent codex    # Check only codex
+  roborev check-agents --timeout 30     # 30 second timeout per agent
+  roborev check-agents --large-prompt   # Test with 33KB+ prompt (Windows limit check)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			names := agent.Available()
 			sort.Strings(names)
 
 			timeout := time.Duration(timeoutSecs) * time.Second
 			smokePrompt := "Respond with exactly: OK"
+			if largePrompt {
+				smokePrompt = "Respond with exactly: OK\n" +
+					strings.Repeat("// padding line\n", 2200)
+			}
 
 			// Use current directory as repo path for the smoke test
 			repoPath, err := os.Getwd()
@@ -3124,6 +3130,8 @@ Examples:
 	cmd.SilenceUsage = true
 	cmd.Flags().IntVar(&timeoutSecs, "timeout", 60, "timeout in seconds per agent")
 	cmd.Flags().StringVar(&agentFilter, "agent", "", "check only this agent")
+	cmd.Flags().BoolVar(&largePrompt, "large-prompt", false,
+		"use a 33KB+ prompt to test Windows command-line limits")
 
 	return cmd
 }

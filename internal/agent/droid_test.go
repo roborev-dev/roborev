@@ -12,31 +12,31 @@ func TestDroidBuildArgsAgenticMode(t *testing.T) {
 	a := NewDroidAgent("droid")
 
 	// Test non-agentic mode (--auto low)
-	args := a.buildArgs("prompt", false)
+	args := a.buildArgs(false)
 	assertContainsArg(t, args, "low")
 	assertNotContainsArg(t, args, "medium")
 
 	// Test agentic mode (--auto medium)
-	args = a.buildArgs("prompt", true)
+	args = a.buildArgs(true)
 	assertContainsArg(t, args, "medium")
 }
 
 func TestDroidBuildArgsReasoningEffort(t *testing.T) {
 	// Test thorough reasoning
 	a := NewDroidAgent("droid").WithReasoning(ReasoningThorough).(*DroidAgent)
-	args := a.buildArgs("prompt", false)
+	args := a.buildArgs(false)
 	assertContainsArg(t, args, "--reasoning-effort")
 	assertContainsArg(t, args, "high")
 
 	// Test fast reasoning
 	a = NewDroidAgent("droid").WithReasoning(ReasoningFast).(*DroidAgent)
-	args = a.buildArgs("prompt", false)
+	args = a.buildArgs(false)
 	assertContainsArg(t, args, "--reasoning-effort")
 	assertContainsArg(t, args, "low")
 
 	// Test standard reasoning (no flag)
 	a = NewDroidAgent("droid").WithReasoning(ReasoningStandard).(*DroidAgent)
-	args = a.buildArgs("prompt", false)
+	args = a.buildArgs(false)
 	assertNotContainsArg(t, args, "--reasoning-effort")
 }
 
@@ -118,21 +118,6 @@ func TestDroidReviewWithProgress(t *testing.T) {
 	progress, _ := os.ReadFile(progressFile)
 	if !strings.Contains(string(progress), "Processing") {
 		t.Fatalf("expected progress output, got %q", string(progress))
-	}
-}
-
-func TestDroidBuildArgsPromptWithDash(t *testing.T) {
-	a := NewDroidAgent("droid")
-
-	prompt := "-o /tmp/malicious --auto high"
-	args := a.buildArgs(prompt, false)
-
-	// Verify "--" appears before the prompt
-	assertArgsOrder(t, args, "--", prompt)
-
-	// Verify the prompt is passed exactly as last arg
-	if args[len(args)-1] != prompt {
-		t.Fatalf("expected prompt as last arg, got %v", args)
 	}
 }
 

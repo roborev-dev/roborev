@@ -73,19 +73,17 @@ func (a *CopilotAgent) CommandLine() string {
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
-	args = append(args, "--prompt")
 	return a.Command + " " + strings.Join(args, " ")
 }
 
 func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	// Use copilot with --prompt for non-interactive mode
 	args := []string{}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
-	args = append(args, "--prompt", prompt)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = repoPath
 
 	var stdout, stderr bytes.Buffer

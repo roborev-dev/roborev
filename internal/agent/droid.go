@@ -77,7 +77,7 @@ func (a *DroidAgent) CommandLine() string {
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *DroidAgent) buildArgs(prompt string, agenticMode bool) []string {
+func (a *DroidAgent) buildArgs(agenticMode bool) []string {
 	args := []string{"exec"}
 
 	// Set autonomy level based on agentic mode
@@ -92,10 +92,6 @@ func (a *DroidAgent) buildArgs(prompt string, agenticMode bool) []string {
 		args = append(args, "--reasoning-effort", effort)
 	}
 
-	// Add -- to stop flag parsing, then the prompt as the final argument
-	// This prevents prompts starting with "-" from being parsed as flags
-	args = append(args, "--", prompt)
-
 	return args
 }
 
@@ -103,10 +99,11 @@ func (a *DroidAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	// Use agentic mode if either per-job setting or global setting enables it
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 
-	args := a.buildArgs(prompt, agenticMode)
+	args := a.buildArgs(agenticMode)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
+	cmd.Stdin = strings.NewReader(prompt)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
