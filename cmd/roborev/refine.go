@@ -766,10 +766,15 @@ func runRefineAllBranches(
 	}
 
 	originalBranch := git.GetCurrentBranch(repoPath)
-	// Capture HEAD SHA only for detached-HEAD restore (defer until
-	// we know originalBranch is empty to avoid failing in unborn repos).
 	var originalHEAD string
-	if originalBranch == "" && !git.IsUnbornHead(repoPath) {
+	if originalBranch == "" {
+		if git.IsUnbornHead(repoPath) {
+			return fmt.Errorf(
+				"cannot run --all-branches from an unborn HEAD " +
+					"(no commits on current branch)",
+			)
+		}
+		// Detached HEAD — capture SHA for restore after processing.
 		originalHEAD, err = git.ResolveSHA(repoPath, "HEAD")
 		if err != nil {
 			return fmt.Errorf("cannot resolve HEAD: %w", err)
@@ -868,7 +873,7 @@ func runRefineAllBranches(
 			)
 		}
 		fmt.Printf("\nRestored to branch %q\n", originalBranch)
-	} else {
+	} else if originalHEAD != "" {
 		// Detached HEAD — restore to the original commit
 		if err := git.CheckoutBranch(repoPath, originalHEAD); err != nil {
 			return fmt.Errorf(
