@@ -255,9 +255,10 @@ func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, er
 func filterEnv(env []string, keys ...string) []string {
 	result := make([]string, 0, len(env))
 	for _, e := range env {
+		k, _, _ := strings.Cut(e, "=")
 		strip := false
 		for _, key := range keys {
-			if strings.HasPrefix(e, key+"=") {
+			if k == key {
 				strip = true
 				break
 			}
