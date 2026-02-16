@@ -34,6 +34,20 @@ func createMockExecutable(t *testing.T, dir, name string, exitCode int) string {
 	return path
 }
 
+// installGitHook writes a shell script as the named git hook
+// (e.g. "pre-commit", "post-checkout") and makes it executable.
+func installGitHook(t *testing.T, repoDir, name, script string) {
+	t.Helper()
+	hooksDir := filepath.Join(repoDir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(hooksDir, name)
+	if err := os.WriteFile(hookPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // gitCommitFile writes a file, stages it, commits, and returns the new HEAD SHA.
 func gitCommitFile(t *testing.T, repoDir string, runGit func(...string) string, filename, content, msg string) string {
 	t.Helper()
@@ -1087,16 +1101,7 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 
 	repoDir, _, runGit := setupTestGitRepo(t)
 
-	// Install a post-checkout hook that always fails
-	hooksDir := filepath.Join(repoDir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookScript := "#!/bin/sh\nexit 1\n"
-	hookPath := filepath.Join(hooksDir, "post-checkout")
-	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
-		t.Fatal(err)
-	}
+	installGitHook(t, repoDir, "post-checkout", "#!/bin/sh\nexit 1\n")
 
 	// Verify the hook is active (a normal worktree add would fail)
 	failDir := t.TempDir()
@@ -1143,11 +1148,7 @@ func TestCommitWithHookRetrySucceeds(t *testing.T) {
 	// Install a pre-commit hook that fails on the first 2 calls and
 	// succeeds on the 3rd+. The hook runs twice before a retry: once
 	// by git commit, once by the hook probe. A counter file tracks calls.
-	hooksDir := filepath.Join(repoDir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookScript := `#!/bin/sh
+	installGitHook(t, repoDir, "pre-commit", `#!/bin/sh
 COUNT_FILE=".git/hook-count"
 COUNT=0
 if [ -f "$COUNT_FILE" ]; then
@@ -1160,11 +1161,7 @@ if [ "$COUNT" -le 2 ]; then
     exit 1
 fi
 exit 0
-`
-	hookPath := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	// Make a file change to commit
 	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
@@ -1195,16 +1192,8 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 
 	repoDir, _, _ := setupTestGitRepo(t)
 
-	// Install a pre-commit hook that always fails
-	hooksDir := filepath.Join(repoDir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookScript := "#!/bin/sh\necho 'always fails' >&2\nexit 1\n"
-	hookPath := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
-		t.Fatal(err)
-	}
+	installGitHook(t, repoDir, "pre-commit",
+		"#!/bin/sh\necho 'always fails' >&2\nexit 1\n")
 
 	// Make a file change
 	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
@@ -1252,15 +1241,7 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 
 	repoDir, _, _ := setupTestGitRepo(t)
 
-	// Install a passing pre-commit hook
-	hooksDir := filepath.Join(repoDir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookPath := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	installGitHook(t, repoDir, "pre-commit", "#!/bin/sh\nexit 0\n")
 
 	// Make a change so there's something to commit
 	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
@@ -1296,15 +1277,7 @@ func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
 
 	repoDir, _, _ := setupTestGitRepo(t)
 
-	// Install a passing pre-commit hook
-	hooksDir := filepath.Join(repoDir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookPath := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	installGitHook(t, repoDir, "pre-commit", "#!/bin/sh\nexit 0\n")
 
 	// No changes to commit — "nothing to commit" is a commit-phase
 	// failure, but the hook passes, so HookFailed should be false.

@@ -100,6 +100,20 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 	return &TestRepo{T: r.T, Dir: wtDir}
 }
 
+// InstallHook writes a shell script as the named git hook
+// (e.g. "pre-commit") and makes it executable.
+func (r *TestRepo) InstallHook(name, script string) {
+	r.T.Helper()
+	hooksDir := filepath.Join(r.Dir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		r.T.Fatal(err)
+	}
+	hookPath := filepath.Join(hooksDir, name)
+	if err := os.WriteFile(hookPath, []byte(script), 0755); err != nil {
+		r.T.Fatal(err)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -1271,16 +1285,8 @@ func TestCreateCommitPreCommitHookOutput(t *testing.T) {
 	repo := NewTestRepo(t)
 	repo.CommitFile("initial.txt", "initial", "initial commit")
 
-	// Install a pre-commit hook that prints a diagnostic and fails
-	hooksDir := filepath.Join(repo.Dir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookScript := "#!/bin/sh\necho 'error: trailing whitespace on line 42' >&2\nexit 1\n"
-	hookPath := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
-		t.Fatal(err)
-	}
+	repo.InstallHook("pre-commit",
+		"#!/bin/sh\necho 'error: trailing whitespace on line 42' >&2\nexit 1\n")
 
 	// Make a change so there's something to commit
 	repo.WriteFile("new.txt", "content")
@@ -1316,15 +1322,7 @@ func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
 	// because there are no staged changes ("nothing to commit").
 	// The dry-run probe (--no-verify --dry-run) also fails for the
 	// same reason, so HookFailed must be false.
-	hooksDir := filepath.Join(repo.Dir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookScript := "#!/bin/sh\nexit 0\n"
-	hookPath := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
-		t.Fatal(err)
-	}
+	repo.InstallHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
 	// No staged changes — commit fails for non-hook reason
 	_, err := CreateCommit(repo.Dir, "empty commit")
