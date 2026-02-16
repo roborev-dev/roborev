@@ -230,10 +230,9 @@ func GetMainRepoRoot(path string) (string, error) {
 	// For regular repos: both return ".git" (or absolute path)
 	// For submodules: both return the same path (e.g., "../.git/modules/sub")
 	// For worktrees: --git-dir returns worktree-specific dir, --git-common-dir returns main repo's .git
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	gitDirCmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+	gitDirCmd := exec.CommandContext(ctx1, "git", "rev-parse", "--git-dir")
 	gitDirCmd.Dir = path
 	gitDirOut, err := gitDirCmd.Output()
 	if err != nil {
@@ -241,7 +240,9 @@ func GetMainRepoRoot(path string) (string, error) {
 	}
 	gitDir := strings.TrimSpace(string(gitDirOut))
 
-	commonDirCmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-common-dir")
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	commonDirCmd := exec.CommandContext(ctx2, "git", "rev-parse", "--git-common-dir")
 	commonDirCmd.Dir = path
 	commonDirOut, err := commonDirCmd.Output()
 	if err != nil {
