@@ -262,3 +262,24 @@ func TestFilterEnvMultipleKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterEnvExactMatchOnly(t *testing.T) {
+	env := []string{
+		"CLAUDE=1",
+		"CLAUDECODE=1",
+		"CLAUDE_NO_SOUND=1",
+		"PATH=/usr/bin",
+	}
+
+	filtered := filterEnv(env, "CLAUDE")
+
+	if len(filtered) != 3 {
+		t.Fatalf("expected 3 env vars, got %d: %v", len(filtered), filtered)
+	}
+	for _, e := range filtered {
+		k, _, _ := strings.Cut(e, "=")
+		if k == "CLAUDE" {
+			t.Fatal("CLAUDE should be stripped")
+		}
+	}
+}
