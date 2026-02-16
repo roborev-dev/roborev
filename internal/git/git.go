@@ -75,7 +75,9 @@ func GetCommitInfo(repoPath, sha string) (*CommitInfo, error) {
 
 // GetCurrentBranch returns the current branch name, or empty string if detached HEAD
 func GetCurrentBranch(repoPath string) string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -228,7 +230,10 @@ func GetMainRepoRoot(path string) (string, error) {
 	// For regular repos: both return ".git" (or absolute path)
 	// For submodules: both return the same path (e.g., "../.git/modules/sub")
 	// For worktrees: --git-dir returns worktree-specific dir, --git-common-dir returns main repo's .git
-	gitDirCmd := exec.Command("git", "rev-parse", "--git-dir")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	gitDirCmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
 	gitDirCmd.Dir = path
 	gitDirOut, err := gitDirCmd.Output()
 	if err != nil {
@@ -236,7 +241,7 @@ func GetMainRepoRoot(path string) (string, error) {
 	}
 	gitDir := strings.TrimSpace(string(gitDirOut))
 
-	commonDirCmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	commonDirCmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-common-dir")
 	commonDirCmd.Dir = path
 	commonDirOut, err := commonDirCmd.Output()
 	if err != nil {
