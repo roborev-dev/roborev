@@ -35,6 +35,18 @@ func (m *tuiModel) mutateJob(id int64, fn func(*storage.ReviewJob)) bool {
 	return false
 }
 
+// applyStatsDelta adjusts jobStats for an addressed state change.
+// addressed=true means marking as addressed (+Addressed, -Unaddressed).
+func (m *tuiModel) applyStatsDelta(addressed bool) {
+	if addressed {
+		m.jobStats.Addressed++
+		m.jobStats.Unaddressed--
+	} else {
+		m.jobStats.Addressed--
+		m.jobStats.Unaddressed++
+	}
+}
+
 // setJobAddressed updates the addressed state for a job by ID.
 // Handles nil pointer by allocating if necessary.
 func (m *tuiModel) setJobAddressed(jobID int64, state bool) {

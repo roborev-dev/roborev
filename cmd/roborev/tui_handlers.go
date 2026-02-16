@@ -784,13 +784,7 @@ func (m tuiModel) handleAddressedKey() (tea.Model, tea.Cmd) {
 			jobID = m.currentReview.Job.ID
 			m.setJobAddressed(jobID, newState)
 			m.pendingAddressed[jobID] = pendingState{newState: newState, seq: seq}
-			if newState {
-				m.jobStats.Addressed++
-				m.jobStats.Unaddressed--
-			} else {
-				m.jobStats.Addressed--
-				m.jobStats.Unaddressed++
-			}
+			m.applyStatsDelta(newState)
 		} else {
 			m.pendingReviewAddressed[m.currentReview.ID] = pendingState{newState: newState, seq: seq}
 		}
@@ -804,14 +798,7 @@ func (m tuiModel) handleAddressedKey() (tea.Model, tea.Cmd) {
 			seq := m.addressedSeq
 			*job.Addressed = newState
 			m.pendingAddressed[job.ID] = pendingState{newState: newState, seq: seq}
-			// Optimistically update stats so status bar reflects change immediately
-			if newState {
-				m.jobStats.Addressed++
-				m.jobStats.Unaddressed--
-			} else {
-				m.jobStats.Addressed--
-				m.jobStats.Unaddressed++
-			}
+			m.applyStatsDelta(newState)
 			if m.hideAddressed && newState {
 				nextIdx := m.findNextVisibleJob(m.selectedIdx)
 				if nextIdx < 0 {
@@ -1108,20 +1095,6 @@ func (m tuiModel) handleJobsMsg(msg tuiJobsMsg) (tea.Model, tea.Cmd) {
 	m.consecutiveErrors = 0
 
 	m.hasMore = msg.hasMore
-	if !msg.append {
-		m.jobStats = msg.stats
-		// Re-apply pending optimistic addressed deltas so that
-		// rollback math stays correct if an error arrives later.
-		for _, pending := range m.pendingAddressed {
-			if pending.newState {
-				m.jobStats.Addressed++
-				m.jobStats.Unaddressed--
-			} else {
-				m.jobStats.Addressed--
-				m.jobStats.Unaddressed++
-			}
-		}
-	}
 
 	m.updateDisplayNameCache(msg.jobs)
 
@@ -1141,6 +1114,16 @@ func (m tuiModel) handleJobsMsg(msg tuiJobsMsg) (tea.Model, tea.Cmd) {
 				}
 				break
 			}
+		}
+	}
+
+	if !msg.append {
+		m.jobStats = msg.stats
+		// Re-apply only unconfirmed pending deltas so that
+		// rollback math stays correct without double-counting
+		// entries the server has already absorbed.
+		for _, pending := range m.pendingAddressed {
+			m.applyStatsDelta(pending.newState)
 		}
 	}
 
@@ -1317,15 +1300,7 @@ func (m tuiModel) handleAddressedResultMsg(msg tuiAddressedResultMsg) (tea.Model
 				m.setJobAddressed(msg.jobID, msg.oldState)
 				delete(m.pendingAddressed, msg.jobID)
 				// Reverse the optimistic stats delta
-				if msg.oldState {
-					// Was addressed, we toggled to unaddressed, now reverting
-					m.jobStats.Addressed++
-					m.jobStats.Unaddressed--
-				} else {
-					// Was unaddressed, we toggled to addressed, now reverting
-					m.jobStats.Addressed--
-					m.jobStats.Unaddressed++
-				}
+				m.applyStatsDelta(msg.oldState)
 			} else if msg.reviewID > 0 {
 				delete(m.pendingReviewAddressed, msg.reviewID)
 			}

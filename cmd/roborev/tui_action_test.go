@@ -439,6 +439,47 @@ func TestTUIAddressedRollbackAfterPollRefresh(t *testing.T) {
 	}
 }
 
+func TestTUIAddressedPollConfirmsNoDoubleCount(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusDone),
+			withAddressed(boolPtr(false))),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 42
+	m.jobStats = storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1}
+	m.pendingAddressed = make(map[int64]pendingState)
+
+	// Step 1: optimistic toggle → addressed
+	result, _ := m.handleAddressedKey()
+	m = result.(tuiModel)
+	if m.jobStats.Addressed != 1 || m.jobStats.Unaddressed != 0 {
+		t.Fatalf("after toggle: Addressed=%d Unaddressed=%d",
+			m.jobStats.Addressed, m.jobStats.Unaddressed)
+	}
+
+	// Step 2: poll arrives with server already reflecting the change
+	pollMsg := tuiJobsMsg{
+		jobs: []storage.ReviewJob{
+			makeJob(42, withStatus(storage.JobStatusDone),
+				withAddressed(boolPtr(true))),
+		},
+		stats: storage.JobStats{Done: 1, Addressed: 1, Unaddressed: 0},
+	}
+	m, _ = updateModel(t, m, pollMsg)
+	// Pending should be cleared (server confirmed), no double-counting
+	if m.jobStats.Addressed != 1 {
+		t.Errorf("after confirm poll: expected Addressed=1, got %d",
+			m.jobStats.Addressed)
+	}
+	if m.jobStats.Unaddressed != 0 {
+		t.Errorf("after confirm poll: expected Unaddressed=0, got %d",
+			m.jobStats.Unaddressed)
+	}
+}
+
 func TestTUIAddressedSuccessNoRollback(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
