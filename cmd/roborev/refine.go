@@ -466,7 +466,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		cleanupWorktree()
 
 		commitMsg := fmt.Sprintf("Address review findings (job %d)\n\n%s", currentFailedReview.JobID, summarizeAgentOutput(output))
-		newCommit, err := git.CreateCommit(repoPath, commitMsg)
+		newCommit, err := commitWithHookRetry(repoPath, commitMsg, addressAgent, quiet)
 		if err != nil {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
@@ -618,8 +618,9 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 		return "", nil, err
 	}
 
-	// Create the worktree (without --recurse-submodules for compatibility with older git)
-	cmd := exec.Command("git", "-C", repoPath, "worktree", "add", "--detach", worktreeDir, "HEAD")
+	// Create the worktree (without --recurse-submodules for compatibility with older git).
+	// Suppress hooks via core.hooksPath=/dev/null — user hooks shouldn't run in internal worktrees.
+	cmd := exec.Command("git", "-C", repoPath, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", worktreeDir, "HEAD")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git worktree add: %w: %s", err, out)
@@ -770,6 +771,70 @@ func applyWorktreeChanges(repoPath, worktreePath string) error {
 	}
 
 	return nil
+}
+
+// commitWithHookRetry attempts git.CreateCommit and, on failure,
+// runs the agent to fix whatever the pre-commit hook complained about.
+// Retries up to 3 total attempts. Returns the commit SHA on success.
+func commitWithHookRetry(
+	repoPath, commitMsg string,
+	fixAgent agent.Agent,
+	quiet bool,
+) (string, error) {
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		sha, err := git.CreateCommit(repoPath, commitMsg)
+		if err == nil {
+			return sha, nil
+		}
+
+		if attempt == maxAttempts {
+			return "", fmt.Errorf(
+				"pre-commit hook failed after %d attempts: %w",
+				maxAttempts, err,
+			)
+		}
+
+		hookErr := err.Error()
+		if !quiet {
+			fmt.Printf(
+				"Pre-commit hook failed (attempt %d/%d), "+
+					"running agent to fix:\n%s\n",
+				attempt, maxAttempts, hookErr,
+			)
+		}
+
+		fixPrompt := fmt.Sprintf(
+			"The pre-commit hook rejected this commit with "+
+				"the following error output. Fix the issues so "+
+				"the commit can succeed.\n\n%s",
+			hookErr,
+		)
+
+		var agentOutput io.Writer
+		if quiet {
+			agentOutput = io.Discard
+		} else {
+			agentOutput = os.Stdout
+		}
+
+		fixCtx, cancel := context.WithTimeout(
+			context.Background(), 5*time.Minute,
+		)
+		_, agentErr := fixAgent.Review(
+			fixCtx, repoPath, "HEAD", fixPrompt, agentOutput,
+		)
+		cancel()
+
+		if agentErr != nil {
+			return "", fmt.Errorf(
+				"agent failed to fix hook issues: %w", agentErr,
+			)
+		}
+	}
+
+	// unreachable, but satisfies the compiler
+	return "", fmt.Errorf("commit retry loop exited unexpectedly")
 }
 
 func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string) (agent.Agent, error) {

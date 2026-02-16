@@ -1080,6 +1080,141 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 	}
 }
 
+func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, runGit := setupTestGitRepo(t)
+
+	// Install a post-checkout hook that always fails
+	hooksDir := filepath.Join(repoDir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookScript := "#!/bin/sh\nexit 1\n"
+	hookPath := filepath.Join(hooksDir, "post-checkout")
+	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the hook is active (a normal worktree add would fail)
+	failDir := t.TempDir()
+	cmd := exec.Command("git", "-C", repoDir, "worktree", "add", "--detach", failDir, "HEAD")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		// Clean up the worktree before failing
+		exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", failDir).Run()
+		// Some git versions don't fail on post-checkout hook errors.
+		// In that case, verify our approach still succeeds.
+		_ = out
+	}
+
+	// createTempWorktree should succeed because it suppresses hooks
+	worktreePath, cleanup, err := createTempWorktree(repoDir)
+	if err != nil {
+		t.Fatalf("createTempWorktree should succeed with failing hook: %v", err)
+	}
+	defer cleanup()
+
+	// Verify the worktree directory exists and has the file from the repo
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("worktree directory should exist: %v", err)
+	}
+
+	baseFile := filepath.Join(worktreePath, "base.txt")
+	content, err := os.ReadFile(baseFile)
+	if err != nil {
+		t.Fatalf("expected base.txt in worktree: %v", err)
+	}
+	if string(content) != "base" {
+		t.Errorf("expected content 'base', got %q", string(content))
+	}
+
+	_ = runGit // used by setupTestGitRepo
+}
+
+func TestCommitWithHookRetrySucceeds(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, runGit := setupTestGitRepo(t)
+
+	// Install a pre-commit hook that fails on first call, succeeds on later calls.
+	// Uses a sentinel file to track whether it has been called before.
+	hooksDir := filepath.Join(repoDir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(repoDir, ".git", "hook-called")
+	hookScript := fmt.Sprintf(`#!/bin/sh
+if [ ! -f "%s" ]; then
+    touch "%s"
+    echo "lint error: trailing whitespace" >&2
+    exit 1
+fi
+exit 0
+`, sentinel, sentinel)
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a file change to commit
+	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	testAgent := agent.NewTestAgent()
+	sha, err := commitWithHookRetry(repoDir, "test commit", testAgent, true)
+	if err != nil {
+		t.Fatalf("commitWithHookRetry should succeed: %v", err)
+	}
+
+	if sha == "" {
+		t.Fatal("expected non-empty SHA")
+	}
+
+	// Verify the commit exists
+	commitSHA := runGit("rev-parse", "HEAD")
+	if commitSHA != sha {
+		t.Errorf("expected HEAD=%s, got %s", sha, commitSHA)
+	}
+}
+
+func TestCommitWithHookRetryExhausted(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, _ := setupTestGitRepo(t)
+
+	// Install a pre-commit hook that always fails
+	hooksDir := filepath.Join(repoDir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookScript := "#!/bin/sh\necho 'always fails' >&2\nexit 1\n"
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a file change
+	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	testAgent := agent.NewTestAgent()
+	_, err := commitWithHookRetry(repoDir, "test commit", testAgent, true)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Errorf("expected error mentioning '3 attempts', got: %v", err)
+	}
+}
+
 func TestResolveReasoningWithFast(t *testing.T) {
 	tests := []struct {
 		name                   string

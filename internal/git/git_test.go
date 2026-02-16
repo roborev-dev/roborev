@@ -1266,6 +1266,38 @@ func TestGetRangeFilesChanged(t *testing.T) {
 	})
 }
 
+func TestCreateCommitPreCommitHookOutput(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.CommitFile("initial.txt", "initial", "initial commit")
+
+	// Install a pre-commit hook that prints a diagnostic and fails
+	hooksDir := filepath.Join(repo.Dir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookScript := "#!/bin/sh\necho 'error: trailing whitespace on line 42' >&2\nexit 1\n"
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a change so there's something to commit
+	repo.WriteFile("new.txt", "content")
+	repo.Run("add", "new.txt")
+
+	_, err := CreateCommit(repo.Dir, "should fail")
+	if err == nil {
+		t.Fatal("expected CreateCommit to fail with pre-commit hook")
+	}
+
+	// The error should contain the hook's stderr output
+	if !strings.Contains(err.Error(), "trailing whitespace on line 42") {
+		t.Errorf(
+			"expected error to contain hook output, got: %v", err,
+		)
+	}
+}
+
 func TestIsAncestor(t *testing.T) {
 	repo := NewTestRepo(t)
 	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
