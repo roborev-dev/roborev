@@ -69,7 +69,7 @@ func (a *CursorAgent) CommandName() string {
 
 func (a *CursorAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	// Show flags without the prompt (which is a positional arg)
+	// Show flags without the prompt (piped via stdin)
 	args := []string{"-p", "--output-format", "stream-json"}
 	model := a.Model
 	if model == "" {

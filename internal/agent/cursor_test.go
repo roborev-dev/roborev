@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -118,6 +119,43 @@ func TestCursorWithChaining(t *testing.T) {
 	}
 	if cursor.Command != "agent" {
 		t.Errorf("expected command 'agent', got %q", cursor.Command)
+	}
+}
+
+func TestCursorReviewPipesPromptViaStdin(t *testing.T) {
+	skipIfWindows(t)
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureArgs:  true,
+		CaptureStdin: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewCursorAgent(mock.CmdPath)
+	prompt := "Review this commit carefully"
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "HEAD", prompt, nil,
+	)
+	if err != nil {
+		t.Fatalf("Review failed: %v", err)
+	}
+
+	stdin, err := os.ReadFile(mock.StdinFile)
+	if err != nil {
+		t.Fatalf("read stdin capture: %v", err)
+	}
+	if strings.TrimSpace(string(stdin)) != prompt {
+		t.Errorf("stdin = %q, want %q", string(stdin), prompt)
+	}
+
+	args, err := os.ReadFile(mock.ArgsFile)
+	if err != nil {
+		t.Fatalf("read args capture: %v", err)
+	}
+	if strings.Contains(string(args), prompt) {
+		t.Errorf("prompt leaked into argv: %s", string(args))
 	}
 }
 
