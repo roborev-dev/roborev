@@ -758,35 +758,49 @@ func runRefineAllBranches(
 		return err
 	}
 
-	// Extract unique branches with failed verdicts
-	branchSet := make(map[string]bool)
+	// Track the newest failed-job timestamp per branch so we can
+	// sort by recency rather than alphabetically.
+	branchNewest := make(map[string]time.Time)
 	for _, j := range jobs {
-		if j.Branch != "" && j.Verdict != nil && *j.Verdict == "F" {
-			branchSet[j.Branch] = true
+		if j.Branch == "" || j.Verdict == nil || *j.Verdict != "F" {
+			continue
+		}
+		var ts time.Time
+		if j.FinishedAt != nil {
+			ts = *j.FinishedAt
+		}
+		if cur, ok := branchNewest[j.Branch]; !ok || ts.After(cur) {
+			branchNewest[j.Branch] = ts
 		}
 	}
 
-	if len(branchSet) == 0 {
+	if len(branchNewest) == 0 {
 		fmt.Println("No branches with failed reviews found.")
 		return nil
 	}
 
-	branches := make([]string, 0, len(branchSet))
-	for b := range branchSet {
+	branches := make([]string, 0, len(branchNewest))
+	for b := range branchNewest {
 		branches = append(branches, b)
 	}
-	sort.Strings(branches)
 
-	if opts.newestFirst {
-		for i, j := 0, len(branches)-1; i < j; i, j = i+1, j-1 {
-			branches[i], branches[j] = branches[j], branches[i]
+	// Default: oldest branch first (by newest failed job).
+	// --newest-first reverses to newest branch first.
+	sort.Slice(branches, func(i, j int) bool {
+		ti := branchNewest[branches[i]]
+		tj := branchNewest[branches[j]]
+		if opts.newestFirst {
+			return ti.After(tj)
 		}
-	}
+		return ti.Before(tj)
+	})
 
 	fmt.Printf(
 		"Found %d branch(es) with failed reviews: %s\n",
 		len(branches), strings.Join(branches, ", "),
 	)
+
+	var failedBranches []string
 
 	for _, b := range branches {
 		fmt.Printf("\n=== Refining branch %q ===\n", b)
@@ -796,6 +810,7 @@ func runRefineAllBranches(
 				"Warning: cannot checkout %q: %v (skipping)\n",
 				b, err,
 			)
+			failedBranches = append(failedBranches, b)
 			continue
 		}
 
@@ -807,6 +822,7 @@ func runRefineAllBranches(
 			fmt.Printf(
 				"Warning: refine on %q: %v\n", b, err,
 			)
+			failedBranches = append(failedBranches, b)
 		}
 	}
 
@@ -819,6 +835,14 @@ func runRefineAllBranches(
 			)
 		}
 		fmt.Printf("\nRestored to branch %q\n", originalBranch)
+	}
+
+	if len(failedBranches) > 0 {
+		return fmt.Errorf(
+			"refine failed on %d branch(es): %s",
+			len(failedBranches),
+			strings.Join(failedBranches, ", "),
+		)
 	}
 
 	return nil
