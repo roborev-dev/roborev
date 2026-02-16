@@ -393,7 +393,7 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 	seen := make(map[int64]bool)
 
 	for {
-		jobIDs, err := queryUnaddressedJobs(repoRoot, branch)
+		jobIDs, err := queryUnaddressedJobIDs(repoRoot, branch)
 		if err != nil {
 			return err
 		}
@@ -434,11 +434,16 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 	}
 }
 
-func queryUnaddressedJobs(repoRoot, branch string) ([]int64, error) {
-	queryURL := fmt.Sprintf("%s/api/jobs?status=done&repo=%s&addressed=false&limit=0",
-		serverAddr, url.QueryEscape(repoRoot))
+func queryUnaddressedJobs(
+	repoRoot, branch string,
+) ([]storage.ReviewJob, error) {
+	queryURL := fmt.Sprintf(
+		"%s/api/jobs?status=done&repo=%s&addressed=false&limit=0",
+		serverAddr, url.QueryEscape(repoRoot),
+	)
 	if branch != "" {
-		queryURL += "&branch=" + url.QueryEscape(branch) + "&branch_include_empty=true"
+		queryURL += "&branch=" + url.QueryEscape(branch) +
+			"&branch_include_empty=true"
 	}
 
 	resp, err := http.Get(queryURL)
@@ -449,7 +454,9 @@ func queryUnaddressedJobs(repoRoot, branch string) ([]int64, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, body)
+		return nil, fmt.Errorf(
+			"server error (%d): %s", resp.StatusCode, body,
+		)
 	}
 
 	var jobsResp struct {
@@ -459,11 +466,21 @@ func queryUnaddressedJobs(repoRoot, branch string) ([]int64, error) {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	var jobIDs []int64
-	for _, j := range jobsResp.Jobs {
-		jobIDs = append(jobIDs, j.ID)
+	return jobsResp.Jobs, nil
+}
+
+func queryUnaddressedJobIDs(
+	repoRoot, branch string,
+) ([]int64, error) {
+	jobs, err := queryUnaddressedJobs(repoRoot, branch)
+	if err != nil {
+		return nil, err
 	}
-	return jobIDs, nil
+	ids := make([]int64, len(jobs))
+	for i, j := range jobs {
+		ids[i] = j.ID
+	}
+	return ids, nil
 }
 
 // runFixList prints unaddressed jobs with detailed information without running any agent.
@@ -481,7 +498,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		repoRoot = root
 	}
 
-	jobIDs, err := queryUnaddressedJobs(repoRoot, branch)
+	jobIDs, err := queryUnaddressedJobIDs(repoRoot, branch)
 	if err != nil {
 		return err
 	}
@@ -715,7 +732,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 
 	// Discover jobs if none provided
 	if len(jobIDs) == 0 {
-		jobIDs, err = queryUnaddressedJobs(apiRepoRoot, branch)
+		jobIDs, err = queryUnaddressedJobIDs(apiRepoRoot, branch)
 		if err != nil {
 			return err
 		}

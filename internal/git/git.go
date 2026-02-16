@@ -861,6 +861,21 @@ func IsWorkingTreeClean(repoPath string) bool {
 	return len(strings.TrimSpace(string(output))) == 0
 }
 
+// CheckoutBranch switches to the given branch in the repository.
+func CheckoutBranch(repoPath, branch string) error {
+	cmd := exec.Command("git", "checkout", branch)
+	cmd.Dir = repoPath
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf(
+			"git checkout %s: %w: %s",
+			branch, err, stderr.String(),
+		)
+	}
+	return nil
+}
+
 // ResetWorkingTree discards all uncommitted changes (staged and unstaged)
 func ResetWorkingTree(repoPath string) error {
 	// Reset staged changes

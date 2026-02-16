@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,16 +30,26 @@ import (
 // if a review was queued by the post-commit hook. Tests can override this.
 var postCommitWaitDelay = 1 * time.Second
 
+// refineOptions groups all CLI parameters for the refine command.
+type refineOptions struct {
+	agentName         string
+	model             string
+	reasoning         string
+	maxIterations     int
+	quiet             bool
+	allowUnsafeAgents bool
+	unsafeFlagChanged bool
+	since             string
+	branch            string
+	allBranches       bool
+	list              bool
+	newestFirst       bool
+}
+
 func refineCmd() *cobra.Command {
 	var (
-		agentName         string
-		model             string
-		reasoning         string
-		fast              bool
-		maxIterations     int
-		quiet             bool
-		allowUnsafeAgents bool
-		since             string
+		opts refineOptions
+		fast bool
 	)
 
 	cmd := &cobra.Command{
@@ -65,23 +76,63 @@ Prerequisites:
 - Must be on a feature branch (or use --since on the default branch)
 
 Use --since to specify a starting commit when on the main branch or to
-limit how far back to look for reviews to address.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// --fast is shorthand for --reasoning fast (explicit --reasoning takes precedence)
-			reasoning = resolveReasoningWithFast(reasoning, fast, cmd.Flags().Changed("reasoning"))
-			unsafeFlagChanged := cmd.Flags().Changed("allow-unsafe-agents")
-			return runRefine(agentName, model, reasoning, maxIterations, quiet, allowUnsafeAgents, unsafeFlagChanged, since)
+limit how far back to look for reviews to address.
+
+Use --list to preview which reviews would be refined without running.
+Use --branch to validate the current branch before refining.
+Use --all-branches to discover and refine all branches with failed reviews.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// --fast is shorthand for --reasoning fast
+			opts.reasoning = resolveReasoningWithFast(
+				opts.reasoning, fast,
+				cmd.Flags().Changed("reasoning"),
+			)
+			opts.unsafeFlagChanged = cmd.Flags().Changed(
+				"allow-unsafe-agents",
+			)
+
+			// Flag validation
+			if opts.allBranches && opts.branch != "" {
+				return fmt.Errorf(
+					"--all-branches and --branch are " +
+						"mutually exclusive",
+				)
+			}
+			if opts.allBranches && opts.since != "" {
+				return fmt.Errorf(
+					"--all-branches and --since are " +
+						"mutually exclusive",
+				)
+			}
+			if opts.newestFirst && !opts.allBranches && !opts.list {
+				return fmt.Errorf(
+					"--newest-first requires " +
+						"--all-branches or --list",
+				)
+			}
+
+			if opts.list {
+				return runRefineList(cmd, opts)
+			}
+			if opts.allBranches {
+				return runRefineAllBranches(cmd, opts)
+			}
+			return runRefine(opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for addressing findings (default: from config)")
-	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
-	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard (default), or thorough")
+	cmd.Flags().StringVar(&opts.agentName, "agent", "", "agent to use for addressing findings (default: from config)")
+	cmd.Flags().StringVar(&opts.model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
+	cmd.Flags().StringVar(&opts.reasoning, "reasoning", "", "reasoning level: fast, standard (default), or thorough")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
-	cmd.Flags().IntVar(&maxIterations, "max-iterations", 10, "maximum refinement iterations")
-	cmd.Flags().BoolVar(&quiet, "quiet", false, "suppress agent output, show elapsed time instead")
-	cmd.Flags().BoolVar(&allowUnsafeAgents, "allow-unsafe-agents", false, "allow agents to run without sandboxing")
-	cmd.Flags().StringVar(&since, "since", "", "base commit to refine from (exclusive, like git's .. range)")
+	cmd.Flags().IntVar(&opts.maxIterations, "max-iterations", 10, "maximum refinement iterations")
+	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress agent output, show elapsed time instead")
+	cmd.Flags().BoolVar(&opts.allowUnsafeAgents, "allow-unsafe-agents", false, "allow agents to run without sandboxing")
+	cmd.Flags().StringVar(&opts.since, "since", "", "base commit to refine from (exclusive, like git's .. range)")
+	cmd.Flags().StringVar(&opts.branch, "branch", "", "validate current branch before refining")
+	cmd.Flags().BoolVar(&opts.allBranches, "all-branches", false, "discover and refine all branches with failed reviews")
+	cmd.Flags().BoolVar(&opts.list, "list", false, "list reviews that would be refined without running")
+	cmd.Flags().BoolVar(&opts.newestFirst, "newest-first", false, "process branches/jobs newest first (requires --all-branches or --list)")
 
 	return cmd
 }
@@ -145,60 +196,105 @@ func (t *stepTimer) stopLive() {
 
 // validateRefineContext validates git and branch preconditions for refine.
 // Returns repoPath, currentBranch, defaultBranch, mergeBase, or an error.
+// If branchFlag is non-empty, validates that the user is on that branch.
 // This validation happens before any daemon interaction.
-func validateRefineContext(since string) (repoPath, currentBranch, defaultBranch, mergeBase string, err error) {
+func validateRefineContext(
+	since, branchFlag string,
+) (repoPath, currentBranch, defaultBranch, mergeBase string, err error) {
 	repoPath, err = git.GetRepoRoot(".")
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("not in a git repository: %w", err)
+		return "", "", "", "",
+			fmt.Errorf("not in a git repository: %w", err)
 	}
 
 	if git.IsRebaseInProgress(repoPath) {
-		return "", "", "", "", fmt.Errorf("rebase in progress - complete or abort it first")
+		return "", "", "", "",
+			fmt.Errorf(
+				"rebase in progress - " +
+					"complete or abort it first",
+			)
 	}
 
 	if !git.IsWorkingTreeClean(repoPath) {
-		return "", "", "", "", fmt.Errorf("working tree not clean - commit or stash your changes first")
+		return "", "", "", "",
+			fmt.Errorf(
+				"working tree not clean - " +
+					"commit or stash your changes first",
+			)
 	}
 
 	defaultBranch, err = git.GetDefaultBranch(repoPath)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("cannot determine default branch: %w", err)
+		return "", "", "", "",
+			fmt.Errorf(
+				"cannot determine default branch: %w", err,
+			)
 	}
 
 	currentBranch = git.GetCurrentBranch(repoPath)
 
+	// --branch: validate the user is on the expected branch
+	if branchFlag != "" && currentBranch != branchFlag {
+		return "", "", "", "", fmt.Errorf(
+			"not on branch %q (currently on %q) -- "+
+				"run 'git checkout %s' first",
+			branchFlag, currentBranch, branchFlag,
+		)
+	}
+
 	if since != "" {
-		// Resolve the --since commit to a full SHA
 		mergeBase, err = git.ResolveSHA(repoPath, since)
 		if err != nil {
-			return "", "", "", "", fmt.Errorf("cannot resolve --since %q: %w", since, err)
+			return "", "", "", "",
+				fmt.Errorf(
+					"cannot resolve --since %q: %w",
+					since, err,
+				)
 		}
-		// Verify --since is an ancestor of HEAD (reachable in commit history)
-		isAncestor, err := git.IsAncestor(repoPath, mergeBase, "HEAD")
-		if err != nil {
-			return "", "", "", "", fmt.Errorf("checking --since ancestry: %w", err)
+		isAncestor, ancestorErr := git.IsAncestor(
+			repoPath, mergeBase, "HEAD",
+		)
+		if ancestorErr != nil {
+			return "", "", "", "",
+				fmt.Errorf(
+					"checking --since ancestry: %w",
+					ancestorErr,
+				)
 		}
 		if !isAncestor {
-			return "", "", "", "", fmt.Errorf("--since %q is not an ancestor of HEAD", since)
+			return "", "", "", "",
+				fmt.Errorf(
+					"--since %q is not an ancestor of HEAD",
+					since,
+				)
 		}
 	} else {
-		// Default behavior: use merge-base with default branch
 		if currentBranch == git.LocalBranchName(defaultBranch) {
-			return "", "", "", "", fmt.Errorf("refusing to refine on %s branch without --since flag", git.LocalBranchName(defaultBranch))
+			return "", "", "", "", fmt.Errorf(
+				"refusing to refine on %s branch "+
+					"without --since flag",
+				git.LocalBranchName(defaultBranch),
+			)
 		}
 
-		mergeBase, err = git.GetMergeBase(repoPath, defaultBranch, "HEAD")
+		mergeBase, err = git.GetMergeBase(
+			repoPath, defaultBranch, "HEAD",
+		)
 		if err != nil {
-			return "", "", "", "", fmt.Errorf("cannot find merge-base with %s: %w", defaultBranch, err)
+			return "", "", "", "",
+				fmt.Errorf(
+					"cannot find merge-base with %s: %w",
+					defaultBranch, err,
+				)
 		}
 	}
 
 	return repoPath, currentBranch, defaultBranch, mergeBase, nil
 }
 
-func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quiet bool, allowUnsafeAgents bool, unsafeFlagChanged bool, since string) error {
+func runRefine(opts refineOptions) error {
 	// 1. Validate git and branch context (before touching daemon)
-	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(since)
+	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(opts.since, opts.branch)
 	if err != nil {
 		return err
 	}
@@ -214,7 +310,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 	}
 
 	// Print branch context after successful connection
-	if since != "" {
+	if opts.since != "" {
 		fmt.Printf("Refining commits since %s on branch %q\n", mergeBase[:7], currentBranch)
 	} else {
 		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, mergeBase[:7])
@@ -222,22 +318,22 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 
 	// Resolve reasoning level from CLI or config (default: standard for refine)
 	cfg, _ := config.LoadGlobal()
-	resolvedReasoning, err := config.ResolveRefineReasoning(reasoningStr, repoPath)
+	resolvedReasoning, err := config.ResolveRefineReasoning(opts.reasoning, repoPath)
 	if err != nil {
 		return err
 	}
 	reasoningLevel := agent.ParseReasoningLevel(resolvedReasoning)
 
 	// Resolve agent for refine workflow at this reasoning level
-	resolvedAgent := config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "refine", resolvedReasoning)
-	allowUnsafeAgents = resolveAllowUnsafeAgents(allowUnsafeAgents, unsafeFlagChanged, cfg)
-	agent.SetAllowUnsafeAgents(allowUnsafeAgents)
+	resolvedAgent := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "refine", resolvedReasoning)
+	allowUnsafe := resolveAllowUnsafeAgents(opts.allowUnsafeAgents, opts.unsafeFlagChanged, cfg)
+	agent.SetAllowUnsafeAgents(allowUnsafe)
 	if cfg != nil {
 		agent.SetAnthropicAPIKey(cfg.AnthropicAPIKey)
 	}
 
 	// Resolve model for refine workflow at this reasoning level
-	resolvedModel := config.ResolveModelForWorkflow(modelStr, repoPath, cfg, "refine", resolvedReasoning)
+	resolvedModel := config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "refine", resolvedReasoning)
 
 	// Get the agent with configured reasoning level and model
 	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel)
@@ -253,7 +349,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 	// Track reviews we've given up on this run to avoid re-selecting them
 	skippedReviews := make(map[int64]bool)
 
-	for iteration := 1; iteration <= maxIterations; {
+	for iteration := 1; iteration <= opts.maxIterations; {
 		// Get commits on current branch
 		commits, err := git.GetCommitsSince(repoPath, mergeBase)
 		if err != nil {
@@ -355,12 +451,12 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		}
 
 		// Now we have a review to address - this counts as an iteration
-		fmt.Printf("\n=== Refinement iteration %d/%d ===\n", iteration, maxIterations)
+		fmt.Printf("\n=== Refinement iteration %d/%d ===\n", iteration, opts.maxIterations)
 		iteration++
 
 		// Address the failed review
-		liveTimer := quiet && isTerminal(os.Stdout.Fd())
-		if !quiet {
+		liveTimer := opts.quiet && isTerminal(os.Stdout.Fd())
+		if !opts.quiet {
 			fmt.Printf("Addressing review (job %d)...\n", currentFailedReview.JobID)
 		}
 
@@ -397,7 +493,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		// Determine output writer
 		var agentOutput io.Writer
 		var fmtr *streamFormatter
-		if quiet {
+		if opts.quiet {
 			agentOutput = io.Discard
 		} else {
 			fmtr = newStreamFormatter(os.Stdout, isTerminal(os.Stdout.Fd()))
@@ -419,7 +515,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		// Show elapsed time
 		if liveTimer {
 			timer.stopLive()
-		} else if quiet {
+		} else if opts.quiet {
 			fmt.Printf("Addressing review (job %d)... %s\n", currentFailedReview.JobID, timer.elapsed())
 		} else {
 			fmt.Printf("Agent completed %s\n", timer.elapsed())
@@ -467,7 +563,7 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		cleanupWorktree()
 
 		commitMsg := fmt.Sprintf("Address review findings (job %d)\n\n%s", currentFailedReview.JobID, summarizeAgentOutput(output))
-		newCommit, err := commitWithHookRetry(repoPath, commitMsg, addressAgent, quiet)
+		newCommit, err := commitWithHookRetry(repoPath, commitMsg, addressAgent, opts.quiet)
 		if err != nil {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
@@ -512,7 +608,220 @@ func runRefine(agentName, modelStr, reasoningStr string, maxIterations int, quie
 		}
 	}
 
-	return fmt.Errorf("max iterations (%d) reached without all reviews passing", maxIterations)
+	return fmt.Errorf("max iterations (%d) reached without all reviews passing", opts.maxIterations)
+}
+
+// runRefineList lists reviews that would be refined, without running.
+// Filters to failed verdicts only (refine only cares about failures).
+func runRefineList(
+	cmd *cobra.Command, opts refineOptions,
+) error {
+	if err := ensureDaemon(); err != nil {
+		return fmt.Errorf("daemon not running: %w", err)
+	}
+
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	repoRoot := workDir
+	if root, err := git.GetMainRepoRoot(workDir); err == nil {
+		repoRoot = root
+	}
+
+	// Determine effective branch filter
+	effectiveBranch := opts.branch
+	if !opts.allBranches && effectiveBranch == "" {
+		effectiveBranch = git.GetCurrentBranch(repoRoot)
+	}
+
+	// Empty string for allBranches means no branch filter
+	queryBranch := effectiveBranch
+	if opts.allBranches {
+		queryBranch = ""
+	}
+
+	jobs, err := queryUnaddressedJobs(repoRoot, queryBranch)
+	if err != nil {
+		return err
+	}
+
+	// Filter to failed verdicts only
+	var failed []storage.ReviewJob
+	for _, j := range jobs {
+		if j.Verdict != nil && *j.Verdict == "F" {
+			failed = append(failed, j)
+		}
+	}
+
+	// Reverse for oldest-first by default (API returns newest first)
+	if !opts.newestFirst {
+		for i, j := 0, len(failed)-1; i < j; i, j = i+1, j-1 {
+			failed[i], failed[j] = failed[j], failed[i]
+		}
+	}
+
+	if len(failed) == 0 {
+		cmd.Println("No failed reviews to refine.")
+		return nil
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	cmd.Printf("Found %d failed review(s) to refine:\n\n", len(failed))
+
+	for _, job := range failed {
+		review, err := fetchReview(ctx, serverAddr, job.ID)
+		if err != nil {
+			fmt.Fprintf(
+				cmd.ErrOrStderr(),
+				"Warning: could not fetch review for job %d: %v\n",
+				job.ID, err,
+			)
+			continue
+		}
+
+		cmd.Printf("Job #%d\n", job.ID)
+		cmd.Printf("  Git Ref:  %s\n", shortSHA(job.GitRef))
+		if job.Branch != "" {
+			cmd.Printf("  Branch:   %s\n", job.Branch)
+		}
+		if job.CommitSubject != "" {
+			cmd.Printf(
+				"  Subject:  %s\n",
+				truncateString(job.CommitSubject, 60),
+			)
+		}
+		cmd.Printf("  Agent:    %s\n", job.Agent)
+		if job.Model != "" {
+			cmd.Printf("  Model:    %s\n", job.Model)
+		}
+		if job.FinishedAt != nil {
+			cmd.Printf(
+				"  Finished: %s\n",
+				job.FinishedAt.Local().Format("2006-01-02 15:04:05"),
+			)
+		}
+		summary := firstLine(review.Output)
+		if summary != "" {
+			cmd.Printf("  Summary:  %s\n", summary)
+		}
+		cmd.Println()
+	}
+
+	cmd.Println("To refine: roborev refine")
+	return nil
+}
+
+// runRefineAllBranches discovers all branches with failed reviews and
+// refines each one in sequence, checking out each branch in turn.
+// The user's explicit --all-branches flag serves as confirmation for
+// branch switching.
+func runRefineAllBranches(
+	cmd *cobra.Command, opts refineOptions,
+) error {
+	repoPath, err := git.GetRepoRoot(".")
+	if err != nil {
+		return fmt.Errorf("not in a git repository: %w", err)
+	}
+
+	if git.IsRebaseInProgress(repoPath) {
+		return fmt.Errorf(
+			"rebase in progress - complete or abort it first",
+		)
+	}
+	if !git.IsWorkingTreeClean(repoPath) {
+		return fmt.Errorf(
+			"working tree not clean - " +
+				"commit or stash your changes first",
+		)
+	}
+
+	if err := ensureDaemon(); err != nil {
+		return fmt.Errorf("daemon not running: %w", err)
+	}
+
+	// Use main repo root for API queries
+	apiRepoRoot := repoPath
+	if root, err := git.GetMainRepoRoot(repoPath); err == nil {
+		apiRepoRoot = root
+	}
+
+	originalBranch := git.GetCurrentBranch(repoPath)
+
+	// Query all unaddressed jobs (no branch filter)
+	jobs, err := queryUnaddressedJobs(apiRepoRoot, "")
+	if err != nil {
+		return err
+	}
+
+	// Extract unique branches with failed verdicts
+	branchSet := make(map[string]bool)
+	for _, j := range jobs {
+		if j.Branch != "" && j.Verdict != nil && *j.Verdict == "F" {
+			branchSet[j.Branch] = true
+		}
+	}
+
+	if len(branchSet) == 0 {
+		fmt.Println("No branches with failed reviews found.")
+		return nil
+	}
+
+	branches := make([]string, 0, len(branchSet))
+	for b := range branchSet {
+		branches = append(branches, b)
+	}
+	sort.Strings(branches)
+
+	if opts.newestFirst {
+		for i, j := 0, len(branches)-1; i < j; i, j = i+1, j-1 {
+			branches[i], branches[j] = branches[j], branches[i]
+		}
+	}
+
+	fmt.Printf(
+		"Found %d branch(es) with failed reviews: %s\n",
+		len(branches), strings.Join(branches, ", "),
+	)
+
+	for _, b := range branches {
+		fmt.Printf("\n=== Refining branch %q ===\n", b)
+
+		if err := git.CheckoutBranch(repoPath, b); err != nil {
+			fmt.Printf(
+				"Warning: cannot checkout %q: %v (skipping)\n",
+				b, err,
+			)
+			continue
+		}
+
+		branchOpts := opts
+		branchOpts.branch = b
+		branchOpts.allBranches = false
+
+		if err := runRefine(branchOpts); err != nil {
+			fmt.Printf(
+				"Warning: refine on %q: %v\n", b, err,
+			)
+		}
+	}
+
+	// Restore original branch
+	if originalBranch != "" {
+		if err := git.CheckoutBranch(repoPath, originalBranch); err != nil {
+			return fmt.Errorf(
+				"cannot restore original branch %q: %w",
+				originalBranch, err,
+			)
+		}
+		fmt.Printf("\nRestored to branch %q\n", originalBranch)
+	}
+
+	return nil
 }
 
 // resolveAllowUnsafeAgents determines whether to allow unsafe agents.

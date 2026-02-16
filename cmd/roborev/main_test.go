@@ -400,7 +400,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	defer cleanup()
 
 	inDir(t, repoDir, func() {
-		if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
+		if err := runRefine(refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
 			t.Fatal("expected error, got nil")
 		}
 	})
@@ -423,7 +423,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 
 	inDir(t, repoDir, func() {
 		output := captureStdout(t, func() {
-			if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
+			if err := runRefine(refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
 				t.Fatal("expected error, got nil")
 			}
 		})
@@ -459,7 +459,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 
 	inDir(t, repoDir, func() {
 		output := captureStdout(t, func() {
-			if err := runRefine("test", "", "", 1, true, false, false, ""); err == nil {
+			if err := runRefine(refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
 				t.Fatal("expected error, got nil")
 			}
 		})
@@ -500,7 +500,7 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	inDir(t, repoDir, func() {
 		output := captureStdout(t, func() {
 			// With 2 iterations and a failing agent, should exhaust iterations
-			err := runRefine("test", "", "", 2, true, false, false, "")
+			err := runRefine(refineOptions{agentName: "test", maxIterations: 2, quiet: true})
 			if err == nil {
 				t.Fatal("expected error after exhausting iterations, got nil")
 			}
@@ -1052,7 +1052,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	defer agent.Register(agent.NewTestAgent())
 
 	inDir(t, repoDir, func() {
-		if err := runRefine("test", "", "", 2, true, false, false, ""); err == nil {
+		if err := runRefine(refineOptions{agentName: "test", maxIterations: 2, quiet: true}); err == nil {
 			t.Fatal("expected error from reaching max iterations")
 		}
 	})
@@ -1169,7 +1169,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 		// an iteration, this would fail with "max iterations reached". Since the
 		// pending job transitions to Done with a passing review (and no failed
 		// reviews exist), refine should succeed.
-		err := runRefine("test", "", "", 1, true, false, false, "")
+		err := runRefine(refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 
 		// Should succeed - all reviews pass after waiting for the pending one
 		if err != nil {
