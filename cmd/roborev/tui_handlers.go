@@ -1305,6 +1305,16 @@ func (m tuiModel) handleAddressedResultMsg(msg tuiAddressedResultMsg) (tea.Model
 			if msg.jobID > 0 {
 				m.setJobAddressed(msg.jobID, msg.oldState)
 				delete(m.pendingAddressed, msg.jobID)
+				// Reverse the optimistic stats delta
+				if msg.oldState {
+					// Was addressed, we toggled to unaddressed, now reverting
+					m.jobStats.Addressed++
+					m.jobStats.Unaddressed--
+				} else {
+					// Was unaddressed, we toggled to addressed, now reverting
+					m.jobStats.Addressed--
+					m.jobStats.Unaddressed++
+				}
 			} else if msg.reviewID > 0 {
 				delete(m.pendingReviewAddressed, msg.reviewID)
 			}

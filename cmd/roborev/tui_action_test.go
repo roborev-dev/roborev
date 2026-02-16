@@ -349,6 +349,7 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 42
+	m.jobStats = storage.JobStats{Done: 1, Addressed: 1, Unaddressed: 0}
 
 	// First, simulate the optimistic update (what happens when 'a' is pressed)
 	*m.jobs[0].Addressed = true
@@ -373,6 +374,13 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 	}
 	if m.err == nil {
 		t.Error("Expected error to be set")
+	}
+	// Stats should be rolled back too
+	if m.jobStats.Addressed != 0 {
+		t.Errorf("Expected Addressed=0 after rollback, got %d", m.jobStats.Addressed)
+	}
+	if m.jobStats.Unaddressed != 1 {
+		t.Errorf("Expected Unaddressed=1 after rollback, got %d", m.jobStats.Unaddressed)
 	}
 }
 
