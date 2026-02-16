@@ -1631,8 +1631,8 @@ func queueHelpLines(width int) int {
 	if width <= 0 {
 		return 2
 	}
-	h1 := (len(queueHelpLine1) + width - 1) / width
-	h2 := (len(queueHelpLine2) + width - 1) / width
+	h1 := (runewidth.StringWidth(queueHelpLine1) + width - 1) / width
+	h2 := (runewidth.StringWidth(queueHelpLine2) + width - 1) / width
 	return h1 + h2
 }
 
@@ -2620,8 +2620,8 @@ func (m tuiModel) renderReviewView() string {
 	const helpLine2 = "↑/↓: scroll | ←/→: prev/next | ?: commands | esc: back"
 	helpLines := 2
 	if m.width > 0 {
-		h1 := (len(helpLine1) + m.width - 1) / m.width
-		h2 := (len(helpLine2) + m.width - 1) / m.width
+		h1 := (runewidth.StringWidth(helpLine1) + m.width - 1) / m.width
+		h2 := (runewidth.StringWidth(helpLine2) + m.width - 1) / m.width
 		helpLines = h1 + h2
 	}
 
