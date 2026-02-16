@@ -5,11 +5,13 @@ import (
 	"testing"
 )
 
-// TestMain isolates the entire test package from the real ~/.roborev directory.
-// Without this, newTuiModel (and anything else that calls config.LoadGlobal)
-// would read the developer's production config, making test outcomes dependent
-// on local machine state.
+// TestMain isolates the entire test package from the real ~/.roborev directory
+// and disables external I/O in newTuiModel (daemon detection, config loading,
+// git subprocess spawning). Without skipExternalIO, the 200+ tests that call
+// newTuiModel each spawn git subprocesses, exhausting macOS CI runner resources.
 func TestMain(m *testing.M) {
+	skipExternalIO = true
+
 	tmpDir, err := os.MkdirTemp("", "roborev-test-*")
 	if err != nil {
 		panic(err)

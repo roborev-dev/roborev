@@ -540,6 +540,9 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 }
 
 func TestTUIHideAddressedDefaultFromConfig(t *testing.T) {
+	skipExternalIO = false
+	defer func() { skipExternalIO = true }()
+
 	tmpDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
@@ -847,6 +850,9 @@ func TestTUIHideAddressedDisableRefetches(t *testing.T) {
 }
 
 func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
+	skipExternalIO = false
+	defer func() { skipExternalIO = true }()
+
 	tmpDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
@@ -885,6 +891,9 @@ func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 }
 
 func TestTUIHideAddressedValidConfigNotMutated(t *testing.T) {
+	skipExternalIO = false
+	defer func() { skipExternalIO = true }()
+
 	tmpDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 

@@ -31,6 +31,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// skipExternalIO disables daemon/config/git calls in newTuiModel.
+// Set by TestMain to avoid spawning subprocesses (and reading disk)
+// for every test, which exhausts macOS CI runner resources.
+var skipExternalIO bool
+
 // Tick intervals for adaptive polling
 const (
 	tickIntervalActive = 2 * time.Second  // Poll frequently when jobs are running/pending
@@ -389,30 +394,32 @@ func isConnectionError(err error) bool {
 }
 
 func newTuiModel(serverAddr string) tuiModel {
-	// Read daemon version from runtime file (authoritative source)
 	daemonVersion := "?"
-	if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
-		daemonVersion = info.Version
-	}
-
-	// Load preferences from config
 	hideAddressed := false
 	autoFilterRepo := false
 	tabWidth := 2
-	if cfg, err := config.LoadGlobal(); err == nil {
-		hideAddressed = cfg.HideAddressedByDefault
-		autoFilterRepo = cfg.AutoFilterRepo
-		if cfg.TabWidth > 0 {
-			tabWidth = cfg.TabWidth
-		}
-	}
-	// Note: Silently ignore config load errors - TUI should work with defaults
-
-	// Detect current repo/branch for filter sort priority
 	var cwdRepoRoot, cwdBranch string
-	if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
-		cwdRepoRoot = repoRoot
-		cwdBranch = git.GetCurrentBranch(".")
+
+	if !skipExternalIO {
+		// Read daemon version from runtime file
+		if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
+			daemonVersion = info.Version
+		}
+
+		// Load preferences from config
+		if cfg, err := config.LoadGlobal(); err == nil {
+			hideAddressed = cfg.HideAddressedByDefault
+			autoFilterRepo = cfg.AutoFilterRepo
+			if cfg.TabWidth > 0 {
+				tabWidth = cfg.TabWidth
+			}
+		}
+
+		// Detect current repo/branch for filter sort priority
+		if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
+			cwdRepoRoot = repoRoot
+			cwdBranch = git.GetCurrentBranch(".")
+		}
 	}
 
 	// Auto-filter to current repo if enabled (reuses detection above)
