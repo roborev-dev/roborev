@@ -2600,8 +2600,8 @@ func (m tuiModel) renderReviewView() string {
 	}
 
 	// Help text wraps at narrow terminals
-	const helpLine1 = "p: prompt | c: comment | x: cancel | r: rerun | t: tail | m: commit msg"
-	const helpLine2 = "↑/↓: scroll | ←/→: prev/next | a: addressed | y: copy | ?: commands | esc: back"
+	const helpLine1 = "p: prompt | c: comment | m: commit msg | a: addressed | y: copy"
+	const helpLine2 = "↑/↓: scroll | ←/→: prev/next | ?: commands | esc: back"
 	helpLines := 2
 	if m.width > 0 {
 		h1 := (len(helpLine1) + m.width - 1) / m.width

@@ -706,6 +706,9 @@ func hasCommitHooks(repoPath string) bool {
 		if err != nil {
 			continue
 		}
+		if info.IsDir() {
+			continue
+		}
 		// On Unix, check the execute bit. On Windows every
 		// regular file is considered executable.
 		if runtime.GOOS == "windows" || info.Mode()&0o111 != 0 {
