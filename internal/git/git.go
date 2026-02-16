@@ -686,42 +686,17 @@ func GetHooksPath(repoPath string) (string, error) {
 	return hooksPath, nil
 }
 
-// HasExecutableHook returns true if the named hook (e.g. "pre-commit")
-// exists and is executable in the repo's hooks directory.
-func HasExecutableHook(repoPath, hookName string) bool {
-	hooksPath, err := GetHooksPath(repoPath)
-	if err != nil {
-		return false
-	}
-	info, err := os.Stat(filepath.Join(hooksPath, hookName))
-	if err != nil {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return !info.IsDir()
-	}
-	return info.Mode()&0111 != 0
-}
-
-// isPreCommitHookFailing runs the pre-commit hook directly against
-// the current index to confirm it is actually rejecting. Returns
-// true only if the hook exists, is executable, and exits non-zero.
+// isPreCommitHookFailing checks whether the commit failure was caused
+// by a hook by probing if a hookless commit would succeed. Runs
+// "git commit --dry-run --no-verify" which validates the commit is
+// viable (staged changes exist, identity set) without executing any
+// hooks. If the dry-run passes, the hook must have caused the failure.
 func isPreCommitHookFailing(repoPath string) bool {
-	hooksPath, err := GetHooksPath(repoPath)
-	if err != nil {
-		return false
-	}
-	hookFile := filepath.Join(hooksPath, "pre-commit")
-	info, err := os.Stat(hookFile)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
-		return false
-	}
-	cmd := exec.Command(hookFile)
-	cmd.Dir = repoPath
-	return cmd.Run() != nil
+	cmd := exec.Command(
+		"git", "-C", repoPath, "commit",
+		"--dry-run", "--no-verify", "-m", "probe",
+	)
+	return cmd.Run() == nil
 }
 
 // GetDefaultBranch detects the default branch (from origin/HEAD, or main/master locally)

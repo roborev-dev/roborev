@@ -1308,6 +1308,41 @@ func TestCreateCommitPreCommitHookOutput(t *testing.T) {
 	}
 }
 
+func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.CommitFile("initial.txt", "initial", "initial commit")
+
+	// Install a passing pre-commit hook. The commit should still fail
+	// because there are no staged changes ("nothing to commit").
+	// The dry-run probe (--no-verify --dry-run) also fails for the
+	// same reason, so HookFailed must be false.
+	hooksDir := filepath.Join(repo.Dir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookScript := "#!/bin/sh\nexit 0\n"
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// No staged changes — commit fails for non-hook reason
+	_, err := CreateCommit(repo.Dir, "empty commit")
+	if err == nil {
+		t.Fatal("expected CreateCommit to fail")
+	}
+
+	var commitErr *CommitError
+	if !errors.As(err, &commitErr) {
+		t.Fatal("expected CommitError type")
+	}
+
+	// Dry-run without hooks also fails, so HookFailed must be false
+	if commitErr.HookFailed {
+		t.Error("HookFailed should be false when commit fails for non-hook reasons")
+	}
+}
+
 func TestIsAncestor(t *testing.T) {
 	repo := NewTestRepo(t)
 	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
