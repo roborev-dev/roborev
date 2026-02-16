@@ -2277,7 +2277,7 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Help
-	helpLine := "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | ?: help | q: quit"
+	helpLine := "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | ?: commands | q: quit"
 	b.WriteString(tuiHelpStyle.Render(helpLine))
 	b.WriteString("\x1b[K") // Clear to end of line (no newline at end)
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
@@ -2600,10 +2600,13 @@ func (m tuiModel) renderReviewView() string {
 	}
 
 	// Help text wraps at narrow terminals
-	const helpText = "↑/↓: scroll | ←/→: prev/next | a: addressed | y: copy | ?: help | esc: back"
-	helpLines := 1
-	if m.width > 0 && m.width < len(helpText) {
-		helpLines = (len(helpText) + m.width - 1) / m.width
+	const helpLine1 = "p: prompt | c: comment | x: cancel | r: rerun | t: tail | m: commit msg"
+	const helpLine2 = "↑/↓: scroll | ←/→: prev/next | a: addressed | y: copy | ?: commands | esc: back"
+	helpLines := 2
+	if m.width > 0 {
+		h1 := (len(helpLine1) + m.width - 1) / m.width
+		h2 := (len(helpLine2) + m.width - 1) / m.width
+		helpLines = h1 + h2
 	}
 
 	// Compute location line count (repo path + ref + branch can wrap)
@@ -2673,8 +2676,10 @@ func (m tuiModel) renderReviewView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear status line
 
-	b.WriteString(tuiHelpStyle.Render(helpText))
-	b.WriteString("\x1b[K") // Clear help line
+	b.WriteString(tuiHelpStyle.Render(helpLine1))
+	b.WriteString("\x1b[K\n")
+	b.WriteString(tuiHelpStyle.Render(helpLine2))
+	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
 	return b.String()
@@ -2765,7 +2770,7 @@ func (m tuiModel) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	b.WriteString(tuiHelpStyle.Render("↑/↓: scroll | ←/→: prev/next | p: toggle prompt/review | ?: help | esc: back"))
+	b.WriteString(tuiHelpStyle.Render("↑/↓: scroll | ←/→: prev/next | p: toggle prompt/review | ?: commands | esc: back"))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
