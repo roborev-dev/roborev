@@ -10,7 +10,7 @@ func TestCursorBuildArgs(t *testing.T) {
 	a := NewCursorAgent("agent")
 
 	// Non-agentic mode (review): --mode plan, no --force, default model "auto"
-	args := a.buildArgs(false, "review this")
+	args := a.buildArgs(false)
 	assertContainsArg(t, args, "-p")
 	assertContainsArg(t, args, "--output-format")
 	assertContainsArg(t, args, "stream-json")
@@ -19,26 +19,19 @@ func TestCursorBuildArgs(t *testing.T) {
 	assertContainsArg(t, args, "--mode")
 	assertContainsArg(t, args, "plan")
 	assertNotContainsArg(t, args, "--force")
-	// Prompt should be the last arg
-	if args[len(args)-1] != "review this" {
-		t.Errorf("expected prompt as last arg, got %q", args[len(args)-1])
-	}
 
 	// Agentic mode: --force, no --mode plan
-	args = a.buildArgs(true, "fix this")
+	args = a.buildArgs(true)
 	assertContainsArg(t, args, "--force")
 	assertNotContainsArg(t, args, "--mode")
 	assertNotContainsArg(t, args, "plan")
-	if args[len(args)-1] != "fix this" {
-		t.Errorf("expected prompt as last arg, got %q", args[len(args)-1])
-	}
 }
 
 func TestCursorBuildArgsWithModel(t *testing.T) {
 	a := NewCursorAgent("agent")
 	a = a.WithModel("gpt-5.2-codex-high").(*CursorAgent)
 
-	args := a.buildArgs(false, "test")
+	args := a.buildArgs(false)
 	assertContainsArg(t, args, "--model")
 	assertContainsArg(t, args, "gpt-5.2-codex-high")
 }
