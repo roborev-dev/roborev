@@ -775,10 +775,10 @@ func applyWorktreeChanges(repoPath, worktreePath string) error {
 }
 
 // commitWithHookRetry attempts git.CreateCommit and, on failure,
-// runs the agent to fix whatever the pre-commit hook complained about.
-// Only retries when a pre-commit hook is installed — other commit
-// failures (missing identity, empty commit, lockfile) are returned
-// immediately. Retries up to 3 total attempts.
+// runs the agent to fix whatever the hook complained about. Only
+// retries when a hook (pre-commit, commit-msg, etc.) caused the
+// failure — other commit failures (missing identity, empty commit,
+// lockfile) are returned immediately. Retries up to 3 total attempts.
 func commitWithHookRetry(
 	repoPath, commitMsg string,
 	fixAgent agent.Agent,
@@ -798,9 +798,9 @@ func commitWithHookRetry(
 			return sha, nil
 		}
 
-		// Only retry when the pre-commit hook positively caused the
-		// failure. Add-phase errors, non-hook commit errors, and
-		// commit failures without a hook are returned immediately.
+		// Only retry when a hook positively caused the failure.
+		// Add-phase errors, non-hook commit errors, and commit
+		// failures without hooks are returned immediately.
 		var commitErr *git.CommitError
 		if !errors.As(err, &commitErr) || !commitErr.HookFailed {
 			return "", err
@@ -808,7 +808,7 @@ func commitWithHookRetry(
 
 		if attempt == maxAttempts {
 			return "", fmt.Errorf(
-				"pre-commit hook failed after %d attempts: %w",
+				"hook failed after %d attempts: %w",
 				maxAttempts, err,
 			)
 		}
@@ -816,7 +816,7 @@ func commitWithHookRetry(
 		hookErr := err.Error()
 		if !quiet {
 			fmt.Printf(
-				"Pre-commit hook failed (attempt %d/%d), "+
+				"Hook failed (attempt %d/%d), "+
 					"running agent to fix:\n%s\n",
 				attempt, maxAttempts, hookErr,
 			)
@@ -831,8 +831,8 @@ func commitWithHookRetry(
 		}
 
 		fixPrompt := fmt.Sprintf(
-			"The pre-commit hook rejected this commit with "+
-				"the following error output. Fix the issues so "+
+			"A git hook rejected this commit with the "+
+				"following error output. Fix the issues so "+
 				"the commit can succeed.\n\n%s",
 			hookErr,
 		)

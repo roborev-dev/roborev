@@ -1341,6 +1341,33 @@ func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
 	}
 }
 
+func TestCommitErrorHookFailedCommitMsgHook(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.CommitFile("initial.txt", "initial", "initial commit")
+
+	// Install a commit-msg hook that rejects. The dry-run probe
+	// bypasses all hooks (--no-verify), so it should succeed and
+	// HookFailed should be true.
+	repo.InstallHook("commit-msg",
+		"#!/bin/sh\necho 'bad commit message format' >&2\nexit 1\n")
+
+	repo.WriteFile("new.txt", "content")
+	repo.Run("add", "new.txt")
+
+	_, err := CreateCommit(repo.Dir, "should fail")
+	if err == nil {
+		t.Fatal("expected CreateCommit to fail with commit-msg hook")
+	}
+
+	var commitErr *CommitError
+	if !errors.As(err, &commitErr) {
+		t.Fatal("expected CommitError type")
+	}
+	if !commitErr.HookFailed {
+		t.Error("expected HookFailed=true for commit-msg hook rejection")
+	}
+}
+
 func TestIsAncestor(t *testing.T) {
 	repo := NewTestRepo(t)
 	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")

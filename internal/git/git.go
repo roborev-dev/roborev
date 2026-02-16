@@ -686,12 +686,13 @@ func GetHooksPath(repoPath string) (string, error) {
 	return hooksPath, nil
 }
 
-// isPreCommitHookFailing checks whether the commit failure was caused
-// by a hook by probing if a hookless commit would succeed. Runs
-// "git commit --dry-run --no-verify" which validates the commit is
-// viable (staged changes exist, identity set) without executing any
-// hooks. If the dry-run passes, the hook must have caused the failure.
-func isPreCommitHookFailing(repoPath string) bool {
+// isHookCausingFailure checks whether a commit failure was caused
+// by a hook (pre-commit, commit-msg, etc.) by probing if a hookless
+// commit would succeed. Runs "git commit --dry-run --no-verify"
+// which validates the commit is viable (staged changes, identity)
+// without executing any hooks. If the dry-run passes, a hook must
+// have caused the failure.
+func isHookCausingFailure(repoPath string) bool {
 	cmd := exec.Command(
 		"git", "-C", repoPath, "commit",
 		"--dry-run", "--no-verify", "-m", "probe",
@@ -760,11 +761,12 @@ func GetCommitsSince(repoPath, mergeBase string) ([]string, error) {
 // CommitError represents a failure during CreateCommit.
 // Phase distinguishes "add" failures (lockfile, permissions) from
 // "commit" failures (hooks, empty commit, identity issues).
-// HookFailed is set by probing the pre-commit hook after a commit-phase
-// failure — true means the hook is positively identified as the cause.
+// HookFailed is set by probing whether a hookless commit would
+// succeed — true means a hook (pre-commit, commit-msg, etc.)
+// caused the failure.
 type CommitError struct {
 	Phase      string // "add" or "commit"
-	HookFailed bool   // true when pre-commit hook caused the failure
+	HookFailed bool   // true when a hook caused the failure
 	Stderr     string
 	Err        error
 }
@@ -799,7 +801,7 @@ func CreateCommit(repoPath, message string) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", &CommitError{
 			Phase:      "commit",
-			HookFailed: isPreCommitHookFailing(repoPath),
+			HookFailed: isHookCausingFailure(repoPath),
 			Stderr:     stderr.String(),
 			Err:        err,
 		}
