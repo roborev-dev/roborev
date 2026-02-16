@@ -36,8 +36,8 @@ jobs:
         shell: pwsh
         run: |
           # go test on Windows can exit 1 due to temp .exe cleanup
-          # ("Access is denied") even when all tests pass. Only
-          # suppress that specific error; propagate all others.
+          # ("go: remove ...\.exe: Access is denied") even when all
+          # tests pass. Only suppress that specific pattern.
           go test -tags integration ./... 2>&1 | Tee-Object -Variable testOut
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
@@ -47,12 +47,13 @@ jobs:
               Write-Host ($failed -join "`n")
               exit 1
             }
-            $cleanup = $testOut | Select-String "Access is denied"
+            $cleanup = $testOut | Select-String "go: remove .+\.exe: Access is denied"
             if (-not $cleanup) {
               Write-Host "go test failed with unknown error"
               exit $exitCode
             }
-            Write-Host "All tests passed (ignoring temp file cleanup error)"
+            Write-Host "All tests passed (ignoring temp .exe cleanup error)"
+            exit 0
           }
 
       - name: Build with CGO disabled
