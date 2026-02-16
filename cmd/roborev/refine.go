@@ -110,6 +110,12 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 						"--all-branches or --list",
 				)
 			}
+			if opts.list && opts.since != "" {
+				return fmt.Errorf(
+					"--list and --since are " +
+						"mutually exclusive",
+				)
+			}
 
 			if opts.list {
 				return runRefineList(cmd, opts)
@@ -624,15 +630,24 @@ func runRefineList(
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
-	repoRoot := workDir
+
+	// Use the current worktree root for branch detection (so linked
+	// worktrees resolve their own branch, not the main worktree's).
+	// Use the main repo root for daemon API queries (jobs are stored
+	// under the main repo path).
+	worktreeRoot := workDir
+	if root, err := git.GetRepoRoot(workDir); err == nil {
+		worktreeRoot = root
+	}
+	apiRoot := worktreeRoot
 	if root, err := git.GetMainRepoRoot(workDir); err == nil {
-		repoRoot = root
+		apiRoot = root
 	}
 
 	// Determine effective branch filter
 	effectiveBranch := opts.branch
 	if !opts.allBranches && effectiveBranch == "" {
-		effectiveBranch = git.GetCurrentBranch(repoRoot)
+		effectiveBranch = git.GetCurrentBranch(worktreeRoot)
 	}
 
 	// Empty string for allBranches means no branch filter
@@ -641,7 +656,7 @@ func runRefineList(
 		queryBranch = ""
 	}
 
-	jobs, err := queryUnaddressedJobs(repoRoot, queryBranch)
+	jobs, err := queryUnaddressedJobs(apiRoot, queryBranch)
 	if err != nil {
 		return err
 	}

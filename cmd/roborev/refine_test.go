@@ -1378,6 +1378,11 @@ func TestRefineFlagValidation(t *testing.T) {
 			args:    []string{"--newest-first", "--all-branches"},
 			wantErr: "",
 		},
+		{
+			name:    "list and since mutually exclusive",
+			args:    []string{"--list", "--since", "abc123"},
+			wantErr: "--list and --since are mutually exclusive",
+		},
 	}
 
 	for _, tt := range tests {
