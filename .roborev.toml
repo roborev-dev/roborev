@@ -19,4 +19,12 @@ The TUI talks to the daemon over loopback HTTP. Do not flag thundering-herd or
 rate-limiting concerns for local loopback requests unless the number of concurrent
 requests scales with untrusted input or external data. A bounded number of requests
 proportional to the user's tracked repos is acceptable.
+
+Git hooks (pre-commit, commit-msg, post-checkout, etc.) are the user's own scripts
+running on their own machine. Hook stderr forwarded to agents or printed to the
+terminal is local-only data that does not cross a trust boundary. Do not flag:
+- "prompt injection" from hook output passed to agent prompts
+- "secret exposure" from hook stderr being logged or forwarded to the model
+- "unbounded capture" of git command stderr (git stderr is practically bounded)
+These are the same class of local-data-in-local-tool issues covered above.
 """
