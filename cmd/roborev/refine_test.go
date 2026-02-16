@@ -1215,6 +1215,30 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 	}
 }
 
+func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir, _, _ := setupTestGitRepo(t)
+
+	// No pre-commit hook installed. Commit with no changes will fail
+	// for a non-hook reason ("nothing to commit").
+	testAgent := agent.NewTestAgent()
+	_, err := commitWithHookRetry(repoDir, "empty commit", testAgent, true)
+	if err == nil {
+		t.Fatal("expected error for empty commit without hook")
+	}
+
+	// Should return the raw git error, not a hook-retry error
+	if strings.Contains(err.Error(), "pre-commit hook failed") {
+		t.Errorf("non-hook error should not be reported as hook failure, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "after 3 attempts") {
+		t.Errorf("non-hook error should not trigger retries, got: %v", err)
+	}
+}
+
 func TestResolveReasoningWithFast(t *testing.T) {
 	tests := []struct {
 		name                   string

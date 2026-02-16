@@ -686,6 +686,23 @@ func GetHooksPath(repoPath string) (string, error) {
 	return hooksPath, nil
 }
 
+// HasExecutableHook returns true if the named hook (e.g. "pre-commit")
+// exists and is executable in the repo's hooks directory.
+func HasExecutableHook(repoPath, hookName string) bool {
+	hooksPath, err := GetHooksPath(repoPath)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(hooksPath, hookName))
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return !info.IsDir()
+	}
+	return info.Mode()&0111 != 0
+}
+
 // GetDefaultBranch detects the default branch (from origin/HEAD, or main/master locally)
 func GetDefaultBranch(repoPath string) (string, error) {
 	// Prefer origin/HEAD as the authoritative source for the default branch

@@ -775,17 +775,30 @@ func applyWorktreeChanges(repoPath, worktreePath string) error {
 
 // commitWithHookRetry attempts git.CreateCommit and, on failure,
 // runs the agent to fix whatever the pre-commit hook complained about.
-// Retries up to 3 total attempts. Returns the commit SHA on success.
+// Only retries when a pre-commit hook is installed — other commit
+// failures (missing identity, empty commit, lockfile) are returned
+// immediately. Retries up to 3 total attempts.
 func commitWithHookRetry(
 	repoPath, commitMsg string,
 	fixAgent agent.Agent,
 	quiet bool,
 ) (string, error) {
 	const maxAttempts = 3
+
+	expectedHead, err := git.ResolveSHA(repoPath, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("cannot determine HEAD: %w", err)
+	}
+	expectedBranch := git.GetCurrentBranch(repoPath)
+
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		sha, err := git.CreateCommit(repoPath, commitMsg)
 		if err == nil {
 			return sha, nil
+		}
+
+		if !git.HasExecutableHook(repoPath, "pre-commit") {
+			return "", err
 		}
 
 		if attempt == maxAttempts {
@@ -801,6 +814,14 @@ func commitWithHookRetry(
 				"Pre-commit hook failed (attempt %d/%d), "+
 					"running agent to fix:\n%s\n",
 				attempt, maxAttempts, hookErr,
+			)
+		}
+
+		if err := verifyRepoState(
+			repoPath, expectedHead, expectedBranch,
+		); err != nil {
+			return "", fmt.Errorf(
+				"aborting hook retry: %w", err,
 			)
 		}
 
@@ -831,10 +852,40 @@ func commitWithHookRetry(
 				"agent failed to fix hook issues: %w", agentErr,
 			)
 		}
+
+		if err := verifyRepoState(
+			repoPath, expectedHead, expectedBranch,
+		); err != nil {
+			return "", fmt.Errorf(
+				"agent changed repo state during hook fix: %w",
+				err,
+			)
+		}
 	}
 
 	// unreachable, but satisfies the compiler
 	return "", fmt.Errorf("commit retry loop exited unexpectedly")
+}
+
+// verifyRepoState checks that HEAD and current branch match expected
+// values. Returns an error describing the drift if they don't.
+func verifyRepoState(
+	repoPath, expectedHead, expectedBranch string,
+) error {
+	currentHead, err := git.ResolveSHA(repoPath, "HEAD")
+	if err != nil {
+		return fmt.Errorf("cannot verify HEAD: %w", err)
+	}
+	currentBranch := git.GetCurrentBranch(repoPath)
+	if currentHead != expectedHead ||
+		currentBranch != expectedBranch {
+		return fmt.Errorf(
+			"HEAD was %s on %s, now %s on %s",
+			shortSHA(expectedHead), expectedBranch,
+			shortSHA(currentHead), currentBranch,
+		)
+	}
+	return nil
 }
 
 func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string) (agent.Agent, error) {
