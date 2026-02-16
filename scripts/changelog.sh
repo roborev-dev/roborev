@@ -45,7 +45,8 @@ echo "Using $AGENT to generate changelog..." >&2
 
 TMPFILE=$(mktemp)
 PROMPTFILE=$(mktemp)
-trap 'rm -f "$TMPFILE" "$PROMPTFILE"' EXIT
+ERRFILE=$(mktemp)
+trap 'rm -f "$TMPFILE" "$PROMPTFILE" "$ERRFILE"' EXIT
 
 cat > "$PROMPTFILE" <<EOF
 You are generating a changelog for roborev version $VERSION.
@@ -75,17 +76,44 @@ Do NOT search for .roborev.toml or any other files. .roborev.toml is simply a fe
 Output ONLY the changelog content, no preamble.
 EOF
 
+AGENT_EXIT=0
 case "$AGENT" in
     codex)
-        codex exec --skip-git-repo-check --sandbox read-only -c reasoning_effort=high -o "$TMPFILE" - >/dev/null < "$PROMPTFILE"
+        CODEX_RUST_LOG="${CHANGELOG_CODEX_RUST_LOG:-${RUST_LOG:-error,codex_core::rollout::list=off}}"
+        set +e
+        RUST_LOG="$CODEX_RUST_LOG" codex exec --json --skip-git-repo-check --sandbox read-only -c reasoning_effort=high -o "$TMPFILE" - >/dev/null < "$PROMPTFILE" 2>"$ERRFILE"
+        AGENT_EXIT=$?
+        set -e
         ;;
     claude)
-        claude --print < "$PROMPTFILE" > "$TMPFILE"
+        set +e
+        claude --print < "$PROMPTFILE" > "$TMPFILE" 2>"$ERRFILE"
+        AGENT_EXIT=$?
+        set -e
         ;;
     *)
         echo "Error: unknown CHANGELOG_AGENT '$AGENT' (expected 'codex' or 'claude')" >&2
         exit 1
         ;;
 esac
+
+if [ "$AGENT_EXIT" -ne 0 ] || [ ! -s "$TMPFILE" ]; then
+    echo "Error: $AGENT failed to generate changelog." >&2
+    if [ "${CHANGELOG_DEBUG:-0}" = "1" ]; then
+        cat "$ERRFILE" >&2
+    else
+        FILTERED_ERR=$(grep -E -v 'rollout path for thread|failed to record rollout items: failed to queue rollout items: channel closed|^mcp startup: no servers$|^WARNING: proceeding, even though we could not update PATH:' "$ERRFILE" || true)
+        if [ -n "$FILTERED_ERR" ]; then
+            echo "$FILTERED_ERR" >&2
+        else
+            echo "Set CHANGELOG_DEBUG=1 to print full agent logs." >&2
+        fi
+    fi
+    exit 1
+fi
+
+if [ "${CHANGELOG_DEBUG:-0}" = "1" ] && [ -s "$ERRFILE" ]; then
+    cat "$ERRFILE" >&2
+fi
 
 cat "$TMPFILE"
