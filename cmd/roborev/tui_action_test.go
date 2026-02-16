@@ -893,3 +893,97 @@ func TestTUIRespondViewTabExpansion(t *testing.T) {
 		t.Errorf("Expected tabs expanded to 4 spaces, got: %q", plainOutput)
 	}
 }
+
+func TestCancelKeyMovesSelectionWithHideAddressed(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.hideAddressed = true
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone),
+			withAddressed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusRunning)),
+		makeJob(3, withStatus(storage.JobStatusDone),
+			withAddressed(boolPtr(false))),
+	}
+	m.selectedIdx = 1
+	m.selectedJobID = 2
+
+	result, _ := m.handleCancelKey()
+	m2 := result.(tuiModel)
+
+	// Job 2 should now be canceled
+	if m2.jobs[1].Status != storage.JobStatusCanceled {
+		t.Fatalf("expected canceled, got %s", m2.jobs[1].Status)
+	}
+	// Cursor should have moved away from the now-hidden job
+	if m2.selectedIdx == 1 {
+		t.Error("cursor should move off canceled job")
+	}
+	if !m2.isJobVisible(m2.jobs[m2.selectedIdx]) {
+		t.Error("cursor should land on a visible job")
+	}
+}
+
+func TestAddressedKeyUpdatesStatsOptimistically(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone),
+			withAddressed(boolPtr(false))),
+		makeJob(2, withStatus(storage.JobStatusDone),
+			withAddressed(boolPtr(false))),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.jobStats = storage.JobStats{
+		Done: 2, Addressed: 0, Unaddressed: 2,
+	}
+	m.pendingAddressed = make(map[int64]pendingState)
+
+	// Mark job 1 as addressed
+	result, _ := m.handleAddressedKey()
+	m2 := result.(tuiModel)
+
+	if m2.jobStats.Addressed != 1 {
+		t.Errorf("expected Addressed=1, got %d",
+			m2.jobStats.Addressed)
+	}
+	if m2.jobStats.Unaddressed != 1 {
+		t.Errorf("expected Unaddressed=1, got %d",
+			m2.jobStats.Unaddressed)
+	}
+}
+
+func TestAddressedKeyUpdatesStatsFromReviewView(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.currentReview = &storage.Review{
+		ID:        42,
+		Addressed: false,
+		Job: &storage.ReviewJob{
+			ID:     1,
+			Status: storage.JobStatusDone,
+		},
+	}
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone),
+			withAddressed(boolPtr(false))),
+	}
+	m.jobStats = storage.JobStats{
+		Done: 1, Addressed: 0, Unaddressed: 1,
+	}
+	m.pendingAddressed = make(map[int64]pendingState)
+	m.pendingReviewAddressed = make(map[int64]pendingState)
+
+	result, _ := m.handleAddressedKey()
+	m2 := result.(tuiModel)
+
+	if m2.jobStats.Addressed != 1 {
+		t.Errorf("expected Addressed=1, got %d",
+			m2.jobStats.Addressed)
+	}
+	if m2.jobStats.Unaddressed != 0 {
+		t.Errorf("expected Unaddressed=0, got %d",
+			m2.jobStats.Unaddressed)
+	}
+}

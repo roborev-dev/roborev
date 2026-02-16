@@ -784,6 +784,13 @@ func (m tuiModel) handleAddressedKey() (tea.Model, tea.Cmd) {
 			jobID = m.currentReview.Job.ID
 			m.setJobAddressed(jobID, newState)
 			m.pendingAddressed[jobID] = pendingState{newState: newState, seq: seq}
+			if newState {
+				m.jobStats.Addressed++
+				m.jobStats.Unaddressed--
+			} else {
+				m.jobStats.Addressed--
+				m.jobStats.Unaddressed++
+			}
 		} else {
 			m.pendingReviewAddressed[m.currentReview.ID] = pendingState{newState: newState, seq: seq}
 		}
@@ -797,6 +804,14 @@ func (m tuiModel) handleAddressedKey() (tea.Model, tea.Cmd) {
 			seq := m.addressedSeq
 			*job.Addressed = newState
 			m.pendingAddressed[job.ID] = pendingState{newState: newState, seq: seq}
+			// Optimistically update stats so status bar reflects change immediately
+			if newState {
+				m.jobStats.Addressed++
+				m.jobStats.Unaddressed--
+			} else {
+				m.jobStats.Addressed--
+				m.jobStats.Unaddressed++
+			}
 			if m.hideAddressed && newState {
 				nextIdx := m.findNextVisibleJob(m.selectedIdx)
 				if nextIdx < 0 {
@@ -827,6 +842,20 @@ func (m tuiModel) handleCancelKey() (tea.Model, tea.Cmd) {
 		job.Status = storage.JobStatusCanceled
 		now := time.Now()
 		job.FinishedAt = &now
+		// Canceled jobs are hidden when hideAddressed is active
+		if m.hideAddressed {
+			nextIdx := m.findNextVisibleJob(m.selectedIdx)
+			if nextIdx < 0 {
+				nextIdx = m.findPrevVisibleJob(m.selectedIdx)
+			}
+			if nextIdx < 0 {
+				nextIdx = m.findFirstVisibleJob()
+			}
+			if nextIdx >= 0 {
+				m.selectedIdx = nextIdx
+				m.updateSelectedJobID()
+			}
+		}
 		return m, m.cancelJob(job.ID, oldStatus, oldFinishedAt)
 	}
 	return m, nil
