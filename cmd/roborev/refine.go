@@ -769,7 +769,7 @@ func runRefineAllBranches(
 	// Capture HEAD SHA only for detached-HEAD restore (defer until
 	// we know originalBranch is empty to avoid failing in unborn repos).
 	var originalHEAD string
-	if originalBranch == "" {
+	if originalBranch == "" && !git.IsUnbornHead(repoPath) {
 		originalHEAD, err = git.ResolveSHA(repoPath, "HEAD")
 		if err != nil {
 			return fmt.Errorf("cannot resolve HEAD: %w", err)
@@ -849,7 +849,12 @@ func runRefineAllBranches(
 			failedBranches = append(failedBranches, b)
 			// Reset dirty tree so the next checkout can succeed
 			if !git.IsWorkingTreeClean(repoPath) {
-				_ = git.ResetWorkingTree(repoPath)
+				if resetErr := git.ResetWorkingTree(repoPath); resetErr != nil {
+					fmt.Printf(
+						"Warning: reset working tree: %v\n",
+						resetErr,
+					)
+				}
 			}
 		}
 	}

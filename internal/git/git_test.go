@@ -1416,6 +1416,24 @@ func TestHasCommitHooksDetectsInstalledHooks(t *testing.T) {
 	}
 }
 
+func TestHasCommitHooksIgnoresDirectories(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.CommitFile("initial.txt", "initial", "initial commit")
+
+	// Create a directory named like a hook — should not count.
+	hooksDir, err := GetHooksPath(repo.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(hooksDir, "pre-commit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if hasCommitHooks(repo.Dir) {
+		t.Error("directory named pre-commit should not count as installed hook")
+	}
+}
+
 func TestIsAncestor(t *testing.T) {
 	repo := NewTestRepo(t)
 	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
