@@ -315,7 +315,7 @@ func TestSubmoduleRequiresFileProtocol(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			gitmodules := filepath.Join(dir, ".gitmodules")
-			if err := os.WriteFile(gitmodules, []byte(fmt.Sprintf(tpl, tc.key, tc.url)), 0644); err != nil {
+			if err := os.WriteFile(gitmodules, fmt.Appendf(nil, tpl, tc.key, tc.url), 0644); err != nil {
 				t.Fatalf("write .gitmodules: %v", err)
 			}
 			if got := submoduleRequiresFileProtocol(dir); got != tc.expected {
@@ -331,14 +331,14 @@ func TestSubmoduleRequiresFileProtocolNested(t *testing.T) {
 	url = %s
 `
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte(fmt.Sprintf(tpl, "https://example.com/repo.git")), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), fmt.Appendf(nil, tpl, "https://example.com/repo.git"), 0644); err != nil {
 		t.Fatalf("write root .gitmodules: %v", err)
 	}
 	nestedPath := filepath.Join(dir, "sub", ".gitmodules")
 	if err := os.MkdirAll(filepath.Dir(nestedPath), 0755); err != nil {
 		t.Fatalf("mkdir nested: %v", err)
 	}
-	if err := os.WriteFile(nestedPath, []byte(fmt.Sprintf(tpl, "file:///tmp/repo")), 0644); err != nil {
+	if err := os.WriteFile(nestedPath, fmt.Appendf(nil, tpl, "file:///tmp/repo"), 0644); err != nil {
 		t.Fatalf("write nested .gitmodules: %v", err)
 	}
 

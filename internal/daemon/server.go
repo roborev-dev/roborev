@@ -1734,7 +1734,7 @@ func (s *Server) handleGetPatch(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(*job.Patch))
+	_, _ = w.Write([]byte(*job.Patch))
 }
 
 // buildFixPrompt constructs a prompt for fixing review findings.

@@ -3389,9 +3389,7 @@ func (m tuiModel) renderTasksView() string {
 
 	// Render each fix job
 	visibleRows := m.height - 5 // title + help + padding
-	if visibleRows < 1 {
-		visibleRows = 1
-	}
+	visibleRows = max(visibleRows, 1)
 	startIdx := 0
 	if m.fixSelectedIdx >= visibleRows {
 		startIdx = m.fixSelectedIdx - visibleRows + 1
@@ -3516,7 +3514,7 @@ func (m tuiModel) fetchFixJobs() tea.Cmd {
 // triggerFix triggers a background fix job for a parent review.
 func (m tuiModel) triggerFix(parentJobID int64, prompt string) tea.Cmd {
 	return func() tea.Msg {
-		req := map[string]interface{}{
+		req := map[string]any{
 			"parent_job_id": parentJobID,
 		}
 		if prompt != "" {
@@ -3619,7 +3617,7 @@ func (m tuiModel) triggerRebase(staleJobID int64) tea.Cmd {
 			"4. Verify the code compiles and tests pass\n" +
 			"5. Stage the changes with git add but do NOT commit\n"
 
-		req := map[string]interface{}{
+		req := map[string]any{
 			"parent_job_id": parentJobID,
 			"prompt":        rebasePrompt,
 		}

@@ -781,7 +781,7 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	}
 
 	// Use NULL for parent_job_id when not a fix job
-	var parentJobIDParam interface{}
+	var parentJobIDParam any
 	if opts.ParentJobID > 0 {
 		parentJobIDParam = opts.ParentJobID
 	}
