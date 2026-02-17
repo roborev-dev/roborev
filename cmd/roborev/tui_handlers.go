@@ -1466,6 +1466,15 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case "R":
+		// Manually trigger rebase for a completed fix job
+		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
+			job := m.fixJobs[m.fixSelectedIdx]
+			if job.Status == storage.JobStatusDone {
+				return m, m.triggerRebase(job.ID)
+			}
+		}
+		return m, nil
 	case "x":
 		// Cancel fix job
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {

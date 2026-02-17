@@ -2070,9 +2070,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiApplyPatchResultMsg:
 		if msg.rebase {
-			m.flashMessage = fmt.Sprintf("Patch for job #%d doesn't apply cleanly - needs rebase", msg.jobID)
+			m.flashMessage = fmt.Sprintf("Patch for job #%d doesn't apply cleanly - triggering rebase", msg.jobID)
 			m.flashExpiresAt = time.Now().Add(5 * time.Second)
 			m.flashView = tuiViewTasks
+			// Auto-trigger a new fix job with the stale patch as context
+			return m, m.triggerRebase(msg.jobID)
 		} else if msg.err != nil {
 			m.flashMessage = fmt.Sprintf("Apply failed: %v", msg.err)
 			m.flashExpiresAt = time.Now().Add(3 * time.Second)
@@ -3550,6 +3552,72 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 		}
 
 		return tuiApplyPatchResultMsg{jobID: jobID, success: true}
+	}
+}
+
+// triggerRebase triggers a new fix job that re-applies a stale patch to the current HEAD.
+// It fetches the original patch from the stale job and builds a rebase prompt.
+func (m tuiModel) triggerRebase(staleJobID int64) tea.Cmd {
+	return func() tea.Msg {
+		// Fetch the stale patch
+		url := m.serverAddr + fmt.Sprintf("/api/job/patch?job_id=%d", staleJobID)
+		resp, err := m.client.Get(url)
+		if err != nil {
+			return tuiFixTriggerResultMsg{err: fmt.Errorf("fetch stale patch: %w", err)}
+		}
+		defer resp.Body.Close()
+
+		var stalePatch string
+		if resp.StatusCode == http.StatusOK {
+			data, _ := io.ReadAll(resp.Body)
+			stalePatch = string(data)
+		}
+
+		// Find the parent job ID (the original review this fix was for)
+		var staleJob *storage.ReviewJob
+		var jobs []storage.ReviewJob
+		if err := m.getJSON("/api/jobs", &jobs); err == nil {
+			for _, j := range jobs {
+				if j.ID == staleJobID {
+					staleJob = &j
+					break
+				}
+			}
+		}
+
+		if staleJob == nil {
+			return tuiFixTriggerResultMsg{err: fmt.Errorf("stale job %d not found", staleJobID)}
+		}
+
+		// Use the original parent job ID if this was already a fix job
+		parentJobID := staleJobID
+		if staleJob.ParentJobID != nil {
+			parentJobID = *staleJob.ParentJobID
+		}
+
+		// Build a rebase prompt that includes the stale patch
+		rebasePrompt := "# Rebase Fix Request\n\n" +
+			"A previous fix attempt produced a patch that no longer applies cleanly to the current HEAD.\n" +
+			"Your task is to achieve the same changes but adapted to the current state of the code.\n\n"
+		if stalePatch != "" {
+			rebasePrompt += "## Previous Patch (stale)\n\n```diff\n" + stalePatch + "\n```\n\n"
+		}
+		rebasePrompt += "## Instructions\n\n" +
+			"1. Review the intent of the previous patch\n" +
+			"2. Apply equivalent changes to the current codebase\n" +
+			"3. Resolve any conflicts with recent changes\n" +
+			"4. Verify the code compiles and tests pass\n" +
+			"5. Create a git commit with a descriptive message\n"
+
+		req := map[string]interface{}{
+			"parent_job_id": parentJobID,
+			"prompt":        rebasePrompt,
+		}
+		var newJob storage.ReviewJob
+		if err := m.postJSON("/api/job/fix", req, &newJob); err != nil {
+			return tuiFixTriggerResultMsg{err: fmt.Errorf("trigger rebase: %w", err)}
+		}
+		return tuiFixTriggerResultMsg{job: &newJob}
 	}
 }
 
