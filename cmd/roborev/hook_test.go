@@ -56,9 +56,8 @@ func TestUninstallHookCmd(t *testing.T) {
 	})
 
 	t.Run("hook with roborev only - removes file", func(t *testing.T) {
-		hookContent := "#!/bin/bash\n# roborev auto-commit hook\nroborev enqueue\n"
 		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(hookContent)
+		repo.WriteHook(generateHookContent())
 		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
@@ -74,9 +73,10 @@ func TestUninstallHookCmd(t *testing.T) {
 	})
 
 	t.Run("hook with roborev and other commands - preserves others", func(t *testing.T) {
-		hookContent := "#!/bin/bash\necho 'before'\nroborev enqueue\necho 'after'\n"
 		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(hookContent)
+		mixed := "#!/bin/sh\necho 'before'\necho 'after'\n" +
+			generateHookContent()
+		repo.WriteHook(mixed)
 		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
@@ -85,15 +85,15 @@ func TestUninstallHookCmd(t *testing.T) {
 			t.Fatalf("uninstall-hook failed: %v", err)
 		}
 
-		// Hook should exist with roborev line removed
+		// Hook should exist with roborev snippet removed
 		content, err := os.ReadFile(repo.HookPath)
 		if err != nil {
 			t.Fatalf("Failed to read hook: %v", err)
 		}
 
 		contentStr := string(content)
-		if strings.Contains(strings.ToLower(contentStr), "roborev") {
-			t.Error("Hook should not contain roborev")
+		if strings.Contains(contentStr, "enqueue --quiet") {
+			t.Error("Hook should not contain generated roborev snippet")
 		}
 		if !strings.Contains(contentStr, "echo 'before'") {
 			t.Error("Hook should still contain 'echo before'")
@@ -103,10 +103,16 @@ func TestUninstallHookCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("hook with capitalized RoboRev", func(t *testing.T) {
-		hookContent := "#!/bin/bash\n# RoboRev hook\nRoboRev enqueue\n"
+	t.Run("also removes post-rewrite hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(hookContent)
+		repo.WriteHook(generateHookContent())
+		// Also install post-rewrite hook
+		prPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		os.WriteFile(
+			prPath,
+			[]byte(generatePostRewriteHookContent()),
+			0755,
+		)
 		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
@@ -115,9 +121,34 @@ func TestUninstallHookCmd(t *testing.T) {
 			t.Fatalf("uninstall-hook failed: %v", err)
 		}
 
-		// Hook should be removed (only had RoboRev content)
 		if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
-			t.Error("Hook file should have been removed")
+			t.Error("post-commit hook should have been removed")
+		}
+		if _, err := os.Stat(prPath); !os.IsNotExist(err) {
+			t.Error("post-rewrite hook should have been removed")
+		}
+	})
+
+	t.Run("removes post-rewrite even without post-commit", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		// Only install post-rewrite, no post-commit
+		prPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		os.MkdirAll(repo.HooksDir, 0755)
+		os.WriteFile(
+			prPath,
+			[]byte(generatePostRewriteHookContent()),
+			0755,
+		)
+		defer repo.Chdir()()
+
+		cmd := uninstallHookCmd()
+		err := cmd.Execute()
+		if err != nil {
+			t.Fatalf("uninstall-hook failed: %v", err)
+		}
+
+		if _, err := os.Stat(prPath); !os.IsNotExist(err) {
+			t.Error("post-rewrite hook should have been removed")
 		}
 	})
 }

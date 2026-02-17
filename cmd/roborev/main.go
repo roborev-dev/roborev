@@ -2421,7 +2421,7 @@ func installOrUpgradeHook(
 func uninstallHookCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall-hook",
-		Short: "Remove post-commit hook from current repository",
+		Short: "Remove roborev hooks from current repository",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := git.GetRepoRoot(".")
 			if err != nil {
@@ -2432,62 +2432,14 @@ func uninstallHookCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)
 			}
-			hookPath := filepath.Join(hooksDir, "post-commit")
 
-			// Check if hook exists
-			content, err := os.ReadFile(hookPath)
-			if os.IsNotExist(err) {
-				fmt.Println("No post-commit hook found")
-				return nil
-			} else if err != nil {
-				return fmt.Errorf("read hook: %w", err)
+			for _, hookName := range []string{
+				"post-commit", "post-rewrite",
+			} {
+				removeRoborevFromHook(
+					filepath.Join(hooksDir, hookName),
+				)
 			}
-
-			// Check if it contains roborev (case-insensitive)
-			hookStr := string(content)
-			if !strings.Contains(strings.ToLower(hookStr), "roborev") {
-				fmt.Println("Post-commit hook does not contain roborev")
-				return nil
-			}
-
-			// Remove roborev lines from the hook
-			lines := strings.Split(hookStr, "\n")
-			var newLines []string
-			for _, line := range lines {
-				// Skip roborev-related lines (case-insensitive)
-				if strings.Contains(strings.ToLower(line), "roborev") {
-					continue
-				}
-				newLines = append(newLines, line)
-			}
-
-			// Check if anything remains (besides shebang and empty lines)
-			hasContent := false
-			for _, line := range newLines {
-				trimmed := strings.TrimSpace(line)
-				if trimmed != "" && !strings.HasPrefix(trimmed, "#!") {
-					hasContent = true
-					break
-				}
-			}
-
-			if hasContent {
-				// Write back the hook without roborev lines
-				newContent := strings.Join(newLines, "\n")
-				if err := os.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
-					return fmt.Errorf("write hook: %w", err)
-				}
-				fmt.Printf("Removed roborev from post-commit hook at %s\n", hookPath)
-			} else {
-				// Remove the hook entirely
-				if err := os.Remove(hookPath); err != nil {
-					return fmt.Errorf("remove hook: %w", err)
-				}
-				fmt.Printf("Removed post-commit hook at %s\n", hookPath)
-			}
-
-			// Also remove post-rewrite hook
-			removeRoborevFromHook(filepath.Join(hooksDir, "post-rewrite"))
 
 			return nil
 		},
