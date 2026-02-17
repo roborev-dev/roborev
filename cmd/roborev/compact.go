@@ -194,18 +194,26 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	// Build verification prompt
 	prompt := buildCompactPrompt(jobReviews, branchFilter)
 
-	// Resolve agent
-	agent, err := resolveFixAgent(repoRoot, fixOptions{
-		agentName: opts.agentName,
-		model:     opts.model,
-		reasoning: opts.reasoning,
-	})
+	// Resolve agent/model/reasoning using "fix" workflow so compact
+	// uses the same config as `roborev fix`.  Pass the resolved values
+	// to the daemon so it doesn't re-resolve under the "review" workflow.
+	cfg, err := config.LoadGlobal()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("load config: %w", err)
 	}
+	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoRoot)
+	if err != nil {
+		return 0, fmt.Errorf("resolve reasoning: %w", err)
+	}
+	agentName := config.ResolveAgentForWorkflow(
+		opts.agentName, repoRoot, cfg, "fix", reasoning,
+	)
+	model := config.ResolveModelForWorkflow(
+		opts.model, repoRoot, cfg, "fix", reasoning,
+	)
 
 	if !opts.quiet {
-		cmd.Printf("\nRunning verification agent (%s) to check findings against current codebase...\n\n", agent.Name())
+		cmd.Printf("\nRunning verification agent (%s) to check findings against current codebase...\n\n", agentName)
 	}
 
 	// Enqueue consolidated task job
@@ -217,7 +225,12 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 
 	outputPrefix := buildCompactOutputPrefix(len(jobReviews), branchFilter, extractJobIDs(jobReviews))
 
-	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, opts)
+	// Use resolved values so daemon enqueues with the correct agent/model
+	resolved := opts
+	resolved.agentName = agentName
+	resolved.model = model
+	resolved.reasoning = reasoning
+	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, resolved)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
