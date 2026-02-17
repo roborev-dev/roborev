@@ -208,7 +208,7 @@ func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, er
 		if line != "" {
 			// Stream raw line to the writer for progress visibility
 			if sw := newSyncWriter(output); sw != nil {
-				sw.Write([]byte(line + "\n"))
+				_, _ = sw.Write([]byte(line + "\n"))
 			}
 
 			var msg claudeStreamMessage

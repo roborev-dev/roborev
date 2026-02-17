@@ -90,7 +90,11 @@ func (r *TestRepo) Chdir() func() {
 	if err := os.Chdir(r.Root); err != nil {
 		r.t.Fatal(err)
 	}
-	return func() { os.Chdir(orig) }
+	return func() {
+		if err := os.Chdir(orig); err != nil {
+			r.t.Fatal(err)
+		}
+	}
 }
 
 // WriteHook writes a post-commit hook with the given content.

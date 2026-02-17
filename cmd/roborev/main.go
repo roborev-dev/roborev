@@ -1477,7 +1477,9 @@ func statusCmd() *cobra.Command {
 			var health storage.HealthStatus
 			if err == nil {
 				defer healthResp.Body.Close()
-				json.NewDecoder(healthResp.Body).Decode(&health)
+				if err := json.NewDecoder(healthResp.Body).Decode(&health); err != nil {
+					log.Printf("failed to parse health response: %v", err)
+				}
 			}
 
 			// Display daemon info with uptime and version

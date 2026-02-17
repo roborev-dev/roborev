@@ -1010,7 +1010,7 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	// Suppress hooks via core.hooksPath=<null> — user hooks shouldn't run in internal worktrees.
 	cmd := exec.Command("git", "-C", repoPath, "-c", "core.hooksPath="+os.DevNull, "worktree", "add", "--detach", worktreeDir, "HEAD")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		os.RemoveAll(worktreeDir)
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git worktree add: %w: %s", err, out)
 	}
 
@@ -1022,8 +1022,8 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	initArgs = append(initArgs, "submodule", "update", "--init")
 	cmd = exec.Command("git", initArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git submodule update: %w: %s", err, out)
 	}
 
@@ -1034,20 +1034,20 @@ func createTempWorktree(repoPath string) (string, func(), error) {
 	updateArgs = append(updateArgs, "submodule", "update", "--init", "--recursive")
 	cmd = exec.Command("git", updateArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
+		_ = os.RemoveAll(worktreeDir)
 		return "", nil, fmt.Errorf("git submodule update: %w: %s", err, out)
 	}
 
 	lfsCmd := exec.Command("git", "-C", worktreeDir, "lfs", "env")
 	if err := lfsCmd.Run(); err == nil {
 		cmd = exec.Command("git", "-C", worktreeDir, "lfs", "pull")
-		cmd.Run()
+		_ = cmd.Run()
 	}
 
 	cleanup := func() {
-		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
+		_ = exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
+		_ = os.RemoveAll(worktreeDir)
 	}
 
 	return worktreeDir, cleanup, nil

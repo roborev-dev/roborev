@@ -227,7 +227,9 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 git clone https://github.com/roborev-dev/roborev
 cd roborev
 go test ./...
+make lint            # run full static lint checks locally
 make install
+make install-hooks   # install pre-commit hook to run lint before commit
 ```
 
 ## License

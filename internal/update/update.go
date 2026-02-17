@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -233,7 +234,11 @@ func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) e
 		// Copy new binary
 		if err := copyFile(srcPath, dstPath); err != nil {
 			// Try to restore backup
-			os.Rename(backupPath, dstPath)
+			if _, err := os.Stat(backupPath); err == nil {
+				if err := os.Rename(backupPath, dstPath); err != nil {
+					return fmt.Errorf("restore backup for %s: %w", binary, err)
+				}
+			}
 			return fmt.Errorf("install %s: %w", binary, err)
 		}
 
@@ -534,8 +539,12 @@ func saveCache(version string) {
 		return
 	}
 	cachePath := filepath.Join(GetCacheDir(), cacheFileName)
-	os.MkdirAll(filepath.Dir(cachePath), 0755)
-	os.WriteFile(cachePath, data, 0644)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		return
+	}
+	if err := os.WriteFile(cachePath, data, 0644); err != nil {
+		return
+	}
 }
 
 // extractBaseSemver extracts the base semver from a version string.
@@ -601,13 +610,28 @@ func isNewer(v1, v2 string) bool {
 	parts1 := strings.Split(base1, ".")
 	parts2 := strings.Split(base2, ".")
 
+	parsePart := func(part string) int {
+		// Strip build metadata (+meta) or any non-numeric suffix
+		// so "3+meta" parses as 3
+		if idx := strings.IndexFunc(part, func(r rune) bool {
+			return r < '0' || r > '9'
+		}); idx > 0 {
+			part = part[:idx]
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+
 	for i := 0; i < 3; i++ {
 		var n1, n2 int
 		if i < len(parts1) {
-			fmt.Sscanf(parts1[i], "%d", &n1)
+			n1 = parsePart(parts1[i])
 		}
 		if i < len(parts2) {
-			fmt.Sscanf(parts2[i], "%d", &n2)
+			n2 = parsePart(parts2[i])
 		}
 		if n1 > n2 {
 			return true

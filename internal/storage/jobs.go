@@ -964,7 +964,9 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(ctx, "ROLLBACK")
+			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+				log.Printf("jobs CompleteJob: rollback failed: %v", err)
+			}
 		}
 	}()
 
@@ -1059,7 +1061,9 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(ctx, "ROLLBACK")
+			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+				log.Printf("jobs ReenqueueJob: rollback failed: %v", err)
+			}
 		}
 	}()
 

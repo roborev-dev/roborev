@@ -312,7 +312,7 @@ func (a *CodexAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (string, error
 		if trimmed != "" {
 			// Stream raw line to the writer for progress visibility
 			if sw != nil {
-				sw.Write([]byte(trimmed + "\n"))
+				_, _ = sw.Write([]byte(trimmed + "\n"))
 			}
 
 			var ev codexEvent

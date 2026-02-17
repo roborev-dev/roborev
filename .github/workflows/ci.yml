@@ -121,8 +121,8 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
-          version: latest
-        continue-on-error: true
+          version: v1.64.8
+          args: --timeout=5m
 
   nix:
     runs-on: ubuntu-latest

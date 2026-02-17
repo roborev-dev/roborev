@@ -107,26 +107,6 @@ func runReviewScenario(t *testing.T, script, prompt string) (string, error) {
 	return a.Review(context.Background(), t.TempDir(), "deadbeef", prompt, nil)
 }
 
-// assertArgsOrder verifies that each element in sequence appears in args
-// in strictly increasing index order.
-func assertArgsOrder(t *testing.T, args []string, sequence ...string) {
-	t.Helper()
-	lastIdx := -1
-	for _, want := range sequence {
-		found := false
-		for i := lastIdx + 1; i < len(args); i++ {
-			if args[i] == want {
-				lastIdx = i
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("expected %q after index %d in args %v", want, lastIdx, args)
-		}
-	}
-}
-
 // assertContainsArg checks that args contains target, failing with a descriptive message.
 func assertContainsArg(t *testing.T, args []string, target string) {
 	t.Helper()

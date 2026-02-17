@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -769,7 +770,11 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 	var responseID int64
 	if responseIDStr != "" {
-		fmt.Sscanf(responseIDStr, "%d", &responseID)
+		parsed, err := strconv.ParseInt(responseIDStr, 10, 64)
+		if err != nil {
+			return stats, fmt.Errorf("parse response cursor: %w", err)
+		}
+		responseID = parsed
 	}
 
 	for {

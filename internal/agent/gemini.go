@@ -205,7 +205,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 		// Stream line to the writer for progress visibility
 		trimmed := strings.TrimSpace(line)
 		if sw != nil && trimmed != "" {
-			sw.Write([]byte(trimmed + "\n"))
+			_, _ = sw.Write([]byte(trimmed + "\n"))
 		}
 
 		// Try to parse as JSON

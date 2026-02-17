@@ -296,7 +296,11 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return fmt.Errorf("begin migration transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() {
+			if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+				return
+			}
+		}()
 
 		_, err = tx.Exec(`
 			CREATE TABLE review_jobs_new (
@@ -452,7 +456,11 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return fmt.Errorf("begin responses migration transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() {
+			if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+				return
+			}
+		}()
 
 		// Check if job_id column already exists in old table
 		var hasJobID bool
@@ -849,7 +857,11 @@ func (db *DB) migrateSyncColumns() error {
 		if err != nil {
 			return fmt.Errorf("begin commits migration transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() {
+			if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+				return
+			}
+		}()
 
 		// Step 1: Create backup
 		_, err = tx.Exec(`CREATE TABLE commits_backup AS SELECT * FROM commits`)
