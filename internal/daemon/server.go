@@ -1635,6 +1635,7 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 	var req struct {
 		ParentJobID int64  `json:"parent_job_id"`
 		Prompt      string `json:"prompt,omitempty"` // Optional custom prompt override
@@ -1749,7 +1750,7 @@ func buildFixPrompt(reviewOutput string) string {
 		"After making changes:\n" +
 		"1. Verify the code still compiles/passes linting\n" +
 		"2. Run any relevant tests to ensure nothing is broken\n" +
-		"3. Create a git commit with a descriptive message summarizing the changes\n"
+		"3. Stage the changes with git add but do NOT commit — the changes will be captured as a patch\n"
 }
 
 // formatDuration formats a duration in human-readable form (e.g., "2h 15m")

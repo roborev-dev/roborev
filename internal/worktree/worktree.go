@@ -17,6 +17,7 @@ import (
 type Worktree struct {
 	Dir      string // Path to the worktree directory
 	repoPath string // Path to the parent repository
+	baseSHA  string // SHA of the commit the worktree was detached at
 }
 
 // Close removes the worktree and its directory.
@@ -71,20 +72,45 @@ func Create(repoPath string) (*Worktree, error) {
 		cmd.Run()
 	}
 
-	return &Worktree{Dir: worktreeDir, repoPath: repoPath}, nil
+	// Record the base SHA for patch capture
+	shaCmd := exec.Command("git", "-C", worktreeDir, "rev-parse", "HEAD")
+	shaOut, shaErr := shaCmd.Output()
+	baseSHA := ""
+	if shaErr == nil {
+		baseSHA = strings.TrimSpace(string(shaOut))
+	}
+
+	return &Worktree{Dir: worktreeDir, repoPath: repoPath, baseSHA: baseSHA}, nil
 }
 
 // CapturePatch stages all changes in the worktree and returns the diff as a patch string.
-// Returns empty string if there are no changes.
-func CapturePatch(worktreeDir string) (string, error) {
+// Returns empty string if there are no changes. Handles both uncommitted and committed
+// changes by diffing the final tree state against the base SHA.
+func (w *Worktree) CapturePatch() (string, error) {
 	// Stage all changes in worktree
-	cmd := exec.Command("git", "-C", worktreeDir, "add", "-A")
+	cmd := exec.Command("git", "-C", w.Dir, "add", "-A")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("git add in worktree: %w: %s", err, out)
 	}
 
-	// Get diff as patch
-	diffCmd := exec.Command("git", "-C", worktreeDir, "diff", "--cached", "--binary")
+	// If we have a base SHA, diff the current tree state (HEAD + staged) against it.
+	// This captures both committed and uncommitted changes the agent made.
+	if w.baseSHA != "" {
+		// Create a temporary tree object from the index (staged state)
+		treeCmd := exec.Command("git", "-C", w.Dir, "write-tree")
+		treeOut, err := treeCmd.Output()
+		if err == nil {
+			tree := strings.TrimSpace(string(treeOut))
+			diffCmd := exec.Command("git", "-C", w.Dir, "diff-tree", "-p", "--binary", w.baseSHA, tree)
+			diff, err := diffCmd.Output()
+			if err == nil && len(diff) > 0 {
+				return string(diff), nil
+			}
+		}
+	}
+
+	// Fallback: diff staged changes against HEAD (works when agent didn't commit)
+	diffCmd := exec.Command("git", "-C", w.Dir, "diff", "--cached", "--binary")
 	diff, err := diffCmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git diff in worktree: %w", err)

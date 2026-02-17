@@ -1103,7 +1103,7 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 	// Reset job status
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0
+		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL
 		WHERE id = ? AND status IN ('done', 'failed', 'canceled')
 	`, jobID)
 	if err != nil {

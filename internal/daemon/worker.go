@@ -377,6 +377,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// For fix jobs, create an isolated worktree to run the agent in.
 	// The agent modifies files in the worktree; afterwards we capture the diff as a patch.
 	reviewRepoPath := job.RepoPath
+	var fixWorktree *worktree.Worktree
 	if job.IsFixJob() {
 		wt, wtErr := worktree.Create(job.RepoPath)
 		if wtErr != nil {
@@ -385,6 +386,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			return
 		}
 		defer wt.Close()
+		fixWorktree = wt
 		reviewRepoPath = wt.Dir
 		log.Printf("[%s] Fix job %d: running agent in worktree %s", workerID, job.ID, wt.Dir)
 	}
@@ -415,7 +417,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// For fix jobs, capture the patch from the worktree and store it.
 	if job.IsFixJob() {
-		patch, patchErr := worktree.CapturePatch(reviewRepoPath)
+		patch, patchErr := fixWorktree.CapturePatch()
 		if patchErr != nil {
 			log.Printf("[%s] Warning: failed to capture patch for fix job %d: %v", workerID, job.ID, patchErr)
 		} else if patch != "" {

@@ -3476,17 +3476,35 @@ func (m tuiModel) renderFixPromptView() string {
 	return b.String()
 }
 
+// fetchJobByID fetches a single job by ID from the daemon API.
+func (m tuiModel) fetchJobByID(jobID int64) (*storage.ReviewJob, error) {
+	var result struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := m.getJSON(fmt.Sprintf("/api/jobs?id=%d", jobID), &result); err != nil {
+		return nil, err
+	}
+	for i := range result.Jobs {
+		if result.Jobs[i].ID == jobID {
+			return &result.Jobs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("job %d not found", jobID)
+}
+
 // fetchFixJobs fetches fix jobs from the daemon.
 func (m tuiModel) fetchFixJobs() tea.Cmd {
 	return func() tea.Msg {
-		var jobs []storage.ReviewJob
-		err := m.getJSON("/api/jobs", &jobs)
+		var result struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		err := m.getJSON("/api/jobs", &result)
 		if err != nil {
 			return tuiFixJobsMsg{err: err}
 		}
 		// Filter to only fix jobs
 		var fixJobs []storage.ReviewJob
-		for _, j := range jobs {
+		for _, j := range result.Jobs {
 			if j.IsFixJob() {
 				fixJobs = append(fixJobs, j)
 			}
@@ -3538,18 +3556,7 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 		}
 
 		// Fetch the job to find repo path
-		jobDetail, jErr := func() (*storage.ReviewJob, error) {
-			var jobs []storage.ReviewJob
-			if err := m.getJSON("/api/jobs", &jobs); err != nil {
-				return nil, err
-			}
-			for _, j := range jobs {
-				if j.ID == jobID {
-					return &j, nil
-				}
-			}
-			return nil, fmt.Errorf("job %d not found", jobID)
-		}()
+		jobDetail, jErr := m.fetchJobByID(jobID)
 		if jErr != nil {
 			return tuiApplyPatchResultMsg{jobID: jobID, err: jErr}
 		}
@@ -3587,19 +3594,9 @@ func (m tuiModel) triggerRebase(staleJobID int64) tea.Cmd {
 		}
 
 		// Find the parent job ID (the original review this fix was for)
-		var staleJob *storage.ReviewJob
-		var jobs []storage.ReviewJob
-		if err := m.getJSON("/api/jobs", &jobs); err == nil {
-			for _, j := range jobs {
-				if j.ID == staleJobID {
-					staleJob = &j
-					break
-				}
-			}
-		}
-
-		if staleJob == nil {
-			return tuiFixTriggerResultMsg{err: fmt.Errorf("stale job %d not found", staleJobID)}
+		staleJob, fetchErr := m.fetchJobByID(staleJobID)
+		if fetchErr != nil {
+			return tuiFixTriggerResultMsg{err: fmt.Errorf("stale job %d not found: %w", staleJobID, fetchErr)}
 		}
 
 		// Use the original parent job ID if this was already a fix job
@@ -3613,14 +3610,14 @@ func (m tuiModel) triggerRebase(staleJobID int64) tea.Cmd {
 			"A previous fix attempt produced a patch that no longer applies cleanly to the current HEAD.\n" +
 			"Your task is to achieve the same changes but adapted to the current state of the code.\n\n"
 		if stalePatch != "" {
-			rebasePrompt += "## Previous Patch (stale)\n\n```diff\n" + stalePatch + "\n```\n\n"
+			rebasePrompt += "## Previous Patch (stale)\n\n`````diff\n" + stalePatch + "\n`````\n\n"
 		}
 		rebasePrompt += "## Instructions\n\n" +
 			"1. Review the intent of the previous patch\n" +
 			"2. Apply equivalent changes to the current codebase\n" +
 			"3. Resolve any conflicts with recent changes\n" +
 			"4. Verify the code compiles and tests pass\n" +
-			"5. Create a git commit with a descriptive message\n"
+			"5. Stage the changes with git add but do NOT commit\n"
 
 		req := map[string]interface{}{
 			"parent_job_id": parentJobID,

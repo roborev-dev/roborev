@@ -585,7 +585,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		}
 
 		// Capture patch from worktree and apply to main repo
-		patch, err := worktree.CapturePatch(worktreePath)
+		patch, err := wt.CapturePatch()
 		if err != nil {
 			wt.Close()
 			return fmt.Errorf("capture worktree patch: %w", err)

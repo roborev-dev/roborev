@@ -69,7 +69,7 @@ func TestCapturePatchNoChanges(t *testing.T) {
 	}
 	defer wt.Close()
 
-	patch, err := CapturePatch(wt.Dir)
+	patch, err := wt.CapturePatch()
 	if err != nil {
 		t.Fatalf("CapturePatch failed: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestCapturePatchWithChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	patch, err := CapturePatch(wt.Dir)
+	patch, err := wt.CapturePatch()
 	if err != nil {
 		t.Fatalf("CapturePatch failed: %v", err)
 	}
@@ -107,6 +107,49 @@ func TestCapturePatchWithChanges(t *testing.T) {
 	}
 	if !strings.Contains(patch, "new.txt") {
 		t.Error("patch should reference new.txt")
+	}
+}
+
+func TestCapturePatchCommittedChanges(t *testing.T) {
+	repo := setupGitRepo(t)
+
+	wt, err := Create(repo)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	defer wt.Close()
+
+	// Simulate an agent that commits changes (instead of just staging)
+	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("committed-change"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", wt.Dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	run("add", "-A")
+	run("commit", "-m", "agent commit")
+
+	// CapturePatch should still capture the committed changes
+	patch, err := wt.CapturePatch()
+	if err != nil {
+		t.Fatalf("CapturePatch failed: %v", err)
+	}
+	if patch == "" {
+		t.Fatal("expected non-empty patch for committed changes")
+	}
+	if !strings.Contains(patch, "hello.txt") {
+		t.Error("patch should reference hello.txt")
+	}
+	if !strings.Contains(patch, "committed-change") {
+		t.Error("patch should contain the committed content")
 	}
 }
 
@@ -133,7 +176,7 @@ func TestApplyPatchRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	patch, err := CapturePatch(wt.Dir)
+	patch, err := wt.CapturePatch()
 	if err != nil {
 		t.Fatalf("CapturePatch failed: %v", err)
 	}
@@ -171,7 +214,7 @@ func TestCheckPatchClean(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("changed"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	patch, err := CapturePatch(wt.Dir)
+	patch, err := wt.CapturePatch()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +243,7 @@ func TestCheckPatchConflict(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("from-worktree"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	patch, err := CapturePatch(wt.Dir)
+	patch, err := wt.CapturePatch()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +270,7 @@ func TestApplyPatchConflictFails(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("from-worktree"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	patch, err := CapturePatch(wt.Dir)
+	patch, err := wt.CapturePatch()
 	if err != nil {
 		t.Fatal(err)
 	}
