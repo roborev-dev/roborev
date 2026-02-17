@@ -281,7 +281,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 
 	// Build placeholders for IN clause
 	placeholders := make([]string, len(jobIDs))
-	args := make([]interface{}, len(jobIDs))
+	args := make([]any, len(jobIDs))
 	for i, id := range jobIDs {
 		placeholders[i] = "?"
 		args[i] = id

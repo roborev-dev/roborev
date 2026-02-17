@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"strings"
@@ -131,17 +132,12 @@ func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra
 	// Fetch in chunks to stay within server batch limit
 	allResults := make(map[int64]storage.JobWithReview)
 	for i := 0; i < len(jobIDs); i += maxBatchFetch {
-		end := i + maxBatchFetch
-		if end > len(jobIDs) {
-			end = len(jobIDs)
-		}
+		end := min(i+maxBatchFetch, len(jobIDs))
 		results, err := fetchJobBatch(ctx, jobIDs[i:end])
 		if err != nil {
 			return nil, nil, err
 		}
-		for k, v := range results {
-			allResults[k] = v
-		}
+		maps.Copy(allResults, results)
 	}
 
 	var jobReviews []jobReview
@@ -178,7 +174,7 @@ func fetchJobReviews(ctx context.Context, jobIDs []int64, quiet bool, cmd *cobra
 
 // fetchJobBatch fetches a single batch of job reviews from the daemon.
 func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithReview, error) {
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"job_ids": ids,
 	})
 	if err != nil {
@@ -471,16 +467,16 @@ func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot string) string 
 	if len(jobReviews) != 1 {
 		reviewWord = "reviews"
 	}
-	sb.WriteString(fmt.Sprintf("Below are %d unaddressed %s", len(jobReviews), reviewWord))
+	fmt.Fprintf(&sb, "Below are %d unaddressed %s", len(jobReviews), reviewWord)
 	if branch != "" {
-		sb.WriteString(fmt.Sprintf(" from branch %s", branch))
+		fmt.Fprintf(&sb, " from branch %s", branch)
 	}
 	sb.WriteString(":\n\n")
 
 	for i, jr := range jobReviews {
-		sb.WriteString(fmt.Sprintf("--- Review %d (Job %d", i+1, jr.jobID))
+		fmt.Fprintf(&sb, "--- Review %d (Job %d", i+1, jr.jobID)
 		if jr.job.GitRef != "" {
-			sb.WriteString(fmt.Sprintf(" — %s", shortSHA(jr.job.GitRef)))
+			fmt.Fprintf(&sb, " — %s", shortSHA(jr.job.GitRef))
 		}
 		sb.WriteString(") ---\n")
 		sb.WriteString(jr.review.Output)
@@ -505,12 +501,12 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 	if jobCount != 1 {
 		reviewWord = "reviews"
 	}
-	sb.WriteString(fmt.Sprintf("Verified and consolidated %d unaddressed %s", jobCount, reviewWord))
+	fmt.Fprintf(&sb, "Verified and consolidated %d unaddressed %s", jobCount, reviewWord)
 	if branch != "" {
-		sb.WriteString(fmt.Sprintf(" from branch %s", branch))
+		fmt.Fprintf(&sb, " from branch %s", branch)
 	}
 	sb.WriteString("\n\n")
-	sb.WriteString(fmt.Sprintf("Original jobs: %s\n\n", formatJobIDs(jobIDs)))
+	fmt.Fprintf(&sb, "Original jobs: %s\n\n", formatJobIDs(jobIDs))
 	sb.WriteString("---\n\n")
 	return sb.String()
 }
@@ -520,7 +516,7 @@ func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opt
 		branch = git.GetCurrentBranch(repoRoot)
 	}
 
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"repo_path":     repoRoot,
 		"git_ref":       label,
 		"branch":        branch,
@@ -589,7 +585,7 @@ func extractJobIDs(reviews []jobReview) []int64 {
 
 // cancelJob cancels a job by ID via the daemon API
 func cancelJob(serverAddr string, jobID int64) error {
-	reqBody, err := json.Marshal(map[string]interface{}{"job_id": jobID})
+	reqBody, err := json.Marshal(map[string]any{"job_id": jobID})
 	if err != nil {
 		return fmt.Errorf("marshal cancel request: %w", err)
 	}

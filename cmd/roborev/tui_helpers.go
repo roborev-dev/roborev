@@ -95,7 +95,7 @@ func wrapText(text string, width int) []string {
 	}
 
 	var result []string
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		lineWidth := runewidth.StringWidth(line)
 		if lineWidth <= width {
 			result = append(result, line)

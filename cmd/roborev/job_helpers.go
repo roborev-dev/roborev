@@ -152,10 +152,7 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 
 		// Exponential backoff
 		if pollInterval < maxInterval {
-			pollInterval = pollInterval * 3 / 2
-			if pollInterval > maxInterval {
-				pollInterval = maxInterval
-			}
+			pollInterval = min(pollInterval*3/2, maxInterval)
 		}
 	}
 }

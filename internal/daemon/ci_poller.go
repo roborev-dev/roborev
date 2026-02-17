@@ -1012,7 +1012,7 @@ Rules:
 	const maxPerReview = 15000
 
 	for i, r := range reviews {
-		b.WriteString(fmt.Sprintf("---\n### Review %d: Agent=%s, Type=%s", i+1, r.Agent, r.ReviewType))
+		fmt.Fprintf(&b, "---\n### Review %d: Agent=%s, Type=%s", i+1, r.Agent, r.ReviewType)
 		if r.Status == "failed" {
 			b.WriteString(" [FAILED]")
 		}
@@ -1057,8 +1057,8 @@ func formatSynthesizedComment(output string, reviews []storage.BatchReviewResult
 		types = append(types, t)
 	}
 
-	b.WriteString(fmt.Sprintf("\n\n---\n*Synthesized from %d reviews (agents: %s | types: %s)*\n",
-		len(reviews), strings.Join(agents, ", "), strings.Join(types, ", ")))
+	fmt.Fprintf(&b, "\n\n---\n*Synthesized from %d reviews (agents: %s | types: %s)*\n",
+		len(reviews), strings.Join(agents, ", "), strings.Join(types, ", "))
 
 	return b.String()
 }
@@ -1072,7 +1072,7 @@ func formatRawBatchComment(reviews []storage.BatchReviewResult) string {
 
 	for _, r := range reviews {
 		summary := fmt.Sprintf("Agent: %s | Type: %s | Status: %s", r.Agent, r.ReviewType, r.Status)
-		b.WriteString(fmt.Sprintf("<details>\n<summary>%s</summary>\n\n", summary))
+		fmt.Fprintf(&b, "<details>\n<summary>%s</summary>\n\n", summary)
 		if r.Status == "failed" {
 			b.WriteString("**Error:** Review failed. Check daemon logs for details.\n")
 		} else if r.Output != "" {
@@ -1098,7 +1098,7 @@ func formatAllFailedComment(reviews []storage.BatchReviewResult) string {
 	b.WriteString("All review jobs in this batch failed.\n\n")
 
 	for _, r := range reviews {
-		b.WriteString(fmt.Sprintf("- **%s** (%s): failed\n", r.Agent, r.ReviewType))
+		fmt.Fprintf(&b, "- **%s** (%s): failed\n", r.Agent, r.ReviewType)
 	}
 
 	b.WriteString("\nCheck daemon logs for error details.")
@@ -1135,8 +1135,8 @@ func formatPRComment(review *storage.Review, verdict string) string {
 	}
 
 	if review.Job != nil {
-		b.WriteString(fmt.Sprintf("\n---\n*Review type: %s | Agent: %s | Job: %d*\n",
-			review.Job.ReviewType, review.Job.Agent, review.Job.ID))
+		fmt.Fprintf(&b, "\n---\n*Review type: %s | Agent: %s | Job: %d*\n",
+			review.Job.ReviewType, review.Job.Agent, review.Job.ID)
 	}
 
 	return b.String()

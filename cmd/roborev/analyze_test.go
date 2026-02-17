@@ -326,7 +326,7 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 			ID:     42,
 			Status: storage.JobStatusQueued,
 		}
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{job}})
 	}))
 	defer ts.Close()
 
@@ -366,7 +366,7 @@ func TestMarkJobAddressed(t *testing.T) {
 					t.Errorf("unexpected method: %s", r.Method)
 				}
 
-				var req map[string]interface{}
+				var req map[string]any
 				_ = json.NewDecoder(r.Body).Decode(&req)
 				gotJobID = int64(req["job_id"].(float64))
 				gotAddressed = req["addressed"].(bool)
@@ -501,9 +501,9 @@ func TestShowAnalysisPrompt(t *testing.T) {
 
 	// Verify there's substantial content after the template header
 	// (the prompt templates are all multi-line with instructions)
-	idx := strings.Index(outputStr, "## Prompt Template")
-	if idx >= 0 {
-		afterHeader := outputStr[idx+len("## Prompt Template"):]
+	_, after, ok := strings.Cut(outputStr, "## Prompt Template")
+	if ok {
+		afterHeader := after
 		if len(strings.TrimSpace(afterHeader)) < 50 {
 			t.Error("prompt template section should have substantial content")
 		}
@@ -573,7 +573,7 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 	ts, _ := newMockServer(t, MockServerOpts{
 		JobIDStart: 42,
 		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
-			var req map[string]interface{}
+			var req map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&req)
 
 			if req["agentic"] != true {
@@ -614,7 +614,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 		var branch string
 		ts, _ := newMockServer(t, MockServerOpts{
 			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
-				var req map[string]interface{}
+				var req map[string]any
 				_ = json.NewDecoder(r.Body).Decode(&req)
 				branch, _ = req["branch"].(string)
 				w.WriteHeader(http.StatusCreated)

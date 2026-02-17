@@ -17,9 +17,9 @@ func setupConfigFile(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "config.toml")
 }
 
-func readTOML(t *testing.T, path string) map[string]interface{} {
+func readTOML(t *testing.T, path string) map[string]any {
 	t.Helper()
-	raw := make(map[string]interface{})
+	raw := make(map[string]any)
 	if _, err := toml.DecodeFile(path, &raw); err != nil {
 		t.Fatalf("read TOML %s: %v", path, err)
 	}
@@ -27,12 +27,12 @@ func readTOML(t *testing.T, path string) map[string]interface{} {
 }
 
 // getNestedValue traverses a dot-separated key path in a nested map.
-func getNestedValue(t *testing.T, raw map[string]interface{}, dotKey string) interface{} {
+func getNestedValue(t *testing.T, raw map[string]any, dotKey string) any {
 	t.Helper()
 	parts := strings.Split(dotKey, ".")
-	var current interface{} = raw
+	var current any = raw
 	for _, part := range parts {
-		m, ok := current.(map[string]interface{})
+		m, ok := current.(map[string]any)
 		if !ok {
 			t.Fatalf("key %q: expected map at %q, got %T", dotKey, part, current)
 		}
@@ -41,7 +41,7 @@ func getNestedValue(t *testing.T, raw map[string]interface{}, dotKey string) int
 	return current
 }
 
-func assertConfigValue(t *testing.T, path, dotKey string, expected interface{}) {
+func assertConfigValue(t *testing.T, path, dotKey string, expected any) {
 	t.Helper()
 	raw := readTOML(t, path)
 	val := getNestedValue(t, raw, dotKey)
@@ -350,7 +350,7 @@ func TestSetConfigKeySlice(t *testing.T) {
 	}
 
 	raw := readTOML(t, path)
-	repos, ok := getNestedValue(t, raw, "ci.repos").([]interface{})
+	repos, ok := getNestedValue(t, raw, "ci.repos").([]any)
 	if !ok {
 		t.Fatalf("ci.repos is not a slice: %v (%T)", getNestedValue(t, raw, "ci.repos"), getNestedValue(t, raw, "ci.repos"))
 	}
@@ -374,7 +374,7 @@ func TestSetConfigKeySliceEmpty(t *testing.T) {
 
 	raw := readTOML(t, path)
 	repos := getNestedValue(t, raw, "ci.repos")
-	slice, ok := repos.([]interface{})
+	slice, ok := repos.([]any)
 	if !ok {
 		t.Fatalf("ci.repos is not a slice after clearing: %v (%T)", repos, repos)
 	}
@@ -397,9 +397,9 @@ func TestSetRawMapKey(t *testing.T) {
 	tests := []struct {
 		name string
 		key  string
-		val  interface{}
+		val  any
 		path string // dot-path to check in the resulting map
-		want interface{}
+		want any
 	}{
 		{
 			name: "SimpleKey",
@@ -419,7 +419,7 @@ func TestSetRawMapKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := make(map[string]interface{})
+			m := make(map[string]any)
 			setRawMapKey(m, tt.key, tt.val)
 			got := getNestedValue(t, m, tt.path)
 			if got != tt.want {

@@ -246,11 +246,11 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	}
 
 	sb.WriteString("## Current Commit\n\n")
-	sb.WriteString(fmt.Sprintf("**Commit:** %s\n", shortSHA))
-	sb.WriteString(fmt.Sprintf("**Author:** %s\n", info.Author))
-	sb.WriteString(fmt.Sprintf("**Subject:** %s\n", info.Subject))
+	fmt.Fprintf(&sb, "**Commit:** %s\n", shortSHA)
+	fmt.Fprintf(&sb, "**Author:** %s\n", info.Author)
+	fmt.Fprintf(&sb, "**Subject:** %s\n", info.Subject)
 	if info.Body != "" {
-		sb.WriteString(fmt.Sprintf("\n**Message:**\n%s\n", info.Body))
+		fmt.Fprintf(&sb, "\n**Message:**\n%s\n", info.Body)
 	}
 	sb.WriteString("\n")
 
@@ -275,7 +275,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 		// Fall back to just commit info without diff
 		sb.WriteString("### Diff\n\n")
 		sb.WriteString("(Diff too large to include - please review the commit directly)\n")
-		sb.WriteString(fmt.Sprintf("View with: git show %s\n", sha))
+		fmt.Fprintf(&sb, "View with: git show %s\n", sha)
 	} else {
 		sb.WriteString(diffSection.String())
 	}
@@ -325,7 +325,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	// Commit range section
 	sb.WriteString("## Commit Range\n\n")
-	sb.WriteString(fmt.Sprintf("Reviewing %d commits:\n\n", len(commits)))
+	fmt.Fprintf(&sb, "Reviewing %d commits:\n\n", len(commits))
 
 	for _, sha := range commits {
 		info, err := git.GetCommitInfo(repoPath, sha)
@@ -334,9 +334,9 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 			shortSHA = shortSHA[:7]
 		}
 		if err == nil {
-			sb.WriteString(fmt.Sprintf("- %s %s\n", shortSHA, info.Subject))
+			fmt.Fprintf(&sb, "- %s %s\n", shortSHA, info.Subject)
 		} else {
-			sb.WriteString(fmt.Sprintf("- %s\n", shortSHA))
+			fmt.Fprintf(&sb, "- %s\n", shortSHA)
 		}
 	}
 	sb.WriteString("\n")
@@ -362,7 +362,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 		// Fall back to just commit info without diff
 		sb.WriteString("### Combined Diff\n\n")
 		sb.WriteString("(Diff too large to include - please review the commits directly)\n")
-		sb.WriteString(fmt.Sprintf("View with: git diff %s\n", rangeRef))
+		fmt.Fprintf(&sb, "View with: git diff %s\n", rangeRef)
 	} else {
 		sb.WriteString(diffSection.String())
 	}
@@ -383,7 +383,7 @@ func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewCon
 			shortSHA = shortSHA[:7]
 		}
 
-		sb.WriteString(fmt.Sprintf("--- Review for commit %s ---\n", shortSHA))
+		fmt.Fprintf(sb, "--- Review for commit %s ---\n", shortSHA)
 		if ctx.Review != nil {
 			sb.WriteString(ctx.Review.Output)
 		} else {
@@ -395,7 +395,7 @@ func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewCon
 		if len(ctx.Responses) > 0 {
 			sb.WriteString("\nComments on this review:\n")
 			for _, resp := range ctx.Responses {
-				sb.WriteString(fmt.Sprintf("- %s: %q\n", resp.Responder, resp.Response))
+				fmt.Fprintf(sb, "- %s: %q\n", resp.Responder, resp.Response)
 			}
 		}
 		sb.WriteString("\n")
@@ -429,8 +429,8 @@ func (b *Builder) writePreviousAttemptsForGitRef(sb *strings.Builder, gitRef str
 	sb.WriteString("\n")
 
 	for i, review := range reviews {
-		sb.WriteString(fmt.Sprintf("--- Review Attempt %d (%s, %s) ---\n",
-			i+1, review.Agent, review.CreatedAt.Format("2006-01-02 15:04")))
+		fmt.Fprintf(sb, "--- Review Attempt %d (%s, %s) ---\n",
+			i+1, review.Agent, review.CreatedAt.Format("2006-01-02 15:04"))
 		sb.WriteString(review.Output)
 		sb.WriteString("\n")
 
@@ -440,7 +440,7 @@ func (b *Builder) writePreviousAttemptsForGitRef(sb *strings.Builder, gitRef str
 			if err == nil && len(responses) > 0 {
 				sb.WriteString("\nComments on this review:\n")
 				for _, resp := range responses {
-					sb.WriteString(fmt.Sprintf("- %s: %q\n", resp.Responder, resp.Response))
+					fmt.Fprintf(sb, "- %s: %q\n", resp.Responder, resp.Response)
 				}
 			}
 		}
@@ -594,15 +594,15 @@ func (b *Builder) BuildAddressPrompt(repoPath string, review *storage.Review, pr
 		sb.WriteString(PreviousAttemptsHeader)
 		sb.WriteString("\n")
 		for _, attempt := range previousAttempts {
-			sb.WriteString(fmt.Sprintf("--- Attempt by %s at %s ---\n",
-				attempt.Responder, attempt.CreatedAt.Format("2006-01-02 15:04")))
+			fmt.Fprintf(&sb, "--- Attempt by %s at %s ---\n",
+				attempt.Responder, attempt.CreatedAt.Format("2006-01-02 15:04"))
 			sb.WriteString(attempt.Response)
 			sb.WriteString("\n\n")
 		}
 	}
 
 	// Review findings section
-	sb.WriteString(fmt.Sprintf("## Review Findings to Address (Job %d)\n\n", review.JobID))
+	fmt.Fprintf(&sb, "## Review Findings to Address (Job %d)\n\n", review.JobID)
 	sb.WriteString(review.Output)
 	sb.WriteString("\n\n")
 

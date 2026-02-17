@@ -341,8 +341,8 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 		Agent: "claude-code",
 	}
 
-	rawGlobal := map[string]interface{}{"default_agent": "gemini"}
-	rawRepo := map[string]interface{}{"agent": "claude-code"}
+	rawGlobal := map[string]any{"default_agent": "gemini"}
+	rawRepo := map[string]any{"agent": "claude-code"}
 
 	kvos := MergedConfigWithOrigin(global, repo, rawGlobal, rawRepo)
 	if len(kvos) == 0 {
@@ -391,8 +391,8 @@ func TestMergedConfigWithOriginLocalOverridesGlobal(t *testing.T) {
 		ReviewContextCount: 10,
 	}
 
-	rawGlobal := map[string]interface{}{"review_context_count": int64(5)}
-	rawRepo := map[string]interface{}{"review_context_count": int64(10)}
+	rawGlobal := map[string]any{"review_context_count": int64(5)}
+	rawRepo := map[string]any{"review_context_count": int64(10)}
 
 	assertOrigins(t, MergedConfigWithOrigin(global, repo, rawGlobal, rawRepo), map[string]expectedOrigin{
 		"review_context_count": {Value: "10", Origin: "local"},
@@ -403,7 +403,7 @@ func TestMergedConfigWithOriginShowsAllOrigins(t *testing.T) {
 	global := DefaultConfig()
 	global.DefaultAgent = "gemini" // override from default
 
-	rawGlobal := map[string]interface{}{"default_agent": "gemini"}
+	rawGlobal := map[string]any{"default_agent": "gemini"}
 	assertOrigins(t, MergedConfigWithOrigin(global, nil, rawGlobal, nil), map[string]expectedOrigin{
 		"default_agent": {Value: "gemini", Origin: "global"},
 	})
@@ -425,14 +425,14 @@ func TestMergedConfigWithOriginIncludesComplexFields(t *testing.T) {
 		"org": 1234,
 	}
 
-	rawGlobal := map[string]interface{}{
-		"sync": map[string]interface{}{
-			"repo_names": map[string]interface{}{
+	rawGlobal := map[string]any{
+		"sync": map[string]any{
+			"repo_names": map[string]any{
 				"org/repo": "my-project",
 			},
 		},
-		"ci": map[string]interface{}{
-			"github_app_installations": map[string]interface{}{
+		"ci": map[string]any{
+			"github_app_installations": map[string]any{
 				"org": int64(1234),
 			},
 		},
@@ -474,7 +474,7 @@ func TestFormatMapDeterministic(t *testing.T) {
 
 	// Run multiple times to verify determinism
 	var prev string
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		kvs := ListConfigKeys(cfg)
 		found := toMap(kvs)
 		got := found["sync.repo_names"]
@@ -509,7 +509,7 @@ func TestFormatMapCollidingKeys(t *testing.T) {
 
 	// Run multiple times to verify determinism despite colliding String() output
 	var prev string
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		got := formatMap(reflect.ValueOf(m))
 		if prev != "" && got != prev {
 			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
@@ -549,7 +549,7 @@ func TestFormatMapFullyCollidingKeys(t *testing.T) {
 
 	// Run multiple times to verify determinism despite colliding %v and %#v
 	var prev string
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		got := formatMap(reflect.ValueOf(m))
 		if prev != "" && got != prev {
 			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
@@ -625,7 +625,7 @@ func TestListExplicitKeysOnlyIncludesRawKeys(t *testing.T) {
 	cfg := DefaultConfig()
 	// default_agent has a non-zero default ("codex" or similar) but if
 	// it's NOT in the raw TOML, it should be excluded.
-	raw := map[string]interface{}{
+	raw := map[string]any{
 		"max_workers": int64(8),
 	}
 	cfg.MaxWorkers = 8
@@ -648,9 +648,9 @@ func TestListExplicitKeysIncludesZeroValues(t *testing.T) {
 			Enabled: false,
 		},
 	}
-	raw := map[string]interface{}{
+	raw := map[string]any{
 		"max_workers": int64(0),
-		"sync": map[string]interface{}{
+		"sync": map[string]any{
 			"enabled": false,
 		},
 	}
@@ -680,13 +680,13 @@ func TestListExplicitKeysIncludesEmptyValues(t *testing.T) {
 			RepoNames: map[string]string{}, // explicit empty map
 		},
 	}
-	raw := map[string]interface{}{
+	raw := map[string]any{
 		"default_model": "",
-		"ci": map[string]interface{}{
-			"repos": []interface{}{},
+		"ci": map[string]any{
+			"repos": []any{},
 		},
-		"sync": map[string]interface{}{
-			"repo_names": map[string]interface{}{},
+		"sync": map[string]any{
+			"repo_names": map[string]any{},
 		},
 	}
 
@@ -715,7 +715,7 @@ func TestListExplicitKeysNilRaw(t *testing.T) {
 func TestDetermineOriginExplicitGlobalMatchingDefault(t *testing.T) {
 	// When a key is explicitly set in global TOML to the same value as the
 	// default, origin should be "global", not "default".
-	rawGlobal := map[string]interface{}{
+	rawGlobal := map[string]any{
 		"max_workers": int64(4),
 	}
 	origin, ok := determineOrigin("max_workers", "4", "4", rawGlobal)
@@ -730,7 +730,7 @@ func TestDetermineOriginExplicitGlobalMatchingDefault(t *testing.T) {
 func TestMergedConfigExplicitGlobalDefaultValueShowsGlobalOrigin(t *testing.T) {
 	global := DefaultConfig()
 	// Explicitly set max_workers to its default value (4)
-	rawGlobal := map[string]interface{}{
+	rawGlobal := map[string]any{
 		"max_workers": int64(4),
 	}
 
@@ -747,14 +747,14 @@ func TestMergedConfigExplicitGlobalDefaultValueShowsGlobalOrigin(t *testing.T) {
 func TestFormatMapNilInterfaceKeys(t *testing.T) {
 	// Map with interface keys where some are nil.
 	// This previously panicked because compareKeys called Elem() on nil interfaces.
-	m := map[interface{}]string{
+	m := map[any]string{
 		nil:   "null-val",
 		"abc": "string-val",
 		42:    "int-val",
 	}
 
 	var prev string
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		got := formatMap(reflect.ValueOf(m))
 		if prev != "" && got != prev {
 			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
@@ -787,7 +787,7 @@ func TestFormatMapNaNFloatKeys(t *testing.T) {
 	}
 
 	var prev string
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		got := formatMap(reflect.ValueOf(m))
 		if prev != "" && got != prev {
 			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
@@ -806,10 +806,10 @@ func TestFormatMapNaNFloatKeys(t *testing.T) {
 
 func TestCompareKeysNilInterfaces(t *testing.T) {
 	// Direct unit tests for compareKeys nil-interface handling.
-	nilIface := reflect.ValueOf((*int)(nil)).Convert(reflect.TypeOf((*interface{})(nil)).Elem())
+	nilIface := reflect.ValueOf((*int)(nil)).Convert(reflect.TypeFor[any]())
 
 	// Two nil interfaces are equal.
-	var i1, i2 interface{}
+	var i1, i2 any
 	v1 := reflect.ValueOf(&i1).Elem()
 	v2 := reflect.ValueOf(&i2).Elem()
 	if c := compareKeys(v1, v2); c != 0 {

@@ -504,7 +504,7 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 
 	// Start with 50 jobs
 	initialJobs := make([]storage.ReviewJob, 50)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		initialJobs[i] = makeJob(int64(50 - i))
 	}
 	m.jobs = initialJobs
@@ -514,7 +514,7 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 
 	// Append 25 more jobs
 	moreJobs := make([]storage.ReviewJob, 25)
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		moreJobs[i] = makeJob(int64(i + 1)) // IDs 1-25 (older)
 	}
 	appendMsg := tuiJobsMsg{jobs: moreJobs, hasMore: false, append: true}
@@ -547,7 +547,7 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 
 	// Simulate user has paginated to 100 jobs
 	jobs := make([]storage.ReviewJob, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		jobs[i] = makeJob(int64(100 - i))
 	}
 	m.jobs = jobs
@@ -556,7 +556,7 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 
 	// Refresh arrives (replace mode, not append)
 	refreshedJobs := make([]storage.ReviewJob, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		refreshedJobs[i] = makeJob(int64(101 - i)) // New job at top
 	}
 	refreshMsg := tuiJobsMsg{jobs: refreshedJobs, hasMore: true, append: false}
@@ -837,11 +837,11 @@ func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
 	// 13 visible (done + unaddressed), 12 hidden (failed) in this page.
 	jobs := make([]storage.ReviewJob, 0, 25)
 	var id int64 = 200
-	for i := 0; i < 13; i++ {
+	for range 13 {
 		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))))
 		id--
 	}
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusFailed)))
 		id--
 	}
@@ -873,11 +873,11 @@ func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) 
 	// 21 visible rows already available (plus hidden jobs).
 	jobs := make([]storage.ReviewJob, 0, 26)
 	var id int64 = 300
-	for i := 0; i < 21; i++ {
+	for range 21 {
 		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))))
 		id--
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusFailed)))
 		id--
 	}

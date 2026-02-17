@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -157,13 +158,7 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	legacyPath := LegacyRuntimePath()
 	if _, err := os.Stat(legacyPath); err == nil {
 		// Check if already in matches (daemon.json matches daemon.*.json pattern)
-		found := false
-		for _, m := range matches {
-			if m == legacyPath {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(matches, legacyPath)
 		if !found {
 			matches = append(matches, legacyPath)
 		}
@@ -232,7 +227,7 @@ func IsDaemonAlive(addr string) bool {
 	url := fmt.Sprintf("http://%s/api/status", addr)
 
 	// Try up to 2 times with a short delay between attempts
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		if attempt > 0 {
 			time.Sleep(200 * time.Millisecond)
 		}
@@ -306,7 +301,7 @@ func KillDaemon(info *RuntimeInfo) bool {
 		if err == nil {
 			resp.Body.Close()
 			// Wait for graceful shutdown
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				time.Sleep(200 * time.Millisecond)
 				if !IsDaemonAlive(info.Addr) {
 					removeRuntimeFile()
@@ -398,7 +393,7 @@ func FindAvailablePort(startAddr string) (string, int, error) {
 	}
 
 	// Try ports starting from the configured one
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		addr := fmt.Sprintf("%s:%d", host, port+i)
 		ln, err := net.Listen("tcp", addr)
 		if err == nil {

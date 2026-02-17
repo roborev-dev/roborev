@@ -293,7 +293,7 @@ func startDaemon() error {
 
 	// Wait for daemon to be ready and update serverAddr from runtime file
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		time.Sleep(100 * time.Millisecond)
 		if info, err := daemon.GetAnyRunningDaemon(); err == nil {
 			addr := fmt.Sprintf("http://%s", info.Addr)
@@ -372,7 +372,7 @@ func restartDaemon() error {
 	// Retry a few times in case daemon hasn't fully released the DB
 	if dbPath := storage.DefaultDBPath(); dbPath != "" {
 		var lastErr error
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			db, err := storage.Open(dbPath)
 			if err != nil {
 				lastErr = err
@@ -996,7 +996,7 @@ Examples:
 			}
 
 			// Build request body
-			reqFields := map[string]interface{}{
+			reqFields := map[string]any{
 				"repo_path":    root,
 				"git_ref":      gitRef,
 				"branch":       branchName,
@@ -1118,7 +1118,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	a = a.WithReasoning(reasoningLevel).WithModel(model)
 
 	// Use consistent output writer, respecting --quiet
-	var out io.Writer = cmd.OutOrStdout()
+	var out = cmd.OutOrStdout()
 	if quiet {
 		out = io.Discard
 	}
@@ -1220,10 +1220,9 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 			unknownStatusCount = 0 // Reset counter on known status
 			time.Sleep(pollInterval)
 			if pollInterval < maxInterval {
-				pollInterval = pollInterval * 3 / 2 // 1.5x backoff
-				if pollInterval > maxInterval {
-					pollInterval = maxInterval
-				}
+				pollInterval = min(
+					// 1.5x backoff
+					pollInterval*3/2, maxInterval)
 			}
 
 		default:
@@ -1238,10 +1237,7 @@ func waitForJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool) 
 			}
 			time.Sleep(pollInterval)
 			if pollInterval < maxInterval {
-				pollInterval = pollInterval * 3 / 2
-				if pollInterval > maxInterval {
-					pollInterval = maxInterval
-				}
+				pollInterval = min(pollInterval*3/2, maxInterval)
 			}
 		}
 	}
@@ -1947,7 +1943,7 @@ Examples:
 			}
 
 			// Build request with either job_id or sha
-			reqData := map[string]interface{}{
+			reqData := map[string]any{
 				"commenter": commenter,
 				"comment":   message,
 			}
@@ -2010,7 +2006,7 @@ func addressCmd() *cobra.Command {
 			}
 
 			addressed := !unaddress
-			reqBody, _ := json.Marshal(map[string]interface{}{
+			reqBody, _ := json.Marshal(map[string]any{
 				"job_id":    jobID,
 				"addressed": addressed,
 			})
@@ -2590,9 +2586,10 @@ This command is idempotent - running it multiple times is safe.`,
 			} else {
 				fmt.Println("\nSkills installed! Try:")
 				for _, agent := range installedAgents {
-					if agent == skills.AgentClaude {
+					switch agent {
+					case skills.AgentClaude:
 						fmt.Println("  Claude Code: /roborev:review, /roborev:review-branch, /roborev:design-review, /roborev:design-review-branch, /roborev:address, /roborev:respond, /roborev:fix")
-					} else if agent == skills.AgentCodex {
+					case skills.AgentCodex:
 						fmt.Println("  Codex: $roborev:review, $roborev:review-branch, $roborev:design-review, $roborev:design-review-branch, $roborev:address, $roborev:respond, $roborev:fix")
 					}
 				}
@@ -2787,8 +2784,8 @@ official release over a dev build.`,
 					fmt.Printf("warning: %v\n", err)
 				} else {
 					// Parse output to show what was updated
-					lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-					for _, line := range lines {
+					lines := strings.SplitSeq(strings.TrimSpace(string(output)), "\n")
+					for line := range lines {
 						if strings.Contains(line, "updated") {
 							fmt.Println(line)
 						}
@@ -2959,13 +2956,13 @@ func syncNowCmd() *cobra.Command {
 			}
 
 			// Helper to safely get int from map
-			getInt := func(m map[string]interface{}, key string) int {
+			getInt := func(m map[string]any, key string) int {
 				if v, ok := m[key].(float64); ok {
 					return int(v)
 				}
 				return 0
 			}
-			getString := func(m map[string]interface{}, key string) string {
+			getString := func(m map[string]any, key string) string {
 				if v, ok := m[key].(string); ok {
 					return v
 				}
@@ -2978,7 +2975,7 @@ func syncNowCmd() *cobra.Command {
 					continue
 				}
 
-				var msg map[string]interface{}
+				var msg map[string]any
 				if err := json.Unmarshal([]byte(line), &msg); err != nil {
 					continue
 				}
@@ -2986,14 +2983,15 @@ func syncNowCmd() *cobra.Command {
 				switch getString(msg, "type") {
 				case "progress":
 					phase := getString(msg, "phase")
-					if phase == "push" {
+					switch phase {
+					case "push":
 						batch := getInt(msg, "batch")
 						totalJobs := getInt(msg, "total_jobs")
 						totalRevs := getInt(msg, "total_revs")
 						totalResps := getInt(msg, "total_resps")
 						fmt.Printf("\rPushing: batch %d (total: %d jobs, %d reviews, %d comments)     ",
 							batch, totalJobs, totalRevs, totalResps)
-					} else if phase == "pull" {
+					case "pull":
 						totalJobs := getInt(msg, "total_jobs")
 						totalRevs := getInt(msg, "total_revs")
 						totalResps := getInt(msg, "total_resps")
@@ -3005,12 +3003,12 @@ func syncNowCmd() *cobra.Command {
 					return fmt.Errorf("sync failed: %s", getString(msg, "error"))
 				case "complete":
 					fmt.Println() // Clear the progress line
-					if pushed, ok := msg["pushed"].(map[string]interface{}); ok {
+					if pushed, ok := msg["pushed"].(map[string]any); ok {
 						finalPushed.Jobs = getInt(pushed, "jobs")
 						finalPushed.Reviews = getInt(pushed, "reviews")
 						finalPushed.Responses = getInt(pushed, "responses")
 					}
-					if pulled, ok := msg["pulled"].(map[string]interface{}); ok {
+					if pulled, ok := msg["pulled"].(map[string]any); ok {
 						finalPulled.Jobs = getInt(pulled, "jobs")
 						finalPulled.Reviews = getInt(pulled, "reviews")
 						finalPulled.Responses = getInt(pulled, "responses")
@@ -3106,7 +3104,7 @@ Examples:
 				if err != nil {
 					fmt.Printf("FAIL\n")
 					// Indent each line of the error for readability
-					for _, line := range strings.Split(err.Error(), "\n") {
+					for line := range strings.SplitSeq(err.Error(), "\n") {
 						line = strings.TrimSpace(line)
 						if line != "" {
 							fmt.Printf("    %s\n", line)

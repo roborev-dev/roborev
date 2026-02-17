@@ -169,7 +169,7 @@ func TestTUIFetchJobsSuccess(t *testing.T) {
 			t.Errorf("Expected /api/jobs, got %s", r.URL.Path)
 		}
 		jobs := []storage.ReviewJob{{ID: 1, GitRef: "abc123", Agent: "test"}}
-		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": jobs})
+		json.NewEncoder(w).Encode(map[string]any{"jobs": jobs})
 	})
 	cmd := m.fetchJobs()
 	msg := cmd()
@@ -200,7 +200,7 @@ func TestTUIHTTPTimeout(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		// Delay much longer than client timeout to avoid flaky timing on fast machines
 		time.Sleep(500 * time.Millisecond)
-		json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+		json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
 	})
 	// Override with short timeout for test (10x shorter than server delay)
 	m.client.Timeout = 50 * time.Millisecond
@@ -321,7 +321,7 @@ func TestTUISelectionMaintainedOnLargeBatch(t *testing.T) {
 
 	// 30 new jobs added at the top (simulating large batch)
 	newJobs := make([]storage.ReviewJob, 31)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		newJobs[i] = makeJob(int64(31 - i)) // IDs 31, 30, 29, ..., 2
 	}
 	newJobs[30] = makeJob(1) // Original job at the end

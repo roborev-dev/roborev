@@ -287,7 +287,7 @@ func TestRunLabelFlag(t *testing.T) {
 			var receivedRef string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/enqueue" {
-					var req map[string]interface{}
+					var req map[string]any
 					json.NewDecoder(r.Body).Decode(&req)
 					receivedRef = req["git_ref"].(string)
 
@@ -308,7 +308,7 @@ func TestRunLabelFlag(t *testing.T) {
 				gitRef = tt.label
 			}
 
-			reqBody, _ := json.Marshal(map[string]interface{}{
+			reqBody, _ := json.Marshal(map[string]any{
 				"repo_path":     "/test",
 				"git_ref":       gitRef,
 				"custom_prompt": "test prompt",

@@ -19,7 +19,7 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
-		var req map[string]interface{}
+		var req map[string]any
 		json.NewDecoder(r.Body).Decode(&req)
 		if req["job_id"].(float64) != 100 {
 			t.Errorf("Expected job_id 100, got %v", req["job_id"])
@@ -66,7 +66,7 @@ func TestTUIAddressReviewNotFound(t *testing.T) {
 func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/review/address" {
-			var req map[string]interface{}
+			var req map[string]any
 			json.NewDecoder(r.Body).Decode(&req)
 			if req["job_id"].(float64) != 1 {
 				t.Errorf("Expected job_id 1, got %v", req["job_id"])
@@ -586,7 +586,7 @@ func TestTUICancelJobSuccess(t *testing.T) {
 		if req.JobID != 42 {
 			t.Errorf("Expected job_id=42, got %d", req.JobID)
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+		json.NewEncoder(w).Encode(map[string]any{"success": true})
 	})
 	oldFinishedAt := time.Now().Add(-1 * time.Hour)
 	cmd := m.cancelJob(42, storage.JobStatusRunning, &oldFinishedAt)

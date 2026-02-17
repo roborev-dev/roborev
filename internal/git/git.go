@@ -453,8 +453,8 @@ func GetDirtyDiff(repoPath string) (string, error) {
 	}
 
 	// 3. For each untracked file, create a diff-style "new file" entry
-	untrackedFiles := strings.Split(strings.TrimSpace(string(untrackedOut)), "\n")
-	for _, file := range untrackedFiles {
+	untrackedFiles := strings.SplitSeq(strings.TrimSpace(string(untrackedOut)), "\n")
+	for file := range untrackedFiles {
 		if file == "" {
 			continue
 		}
@@ -474,17 +474,17 @@ func GetDirtyDiff(repoPath string) (string, error) {
 
 		// Check if file is binary
 		if isBinaryContent(content) {
-			result.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", file, file))
+			fmt.Fprintf(&result, "diff --git a/%s b/%s\n", file, file)
 			result.WriteString("new file mode 100644\n")
 			result.WriteString("Binary file (not shown)\n")
 			continue
 		}
 
 		// Format as diff "new file" entry
-		result.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", file, file))
+		fmt.Fprintf(&result, "diff --git a/%s b/%s\n", file, file)
 		result.WriteString("new file mode 100644\n")
 		result.WriteString("--- /dev/null\n")
-		result.WriteString(fmt.Sprintf("+++ b/%s\n", file))
+		fmt.Fprintf(&result, "+++ b/%s\n", file)
 
 		lines := strings.Split(string(content), "\n")
 		// Add line count header
@@ -492,7 +492,7 @@ func GetDirtyDiff(repoPath string) (string, error) {
 		if lineCount > 0 && lines[lineCount-1] == "" {
 			lineCount-- // Don't count trailing empty line from split
 		}
-		result.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", lineCount))
+		fmt.Fprintf(&result, "@@ -0,0 +1,%d @@\n", lineCount)
 
 		// Add each line with + prefix
 		for i, line := range lines {
@@ -561,11 +561,8 @@ func isExcludedFile(filePath string) bool {
 // isBinaryContent checks if content appears to be binary (contains null bytes in first 8KB)
 func isBinaryContent(content []byte) bool {
 	// Check first 8KB for null bytes
-	checkLen := len(content)
-	if checkLen > 8192 {
-		checkLen = 8192
-	}
-	for i := 0; i < checkLen; i++ {
+	checkLen := min(len(content), 8192)
+	for i := range checkLen {
 		if content[i] == 0 {
 			return true
 		}
@@ -929,8 +926,8 @@ func getAnyRemoteURL(repoPath string) string {
 		return ""
 	}
 
-	remotes := strings.Split(strings.TrimSpace(string(out)), "\n")
-	for _, remote := range remotes {
+	remotes := strings.SplitSeq(strings.TrimSpace(string(out)), "\n")
+	for remote := range remotes {
 		if remote == "" {
 			continue
 		}

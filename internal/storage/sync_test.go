@@ -1944,7 +1944,7 @@ func TestBatchMarkSynced(t *testing.T) {
 
 	// Create multiple jobs with reviews and responses
 	var jobs []*ReviewJob
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		job := h.createCompletedJob(fmt.Sprintf("batch-test-sha-%d", i))
 		jobs = append(jobs, job)
 		_, err := h.db.AddCommentToJob(job.ID, "user", fmt.Sprintf("response %d", i))
@@ -2229,7 +2229,7 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 
 	// Create 3 jobs with reviews and responses
 	var createdJobs []*ReviewJob
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		job := h.createCompletedJob("workflow-sha-" + string(rune('a'+i)))
 		createdJobs = append(createdJobs, job)
 		// Add a response

@@ -93,7 +93,7 @@ func TestStaticConfig(t *testing.T) {
 	}
 
 	// Call multiple times to verify consistency
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if sc.Config().DefaultAgent != "test-agent" {
 			t.Errorf("StaticConfig.Config().DefaultAgent = %q, want %q", sc.Config().DefaultAgent, "test-agent")
 		}
@@ -130,8 +130,7 @@ func TestConfigWatcher_NoConfigPath(t *testing.T) {
 	// When configPath is empty, Start should be a no-op
 	cw := NewConfigWatcher("", cfg, broadcaster)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	err := cw.Start(ctx)
 	if err != nil {

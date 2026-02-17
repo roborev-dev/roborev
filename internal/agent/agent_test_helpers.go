@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -38,12 +39,7 @@ func verifyAgentPassesFlag(t *testing.T, createAgent func(cmdPath string) Agent,
 }
 
 func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
 
 // skipIfWindows skips the test on Windows with a message.
@@ -180,8 +176,8 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 // makeToolCallJSON returns a JSON string representing a tool call with the
 // given name and arguments. It is useful for building test inputs that
 // contain tool-call lines without hardcoding brittle JSON strings.
-func makeToolCallJSON(name string, args map[string]interface{}) string {
-	m := map[string]interface{}{
+func makeToolCallJSON(name string, args map[string]any) string {
+	m := map[string]any{
 		"name":      name,
 		"arguments": args,
 	}
@@ -225,7 +221,7 @@ func (b *ScriptBuilder) AddOutput(s string) *ScriptBuilder {
 }
 
 // AddToolCall adds a line that prints a tool-call JSON object to stdout.
-func (b *ScriptBuilder) AddToolCall(name string, args map[string]interface{}) *ScriptBuilder {
+func (b *ScriptBuilder) AddToolCall(name string, args map[string]any) *ScriptBuilder {
 	j := makeToolCallJSON(name, args)
 	escaped := strings.ReplaceAll(j, "'", "'\\''")
 	b.lines = append(b.lines, fmt.Sprintf("printf '%%s\\n' '%s'", escaped))

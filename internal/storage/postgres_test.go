@@ -932,7 +932,7 @@ func TestIntegration_BatchOperations(t *testing.T) {
 	t.Run("BatchUpsertJobs", func(t *testing.T) {
 		// Create multiple jobs with prepared IDs
 		var jobs []JobWithPgIDs
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			commitID, err := pool.GetOrCreateCommit(ctx, repoID, fmt.Sprintf("batch-test-sha-%d", i), "Author", "Subject", time.Now())
 			if err != nil {
 				t.Fatalf("GetOrCreateCommit failed: %v", err)
@@ -1231,14 +1231,14 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 
 	// Load and execute v1 schema from embedded SQL file
 	// Use same parsing logic as pgSchemaStatements() to handle comments correctly
-	for _, stmt := range strings.Split(postgresV1Schema, ";") {
+	for stmt := range strings.SplitSeq(postgresV1Schema, ";") {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
 			continue
 		}
 		// Skip statements that are only comments
 		hasCode := false
-		for _, line := range strings.Split(stmt, "\n") {
+		for line := range strings.SplitSeq(stmt, "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" && !strings.HasPrefix(line, "--") {
 				hasCode = true

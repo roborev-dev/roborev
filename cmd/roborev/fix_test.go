@@ -97,7 +97,7 @@ func TestFetchJob(t *testing.T) {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.statusCode)
 				if tt.statusCode == http.StatusOK {
-					writeJSON(w, map[string]interface{}{"jobs": tt.jobs})
+					writeJSON(w, map[string]any{"jobs": tt.jobs})
 				}
 			}))
 			defer ts.Close()
@@ -163,7 +163,7 @@ func TestAddJobResponse(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 
-		var req map[string]interface{}
+		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decode request body: %v", err)
 			return
@@ -200,7 +200,7 @@ func TestFixSingleJob(t *testing.T) {
 	ts, _ := newMockServer(t, MockServerOpts{
 		ReviewOutput: "## Issues\n- Found minor issue",
 		OnJobs: func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, map[string]interface{}{
+			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{
 					ID:     99,
 					Status: storage.JobStatusDone,
@@ -236,7 +236,7 @@ func TestFixSingleJob(t *testing.T) {
 func TestFixJobNotComplete(t *testing.T) {
 	ts, _ := newMockServer(t, MockServerOpts{
 		OnJobs: func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, map[string]interface{}{
+			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{
 					ID:     99,
 					Status: storage.JobStatusRunning, // Not complete
@@ -318,8 +318,8 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 	// daemon subprocess (which hangs on CI).
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return empty for all queries — we only care about argument routing
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"jobs":     []interface{}{},
+		json.NewEncoder(w).Encode(map[string]any{
+			"jobs":     []any{},
 			"has_more": false,
 		})
 	}))
@@ -349,7 +349,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 			if q.Get("addressed") != "false" {
 				t.Errorf("expected addressed=false, got %q", q.Get("addressed"))
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
 			})
@@ -382,7 +382,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 				q := r.URL.Query()
 				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
 					if unaddressedCalls.Add(1) == 1 {
-						json.NewEncoder(w).Encode(map[string]interface{}{
+						json.NewEncoder(w).Encode(map[string]any{
 							"jobs": []storage.ReviewJob{
 								{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 								{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
@@ -390,13 +390,13 @@ func TestRunFixUnaddressed(t *testing.T) {
 							"has_more": false,
 						})
 					} else {
-						json.NewEncoder(w).Encode(map[string]interface{}{
+						json.NewEncoder(w).Encode(map[string]any{
 							"jobs":     []storage.ReviewJob{},
 							"has_more": false,
 						})
 					}
 				} else {
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					json.NewEncoder(w).Encode(map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
@@ -446,7 +446,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 			if r.URL.Path == "/api/jobs" && r.URL.Query().Get("addressed") == "false" {
 				gotBranch = r.URL.Query().Get("branch")
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
 			})
@@ -509,7 +509,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 				if q.Get("addressed") == "false" {
 					if unaddressedCalls.Add(1) == 1 {
 						// Return newest first (as the API does)
-						json.NewEncoder(w).Encode(map[string]interface{}{
+						json.NewEncoder(w).Encode(map[string]any{
 							"jobs": []storage.ReviewJob{
 								{ID: 30, Status: storage.JobStatusDone, Agent: "test"},
 								{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
@@ -518,13 +518,13 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 							"has_more": false,
 						})
 					} else {
-						json.NewEncoder(w).Encode(map[string]interface{}{
+						json.NewEncoder(w).Encode(map[string]any{
 							"jobs":     []storage.ReviewJob{},
 							"has_more": false,
 						})
 					}
 				} else {
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					json.NewEncoder(w).Encode(map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
@@ -601,7 +601,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 				switch n {
 				case 1:
 					// First query: return batch 1
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					json.NewEncoder(w).Encode(map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
@@ -609,7 +609,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 					})
 				case 2:
 					// Second query: new job appeared
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					json.NewEncoder(w).Encode(map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
@@ -618,14 +618,14 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 					})
 				default:
 					// Third query: no new jobs
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					json.NewEncoder(w).Encode(map[string]any{
 						"jobs":     []storage.ReviewJob{},
 						"has_more": false,
 					})
 				}
 			} else {
 				// Individual job fetch
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs": []storage.ReviewJob{
 						{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 					},
@@ -1052,13 +1052,13 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/jobs":
 			// Return an existing job — hook already fired
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs": []map[string]interface{}{{"id": 42}},
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobs": []map[string]any{{"id": 42}},
 			})
 		case "/api/enqueue":
 			enqueueCalls.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+			json.NewEncoder(w).Encode(map[string]any{"id": 99})
 		}
 	}))
 	defer ts.Close()
@@ -1081,7 +1081,7 @@ func TestRunFixList(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/jobs":
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs": []storage.ReviewJob{
 						{
 							ID:            42,
@@ -1168,7 +1168,7 @@ func TestRunFixList(t *testing.T) {
 
 	t.Run("no unaddressed jobs", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
 			})
@@ -1206,7 +1206,7 @@ func TestRunFixList(t *testing.T) {
 				q := r.URL.Query()
 				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
 					// API returns newest first
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					json.NewEncoder(w).Encode(map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 30, Status: storage.JobStatusDone, Agent: "test"},
 							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
@@ -1218,7 +1218,7 @@ func TestRunFixList(t *testing.T) {
 					var id int64
 					_, _ = fmt.Sscanf(q.Get("id"), "%d", &id)
 					gotIDs = append(gotIDs, id)
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					json.NewEncoder(w).Encode(map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: id, Status: storage.JobStatusDone, Agent: "test"},
 						},
@@ -1348,7 +1348,7 @@ func setupWorktreeMockDaemon(t *testing.T) (receivedRepo *string) {
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
 			repo = r.URL.Query().Get("repo")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
 			})

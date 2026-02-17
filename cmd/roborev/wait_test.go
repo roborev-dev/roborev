@@ -23,7 +23,7 @@ func waitMockHandler(job *storage.ReviewJob, review *storage.Review) http.Handle
 				jobs = []storage.ReviewJob{*job}
 			}
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     jobs,
 				"has_more": false,
 			})
@@ -266,7 +266,7 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 			lastJobsQuery = r.URL.RawQuery
 			job := storage.ReviewJob{ID: 42, GitRef: "abc", Agent: "test", Status: "done"}
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     []storage.ReviewJob{job},
 				"has_more": false,
 			})
@@ -302,7 +302,7 @@ func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 	newWaitEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     []storage.ReviewJob{job},
 				"has_more": false,
 			})
@@ -372,7 +372,7 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 			}
 			job := storage.ReviewJob{ID: 1, GitRef: wtSHA, Agent: "test", Status: "done"}
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     []storage.ReviewJob{job},
 				"has_more": false,
 			})

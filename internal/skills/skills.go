@@ -382,10 +382,10 @@ func parseFrontmatter(data []byte) (name, description string) {
 		if strings.TrimSpace(line) == "---" {
 			break
 		}
-		if strings.HasPrefix(line, "name:") {
-			name = strings.TrimSpace(strings.TrimPrefix(line, "name:"))
-		} else if strings.HasPrefix(line, "description:") {
-			description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+		if after, ok := strings.CutPrefix(line, "name:"); ok {
+			name = strings.TrimSpace(after)
+		} else if after, ok := strings.CutPrefix(line, "description:"); ok {
+			description = strings.TrimSpace(after)
 		}
 	}
 	return name, description

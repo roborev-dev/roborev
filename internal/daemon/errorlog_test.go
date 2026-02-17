@@ -141,9 +141,9 @@ func TestErrorLogConcurrency(t *testing.T) {
 
 	// Log from multiple goroutines
 	done := make(chan bool)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(id int) {
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				el.Log("error", "worker", "concurrent error", int64(id*10+j))
 			}
 			done <- true
@@ -151,7 +151,7 @@ func TestErrorLogConcurrency(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):

@@ -288,20 +288,14 @@ func (m tuiModel) handleTailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "pgup":
 		m.tailFollow = false
-		visibleLines := m.height - 4
-		if visibleLines < 1 {
-			visibleLines = 1
-		}
+		visibleLines := max(m.height-4, 1)
 		m.tailScroll -= visibleLines
 		if m.tailScroll < 0 {
 			m.tailScroll = 0
 		}
 		return m, tea.ClearScreen
 	case "pgdown":
-		visibleLines := m.height - 4
-		if visibleLines < 1 {
-			visibleLines = 1
-		}
+		visibleLines := max(m.height-4, 1)
 		m.tailScroll += visibleLines
 		return m, tea.ClearScreen
 	case "home":
@@ -310,25 +304,13 @@ func (m tuiModel) handleTailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "end":
 		m.tailFollow = true
-		visibleLines := m.height - 4
-		if visibleLines < 1 {
-			visibleLines = 1
-		}
-		maxScroll := len(m.tailLines) - visibleLines
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		visibleLines := max(m.height-4, 1)
+		maxScroll := max(len(m.tailLines)-visibleLines, 0)
 		m.tailScroll = maxScroll
 		return m, nil
 	case "g", "G":
-		visibleLines := m.height - 4
-		if visibleLines < 1 {
-			visibleLines = 1
-		}
-		maxScroll := len(m.tailLines) - visibleLines
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		visibleLines := max(m.height-4, 1)
+		maxScroll := max(len(m.tailLines)-visibleLines, 0)
 		if m.tailScroll == 0 {
 			m.tailFollow = true
 			m.tailScroll = maxScroll
@@ -498,9 +480,10 @@ func (m tuiModel) handlePrevKey() (tea.Model, tea.Cmd) {
 			m.updateSelectedJobID()
 			m.reviewScroll = 0
 			job := m.jobs[prevIdx]
-			if job.Status == storage.JobStatusDone {
+			switch job.Status {
+			case storage.JobStatusDone:
 				return m, m.fetchReview(job.ID)
-			} else if job.Status == storage.JobStatusFailed {
+			case storage.JobStatusFailed:
 				m.currentBranch = ""
 				m.currentReview = &storage.Review{
 					Agent:  job.Agent,
@@ -589,9 +572,10 @@ func (m tuiModel) handleNextKey() (tea.Model, tea.Cmd) {
 			m.updateSelectedJobID()
 			m.reviewScroll = 0
 			job := m.jobs[nextIdx]
-			if job.Status == storage.JobStatusDone {
+			switch job.Status {
+			case storage.JobStatusDone:
 				return m, m.fetchReview(job.ID)
-			} else if job.Status == storage.JobStatusFailed {
+			case storage.JobStatusFailed:
 				m.currentBranch = ""
 				m.currentReview = &storage.Review{
 					Agent:  job.Agent,
@@ -641,7 +625,7 @@ func (m tuiModel) handlePageUpKey() (tea.Model, tea.Cmd) {
 	pageSize := max(1, m.height-10)
 	switch m.currentView {
 	case tuiViewQueue:
-		for i := 0; i < pageSize; i++ {
+		for range pageSize {
 			prevIdx := m.findPrevVisibleJob(m.selectedIdx)
 			if prevIdx < 0 {
 				break
@@ -672,7 +656,7 @@ func (m tuiModel) handlePageDownKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case tuiViewQueue:
 		reachedEnd := false
-		for i := 0; i < pageSize; i++ {
+		for range pageSize {
 			nextIdx := m.findNextVisibleJob(m.selectedIdx)
 			if nextIdx < 0 {
 				reachedEnd = true
@@ -708,9 +692,10 @@ func (m tuiModel) handleEnterKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	job := m.jobs[m.selectedIdx]
-	if job.Status == storage.JobStatusDone {
+	switch job.Status {
+	case storage.JobStatusDone:
 		return m, m.fetchReview(job.ID)
-	} else if job.Status == storage.JobStatusFailed {
+	case storage.JobStatusFailed:
 		m.currentBranch = ""
 		m.currentReview = &storage.Review{
 			Agent:  job.Agent,
@@ -872,7 +857,8 @@ func (m tuiModel) handleTailKey2() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	job := m.jobs[m.selectedIdx]
-	if job.Status == storage.JobStatusRunning {
+	switch job.Status {
+	case storage.JobStatusRunning:
 		m.tailJobID = job.ID
 		m.tailLines = nil
 		m.tailScroll = 0
@@ -881,7 +867,7 @@ func (m tuiModel) handleTailKey2() (tea.Model, tea.Cmd) {
 		m.tailFromView = tuiViewQueue
 		m.currentView = tuiViewTail
 		return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
-	} else if job.Status == storage.JobStatusQueued {
+	case storage.JobStatusQueued:
 		m.flashMessage = "Job is queued - not yet running"
 		m.flashExpiresAt = time.Now().Add(2 * time.Second)
 		m.flashView = tuiViewQueue
@@ -1224,16 +1210,18 @@ func (m tuiModel) handleJobsMsg(msg tuiJobsMsg) (tea.Model, tea.Cmd) {
 	if msg.append && m.paginateNav != 0 && m.currentView == m.paginateNav {
 		nav := m.paginateNav
 		m.paginateNav = 0
-		if nav == tuiViewReview {
+		switch nav {
+		case tuiViewReview:
 			nextIdx := m.findNextViewableJob()
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx
 				m.updateSelectedJobID()
 				m.reviewScroll = 0
 				job := m.jobs[nextIdx]
-				if job.Status == storage.JobStatusDone {
+				switch job.Status {
+				case storage.JobStatusDone:
 					return m, m.fetchReview(job.ID)
-				} else if job.Status == storage.JobStatusFailed {
+				case storage.JobStatusFailed:
 					m.currentBranch = ""
 					m.currentReview = &storage.Review{
 						Agent:  job.Agent,
@@ -1242,7 +1230,7 @@ func (m tuiModel) handleJobsMsg(msg tuiJobsMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		} else if nav == tuiViewPrompt {
+		case tuiViewPrompt:
 			nextIdx := m.findNextPromptableJob()
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx

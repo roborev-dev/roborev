@@ -22,12 +22,12 @@ func createMockExecutable(t *testing.T, dir, name string, exitCode int) string {
 	var path string
 	if runtime.GOOS == "windows" {
 		path = filepath.Join(dir, name+".bat")
-		if err := os.WriteFile(path, []byte(fmt.Sprintf("@exit /b %d\r\n", exitCode)), 0755); err != nil {
+		if err := os.WriteFile(path, fmt.Appendf(nil, "@exit /b %d\r\n", exitCode), 0755); err != nil {
 			t.Fatalf("write %s stub: %v", name, err)
 		}
 	} else {
 		path = filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)), 0755); err != nil {
+		if err := os.WriteFile(path, fmt.Appendf(nil, "#!/bin/sh\nexit %d\n", exitCode), 0755); err != nil {
 			t.Fatalf("write %s stub: %v", name, err)
 		}
 	}
@@ -464,7 +464,7 @@ func TestSubmoduleRequiresFileProtocol(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			gitmodules := filepath.Join(dir, ".gitmodules")
-			if err := os.WriteFile(gitmodules, []byte(fmt.Sprintf(tpl, tc.key, tc.url)), 0644); err != nil {
+			if err := os.WriteFile(gitmodules, fmt.Appendf(nil, tpl, tc.key, tc.url), 0644); err != nil {
 				t.Fatalf("write .gitmodules: %v", err)
 			}
 			if got := submoduleRequiresFileProtocol(dir); got != tc.expected {
@@ -480,14 +480,14 @@ func TestSubmoduleRequiresFileProtocolNested(t *testing.T) {
 	url = %s
 `
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte(fmt.Sprintf(tpl, "https://example.com/repo.git")), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), fmt.Appendf(nil, tpl, "https://example.com/repo.git"), 0644); err != nil {
 		t.Fatalf("write root .gitmodules: %v", err)
 	}
 	nestedPath := filepath.Join(dir, "sub", ".gitmodules")
 	if err := os.MkdirAll(filepath.Dir(nestedPath), 0755); err != nil {
 		t.Fatalf("mkdir nested: %v", err)
 	}
-	if err := os.WriteFile(nestedPath, []byte(fmt.Sprintf(tpl, "file:///tmp/repo")), 0644); err != nil {
+	if err := os.WriteFile(nestedPath, fmt.Appendf(nil, tpl, "file:///tmp/repo"), 0644); err != nil {
 		t.Fatalf("write nested .gitmodules: %v", err)
 	}
 
@@ -1065,7 +1065,7 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 	// Simulate the refine loop pattern: create a worktree, then clean it up
 	// before the next iteration. Verify the directory is removed each time.
 	var prevPath string
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		worktreePath, cleanup, err := createTempWorktree(repoDir)
 		if err != nil {
 			t.Fatalf("iteration %d: createTempWorktree failed: %v", i, err)

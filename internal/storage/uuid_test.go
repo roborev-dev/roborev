@@ -17,7 +17,7 @@ func assertUUIDFormat(t *testing.T, uuid string) {
 func checkUniqueness(t *testing.T, generator func() string, iterations int) {
 	t.Helper()
 	seen := make(map[string]bool, iterations)
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		s := generator()
 		if seen[s] {
 			t.Fatalf("Collision detected at iteration %d: %s", i, s)
@@ -28,7 +28,7 @@ func checkUniqueness(t *testing.T, generator func() string, iterations int) {
 
 func TestGenerateUUID(t *testing.T) {
 	seen := make(map[string]bool, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		uuid := GenerateUUID()
 		assertUUIDFormat(t, uuid)
 		if seen[uuid] {

@@ -26,7 +26,7 @@ var pgSchemaSQL string
 // Parsed from the embedded SQL file.
 func pgSchemaStatements() []string {
 	var stmts []string
-	for _, stmt := range strings.Split(pgSchemaSQL, ";") {
+	for stmt := range strings.SplitSeq(pgSchemaSQL, ";") {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
 			continue
@@ -726,7 +726,7 @@ func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, aft
 	defer rows.Close()
 
 	var responses []PulledResponse
-	var lastID int64 = afterID
+	var lastID = afterID
 
 	for rows.Next() {
 		var r PulledResponse
@@ -749,7 +749,7 @@ func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, aft
 }
 
 // nullString returns nil if s is empty, otherwise returns s
-func nullString(s string) interface{} {
+func nullString(s string) any {
 	if s == "" {
 		return nil
 	}

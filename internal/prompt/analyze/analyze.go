@@ -105,15 +105,15 @@ func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 
 	// Write metadata header (for easy copy-paste into agent sessions)
 	sb.WriteString("## Analysis Request\n\n")
-	sb.WriteString(fmt.Sprintf("**Type:** %s\n", t.Name))
-	sb.WriteString(fmt.Sprintf("**Description:** %s\n", t.Description))
-	sb.WriteString(fmt.Sprintf("**Files:** %s\n\n", strings.Join(fileNames, ", ")))
+	fmt.Fprintf(&sb, "**Type:** %s\n", t.Name)
+	fmt.Fprintf(&sb, "**Description:** %s\n", t.Description)
+	fmt.Fprintf(&sb, "**Files:** %s\n\n", strings.Join(fileNames, ", "))
 
 	// Write file contents in sorted order
 	sb.WriteString("## Files to Analyze\n\n")
 	for _, name := range fileNames {
 		content := files[name]
-		sb.WriteString(fmt.Sprintf("### %s\n\n", name))
+		fmt.Fprintf(&sb, "### %s\n\n", name)
 		sb.WriteString("```\n")
 		sb.WriteString(content)
 		if !strings.HasSuffix(content, "\n") {
@@ -145,16 +145,16 @@ func (t AnalysisType) BuildPromptWithPaths(repoRoot string, filePaths []string) 
 
 	// Write metadata header
 	sb.WriteString("## Analysis Request\n\n")
-	sb.WriteString(fmt.Sprintf("**Type:** %s\n", t.Name))
-	sb.WriteString(fmt.Sprintf("**Description:** %s\n", t.Description))
-	sb.WriteString(fmt.Sprintf("**Repository:** %s\n", repoRoot))
-	sb.WriteString(fmt.Sprintf("**Files:** %s\n\n", strings.Join(filePaths, ", ")))
+	fmt.Fprintf(&sb, "**Type:** %s\n", t.Name)
+	fmt.Fprintf(&sb, "**Description:** %s\n", t.Description)
+	fmt.Fprintf(&sb, "**Repository:** %s\n", repoRoot)
+	fmt.Fprintf(&sb, "**Files:** %s\n\n", strings.Join(filePaths, ", "))
 
 	// List file paths for the agent to read
 	sb.WriteString("## Files to Analyze\n\n")
 	sb.WriteString("The following files are too large to embed. Please read them directly:\n\n")
 	for _, path := range filePaths {
-		sb.WriteString(fmt.Sprintf("- `%s`\n", path))
+		fmt.Fprintf(&sb, "- `%s`\n", path)
 	}
 	sb.WriteString("\n")
 

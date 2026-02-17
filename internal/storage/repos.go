@@ -223,7 +223,7 @@ func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, err
 	} else {
 		// Multiple repo paths - build IN clause with placeholders
 		placeholders := make([]string, len(repoPaths))
-		args := make([]interface{}, len(repoPaths))
+		args := make([]any, len(repoPaths))
 		for i, p := range repoPaths {
 			placeholders[i] = "?"
 			args[i] = p

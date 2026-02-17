@@ -78,7 +78,7 @@ func (a *OpenCodeAgent) CommandName() string {
 // examples which would have additional keys.
 func filterOpencodeToolCallLines(s string) string {
 	var out []string
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if isOpencodeToolCallLine(line) {
 			continue
 		}

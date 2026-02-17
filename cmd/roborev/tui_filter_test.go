@@ -1800,7 +1800,7 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 			maxSearchBranchFetches, countLoading(&m))
 	}
 	// Repos 0-4 should be loading, 5-7 should not
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !m.filterTree[i].loading {
 			t.Errorf("Expected repo-%d loading=true", i)
 		}

@@ -38,7 +38,7 @@ func TestListCommand(t *testing.T) {
 	t.Run("tabular output shows jobs", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     testJobs,
 					"has_more": false,
 				})
@@ -76,7 +76,7 @@ func TestListCommand(t *testing.T) {
 	t.Run("json output passes through raw response", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     testJobs,
 					"has_more": true,
 				})
@@ -109,7 +109,7 @@ func TestListCommand(t *testing.T) {
 	t.Run("has_more shows hint in tabular mode", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     testJobs,
 					"has_more": true,
 				})
@@ -138,7 +138,7 @@ func TestListCommand(t *testing.T) {
 	t.Run("empty results shows message", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     []storage.ReviewJob{},
 					"has_more": false,
 				})
@@ -219,7 +219,7 @@ func TestListCommand(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
 				receivedQuery = r.URL.RawQuery
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     []storage.ReviewJob{},
 					"has_more": false,
 				})
@@ -253,7 +253,7 @@ func TestListCommand(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
 				receivedQuery = r.URL.RawQuery
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     []storage.ReviewJob{},
 					"has_more": false,
 				})
@@ -288,7 +288,7 @@ func TestListCommand(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
 				receivedQuery = r.URL.RawQuery
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     []storage.ReviewJob{},
 					"has_more": false,
 				})
@@ -319,7 +319,7 @@ func TestListCommand(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
 				receivedQuery = r.URL.RawQuery
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     []storage.ReviewJob{},
 					"has_more": false,
 				})
@@ -366,7 +366,7 @@ func TestListCommand(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/jobs" {
 				receivedQuery = r.URL.RawQuery
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     []storage.ReviewJob{},
 					"has_more": false,
 				})

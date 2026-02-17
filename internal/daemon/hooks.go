@@ -105,8 +105,8 @@ func matchEvent(pattern, eventType string) bool {
 		return true
 	}
 	// Support wildcard like "review.*"
-	if strings.HasSuffix(pattern, ".*") {
-		prefix := strings.TrimSuffix(pattern, ".*")
+	if before, ok := strings.CutSuffix(pattern, ".*"); ok {
+		prefix := before
 		return strings.HasPrefix(eventType, prefix+".")
 	}
 	return false

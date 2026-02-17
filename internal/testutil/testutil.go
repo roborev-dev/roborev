@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -197,7 +198,7 @@ func CreateTestJobs(t *testing.T, db *storage.DB, repo *storage.Repo, count int,
 
 	jobs := make([]*storage.ReviewJob, 0, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		sha := fmt.Sprintf("sha%d", i)
 		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Test Author", fmt.Sprintf("Test commit %d", i), time.Now())
 		if err != nil {
@@ -280,7 +281,7 @@ func GetHeadSHA(t *testing.T, dir string) string {
 }
 
 // MakeJSONRequest creates an HTTP request with the given body marshaled as JSON.
-func MakeJSONRequest(t *testing.T, method, path string, body interface{}) *http.Request {
+func MakeJSONRequest(t *testing.T, method, path string, body any) *http.Request {
 	t.Helper()
 
 	reqBody, err := json.Marshal(body)
@@ -316,10 +317,8 @@ func WaitForJobStatus(t *testing.T, db *storage.DB, jobID int64, timeout time.Du
 		if err != nil {
 			t.Fatalf("GetJobByID failed: %v", err)
 		}
-		for _, s := range statuses {
-			if job.Status == s {
-				return job
-			}
+		if slices.Contains(statuses, job.Status) {
+			return job
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -376,7 +375,7 @@ func CreateReviewWithComments(t *testing.T, db *storage.DB, repoID int64, sha, r
 }
 
 // DecodeJSON unmarshals the response body from an httptest.ResponseRecorder into v.
-func DecodeJSON(t *testing.T, w *httptest.ResponseRecorder, v interface{}) {
+func DecodeJSON(t *testing.T, w *httptest.ResponseRecorder, v any) {
 	t.Helper()
 
 	if err := json.Unmarshal(w.Body.Bytes(), v); err != nil {

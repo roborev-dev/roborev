@@ -150,7 +150,7 @@ func TestNilMdCacheRenderPromptView(t *testing.T) {
 func TestPromptScrollPageUpAfterPageDown(t *testing.T) {
 	// Generate enough content to require scrolling (more than terminal height)
 	var lines []string
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		lines = append(lines, fmt.Sprintf("Line %d of the prompt content", i+1))
 	}
 	longContent := strings.Join(lines, "\n")
@@ -178,7 +178,7 @@ func TestPromptScrollPageUpAfterPageDown(t *testing.T) {
 	}
 
 	// Page down several times past the end
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		m, _ = pressSpecial(m, tea.KeyPgDown)
 	}
 
@@ -200,7 +200,7 @@ func TestPromptScrollPageUpAfterPageDown(t *testing.T) {
 
 func TestReviewScrollPageUpAfterPageDown(t *testing.T) {
 	var lines []string
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		lines = append(lines, fmt.Sprintf("Line %d of the review output", i+1))
 	}
 	longContent := strings.Join(lines, "\n")
@@ -229,7 +229,7 @@ func TestReviewScrollPageUpAfterPageDown(t *testing.T) {
 	}
 
 	// Page down past the end
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		m, _ = pressSpecial(m, tea.KeyPgDown)
 	}
 
@@ -320,9 +320,9 @@ func TestTruncateLongLinesFenceEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := truncateLongLines(tt.input, 20, 2)
-			lines := strings.Split(out, "\n")
+			lines := strings.SplitSeq(out, "\n")
 			// Find the longLine (or its truncation) in the output
-			for _, line := range lines {
+			for line := range lines {
 				if strings.HasPrefix(line, "xxx") || line == longLine {
 					truncated := len(line) <= 20
 					if tt.wantTrunc && !truncated {

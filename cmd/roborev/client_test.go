@@ -15,7 +15,7 @@ import (
 )
 
 // writeJSON encodes data as JSON to the response writer.
-func writeJSON(w http.ResponseWriter, data interface{}) {
+func writeJSON(w http.ResponseWriter, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
@@ -37,7 +37,7 @@ func mockJobsHandler(t *testing.T, jobs []storage.ReviewJob) http.HandlerFunc {
 				matching = append(matching, job)
 			}
 		}
-		writeJSON(w, map[string]interface{}{"jobs": matching})
+		writeJSON(w, map[string]any{"jobs": matching})
 	}
 }
 
@@ -51,14 +51,14 @@ func TestGetCommentsForJob(t *testing.T) {
 			}
 			jobID := r.URL.Query().Get("job_id")
 			if jobID == "42" {
-				writeJSON(w, map[string]interface{}{
+				writeJSON(w, map[string]any{
 					"responses": []storage.Response{
 						{ID: 1, Responder: "user", Response: "Fixed it"},
 						{ID: 2, Responder: "agent", Response: "Verified"},
 					},
 				})
 			} else {
-				writeJSON(w, map[string]interface{}{"responses": []storage.Response{}})
+				writeJSON(w, map[string]any{"responses": []storage.Response{}})
 			}
 		}))
 		defer cleanup()
@@ -89,7 +89,7 @@ func TestWaitForReview(t *testing.T) {
 	t.Run("returns review when job completes", func(t *testing.T) {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, map[string]interface{}{
+			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone}},
 			})
 		})
@@ -117,7 +117,7 @@ func TestWaitForReview(t *testing.T) {
 			if pollCount >= 3 {
 				status = storage.JobStatusDone
 			}
-			writeJSON(w, map[string]interface{}{
+			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{ID: 1, Status: status}},
 			})
 		})
@@ -146,7 +146,7 @@ func TestWaitForReview(t *testing.T) {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			writeJSON(w, map[string]interface{}{
+			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusFailed, Error: "agent crashed"}},
 			})
 		}))
@@ -168,7 +168,7 @@ func TestWaitForReview(t *testing.T) {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			writeJSON(w, map[string]interface{}{
+			writeJSON(w, map[string]any{
 				"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusCanceled}},
 			})
 		}))
@@ -270,7 +270,7 @@ func TestFindJobForCommit(t *testing.T) {
 					matching = append(matching, job)
 				}
 			}
-			writeJSON(w, map[string]interface{}{"jobs": matching})
+			writeJSON(w, map[string]any{"jobs": matching})
 		}))
 		defer cleanup()
 
@@ -337,7 +337,7 @@ func TestFindJobForCommit(t *testing.T) {
 			repo := r.URL.Query().Get("repo")
 
 			if repo != "" {
-				writeJSON(w, map[string]interface{}{"jobs": []storage.ReviewJob{}})
+				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
 				return
 			}
 
@@ -347,7 +347,7 @@ func TestFindJobForCommit(t *testing.T) {
 					matching = append(matching, job)
 				}
 			}
-			writeJSON(w, map[string]interface{}{"jobs": matching})
+			writeJSON(w, map[string]any{"jobs": matching})
 		}))
 		defer cleanup()
 

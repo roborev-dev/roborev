@@ -399,7 +399,7 @@ func (f *streamFormatter) formatToolUse(name string, input json.RawMessage) {
 }
 
 // writef writes formatted output, capturing the first error.
-func (f *streamFormatter) writef(format string, args ...interface{}) {
+func (f *streamFormatter) writef(format string, args ...any) {
 	if f.writeErr != nil {
 		return
 	}

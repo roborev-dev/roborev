@@ -622,7 +622,7 @@ func isNewer(v1, v2 string) bool {
 		return n
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var n1, n2 int
 		if i < len(parts1) {
 			n1 = parsePart(parts1[i])

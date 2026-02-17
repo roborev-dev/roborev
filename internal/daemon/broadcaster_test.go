@@ -136,7 +136,7 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 	_, ch := b.Subscribe("")
 
 	// Fill the channel buffer (capacity is 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		b.Broadcast(Event{JobID: int64(i)})
 	}
 
@@ -155,7 +155,7 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 	}
 
 	// Verify we received the first 10 events (not the dropped one)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		e := <-ch
 		if e.JobID != int64(i) {
 			t.Errorf("expected JobID %d, got %d", i, e.JobID)

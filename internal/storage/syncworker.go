@@ -847,13 +847,6 @@ func (w *SyncWorker) pullJob(j PulledJob) error {
 	return w.db.UpsertPulledJob(j, repoID, commitID)
 }
 
-func min(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // HealthCheck returns the health status of the sync worker
 func (w *SyncWorker) HealthCheck() (healthy bool, message string) {
 	w.mu.Lock()

@@ -48,7 +48,7 @@ test-all: test-integration test-postgres
 # Lint Go code with project defaults
 lint:
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8" >&2; \
+		echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1" >&2; \
 		exit 1; \
 	fi
 	golangci-lint run ./...

@@ -44,7 +44,7 @@ func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func
 	// ensureDaemon from trying to restart the daemon (which would kill the test).
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/status" && r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"version": version.Version,
 			})
 			return
@@ -384,14 +384,14 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	repoDir, _ := setupRefineRepo(t)
 
 	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/status":
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
-		case r.URL.Path == "/api/review":
+		switch r.URL.Path {
+		case "/api/status":
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
+		case "/api/review":
 			json.NewEncoder(w).Encode(storage.Review{
 				ID: 1, JobID: 1, Output: "**Bug found**: fail", Addressed: false,
 			})
-		case r.URL.Path == "/api/comments":
+		case "/api/comments":
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -615,7 +615,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/status":
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"version": version.Version,
 			})
 
@@ -661,7 +661,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			responses := make([]storage.Response, len(origResponses))
 			copy(responses, origResponses)
 			state.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"responses": responses,
 			})
 
@@ -741,7 +741,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				jobs = append(jobs, *job)
 			}
 			state.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     jobs,
 				"has_more": false,
 			})
@@ -990,12 +990,12 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 				job, ok := s.jobs[jobID]
 				if !ok {
 					s.mu.Unlock()
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+					json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
 					return true
 				}
 				jobCopy := *job
 				s.mu.Unlock()
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{jobCopy}})
 				return true
 			}
 			if gitRef := q.Get("git_ref"); gitRef != "" {
@@ -1027,7 +1027,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 				}
 				jobCopy := *job
 				s.mu.Unlock()
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{jobCopy}})
 				return true
 			}
 			return false // fall through to base handler
@@ -1102,7 +1102,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				job, ok := s.jobs[jobID]
 				if !ok {
 					s.mu.Unlock()
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{}})
+					json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
 					return true
 				}
 				// On first poll, job is still Running; on subsequent polls, transition to Done
@@ -1112,7 +1112,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				}
 				jobCopy := *job
 				s.mu.Unlock()
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{jobCopy}})
 				return true
 			}
 			if gitRef := q.Get("git_ref"); gitRef != "" {
@@ -1127,7 +1127,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 				if job != nil {
 					jobCopy := *job
 					s.mu.Unlock()
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{jobCopy}})
+					json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{jobCopy}})
 					return true
 				}
 				s.mu.Unlock()

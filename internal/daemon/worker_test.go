@@ -113,7 +113,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	tc := newWorkerTestContext(t, 4)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tc.createJob(t, sha)
 	}
 

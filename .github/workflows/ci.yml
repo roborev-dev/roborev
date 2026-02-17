@@ -119,10 +119,9 @@ jobs:
           go-version: '1.24'
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@d6238b002a20823d52840fda27e2d4891c5952dc  # v4
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa  # v7
         with:
-          version: v1.64.8
-          args: --timeout=5m
+          version: v2.10.1
 
   nix:
     runs-on: ubuntu-latest

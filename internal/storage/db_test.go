@@ -588,7 +588,7 @@ func TestJobCounts(t *testing.T) {
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 
 	// Create 3 jobs that will stay queued
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sha := fmt.Sprintf("queued%d", i)
 		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "A", "S", time.Now())
 		db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "codex"})
@@ -1449,14 +1449,14 @@ func TestListReposWithReviewCounts(t *testing.T) {
 	_ = createRepo(t, db, "/tmp/repo3") // will have 0 jobs
 
 	// Add jobs to repo1 (3 jobs)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sha := fmt.Sprintf("repo1-sha%d", i)
 		commit := createCommit(t, db, repo1.ID, sha)
 		enqueueJob(t, db, repo1.ID, commit.ID, sha)
 	}
 
 	// Add jobs to repo2 (2 jobs)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := fmt.Sprintf("repo2-sha%d", i)
 		commit := createCommit(t, db, repo2.ID, sha)
 		enqueueJob(t, db, repo2.ID, commit.ID, sha)
@@ -1538,14 +1538,14 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 	repo2 := createRepo(t, db, "/tmp/repo2")
 
 	// Add 3 jobs to repo1
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sha := fmt.Sprintf("repo1-sha%d", i)
 		commit := createCommit(t, db, repo1.ID, sha)
 		enqueueJob(t, db, repo1.ID, commit.ID, sha)
 	}
 
 	// Add 2 jobs to repo2
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := fmt.Sprintf("repo2-sha%d", i)
 		commit := createCommit(t, db, repo2.ID, sha)
 		enqueueJob(t, db, repo2.ID, commit.ID, sha)

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -516,12 +517,7 @@ func IsBranchExcluded(repoPath, branch string) bool {
 		return false
 	}
 
-	for _, excluded := range repoCfg.ExcludedBranches {
-		if excluded == branch {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(repoCfg.ExcludedBranches, branch)
 }
 
 // GetDisplayName returns the display name for a repo, or empty if not set
@@ -880,8 +876,8 @@ func stripURLCredentials(rawURL string) string {
 	// If there's no scheme, it's likely an SCP-style URL (git@host:repo.git).
 	// Strip any credentials (user:pass@host:repo → host:repo).
 	if parsed.Scheme == "" {
-		if at := strings.Index(rawURL, "@"); at >= 0 {
-			return rawURL[at+1:]
+		if _, after, ok := strings.Cut(rawURL, "@"); ok {
+			return after
 		}
 		return rawURL
 	}

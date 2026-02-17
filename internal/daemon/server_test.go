@@ -166,12 +166,12 @@ func TestHandleListRepos(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
 		// repos can be nil when empty
 		var reposLen int
-		if repos, ok := response["repos"].([]interface{}); ok && repos != nil {
+		if repos, ok := response["repos"].([]any); ok && repos != nil {
 			reposLen = len(repos)
 		}
 		totalCount := int(response["total_count"].(float64))
@@ -195,7 +195,7 @@ func TestHandleListRepos(t *testing.T) {
 	}
 
 	// Add 3 jobs to repo1
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sha := "repo1sha" + string(rune('a'+i))
 		commit, err := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
 		if err != nil {
@@ -207,7 +207,7 @@ func TestHandleListRepos(t *testing.T) {
 	}
 
 	// Add 2 jobs to repo2
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := "repo2sha" + string(rune('a'+i))
 		commit, err := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
 		if err != nil {
@@ -228,10 +228,10 @@ func TestHandleListRepos(t *testing.T) {
 			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
-		repos := response["repos"].([]interface{})
+		repos := response["repos"].([]any)
 		totalCount := int(response["total_count"].(float64))
 
 		if len(repos) != 2 {
@@ -244,7 +244,7 @@ func TestHandleListRepos(t *testing.T) {
 		// Verify individual repo counts
 		repoMap := make(map[string]int)
 		for _, r := range repos {
-			repoObj := r.(map[string]interface{})
+			repoObj := r.(map[string]any)
 			repoMap[repoObj["name"].(string)] = int(repoObj["count"].(float64))
 		}
 
@@ -276,12 +276,12 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
 
 	// Add jobs to repos
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sha := "repo1sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
 		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := "repo2sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
 		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
@@ -299,10 +299,10 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
-		repos := response["repos"].([]interface{})
+		repos := response["repos"].([]any)
 		totalCount := int(response["total_count"].(float64))
 
 		if len(repos) != 2 {
@@ -321,10 +321,10 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
-		repos := response["repos"].([]interface{})
+		repos := response["repos"].([]any)
 		totalCount := int(response["total_count"].(float64))
 
 		if len(repos) != 1 {
@@ -343,7 +343,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
 		totalCount := int(response["total_count"].(float64))
@@ -361,12 +361,12 @@ func TestHandleListBranches(t *testing.T) {
 	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
 
 	// Add jobs to repos
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sha := "repo1sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
 		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := "repo2sha" + string(rune('a'+i))
 		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
 		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
@@ -384,10 +384,10 @@ func TestHandleListBranches(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
-		branches := response["branches"].([]interface{})
+		branches := response["branches"].([]any)
 		totalCount := int(response["total_count"].(float64))
 		nullsRemaining := int(response["nulls_remaining"].(float64))
 
@@ -411,10 +411,10 @@ func TestHandleListBranches(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
-		branches := response["branches"].([]interface{})
+		branches := response["branches"].([]any)
 		totalCount := int(response["total_count"].(float64))
 
 		if len(branches) != 2 {
@@ -435,10 +435,10 @@ func TestHandleListBranches(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
-		branches := response["branches"].([]interface{})
+		branches := response["branches"].([]any)
 		totalCount := int(response["total_count"].(float64))
 
 		if len(branches) != 3 {
@@ -458,10 +458,10 @@ func TestHandleListBranches(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]interface{}
+		var response map[string]any
 		testutil.DecodeJSON(t, w, &response)
 
-		branches := response["branches"].([]interface{})
+		branches := response["branches"].([]any)
 		totalCount := int(response["total_count"].(float64))
 
 		// Should return all 3 branches and 5 jobs, not zero
@@ -499,7 +499,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	}
 
 	// Add 3 jobs to repo1
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sha := "repo1sha" + string(rune('a'+i))
 		commit, err := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
 		if err != nil {
@@ -511,7 +511,7 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	}
 
 	// Add 2 jobs to repo2
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		sha := "repo2sha" + string(rune('a'+i))
 		commit, err := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
 		if err != nil {
@@ -826,7 +826,7 @@ func TestHandleCancelJob(t *testing.T) {
 	})
 
 	t.Run("cancel with missing job_id fails", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", map[string]interface{}{})
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/cancel", map[string]any{})
 		w := httptest.NewRecorder()
 
 		server.handleCancelJob(w, req)
@@ -890,7 +890,7 @@ func TestListJobsPagination(t *testing.T) {
 	}
 
 	// Create 10 jobs
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		commit, err := db.GetOrCreateCommit(repo.ID, fmt.Sprintf("sha%d", i), "author", fmt.Sprintf("subject%d", i), time.Now())
 		if err != nil {
 			t.Fatalf("GetOrCreateCommit failed: %v", err)
@@ -1324,12 +1324,12 @@ func TestHandleStreamEvents(t *testing.T) {
 		lines := strings.Split(strings.TrimSpace(body), "\n")
 
 		// Parse into maps to check actual key presence (not just empty values)
-		var rawEvents []map[string]interface{}
+		var rawEvents []map[string]any
 		for _, line := range lines {
 			if line == "" {
 				continue
 			}
-			var raw map[string]interface{}
+			var raw map[string]any
 			if err := json.Unmarshal([]byte(line), &raw); err != nil {
 				t.Fatalf("Failed to parse JSONL: %v", err)
 			}
@@ -1695,7 +1695,7 @@ func TestHandleRerunJob(t *testing.T) {
 	})
 
 	t.Run("rerun with missing job_id fails", func(t *testing.T) {
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", map[string]interface{}{})
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", map[string]any{})
 		w := httptest.NewRecorder()
 
 		server.handleRerunJob(w, req)
@@ -1857,7 +1857,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 			t.Errorf("Expected status 200 for skipped enqueue, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var response map[string]interface{}
+		var response map[string]any
 		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
@@ -1968,7 +1968,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 			t.Errorf("Expected status 413, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var response map[string]interface{}
+		var response map[string]any
 		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
@@ -1995,7 +1995,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 			t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var response map[string]interface{}
+		var response map[string]any
 		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
@@ -2275,7 +2275,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("prompt job with agentic flag", func(t *testing.T) {
-		reqData := map[string]interface{}{
+		reqData := map[string]any{
 			"repo_path":     repoDir,
 			"git_ref":       "prompt",
 			"agent":         "test",
@@ -2446,7 +2446,7 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 			}
 
 			// Add comment via API
-			reqData := map[string]interface{}{
+			reqData := map[string]any{
 				"job_id":    job.ID,
 				"commenter": "test-user",
 				"comment":   "Test comment for " + tc.name,
@@ -2475,7 +2475,7 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 func TestHandleAddCommentToNonExistentJob(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
-	reqData := map[string]interface{}{
+	reqData := map[string]any{
 		"job_id":    99999,
 		"commenter": "test-user",
 		"comment":   "This should fail",
@@ -2523,7 +2523,7 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 	}
 
 	// Add comment - should succeed even without a review
-	reqData := map[string]interface{}{
+	reqData := map[string]any{
 		"job_id":    job.ID,
 		"commenter": "test-user",
 		"comment":   "Comment on in-progress job without review",

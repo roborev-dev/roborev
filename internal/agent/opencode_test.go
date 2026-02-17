@@ -8,8 +8,8 @@ import (
 )
 
 func TestFilterOpencodeToolCallLines(t *testing.T) {
-	readCall := makeToolCallJSON("read", map[string]interface{}{"path": "/foo"})
-	editCall := makeToolCallJSON("edit", map[string]interface{}{})
+	readCall := makeToolCallJSON("read", map[string]any{"path": "/foo"})
+	editCall := makeToolCallJSON("edit", map[string]any{})
 
 	tests := []struct {
 		name     string
@@ -28,7 +28,7 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 		},
 		{
 			name:     "mixed",
-			input:    makeToolCallJSON("read", map[string]interface{}{}) + "\n" + "Real text\n" + makeToolCallJSON("edit", map[string]interface{}{}),
+			input:    makeToolCallJSON("read", map[string]any{}) + "\n" + "Real text\n" + makeToolCallJSON("edit", map[string]any{}),
 			expected: "Real text",
 		},
 		{
@@ -199,9 +199,9 @@ func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
 func TestOpenCodeReviewFiltersToolCallLines(t *testing.T) {
 	skipIfWindows(t)
 	script := NewScriptBuilder().
-		AddToolCall("read", map[string]interface{}{"path": "/foo"}).
+		AddToolCall("read", map[string]any{"path": "/foo"}).
 		AddOutput("**Review:** Fix the typo.").
-		AddToolCall("edit", map[string]interface{}{}).
+		AddToolCall("edit", map[string]any{}).
 		AddOutput("Done.").
 		Build()
 	cmdPath := writeTempCommand(t, script)

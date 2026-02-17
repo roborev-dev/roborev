@@ -68,7 +68,7 @@ func NewHTTPClient(addr string) *HTTPClient {
 // NewHTTPClientFromRuntime creates an HTTP client using daemon runtime info
 func NewHTTPClientFromRuntime() (*HTTPClient, error) {
 	var lastErr error
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		info, err := GetAnyRunningDaemon()
 		if err == nil {
 			return NewHTTPClient(fmt.Sprintf("http://%s", info.Addr)), nil
@@ -131,7 +131,7 @@ func (c *HTTPClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
 }
 
 func (c *HTTPClient) MarkReviewAddressed(jobID int64) error {
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"job_id":    jobID,
 		"addressed": true,
 	})
@@ -151,7 +151,7 @@ func (c *HTTPClient) MarkReviewAddressed(jobID int64) error {
 }
 
 func (c *HTTPClient) AddComment(jobID int64, commenter, comment string) error {
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"job_id":    jobID,
 		"commenter": commenter,
 		"comment":   comment,

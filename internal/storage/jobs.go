@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"slices"
 	"strings"
 	"time"
 )
@@ -19,7 +20,7 @@ func ParseVerdict(output string) string {
 		return "F"
 	}
 
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		trimmed := strings.TrimSpace(strings.ToLower(line))
 		// Normalize curly apostrophes to straight apostrophes (LLMs sometimes use these)
 		trimmed = strings.ReplaceAll(trimmed, "\u2018", "'") // left single quote
@@ -252,8 +253,7 @@ func hasCaveat(s string) bool {
 	normalized = strings.ReplaceAll(normalized, "? ", "|")
 	normalized = strings.ReplaceAll(normalized, "! ", "|")
 
-	clauses := strings.Split(normalized, "|")
-	for _, clause := range clauses {
+	for clause := range strings.SplitSeq(normalized, "|") {
 		if checkClauseForCaveat(clause) {
 			return true
 		}
@@ -411,10 +411,7 @@ func checkClauseForCaveat(clause string) bool {
 	for _, pattern := range contextualPatterns {
 		if idx := strings.Index(lc, pattern); idx >= 0 {
 			// Check if preceded by negation within last few words
-			start := idx - 30
-			if start < 0 {
-				start = 0
-			}
+			start := max(idx-30, 0)
 			prefix := strings.TrimSpace(lc[start:idx])
 			if !hasNegatorInLastWords(prefix, contextNegators, 3) {
 				return true
@@ -429,10 +426,7 @@ func checkClauseForCaveat(clause string) bool {
 	for _, pattern := range withInPatterns {
 		if idx := strings.Index(lc, pattern); idx >= 0 {
 			// Check if preceded by negation within last few words
-			start := idx - 30
-			if start < 0 {
-				start = 0
-			}
+			start := max(idx-30, 0)
 			prefix := strings.TrimSpace(lc[start:idx])
 			isNegated := hasNegatorInLastWords(prefix, withInNegators, 4)
 			if !isNegated {
@@ -455,8 +449,7 @@ func checkClauseForCaveat(clause string) bool {
 
 	if hasCheckPhrase {
 		// Check for "still <issue>" pattern (e.g., "it still crashes")
-		if idx := strings.Index(lc, " still "); idx >= 0 {
-			afterStill := lc[idx+7:]
+		if _, afterStill, found := strings.Cut(lc, " still "); found {
 			stillKeywords := []string{"crash", "panic", "fail", "break", "error", "bug"}
 			for _, kw := range stillKeywords {
 				if strings.HasPrefix(afterStill, kw) || strings.Contains(afterStill, " "+kw) {
@@ -467,8 +460,7 @@ func checkClauseForCaveat(clause string) bool {
 
 		// Check for contrastive markers with issue words AFTER the marker
 		for _, marker := range []string{" however ", " but "} {
-			if idx := strings.Index(lc, marker); idx >= 0 {
-				tail := lc[idx+len(marker):]
+			if _, tail, found := strings.Cut(lc, marker); found {
 				if strings.Contains(tail, "crash") || strings.Contains(tail, "panic") ||
 					strings.Contains(tail, "error") || strings.Contains(tail, "bug") ||
 					strings.Contains(tail, "fail") || strings.Contains(tail, "break") ||
@@ -643,10 +635,8 @@ func hasNegatorInLastWords(prefix string, negators []string, n int) bool {
 			break
 		}
 		w := strings.Trim(raw, ".,;:!?()[]\"'")
-		for _, neg := range negators {
-			if w == neg {
-				return true
-			}
+		if slices.Contains(negators, w) {
+			return true
 		}
 		checked++
 	}
@@ -678,20 +668,12 @@ func hasNotVerbPattern(prefix string) bool {
 		prevRaw := words[i-1]
 		prev := strings.Trim(prevRaw, ".,;:!?()[]\"'")
 		// Check for "not" followed by verb
-		if prev == "not" {
-			for _, v := range verbs {
-				if w == v {
-					return true
-				}
-			}
+		if prev == "not" && slices.Contains(verbs, w) {
+			return true
 		}
 		// Check for contraction followed by verb (e.g., "can't find", "couldn't see")
-		if contractions[prev] {
-			for _, v := range verbs {
-				if w == v {
-					return true
-				}
-			}
+		if contractions[prev] && slices.Contains(verbs, w) {
+			return true
 		}
 		checked++
 	}
@@ -790,7 +772,7 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	nowStr := now.Format(time.RFC3339)
 
 	// Use NULL for commit_id when not a single-commit review
-	var commitIDParam interface{}
+	var commitIDParam any
 	if opts.CommitID > 0 {
 		commitIDParam = opts.CommitID
 	}
@@ -1175,7 +1157,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	var args []interface{}
+	var args []any
 	var conditions []string
 
 	if statusFilter != "" {
@@ -1330,7 +1312,7 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	var args []interface{}
+	var args []any
 	var conditions []string
 
 	if repoFilter != "" {

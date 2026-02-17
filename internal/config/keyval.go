@@ -26,8 +26,8 @@ var sensitiveKeys map[string]bool
 
 func init() {
 	sensitiveKeys = make(map[string]bool)
-	collectSensitiveKeys(reflect.TypeOf(Config{}), "", sensitiveKeys)
-	collectSensitiveKeys(reflect.TypeOf(RepoConfig{}), "", sensitiveKeys)
+	collectSensitiveKeys(reflect.TypeFor[Config](), "", sensitiveKeys)
+	collectSensitiveKeys(reflect.TypeFor[RepoConfig](), "", sensitiveKeys)
 }
 
 // getTOMLKey extracts the TOML key name from a struct field's tag.
@@ -118,7 +118,7 @@ type KeyValueOrigin struct {
 }
 
 // IsConfigValueSet returns true if the field for key exists and is non-zero.
-func IsConfigValueSet(cfg interface{}, key string) bool {
+func IsConfigValueSet(cfg any, key string) bool {
 	v := reflect.ValueOf(cfg)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -134,18 +134,18 @@ func IsConfigValueSet(cfg interface{}, key string) bool {
 }
 
 // LoadRawGlobal loads the global config file as a raw TOML map.
-func LoadRawGlobal() (map[string]interface{}, error) {
+func LoadRawGlobal() (map[string]any, error) {
 	return LoadRawTOML(GlobalConfigPath())
 }
 
 // LoadRawRepo loads the repo config file as a raw TOML map.
-func LoadRawRepo(repoPath string) (map[string]interface{}, error) {
+func LoadRawRepo(repoPath string) (map[string]any, error) {
 	return LoadRawTOML(filepath.Join(repoPath, ".roborev.toml"))
 }
 
 // LoadRawTOML loads a TOML file as a raw map.
-func LoadRawTOML(path string) (map[string]interface{}, error) {
-	raw := make(map[string]interface{})
+func LoadRawTOML(path string) (map[string]any, error) {
+	raw := make(map[string]any)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -158,7 +158,7 @@ func LoadRawTOML(path string) (map[string]interface{}, error) {
 // IsKeyInTOMLFile checks whether a dot-separated key was explicitly present
 // in a raw TOML map (as returned by toml.Decode into map[string]interface{}).
 // This correctly detects explicit false/0 values that IsZero would miss.
-func IsKeyInTOMLFile(raw map[string]interface{}, key string) bool {
+func IsKeyInTOMLFile(raw map[string]any, key string) bool {
 	parts := strings.SplitN(key, ".", 2)
 	val, ok := raw[parts[0]]
 	if !ok {
@@ -167,7 +167,7 @@ func IsKeyInTOMLFile(raw map[string]interface{}, key string) bool {
 	if len(parts) == 1 {
 		return true
 	}
-	sub, ok := val.(map[string]interface{})
+	sub, ok := val.(map[string]any)
 	if !ok {
 		return false
 	}
@@ -176,7 +176,7 @@ func IsKeyInTOMLFile(raw map[string]interface{}, key string) bool {
 
 // GetConfigValue retrieves a value from a config struct by its TOML key.
 // Supports dot-separated keys for nested structs (e.g., "sync.enabled").
-func GetConfigValue(cfg interface{}, key string) (string, error) {
+func GetConfigValue(cfg any, key string) (string, error) {
 	v := reflect.ValueOf(cfg)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -195,7 +195,7 @@ func GetConfigValue(cfg interface{}, key string) (string, error) {
 
 // SetConfigValue sets a value on a config struct by its TOML key.
 // Converts the string value to the appropriate Go type.
-func SetConfigValue(cfg interface{}, key string, value string) error {
+func SetConfigValue(cfg any, key string, value string) error {
 	v := reflect.ValueOf(cfg)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -217,7 +217,7 @@ func SetConfigValue(cfg interface{}, key string, value string) error {
 }
 
 // ListConfigKeys returns all non-zero values from a config struct as key-value pairs.
-func ListConfigKeys(cfg interface{}) []KeyValue {
+func ListConfigKeys(cfg any) []KeyValue {
 	v := reflect.ValueOf(cfg)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -232,7 +232,7 @@ func ListConfigKeys(cfg interface{}) []KeyValue {
 // ListExplicitKeys returns key-value pairs only for keys explicitly present
 // in the raw TOML map. This avoids showing default values or dropping
 // explicit zero/false/empty values.
-func ListExplicitKeys(cfg interface{}, raw map[string]interface{}) []KeyValue {
+func ListExplicitKeys(cfg any, raw map[string]any) []KeyValue {
 	if raw == nil {
 		return nil
 	}
@@ -255,7 +255,7 @@ func ListExplicitKeys(cfg interface{}, raw map[string]interface{}) []KeyValue {
 }
 
 // kvMap builds a map from key to formatted value for all fields in a struct.
-func kvMap(cfg interface{}) map[string]string {
+func kvMap(cfg any) map[string]string {
 	v := reflect.ValueOf(cfg)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -269,7 +269,7 @@ func kvMap(cfg interface{}) map[string]string {
 
 // determineOrigin decides the origin label for a global config key.
 // It returns ("", false) if the key should be omitted from output.
-func determineOrigin(key, value, defaultValue string, rawGlobal map[string]interface{}) (string, bool) {
+func determineOrigin(key, value, defaultValue string, rawGlobal map[string]any) (string, bool) {
 	isDefault := defaultValue == value
 	isEmptyDefault := value == "" || value == "0" || value == "false" || value == "[]"
 	explicitInGlobal := IsKeyInTOMLFile(rawGlobal, key)
@@ -291,12 +291,12 @@ func determineOrigin(key, value, defaultValue string, rawGlobal map[string]inter
 // repo is the loaded repo config (nil if no .roborev.toml).
 // rawGlobal and rawRepo are raw TOML maps for detecting explicit presence of
 // false/0 values. Pass nil if not available.
-func MergedConfigWithOrigin(global *Config, repo *RepoConfig, rawGlobal, rawRepo map[string]interface{}) []KeyValueOrigin {
+func MergedConfigWithOrigin(global *Config, repo *RepoConfig, rawGlobal, rawRepo map[string]any) []KeyValueOrigin {
 	if rawGlobal == nil {
-		rawGlobal = make(map[string]interface{})
+		rawGlobal = make(map[string]any)
 	}
 	if rawRepo == nil {
-		rawRepo = make(map[string]interface{})
+		rawRepo = make(map[string]any)
 	}
 
 	defaultMap := kvMap(DefaultConfig())

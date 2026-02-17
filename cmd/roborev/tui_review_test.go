@@ -73,14 +73,14 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 
 			if jobID != "" {
 				// Job ID query returns empty responses
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"responses": []storage.Response{},
 				})
 				return
 			}
 			if sha != "" {
 				// SHA fallback query returns legacy responses
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"responses": []storage.Response{
 						{ID: 1, Responder: "user", Response: "Legacy response from SHA lookup"},
 					},
@@ -152,7 +152,7 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 
 		if r.URL.Path == "/api/comments" {
 			// Return empty responses for job_id
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"responses": []storage.Response{},
 			})
 			return
@@ -1143,7 +1143,7 @@ func TestTUIVisibleLinesCalculationNoVerdict(t *testing.T) {
 
 	// Count content lines (glamour indents with spaces, so check trimmed)
 	contentCount := 0
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		trimmed := strings.TrimSpace(stripANSI(line))
 		if len(trimmed) >= 2 && trimmed[0] == 'L' && trimmed[1] >= '0' && trimmed[1] <= '9' {
 			contentCount++

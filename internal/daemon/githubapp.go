@@ -82,10 +82,10 @@ func (p *GitHubAppTokenProvider) TokenForInstallation(installationID int64) (str
 func (p *GitHubAppTokenProvider) signJWT() (string, error) {
 	now := time.Now()
 	header := base64URLEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
-	payload := base64URLEncode([]byte(fmt.Sprintf(
+	payload := base64URLEncode(fmt.Appendf(nil,
 		`{"iss":%d,"iat":%d,"exp":%d}`,
 		p.appID, now.Add(-60*time.Second).Unix(), now.Add(10*time.Minute).Unix(),
-	)))
+	))
 
 	sigInput := header + "." + payload
 	h := sha256.Sum256([]byte(sigInput))

@@ -167,7 +167,7 @@ func killProcess(pid int) bool {
 	}
 
 	// Wait up to 2 seconds for graceful shutdown
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		time.Sleep(100 * time.Millisecond)
 		if err := process.Signal(syscall.Signal(0)); err != nil {
 			if errors.Is(err, syscall.EPERM) {
@@ -181,7 +181,7 @@ func killProcess(pid int) bool {
 	_ = process.Signal(syscall.SIGKILL)
 
 	// Wait and verify death
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		time.Sleep(100 * time.Millisecond)
 		if err := process.Signal(syscall.Signal(0)); err != nil {
 			if errors.Is(err, syscall.EPERM) {

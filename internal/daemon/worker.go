@@ -483,7 +483,7 @@ func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error 
 	// writing it yet (the file is written after enqueue returns the job ID).
 	var metadata *CompactMetadata
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := range 3 {
 		metadata, err = ReadCompactMetadata(jobID)
 		if err == nil {
 			break

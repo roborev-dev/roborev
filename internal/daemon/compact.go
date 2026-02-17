@@ -59,7 +59,7 @@ func IsValidCompactOutput(output string) bool {
 	}
 
 	// Reject obvious agent error patterns at line starts
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		trimmed := strings.TrimSpace(strings.ToLower(line))
 		if strings.HasPrefix(trimmed, "error:") ||
 			strings.HasPrefix(trimmed, "exception:") ||

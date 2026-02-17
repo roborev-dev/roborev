@@ -583,7 +583,7 @@ func truncateString(s string, maxLen int) string {
 
 // firstLine returns the first non-empty line of s, truncated to 80 chars.
 func firstLine(s string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" && !strings.HasPrefix(line, "#") {
 			return truncateString(line, 80)
@@ -924,7 +924,7 @@ func buildBatchFixPrompt(entries []batchEntry) string {
 	sb.WriteString(batchPromptHeader)
 
 	for i, e := range entries {
-		sb.WriteString(fmt.Sprintf("## Review %d (Job %d — %s)\n\n", i+1, e.jobID, shortSHA(e.job.GitRef)))
+		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, shortSHA(e.job.GitRef))
 		sb.WriteString(e.review.Output)
 		sb.WriteString("\n\n")
 	}
@@ -1039,7 +1039,7 @@ func buildGenericCommitPrompt() string {
 
 // addJobResponse adds a response/comment to a job
 func addJobResponse(serverAddr string, jobID int64, commenter, response string) error {
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"job_id":    jobID,
 		"commenter": commenter,
 		"comment":   response,
@@ -1079,7 +1079,7 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 
 	branchName := git.GetCurrentBranch(repoPath)
 
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"repo_path": repoPath,
 		"git_ref":   sha,
 		"branch":    branchName,

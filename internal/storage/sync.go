@@ -381,7 +381,7 @@ func (db *DB) MarkJobsSynced(jobIDs []int64) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	placeholders := make([]string, len(jobIDs))
-	args := make([]interface{}, len(jobIDs)+1)
+	args := make([]any, len(jobIDs)+1)
 	args[0] = now
 	for i, id := range jobIDs {
 		placeholders[i] = "?"
@@ -472,7 +472,7 @@ func (db *DB) MarkReviewsSynced(reviewIDs []int64) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	placeholders := make([]string, len(reviewIDs))
-	args := make([]interface{}, len(reviewIDs)+1)
+	args := make([]any, len(reviewIDs)+1)
 	args[0] = now
 	for i, id := range reviewIDs {
 		placeholders[i] = "?"
@@ -555,7 +555,7 @@ func (db *DB) MarkCommentsSynced(responseIDs []int64) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	placeholders := make([]string, len(responseIDs))
-	args := make([]interface{}, len(responseIDs)+1)
+	args := make([]any, len(responseIDs)+1)
 	args[0] = now
 	for i, id := range responseIDs {
 		placeholders[i] = "?"
@@ -786,7 +786,7 @@ func (db *DB) GetOrCreateCommitByRepoAndSHA(repoID int64, sha, author, subject s
 }
 
 // nullStr returns nil if s is empty, otherwise returns s
-func nullStr(s string) interface{} {
+func nullStr(s string) any {
 	if s == "" {
 		return nil
 	}
@@ -794,7 +794,7 @@ func nullStr(s string) interface{} {
 }
 
 // nullTimeStr formats a time pointer or returns nil
-func nullTimeStr(t *time.Time) interface{} {
+func nullTimeStr(t *time.Time) any {
 	if t == nil {
 		return nil
 	}

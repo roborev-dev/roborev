@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -605,10 +606,9 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		if needsAllJobs {
 			params.Set("limit", "0")
 		} else {
-			limit := visibleRows
-			if currentJobCount > visibleRows {
-				limit = currentJobCount // Maintain paginated view on refresh
-			}
+			limit := max(currentJobCount,
+				// Maintain paginated view on refresh
+				visibleRows)
 			params.Set("limit", fmt.Sprintf("%d", limit))
 		}
 
@@ -933,7 +933,7 @@ func (m tuiModel) backfillBranches() tea.Cmd {
 
 			// Persist to database
 			for _, bf := range toBackfill {
-				reqBody, _ := json.Marshal(map[string]interface{}{
+				reqBody, _ := json.Marshal(map[string]any{
 					"job_id": bf.id,
 					"branch": bf.branch,
 				})
@@ -1197,20 +1197,20 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 
 			// Fetch info for each commit
 			var content strings.Builder
-			content.WriteString(fmt.Sprintf("Commits in %s (%d commits):\n\n", job.GitRef, len(commits)))
+			fmt.Fprintf(&content, "Commits in %s (%d commits):\n\n", job.GitRef, len(commits))
 
 			for i, sha := range commits {
 				info, err := git.GetCommitInfo(job.RepoPath, sha)
 				if err != nil {
-					content.WriteString(fmt.Sprintf("%d. %s: (error: %v)\n\n", i+1, sha[:7], err))
+					fmt.Fprintf(&content, "%d. %s: (error: %v)\n\n", i+1, sha[:7], err)
 					continue
 				}
-				content.WriteString(fmt.Sprintf("%d. %s %s\n", i+1, info.SHA[:7], info.Subject))
-				content.WriteString(fmt.Sprintf("   Author: %s | %s\n", info.Author, info.Timestamp.Format("2006-01-02 15:04")))
+				fmt.Fprintf(&content, "%d. %s %s\n", i+1, info.SHA[:7], info.Subject)
+				fmt.Fprintf(&content, "   Author: %s | %s\n", info.Author, info.Timestamp.Format("2006-01-02 15:04"))
 				if info.Body != "" {
 					// Indent body
-					bodyLines := strings.Split(info.Body, "\n")
-					for _, line := range bodyLines {
+					bodyLines := strings.SplitSeq(info.Body, "\n")
+					for line := range bodyLines {
 						content.WriteString("   " + line + "\n")
 					}
 				}
@@ -1227,9 +1227,9 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 		}
 
 		var content strings.Builder
-		content.WriteString(fmt.Sprintf("Commit: %s\n", info.SHA))
-		content.WriteString(fmt.Sprintf("Author: %s\n", info.Author))
-		content.WriteString(fmt.Sprintf("Date:   %s\n\n", info.Timestamp.Format("2006-01-02 15:04:05 -0700")))
+		fmt.Fprintf(&content, "Commit: %s\n", info.SHA)
+		fmt.Fprintf(&content, "Author: %s\n", info.Author)
+		fmt.Fprintf(&content, "Date:   %s\n\n", info.Timestamp.Format("2006-01-02 15:04:05 -0700"))
 		content.WriteString(info.Subject + "\n")
 		if info.Body != "" {
 			content.WriteString("\n" + info.Body + "\n")
@@ -1242,7 +1242,7 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 // postAddressed sends an addressed state change to the server.
 // Translates "not found" to a context-specific error message.
 func (m tuiModel) postAddressed(jobID int64, newState bool, notFoundMsg string) error {
-	err := m.postJSON("/api/review/address", map[string]interface{}{
+	err := m.postJSON("/api/review/address", map[string]any{
 		"job_id":    jobID,
 		"addressed": newState,
 	}, nil)
@@ -1274,10 +1274,8 @@ func (m tuiModel) addressReviewInBackground(jobID int64, newState, oldState bool
 
 func (m tuiModel) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd {
 	return func() tea.Msg {
-		newState := true
-		if currentState != nil && *currentState {
-			newState = false
-		}
+		newState := currentState == nil || !*currentState
+
 		if err := m.postAddressed(jobID, newState, "no review for this job"); err != nil {
 			return tuiErrMsg(err)
 		}
@@ -1369,7 +1367,7 @@ func (m *tuiModel) normalizeSelectionIfHidden() {
 // cancelJob sends a cancel request to the server
 func (m tuiModel) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishedAt *time.Time) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postJSON("/api/job/cancel", map[string]interface{}{"job_id": jobID}, nil)
+		err := m.postJSON("/api/job/cancel", map[string]any{"job_id": jobID}, nil)
 		return tuiCancelResultMsg{jobID: jobID, oldState: oldStatus, oldFinishedAt: oldFinishedAt, err: err}
 	}
 }
@@ -1377,7 +1375,7 @@ func (m tuiModel) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishe
 // rerunJob sends a rerun request to the server for failed/canceled jobs
 func (m tuiModel) rerunJob(jobID int64, oldStatus storage.JobStatus, oldStartedAt, oldFinishedAt *time.Time, oldError string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postJSON("/api/job/rerun", map[string]interface{}{"job_id": jobID}, nil)
+		err := m.postJSON("/api/job/rerun", map[string]any{"job_id": jobID}, nil)
 		return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: err}
 	}
 }
@@ -1531,12 +1529,7 @@ func rootPathsMatch(a, b []string) bool {
 
 // repoMatchesFilter checks if a repo path matches the active filter.
 func (m tuiModel) repoMatchesFilter(repoPath string) bool {
-	for _, p := range m.activeRepoFilter {
-		if p == repoPath {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.activeRepoFilter, repoPath)
 }
 
 // isJobVisible checks if a job passes all active filters
@@ -1644,10 +1637,7 @@ func queueHelpLines(width int) int {
 func (m tuiModel) queueVisibleRows() int {
 	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
 	reserved := 7 + queueHelpLines(m.width)
-	visibleRows := m.height - reserved
-	if visibleRows < 3 {
-		visibleRows = 3
-	}
+	visibleRows := max(m.height-reserved, 3)
 	return visibleRows
 }
 
@@ -1786,14 +1776,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.tailStreaming = msg.hasMore
 			if m.tailFollow && len(m.tailLines) > 0 {
-				visibleLines := m.height - 4
-				if visibleLines < 1 {
-					visibleLines = 1
-				}
-				maxScroll := len(m.tailLines) - visibleLines
-				if maxScroll < 0 {
-					maxScroll = 0
-				}
+				visibleLines := max(m.height-4, 1)
+				maxScroll := max(len(m.tailLines)-visibleLines, 0)
 				m.tailScroll = maxScroll
 			}
 			if m.tailStreaming {
@@ -1841,12 +1825,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Move cwd repo to first position for quick access
 		if m.cwdRepoRoot != "" && len(m.filterTree) > 1 {
 			moveToFront(m.filterTree, func(n treeFilterNode) bool {
-				for _, p := range n.rootPaths {
-					if p == m.cwdRepoRoot {
-						return true
-					}
-				}
-				return false
+				return slices.Contains(n.rootPaths, m.cwdRepoRoot)
 			})
 		}
 		m.rebuildFilterFlatList()
@@ -1937,13 +1916,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Move cwd branch to first position if this is the cwd repo
 			if m.cwdBranch != "" && len(msg.branches) > 1 {
-				isCwdRepo := false
-				for _, p := range m.filterTree[msg.repoIdx].rootPaths {
-					if p == m.cwdRepoRoot {
-						isCwdRepo = true
-						break
-					}
-				}
+				isCwdRepo := slices.Contains(m.filterTree[msg.repoIdx].rootPaths, m.cwdRepoRoot)
 				if isCwdRepo {
 					moveToFront(m.filterTree[msg.repoIdx].children, func(b branchFilterItem) bool {
 						return b.name == m.cwdBranch
@@ -2077,24 +2050,25 @@ func (m tuiModel) renderQueueView() string {
 	var b strings.Builder
 
 	// Title with version, optional update notification, and filter indicators (in stack order)
-	title := fmt.Sprintf("roborev queue (%s)", version.Version)
+	var title strings.Builder
+	fmt.Fprintf(&title, "roborev queue (%s)", version.Version)
 	for _, filterType := range m.filterStack {
 		switch filterType {
 		case filterTypeRepo:
 			if len(m.activeRepoFilter) > 0 {
 				filterName := m.getDisplayName(m.activeRepoFilter[0], filepath.Base(m.activeRepoFilter[0]))
-				title += fmt.Sprintf(" [f: %s]", filterName)
+				fmt.Fprintf(&title, " [f: %s]", filterName)
 			}
 		case filterTypeBranch:
 			if m.activeBranchFilter != "" {
-				title += fmt.Sprintf(" [b: %s]", m.activeBranchFilter)
+				fmt.Fprintf(&title, " [b: %s]", m.activeBranchFilter)
 			}
 		}
 	}
 	if m.hideAddressed {
-		title += " [hiding addressed]"
+		title.WriteString(" [hiding addressed]")
 	}
-	b.WriteString(tuiTitleStyle.Render(title))
+	b.WriteString(tuiTitleStyle.Render(title.String()))
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Status line - use server-side aggregate counts for paginated views,
@@ -2157,10 +2131,9 @@ func (m tuiModel) renderQueueView() string {
 	// Calculate visible job range based on terminal height
 	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
 	reservedLines := 7 + queueHelpLines(m.width)
-	visibleRows := m.height - reservedLines
-	if visibleRows < 3 {
-		visibleRows = 3 // Show at least 3 jobs
-	}
+	visibleRows := max(m.height-reservedLines,
+		// Show at least 3 jobs
+		3)
 
 	// Track scroll indicator state for later
 	var scrollInfo string
@@ -2217,10 +2190,7 @@ func (m tuiModel) renderQueueView() string {
 
 		if len(visibleJobList) > visibleRows {
 			// Center the selected item when possible
-			start = visibleSelectedIdx - visibleRows/2
-			if start < 0 {
-				start = 0
-			}
+			start = max(visibleSelectedIdx-visibleRows/2, 0)
 			end = start + visibleRows
 			if end > len(visibleJobList) {
 				end = len(visibleJobList)
@@ -2324,10 +2294,9 @@ func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
 		refWidth = max(1, availableWidth*20/100)
 		branchWidth = max(1, availableWidth*32/100)
 		repoWidth = max(1, availableWidth*33/100)
-		agentWidth = availableWidth - refWidth - branchWidth - repoWidth // Give remainder to agent
-		if agentWidth < 1 {
-			agentWidth = 1
-		}
+		agentWidth = max(
+			// Give remainder to agent
+			availableWidth-refWidth-branchWidth-repoWidth, 1)
 	}
 
 	// Apply higher minimums only when there's plenty of space
@@ -2585,7 +2554,7 @@ func (m tuiModel) renderReviewView() string {
 		content.WriteString("\n\n--- Comments ---\n")
 		for _, r := range m.currentResponses {
 			timestamp := r.CreatedAt.Format("Jan 02 15:04")
-			content.WriteString(fmt.Sprintf("\n[%s] %s:\n", timestamp, r.Responder))
+			fmt.Fprintf(&content, "\n[%s] %s:\n", timestamp, r.Responder)
 			content.WriteString(r.Response)
 			content.WriteString("\n")
 		}
@@ -2634,26 +2603,14 @@ func (m tuiModel) renderReviewView() string {
 	if hasVerdict || review.Addressed {
 		headerHeight++ // Add 1 for verdict/addressed line
 	}
-	visibleLines := m.height - headerHeight
-	if visibleLines < 1 {
-		visibleLines = 1
-	}
+	visibleLines := max(m.height-headerHeight, 1)
 
 	// Clamp scroll position to valid range
-	maxScroll := len(lines) - visibleLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(len(lines)-visibleLines, 0)
 	if m.mdCache != nil {
 		m.mdCache.lastReviewMaxScroll = maxScroll
 	}
-	start := m.reviewScroll
-	if start > maxScroll {
-		start = maxScroll
-	}
-	if start < 0 {
-		start = 0
-	}
+	start := max(min(m.reviewScroll, maxScroll), 0)
 	end := min(start+visibleLines, len(lines))
 
 	linesWritten := 0
@@ -2734,26 +2691,14 @@ func (m tuiModel) renderPromptView() string {
 	}
 
 	// Reserve: title(1) + command(0-1) + scroll indicator(1) + help(1) + margin(1)
-	visibleLines := m.height - 3 - headerLines
-	if visibleLines < 1 {
-		visibleLines = 1
-	}
+	visibleLines := max(m.height-3-headerLines, 1)
 
 	// Clamp scroll position to valid range
-	maxScroll := len(lines) - visibleLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(len(lines)-visibleLines, 0)
 	if m.mdCache != nil {
 		m.mdCache.lastPromptMaxScroll = maxScroll
 	}
-	start := m.promptScroll
-	if start > maxScroll {
-		start = maxScroll
-	}
-	if start < 0 {
-		start = 0
-	}
+	start := max(min(m.promptScroll, maxScroll), 0)
 	end := min(start+visibleLines, len(lines))
 
 	linesWritten := 0
@@ -2814,7 +2759,7 @@ func (m tuiModel) renderFilterView() string {
 	if searchDisplay == "" {
 		searchDisplay = tuiStatusStyle.Render("Type to search...")
 	}
-	b.WriteString(fmt.Sprintf("Search: %s", searchDisplay))
+	fmt.Fprintf(&b, "Search: %s", searchDisplay)
 	b.WriteString("\x1b[K\n\x1b[K\n")
 
 	flatList := m.filterFlatList
@@ -2822,27 +2767,18 @@ func (m tuiModel) renderFilterView() string {
 	// Calculate visible rows
 	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(1) = 7
 	reservedLines := 7
-	visibleRows := m.height - reservedLines
-	if visibleRows < 0 {
-		visibleRows = 0
-	}
+	visibleRows := max(m.height-reservedLines, 0)
 
 	// Determine which rows to show, keeping selected item visible
 	start := 0
 	end := len(flatList)
 	needsScroll := len(flatList) > visibleRows && visibleRows > 0
 	if needsScroll {
-		start = m.filterSelectedIdx - visibleRows/2
-		if start < 0 {
-			start = 0
-		}
+		start = max(m.filterSelectedIdx-visibleRows/2, 0)
 		end = start + visibleRows
 		if end > len(flatList) {
 			end = len(flatList)
-			start = end - visibleRows
-			if start < 0 {
-				start = 0
-			}
+			start = max(end-visibleRows, 0)
 		}
 	} else if visibleRows > 0 {
 		if end > visibleRows {
@@ -2931,19 +2867,15 @@ func (m tuiModel) renderRespondView() string {
 	b.WriteString("\x1b[K\n\x1b[K\n")
 
 	// Simple text box with border
-	boxWidth := m.width - 4
-	if boxWidth < 20 {
-		boxWidth = 20
-	}
+	boxWidth := max(m.width-4, 20)
 
 	b.WriteString("+-" + strings.Repeat("-", boxWidth-2) + "-+\n")
 
 	// Wrap text display to box width
 	textLinesWritten := 0
-	maxTextLines := m.height - 10 // Reserve space for chrome
-	if maxTextLines < 3 {
-		maxTextLines = 3
-	}
+	maxTextLines := max(
+		// Reserve space for chrome
+		m.height-10, 3)
 
 	if m.commentText == "" {
 		// Show placeholder (styled, but we pad manually to avoid ANSI issues)
@@ -2952,8 +2884,8 @@ func (m tuiModel) renderRespondView() string {
 		b.WriteString("| " + tuiStatusStyle.Render(padded) + " |\x1b[K\n")
 		textLinesWritten++
 	} else {
-		lines := strings.Split(m.commentText, "\n")
-		for _, line := range lines {
+		lines := strings.SplitSeq(m.commentText, "\n")
+		for line := range lines {
 			if textLinesWritten >= maxTextLines {
 				break
 			}
@@ -2962,18 +2894,15 @@ func (m tuiModel) renderRespondView() string {
 			// Truncate lines that are too long (use visual width for wide characters)
 			line = runewidth.Truncate(line, boxWidth-2, "")
 			// Pad based on visual width, not rune count
-			padding := boxWidth - 2 - runewidth.StringWidth(line)
-			if padding < 0 {
-				padding = 0
-			}
-			b.WriteString(fmt.Sprintf("| %s%s |\x1b[K\n", line, strings.Repeat(" ", padding)))
+			padding := max(boxWidth-2-runewidth.StringWidth(line), 0)
+			fmt.Fprintf(&b, "| %s%s |\x1b[K\n", line, strings.Repeat(" ", padding))
 			textLinesWritten++
 		}
 	}
 
 	// Pad with empty lines if needed
 	for textLinesWritten < 3 {
-		b.WriteString(fmt.Sprintf("| %-*s |\x1b[K\n", boxWidth-2, ""))
+		fmt.Fprintf(&b, "| %-*s |\x1b[K\n", boxWidth-2, "")
 		textLinesWritten++
 	}
 
@@ -3000,7 +2929,7 @@ func (m tuiModel) submitComment(jobID int64, text string) tea.Cmd {
 			commenter = "anonymous"
 		}
 
-		err := m.postJSON("/api/comment", map[string]interface{}{
+		err := m.postJSON("/api/comment", map[string]any{
 			"job_id":    jobID,
 			"commenter": commenter,
 			"comment":   strings.TrimSpace(text),
@@ -3039,23 +2968,11 @@ func (m tuiModel) renderCommitMsgView() string {
 	lines := wrapText(m.commitMsgContent, wrapWidth)
 
 	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)
-	visibleLines := m.height - 4
-	if visibleLines < 1 {
-		visibleLines = 1
-	}
+	visibleLines := max(m.height-4, 1)
 
 	// Clamp scroll position to valid range
-	maxScroll := len(lines) - visibleLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	start := m.commitMsgScroll
-	if start > maxScroll {
-		start = maxScroll
-	}
-	if start < 0 {
-		start = 0
-	}
+	maxScroll := max(len(lines)-visibleLines, 0)
+	start := max(min(m.commitMsgScroll, maxScroll), 0)
 	end := min(start+visibleLines, len(lines))
 
 	linesWritten := 0
@@ -3114,23 +3031,11 @@ func (m tuiModel) renderTailView() string {
 
 	// Calculate visible area
 	reservedLines := 4 // title + separator + status + help
-	visibleLines := m.height - reservedLines
-	if visibleLines < 1 {
-		visibleLines = 1
-	}
+	visibleLines := max(m.height-reservedLines, 1)
 
 	// Clamp scroll
-	maxScroll := len(m.tailLines) - visibleLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	scroll := m.tailScroll
-	if scroll > maxScroll {
-		scroll = maxScroll
-	}
-	if scroll < 0 {
-		scroll = 0
-	}
+	maxScroll := max(len(m.tailLines)-visibleLines, 0)
+	scroll := max(min(m.tailScroll, maxScroll), 0)
 
 	// Separator
 	b.WriteString(strings.Repeat("─", m.width))
@@ -3143,10 +3048,7 @@ func (m tuiModel) renderTailView() string {
 		b.WriteString("\x1b[K\n")
 		linesWritten++
 	} else {
-		end := scroll + visibleLines
-		if end > len(m.tailLines) {
-			end = len(m.tailLines)
-		}
+		end := min(scroll+visibleLines, len(m.tailLines))
 		for i := scroll; i < end; i++ {
 			line := m.tailLines[i]
 			// Format with timestamp
@@ -3185,10 +3087,7 @@ func (m tuiModel) renderTailView() string {
 	var status string
 	if len(m.tailLines) > visibleLines {
 		// Calculate actual displayed range (not including padding)
-		displayEnd := scroll + visibleLines
-		if displayEnd > len(m.tailLines) {
-			displayEnd = len(m.tailLines)
-		}
+		displayEnd := min(scroll+visibleLines, len(m.tailLines))
 		status = fmt.Sprintf("[%d-%d of %d lines]", scroll+1, displayEnd, len(m.tailLines))
 	} else {
 		status = fmt.Sprintf("[%d lines]", len(m.tailLines))
@@ -3305,10 +3204,7 @@ func helpLines() []string {
 // helpMaxScroll returns the maximum scroll offset for the help view.
 func (m tuiModel) helpMaxScroll() int {
 	reservedLines := 3 // title + blank + help hint
-	visibleLines := m.height - reservedLines
-	if visibleLines < 5 {
-		visibleLines = 5
-	}
+	visibleLines := max(m.height-reservedLines, 5)
 	maxScroll := len(helpLines()) - visibleLines
 	if maxScroll < 0 {
 		return 0
@@ -3326,30 +3222,18 @@ func (m tuiModel) renderHelpView() string {
 
 	// Calculate visible area: title(1) + blank(1) + help(1)
 	reservedLines := 3
-	visibleLines := m.height - reservedLines
-	if visibleLines < 5 {
-		visibleLines = 5
-	}
+	visibleLines := max(m.height-reservedLines, 5)
 
 	// Clamp scroll
-	maxScroll := len(allLines) - visibleLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	scroll := m.helpScroll
-	if scroll > maxScroll {
-		scroll = maxScroll
-	}
+	maxScroll := max(len(allLines)-visibleLines, 0)
+	scroll := min(m.helpScroll, maxScroll)
 
 	// Render visible window
-	end := scroll + visibleLines
-	if end > len(allLines) {
-		end = len(allLines)
-	}
+	end := min(scroll+visibleLines, len(allLines))
 	linesWritten := 0
 	for _, line := range allLines[scroll:end] {
-		if strings.HasPrefix(line, "\x00group:") {
-			b.WriteString(tuiSelectedStyle.Render(strings.TrimPrefix(line, "\x00group:")))
+		if after, ok := strings.CutPrefix(line, "\x00group:"); ok {
+			b.WriteString(tuiSelectedStyle.Render(after))
 		} else {
 			b.WriteString(line)
 		}

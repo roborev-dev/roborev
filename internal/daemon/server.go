@@ -267,7 +267,7 @@ func (s *Server) handleBatchJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{"results": results})
+	writeJSON(w, map[string]any{"results": results})
 }
 
 // handleSyncNow triggers an immediate sync cycle
@@ -296,7 +296,7 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 		}
 
 		stats, err := s.syncWorker.SyncNowWithProgress(func(p storage.SyncProgress) bool {
-			if !writeNDJSON(w, map[string]interface{}{
+			if !writeNDJSON(w, map[string]any{
 				"type":        "progress",
 				"phase":       p.Phase,
 				"batch":       p.BatchNum,
@@ -314,7 +314,7 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 		})
 
 		if err != nil {
-			if !writeNDJSON(w, map[string]interface{}{
+			if !writeNDJSON(w, map[string]any{
 				"type":  "error",
 				"error": err.Error(),
 			}) {
@@ -324,7 +324,7 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Final result
-		if !writeNDJSON(w, map[string]interface{}{
+		if !writeNDJSON(w, map[string]any{
 			"type":    "complete",
 			"message": "Sync completed",
 			"pushed": map[string]int{
@@ -351,7 +351,7 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"message": "Sync completed",
 		"pushed": map[string]int{
 			"jobs":      stats.PushedJobs,
@@ -376,7 +376,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if s.syncWorker == nil {
-		writeJSON(w, map[string]interface{}{
+		writeJSON(w, map[string]any{
 			"enabled":   false,
 			"connected": false,
 			"message":   "sync not enabled",
@@ -385,7 +385,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	healthy, message := s.syncWorker.HealthCheck()
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"enabled":   true,
 		"connected": healthy,
 		"message":   message,
@@ -414,15 +414,15 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-func writeJSON(w http.ResponseWriter, v interface{}) {
+func writeJSON(w http.ResponseWriter, v any) {
 	writeJSONWithStatus(w, http.StatusOK, v)
 }
 
-func writeCreatedJSON(w http.ResponseWriter, v interface{}) {
+func writeCreatedJSON(w http.ResponseWriter, v any) {
 	writeJSONWithStatus(w, http.StatusCreated, v)
 }
 
-func writeJSONWithStatus(w http.ResponseWriter, status int, v interface{}) {
+func writeJSONWithStatus(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
@@ -626,8 +626,8 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			// If the start ref is <sha>^ and resolution failed, the commit
 			// may be the root commit (no parent). Use the empty tree SHA so
 			// the range includes the root commit's changes.
-			if strings.HasSuffix(parts[0], "^") {
-				base := strings.TrimSuffix(parts[0], "^")
+			if before, ok := strings.CutSuffix(parts[0], "^"); ok {
+				base := before
 				if _, resolveErr := git.ResolveSHA(gitCwd, base+"^{commit}"); resolveErr == nil {
 					startSHA = git.EmptyTreeSHA
 					err = nil
@@ -722,7 +722,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Distinguish "not found" from actual DB errors
 			if errors.Is(err, sql.ErrNoRows) {
-				writeJSON(w, map[string]interface{}{
+				writeJSON(w, map[string]any{
 					"jobs":     []storage.ReviewJob{},
 					"has_more": false,
 				})
@@ -731,7 +731,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("database error: %v", err))
 			return
 		}
-		writeJSON(w, map[string]interface{}{
+		writeJSON(w, map[string]any{
 			"jobs":     []storage.ReviewJob{*job},
 			"has_more": false,
 		})
@@ -818,7 +818,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Warning: failed to count job stats: %v", statsErr)
 	}
 
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"jobs":     jobs,
 		"has_more": hasMore,
 		"stats":    stats,
@@ -848,7 +848,7 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"repos":       repos,
 		"total_count": totalCount,
 	})
@@ -914,7 +914,7 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"branches":        result.Branches,
 		"total_count":     result.TotalCount,
 		"nulls_remaining": result.NullsRemaining,
@@ -955,7 +955,7 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	// Also cancel the running worker if job was running (kills subprocess)
 	s.workerPool.CancelJob(req.JobID)
 
-	writeJSON(w, map[string]interface{}{"success": true})
+	writeJSON(w, map[string]any{"success": true})
 }
 
 // JobOutputResponse is the response for /api/job/output
@@ -1016,7 +1016,7 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 	// and would hang forever waiting for data
 	if job.Status != storage.JobStatusRunning {
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		if !writeNDJSON(w, map[string]interface{}{
+		if !writeNDJSON(w, map[string]any{
 			"type":   "complete",
 			"status": string(job.Status),
 		}) {
@@ -1041,7 +1041,7 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 
 	// Send initial lines
 	for _, line := range initial {
-		if !writeNDJSON(w, map[string]interface{}{
+		if !writeNDJSON(w, map[string]any{
 			"type":      "line",
 			"ts":        line.Timestamp.Format(time.RFC3339Nano),
 			"text":      line.Text,
@@ -1064,7 +1064,7 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 				if finalJob, err := s.db.GetJobByID(jobID); err == nil {
 					finalStatus = string(finalJob.Status)
 				}
-				if !writeNDJSON(w, map[string]interface{}{
+				if !writeNDJSON(w, map[string]any{
 					"type":   "complete",
 					"status": finalStatus,
 				}) {
@@ -1073,7 +1073,7 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 				return
 			}
-			if !writeNDJSON(w, map[string]interface{}{
+			if !writeNDJSON(w, map[string]any{
 				"type":      "line",
 				"ts":        line.Timestamp.Format(time.RFC3339Nano),
 				"text":      line.Text,
@@ -1086,7 +1086,7 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func writeNDJSON(w http.ResponseWriter, v interface{}) bool {
+func writeNDJSON(w http.ResponseWriter, v any) bool {
 	line, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("failed to marshal NDJSON response: %v", err)
@@ -1131,7 +1131,7 @@ func (s *Server) handleRerunJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{"success": true})
+	writeJSON(w, map[string]any{"success": true})
 }
 
 func (s *Server) handleUpdateJobBranch(w http.ResponseWriter, r *http.Request) {
@@ -1164,7 +1164,7 @@ func (s *Server) handleUpdateJobBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{
+	writeJSON(w, map[string]any{
 		"success": true,
 		"updated": rowsAffected > 0,
 	})
@@ -1296,7 +1296,7 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{"responses": responses})
+	writeJSON(w, map[string]any{"responses": responses})
 }
 
 // getMachineID returns the cached machine ID, fetching it on first successful call.
@@ -1383,7 +1383,7 @@ func (s *Server) handleAddressReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{"success": true})
+	writeJSON(w, map[string]any{"success": true})
 }
 
 func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {

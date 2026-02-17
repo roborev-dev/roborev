@@ -322,7 +322,7 @@ func listMergedConfig(showOrigin bool) error {
 	rawGlobal, _ := config.LoadRawGlobal()
 
 	var repoCfg *config.RepoConfig
-	var rawRepo map[string]interface{}
+	var rawRepo map[string]any
 	repoPath, err := repoRoot()
 	if err != nil {
 		return fmt.Errorf("determine repository root: %w", err)
@@ -393,7 +393,7 @@ func setConfigKey(path, key, value string, isGlobal bool) error {
 
 // validateKeyForScope validates a key against the appropriate config struct
 // and returns the populated struct for type coercion.
-func validateKeyForScope(key, value string, isGlobal bool) (interface{}, error) {
+func validateKeyForScope(key, value string, isGlobal bool) (any, error) {
 	if isGlobal {
 		cfg := config.DefaultConfig()
 		if err := config.SetConfigValue(cfg, key, value); err != nil {
@@ -419,8 +419,8 @@ func validateKeyForScope(key, value string, isGlobal bool) (interface{}, error) 
 
 // loadRawConfig loads an existing TOML file as a raw map, or returns
 // an empty map if the file doesn't exist.
-func loadRawConfig(path string) (map[string]interface{}, error) {
-	raw := make(map[string]interface{})
+func loadRawConfig(path string) (map[string]any, error) {
+	raw := make(map[string]any)
 	if _, err := os.Stat(path); err == nil {
 		if _, err := toml.DecodeFile(path, &raw); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -431,7 +431,7 @@ func loadRawConfig(path string) (map[string]interface{}, error) {
 
 // atomicWriteConfig writes a config map to a TOML file atomically using
 // a temp file and rename. It creates parent directories as needed.
-func atomicWriteConfig(path string, raw map[string]interface{}, isGlobal bool) error {
+func atomicWriteConfig(path string, raw map[string]any, isGlobal bool) error {
 	// Ensure directory exists. Use restrictive perms for the global config dir
 	// since it may contain secrets (API keys, DB credentials).
 	dirMode := os.FileMode(0755)
@@ -484,7 +484,7 @@ func atomicWriteConfig(path string, raw map[string]interface{}, isGlobal bool) e
 }
 
 // setRawMapKey sets a value in a nested map using dot-separated keys.
-func setRawMapKey(m map[string]interface{}, key string, value interface{}) {
+func setRawMapKey(m map[string]any, key string, value any) {
 	parts := strings.Split(key, ".")
 
 	if len(parts) == 1 {
@@ -496,16 +496,16 @@ func setRawMapKey(m map[string]interface{}, key string, value interface{}) {
 	current := m
 	for _, part := range parts[:len(parts)-1] {
 		if sub, ok := current[part]; ok {
-			if subMap, ok := sub.(map[string]interface{}); ok {
+			if subMap, ok := sub.(map[string]any); ok {
 				current = subMap
 			} else {
 				// Overwrite non-map value with new map
-				newMap := make(map[string]interface{})
+				newMap := make(map[string]any)
 				current[part] = newMap
 				current = newMap
 			}
 		} else {
-			newMap := make(map[string]interface{})
+			newMap := make(map[string]any)
 			current[part] = newMap
 			current = newMap
 		}
@@ -516,7 +516,7 @@ func setRawMapKey(m map[string]interface{}, key string, value interface{}) {
 
 // coerceValue uses the typed config struct to determine the correct TOML type
 // for the given key's value.
-func coerceValue(validationCfg interface{}, key, rawVal string) interface{} {
+func coerceValue(validationCfg any, key, rawVal string) any {
 	v := reflect.ValueOf(validationCfg)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -537,7 +537,7 @@ func coerceValue(validationCfg interface{}, key, rawVal string) interface{} {
 		return field.Int()
 	case reflect.Slice:
 		if field.Type().Elem().Kind() == reflect.String {
-			result := make([]interface{}, field.Len())
+			result := make([]any, field.Len())
 			for i := 0; i < field.Len(); i++ {
 				result[i] = field.Index(i).String()
 			}

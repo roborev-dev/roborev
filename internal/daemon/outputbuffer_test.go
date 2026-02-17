@@ -397,7 +397,7 @@ func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
 
 	// Write data exceeding maxLine (100 bytes) multiple times WITHOUT a newline
 	// This simulates a single very long line being written in chunks
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		w.Write([]byte(strings.Repeat("x", 50))) // 5 * 50 = 250 bytes total
 	}
 
@@ -481,11 +481,11 @@ func TestOutputBuffer_Concurrent(t *testing.T) {
 	ob := NewOutputBuffer(10240, 40960)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(jobID int64) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				ob.Append(jobID, OutputLine{Text: "test", Type: "text"})
 			}
 		}(int64(i))
@@ -494,7 +494,7 @@ func TestOutputBuffer_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	// All jobs should have lines
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		lines := ob.GetLines(int64(i))
 		if len(lines) == 0 {
 			t.Errorf("job %d has no lines", i)

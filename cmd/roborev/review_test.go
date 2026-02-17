@@ -95,7 +95,7 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		if r.URL.Path == "/api/enqueue" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"skipped": true,
 				"reason":  "branch \"wip\" is excluded from reviews",
 			})
@@ -157,7 +157,7 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 			if r.URL.Path == "/api/jobs" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
+				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{job}, "has_more": false})
 				return
 			}
 			if r.URL.Path == "/api/review" {
@@ -197,7 +197,7 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 			if r.URL.Path == "/api/jobs" {
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}, "has_more": false})
+				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{job}, "has_more": false})
 				return
 			}
 			if r.URL.Path == "/api/review" {
@@ -253,7 +253,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 				callCount++
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "future_status"}
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     []storage.ReviewJob{job},
 					"has_more": false,
 				})
@@ -304,7 +304,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 				}
 				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatus(status)}
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"jobs":     []storage.ReviewJob{job},
 					"has_more": false,
 				})
@@ -380,7 +380,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with invalid ref fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -401,7 +401,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with no commits ahead fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -422,7 +422,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since and branch are mutually exclusive", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -442,7 +442,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since and dirty are mutually exclusive", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -462,7 +462,7 @@ func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with positional args fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -484,7 +484,7 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch and dirty are mutually exclusive", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -504,7 +504,7 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch with positional args fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -527,7 +527,7 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch on default branch fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 
@@ -549,7 +549,7 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch with no commits fails", func(t *testing.T) {
 		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]interface{}{"version": version.Version})
+			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
 		}))
 		defer cleanup()
 

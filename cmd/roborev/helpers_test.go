@@ -280,7 +280,7 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 			if count >= opts.DoneAfterPolls {
 				status = storage.JobStatusDone
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"jobs": []storage.ReviewJob{{
 					ID:     atomic.LoadInt64(&jobID),
 					Status: status,

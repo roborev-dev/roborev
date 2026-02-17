@@ -134,7 +134,7 @@ func TestSignJWT_Structure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode payload: %v", err)
 	}
-	var payload map[string]interface{}
+	var payload map[string]any
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		t.Fatalf("parse payload: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestTokenCaching(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"token":      "ghs_test_token_123",
 			"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 		})
@@ -236,7 +236,7 @@ func TestTokenRefreshOnExpiry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"token":      "ghs_refreshed",
 			"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 		})
@@ -309,7 +309,7 @@ func TestTokenCaching_MultipleInstallations(t *testing.T) {
 			token = "ghs_unknown"
 		}
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"token":      token,
 			"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 		})

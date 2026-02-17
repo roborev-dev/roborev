@@ -470,10 +470,10 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 func buildOutputPrefix(analysisType string, filePaths []string) string {
 	sort.Strings(filePaths)
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## %s Analysis\n\n", analysisType))
+	fmt.Fprintf(&sb, "## %s Analysis\n\n", analysisType)
 	sb.WriteString("**Files:**\n")
 	for _, path := range filePaths {
-		sb.WriteString(fmt.Sprintf("- %s\n", path))
+		fmt.Fprintf(&sb, "- %s\n", path)
 	}
 	sb.WriteString("\n---\n\n")
 	return sb.String()
@@ -485,7 +485,7 @@ func enqueueAnalysisJob(repoRoot, prompt, outputPrefix, label string, opts analy
 	if opts.branch != "" && opts.branch != "HEAD" {
 		branch = opts.branch
 	}
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"repo_path":     repoRoot,
 		"git_ref":       label, // Use analysis type name as the TUI label
 		"branch":        branch,
@@ -729,10 +729,7 @@ func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*s
 		}
 
 		if pollInterval < maxInterval {
-			pollInterval = pollInterval * 3 / 2
-			if pollInterval > maxInterval {
-				pollInterval = maxInterval
-			}
+			pollInterval = min(pollInterval*3/2, maxInterval)
 		}
 	}
 }
@@ -741,7 +738,7 @@ func waitForAnalysisJob(ctx context.Context, serverAddr string, jobID int64) (*s
 func buildFixPrompt(analysisType *analyze.AnalysisType, analysisOutput string) string {
 	var sb strings.Builder
 	sb.WriteString("# Fix Request\n\n")
-	sb.WriteString(fmt.Sprintf("An analysis of type **%s** was performed and produced the following findings:\n\n", analysisType.Name))
+	fmt.Fprintf(&sb, "An analysis of type **%s** was performed and produced the following findings:\n\n", analysisType.Name)
 	sb.WriteString("## Analysis Findings\n\n")
 	sb.WriteString(analysisOutput)
 	sb.WriteString("\n\n## Instructions\n\n")
@@ -765,7 +762,7 @@ func buildCommitPrompt(analysisType *analyze.AnalysisType) string {
 	sb.WriteString("2. Stage the appropriate files\n")
 	sb.WriteString("3. Create a git commit with a descriptive message\n\n")
 	sb.WriteString("The commit message should:\n")
-	sb.WriteString(fmt.Sprintf("- Reference the '%s' analysis that prompted the changes\n", analysisType.Name))
+	fmt.Fprintf(&sb, "- Reference the '%s' analysis that prompted the changes\n", analysisType.Name)
 	sb.WriteString("- Summarize what was changed and why\n")
 	sb.WriteString("- Be concise but informative\n")
 	return sb.String()
@@ -833,7 +830,7 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 
 // markJobAddressed marks a job as addressed via the API
 func markJobAddressed(serverAddr string, jobID int64) error {
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"job_id":    jobID,
 		"addressed": true,
 	})

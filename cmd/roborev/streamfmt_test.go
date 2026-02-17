@@ -60,7 +60,7 @@ func (fix *streamFormatterFixture) assertCount(t *testing.T, substr string, want
 
 // mustMarshal is like json.Marshal but panics on error.
 // Safe to use in tests where inputs are always simple map literals.
-func mustMarshal(v interface{}) []byte {
+func mustMarshal(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
 		panic(fmt.Sprintf("mustMarshal: %v", err))
@@ -70,7 +70,7 @@ func mustMarshal(v interface{}) []byte {
 
 // Event builders for Anthropic-style JSON.
 
-func eventAssistantToolUse(toolName string, input map[string]interface{}) string {
+func eventAssistantToolUse(toolName string, input map[string]any) string {
 	return fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":%q,"input":%s}]}}`,
 		toolName, mustMarshal(input))
 }
@@ -87,7 +87,7 @@ func contentBlockText(text string) string {
 	return fmt.Sprintf(`{"type":"text","text":%s}`, mustMarshal(text))
 }
 
-func contentBlockToolUse(toolName string, input map[string]interface{}) string {
+func contentBlockToolUse(toolName string, input map[string]any) string {
 	return fmt.Sprintf(`{"type":"tool_use","name":%q,"input":%s}`, toolName, mustMarshal(input))
 }
 
@@ -97,7 +97,7 @@ func eventAssistantLegacy(content string) string {
 
 // Event builders for Gemini-style JSON.
 
-func eventGeminiToolUse(toolName, toolID string, params map[string]interface{}) string {
+func eventGeminiToolUse(toolName, toolID string, params map[string]any) string {
 	return fmt.Sprintf(`{"type":"tool_use","tool_name":%q,"tool_id":%q,"parameters":%s}`,
 		toolName, toolID, mustMarshal(params))
 }
@@ -105,10 +105,10 @@ func eventGeminiToolUse(toolName, toolID string, params map[string]interface{}) 
 func TestStreamFormatter_ToolUse(t *testing.T) {
 	fix := newFixture(true)
 
-	fix.writeLine(eventAssistantToolUse("Read", map[string]interface{}{"file_path": "internal/gmail/ratelimit.go"}))
+	fix.writeLine(eventAssistantToolUse("Read", map[string]any{"file_path": "internal/gmail/ratelimit.go"}))
 	fix.writeLine(`{"type":"user","tool_use_result":{"filePath":"internal/gmail/ratelimit.go"}}`)
-	fix.writeLine(eventAssistantToolUse("Edit", map[string]interface{}{"file_path": "internal/gmail/ratelimit.go", "old_string": "foo", "new_string": "bar"}))
-	fix.writeLine(eventAssistantToolUse("Bash", map[string]interface{}{"command": "go test ./internal/gmail/ -run TestRateLimiter"}))
+	fix.writeLine(eventAssistantToolUse("Edit", map[string]any{"file_path": "internal/gmail/ratelimit.go", "old_string": "foo", "new_string": "bar"}))
+	fix.writeLine(eventAssistantToolUse("Bash", map[string]any{"command": "go test ./internal/gmail/ -run TestRateLimiter"}))
 
 	fix.assertContains(t, "Read   internal/gmail/ratelimit.go")
 	fix.assertContains(t, "Edit   internal/gmail/ratelimit.go")
@@ -143,7 +143,7 @@ func TestStreamFormatter_ResultSuppressed(t *testing.T) {
 func TestStreamFormatter_BashTruncation(t *testing.T) {
 	fix := newFixture(true)
 	longCmd := strings.Repeat("x", 100)
-	fix.writeLine(eventAssistantToolUse("Bash", map[string]interface{}{"command": longCmd}))
+	fix.writeLine(eventAssistantToolUse("Bash", map[string]any{"command": longCmd}))
 
 	got := fix.output()
 	if len(got) > 100 {
@@ -156,7 +156,7 @@ func TestStreamFormatter_BashTruncation(t *testing.T) {
 
 func TestStreamFormatter_GrepWithPath(t *testing.T) {
 	fix := newFixture(true)
-	fix.writeLine(eventAssistantToolUse("Grep", map[string]interface{}{"pattern": "TODO", "path": "internal/"}))
+	fix.writeLine(eventAssistantToolUse("Grep", map[string]any{"pattern": "TODO", "path": "internal/"}))
 	fix.assertContains(t, "Grep   TODO  internal/")
 }
 
@@ -170,7 +170,7 @@ func TestStreamFormatter_MultipleContentBlocks(t *testing.T) {
 	fix := newFixture(true)
 	fix.writeLine(eventAssistantMulti(
 		contentBlockText("thinking..."),
-		contentBlockToolUse("Read", map[string]interface{}{"file_path": "main.go"}),
+		contentBlockToolUse("Read", map[string]any{"file_path": "main.go"}),
 	))
 	fix.assertContains(t, "thinking...")
 	fix.assertContains(t, "Read   main.go")
@@ -200,10 +200,10 @@ func TestStreamFormatter_GeminiToolUse(t *testing.T) {
 		`{"type":"init","session_id":"abc"}`,
 		`{"type":"message","role":"user","content":"fix this"}`,
 		`{"type":"message","role":"assistant","content":"I'll fix this.","delta":true}`,
-		eventGeminiToolUse("read_file", "t1", map[string]interface{}{"file_path": "main.go"}),
+		eventGeminiToolUse("read_file", "t1", map[string]any{"file_path": "main.go"}),
 		`{"type":"tool_result","tool_id":"t1","status":"success"}`,
-		eventGeminiToolUse("replace", "t2", map[string]interface{}{"file_path": "main.go", "old_string": "foo", "new_string": "bar"}),
-		eventGeminiToolUse("run_shell_command", "t3", map[string]interface{}{"command": "go test ./..."}),
+		eventGeminiToolUse("replace", "t2", map[string]any{"file_path": "main.go", "old_string": "foo", "new_string": "bar"}),
+		eventGeminiToolUse("run_shell_command", "t3", map[string]any{"command": "go test ./..."}),
 		`{"type":"result","status":"success"}`,
 	}
 

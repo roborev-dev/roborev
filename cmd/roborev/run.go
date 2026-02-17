@@ -141,7 +141,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 	if label != "" {
 		gitRef = label
 	}
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"repo_path":     repoRoot,
 		"git_ref":       gitRef,
 		"agent":         agentName,
@@ -252,10 +252,7 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 			unknownStatusCount = 0 // Reset counter on known status
 			time.Sleep(pollInterval)
 			if pollInterval < maxInterval {
-				pollInterval = time.Duration(float64(pollInterval) * 1.5)
-				if pollInterval > maxInterval {
-					pollInterval = maxInterval
-				}
+				pollInterval = min(time.Duration(float64(pollInterval)*1.5), maxInterval)
 			}
 
 		default:
@@ -270,10 +267,7 @@ func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet 
 			}
 			time.Sleep(pollInterval)
 			if pollInterval < maxInterval {
-				pollInterval = time.Duration(float64(pollInterval) * 1.5)
-				if pollInterval > maxInterval {
-					pollInterval = maxInterval
-				}
+				pollInterval = min(time.Duration(float64(pollInterval)*1.5), maxInterval)
 			}
 		}
 	}
@@ -324,7 +318,7 @@ func buildPromptWithContext(repoPath, userPrompt string) string {
 	repoName := filepath.Base(repoPath)
 
 	sb.WriteString("## Context\n\n")
-	sb.WriteString(fmt.Sprintf("You are working in the repository \"%s\" at %s.\n", repoName, repoPath))
+	fmt.Fprintf(&sb, "You are working in the repository \"%s\" at %s.\n", repoName, repoPath)
 
 	// Load project guidelines if available
 	repoCfg, err := config.LoadRepoConfig(repoPath)
