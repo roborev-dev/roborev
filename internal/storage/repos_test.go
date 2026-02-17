@@ -142,6 +142,46 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 	})
 
+	t.Run("ClaimJob loads output_prefix", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/claim-prefix-test")
+
+		prefix := "## Compact Analysis\n\n---\n\n"
+		mustEnqueuePromptJob(t, db, EnqueueOpts{
+			RepoID:       repo.ID,
+			Agent:        "test",
+			Prompt:       "compact prompt",
+			OutputPrefix: prefix,
+		})
+
+		claimed := claimJob(t, db, "test-worker")
+		if claimed.OutputPrefix != prefix {
+			t.Errorf("ClaimJob OutputPrefix = %q, want %q",
+				claimed.OutputPrefix, prefix)
+		}
+	})
+
+	t.Run("ClaimJob returns empty OutputPrefix when not set", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/claim-no-prefix-test")
+
+		mustEnqueuePromptJob(t, db, EnqueueOpts{
+			RepoID: repo.ID,
+			Agent:  "test",
+			Prompt: "plain prompt",
+		})
+
+		claimed := claimJob(t, db, "test-worker")
+		if claimed.OutputPrefix != "" {
+			t.Errorf("ClaimJob OutputPrefix = %q, want empty",
+				claimed.OutputPrefix)
+		}
+	})
+
 	t.Run("output_prefix is prepended to review output", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
