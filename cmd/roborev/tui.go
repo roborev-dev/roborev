@@ -1646,8 +1646,8 @@ func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 }
 
 // Queue help line constants (used by both queueVisibleRows and renderQueueView).
-const queueHelpLine1 = "x: cancel | r: rerun | t: tail | p: prompt | c: comment | y: copy | m: commit msg"
-const queueHelpLine2 = "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | ?: commands | q: quit"
+const queueHelpLine1 = "x: cancel | r: rerun | t: tail | p: prompt | c: comment | y: copy | m: commit msg | F: fix"
+const queueHelpLine2 = "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | T: tasks | ?: help | q: quit"
 
 // queueHelpLines computes how many terminal lines the queue help
 // footer occupies, accounting for wrapping at narrow widths.
@@ -3209,6 +3209,8 @@ func helpLines() []string {
 				{"y", "Copy review to clipboard"},
 				{"x", "Cancel running/queued job"},
 				{"r", "Re-run completed/failed job"},
+				{"F", "Trigger fix for selected review"},
+				{"T", "Open Tasks view"},
 			},
 		},
 		{
@@ -3251,6 +3253,17 @@ func helpLines() []string {
 				{"g", "Toggle follow mode / jump to top"},
 				{"x", "Cancel job"},
 				{"esc/q", "Back to queue"},
+			},
+		},
+		{
+			group: "Tasks View",
+			keys: []struct{ key, desc string }{
+				{"↑/↓", "Navigate fix jobs"},
+				{"A", "Apply patch from completed fix"},
+				{"R", "Re-trigger fix (rebase)"},
+				{"t", "Tail running fix job output"},
+				{"x", "Cancel running/queued fix job"},
+				{"esc/T", "Back to queue"},
 			},
 		},
 		{
@@ -3433,7 +3446,7 @@ func (m tuiModel) renderTasksView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Help
-	b.WriteString(tuiHelpStyle.Render("A: apply patch | t: tail | x: cancel | r: refresh | T/esc: back to queue"))
+	b.WriteString(tuiHelpStyle.Render("A: apply | R: rebase | t: tail | x: cancel | r: refresh | T/esc: back"))
 	b.WriteString("\x1b[K\x1b[J")
 
 	return b.String()
