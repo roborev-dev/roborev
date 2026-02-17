@@ -1453,7 +1453,7 @@ func (s *Server) handleRemap(w http.ResponseWriter, r *http.Request) {
 
 	repoRoot, err := git.GetMainRepoRoot(req.RepoPath)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]int{
+		writeJSON(w, map[string]int{
 			"remapped": 0, "skipped": 0,
 		})
 		return
@@ -1461,7 +1461,7 @@ func (s *Server) handleRemap(w http.ResponseWriter, r *http.Request) {
 
 	repo, err := s.db.GetRepoByPath(repoRoot)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]int{
+		writeJSON(w, map[string]int{
 			"remapped": 0, "skipped": 0,
 		})
 		return
@@ -1503,7 +1503,7 @@ func (s *Server) handleRemap(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]int{
+	writeJSON(w, map[string]int{
 		"remapped": remapped, "skipped": skipped,
 	})
 }

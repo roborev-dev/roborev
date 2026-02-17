@@ -941,11 +941,11 @@ func GetPatchID(repoPath, sha string) string {
 		return ""
 	}
 	if err := patchID.Start(); err != nil {
-		show.Wait()
+		_ = show.Wait() // cleanup; patchID never started
 		return ""
 	}
 
-	show.Wait()
+	_ = show.Wait() // only patchID's exit status matters
 	if err := patchID.Wait(); err != nil {
 		return ""
 	}
