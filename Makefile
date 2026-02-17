@@ -53,13 +53,15 @@ lint:
 	fi
 	golangci-lint run ./...
 
-# Install pre-commit hook and set local core.hooksPath to .git/hooks,
-# overriding any inherited/global hooks path
+# Install pre-commit hook, resolving the hooks directory via git so
+# this works in both normal repos and linked worktrees
 install-hooks:
-	@git config --local core.hooksPath .git/hooks
-	@cp .githooks/pre-commit .git/hooks/pre-commit
-	@chmod +x .git/hooks/pre-commit
-	@echo "Installed pre-commit hook to .git/hooks/pre-commit"
+	@hooks_dir=$$(git rev-parse --git-path hooks) && \
+		git config --local core.hooksPath "$$hooks_dir" && \
+		mkdir -p "$$hooks_dir" && \
+		cp .githooks/pre-commit "$$hooks_dir/pre-commit" && \
+		chmod +x "$$hooks_dir/pre-commit" && \
+		echo "Installed pre-commit hook to $$hooks_dir/pre-commit"
 
 # CI target: run postgres tests without managing docker (assumes postgres is running)
 test-postgres-ci:
