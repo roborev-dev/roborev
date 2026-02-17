@@ -26,6 +26,9 @@ security findings:
   embedded in prompts (all locally generated; a compromised local agent
   already has full shell access)
 - "Secret exposure" from hook stderr logged or forwarded to the model
+- "Untrusted remap data" or "history tampering" from the remap endpoint (the
+  client is the user's own post-rewrite hook, data comes from the user's own
+  git repo, and the daemon is localhost-only)
 - .githooks/ tracked as a supply-chain risk (source templates only; installed
   hooks are frozen copies in .git/hooks/, unaffected by branch switches)
 - Race conditions in metadata handoff between CLI and daemon (correctness

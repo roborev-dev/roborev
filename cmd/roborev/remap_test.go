@@ -7,9 +7,8 @@ import (
 
 func TestRemapStdinParsing(t *testing.T) {
 	input := "abc123 def456\nfoo bar\n\n  baz qux  \n"
-	scanner := strings.NewReader(input)
 
-	lines := strings.Split(strings.TrimSpace(string([]byte(input))), "\n")
+	lines := strings.Split(strings.TrimSpace(input), "\n")
 	var pairs [][2]string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -23,8 +22,6 @@ func TestRemapStdinParsing(t *testing.T) {
 		pairs = append(pairs, [2]string{fields[0], fields[1]})
 	}
 
-	_ = scanner // reader not needed — we tested parsing logic directly
-
 	expected := [][2]string{
 		{"abc123", "def456"},
 		{"foo", "bar"},
@@ -37,6 +34,32 @@ func TestRemapStdinParsing(t *testing.T) {
 	for i, p := range pairs {
 		if p != expected[i] {
 			t.Errorf("pair %d: expected %v, got %v", i, expected[i], p)
+		}
+	}
+}
+
+func TestGitSHAValidation(t *testing.T) {
+	tests := []struct {
+		input string
+		valid bool
+	}{
+		{"abc123def456abc123def456abc123def456abc1", true},
+		{"0000000000000000000000000000000000000000", true},
+		{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true},
+		{"abc123", false}, // too short
+		{"ABC123DEF456ABC123DEF456ABC123DEF456ABC1", false}, // uppercase
+		{"--option", false}, // flag injection
+		{"-n1", false},      // short flag
+		{"abc123def456abc123def456abc123def456abc1x", false}, // 41 chars
+		{"abc123def456abc123def456abc123def456abc", false},   // 39 chars
+		{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", false},  // non-hex
+		{"abc123def456abc123def456abc123def456abc1 ", false}, // trailing space
+	}
+	for _, tt := range tests {
+		got := gitSHAPattern.MatchString(tt.input)
+		if got != tt.valid {
+			t.Errorf("gitSHAPattern.MatchString(%q) = %v, want %v",
+				tt.input, got, tt.valid)
 		}
 	}
 }

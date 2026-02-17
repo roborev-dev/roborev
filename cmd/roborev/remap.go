@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/spf13/cobra"
 )
+
+// gitSHAPattern matches a full 40-character hex git SHA.
+var gitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func remapCmd() *cobra.Command {
 	var quiet bool
@@ -43,6 +47,11 @@ new commits. Intended to be called from a post-rewrite hook.`,
 					continue
 				}
 				oldSHA, newSHA := fields[0], fields[1]
+
+				if !gitSHAPattern.MatchString(oldSHA) ||
+					!gitSHAPattern.MatchString(newSHA) {
+					continue
+				}
 
 				oldPatchID := git.GetPatchID(gitCwd, oldSHA)
 				newPatchID := git.GetPatchID(gitCwd, newSHA)
