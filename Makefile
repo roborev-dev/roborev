@@ -53,8 +53,8 @@ lint:
 	fi
 	golangci-lint run ./...
 
-# Install pre-commit hook into .git/hooks (not core.hooksPath, to avoid
-# tracked hooks being modified by branch switches)
+# Install pre-commit hook and set local core.hooksPath to .git/hooks,
+# overriding any inherited/global hooks path
 install-hooks:
 	@git config --local core.hooksPath .git/hooks
 	@cp .githooks/pre-commit .git/hooks/pre-commit

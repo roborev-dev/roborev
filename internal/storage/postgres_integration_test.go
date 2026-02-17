@@ -1113,3 +1113,84 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 	t.Logf("Batch sync test passed: %d jobs and %d reviews pushed in batches of %d",
 		stats.PushedJobs, stats.PushedReviews, syncBatchSize)
 }
+
+func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
+	env := newIntegrationEnv(t, 30*time.Second)
+	db := env.openDB("test.db")
+
+	worker := startSyncWorker(t, db, env.pgURL, "", "1h")
+
+	repo, err := db.GetOrCreateRepo(
+		"/test/progress-abort-repo", "progress-abort-identity",
+	)
+	if err != nil {
+		t.Fatalf("Failed to create repo: %v", err)
+	}
+
+	// Create enough jobs to require multiple push batches
+	numJobs := 80
+	for i := 0; i < numJobs; i++ {
+		sha := fmt.Sprintf("abort%03d", i)
+		commit, err := db.GetOrCreateCommit(
+			repo.ID, sha,
+			fmt.Sprintf("Author %d", i),
+			fmt.Sprintf("Message %d", i),
+			time.Now(),
+		)
+		if err != nil {
+			t.Fatalf("Failed to create commit %d: %v", i, err)
+		}
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   sha,
+			Agent:    "test",
+		})
+		if err != nil {
+			t.Fatalf("Failed to enqueue job %d: %v", i, err)
+		}
+		if _, err := db.Exec(
+			`UPDATE review_jobs SET status = 'running',
+			 started_at = datetime('now') WHERE id = ?`,
+			job.ID,
+		); err != nil {
+			t.Fatalf("Failed to update job %d: %v", i, err)
+		}
+		if err := db.CompleteJob(
+			job.ID, "test", "prompt",
+			fmt.Sprintf("Review %d", i),
+		); err != nil {
+			t.Fatalf("Failed to complete job %d: %v", i, err)
+		}
+	}
+
+	// progressFn returns false on first call to simulate
+	// client disconnect; sync should abort early
+	calls := 0
+	stats, err := worker.SyncNowWithProgress(
+		func(SyncProgress) bool {
+			calls++
+			return false
+		},
+	)
+	if err != nil {
+		t.Fatalf("SyncNowWithProgress failed: %v", err)
+	}
+
+	if calls != 1 {
+		t.Errorf("Expected progressFn called once, got %d", calls)
+	}
+
+	// Should have pushed only one batch worth, not all jobs
+	if stats.PushedJobs >= numJobs {
+		t.Errorf(
+			"Expected partial push (abort after 1 batch), "+
+				"but pushed %d/%d jobs",
+			stats.PushedJobs, numJobs,
+		)
+	}
+
+	t.Logf("Progress abort test passed: pushed %d/%d jobs "+
+		"before abort (1 callback call)",
+		stats.PushedJobs, numJobs)
+}
