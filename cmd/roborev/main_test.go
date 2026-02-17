@@ -24,6 +24,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
+	"github.com/roborev-dev/roborev/internal/worktree"
 )
 
 // ============================================================================
@@ -331,6 +332,54 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	}
 	if !strings.Contains(output[idx:], "\n") {
 		t.Fatalf("expected timer to stop with newline, got: %q", output)
+	}
+}
+
+func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
+	submoduleRepo := t.TempDir()
+	runSubGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = submoduleRepo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	runSubGit("init")
+	runSubGit("symbolic-ref", "HEAD", "refs/heads/main")
+	runSubGit("config", "user.email", "test@test.com")
+	runSubGit("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(submoduleRepo, "sub.txt"), []byte("sub"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runSubGit("add", "sub.txt")
+	runSubGit("commit", "-m", "submodule commit")
+
+	mainRepo := t.TempDir()
+	runMainGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = mainRepo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	runMainGit("init")
+	runMainGit("symbolic-ref", "HEAD", "refs/heads/main")
+	runMainGit("config", "user.email", "test@test.com")
+	runMainGit("config", "user.name", "Test")
+	runMainGit("config", "protocol.file.allow", "always")
+	runMainGit("-c", "protocol.file.allow=always", "submodule", "add", submoduleRepo, "deps/sub")
+	runMainGit("commit", "-m", "add submodule")
+
+	worktreePath, cleanup, err := worktree.Create(mainRepo)
+	if err != nil {
+		t.Fatalf("worktree.Create failed: %v", err)
+	}
+	defer cleanup()
+
+	if _, err := os.Stat(filepath.Join(worktreePath, "deps", "sub", "sub.txt")); err != nil {
+		t.Fatalf("expected submodule file in worktree: %v", err)
 	}
 }
 
