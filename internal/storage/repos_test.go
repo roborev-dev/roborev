@@ -1078,9 +1078,9 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 // TestRetriedReviewJobNotRoutedAsPromptJob verifies that when a review
 // job is retried, the saved prompt from the first run does not cause
 // the job to be misidentified as a prompt-native job (task/compact).
-// This is the storage-level regression test for the IsPromptJob gate.
+// This is the storage-level regression test for the UsesStoredPrompt gate.
 func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
-	t.Run("review job: saved prompt does not make IsPromptJob true", func(t *testing.T) {
+	t.Run("review job: saved prompt does not make UsesStoredPrompt true", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
@@ -1098,8 +1098,8 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		if claimed.Prompt != "" {
 			t.Fatalf("First claim: expected empty prompt, got %q", claimed.Prompt)
 		}
-		if claimed.IsPromptJob() {
-			t.Fatal("First claim: IsPromptJob() should be false for review job")
+		if claimed.UsesStoredPrompt() {
+			t.Fatal("First claim: UsesStoredPrompt() should be false for review job")
 		}
 
 		// 3. Worker saves a built prompt (simulating processJob behavior)
@@ -1117,7 +1117,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			t.Fatal("RetryJob returned false, expected true")
 		}
 
-		// 5. Claim again — prompt is non-empty but IsPromptJob must be false
+		// 5. Claim again — prompt is non-empty but UsesStoredPrompt must be false
 		reclaimed := claimJob(t, db, "worker-2")
 		if reclaimed.ID != claimed.ID {
 			t.Fatalf("Expected to reclaim job %d, got %d", claimed.ID, reclaimed.ID)
@@ -1128,12 +1128,12 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		if reclaimed.JobType != JobTypeReview {
 			t.Errorf("Reclaim: expected job_type=%q, got %q", JobTypeReview, reclaimed.JobType)
 		}
-		if reclaimed.IsPromptJob() {
-			t.Error("Reclaim: IsPromptJob() must be false for review job, even with saved prompt")
+		if reclaimed.UsesStoredPrompt() {
+			t.Error("Reclaim: UsesStoredPrompt() must be false for review job, even with saved prompt")
 		}
 	})
 
-	t.Run("task job: IsPromptJob true across retry", func(t *testing.T) {
+	t.Run("task job: UsesStoredPrompt true across retry", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
@@ -1150,13 +1150,13 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			t.Fatalf("Expected job_type=%q, got %q", JobTypeTask, job.JobType)
 		}
 
-		// 2. Claim it — prompt and IsPromptJob should both be set
+		// 2. Claim it — prompt and UsesStoredPrompt should both be set
 		claimed := claimJob(t, db, "worker-1")
 		if claimed.Prompt != taskPrompt {
 			t.Errorf("First claim: expected prompt %q, got %q", taskPrompt, claimed.Prompt)
 		}
-		if !claimed.IsPromptJob() {
-			t.Error("First claim: IsPromptJob() should be true for task job")
+		if !claimed.UsesStoredPrompt() {
+			t.Error("First claim: UsesStoredPrompt() should be true for task job")
 		}
 
 		// 3. Retry
@@ -1173,15 +1173,15 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		if reclaimed.ID != claimed.ID {
 			t.Fatalf("Expected to reclaim job %d, got %d", claimed.ID, reclaimed.ID)
 		}
-		if !reclaimed.IsPromptJob() {
-			t.Error("Reclaim: IsPromptJob() must be true for task job")
+		if !reclaimed.UsesStoredPrompt() {
+			t.Error("Reclaim: UsesStoredPrompt() must be true for task job")
 		}
 		if reclaimed.Prompt != taskPrompt {
 			t.Errorf("Reclaim: expected prompt %q, got %q", taskPrompt, reclaimed.Prompt)
 		}
 	})
 
-	t.Run("compact job: IsPromptJob true across retry", func(t *testing.T) {
+	t.Run("compact job: UsesStoredPrompt true across retry", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
@@ -1202,8 +1202,8 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 
 		// Claim, retry, reclaim
 		claimed := claimJob(t, db, "worker-1")
-		if !claimed.IsPromptJob() {
-			t.Error("Compact job: IsPromptJob() should be true")
+		if !claimed.UsesStoredPrompt() {
+			t.Error("Compact job: UsesStoredPrompt() should be true")
 		}
 
 		retried, err := db.RetryJob(claimed.ID, "", 3)
@@ -1215,15 +1215,15 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		}
 
 		reclaimed := claimJob(t, db, "worker-2")
-		if !reclaimed.IsPromptJob() {
-			t.Error("Reclaim: IsPromptJob() must be true for compact job")
+		if !reclaimed.UsesStoredPrompt() {
+			t.Error("Reclaim: UsesStoredPrompt() must be true for compact job")
 		}
 		if reclaimed.Prompt != compactPrompt {
 			t.Errorf("Reclaim: expected prompt %q, got %q", compactPrompt, reclaimed.Prompt)
 		}
 	})
 
-	t.Run("dirty job: saved prompt does not make IsPromptJob true", func(t *testing.T) {
+	t.Run("dirty job: saved prompt does not make UsesStoredPrompt true", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
@@ -1255,12 +1255,12 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		}
 
 		reclaimed := claimJob(t, db, "worker-2")
-		if reclaimed.IsPromptJob() {
-			t.Error("Dirty job: IsPromptJob() must be false even with saved prompt")
+		if reclaimed.UsesStoredPrompt() {
+			t.Error("Dirty job: UsesStoredPrompt() must be false even with saved prompt")
 		}
 	})
 
-	t.Run("range job: saved prompt does not make IsPromptJob true", func(t *testing.T) {
+	t.Run("range job: saved prompt does not make UsesStoredPrompt true", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
@@ -1291,8 +1291,8 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		}
 
 		reclaimed := claimJob(t, db, "worker-2")
-		if reclaimed.IsPromptJob() {
-			t.Error("Range job: IsPromptJob() must be false even with saved prompt")
+		if reclaimed.UsesStoredPrompt() {
+			t.Error("Range job: UsesStoredPrompt() must be false even with saved prompt")
 		}
 	})
 }

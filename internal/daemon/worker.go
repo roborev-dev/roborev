@@ -301,7 +301,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Build the prompt (or use pre-stored prompt for task/compact jobs)
 	var reviewPrompt string
 	var err error
-	if job.IsPromptJob() && job.Prompt != "" {
+	if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
 		if preamble != "" {
@@ -309,7 +309,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		} else {
 			reviewPrompt = job.Prompt
 		}
-	} else if job.IsPromptJob() {
+	} else if job.UsesStoredPrompt() {
 		// Prompt-native job (task/compact) with missing prompt — likely a
 		// daemon version mismatch or storage issue. Fail clearly instead
 		// of trying to build a prompt from a non-git label.
@@ -378,15 +378,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// The agent modifies files in the worktree; afterwards we capture the diff as a patch.
 	reviewRepoPath := job.RepoPath
 	if job.IsFixJob() {
-		wtDir, wtCleanup, wtErr := worktree.Create(job.RepoPath)
+		wt, wtErr := worktree.Create(job.RepoPath)
 		if wtErr != nil {
 			log.Printf("[%s] Error creating worktree for fix job %d: %v", workerID, job.ID, wtErr)
 			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("create worktree: %v", wtErr))
 			return
 		}
-		defer wtCleanup()
-		reviewRepoPath = wtDir
-		log.Printf("[%s] Fix job %d: running agent in worktree %s", workerID, job.ID, wtDir)
+		defer wt.Close()
+		reviewRepoPath = wt.Dir
+		log.Printf("[%s] Fix job %d: running agent in worktree %s", workerID, job.ID, wt.Dir)
 	}
 
 	// Run the review

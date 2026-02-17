@@ -372,13 +372,13 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 	runMainGit("-c", "protocol.file.allow=always", "submodule", "add", submoduleRepo, "deps/sub")
 	runMainGit("commit", "-m", "add submodule")
 
-	worktreePath, cleanup, err := worktree.Create(mainRepo)
+	wt, err := worktree.Create(mainRepo)
 	if err != nil {
 		t.Fatalf("worktree.Create failed: %v", err)
 	}
-	defer cleanup()
+	defer wt.Close()
 
-	if _, err := os.Stat(filepath.Join(worktreePath, "deps", "sub", "sub.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(wt.Dir, "deps", "sub", "sub.txt")); err != nil {
 		t.Fatalf("expected submodule file in worktree: %v", err)
 	}
 }

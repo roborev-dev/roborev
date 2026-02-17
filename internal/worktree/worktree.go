@@ -12,13 +12,24 @@ import (
 	"strings"
 )
 
+// Worktree represents a temporary git worktree for isolated agent work.
+// Call Close to remove the worktree and its directory.
+type Worktree struct {
+	Dir      string // Path to the worktree directory
+	repoPath string // Path to the parent repository
+}
+
+// Close removes the worktree and its directory.
+func (w *Worktree) Close() {
+	exec.Command("git", "-C", w.repoPath, "worktree", "remove", "--force", w.Dir).Run()
+	os.RemoveAll(w.Dir)
+}
+
 // Create creates a temporary git worktree detached at HEAD for isolated agent work.
-// Returns the worktree directory path, a cleanup function, and any error.
-// The cleanup function removes the worktree and its directory.
-func Create(repoPath string) (string, func(), error) {
+func Create(repoPath string) (*Worktree, error) {
 	worktreeDir, err := os.MkdirTemp("", "roborev-worktree-")
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 
 	// Create the worktree (without --recurse-submodules for compatibility with older git).
@@ -26,7 +37,7 @@ func Create(repoPath string) (string, func(), error) {
 	cmd := exec.Command("git", "-C", repoPath, "-c", "core.hooksPath="+os.DevNull, "worktree", "add", "--detach", worktreeDir, "HEAD")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.RemoveAll(worktreeDir)
-		return "", nil, fmt.Errorf("git worktree add: %w: %s", err, out)
+		return nil, fmt.Errorf("git worktree add: %w: %s", err, out)
 	}
 
 	// Initialize and update submodules in the worktree
@@ -39,7 +50,7 @@ func Create(repoPath string) (string, func(), error) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
 		os.RemoveAll(worktreeDir)
-		return "", nil, fmt.Errorf("git submodule update: %w: %s", err, out)
+		return nil, fmt.Errorf("git submodule update: %w: %s", err, out)
 	}
 
 	updateArgs := []string{"-C", worktreeDir}
@@ -51,7 +62,7 @@ func Create(repoPath string) (string, func(), error) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
 		os.RemoveAll(worktreeDir)
-		return "", nil, fmt.Errorf("git submodule update: %w: %s", err, out)
+		return nil, fmt.Errorf("git submodule update: %w: %s", err, out)
 	}
 
 	lfsCmd := exec.Command("git", "-C", worktreeDir, "lfs", "env")
@@ -60,12 +71,7 @@ func Create(repoPath string) (string, func(), error) {
 		cmd.Run()
 	}
 
-	cleanup := func() {
-		exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreeDir).Run()
-		os.RemoveAll(worktreeDir)
-	}
-
-	return worktreeDir, cleanup, nil
+	return &Worktree{Dir: worktreeDir, repoPath: repoPath}, nil
 }
 
 // CapturePatch stages all changes in the worktree and returns the diff as a patch string.

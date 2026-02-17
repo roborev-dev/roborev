@@ -508,13 +508,14 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		branchBefore := git.GetCurrentBranch(repoPath)
 
 		// Create temp worktree to isolate agent from user's working tree
-		worktreePath, cleanupWorktree, err := worktree.Create(repoPath)
+		wt, err := worktree.Create(repoPath)
 		if err != nil {
 			return fmt.Errorf("create worktree: %w", err)
 		}
+		worktreePath := wt.Dir
 		// NOTE: not using defer here because we're inside a loop;
 		// defer wouldn't run until runRefine returns, leaking worktrees.
-		// Instead, cleanupWorktree() is called explicitly before every exit point.
+		// Instead, wt.Close() is called explicitly before every exit point.
 
 		// Determine output writer
 		var agentOutput io.Writer
@@ -549,23 +550,23 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 		// Safety checks on main repo (before applying any changes)
 		if wasCleanBefore && !git.IsWorkingTreeClean(repoPath) {
-			cleanupWorktree()
+			wt.Close()
 			return fmt.Errorf("working tree changed during refine - aborting to prevent data loss")
 		}
 		headAfterAgent, resolveErr := git.ResolveSHA(repoPath, "HEAD")
 		if resolveErr != nil {
-			cleanupWorktree()
+			wt.Close()
 			return fmt.Errorf("cannot determine HEAD after agent run: %w", resolveErr)
 		}
 		branchAfterAgent := git.GetCurrentBranch(repoPath)
 		if headAfterAgent != headBefore || branchAfterAgent != branchBefore {
-			cleanupWorktree()
+			wt.Close()
 			return fmt.Errorf("HEAD changed during refine (was %s on %s, now %s on %s) - aborting to prevent applying patch to wrong commit",
 				shortSHA(headBefore), branchBefore, shortSHA(headAfterAgent), branchAfterAgent)
 		}
 
 		if agentErr != nil {
-			cleanupWorktree()
+			wt.Close()
 			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
 			continue
@@ -573,7 +574,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 		// Check if agent made changes in worktree
 		if git.IsWorkingTreeClean(worktreePath) {
-			cleanupWorktree()
+			wt.Close()
 			fmt.Println("Agent made no changes - skipping this review")
 			if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
 				fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
@@ -586,14 +587,14 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		// Capture patch from worktree and apply to main repo
 		patch, err := worktree.CapturePatch(worktreePath)
 		if err != nil {
-			cleanupWorktree()
+			wt.Close()
 			return fmt.Errorf("capture worktree patch: %w", err)
 		}
 		if err := worktree.ApplyPatch(repoPath, patch); err != nil {
-			cleanupWorktree()
+			wt.Close()
 			return fmt.Errorf("apply worktree patch: %w", err)
 		}
-		cleanupWorktree()
+		wt.Close()
 
 		commitMsg := fmt.Sprintf("Address review findings (job %d)\n\n%s", currentFailedReview.JobID, summarizeAgentOutput(output))
 		newCommit, err := commitWithHookRetry(repoPath, commitMsg, addressAgent, opts.quiet)

@@ -961,7 +961,7 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 	// before the next iteration. Verify the directory is removed each time.
 	var prevPath string
 	for i := range 3 {
-		worktreePath, cleanup, err := worktree.Create(repoDir)
+		wt, err := worktree.Create(repoDir)
 		if err != nil {
 			t.Fatalf("iteration %d: worktree.Create failed: %v", i, err)
 		}
@@ -974,13 +974,13 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 		}
 
 		// Verify current worktree exists
-		if _, err := os.Stat(worktreePath); err != nil {
-			t.Fatalf("iteration %d: worktree %s should exist: %v", i, worktreePath, err)
+		if _, err := os.Stat(wt.Dir); err != nil {
+			t.Fatalf("iteration %d: worktree %s should exist: %v", i, wt.Dir, err)
 		}
 
 		// Simulate the explicit cleanup call (as done on error/no-change paths)
-		cleanup()
-		prevPath = worktreePath
+		wt.Close()
+		prevPath = wt.Dir
 	}
 
 	// Verify the last worktree was also cleaned up
@@ -1010,18 +1010,18 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 	}
 
 	// worktree.Create should succeed because it suppresses hooks
-	worktreePath, cleanup, err := worktree.Create(repoDir)
+	wt, err := worktree.Create(repoDir)
 	if err != nil {
 		t.Fatalf("worktree.Create should succeed with failing hook: %v", err)
 	}
-	defer cleanup()
+	defer wt.Close()
 
 	// Verify the worktree directory exists and has the file from the repo
-	if _, err := os.Stat(worktreePath); err != nil {
+	if _, err := os.Stat(wt.Dir); err != nil {
 		t.Fatalf("worktree directory should exist: %v", err)
 	}
 
-	baseFile := filepath.Join(worktreePath, "base.txt")
+	baseFile := filepath.Join(wt.Dir, "base.txt")
 	content, err := os.ReadFile(baseFile)
 	if err != nil {
 		t.Fatalf("expected base.txt in worktree: %v", err)

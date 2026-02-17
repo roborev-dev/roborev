@@ -117,10 +117,10 @@ func (j ReviewJob) IsTaskJob() bool {
 	return true
 }
 
-// IsPromptJob returns true if this job type uses a pre-stored prompt
-// (task or compact). These job types have prompts built by the CLI at
-// enqueue time, not constructed by the worker from git data.
-func (j ReviewJob) IsPromptJob() bool {
+// UsesStoredPrompt returns true if this job type uses a pre-stored prompt
+// (task, compact, or fix). These job types have prompts built at enqueue
+// time, not constructed by the worker from git data.
+func (j ReviewJob) UsesStoredPrompt() bool {
 	return j.JobType == JobTypeTask || j.JobType == JobTypeCompact || j.JobType == JobTypeFix
 }
 

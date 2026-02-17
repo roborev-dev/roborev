@@ -193,7 +193,7 @@ func TestIsDirtyJob(t *testing.T) {
 	})
 }
 
-func TestIsPromptJob(t *testing.T) {
+func TestUsesStoredPrompt(t *testing.T) {
 	tests := []struct {
 		name string
 		job  storage.ReviewJob
@@ -210,8 +210,8 @@ func TestIsPromptJob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.job.IsPromptJob(); got != tt.want {
-				t.Errorf("IsPromptJob() = %v, want %v", got, tt.want)
+			if got := tt.job.UsesStoredPrompt(); got != tt.want {
+				t.Errorf("UsesStoredPrompt() = %v, want %v", got, tt.want)
 			}
 		})
 	}
