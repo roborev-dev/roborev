@@ -1106,14 +1106,23 @@ func (m tuiModel) handleJobsMsg(msg tuiJobsMsg) (tea.Model, tea.Cmd) {
 
 	// Clear pending addressed states that server has confirmed
 	for jobID, pending := range m.pendingAddressed {
+		found := false
 		for i := range m.jobs {
 			if m.jobs[i].ID == jobID {
+				found = true
 				serverState := m.jobs[i].Addressed != nil && *m.jobs[i].Addressed
 				if serverState == pending.newState {
 					delete(m.pendingAddressed, jobID)
 				}
 				break
 			}
+		}
+		// When hideAddressed is active, addressed jobs are filtered
+		// out of the response. If a pending "mark addressed" job is
+		// absent from the response, that confirms the server absorbed
+		// the change — clear it to prevent delta double-counting.
+		if !found && m.hideAddressed && pending.newState {
+			delete(m.pendingAddressed, jobID)
 		}
 	}
 
