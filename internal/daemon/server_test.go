@@ -3388,4 +3388,30 @@ func TestHandleRemap(t *testing.T) {
 			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 		}
 	})
+
+	t.Run("remap with empty repo_path returns 400", func(t *testing.T) {
+		reqData := RemapRequest{
+			RepoPath: "",
+			Mappings: []RemapMapping{
+				{
+					OldSHA:    "a",
+					NewSHA:    "b",
+					PatchID:   "c",
+					Author:    "x",
+					Subject:   "y",
+					Timestamp: time.Now().Format(time.RFC3339),
+				},
+			},
+		}
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/remap", reqData,
+		)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s",
+				w.Code, w.Body.String())
+		}
+	})
 }

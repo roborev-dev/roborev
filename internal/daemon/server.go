@@ -1446,6 +1446,11 @@ func (s *Server) handleRemap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.RepoPath == "" {
+		writeError(w, http.StatusBadRequest, "repo_path is required")
+		return
+	}
+
 	repoRoot, err := git.GetMainRepoRoot(req.RepoPath)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]int{
