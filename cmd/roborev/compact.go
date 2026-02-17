@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
@@ -249,7 +250,7 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 		return fmt.Errorf("fetch final review: %w", err)
 	}
 
-	if !isValidConsolidatedReview(review.Output) {
+	if !daemon.IsValidCompactOutput(review.Output) {
 		return fmt.Errorf("agent produced invalid output (validation failed)")
 	}
 
@@ -521,61 +522,9 @@ func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opt
 	return &job, nil
 }
 
-// isValidConsolidatedReview checks if output looks like actual findings vs error message
-func isValidConsolidatedReview(output string) bool {
-	output = strings.TrimSpace(output)
-
-	// Check for empty output
-	if output == "" {
-		return false
-	}
-
-	lowerOutput := strings.ToLower(output)
-
-	// Valid if it contains "All previous findings have been addressed" (success case)
-	if strings.Contains(lowerOutput, "all previous findings have been addressed") {
-		return true
-	}
-
-	// Check for common error patterns at start of lines (agent failures)
-	// Only check at line start to avoid false positives in review content
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(strings.ToLower(line))
-		if strings.HasPrefix(trimmed, "error:") ||
-			strings.HasPrefix(trimmed, "exception:") ||
-			strings.HasPrefix(trimmed, "traceback") {
-			return false
-		}
-	}
-
-	// Valid if it looks like structured review output
-	// Require both severity indicators AND structural markers for confidence
-	hasSeverity := strings.Contains(lowerOutput, "severity") ||
-		strings.Contains(lowerOutput, "critical") ||
-		strings.Contains(lowerOutput, "high") ||
-		strings.Contains(lowerOutput, "medium") ||
-		strings.Contains(lowerOutput, "low")
-
-	hasStructure := strings.Contains(output, "##") || // Markdown headers
-		strings.Contains(output, "###") ||
-		strings.Contains(lowerOutput, "verified") ||
-		strings.Contains(lowerOutput, "findings") ||
-		strings.Contains(lowerOutput, "issues")
-
-	// Accept if it has both severity levels and structural elements
-	if hasSeverity && hasStructure {
-		return true
-	}
-
-	// Also accept if it has file references (even without severity markers)
-	hasFileRef := strings.Contains(output, ".go:") ||
-		strings.Contains(output, ".py:") ||
-		strings.Contains(output, ".js:") ||
-		strings.Contains(output, ".ts:")
-
-	return hasFileRef && hasStructure
-}
+// isValidConsolidatedReview delegates to the shared daemon package
+// so CLI --wait and daemon background mode use the same validation.
+var isValidConsolidatedReview = daemon.IsValidCompactOutput
 
 // extractJobIDs extracts job IDs from jobReview slice
 func extractJobIDs(reviews []jobReview) []int64 {

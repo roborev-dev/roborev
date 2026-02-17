@@ -388,9 +388,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	log.Printf("[%s] Completed job %d", workerID, job.ID)
 
-	// For compact jobs, automatically mark source jobs as addressed
+	// For compact jobs, validate output then mark source jobs as addressed
 	if job.JobType == "compact" {
-		if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
+		if !IsValidCompactOutput(output) {
+			log.Printf("[%s] Compact job %d produced invalid output, not marking source jobs", workerID, job.ID)
+		} else if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
 			log.Printf("[%s] Warning: failed to mark compact source jobs for job %d: %v", workerID, job.ID, err)
 		}
 	}
@@ -452,12 +454,21 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 
 // markCompactSourceJobs marks all source jobs as addressed for a completed compact job
 func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error {
-	// Read metadata file to get source job IDs
-	metadata, err := ReadCompactMetadata(jobID)
+	// Read metadata file, retrying briefly in case the CLI hasn't finished
+	// writing it yet (the file is written after enqueue returns the job ID).
+	var metadata *CompactMetadata
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		metadata, err = ReadCompactMetadata(jobID)
+		if err == nil {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 	if err != nil {
-		// Metadata file not found or invalid - likely an old compact job from before this feature
-		// or the file was already deleted. Log and continue gracefully.
-		log.Printf("[%s] No compact metadata found for job %d (may be legacy job): %v", workerID, jobID, err)
+		log.Printf("[%s] No compact metadata found for job %d after retries: %v", workerID, jobID, err)
 		return nil
 	}
 

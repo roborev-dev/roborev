@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/roborev-dev/roborev/internal/config"
 )
@@ -46,4 +47,55 @@ func DeleteCompactMetadata(jobID int64) error {
 // compactMetadataPath returns the file path for compact job metadata
 func compactMetadataPath(jobID int64) string {
 	return filepath.Join(config.DataDir(), fmt.Sprintf("compact-%d.json", jobID))
+}
+
+// IsValidCompactOutput checks whether compact agent output looks like
+// a valid consolidated review (vs. an error or garbage).
+func IsValidCompactOutput(output string) bool {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return false
+	}
+
+	lower := strings.ToLower(output)
+
+	// "All previous findings have been addressed" is the success case
+	if strings.Contains(lower, "all previous findings have been addressed") {
+		return true
+	}
+
+	// Reject obvious agent error patterns at line starts
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(strings.ToLower(line))
+		if strings.HasPrefix(trimmed, "error:") ||
+			strings.HasPrefix(trimmed, "exception:") ||
+			strings.HasPrefix(trimmed, "traceback") {
+			return false
+		}
+	}
+
+	// Require severity indicators AND structural markers
+	hasSeverity := strings.Contains(lower, "severity") ||
+		strings.Contains(lower, "critical") ||
+		strings.Contains(lower, "high") ||
+		strings.Contains(lower, "medium") ||
+		strings.Contains(lower, "low")
+
+	hasStructure := strings.Contains(output, "##") ||
+		strings.Contains(output, "###") ||
+		strings.Contains(lower, "verified") ||
+		strings.Contains(lower, "findings") ||
+		strings.Contains(lower, "issues")
+
+	if hasSeverity && hasStructure {
+		return true
+	}
+
+	// File references + structure is also acceptable
+	hasFileRef := strings.Contains(output, ".go:") ||
+		strings.Contains(output, ".py:") ||
+		strings.Contains(output, ".js:") ||
+		strings.Contains(output, ".ts:")
+
+	return hasFileRef && hasStructure
 }

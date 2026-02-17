@@ -93,16 +93,18 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 			reviewReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/review?job_id=%d", serverAddr, jobID), nil)
 			if err == nil {
 				reviewResp, err := client.Do(reviewReq)
-				if err == nil && reviewResp.StatusCode == http.StatusOK {
-					var review storage.Review
-					if json.NewDecoder(reviewResp.Body).Decode(&review) == nil {
-						if len(review.Output) > lastOutputLen {
-							// First output - add newline after waiting dots
-							if lastOutputLen == 0 && waitDots > 0 {
-								fmt.Fprintln(output)
+				if err == nil {
+					if reviewResp.StatusCode == http.StatusOK {
+						var review storage.Review
+						if json.NewDecoder(reviewResp.Body).Decode(&review) == nil {
+							if len(review.Output) > lastOutputLen {
+								// First output - add newline after waiting dots
+								if lastOutputLen == 0 && waitDots > 0 {
+									fmt.Fprintln(output)
+								}
+								fmt.Fprint(output, review.Output[lastOutputLen:])
+								lastOutputLen = len(review.Output)
 							}
-							fmt.Fprint(output, review.Output[lastOutputLen:])
-							lastOutputLen = len(review.Output)
 						}
 					}
 					reviewResp.Body.Close()
