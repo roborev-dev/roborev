@@ -922,7 +922,7 @@ func getRemoteURLByName(repoPath, name string) string {
 // change (e.g. before and after a rebase) share the same patch-id.
 // Returns "" for merge commits, empty commits, or on any error.
 func GetPatchID(repoPath, sha string) string {
-	show := exec.Command("git", "show", sha)
+	show := exec.Command("git", "-c", "color.ui=false", "show", sha)
 	show.Dir = repoPath
 
 	patchID := exec.Command("git", "patch-id", "--stable")

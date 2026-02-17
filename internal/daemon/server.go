@@ -1453,17 +1453,15 @@ func (s *Server) handleRemap(w http.ResponseWriter, r *http.Request) {
 
 	repoRoot, err := git.GetMainRepoRoot(req.RepoPath)
 	if err != nil {
-		writeJSON(w, map[string]int{
-			"remapped": 0, "skipped": 0,
-		})
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("not a git repository: %s", req.RepoPath))
 		return
 	}
 
 	repo, err := s.db.GetRepoByPath(repoRoot)
 	if err != nil {
-		writeJSON(w, map[string]int{
-			"remapped": 0, "skipped": 0,
-		})
+		writeError(w, http.StatusNotFound,
+			fmt.Sprintf("unknown repo: %s", repoRoot))
 		return
 	}
 

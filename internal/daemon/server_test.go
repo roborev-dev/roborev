@@ -3345,7 +3345,7 @@ func TestHandleRemap(t *testing.T) {
 		}
 	})
 
-	t.Run("remap with unknown repo returns zero", func(t *testing.T) {
+	t.Run("remap with unknown repo returns error", func(t *testing.T) {
 		reqData := RemapRequest{
 			RepoPath: "/nonexistent/repo",
 			Mappings: []RemapMapping{
@@ -3356,13 +3356,8 @@ func TestHandleRemap(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handleRemap(w, req)
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", w.Code)
-		}
-		var result map[string]int
-		json.Unmarshal(w.Body.Bytes(), &result)
-		if result["remapped"] != 0 {
-			t.Errorf("expected remapped=0, got %d", result["remapped"])
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
