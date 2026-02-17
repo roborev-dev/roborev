@@ -13,7 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/mattn/go-isatty v0.0.20
-	github.com/mattn/go-runewidth v0.0.16
+	github.com/mattn/go-runewidth v0.0.20
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.42.2
@@ -26,6 +26,7 @@ require (
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
