@@ -580,6 +580,22 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add patch_id column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'patch_id'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check patch_id column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN patch_id TEXT`)
+		if err != nil {
+			return fmt.Errorf("add patch_id column: %w", err)
+		}
+		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_patch_id ON review_jobs(patch_id)`)
+		if err != nil {
+			return fmt.Errorf("create idx_review_jobs_patch_id: %w", err)
+		}
+	}
+
 	// Migration: add index on reviews.addressed for server-side filtering
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reviews_addressed ON reviews(addressed)`)
 	if err != nil {

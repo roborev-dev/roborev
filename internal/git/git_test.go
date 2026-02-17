@@ -1507,3 +1507,68 @@ func TestIsAncestor(t *testing.T) {
 		}
 	})
 }
+
+func TestGetPatchID(t *testing.T) {
+	t.Run("stable across rebase", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		// Use -b to name the initial branch explicitly
+		repo.Run("checkout", "-b", "main")
+		repo.CommitFile("base.txt", "base", "initial")
+
+		// Create a commit on a branch
+		repo.Run("checkout", "-b", "feature")
+		repo.CommitFile("feature.txt", "hello", "add feature")
+		sha1 := repo.HeadSHA()
+		patchID1 := GetPatchID(repo.Dir, sha1)
+
+		if patchID1 == "" {
+			t.Fatal("expected non-empty patch-id")
+		}
+
+		// Rebase onto a new base commit
+		repo.Run("checkout", "main")
+		repo.CommitFile("other.txt", "other", "another commit")
+		repo.Run("checkout", "feature")
+		repo.Run("rebase", "main")
+		sha2 := repo.HeadSHA()
+		patchID2 := GetPatchID(repo.Dir, sha2)
+
+		if sha1 == sha2 {
+			t.Fatal("SHAs should differ after rebase")
+		}
+		if patchID1 != patchID2 {
+			t.Errorf("patch-ids should match: %s != %s", patchID1, patchID2)
+		}
+	})
+
+	t.Run("different for modified commits", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("a.txt", "content-a", "commit a")
+		sha1 := repo.HeadSHA()
+
+		repo.CommitFile("b.txt", "content-b", "commit b")
+		sha2 := repo.HeadSHA()
+
+		pid1 := GetPatchID(repo.Dir, sha1)
+		pid2 := GetPatchID(repo.Dir, sha2)
+
+		if pid1 == "" || pid2 == "" {
+			t.Fatal("expected non-empty patch-ids")
+		}
+		if pid1 == pid2 {
+			t.Error("different diffs should produce different patch-ids")
+		}
+	})
+
+	t.Run("empty for empty commit", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("a.txt", "content", "first")
+		repo.Run("commit", "--allow-empty", "-m", "empty")
+		sha := repo.HeadSHA()
+
+		pid := GetPatchID(repo.Dir, sha)
+		if pid != "" {
+			t.Errorf("expected empty patch-id for empty commit, got %s", pid)
+		}
+	})
+}

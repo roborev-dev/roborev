@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"slices"
 	"strings"
@@ -719,6 +720,7 @@ type EnqueueOpts struct {
 	Model        string
 	Reasoning    string
 	ReviewType   string // e.g. "security" — changes which system prompt is used
+	PatchID      string // Stable patch-id for rebase tracking
 	DiffContent  string // For dirty reviews (captured at enqueue time)
 	Prompt       string // For task jobs (pre-stored prompt)
 	OutputPrefix string // Prefix to prepend to review output
@@ -779,12 +781,12 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 
 	result, err := db.Exec(`
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning,
-			status, job_type, review_type, diff_content, prompt, agentic, output_prefix,
+			status, job_type, review_type, patch_id, diff_content, prompt, agentic, output_prefix,
 			uuid, source_machine_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch),
 		opts.Agent, nullString(opts.Model), reasoning,
-		jobType, opts.ReviewType,
+		jobType, opts.ReviewType, nullString(opts.PatchID),
 		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt,
 		nullString(opts.OutputPrefix),
 		uid, machineID, nowStr)
@@ -803,6 +805,7 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 		Reasoning:       reasoning,
 		JobType:         jobType,
 		ReviewType:      opts.ReviewType,
+		PatchID:         opts.PatchID,
 		Status:          JobStatusQueued,
 		EnqueuedAt:      now,
 		Prompt:          opts.Prompt,
@@ -863,10 +866,11 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var jobType sql.NullString
 	var reviewType sql.NullString
 	var outputPrefix sql.NullString
+	var patchID sql.NullString
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.model, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), j.job_type, j.review_type,
-		       j.output_prefix
+		       j.output_prefix, j.patch_id
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -875,7 +879,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &job.Agent, &model, &job.Reasoning, &job.Status, &enqueuedAt,
 		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent, &prompt, &agenticInt, &jobType, &reviewType,
-		&outputPrefix)
+		&outputPrefix, &patchID)
 	if err != nil {
 		return nil, err
 	}
@@ -907,6 +911,9 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	}
 	if outputPrefix.Valid {
 		job.OutputPrefix = outputPrefix.String
+	}
+	if patchID.Valid {
+		job.PatchID = patchID.String
 	}
 	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	job.Status = JobStatusRunning
@@ -1151,7 +1158,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.addressed, rv.output,
-		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type
+		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -1218,7 +1225,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, jobTypeStr, reviewTypeStr sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var addressed sql.NullInt64
@@ -1227,7 +1234,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
 			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &addressed, &output,
-			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr)
+			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr)
 		if err != nil {
 			return nil, err
 		}
@@ -1271,6 +1278,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		if reviewTypeStr.Valid {
 			j.ReviewType = reviewTypeStr.String
+		}
+		if patchIDStr.Valid {
+			j.PatchID = patchIDStr.String
 		}
 		if branch.Valid {
 			j.Branch = branch.String
@@ -1349,18 +1359,18 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var agentic int
 
-	var model, branch, jobTypeStr, reviewTypeStr sql.NullString
+	var model, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 	err := db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
-		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type
+		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type, j.patch_id
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE j.id = ?
 	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &agentic,
-		&j.RepoPath, &j.RepoName, &commitSubject, &model, &jobTypeStr, &reviewTypeStr)
+		&j.RepoPath, &j.RepoName, &commitSubject, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr)
 	if err != nil {
 		return nil, err
 	}
@@ -1398,6 +1408,9 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	}
 	if reviewTypeStr.Valid {
 		j.ReviewType = reviewTypeStr.String
+	}
+	if patchIDStr.Valid {
+		j.PatchID = patchIDStr.String
 	}
 	if branch.Valid {
 		j.Branch = branch.String
@@ -1447,4 +1460,97 @@ func (db *DB) UpdateJobBranch(jobID int64, branch string) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+// RemapJobGitRef updates git_ref and commit_id for jobs matching
+// oldSHA in a repo, used after rebases to preserve review history.
+// If a job has a stored patch_id that differs from the provided one,
+// that job is skipped (the commit's content changed).
+// Returns the number of rows updated.
+func (db *DB) RemapJobGitRef(
+	repoID int64, oldSHA, newSHA, patchID string, newCommitID int64,
+) (int, error) {
+	now := time.Now().Format(time.RFC3339)
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET git_ref = ?, commit_id = ?, patch_id = ?, updated_at = ?
+		WHERE git_ref = ? AND repo_id = ?
+		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
+	`, newSHA, newCommitID, nullString(patchID), now, oldSHA, repoID, patchID)
+	if err != nil {
+		return 0, fmt.Errorf("remap job git_ref: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+// RemapJob atomically checks for matching jobs, creates the commit
+// row, and updates git_ref — all in a single transaction to prevent
+// orphan commit rows or races between concurrent remaps.
+func (db *DB) RemapJob(
+	repoID int64, oldSHA, newSHA, patchID string,
+	author, subject string, timestamp time.Time,
+) (int, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin remap tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var matchCount int
+	err = tx.QueryRow(`
+		SELECT COUNT(*) FROM review_jobs
+		WHERE git_ref = ? AND repo_id = ?
+		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
+	`, oldSHA, repoID, patchID).Scan(&matchCount)
+	if err != nil {
+		return 0, fmt.Errorf("count matching jobs: %w", err)
+	}
+	if matchCount == 0 {
+		return 0, nil
+	}
+
+	// Create or find commit row for the new SHA
+	var commitID int64
+	err = tx.QueryRow(
+		`SELECT id FROM commits WHERE repo_id = ? AND sha = ?`,
+		repoID, newSHA,
+	).Scan(&commitID)
+	if err == sql.ErrNoRows {
+		result, insertErr := tx.Exec(`
+			INSERT INTO commits (repo_id, sha, author, subject, timestamp)
+			VALUES (?, ?, ?, ?, ?)
+		`, repoID, newSHA, author, subject,
+			timestamp.Format(time.RFC3339))
+		if insertErr != nil {
+			return 0, fmt.Errorf("create commit: %w", insertErr)
+		}
+		commitID, _ = result.LastInsertId()
+	} else if err != nil {
+		return 0, fmt.Errorf("find commit: %w", err)
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	result, err := tx.Exec(`
+		UPDATE review_jobs
+		SET git_ref = ?, commit_id = ?, patch_id = ?, updated_at = ?
+		WHERE git_ref = ? AND repo_id = ?
+		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
+	`, newSHA, commitID, nullString(patchID), now,
+		oldSHA, repoID, patchID)
+	if err != nil {
+		return 0, fmt.Errorf("remap job git_ref: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit remap tx: %w", err)
+	}
+	return int(n), nil
 }
