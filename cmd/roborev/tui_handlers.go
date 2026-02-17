@@ -21,6 +21,10 @@ func (m tuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(msg)
 	case tuiViewTail:
 		return m.handleTailKey(msg)
+	case tuiViewFixPrompt:
+		return m.handleFixPromptKey(msg)
+	case tuiViewTasks:
+		return m.handleTasksKey(msg)
 	}
 
 	// Global keys shared across queue/review/prompt/commitMsg/help views
@@ -375,6 +379,10 @@ func (m tuiModel) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKey()
 	case "esc":
 		return m.handleEscKey()
+	case "F":
+		return m.handleFixKey()
+	case "T":
+		return m.handleToggleTasksKey()
 	}
 	return m, nil
 }
@@ -1328,6 +1336,153 @@ func (m tuiModel) handleReconnectMsg(msg tuiReconnectMsg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		return m, tea.Batch(cmds...)
+	}
+	return m, nil
+}
+
+// handleFixKey opens the fix prompt modal for the currently selected job.
+func (m tuiModel) handleFixKey() (tea.Model, tea.Cmd) {
+	if m.currentView != tuiViewQueue && m.currentView != tuiViewReview {
+		return m, nil
+	}
+
+	// Get the selected job
+	var job storage.ReviewJob
+	if m.currentView == tuiViewReview {
+		if m.currentReview == nil || m.currentReview.Job == nil {
+			return m, nil
+		}
+		job = *m.currentReview.Job
+	} else {
+		if len(m.jobs) == 0 || m.selectedIdx < 0 || m.selectedIdx >= len(m.jobs) {
+			return m, nil
+		}
+		job = m.jobs[m.selectedIdx]
+	}
+
+	// Only allow fix on completed jobs with a failing verdict
+	if job.Status != storage.JobStatusDone {
+		m.flashMessage = "Can only fix completed reviews"
+		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashView = m.currentView
+		return m, nil
+	}
+
+	// Open fix prompt modal
+	m.fixPromptJobID = job.ID
+	m.fixPromptText = "" // Empty means use default prompt from server
+	m.currentView = tuiViewFixPrompt
+	return m, nil
+}
+
+// handleToggleTasksKey switches between queue and tasks view.
+func (m tuiModel) handleToggleTasksKey() (tea.Model, tea.Cmd) {
+	if m.currentView == tuiViewTasks {
+		m.currentView = tuiViewQueue
+		return m, nil
+	}
+	if m.currentView == tuiViewQueue {
+		m.currentView = tuiViewTasks
+		return m, m.fetchFixJobs()
+	}
+	return m, nil
+}
+
+// handleFixPromptKey handles key input in the fix prompt confirmation modal.
+func (m tuiModel) handleFixPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.currentView = tuiViewQueue
+		m.fixPromptText = ""
+		m.fixPromptJobID = 0
+		return m, nil
+	case "enter":
+		jobID := m.fixPromptJobID
+		prompt := m.fixPromptText
+		m.currentView = tuiViewTasks
+		m.fixPromptText = ""
+		m.fixPromptJobID = 0
+		return m, m.triggerFix(jobID, prompt)
+	case "backspace":
+		if len(m.fixPromptText) > 0 {
+			runes := []rune(m.fixPromptText)
+			m.fixPromptText = string(runes[:len(runes)-1])
+		}
+		return m, nil
+	default:
+		if len(msg.Runes) > 0 {
+			for _, r := range msg.Runes {
+				if unicode.IsPrint(r) || r == '\n' || r == '\t' {
+					m.fixPromptText += string(r)
+				}
+			}
+		}
+		return m, nil
+	}
+}
+
+// handleTasksKey handles key input in the tasks view.
+func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc", "T":
+		m.currentView = tuiViewQueue
+		return m, nil
+	case "up", "k":
+		if m.fixSelectedIdx > 0 {
+			m.fixSelectedIdx--
+		}
+		return m, nil
+	case "down", "j":
+		if m.fixSelectedIdx < len(m.fixJobs)-1 {
+			m.fixSelectedIdx++
+		}
+		return m, nil
+	case "t":
+		// Tail output of running fix job
+		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
+			job := m.fixJobs[m.fixSelectedIdx]
+			if job.Status == storage.JobStatusRunning {
+				m.tailJobID = job.ID
+				m.tailLines = nil
+				m.tailScroll = 0
+				m.tailStreaming = true
+				m.tailFollow = true
+				m.tailFromView = tuiViewTasks
+				m.currentView = tuiViewTail
+				return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
+			}
+		}
+		return m, nil
+	case "A":
+		// Apply patch (handled in Phase 5)
+		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
+			job := m.fixJobs[m.fixSelectedIdx]
+			if job.Status == storage.JobStatusDone {
+				return m, m.applyFixPatch(job.ID)
+			}
+		}
+		return m, nil
+	case "x":
+		// Cancel fix job
+		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
+			job := &m.fixJobs[m.fixSelectedIdx]
+			if job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued {
+				oldStatus := job.Status
+				oldFinishedAt := job.FinishedAt
+				job.Status = storage.JobStatusCanceled
+				now := time.Now()
+				job.FinishedAt = &now
+				return m, m.cancelJob(job.ID, oldStatus, oldFinishedAt)
+			}
+		}
+		return m, nil
+	case "r":
+		// Refresh
+		return m, m.fetchFixJobs()
 	}
 	return m, nil
 }
