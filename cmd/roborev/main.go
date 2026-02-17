@@ -2400,7 +2400,9 @@ func installOrUpgradeHook(
 			return nil
 		} else {
 			// Upgrade: remove old snippet, append new one
-			removeRoborevFromHook(hookPath)
+			if rmErr := removeRoborevFromHook(hookPath); rmErr != nil {
+				return fmt.Errorf("upgrade %s: %w", hookName, rmErr)
+			}
 			if updated, readErr := os.ReadFile(hookPath); readErr == nil {
 				remaining := string(updated)
 				if remaining != "" && !strings.HasSuffix(remaining, "\n") {
@@ -2436,9 +2438,11 @@ func uninstallHookCmd() *cobra.Command {
 			for _, hookName := range []string{
 				"post-commit", "post-rewrite",
 			} {
-				removeRoborevFromHook(
+				if err := removeRoborevFromHook(
 					filepath.Join(hooksDir, hookName),
-				)
+				); err != nil {
+					return err
+				}
 			}
 
 			return nil
@@ -2462,6 +2466,22 @@ func isRoborevMarker(line string) bool {
 		strings.HasPrefix(trimmed, "# roborev post-rewrite hook")
 }
 
+// hasCommandPrefix checks if line starts with prefix and the prefix
+// is followed by end-of-string, whitespace, or a shell operator
+// (e.g. redirection). This prevents "enqueue --quiet" from matching
+// "enqueue --quietly".
+func hasCommandPrefix(line, prefix string) bool {
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	if len(line) == len(prefix) {
+		return true
+	}
+	next := line[len(prefix)]
+	return next == ' ' || next == '\t' || next == '>' ||
+		next == '|' || next == '&' || next == ';'
+}
+
 // isRoborevSnippetLine returns true if the line is part of the
 // generated roborev hook snippet. Matches only the exact patterns
 // produced by generateHookContent/generatePostRewriteHookContent:
@@ -2478,22 +2498,25 @@ func isRoborevSnippetLine(line string) bool {
 		return false
 	}
 	return strings.HasPrefix(trimmed, "ROBOREV=") ||
-		strings.HasPrefix(trimmed, "\"$ROBOREV\" enqueue --quiet") ||
-		strings.HasPrefix(trimmed, "\"$ROBOREV\" remap --quiet") ||
+		hasCommandPrefix(trimmed, "\"$ROBOREV\" enqueue --quiet") ||
+		hasCommandPrefix(trimmed, "\"$ROBOREV\" remap --quiet") ||
 		strings.HasPrefix(trimmed, "if [ ! -x \"$ROBOREV\"") ||
 		strings.HasPrefix(trimmed, "[ -z \"$ROBOREV\"") ||
 		strings.HasPrefix(trimmed, "ROBOREV=$(command")
 }
 
-func removeRoborevFromHook(hookPath string) {
+func removeRoborevFromHook(hookPath string) error {
 	content, err := os.ReadFile(hookPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
-		return
+		return fmt.Errorf("read %s: %w", filepath.Base(hookPath), err)
 	}
 
 	hookStr := string(content)
 	if !strings.Contains(strings.ToLower(hookStr), "roborev") {
-		return
+		return nil
 	}
 
 	lines := strings.Split(hookStr, "\n")
@@ -2509,7 +2532,7 @@ func removeRoborevFromHook(hookPath string) {
 		}
 	}
 	if blockStart < 0 {
-		return
+		return nil
 	}
 
 	// Find the end: scan forward from the marker, consuming only
@@ -2560,21 +2583,23 @@ func removeRoborevFromHook(hookPath string) {
 		}
 	}
 
+	hookName := filepath.Base(hookPath)
 	if hasContent {
 		newContent := strings.Join(remaining, "\n")
 		if !strings.HasSuffix(newContent, "\n") {
 			newContent += "\n"
 		}
 		if err := os.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
-			return
+			return fmt.Errorf("write %s: %w", hookName, err)
 		}
-		fmt.Printf("Removed roborev from %s\n", filepath.Base(hookPath))
+		fmt.Printf("Removed roborev from %s\n", hookName)
 	} else {
 		if err := os.Remove(hookPath); err != nil {
-			return
+			return fmt.Errorf("remove %s: %w", hookName, err)
 		}
-		fmt.Printf("Removed %s hook\n", filepath.Base(hookPath))
+		fmt.Printf("Removed %s hook\n", hookName)
 	}
+	return nil
 }
 
 func skillsCmd() *cobra.Command {
@@ -3430,7 +3455,10 @@ func installPostRewriteHook(hooksDir string) {
 		} else {
 			// Upgrade: remove old roborev snippet, append new one.
 			// This preserves user content around the snippet.
-			removeRoborevFromHook(hookPath)
+			if rmErr := removeRoborevFromHook(hookPath); rmErr != nil {
+				fmt.Printf("  Warning: %v\n", rmErr)
+				return
+			}
 			if updated, err := os.ReadFile(hookPath); err == nil {
 				remaining := string(updated)
 				if remaining != "" && !strings.HasSuffix(remaining, "\n") {

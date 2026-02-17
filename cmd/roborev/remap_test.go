@@ -39,6 +39,8 @@ func TestRemapStdinParsing(t *testing.T) {
 }
 
 func TestGitSHAValidation(t *testing.T) {
+	sha256Valid := "abc123def456abc123def456abc123def456abc1" +
+		"aabbccddeeff00112233aabb"
 	tests := []struct {
 		input string
 		valid bool
@@ -46,7 +48,8 @@ func TestGitSHAValidation(t *testing.T) {
 		{"abc123def456abc123def456abc123def456abc1", true},
 		{"0000000000000000000000000000000000000000", true},
 		{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true},
-		{"abc123", false}, // too short
+		{sha256Valid, true}, // SHA-256 (64 chars)
+		{"abc123", false},   // too short
 		{"ABC123DEF456ABC123DEF456ABC123DEF456ABC1", false}, // uppercase
 		{"--option", false}, // flag injection
 		{"-n1", false},      // short flag
@@ -54,6 +57,8 @@ func TestGitSHAValidation(t *testing.T) {
 		{"abc123def456abc123def456abc123def456abc", false},   // 39 chars
 		{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", false},  // non-hex
 		{"abc123def456abc123def456abc123def456abc1 ", false}, // trailing space
+		{sha256Valid + "aa", false},                          // 66 chars
+		{sha256Valid[:63], false},                            // 63 chars
 	}
 	for _, tt := range tests {
 		got := gitSHAPattern.MatchString(tt.input)

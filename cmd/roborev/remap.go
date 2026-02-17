@@ -12,8 +12,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// gitSHAPattern matches a full 40-character hex git SHA.
-var gitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+// gitSHAPattern matches a full hex git SHA: 40 chars (SHA-1)
+// or 64 chars (SHA-256).
+var gitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
 func remapCmd() *cobra.Command {
 	var quiet bool

@@ -737,7 +737,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
 			t.Error("generated hook should have been deleted entirely")
@@ -755,7 +757,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		content, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -787,7 +791,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		content, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -820,7 +826,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		content, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -869,7 +877,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		content, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -902,7 +912,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		content, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -934,7 +946,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		content, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -964,7 +978,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		content, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -982,6 +998,38 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 		}
 	})
 
+	t.Run("user --quietly/--quiet-mode lines are preserved", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		// User lines that start with --quiet but aren't the exact generated form
+		mixed := "#!/bin/sh\n" +
+			generatePostRewriteHookContent() +
+			"\"$ROBOREV\" enqueue --quietly\n" +
+			"\"$ROBOREV\" remap --quiet-mode\n"
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "enqueue --quietly") {
+			t.Errorf("user --quietly line should be preserved, got:\n%s", contentStr)
+		}
+		if !strings.Contains(contentStr, "remap --quiet-mode") {
+			t.Errorf("user --quiet-mode line should be preserved, got:\n%s", contentStr)
+		}
+	})
+
 	t.Run("no-op if hook has no roborev content", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
@@ -993,7 +1041,9 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		removeRoborevFromHook(hookPath)
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
 
 		content, err := os.ReadFile(hookPath)
 		if err != nil {
