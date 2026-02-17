@@ -380,6 +380,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
+	// For compact jobs, validate raw agent output before storing.
+	// Invalid output (empty, error patterns) should fail the job,
+	// not produce a "done" review that misleads --wait callers.
+	if job.JobType == "compact" && !IsValidCompactOutput(output) {
+		log.Printf("[%s] Compact job %d produced invalid output, failing", workerID, job.ID)
+		wp.failOrRetry(workerID, job, agentName, "compact output invalid (empty or error)")
+		return
+	}
+
 	// Store the result (use actual agent name, not requested).
 	// CompleteJob is a no-op (returns nil) if the job was canceled
 	// between agent finish and now.
@@ -402,15 +411,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			// No review was stored, so skip broadcast too.
 			log.Printf("[%s] Compact job %d not completed (status=%s), skipping source marking", workerID, job.ID, j.Status)
 			return
-		} else {
-			// Validate the raw agent output (not the prefixed form)
-			// to catch empty/error responses that would be masked
-			// by the always-present output prefix.
-			if !IsValidCompactOutput(output) {
-				log.Printf("[%s] Compact job %d produced invalid output, not marking source jobs", workerID, job.ID)
-			} else if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
-				log.Printf("[%s] Warning: failed to mark compact source jobs for job %d: %v", workerID, job.ID, err)
-			}
+		} else if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
+			log.Printf("[%s] Warning: failed to mark compact source jobs for job %d: %v", workerID, job.ID, err)
 		}
 	}
 

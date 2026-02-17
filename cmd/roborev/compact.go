@@ -281,16 +281,6 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 		return fmt.Errorf("verification failed: %w", err)
 	}
 
-	// Fetch and validate final output
-	review, err := fetchReview(ctx, serverAddr, jobID)
-	if err != nil {
-		return fmt.Errorf("fetch final review: %w", err)
-	}
-
-	if !daemon.IsValidCompactOutput(review.Output) {
-		return fmt.Errorf("agent produced invalid output (validation failed)")
-	}
-
 	return nil
 }
 
