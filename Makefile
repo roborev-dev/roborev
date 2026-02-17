@@ -56,7 +56,8 @@ lint:
 # Install pre-commit hook, resolving the hooks directory via git so
 # this works in both normal repos and linked worktrees
 install-hooks:
-	@hooks_dir=$$(git rev-parse --git-path hooks) && \
+	@hooks_rel=$$(git rev-parse --git-path hooks) && \
+		hooks_dir=$$(cd "$$(dirname "$$hooks_rel")" && echo "$$PWD/$$(basename "$$hooks_rel")") && \
 		git config --local core.hooksPath "$$hooks_dir" && \
 		mkdir -p "$$hooks_dir" && \
 		cp .githooks/pre-commit "$$hooks_dir/pre-commit" && \
