@@ -779,9 +779,10 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			strings.TrimSpace(responseIDStr), 10, 64,
 		)
 		if err != nil {
-			return stats, fmt.Errorf("parse response cursor: %w", err)
+			log.Printf("Sync: malformed response cursor %q, resetting to 0", responseIDStr)
+		} else {
+			responseID = parsed
 		}
-		responseID = parsed
 	}
 
 	for {
