@@ -110,6 +110,75 @@ func TestIsValidConsolidatedReview(t *testing.T) {
 	}
 }
 
+func TestFilterReviewJobs(t *testing.T) {
+	tests := []struct {
+		name    string
+		jobs    []storage.ReviewJob
+		wantIDs []int64
+	}{
+		{
+			name: "excludes_compact_and_task",
+			jobs: []storage.ReviewJob{
+				{ID: 1, JobType: "review"},
+				{ID: 2, JobType: "compact"},
+				{ID: 3, JobType: "range"},
+				{ID: 4, JobType: "task"},
+				{ID: 5, JobType: "dirty"},
+			},
+			wantIDs: []int64{1, 3, 5},
+		},
+		{
+			name: "keeps_all_review_types",
+			jobs: []storage.ReviewJob{
+				{ID: 10, JobType: "review"},
+				{ID: 11, JobType: "range"},
+				{ID: 12, JobType: "dirty"},
+				{ID: 13, JobType: "security"},
+			},
+			wantIDs: []int64{10, 11, 12, 13},
+		},
+		{
+			name:    "empty_input",
+			jobs:    []storage.ReviewJob{},
+			wantIDs: []int64{},
+		},
+		{
+			name: "all_excluded",
+			jobs: []storage.ReviewJob{
+				{ID: 1, JobType: "compact"},
+				{ID: 2, JobType: "task"},
+			},
+			wantIDs: []int64{},
+		},
+		{
+			name: "empty_job_type_kept",
+			jobs: []storage.ReviewJob{
+				{ID: 1, JobType: ""},
+				{ID: 2, JobType: "compact"},
+			},
+			wantIDs: []int64{1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterReviewJobs(tt.jobs)
+
+			if len(got) != len(tt.wantIDs) {
+				t.Fatalf("filterReviewJobs() returned %d jobs, want %d",
+					len(got), len(tt.wantIDs))
+			}
+
+			for i, j := range got {
+				if j.ID != tt.wantIDs[i] {
+					t.Errorf("filterReviewJobs()[%d].ID = %d, want %d",
+						i, j.ID, tt.wantIDs[i])
+				}
+			}
+		})
+	}
+}
+
 func TestExtractJobIDs(t *testing.T) {
 	tests := []struct {
 		name    string
