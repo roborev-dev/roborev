@@ -7,9 +7,38 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
+
+// templateDB holds a pre-migrated SQLite database file. Tests copy this
+// file instead of re-running the full migration chain on every call to
+// openTestDB, which is the dominant cost on macOS ARM64 with -race.
+var (
+	templateOnce sync.Once
+	templatePath string
+	templateErr  error
+)
+
+func getTemplatePath() (string, error) {
+	templateOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "roborev-test-template-*")
+		if err != nil {
+			templateErr = err
+			return
+		}
+		p := filepath.Join(dir, "template.db")
+		db, err := Open(p)
+		if err != nil {
+			templateErr = err
+			return
+		}
+		db.Close()
+		templatePath = p
+	})
+	return templatePath, templateErr
+}
 
 func TestOpenAndClose(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -2464,14 +2493,26 @@ func TestListBranchesWithCounts(t *testing.T) {
 }
 
 func openTestDB(t *testing.T) *DB {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	t.Helper()
+	tmpl, err := getTemplatePath()
+	if err != nil {
+		t.Fatalf("Failed to create template DB: %v", err)
+	}
+
+	data, err := os.ReadFile(tmpl)
+	if err != nil {
+		t.Fatalf("Failed to read template DB: %v", err)
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	if err := os.WriteFile(dbPath, data, 0644); err != nil {
+		t.Fatalf("Failed to write test DB: %v", err)
+	}
 
 	db, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open test DB: %v", err)
 	}
-
 	return db
 }
 
