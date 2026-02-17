@@ -1459,9 +1459,14 @@ func (s *Server) handleRemap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo, err := s.db.GetRepoByPath(repoRoot)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound,
 			fmt.Sprintf("unknown repo: %s", repoRoot))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError,
+			fmt.Sprintf("lookup repo: %v", err))
 		return
 	}
 

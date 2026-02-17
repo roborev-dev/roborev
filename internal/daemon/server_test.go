@@ -3345,7 +3345,7 @@ func TestHandleRemap(t *testing.T) {
 		}
 	})
 
-	t.Run("remap with unknown repo returns error", func(t *testing.T) {
+	t.Run("remap with non-git path returns 400", func(t *testing.T) {
 		reqData := RemapRequest{
 			RepoPath: "/nonexistent/repo",
 			Mappings: []RemapMapping{
@@ -3358,6 +3358,33 @@ func TestHandleRemap(t *testing.T) {
 
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("remap with unregistered repo returns 404", func(t *testing.T) {
+		// Create a valid git repo that is NOT registered in the DB
+		unregistered := filepath.Join(tmpDir, "unregistered-repo")
+		if err := os.MkdirAll(unregistered, 0755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("git", "init")
+		cmd.Dir = unregistered
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %s: %v", out, err)
+		}
+
+		reqData := RemapRequest{
+			RepoPath: unregistered,
+			Mappings: []RemapMapping{
+				{OldSHA: "a", NewSHA: "b", PatchID: "c", Author: "x", Subject: "y", Timestamp: time.Now().Format(time.RFC3339)},
+			},
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
