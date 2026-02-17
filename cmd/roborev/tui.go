@@ -3465,7 +3465,7 @@ func (m tuiModel) renderFixPromptView() string {
 	if promptDisplay == "" {
 		promptDisplay = "(default: fix all findings from the review)"
 	}
-	b.WriteString(fmt.Sprintf("  > %s_\n", promptDisplay))
+	fmt.Fprintf(&b, "  > %s_\n", promptDisplay)
 	b.WriteString("\n")
 
 	b.WriteString(tuiHelpStyle.Render("enter: start fix | esc: cancel"))
