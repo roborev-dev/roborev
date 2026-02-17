@@ -295,7 +295,7 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		stats, err := s.syncWorker.SyncNowWithProgress(func(p storage.SyncProgress) {
+		stats, err := s.syncWorker.SyncNowWithProgress(func(p storage.SyncProgress) bool {
 			if !writeNDJSON(w, map[string]interface{}{
 				"type":        "progress",
 				"phase":       p.Phase,
@@ -307,9 +307,10 @@ func (s *Server) handleSyncNow(w http.ResponseWriter, r *http.Request) {
 				"total_revs":  p.TotalRevs,
 				"total_resps": p.TotalResps,
 			}) {
-				return
+				return false
 			}
 			flusher.Flush()
+			return true
 		})
 
 		if err != nil {

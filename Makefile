@@ -56,7 +56,7 @@ lint:
 # Install pre-commit hook into .git/hooks (not core.hooksPath, to avoid
 # tracked hooks being modified by branch switches)
 install-hooks:
-	@git config --unset core.hooksPath 2>/dev/null || true
+	@git config --local core.hooksPath .git/hooks
 	@cp .githooks/pre-commit .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
 	@echo "Installed pre-commit hook to .git/hooks/pre-commit"

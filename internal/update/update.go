@@ -567,6 +567,10 @@ func extractBaseSemver(v string) string {
 	if idx := strings.Index(v, "-"); idx > 0 {
 		v = v[:idx]
 	}
+	// Strip build metadata (+meta per semver spec)
+	if idx := strings.Index(v, "+"); idx > 0 {
+		v = v[:idx]
+	}
 	return v
 }
 
@@ -611,13 +615,6 @@ func isNewer(v1, v2 string) bool {
 	parts2 := strings.Split(base2, ".")
 
 	parsePart := func(part string) int {
-		// Strip build metadata (+meta) or any non-numeric suffix
-		// so "3+meta" parses as 3
-		if idx := strings.IndexFunc(part, func(r rune) bool {
-			return r < '0' || r > '9'
-		}); idx > 0 {
-			part = part[:idx]
-		}
 		n, err := strconv.Atoi(part)
 		if err != nil {
 			return 0

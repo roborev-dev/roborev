@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -182,7 +183,7 @@ func (w *SyncWorker) SyncNow() (*SyncStats, error) {
 
 // SyncNowWithProgress is like SyncNow but calls progressFn after each batch.
 // If not connected, attempts to connect first.
-func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncStats, error) {
+func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*SyncStats, error) {
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
@@ -254,7 +255,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncSt
 			stats.PushedJobs, stats.PushedReviews, stats.PushedResponses)
 
 		if progressFn != nil {
-			progressFn(SyncProgress{
+			if !progressFn(SyncProgress{
 				Phase:      "push",
 				BatchNum:   batchNum,
 				BatchJobs:  pushed.Jobs,
@@ -263,7 +264,9 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncSt
 				TotalJobs:  stats.PushedJobs,
 				TotalRevs:  stats.PushedReviews,
 				TotalResps: stats.PushedResponses,
-			})
+			}) {
+				return stats, nil
+			}
 		}
 	}
 	if batchNum == maxPushBatches {
@@ -280,12 +283,14 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress)) (*SyncSt
 	stats.PulledResponses = pulled.Responses
 
 	if progressFn != nil && (pulled.Jobs > 0 || pulled.Reviews > 0 || pulled.Responses > 0) {
-		progressFn(SyncProgress{
+		if !progressFn(SyncProgress{
 			Phase:      "pull",
 			TotalJobs:  pulled.Jobs,
 			TotalRevs:  pulled.Reviews,
 			TotalResps: pulled.Responses,
-		})
+		}) {
+			return stats, nil
+		}
 	}
 
 	if stats.PushedJobs > 0 || stats.PushedReviews > 0 || stats.PushedResponses > 0 ||
@@ -770,7 +775,9 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 	var responseID int64
 	if responseIDStr != "" {
-		parsed, err := strconv.ParseInt(responseIDStr, 10, 64)
+		parsed, err := strconv.ParseInt(
+			strings.TrimSpace(responseIDStr), 10, 64,
+		)
 		if err != nil {
 			return stats, fmt.Errorf("parse response cursor: %w", err)
 		}

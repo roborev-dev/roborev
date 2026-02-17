@@ -231,6 +231,10 @@ func TestExtractBaseSemver(t *testing.T) {
 		{"88be010", ""},
 		{"abc1234-dirty", ""},
 		{"", ""},
+		// Build metadata
+		{"1.2.3+meta", "1.2.3"},
+		{"v1.2.3+build.42", "1.2.3"},
+		{"1.0.0-rc1+build", "1.0.0"},
 		// Edge cases
 		{"0", ""},              // No dots
 		{"v", ""},              // Just v
@@ -339,6 +343,12 @@ func TestIsNewer(t *testing.T) {
 		{"0.5.0", "0.4.0-rc1", true},
 		{"0.4.0", "0.4.0-dev", false},
 		{"0.5.0", "0.4.0-dev", true},
+
+		// Build metadata (+meta) suffix handling
+		{"1.2.4", "1.2.3+meta", true},
+		{"1.2.3", "1.2.3+meta", false},
+		{"1.2.3+build1", "1.2.3+build2", false},
+		{"1.3.0+meta", "1.2.0", true},
 	}
 
 	for _, tt := range tests {
