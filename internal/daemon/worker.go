@@ -415,20 +415,23 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// For fix jobs, capture the patch from the worktree and store it.
+	// For fix jobs, capture the patch from the worktree. Patch capture
+	// failures are fatal — a fix job without a patch is useless.
+	var fixPatch string
 	if job.IsFixJob() {
-		patch, patchErr := fixWorktree.CapturePatch()
+		var patchErr error
+		fixPatch, patchErr = fixWorktree.CapturePatch()
 		if patchErr != nil {
-			log.Printf("[%s] Warning: failed to capture patch for fix job %d: %v", workerID, job.ID, patchErr)
-		} else if patch != "" {
-			if saveErr := wp.db.SaveJobPatch(job.ID, patch); saveErr != nil {
-				log.Printf("[%s] Warning: failed to save patch for fix job %d: %v", workerID, job.ID, saveErr)
-			} else {
-				log.Printf("[%s] Fix job %d: saved patch (%d bytes)", workerID, job.ID, len(patch))
-			}
-		} else {
-			log.Printf("[%s] Fix job %d: agent produced no file changes", workerID, job.ID)
+			log.Printf("[%s] Fix job %d: patch capture failed: %v", workerID, job.ID, patchErr)
+			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("patch capture: %v", patchErr))
+			return
 		}
+		if fixPatch == "" {
+			log.Printf("[%s] Fix job %d: agent produced no file changes", workerID, job.ID)
+			wp.failOrRetry(workerID, job, agentName, "agent produced no file changes")
+			return
+		}
+		log.Printf("[%s] Fix job %d: captured patch (%d bytes)", workerID, job.ID, len(fixPatch))
 	}
 
 	// For compact jobs, validate raw agent output before storing.
@@ -441,9 +444,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Store the result (use actual agent name, not requested).
-	// CompleteJob is a no-op (returns nil) if the job was canceled
-	// between agent finish and now.
-	if err := wp.db.CompleteJob(job.ID, agentName, reviewPrompt, output); err != nil {
+	// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
+	// canceled between agent finish and now.
+	if job.IsFixJob() {
+		if err := wp.db.CompleteFixJob(job.ID, agentName, reviewPrompt, output, fixPatch); err != nil {
+			log.Printf("[%s] Error storing fix review: %v", workerID, err)
+			return
+		}
+	} else if err := wp.db.CompleteJob(job.ID, agentName, reviewPrompt, output); err != nil {
 		log.Printf("[%s] Error storing review: %v", workerID, err)
 		return
 	}

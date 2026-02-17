@@ -1727,7 +1727,7 @@ func (s *Server) handleGetPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if job.Patch == nil {
+	if job.Status != storage.JobStatusDone || job.Patch == nil {
 		writeError(w, http.StatusNotFound, "no patch available for this job")
 		return
 	}

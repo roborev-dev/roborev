@@ -948,6 +948,76 @@ func (db *DB) SaveJobPatch(jobID int64, patch string) error {
 	return err
 }
 
+// CompleteFixJob atomically marks a fix job as done, stores the review,
+// and persists the patch in a single transaction. This prevents invalid
+// states where a patch is written but the job isn't done, or vice versa.
+func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) error {
+	now := time.Now().Format(time.RFC3339)
+	machineID, _ := db.GetMachineID()
+	reviewUUID := GenerateUUID()
+
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+				log.Printf("jobs CompleteFixJob: rollback failed: %v", err)
+			}
+		}
+	}()
+
+	// Fetch output_prefix from job (if any)
+	var outputPrefix sql.NullString
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	finalOutput := output
+	if outputPrefix.Valid && outputPrefix.String != "" {
+		finalOutput = outputPrefix.String + output
+	}
+
+	// Atomically set status=done AND patch in one UPDATE
+	result, err := conn.ExecContext(ctx,
+		`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ?, patch = ? WHERE id = ? AND status = 'running'`,
+		now, now, patch, jobID)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return nil // Job was canceled
+	}
+
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO reviews (job_id, agent, prompt, output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, reviewUUID, machineID, now)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	if err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 // CompleteJob marks a job as done and stores the review.
 // Only updates if job is still in 'running' state (respects cancellation).
 // If the job has an output_prefix, it will be prepended to the output.
