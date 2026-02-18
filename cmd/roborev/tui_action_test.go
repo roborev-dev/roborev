@@ -105,143 +105,97 @@ func TestTUIToggleAddressedNoReview(t *testing.T) {
 	}
 }
 
-func TestTUIAddressFromReviewViewWithHideAddressed(t *testing.T) {
-	// When hideAddressed is on and user marks a review as addressed from review view,
-	// selectedIdx should NOT change immediately. The findNextViewableJob/findPrevViewableJob
-	// functions start from selectedIdx +/- 1, so left/right navigation will naturally
-	// find the correct adjacent visible jobs. Selection only moves on escape.
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewReview
-	m.hideAddressed = true
+func TestTUIAddressFromReviewView_Navigation(t *testing.T) {
+	cases := []struct {
+		name         string
+		initialIdx   int
+		initialJobID int64
+		actions      func(tuiModel) tuiModel
+		expectedIdx  int
+		expectedJob  int64
+		expectedView tuiView
+	}{
+		{
+			name:         "NextVisible",
+			initialIdx:   1, // Viewing job 2
+			initialJobID: 2,
+			actions: func(m tuiModel) tuiModel {
+				// Press 'a' to mark as addressed
+				m2, _ := pressKey(m, 'a')
+				// Selection stays at index 1 so left/right navigation works correctly from current position
+				assertSelection(t, m2, 1, 2)
+				assertView(t, m2, tuiViewReview)
 
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-		makeJob(2, withAddressed(boolPtr(false))),
-		makeJob(3, withAddressed(boolPtr(false))),
+				// Press escape to return to queue
+				m3, _ := pressSpecial(m2, tea.KeyEscape)
+				return m3
+			},
+			expectedIdx:  2, // Moves to job 3
+			expectedJob:  3,
+			expectedView: tuiViewQueue,
+		},
+		{
+			name:         "FallbackPrev",
+			initialIdx:   2, // Viewing job 3 (last)
+			initialJobID: 3,
+			actions: func(m tuiModel) tuiModel {
+				m2, _ := pressKey(m, 'a')
+				m3, _ := pressSpecial(m2, tea.KeyEscape)
+				return m3
+			},
+			expectedIdx:  1, // Moves back to job 2
+			expectedJob:  2,
+			expectedView: tuiViewQueue,
+		},
+		{
+			name:         "ExitWithQ",
+			initialIdx:   1, // Viewing job 2
+			initialJobID: 2,
+			actions: func(m tuiModel) tuiModel {
+				m2, _ := pressKey(m, 'a')
+				m3, _ := pressKey(m2, 'q')
+				return m3
+			},
+			expectedIdx:  2, // Moves to job 3
+			expectedJob:  3,
+			expectedView: tuiViewQueue,
+		},
+		{
+			name:         "ExitWithCtrlC",
+			initialIdx:   1, // Viewing job 2
+			initialJobID: 2,
+			actions: func(m tuiModel) tuiModel {
+				m2, _ := pressKey(m, 'a')
+				m3, _ := pressSpecial(m2, tea.KeyCtrlC)
+				return m3
+			},
+			expectedIdx:  2, // Moves to job 3
+			expectedJob:  3,
+			expectedView: tuiViewQueue,
+		},
 	}
-	m.selectedIdx = 1 // Currently viewing job 2
-	m.selectedJobID = 2
-	m.currentReview = makeReview(10, &m.jobs[1])
 
-	// Press 'a' to mark as addressed - selection stays at current position
-	m2, _ := pressKey(m, 'a')
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jobs := []storage.ReviewJob{
+				makeJob(1, withAddressed(boolPtr(false))),
+				makeJob(2, withAddressed(boolPtr(false))),
+				makeJob(3, withAddressed(boolPtr(false))),
+			}
 
-	// Selection stays at index 1 so left/right navigation works correctly from current position
-	if m2.selectedIdx != 1 {
-		t.Errorf("After 'a': expected selectedIdx=1 (unchanged), got %d", m2.selectedIdx)
-	}
-	if m2.selectedJobID != 2 {
-		t.Errorf("After 'a': expected selectedJobID=2 (unchanged), got %d", m2.selectedJobID)
-	}
-	// Still viewing the current review
-	if m2.currentView != tuiViewReview {
-		t.Errorf("After 'a': expected view=review (unchanged), got %d", m2.currentView)
-	}
+			m := setupTestModel(jobs, func(m *tuiModel) {
+				m.currentView = tuiViewReview
+				m.hideAddressed = true
+				m.selectedIdx = tc.initialIdx
+				m.selectedJobID = tc.initialJobID
+				m.currentReview = makeReview(10, &m.jobs[tc.initialIdx])
+			})
 
-	// Press escape to return to queue - NOW selection moves via normalizeSelectionIfHidden
-	m3, _ := pressSpecial(m2, tea.KeyEscape)
+			m2 := tc.actions(m)
 
-	// Selection moved to next visible job (job 3, index 2)
-	if m3.selectedIdx != 2 {
-		t.Errorf("After escape: expected selectedIdx=2, got %d", m3.selectedIdx)
-	}
-	if m3.selectedJobID != 3 {
-		t.Errorf("After escape: expected selectedJobID=3, got %d", m3.selectedJobID)
-	}
-	if m3.currentView != tuiViewQueue {
-		t.Errorf("After escape: expected view=queue, got %d", m3.currentView)
-	}
-}
-
-func TestTUIAddressFromReviewViewFallbackToPrev(t *testing.T) {
-	// When at end of list and marking addressed, should fall back to previous visible job
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewReview
-	m.hideAddressed = true
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-		makeJob(2, withAddressed(boolPtr(false))),
-		makeJob(3, withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 2 // Currently viewing job 3 (last one)
-	m.selectedJobID = 3
-	m.currentReview = makeReview(10, &m.jobs[2])
-
-	// Press 'a' then escape
-	m2, _ := pressKey(m, 'a')
-	m3, _ := pressSpecial(m2, tea.KeyEscape)
-
-	// Should fall back to previous visible job (job 2, index 1)
-	if m3.selectedIdx != 1 {
-		t.Errorf("Expected selectedIdx=1 (prev visible job), got %d", m3.selectedIdx)
-	}
-	if m3.selectedJobID != 2 {
-		t.Errorf("Expected selectedJobID=2, got %d", m3.selectedJobID)
-	}
-}
-
-func TestTUIAddressFromReviewViewExitWithQ(t *testing.T) {
-	// Same as TestTUIAddressFromReviewViewWithHideAddressed but exits with 'q'
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewReview
-	m.hideAddressed = true
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-		makeJob(2, withAddressed(boolPtr(false))),
-		makeJob(3, withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
-	m.currentReview = makeReview(10, &m.jobs[1])
-
-	// Press 'a' to mark as addressed
-	m2, _ := pressKey(m, 'a')
-
-	// Press 'q' to return to queue - selection should normalize
-	m3, _ := pressKey(m2, 'q')
-
-	if m3.selectedIdx != 2 {
-		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
-	}
-	if m3.selectedJobID != 3 {
-		t.Errorf("Expected selectedJobID=3, got %d", m3.selectedJobID)
-	}
-	if m3.currentView != tuiViewQueue {
-		t.Errorf("Expected view=queue, got %d", m3.currentView)
-	}
-}
-
-func TestTUIAddressFromReviewViewExitWithCtrlC(t *testing.T) {
-	// Same as TestTUIAddressFromReviewViewExitWithQ but exits with ctrl+c
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewReview
-	m.hideAddressed = true
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-		makeJob(2, withAddressed(boolPtr(false))),
-		makeJob(3, withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
-	m.currentReview = makeReview(10, &m.jobs[1])
-
-	// Press 'a' to mark as addressed
-	m2, _ := pressKey(m, 'a')
-
-	// Press ctrl+c to return to queue - selection should normalize
-	m3, _ := pressSpecial(m2, tea.KeyCtrlC)
-
-	if m3.selectedIdx != 2 {
-		t.Errorf("Expected selectedIdx=2 (next visible job), got %d", m3.selectedIdx)
-	}
-	if m3.selectedJobID != 3 {
-		t.Errorf("Expected selectedJobID=3, got %d", m3.selectedJobID)
-	}
-	if m3.currentView != tuiViewQueue {
-		t.Errorf("Expected view=queue, got %d", m3.currentView)
+			assertSelection(t, m2, tc.expectedIdx, tc.expectedJob)
+			assertView(t, m2, tc.expectedView)
+		})
 	}
 }
 
@@ -340,16 +294,13 @@ func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
 }
 
 func TestTUIAddressedRollbackOnError(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	// Initial state with job addressed=false
-	addressed := false
-	m.jobs = []storage.ReviewJob{
-		{ID: 42, Status: storage.JobStatusDone, Addressed: &addressed},
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 42
-	m.jobStats = storage.JobStats{Done: 1, Addressed: 1, Unaddressed: 0}
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+	}, func(m *tuiModel) {
+		m.selectedIdx = 0
+		m.selectedJobID = 42
+		m.jobStats = storage.JobStats{Done: 1, Addressed: 1, Unaddressed: 0}
+	})
 
 	// First, simulate the optimistic update (what happens when 'a' is pressed)
 	*m.jobs[0].Addressed = true
@@ -385,17 +336,15 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 }
 
 func TestTUIAddressedRollbackAfterPollRefresh(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone),
-			withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 42
-	m.jobStats = storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1}
-	m.pendingAddressed = make(map[int64]pendingState)
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+	}, func(m *tuiModel) {
+		m.currentView = tuiViewQueue
+		m.selectedIdx = 0
+		m.selectedJobID = 42
+		m.jobStats = storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1}
+		m.pendingAddressed = make(map[int64]pendingState)
+	})
 
 	// Step 1: optimistic toggle → addressed
 	result, _ := m.handleAddressedKey()
@@ -440,17 +389,15 @@ func TestTUIAddressedRollbackAfterPollRefresh(t *testing.T) {
 }
 
 func TestTUIAddressedPollConfirmsNoDoubleCount(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone),
-			withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 42
-	m.jobStats = storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1}
-	m.pendingAddressed = make(map[int64]pendingState)
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+	}, func(m *tuiModel) {
+		m.currentView = tuiViewQueue
+		m.selectedIdx = 0
+		m.selectedJobID = 42
+		m.jobStats = storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1}
+		m.pendingAddressed = make(map[int64]pendingState)
+	})
 
 	// Step 1: optimistic toggle → addressed
 	result, _ := m.handleAddressedKey()
@@ -481,13 +428,9 @@ func TestTUIAddressedPollConfirmsNoDoubleCount(t *testing.T) {
 }
 
 func TestTUIAddressedSuccessNoRollback(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	// Initial state
-	addressed := false
-	m.jobs = []storage.ReviewJob{
-		{ID: 42, Status: storage.JobStatusDone, Addressed: &addressed},
-	}
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+	})
 
 	// Simulate optimistic update
 	*m.jobs[0].Addressed = true
@@ -512,17 +455,16 @@ func TestTUIAddressedSuccessNoRollback(t *testing.T) {
 }
 
 func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue
-	m.hideAddressed = true
-
-	m.jobs = []storage.ReviewJob{
+	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withAddressed(boolPtr(false))),
 		makeJob(2, withAddressed(boolPtr(false))),
 		makeJob(3, withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
+	}, func(m *tuiModel) {
+		m.currentView = tuiViewQueue
+		m.hideAddressed = true
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+	})
 
 	// Simulate marking job 2 as addressed
 
@@ -634,15 +576,14 @@ func TestTUICancelJobNotFound(t *testing.T) {
 }
 
 func TestTUICancelRollbackOnError(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
 	// Setup: running job with no FinishedAt (still running)
 	startTime := time.Now().Add(-5 * time.Minute)
-	m.jobs = []storage.ReviewJob{
-		{ID: 42, Status: storage.JobStatusRunning, StartedAt: &startTime, FinishedAt: nil},
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 42
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusRunning), withStartedAt(startTime), withFinishedAt(nil)),
+	}, func(m *tuiModel) {
+		m.selectedIdx = 0
+		m.selectedJobID = 42
+	})
 
 	// Simulate the optimistic update that would have happened
 	now := time.Now()
@@ -673,16 +614,14 @@ func TestTUICancelRollbackOnError(t *testing.T) {
 func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
 	// Test rollback when original FinishedAt is non-nil (edge case: corrupted state
 	// or queued job that somehow has a timestamp)
-	m := newTuiModel("http://localhost")
-
-	// Setup: job with an existing FinishedAt (unusual but possible edge case)
 	startTime := time.Now().Add(-5 * time.Minute)
 	originalFinished := time.Now().Add(-2 * time.Minute)
-	m.jobs = []storage.ReviewJob{
-		{ID: 42, Status: storage.JobStatusQueued, StartedAt: &startTime, FinishedAt: &originalFinished},
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 42
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusQueued), withStartedAt(startTime), withFinishedAt(&originalFinished)),
+	}, func(m *tuiModel) {
+		m.selectedIdx = 0
+		m.selectedJobID = 42
+	})
 
 	// Simulate the optimistic update that would have happened
 	now := time.Now()
@@ -713,16 +652,15 @@ func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
 }
 
 func TestTUICancelOptimisticUpdate(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
 	// Setup: running job with no FinishedAt
 	startTime := time.Now().Add(-5 * time.Minute)
-	m.jobs = []storage.ReviewJob{
-		{ID: 42, Status: storage.JobStatusRunning, StartedAt: &startTime, FinishedAt: nil},
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 42
-	m.currentView = tuiViewQueue
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(42, withStatus(storage.JobStatusRunning), withStartedAt(startTime), withFinishedAt(nil)),
+	}, func(m *tuiModel) {
+		m.selectedIdx = 0
+		m.selectedJobID = 42
+		m.currentView = tuiViewQueue
+	})
 
 	// Simulate pressing 'x' key
 	beforeUpdate := time.Now()
@@ -756,13 +694,13 @@ func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
 
 	for _, status := range testCases {
 		t.Run(string(status), func(t *testing.T) {
-			m := newTuiModel("http://localhost")
 			finishedAt := time.Now().Add(-1 * time.Hour)
-			m.jobs = []storage.ReviewJob{
-				{ID: 1, Status: status, FinishedAt: &finishedAt},
-			}
-			m.selectedIdx = 0
-			m.currentView = tuiViewQueue
+			m := setupTestModel([]storage.ReviewJob{
+				makeJob(1, withStatus(status), withFinishedAt(&finishedAt)),
+			}, func(m *tuiModel) {
+				m.selectedIdx = 0
+				m.currentView = tuiViewQueue
+			})
 
 			// Simulate pressing 'x' key
 			m2, cmd := pressKey(m, 'x')
@@ -788,15 +726,15 @@ func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
 // Tests for filter functionality
 
 func TestTUIRespondTextPreservation(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.jobs = []storage.ReviewJob{
+	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withRef("abc1234")),
 		makeJob(2, withRef("def5678")),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.width = 80
-	m.height = 24
+	}, func(m *tuiModel) {
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+		m.width = 80
+		m.height = 24
+	})
 
 	// 1. Open respond for Job 1
 	m, _ = pressKey(m, 'c')
@@ -848,15 +786,13 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 }
 
 func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.jobs = []storage.ReviewJob{
+	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withRef("abc1234")),
 		makeJob(2, withRef("def5678")),
-	}
-
-	// User submitted response for job 1, then started drafting for job 2
-	m.commentJobID = 2
-	m.commentText = "New draft for job 2"
+	}, func(m *tuiModel) {
+		m.commentJobID = 2
+		m.commentText = "New draft for job 2"
+	})
 
 	// Success message arrives for job 1 (the old submission)
 	successMsg := tuiCommentResultMsg{jobID: 1, err: nil}
@@ -999,18 +935,16 @@ func TestTUIRespondViewTabExpansion(t *testing.T) {
 }
 
 func TestCancelKeyMovesSelectionWithHideAddressed(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue
-	m.hideAddressed = true
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone),
-			withAddressed(boolPtr(false))),
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
 		makeJob(2, withStatus(storage.JobStatusRunning)),
-		makeJob(3, withStatus(storage.JobStatusDone),
-			withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
+		makeJob(3, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+	}, func(m *tuiModel) {
+		m.currentView = tuiViewQueue
+		m.hideAddressed = true
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+	})
 
 	result, _ := m.handleCancelKey()
 	m2 := result.(tuiModel)
@@ -1029,20 +963,20 @@ func TestCancelKeyMovesSelectionWithHideAddressed(t *testing.T) {
 }
 
 func TestAddressedKeyUpdatesStatsOptimistically(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue
-	m.jobs = []storage.ReviewJob{
+	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone),
 			withAddressed(boolPtr(false))),
 		makeJob(2, withStatus(storage.JobStatusDone),
 			withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.jobStats = storage.JobStats{
-		Done: 2, Addressed: 0, Unaddressed: 2,
-	}
-	m.pendingAddressed = make(map[int64]pendingState)
+	}, func(m *tuiModel) {
+		m.currentView = tuiViewQueue
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+		m.jobStats = storage.JobStats{
+			Done: 2, Addressed: 0, Unaddressed: 2,
+		}
+		m.pendingAddressed = make(map[int64]pendingState)
+	})
 
 	// Mark job 1 as addressed
 	result, _ := m.handleAddressedKey()
@@ -1059,25 +993,25 @@ func TestAddressedKeyUpdatesStatsOptimistically(t *testing.T) {
 }
 
 func TestAddressedKeyUpdatesStatsFromReviewView(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewReview
-	m.currentReview = &storage.Review{
-		ID:        42,
-		Addressed: false,
-		Job: &storage.ReviewJob{
-			ID:     1,
-			Status: storage.JobStatusDone,
-		},
-	}
-	m.jobs = []storage.ReviewJob{
+	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone),
 			withAddressed(boolPtr(false))),
-	}
-	m.jobStats = storage.JobStats{
-		Done: 1, Addressed: 0, Unaddressed: 1,
-	}
-	m.pendingAddressed = make(map[int64]pendingState)
-	m.pendingReviewAddressed = make(map[int64]pendingState)
+	}, func(m *tuiModel) {
+		m.currentView = tuiViewReview
+		m.currentReview = &storage.Review{
+			ID:        42,
+			Addressed: false,
+			Job: &storage.ReviewJob{
+				ID:     1,
+				Status: storage.JobStatusDone,
+			},
+		}
+		m.jobStats = storage.JobStats{
+			Done: 1, Addressed: 0, Unaddressed: 1,
+		}
+		m.pendingAddressed = make(map[int64]pendingState)
+		m.pendingReviewAddressed = make(map[int64]pendingState)
+	})
 
 	result, _ := m.handleAddressedKey()
 	m2 := result.(tuiModel)
@@ -1090,4 +1024,38 @@ func TestAddressedKeyUpdatesStatsFromReviewView(t *testing.T) {
 		t.Errorf("expected Unaddressed=0, got %d",
 			m2.jobStats.Unaddressed)
 	}
+}
+
+func setupTestModel(jobs []storage.ReviewJob, opts ...func(*tuiModel)) tuiModel {
+	m := newTuiModel("http://localhost")
+	m.jobs = jobs
+	for _, opt := range opts {
+		opt(&m)
+	}
+	return m
+}
+
+func assertSelection(t *testing.T, m tuiModel, idx int, jobID int64) {
+	t.Helper()
+	if m.selectedIdx != idx {
+		t.Errorf("Expected selectedIdx=%d, got %d", idx, m.selectedIdx)
+	}
+	if m.selectedJobID != jobID {
+		t.Errorf("Expected selectedJobID=%d, got %d", jobID, m.selectedJobID)
+	}
+}
+
+func assertView(t *testing.T, m tuiModel, view tuiView) {
+	t.Helper()
+	if m.currentView != view {
+		t.Errorf("Expected view=%d, got %d", view, m.currentView)
+	}
+}
+
+func withStartedAt(t time.Time) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.StartedAt = &t }
+}
+
+func withFinishedAt(t *time.Time) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.FinishedAt = t }
 }
