@@ -109,6 +109,7 @@ const (
 	tuiViewTail
 	tuiViewTasks     // Background fix tasks view
 	tuiViewFixPrompt // Fix prompt confirmation modal
+	tuiViewPatch     // Patch viewer for fix jobs
 )
 
 // queuePrefetchBuffer is the number of extra rows to fetch beyond what's visible,
@@ -253,11 +254,18 @@ type tuiModel struct {
 
 	clipboard ClipboardWriter
 
+	// Review view navigation
+	reviewFromView tuiView // View to return to when exiting review (queue or tasks)
+
 	// Fix task state
 	fixJobs        []storage.ReviewJob // Fix jobs for tasks view
 	fixSelectedIdx int                 // Selected index in tasks view
 	fixPromptText  string              // Editable fix prompt text
 	fixPromptJobID int64               // Parent job ID for fix prompt modal
+	fixShowHelp    bool                // Show help overlay in tasks view
+	patchText      string              // Current patch text for patch viewer
+	patchScroll    int                 // Scroll offset in patch viewer
+	patchJobID     int64               // Job ID of the patch being viewed
 }
 
 // pendingState tracks a pending addressed toggle with sequence number
@@ -388,6 +396,12 @@ type tuiApplyPatchResultMsg struct {
 	success     bool
 	err         error
 	rebase      bool // True if patch didn't apply and needs rebase
+}
+
+type tuiPatchMsg struct {
+	jobID int64
+	patch string
+	err   error
 }
 
 // ClipboardWriter is an interface for clipboard operations (allows mocking in tests)
@@ -2084,6 +2098,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.fetchFixJobs()
 		}
 
+	case tuiPatchMsg:
+		if msg.err != nil {
+			m.flashMessage = fmt.Sprintf("Patch fetch failed: %v", msg.err)
+			m.flashExpiresAt = time.Now().Add(3 * time.Second)
+			m.flashView = tuiViewTasks
+		} else {
+			m.patchText = msg.patch
+			m.patchJobID = msg.jobID
+			m.patchScroll = 0
+			m.currentView = tuiViewPatch
+		}
+
 	case tuiApplyPatchResultMsg:
 		if msg.rebase {
 			m.flashMessage = fmt.Sprintf("Patch for job #%d doesn't apply cleanly - triggering rebase", msg.jobID)
@@ -2134,6 +2160,9 @@ func (m tuiModel) View() string {
 	}
 	if m.currentView == tuiViewFixPrompt {
 		return m.renderFixPromptView()
+	}
+	if m.currentView == tuiViewPatch {
+		return m.renderPatchView()
 	}
 	if m.currentView == tuiViewPrompt && m.currentReview != nil {
 		return m.renderPromptView()
@@ -3403,12 +3432,30 @@ func (m tuiModel) renderTasksView() string {
 	b.WriteString(tuiTitleStyle.Render("roborev tasks (background fixes)"))
 	b.WriteString("\x1b[K\n")
 
+	// Help overlay
+	if m.fixShowHelp {
+		return m.renderTasksHelpOverlay(&b)
+	}
+
 	if len(m.fixJobs) == 0 {
 		b.WriteString("\n  No fix tasks. Press F on a review to trigger a background fix.\n")
 		b.WriteString("\n")
 		b.WriteString(tuiHelpStyle.Render("T: back to queue | F: fix review | q: quit"))
 		b.WriteString("\x1b[K\x1b[J")
 		return b.String()
+	}
+
+	// Dynamic column widths based on terminal width
+	// Columns: status(8) + id(6) + parent(varies) + ref(varies) + subject(rest)
+	statusW := 8
+	idW := 6
+	parentW := 16
+	refW := 12
+	padding := 10 // spaces between columns
+	subjectW := max(m.width-statusW-idW-parentW-refW-padding, 10)
+	if m.width > 120 {
+		refW = 20
+		subjectW = max(m.width-statusW-idW-parentW-refW-padding, 20)
 	}
 
 	// Render each fix job
@@ -3422,40 +3469,53 @@ func (m tuiModel) renderTasksView() string {
 	for i := startIdx; i < len(m.fixJobs) && i < startIdx+visibleRows; i++ {
 		job := m.fixJobs[i]
 
-		// Status indicator
-		var statusIcon string
+		// Status label
+		var statusLabel string
+		var statusStyle lipgloss.Style
 		switch job.Status {
 		case storage.JobStatusQueued:
-			statusIcon = "..."
+			statusLabel = "queued"
+			statusStyle = tuiQueuedStyle
 		case storage.JobStatusRunning:
-			statusIcon = ">>>"
+			statusLabel = "running"
+			statusStyle = tuiRunningStyle
 		case storage.JobStatusDone:
-			statusIcon = "[+]"
+			statusLabel = "ready"
+			statusStyle = tuiDoneStyle
 		case storage.JobStatusFailed:
-			statusIcon = "[!]"
+			statusLabel = "failed"
+			statusStyle = tuiFailedStyle
 		case storage.JobStatusCanceled:
-			statusIcon = "[-]"
+			statusLabel = "canceled"
+			statusStyle = tuiCanceledStyle
 		}
 
 		// Parent job reference
 		parentRef := ""
 		if job.ParentJobID != nil {
-			parentRef = fmt.Sprintf("review #%d", *job.ParentJobID)
+			parentRef = fmt.Sprintf("fixes #%d", *job.ParentJobID)
 		}
 
-		line := fmt.Sprintf("  %s  #%-4d  %-8s  %-16s  %s  %s",
-			statusIcon,
+		line := fmt.Sprintf("  %-*s  #%-4d  %-*s  %-*s  %s",
+			statusW, statusLabel,
 			job.ID,
-			job.Status,
-			parentRef,
-			truncateString(job.GitRef, 12),
-			truncateString(job.CommitSubject, 40),
+			parentW, truncateString(parentRef, parentW),
+			refW, truncateString(job.GitRef, refW),
+			truncateString(job.CommitSubject, subjectW),
 		)
 
 		if i == m.fixSelectedIdx {
 			b.WriteString(tuiSelectedStyle.Render(line))
 		} else {
-			b.WriteString(line)
+			// Apply status color to the status portion only
+			styledStatus := statusStyle.Render(fmt.Sprintf("%-*s", statusW, statusLabel))
+			rest := fmt.Sprintf("  #%-4d  %-*s  %-*s  %s",
+				job.ID,
+				parentW, truncateString(parentRef, parentW),
+				refW, truncateString(job.GitRef, refW),
+				truncateString(job.CommitSubject, subjectW),
+			)
+			b.WriteString("  " + styledStatus + rest)
 		}
 		b.WriteString("\x1b[K\n")
 	}
@@ -3468,9 +3528,118 @@ func (m tuiModel) renderTasksView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Help
-	b.WriteString(tuiHelpStyle.Render("A: apply | R: rebase | t: tail | x: cancel | r: refresh | T/esc: back"))
+	b.WriteString(tuiHelpStyle.Render("enter: view | p: patch | A: apply | t: tail | x: cancel | r: refresh | ?: help | T/esc: back"))
 	b.WriteString("\x1b[K\x1b[J")
 
+	return b.String()
+}
+
+func (m tuiModel) renderTasksHelpOverlay(b *strings.Builder) string {
+	help := []string{
+		"",
+		"  Task Status",
+		"    queued     Waiting for a worker to pick up the job",
+		"    running    Agent is working in an isolated worktree",
+		"    ready      Patch captured and ready to apply to your working tree",
+		"    failed     Agent failed (press enter or t to see error details)",
+		"    canceled   Job was canceled by user",
+		"",
+		"  Keybindings",
+		"    enter/t    View review output (ready) or error (failed) or tail (running)",
+		"    p          View the patch diff for a ready job",
+		"    A          Apply patch from a ready job to your working tree",
+		"    R          Re-run fix against current HEAD (when patch is stale)",
+		"    F          Trigger a new fix from a review (from queue view)",
+		"    x          Cancel a queued or running job",
+		"    r          Refresh the task list",
+		"    T/esc      Return to the main queue view",
+		"    ?          Toggle this help",
+		"",
+		"  Workflow",
+		"    1. Press F on a failing review to trigger a background fix",
+		"    2. The agent runs in an isolated worktree (your files are untouched)",
+		"    3. When status shows 'ready', press A to apply and commit the patch",
+		"    4. If the patch is stale (code changed since), press R to re-run",
+		"",
+	}
+	for _, line := range help {
+		b.WriteString(line)
+		b.WriteString("\x1b[K\n")
+	}
+	b.WriteString(tuiHelpStyle.Render("?: close help"))
+	b.WriteString("\x1b[K\x1b[J")
+	return b.String()
+}
+
+// fetchPatch fetches the patch for a fix job from the daemon.
+func (m tuiModel) fetchPatch(jobID int64) tea.Cmd {
+	return func() tea.Msg {
+		url := m.serverAddr + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
+		resp, err := m.client.Get(url)
+		if err != nil {
+			return tuiPatchMsg{jobID: jobID, err: err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return tuiPatchMsg{jobID: jobID, err: fmt.Errorf("no patch available (HTTP %d)", resp.StatusCode)}
+		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return tuiPatchMsg{jobID: jobID, err: err}
+		}
+		return tuiPatchMsg{jobID: jobID, patch: string(data)}
+	}
+}
+
+func (m tuiModel) renderPatchView() string {
+	var b strings.Builder
+
+	b.WriteString(tuiTitleStyle.Render(fmt.Sprintf("patch for fix job #%d", m.patchJobID)))
+	b.WriteString("\x1b[K\n")
+
+	if m.patchText == "" {
+		b.WriteString("\n  No patch available.\n")
+	} else {
+		lines := strings.Split(m.patchText, "\n")
+		visibleRows := max(m.height-4, 1)
+		maxScroll := max(len(lines)-visibleRows, 0)
+		start := max(min(m.patchScroll, maxScroll), 0)
+		end := min(start+visibleRows, len(lines))
+
+		addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("34"))   // green
+		delStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("160"))  // red
+		hdrStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))   // blue
+		metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // gray
+
+		for _, line := range lines[start:end] {
+			display := line
+			switch {
+			case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+				display = addStyle.Render(line)
+			case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+				display = delStyle.Render(line)
+			case strings.HasPrefix(line, "@@"):
+				display = hdrStyle.Render(line)
+			case strings.HasPrefix(line, "diff ") || strings.HasPrefix(line, "index ") ||
+				strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++"):
+				display = metaStyle.Render(line)
+			}
+			b.WriteString("  " + display)
+			b.WriteString("\x1b[K\n")
+		}
+
+		if len(lines) > visibleRows {
+			pct := 0
+			if maxScroll > 0 {
+				pct = start * 100 / maxScroll
+			}
+			b.WriteString(tuiHelpStyle.Render(fmt.Sprintf("  [%d%%]", pct)))
+			b.WriteString("\x1b[K\n")
+		}
+	}
+
+	b.WriteString(tuiHelpStyle.Render("j/k/up/down: scroll | esc: back to tasks"))
+	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }
 

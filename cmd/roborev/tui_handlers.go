@@ -25,6 +25,8 @@ func (m tuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFixPromptKey(msg)
 	case tuiViewTasks:
 		return m.handleTasksKey(msg)
+	case tuiViewPatch:
+		return m.handlePatchKey(msg)
 	}
 
 	// Global keys shared across queue/review/prompt/commitMsg/help views
@@ -389,11 +391,17 @@ func (m tuiModel) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) handleQuitKey() (tea.Model, tea.Cmd) {
 	if m.currentView == tuiViewReview {
-		m.currentView = tuiViewQueue
+		returnTo := m.reviewFromView
+		if returnTo == 0 {
+			returnTo = tuiViewQueue
+		}
+		m.currentView = returnTo
 		m.currentReview = nil
 		m.reviewScroll = 0
 		m.paginateNav = 0
-		m.normalizeSelectionIfHidden()
+		if returnTo == tuiViewQueue {
+			m.normalizeSelectionIfHidden()
+		}
 		return m, nil
 	}
 	if m.currentView == tuiViewPrompt {
@@ -702,6 +710,7 @@ func (m tuiModel) handleEnterKey() (tea.Model, tea.Cmd) {
 	job := m.jobs[m.selectedIdx]
 	switch job.Status {
 	case storage.JobStatusDone:
+		m.reviewFromView = tuiViewQueue
 		return m, m.fetchReview(job.ID)
 	case storage.JobStatusFailed:
 		m.currentBranch = ""
@@ -710,6 +719,7 @@ func (m tuiModel) handleEnterKey() (tea.Model, tea.Cmd) {
 			Output: "Job failed:\n\n" + job.Error,
 			Job:    &job,
 		}
+		m.reviewFromView = tuiViewQueue
 		m.currentView = tuiViewReview
 		m.reviewScroll = 0
 		return m, nil
@@ -1042,14 +1052,20 @@ func (m tuiModel) handleEscKey() (tea.Model, tea.Cmd) {
 		m.loadingJobs = true
 		return m, m.fetchJobs()
 	} else if m.currentView == tuiViewReview {
-		m.currentView = tuiViewQueue
+		returnTo := m.reviewFromView
+		if returnTo == 0 {
+			returnTo = tuiViewQueue
+		}
+		m.currentView = returnTo
 		m.currentReview = nil
 		m.reviewScroll = 0
 		m.paginateNav = 0
-		m.normalizeSelectionIfHidden()
-		if m.hideAddressed && !m.loadingJobs {
-			m.loadingJobs = true
-			return m, m.fetchJobs()
+		if returnTo == tuiViewQueue {
+			m.normalizeSelectionIfHidden()
+			if m.hideAddressed && !m.loadingJobs {
+				m.loadingJobs = true
+				return m, m.fetchJobs()
+			}
 		}
 	} else if m.currentView == tuiViewPrompt {
 		m.paginateNav = 0
@@ -1455,6 +1471,7 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			job := m.fixJobs[m.fixSelectedIdx]
 			if job.Status == storage.JobStatusDone {
 				m.selectedJobID = job.ID
+				m.reviewFromView = tuiViewTasks
 				return m, m.fetchReview(job.ID)
 			}
 			if job.Status == storage.JobStatusFailed {
@@ -1484,6 +1501,7 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
 			case storage.JobStatusDone:
 				m.selectedJobID = job.ID
+				m.reviewFromView = tuiViewTasks
 				return m, m.fetchReview(job.ID)
 			case storage.JobStatusFailed:
 				errMsg := job.Error
@@ -1528,9 +1546,60 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case "p":
+		// View patch for completed fix jobs
+		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
+			job := m.fixJobs[m.fixSelectedIdx]
+			if job.Status == storage.JobStatusDone {
+				return m, m.fetchPatch(job.ID)
+			}
+		}
+		return m, nil
 	case "r":
 		// Refresh
 		return m, m.fetchFixJobs()
+	case "?":
+		m.fixShowHelp = !m.fixShowHelp
+		return m, nil
+	}
+	return m, nil
+}
+
+// handlePatchKey handles key input in the patch viewer.
+func (m tuiModel) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.currentView = tuiViewTasks
+		m.patchText = ""
+		m.patchScroll = 0
+		m.patchJobID = 0
+		return m, nil
+	case "up", "k":
+		if m.patchScroll > 0 {
+			m.patchScroll--
+		}
+		return m, nil
+	case "down", "j":
+		m.patchScroll++
+		return m, nil
+	case "pgup":
+		visibleLines := max(m.height-4, 1)
+		m.patchScroll = max(0, m.patchScroll-visibleLines)
+		return m, tea.ClearScreen
+	case "pgdown":
+		visibleLines := max(m.height-4, 1)
+		m.patchScroll += visibleLines
+		return m, tea.ClearScreen
+	case "home", "g":
+		m.patchScroll = 0
+		return m, nil
+	case "end", "G":
+		lines := strings.Split(m.patchText, "\n")
+		visibleRows := max(m.height-4, 1)
+		m.patchScroll = max(len(lines)-visibleRows, 0)
+		return m, nil
 	}
 	return m, nil
 }
