@@ -16,6 +16,25 @@ func setupFilterTree(m *tuiModel, nodes []treeFilterNode) {
 	m.rebuildFilterFlatList()
 }
 
+// Helper function to initialize model for filter tests
+func initFilterModel(nodes []treeFilterNode) tuiModel {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFilter
+	if nodes != nil {
+		setupFilterTree(&m, nodes)
+	}
+	return m
+}
+
+// Helper function to create a treeFilterNode for tests
+func makeNode(name string, count int) treeFilterNode {
+	return treeFilterNode{
+		name:      name,
+		rootPaths: []string{"/path/to/" + name},
+		count:     count,
+	}
+}
+
 func TestTUIFilterOpenModal(t *testing.T) {
 	m := newTuiModel("http://localhost")
 
@@ -50,8 +69,7 @@ func TestTUIFilterOpenModal(t *testing.T) {
 }
 
 func TestTUIFilterReposMsg(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
+	m := initFilterModel(nil)
 
 	// Simulate receiving repos from API
 	repos := []repoFilterItem{
@@ -83,99 +101,81 @@ func TestTUIFilterReposMsg(t *testing.T) {
 }
 
 func TestTUIFilterSearch(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	setupFilterTree(&m, []treeFilterNode{
+	testNodes := []treeFilterNode{
 		{name: "repo-alpha", count: 5},
 		{name: "repo-beta", count: 3},
 		{name: "something-else", count: 2},
-	})
-
-	// No search - all visible (All + 3 repos)
-	if len(m.filterFlatList) != 4 {
-		t.Errorf("No search: expected 4 visible, got %d", len(m.filterFlatList))
 	}
 
-	// Search for "repo"
-	m.filterSearch = "repo"
-	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 2 { // repo-alpha + repo-beta (All is excluded because "all" doesn't contain "repo")
-		t.Errorf("Search 'repo': expected 2 visible, got %d", len(m.filterFlatList))
+	cases := []struct {
+		query         string
+		expectedCount int
+		description   string
+	}{
+		{"", 4, "No search (all visible)"},
+		{"repo", 2, "Search 'repo'"},
+		{"alpha", 1, "Search 'alpha'"},
+		{"xyz", 0, "No matches"},
+		{"all", 1, "Search 'all'"},
 	}
 
-	// Search for "alpha"
-	m.filterSearch = "alpha"
-	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 1 { // repo-alpha only
-		t.Errorf("Search 'alpha': expected 1 visible, got %d", len(m.filterFlatList))
-	}
-
-	// Search for "xyz" - no matches
-	m.filterSearch = "xyz"
-	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 0 {
-		t.Errorf("Search 'xyz': expected 0 visible, got %d", len(m.filterFlatList))
-	}
-
-	// Search for "all" - should show All row
-	m.filterSearch = "all"
-	m.rebuildFilterFlatList()
-	if len(m.filterFlatList) != 1 { // Just All
-		t.Errorf("Search 'all': expected 1 visible, got %d", len(m.filterFlatList))
-	}
-	if m.filterFlatList[0].repoIdx != -1 {
-		t.Error("Expected the visible item to be the All entry")
+	for _, tc := range cases {
+		t.Run(tc.description, func(t *testing.T) {
+			m := initFilterModel(testNodes)
+			m.filterSearch = tc.query
+			m.rebuildFilterFlatList()
+			if len(m.filterFlatList) != tc.expectedCount {
+				t.Errorf("Expected %d visible, got %d", tc.expectedCount, len(m.filterFlatList))
+			}
+			if tc.query == "all" && len(m.filterFlatList) > 0 {
+				if m.filterFlatList[0].repoIdx != -1 {
+					t.Error("Expected the visible item to be the All entry")
+				}
+			}
+		})
 	}
 }
 
 func TestTUIFilterNavigation(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", count: 5},
-		{name: "repo-b", count: 3},
-	})
-	// Flat list: All, repo-a, repo-b = 3 entries
-	m.filterSelectedIdx = 0
-
-	// Navigate down
-	m2, _ := pressKey(m, 'j')
-	if m2.filterSelectedIdx != 1 {
-		t.Errorf("j key: expected filterSelectedIdx=1, got %d", m2.filterSelectedIdx)
+	cases := []struct {
+		startIdx    int
+		key         rune
+		expectedIdx int
+		description string
+	}{
+		{0, 'j', 1, "Navigate down from 0"},
+		{1, 'j', 2, "Navigate down from 1"},
+		{2, 'j', 2, "Navigate down at boundary"},
+		{2, 'k', 1, "Navigate up from 2"},
 	}
 
-	// Navigate down again
-	m3, _ := pressKey(m2, 'j')
-	if m3.filterSelectedIdx != 2 {
-		t.Errorf("j key: expected filterSelectedIdx=2, got %d", m3.filterSelectedIdx)
-	}
+	for _, tc := range cases {
+		t.Run(tc.description, func(t *testing.T) {
+			m := initFilterModel([]treeFilterNode{
+				makeNode("repo-a", 5),
+				makeNode("repo-b", 3),
+			})
+			m.filterSelectedIdx = tc.startIdx
 
-	// Navigate down at boundary - should stay at 2
-	m4, _ := pressKey(m3, 'j')
-	if m4.filterSelectedIdx != 2 {
-		t.Errorf("j key at boundary: expected filterSelectedIdx=2, got %d", m4.filterSelectedIdx)
-	}
-
-	// Navigate up
-	m5, _ := pressKey(m4, 'k')
-	if m5.filterSelectedIdx != 1 {
-		t.Errorf("k key: expected filterSelectedIdx=1, got %d", m5.filterSelectedIdx)
+			m2, _ := pressKey(m, tc.key)
+			if m2.filterSelectedIdx != tc.expectedIdx {
+				t.Errorf("Expected filterSelectedIdx=%d, got %d", tc.expectedIdx, m2.filterSelectedIdx)
+			}
+		})
 	}
 }
 
 func TestTUIFilterSelectRepo(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 2),
+		makeNode("repo-b", 1),
+	})
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a")),
 		makeJob(2, withRepoName("repo-b")),
 		makeJob(3, withRepoName("repo-a")),
 	}
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 2},
-		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 1},
-	})
 	// Flat list: All(0), repo-a(1), repo-b(2)
 	m.filterSelectedIdx = 1 // repo-a
 
@@ -195,15 +195,12 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 }
 
 func TestTUIFilterSelectAll(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 2),
+	})
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
 	m.activeBranchFilter = "main"
 	m.filterStack = []string{"repo", "branch"}
-
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 2},
-	})
 	m.filterSelectedIdx = 0 // "All"
 
 	m2, _ := pressSpecial(m, tea.KeyEnter)
@@ -391,12 +388,10 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 }
 
 func TestTUIFilterEscapeCloses(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	m.filterSearch = "test"
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", count: 1},
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 1),
 	})
+	m.filterSearch = "test"
 
 	// Press 'esc' to close without selecting
 	m2, _ := pressSpecial(m, tea.KeyEscape)
@@ -410,10 +405,8 @@ func TestTUIFilterEscapeCloses(t *testing.T) {
 }
 
 func TestTUIFilterTypingSearch(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", count: 5},
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 5),
 	})
 	m.filterSelectedIdx = 1
 
@@ -443,9 +436,7 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 }
 
 func TestTUIFilterTypingHAndL(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "highlight",
 			rootPaths: []string{"/path/to/highlight"},
@@ -469,8 +460,7 @@ func TestTUIFilterTypingHAndL(t *testing.T) {
 }
 
 func TestTUIFilterPreselectsCurrent(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
+	m := initFilterModel(nil)
 	m.activeRepoFilter = []string{"/path/to/repo-b"} // Already filtering to repo-b
 
 	// Simulate receiving repos from API (should pre-select repo-b)
@@ -490,8 +480,7 @@ func TestTUIFilterPreselectsCurrent(t *testing.T) {
 }
 
 func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
+	m := initFilterModel(nil)
 	// Active filter has paths in one order
 	m.activeRepoFilter = []string{"/path/b", "/path/a"}
 
@@ -510,7 +499,10 @@ func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
 }
 
 func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 2),
+		makeNode("repo-b", 0),
+	})
 
 	// Jobs only in repo-a
 	m.jobs = []storage.ReviewJob{
@@ -519,11 +511,6 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 2},
-		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 0}, // No jobs
-	})
 	// Flat list: All(0), repo-a(1), repo-b(2)
 	m.filterSelectedIdx = 2 // Select repo-b
 
@@ -558,7 +545,11 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUIFilterAggregatedDisplayName(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	// Custom nodes with specific rootPaths
+	m := initFilterModel([]treeFilterNode{
+		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
+		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
+	})
 
 	// Jobs from two repos that share a display name
 	m.jobs = []storage.ReviewJob{
@@ -566,12 +557,6 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 		makeJob(2, withRepoName("backend-prod"), withRepoPath("/path/to/backend-prod")),
 		makeJob(3, withRepoName("frontend"), withRepoPath("/path/to/frontend"), withStatus(storage.JobStatusFailed)),
 	}
-	m.currentView = tuiViewFilter
-	// Aggregated group: "backend" covers both backend-dev and backend-prod
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
-		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
-	})
 	// Flat list: All(0), backend(1), frontend(2)
 	m.filterSelectedIdx = 1 // Select "backend" group
 
@@ -597,8 +582,7 @@ func TestTUIFilterAggregatedDisplayName(t *testing.T) {
 }
 
 func TestTUIFilterSearchByRepoPath(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
 		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
 	})
@@ -617,8 +601,7 @@ func TestTUIFilterSearchByRepoPath(t *testing.T) {
 }
 
 func TestTUIFilterSearchByDisplayName(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		// Display name "My Project" differs from path basename "my-project-repo"
 		{name: "My Project", rootPaths: []string{"/home/user/my-project-repo"}, count: 2},
 		// Display name matches path basename
@@ -692,12 +675,10 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 }
 
 func TestTUIFilterViewSmallTerminal(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", count: 5},
-		{name: "repo-b", count: 3},
-		{name: "repo-c", count: 2},
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 5),
+		makeNode("repo-b", 3),
+		makeNode("repo-c", 2),
 	})
 	// Flat list: All + 3 repos = 4 entries
 	m.filterSelectedIdx = 0
@@ -778,14 +759,12 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 }
 
 func TestTUIFilterViewScrollWindow(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-1", count: 5},
-		{name: "repo-2", count: 4},
-		{name: "repo-3", count: 3},
-		{name: "repo-4", count: 2},
-		{name: "repo-5", count: 1},
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-1", 5),
+		makeNode("repo-2", 4),
+		makeNode("repo-3", 3),
+		makeNode("repo-4", 2),
+		makeNode("repo-5", 1),
 	})
 	// Flat list: All + 5 repos = 6 entries
 	m.height = 10 // visibleRows = 3
@@ -826,11 +805,10 @@ func TestTUIFilterViewScrollWindow(t *testing.T) {
 
 func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
 	// Test that filter loading state pads output to fill terminal height
-	m := newTuiModel("http://localhost")
+	m := initFilterModel(nil)
 	m.width = 100
 	m.height = 20
-	m.currentView = tuiViewFilter
-	m.filterTree = nil // Loading state (tree not built yet)
+	// filterTree == nil (Loading state)
 
 	output := m.View()
 
@@ -847,10 +825,8 @@ func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
 }
 
 func TestTUIFilterBackspaceMultiByte(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", count: 10},
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 10),
 	})
 
 	// Type an emoji (multi-byte character)
@@ -960,7 +936,7 @@ func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
 // Filter stack tests
 
 func TestTUIFilterStackPush(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := initFilterModel(nil)
 
 	// Push repo filter
 	m.pushFilter("repo")
@@ -976,7 +952,7 @@ func TestTUIFilterStackPush(t *testing.T) {
 }
 
 func TestTUIFilterStackPushMovesDuplicate(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := initFilterModel(nil)
 
 	// Push repo then branch
 	m.pushFilter("repo")
@@ -990,7 +966,7 @@ func TestTUIFilterStackPushMovesDuplicate(t *testing.T) {
 }
 
 func TestTUIFilterStackPopClearsValue(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := initFilterModel(nil)
 
 	m.activeRepoFilter = []string{"/path/to/repo"}
 	m.activeBranchFilter = "main"
@@ -1124,9 +1100,7 @@ func TestTUIFilterStackReverseOrder(t *testing.T) {
 }
 
 func TestTUITreeFilterExpandCollapse(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1136,7 +1110,7 @@ func TestTUITreeFilterExpandCollapse(t *testing.T) {
 				{name: "feature", count: 2},
 			},
 		},
-		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 3},
+		makeNode("repo-b", 3),
 	})
 	// Flat list: All(0), repo-a(1), repo-b(2) -- both collapsed
 	if len(m.filterFlatList) != 3 {
@@ -1174,9 +1148,7 @@ func TestTUITreeFilterExpandCollapse(t *testing.T) {
 }
 
 func TestTUITreeFilterSelectBranch(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1229,10 +1201,8 @@ func TestTUITreeFilterSelectBranch(t *testing.T) {
 }
 
 func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5},
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 5),
 	})
 	// No children loaded yet
 	m.filterSelectedIdx = 1 // repo-a
@@ -1271,9 +1241,7 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 }
 
 func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1335,10 +1303,7 @@ func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
 }
 
 func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	m.consecutiveErrors = 2 // Already had 2 connection errors
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1346,6 +1311,7 @@ func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) 
 			loading:   true,
 		},
 	})
+	m.consecutiveErrors = 2 // Already had 2 connection errors
 
 	// Third connection error should trigger reconnection
 	m2, cmd := updateModel(t, m, tuiRepoBranchesMsg{
@@ -1369,9 +1335,7 @@ func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) 
 }
 
 func TestTUITreeFilterSearchTriggersLazyBranchLoad(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1402,9 +1366,7 @@ func TestTUITreeFilterSearchTriggersLazyBranchLoad(t *testing.T) {
 }
 
 func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1443,14 +1405,8 @@ func TestTUITreeFilterSearchExpandsMatchingBranches(t *testing.T) {
 }
 
 func TestTUISearchTriggeredLoadDoesNotExpand(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
-		{
-			name:      "repo-a",
-			rootPaths: []string{"/path/to/repo-a"},
-			count:     5,
-		},
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 5),
 	})
 
 	// Simulate search-triggered branch load (expandOnLoad=false)
@@ -1485,9 +1441,7 @@ func TestTUISearchTriggeredLoadDoesNotExpand(t *testing.T) {
 }
 
 func TestTUILeftArrowCollapsesDuringSearch(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1533,9 +1487,7 @@ func TestTUILeftArrowCollapsesDuringSearch(t *testing.T) {
 }
 
 func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1573,9 +1525,7 @@ func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
 }
 
 func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1601,9 +1551,7 @@ func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
 }
 
 func TestTUIUserCollapsedResetsWhenSearchClears(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/to/repo-a"},
@@ -1664,9 +1612,7 @@ func TestRootPathsMatchOrderIndependent(t *testing.T) {
 }
 
 func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "multi-root",
 			rootPaths: []string{"/path/b", "/path/a"},
@@ -1694,9 +1640,7 @@ func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
 	}
 
 	// Truly different paths should be rejected (stale message)
-	m3 := newTuiModel("http://localhost")
-	m3.currentView = tuiViewFilter
-	setupFilterTree(&m3, []treeFilterNode{
+	m3 := initFilterModel([]treeFilterNode{
 		{
 			name:      "other-repo",
 			rootPaths: []string{"/path/c"},
@@ -1742,8 +1686,7 @@ func countLoaded(m *tuiModel) int {
 }
 
 func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
+	m := initFilterModel(nil)
 
 	// Create more repos than maxSearchBranchFetches
 	nodes := make([]treeFilterNode, 10)
@@ -1779,8 +1722,7 @@ func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
 }
 
 func TestTUISearchFetchProgressiveLoading(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
+	m := initFilterModel(nil)
 
 	nodes := make([]treeFilterNode, 8)
 	for i := range nodes {
@@ -1848,8 +1790,7 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 }
 
 func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
+	m := initFilterModel(nil)
 
 	nodes := make([]treeFilterNode, 3)
 	for i := range nodes {
@@ -1908,9 +1849,7 @@ func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
 }
 
 func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/repo-a"},
@@ -1944,9 +1883,7 @@ func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
 }
 
 func TestTUIFetchFailedResetsOnSearchClear(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/repo-a"},
@@ -1979,9 +1916,7 @@ func TestTUIFetchFailedResetsOnSearchClear(t *testing.T) {
 }
 
 func TestTUILateErrorAfterSearchClear(t *testing.T) {
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewFilter
-	setupFilterTree(&m, []treeFilterNode{
+	m := initFilterModel([]treeFilterNode{
 		{
 			name:      "repo-a",
 			rootPaths: []string{"/path/repo-a"},
