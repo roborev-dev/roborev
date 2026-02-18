@@ -3461,4 +3461,27 @@ func TestHandleRemap(t *testing.T) {
 				w.Code, w.Body.String())
 		}
 	})
+
+	t.Run("remap rejects oversized body", func(t *testing.T) {
+		// Build a payload larger than 1MB
+		body := []byte(`{"repo_path":"` + repoDir + `","mappings":[`)
+		entry := []byte(`{"old_sha":"a","new_sha":"b","patch_id":"c","author":"x","subject":"y","timestamp":"2026-01-01T00:00:00Z"},`)
+		for len(body) < 1<<20+1 {
+			body = append(body, entry...)
+		}
+		body = append(body[:len(body)-1], []byte(`]}`)...)
+
+		req := httptest.NewRequest(
+			http.MethodPost, "/api/remap",
+			bytes.NewReader(body),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("expected 413, got %d: %s",
+				w.Code, w.Body.String())
+		}
+	})
 }
