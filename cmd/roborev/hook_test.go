@@ -18,134 +18,129 @@ import (
 )
 
 func TestUninstallHookCmd(t *testing.T) {
-	t.Run("hook missing", func(t *testing.T) {
-		repo := testutil.NewTestRepo(t)
-		defer repo.Chdir()()
+	tests := []struct {
+		name         string
+		initialHooks map[string]string
+		setup        func(t *testing.T, repo *testutil.TestRepo)
+		assert       func(t *testing.T, repo *testutil.TestRepo)
+	}{
+		{
+			name: "hook missing",
+			assert: func(t *testing.T, repo *testutil.TestRepo) {
+				if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
+					t.Error("Hook file should not exist")
+				}
+			},
+		},
+		{
+			name: "hook without roborev",
+			initialHooks: map[string]string{
+				"post-commit": "#!/bin/bash\necho 'other hook'\n",
+			},
+			assert: func(t *testing.T, repo *testutil.TestRepo) {
+				content, err := os.ReadFile(repo.HookPath)
+				if err != nil {
+					t.Fatalf("Failed to read hook: %v", err)
+				}
+				want := "#!/bin/bash\necho 'other hook'\n"
+				if string(content) != want {
+					t.Errorf("Hook content changed: got %q, want %q", string(content), want)
+				}
+			},
+		},
+		{
+			name: "hook with roborev only - removes file",
+			initialHooks: map[string]string{
+				"post-commit": githook.GeneratePostCommit(),
+			},
+			assert: func(t *testing.T, repo *testutil.TestRepo) {
+				if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
+					t.Error("Hook file should have been removed")
+				}
+			},
+		},
+		{
+			name: "hook with roborev and other commands - preserves others",
+			initialHooks: map[string]string{
+				"post-commit": "#!/bin/sh\necho 'before'\necho 'after'\n" + githook.GeneratePostCommit(),
+			},
+			assert: func(t *testing.T, repo *testutil.TestRepo) {
+				content, err := os.ReadFile(repo.HookPath)
+				if err != nil {
+					t.Fatalf("Failed to read hook: %v", err)
+				}
+				contentStr := string(content)
+				if strings.Contains(contentStr, "enqueue --quiet") {
+					t.Error("Hook should not contain generated roborev snippet")
+				}
+				if !strings.Contains(contentStr, "echo 'before'") {
+					t.Error("Hook should still contain 'echo before'")
+				}
+				if !strings.Contains(contentStr, "echo 'after'") {
+					t.Error("Hook should still contain 'echo after'")
+				}
+			},
+		},
+		{
+			name: "also removes post-rewrite hook",
+			initialHooks: map[string]string{
+				"post-commit":  githook.GeneratePostCommit(),
+				"post-rewrite": githook.GeneratePostRewrite(),
+			},
+			assert: func(t *testing.T, repo *testutil.TestRepo) {
+				if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
+					t.Error("post-commit hook should have been removed")
+				}
+				prPath := filepath.Join(repo.HooksDir, "post-rewrite")
+				if _, err := os.Stat(prPath); !os.IsNotExist(err) {
+					t.Error("post-rewrite hook should have been removed")
+				}
+			},
+		},
+		{
+			name: "removes post-rewrite even without post-commit",
+			initialHooks: map[string]string{
+				"post-rewrite": githook.GeneratePostRewrite(),
+			},
+			assert: func(t *testing.T, repo *testutil.TestRepo) {
+				prPath := filepath.Join(repo.HooksDir, "post-rewrite")
+				if _, err := os.Stat(prPath); !os.IsNotExist(err) {
+					t.Error("post-rewrite hook should have been removed")
+				}
+			},
+		},
+	}
 
-		cmd := uninstallHookCmd()
-		err := cmd.Execute()
-		if err != nil {
-			t.Fatalf("uninstall-hook failed: %v", err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := testutil.NewTestRepo(t)
+			defer repo.Chdir()()
 
-		if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
-			t.Error("Hook file should not exist")
-		}
-	})
+			if tt.setup != nil {
+				tt.setup(t, repo)
+			}
 
-	t.Run("hook without roborev", func(t *testing.T) {
-		hookContent := "#!/bin/bash\necho 'other hook'\n"
-		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(hookContent)
-		defer repo.Chdir()()
+			if len(tt.initialHooks) > 0 {
+				if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				for name, content := range tt.initialHooks {
+					path := filepath.Join(repo.HooksDir, name)
+					if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
 
-		cmd := uninstallHookCmd()
-		err := cmd.Execute()
-		if err != nil {
-			t.Fatalf("uninstall-hook failed: %v", err)
-		}
+			cmd := uninstallHookCmd()
+			err := cmd.Execute()
+			if err != nil {
+				t.Fatalf("uninstall-hook failed: %v", err)
+			}
 
-		content, err := os.ReadFile(repo.HookPath)
-		if err != nil {
-			t.Fatalf("Failed to read hook: %v", err)
-		}
-		if string(content) != hookContent {
-			t.Errorf("Hook content changed: got %q, want %q", string(content), hookContent)
-		}
-	})
-
-	t.Run("hook with roborev only - removes file", func(t *testing.T) {
-		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(githook.GeneratePostCommit())
-		defer repo.Chdir()()
-
-		cmd := uninstallHookCmd()
-		err := cmd.Execute()
-		if err != nil {
-			t.Fatalf("uninstall-hook failed: %v", err)
-		}
-
-		if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
-			t.Error("Hook file should have been removed")
-		}
-	})
-
-	t.Run("hook with roborev and other commands - preserves others", func(t *testing.T) {
-		repo := testutil.NewTestRepo(t)
-		mixed := "#!/bin/sh\necho 'before'\necho 'after'\n" +
-			githook.GeneratePostCommit()
-		repo.WriteHook(mixed)
-		defer repo.Chdir()()
-
-		cmd := uninstallHookCmd()
-		err := cmd.Execute()
-		if err != nil {
-			t.Fatalf("uninstall-hook failed: %v", err)
-		}
-
-		content, err := os.ReadFile(repo.HookPath)
-		if err != nil {
-			t.Fatalf("Failed to read hook: %v", err)
-		}
-
-		contentStr := string(content)
-		if strings.Contains(contentStr, "enqueue --quiet") {
-			t.Error("Hook should not contain generated roborev snippet")
-		}
-		if !strings.Contains(contentStr, "echo 'before'") {
-			t.Error("Hook should still contain 'echo before'")
-		}
-		if !strings.Contains(contentStr, "echo 'after'") {
-			t.Error("Hook should still contain 'echo after'")
-		}
-	})
-
-	t.Run("also removes post-rewrite hook", func(t *testing.T) {
-		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(githook.GeneratePostCommit())
-		prPath := filepath.Join(repo.HooksDir, "post-rewrite")
-		os.WriteFile(
-			prPath,
-			[]byte(githook.GeneratePostRewrite()),
-			0755,
-		)
-		defer repo.Chdir()()
-
-		cmd := uninstallHookCmd()
-		err := cmd.Execute()
-		if err != nil {
-			t.Fatalf("uninstall-hook failed: %v", err)
-		}
-
-		if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
-			t.Error("post-commit hook should have been removed")
-		}
-		if _, err := os.Stat(prPath); !os.IsNotExist(err) {
-			t.Error("post-rewrite hook should have been removed")
-		}
-	})
-
-	t.Run("removes post-rewrite even without post-commit", func(t *testing.T) {
-		repo := testutil.NewTestRepo(t)
-		prPath := filepath.Join(repo.HooksDir, "post-rewrite")
-		os.MkdirAll(repo.HooksDir, 0755)
-		os.WriteFile(
-			prPath,
-			[]byte(githook.GeneratePostRewrite()),
-			0755,
-		)
-		defer repo.Chdir()()
-
-		cmd := uninstallHookCmd()
-		err := cmd.Execute()
-		if err != nil {
-			t.Fatalf("uninstall-hook failed: %v", err)
-		}
-
-		if _, err := os.Stat(prPath); !os.IsNotExist(err) {
-			t.Error("post-rewrite hook should have been removed")
-		}
-	})
+			tt.assert(t, repo)
+		})
+	}
 }
 
 func TestInstallHookCmdCreatesHooksDirectory(t *testing.T) {
@@ -282,255 +277,197 @@ func initNoDaemonSetup(t *testing.T) string {
 	return repo.Root
 }
 
-func TestInitNoDaemon_ConnectionError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-	initNoDaemonSetup(t)
-
-	oldAddr := serverAddr
-	serverAddr = "http://127.0.0.1:1"
-	defer func() { serverAddr = oldAddr }()
-
-	output := captureStdout(t, func() {
-		cmd := initCmd()
-		cmd.SetArgs([]string{"--no-daemon"})
-		_ = cmd.Execute()
-	})
-
-	if !strings.Contains(output, "Daemon not running") {
-		t.Errorf("expected 'Daemon not running' for connection error, got:\n%s", output)
-	}
-	if !strings.Contains(output, "Setup incomplete") {
-		t.Errorf("expected 'Setup incomplete' banner, got:\n%s", output)
-	}
-	if strings.Contains(output, "Ready!") {
-		t.Errorf("should not show 'Ready!' on connection failure, got:\n%s", output)
-	}
-}
-
-func TestInitNoDaemon_ServerError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-	initNoDaemonSetup(t)
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(500)
-		_, _ = w.Write([]byte("database locked"))
-	}))
+func withMockServer(t *testing.T, handler http.HandlerFunc, fn func(url string)) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
 	oldAddr := serverAddr
 	serverAddr = ts.URL
 	defer func() { serverAddr = oldAddr }()
 
-	output := captureStdout(t, func() {
-		cmd := initCmd()
-		cmd.SetArgs([]string{"--no-daemon"})
-		_ = cmd.Execute()
-	})
-
-	if !strings.Contains(output, "Warning: failed to register repo") {
-		t.Errorf("expected server error warning, got:\n%s", output)
-	}
-	if !strings.Contains(output, "500") {
-		t.Errorf("expected status code 500 in output, got:\n%s", output)
-	}
-	if !strings.Contains(output, "Setup incomplete") {
-		t.Errorf("expected 'Setup incomplete' banner, got:\n%s", output)
-	}
-	if strings.Contains(output, "Ready!") {
-		t.Errorf("should not show 'Ready!' on server error, got:\n%s", output)
-	}
+	fn(ts.URL)
 }
 
-func TestInitNoDaemon_Success(t *testing.T) {
+func TestInitNoDaemon(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-	initNoDaemonSetup(t)
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-	defer ts.Close()
-
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
-	output := captureStdout(t, func() {
-		cmd := initCmd()
-		cmd.SetArgs([]string{"--no-daemon"})
-		_ = cmd.Execute()
-	})
-
-	if !strings.Contains(output, "Repo registered with running daemon") {
-		t.Errorf("expected success registration message, got:\n%s", output)
-	}
-	if !strings.Contains(output, "Ready!") {
-		t.Errorf("expected 'Ready!' banner on success, got:\n%s", output)
-	}
-	if strings.Contains(output, "Setup incomplete") {
-		t.Errorf("should not show 'Setup incomplete' on success, got:\n%s", output)
-	}
-}
-
-func TestInitInstallsPostRewriteHookOnUpgrade(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-	root := initNoDaemonSetup(t)
-
-	// Pre-install a current post-commit hook so init sees it
-	hooksDir := filepath.Join(root, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookContent := githook.GeneratePostCommit()
-	if err := os.WriteFile(filepath.Join(hooksDir, "post-commit"), []byte(hookContent), 0755); err != nil {
-		t.Fatal(err)
+		t.Skip("skipping on Windows due to shell script stubs")
 	}
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-	defer ts.Close()
-
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
-	captureStdout(t, func() {
-		cmd := initCmd()
-		cmd.SetArgs([]string{"--no-daemon"})
-		_ = cmd.Execute()
-	})
-
-	prHookPath := filepath.Join(hooksDir, "post-rewrite")
-	content, err := os.ReadFile(prHookPath)
-	if err != nil {
-		t.Fatalf("post-rewrite hook should be installed: %v", err)
+	tests := []struct {
+		name           string
+		serverHandler  http.HandlerFunc
+		setupFiles     func(t *testing.T, root string)
+		expectContains []string
+		expectNot      []string
+		expectError    bool
+		errorContains  string
+		postCheck      func(t *testing.T, root string)
+	}{
+		{
+			name:          "Connection Error",
+			serverHandler: nil, // Simulates bad connection
+			expectContains: []string{
+				"Daemon not running",
+				"Setup incomplete",
+			},
+			expectNot: []string{"Ready!"},
+		},
+		{
+			name: "Server Error 500",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(500)
+				_, _ = w.Write([]byte("database locked"))
+			},
+			expectContains: []string{
+				"Warning: failed to register repo",
+				"500",
+				"Setup incomplete",
+			},
+			expectNot: []string{"Ready!"},
+		},
+		{
+			name: "Success",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+			},
+			expectContains: []string{
+				"Repo registered with running daemon",
+				"Ready!",
+			},
+			expectNot: []string{"Setup incomplete"},
+		},
+		{
+			name: "Installs PostRewrite Hook On Upgrade",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+			},
+			setupFiles: func(t *testing.T, root string) {
+				hooksDir := filepath.Join(root, ".git", "hooks")
+				if err := os.MkdirAll(hooksDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(hooksDir, "post-commit"), []byte(githook.GeneratePostCommit()), 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			postCheck: func(t *testing.T, root string) {
+				hooksDir := filepath.Join(root, ".git", "hooks")
+				prHookPath := filepath.Join(hooksDir, "post-rewrite")
+				content, err := os.ReadFile(prHookPath)
+				if err != nil {
+					t.Fatalf("post-rewrite hook should be installed: %v", err)
+				}
+				if !strings.Contains(string(content), "remap --quiet") {
+					t.Error("post-rewrite hook should contain 'remap --quiet'")
+				}
+			},
+		},
+		{
+			name: "Warns On Non-Shell Hook",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+			},
+			setupFiles: func(t *testing.T, root string) {
+				hooksDir := filepath.Join(root, ".git", "hooks")
+				os.MkdirAll(hooksDir, 0755)
+				os.WriteFile(
+					filepath.Join(hooksDir, "post-commit"),
+					[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
+					0755,
+				)
+			},
+			expectContains: []string{
+				"non-shell interpreter",
+				"Ready!",
+			},
+		},
+		{
+			name: "Fails On Hook Write Error",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+			},
+			setupFiles: func(t *testing.T, root string) {
+				hooksDir := filepath.Join(root, ".git", "hooks")
+				os.MkdirAll(hooksDir, 0755)
+				os.Chmod(hooksDir, 0555)
+				t.Cleanup(func() { os.Chmod(hooksDir, 0755) })
+			},
+			expectError:   true,
+			errorContains: "install hooks",
+		},
+		{
+			name: "Fails On Mixed Hook Errors",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+			},
+			setupFiles: func(t *testing.T, root string) {
+				hooksDir := filepath.Join(root, ".git", "hooks")
+				os.MkdirAll(hooksDir, 0755)
+				os.WriteFile(
+					filepath.Join(hooksDir, "post-commit"),
+					[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
+					0755,
+				)
+				// Create post-rewrite as a directory so writing it fails.
+				os.MkdirAll(filepath.Join(hooksDir, "post-rewrite"), 0755)
+			},
+			expectError:   true,
+			errorContains: "install hooks",
+		},
 	}
-	if !strings.Contains(string(content), "remap --quiet") {
-		t.Error("post-rewrite hook should contain 'remap --quiet'")
-	}
-}
 
-func TestInitCmdWarnsOnNonShellHook(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-	root := initNoDaemonSetup(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := initNoDaemonSetup(t)
 
-	// Install a non-shell post-commit hook
-	hooksDir := filepath.Join(root, ".git", "hooks")
-	os.MkdirAll(hooksDir, 0755)
-	os.WriteFile(
-		filepath.Join(hooksDir, "post-commit"),
-		[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
-		0755,
-	)
+			if tt.setupFiles != nil {
+				tt.setupFiles(t, root)
+			}
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-	defer ts.Close()
+			runTest := func() {
+				output := captureStdout(t, func() {
+					cmd := initCmd()
+					cmd.SetArgs([]string{"--no-daemon"})
+					err := cmd.Execute()
+					if tt.expectError {
+						if err == nil {
+							t.Error("expected error but got nil")
+						} else if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
+							t.Errorf("error %q expected to contain %q", err.Error(), tt.errorContains)
+						}
+					} else if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				})
 
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
+				for _, s := range tt.expectContains {
+					if !strings.Contains(output, s) {
+						t.Errorf("output missing %q", s)
+					}
+				}
+				for _, s := range tt.expectNot {
+					if strings.Contains(output, s) {
+						t.Errorf("output should not contain %q", s)
+					}
+				}
+			}
 
-	output := captureStdout(t, func() {
-		cmd := initCmd()
-		cmd.SetArgs([]string{"--no-daemon"})
-		_ = cmd.Execute()
-	})
+			if tt.serverHandler != nil {
+				withMockServer(t, tt.serverHandler, func(_ string) {
+					runTest()
+				})
+			} else {
+				// Simulate connection error
+				oldAddr := serverAddr
+				serverAddr = "http://127.0.0.1:1"
+				defer func() { serverAddr = oldAddr }()
+				runTest()
+			}
 
-	// Should warn about non-shell hook but still succeed
-	if !strings.Contains(output, "non-shell interpreter") {
-		t.Errorf("expected non-shell warning, got:\n%s", output)
-	}
-	if !strings.Contains(output, "Ready!") {
-		t.Errorf("init should still succeed with Ready!, got:\n%s", output)
-	}
-}
-
-func TestInitCmdFailsOnHookWriteError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-	root := initNoDaemonSetup(t)
-
-	// Make hooks directory unwritable to trigger a real error
-	hooksDir := filepath.Join(root, ".git", "hooks")
-	os.MkdirAll(hooksDir, 0755)
-	os.Chmod(hooksDir, 0555)
-	t.Cleanup(func() { os.Chmod(hooksDir, 0755) })
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-	defer ts.Close()
-
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
-	cmd := initCmd()
-	cmd.SetArgs([]string{"--no-daemon"})
-	err := cmd.Execute()
-
-	// Should fail on permission error, not warn-and-continue
-	if err == nil {
-		t.Fatal("expected error for unwritable hooks directory")
-	}
-	if !strings.Contains(err.Error(), "install hooks") {
-		t.Errorf("error should mention install hooks: %v", err)
-	}
-}
-
-func TestInitCmdFailsOnMixedHookErrors(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-	root := initNoDaemonSetup(t)
-
-	// Non-shell post-commit (produces ErrNonShellHook) +
-	// unwritable post-rewrite (produces real write error).
-	// InstallAll joins both; init must treat as fatal.
-	hooksDir := filepath.Join(root, ".git", "hooks")
-	os.MkdirAll(hooksDir, 0755)
-	os.WriteFile(
-		filepath.Join(hooksDir, "post-commit"),
-		[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
-		0755,
-	)
-	// Create post-rewrite as a directory so writing it fails.
-	os.MkdirAll(
-		filepath.Join(hooksDir, "post-rewrite"), 0755,
-	)
-
-	ts := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
-		}),
-	)
-	defer ts.Close()
-
-	oldAddr := serverAddr
-	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
-	cmd := initCmd()
-	cmd.SetArgs([]string{"--no-daemon"})
-	err := cmd.Execute()
-
-	if err == nil {
-		t.Fatal("expected error when mixed errors from InstallAll")
-	}
-	if !strings.Contains(err.Error(), "install hooks") {
-		t.Errorf("error should mention install hooks: %v", err)
+			if tt.postCheck != nil {
+				tt.postCheck(t, root)
+			}
+		})
 	}
 }
