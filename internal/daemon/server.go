@@ -138,15 +138,18 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool
 	s.workerPool.Start()
 
-	// Check for outdated hooks in registered repos
-	if repos, err := s.db.ListRepos(); err == nil {
-		for _, repo := range repos {
-			if hookNeedsUpgrade(repo.RootPath, "post-commit", hookVersionMarker) {
-				log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
-			}
-			if hookNeedsUpgrade(repo.RootPath, "post-rewrite", postRewriteHookVersionMarker) ||
-				hookMissing(repo.RootPath, "post-rewrite") {
-				log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", repo.RootPath)
+	// Check for outdated hooks in registered repos (skip in CI mode
+	// where repos are fetch-only and don't need local hooks).
+	if s.ciPoller == nil {
+		if repos, err := s.db.ListRepos(); err == nil {
+			for _, repo := range repos {
+				if hookNeedsUpgrade(repo.RootPath, "post-commit", hookVersionMarker) {
+					log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
+				}
+				if hookNeedsUpgrade(repo.RootPath, "post-rewrite", postRewriteHookVersionMarker) ||
+					hookMissing(repo.RootPath, "post-rewrite") {
+					log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", repo.RootPath)
+				}
 			}
 		}
 	}
