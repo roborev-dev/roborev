@@ -1346,8 +1346,8 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected parse error, got cfg=%+v", cfg)
 	}
-	if !strings.Contains(err.Error(), "parse") {
-		t.Errorf("expected parse error, got: %v", err)
+	if !config.IsConfigParseError(err) {
+		t.Errorf("expected ConfigParseError, got: %v", err)
 	}
 }
 

@@ -423,7 +423,7 @@ func loadGuidelines(repoPath string) string {
 	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
 		cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
 		if err != nil {
-			if strings.Contains(err.Error(), "parse") {
+			if config.IsConfigParseError(err) {
 				log.Printf("prompt: invalid .roborev.toml on %s: %v",
 					defaultBranch, err)
 				return ""

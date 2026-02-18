@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,6 +14,26 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/roborev-dev/roborev/internal/git"
 )
+
+// ConfigParseError is returned when .roborev.toml exists but
+// contains invalid TOML. Callers can check with errors.As.
+type ConfigParseError struct {
+	Ref string
+	Err error
+}
+
+func (e *ConfigParseError) Error() string {
+	return fmt.Sprintf("parse .roborev.toml at %s: %v", e.Ref, e.Err)
+}
+
+func (e *ConfigParseError) Unwrap() error { return e.Err }
+
+// IsConfigParseError reports whether err (or any error in its chain)
+// is a ConfigParseError.
+func IsConfigParseError(err error) bool {
+	var pe *ConfigParseError
+	return errors.As(err, &pe)
+}
 
 // HookConfig defines a hook that runs on review events
 type HookConfig struct {
@@ -476,7 +497,7 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 
 	var cfg RepoConfig
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
-		return nil, fmt.Errorf("parse .roborev.toml at %s: %w", ref, err)
+		return nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	return &cfg, nil
 }

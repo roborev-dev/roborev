@@ -778,6 +778,57 @@ func TestLoadGuidelines_ParseErrorBlocksFallback(t *testing.T) {
 	}
 }
 
+func TestLoadGuidelines_GitErrorFallsBackToFilesystem(t *testing.T) {
+	// When LoadRepoConfigFromRef fails with a non-parse error (e.g.,
+	// corrupt object), loadGuidelines should fall back to filesystem.
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	run("init", "-b", "main")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
+
+	// Commit .roborev.toml so it exists in the tree.
+	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("review_guidelines = \"From main\"\n"), 0644)
+	run("add", "-A")
+	run("commit", "-m", "init")
+
+	// Corrupt the blob object for .roborev.toml so git show fails
+	// with a non-"does not exist" error ("loose object ... is corrupt").
+	blobSHA := run("rev-parse", "HEAD:.roborev.toml")
+	objPath := filepath.Join(dir, ".git", "objects",
+		blobSHA[:2], blobSHA[2:])
+	if err := os.Chmod(objPath, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	os.WriteFile(objPath, []byte("corrupt"), 0444)
+
+	// Write valid filesystem config that should be used as fallback.
+	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0644)
+
+	guidelines := loadGuidelines(dir)
+
+	if !strings.Contains(guidelines, "Filesystem fallback.") {
+		t.Error("non-parse git error should fall back to filesystem")
+	}
+}
+
 // extractGuidelinesSection returns the text between "## Project Guidelines"
 // and the next "## " header, or empty string if no guidelines section exists.
 func extractGuidelinesSection(prompt string) string {
