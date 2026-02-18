@@ -103,6 +103,12 @@ func (r *TestGitRepo) CommitFile(name, content, msg string) string {
 	return r.Run("rev-parse", "HEAD")
 }
 
+// WriteFiles writes the given files to the repository directory.
+func (r *TestGitRepo) WriteFiles(files map[string]string) {
+	r.t.Helper()
+	writeFiles(r.t, r.Dir, files)
+}
+
 // patchServerAddr safely swaps the global serverAddr variable and restores it
 // when the test completes.
 func patchServerAddr(t *testing.T, newURL string) {
@@ -113,52 +119,31 @@ func patchServerAddr(t *testing.T, newURL string) {
 }
 
 // createTestRepo creates a temporary git repository with the given files
-// committed. It returns the repo directory path.
-func createTestRepo(t *testing.T, files map[string]string) string {
+// committed. It returns the TestGitRepo.
+func createTestRepo(t *testing.T, files map[string]string) *TestGitRepo {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 
-	dir := t.TempDir()
-	resolved, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		t.Fatalf("Failed to resolve symlinks: %v", err)
-	}
-	dir = resolved
-
-	runGit := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-
-	for path, content := range files {
-		fullPath := filepath.Join(dir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	runGit("add", ".")
-	runGit("commit", "-m", "initial")
-	return dir
+	r := newTestGitRepo(t)
+	r.WriteFiles(files)
+	r.Run("add", ".")
+	r.Run("commit", "-m", "initial")
+	return r
 }
 
 // writeTestFiles creates files in a directory without git. Returns the directory.
 func writeTestFiles(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
+	writeFiles(t, dir, files)
+	return dir
+}
+
+// writeFiles is a helper to write files to a directory.
+func writeFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
 	for path, content := range files {
 		fullPath := filepath.Join(dir, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
@@ -168,7 +153,6 @@ func writeTestFiles(t *testing.T, files map[string]string) string {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
-	return dir
 }
 
 // mockReviewDaemon sets up a mock daemon that returns the given review on
@@ -252,65 +236,75 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	}
 	jobID := jobIDStart - 1
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/enqueue" && r.Method == http.MethodPost:
-			if opts.OnEnqueue != nil {
-				atomic.AddInt32(&state.EnqueueCount, 1)
-				opts.OnEnqueue(w, r)
-				return
-			}
-			id := atomic.AddInt64(&jobID, 1)
-			atomic.AddInt32(&state.EnqueueCount, 1)
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(storage.ReviewJob{
-				ID:     id,
-				Agent:  opts.Agent,
-				Status: storage.JobStatusQueued,
-			})
+	mux := http.NewServeMux()
 
-		case r.URL.Path == "/api/jobs":
-			if opts.OnJobs != nil {
-				atomic.AddInt32(&state.JobsCount, 1)
-				opts.OnJobs(w, r)
-				return
-			}
-			count := atomic.AddInt32(&state.JobsCount, 1)
-			status := storage.JobStatusQueued
-			if count >= opts.DoneAfterPolls {
-				status = storage.JobStatusDone
-			}
-			json.NewEncoder(w).Encode(map[string]any{
-				"jobs": []storage.ReviewJob{{
-					ID:     atomic.LoadInt64(&jobID),
-					Status: status,
-				}},
-			})
-
-		case r.URL.Path == "/api/review":
-			atomic.AddInt32(&state.ReviewCount, 1)
-			output := opts.ReviewOutput
-			if output == "" {
-				output = "review output"
-			}
-			json.NewEncoder(w).Encode(storage.Review{
-				JobID:  atomic.LoadInt64(&jobID),
-				Agent:  opts.Agent,
-				Output: output,
-			})
-
-		case r.URL.Path == "/api/comment" && r.Method == http.MethodPost:
-			atomic.AddInt32(&state.CommentCount, 1)
-			w.WriteHeader(http.StatusCreated)
-
-		case r.URL.Path == "/api/review/address":
-			atomic.AddInt32(&state.AddressCount, 1)
-			w.WriteHeader(http.StatusOK)
-
-		default:
-			w.WriteHeader(http.StatusNotFound)
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
 		}
-	}))
+		if opts.OnEnqueue != nil {
+			atomic.AddInt32(&state.EnqueueCount, 1)
+			opts.OnEnqueue(w, r)
+			return
+		}
+		id := atomic.AddInt64(&jobID, 1)
+		atomic.AddInt32(&state.EnqueueCount, 1)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(storage.ReviewJob{
+			ID:     id,
+			Agent:  opts.Agent,
+			Status: storage.JobStatusQueued,
+		})
+	})
+
+	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if opts.OnJobs != nil {
+			atomic.AddInt32(&state.JobsCount, 1)
+			opts.OnJobs(w, r)
+			return
+		}
+		count := atomic.AddInt32(&state.JobsCount, 1)
+		status := storage.JobStatusQueued
+		if count >= opts.DoneAfterPolls {
+			status = storage.JobStatusDone
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"jobs": []storage.ReviewJob{{
+				ID:     atomic.LoadInt64(&jobID),
+				Status: status,
+			}},
+		})
+	})
+
+	mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&state.ReviewCount, 1)
+		output := opts.ReviewOutput
+		if output == "" {
+			output = "review output"
+		}
+		json.NewEncoder(w).Encode(storage.Review{
+			JobID:  atomic.LoadInt64(&jobID),
+			Agent:  opts.Agent,
+			Output: output,
+		})
+	})
+
+	mux.HandleFunc("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		atomic.AddInt32(&state.CommentCount, 1)
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	mux.HandleFunc("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&state.AddressCount, 1)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts, state
 }

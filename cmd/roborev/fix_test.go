@@ -229,7 +229,7 @@ func TestAddJobResponse(t *testing.T) {
 }
 
 func TestFixSingleJob(t *testing.T) {
-	repoDir := createTestRepo(t, map[string]string{
+	repo := createTestRepo(t, map[string]string{
 		"main.go": "package main\n",
 	})
 
@@ -254,7 +254,7 @@ func TestFixSingleJob(t *testing.T) {
 		reasoning: "fast",
 	}
 
-	err := fixSingleJob(cmd, repoDir, 99, opts)
+	err := fixSingleJob(cmd, repo.Dir, 99, opts)
 	if err != nil {
 		t.Fatalf("fixSingleJob: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 }
 
 func TestRunFixUnaddressed(t *testing.T) {
-	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	t.Run("no unaddressed jobs", func(t *testing.T) {
 		_, cleanup := newMockDaemonBuilder(t).
@@ -399,7 +399,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		cmd.SetOut(&output)
 
 		oldWd, _ := os.Getwd()
-		_ = os.Chdir(tmpDir)
+		_ = os.Chdir(repo.Dir)
 		defer func() { _ = os.Chdir(oldWd) }()
 
 		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
@@ -461,7 +461,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		cmd.SetOut(&output)
 
 		oldWd, _ := os.Getwd()
-		_ = os.Chdir(tmpDir)
+		_ = os.Chdir(repo.Dir)
 		defer func() { _ = os.Chdir(oldWd) }()
 
 		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
@@ -499,7 +499,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		cmd.SetOut(&output)
 
 		oldWd, _ := os.Getwd()
-		_ = os.Chdir(tmpDir)
+		_ = os.Chdir(repo.Dir)
 		defer func() { _ = os.Chdir(oldWd) }()
 
 		err := runFixUnaddressed(cmd, "feature-branch", false, fixOptions{agentName: "test"})
@@ -525,7 +525,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		cmd.SetOut(&output)
 
 		oldWd, _ := os.Getwd()
-		_ = os.Chdir(tmpDir)
+		_ = os.Chdir(repo.Dir)
 		defer func() { _ = os.Chdir(oldWd) }()
 
 		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
@@ -537,9 +537,8 @@ func TestRunFixUnaddressed(t *testing.T) {
 		}
 	})
 }
-
 func TestRunFixUnaddressedOrdering(t *testing.T) {
-	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	makeBuilder := func() (*MockDaemonBuilder, *atomic.Int32) {
 		var unaddressedCalls atomic.Int32
@@ -597,7 +596,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		cmd.SetOut(&output)
 
 		oldWd, _ := os.Getwd()
-		_ = os.Chdir(tmpDir)
+		_ = os.Chdir(repo.Dir)
 		defer func() { _ = os.Chdir(oldWd) }()
 
 		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
@@ -619,7 +618,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		cmd.SetOut(&output)
 
 		oldWd, _ := os.Getwd()
-		_ = os.Chdir(tmpDir)
+		_ = os.Chdir(repo.Dir)
 		defer func() { _ = os.Chdir(oldWd) }()
 
 		err := runFixUnaddressed(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
@@ -631,9 +630,8 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		}
 	})
 }
-
 func TestRunFixUnaddressedRequery(t *testing.T) {
-	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	var queryCount atomic.Int32
 	_, cleanup := newMockDaemonBuilder(t).
@@ -696,7 +694,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 	cmd.SetOut(&output)
 
 	oldWd, _ := os.Getwd()
-	_ = os.Chdir(tmpDir)
+	_ = os.Chdir(repo.Dir)
 	defer func() { _ = os.Chdir(oldWd) }()
 
 	err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
@@ -1067,7 +1065,7 @@ func TestFixCmdBatchFlagValidation(t *testing.T) {
 }
 
 func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
-	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 	sha := "abc123def456"
 
 	var enqueueCalls atomic.Int32
@@ -1087,7 +1085,7 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err := enqueueIfNeeded(ts.URL, tmpDir, sha)
+	err := enqueueIfNeeded(ts.URL, repo.Dir, sha)
 	if err != nil {
 		t.Fatalf("enqueueIfNeeded: %v", err)
 	}
@@ -1097,7 +1095,7 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 }
 
 func TestRunFixList(t *testing.T) {
-	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	t.Run("lists unaddressed jobs with details", func(t *testing.T) {
 		finishedAt := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
@@ -1128,7 +1126,7 @@ func TestRunFixList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chdir(tmpDir); err != nil {
+		if err := os.Chdir(repo.Dir); err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = os.Chdir(oldWd) }()
@@ -1194,7 +1192,7 @@ func TestRunFixList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chdir(tmpDir); err != nil {
+		if err := os.Chdir(repo.Dir); err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = os.Chdir(oldWd) }()
@@ -1250,7 +1248,7 @@ func TestRunFixList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chdir(tmpDir); err != nil {
+		if err := os.Chdir(repo.Dir); err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = os.Chdir(oldWd) }()
@@ -1270,7 +1268,6 @@ func TestRunFixList(t *testing.T) {
 		}
 	})
 }
-
 func TestTruncateString(t *testing.T) {
 	tests := []struct {
 		s      string

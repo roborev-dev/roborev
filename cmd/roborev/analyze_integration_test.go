@@ -138,7 +138,7 @@ func TestWaitForAnalysisJob(t *testing.T) {
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	// This tests the full workflow with mocked daemon and test agent
-	tmpDir := createTestRepo(t, map[string]string{
+	repo := createTestRepo(t, map[string]string{
 		"main.go": "package main\n",
 	})
 
@@ -158,7 +158,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 		reasoning: "fast",
 	}
 
-	err := runAnalyzeAndFix(cmd, ts.URL, tmpDir, 99, analysisType, opts)
+	err := runAnalyzeAndFix(cmd, ts.URL, repo.Dir, 99, analysisType, opts)
 	if err != nil {
 		t.Fatalf("runAnalyzeAndFix failed: %v", err)
 	}
