@@ -89,17 +89,7 @@ func TestExpandAndReadFiles(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if len(files) != len(tt.wantKeys) {
-				t.Errorf("got %d files, want %d", len(files), len(tt.wantKeys))
-			}
-
-			for _, key := range tt.wantKeys {
-				// Convert to native path separator for cross-platform compatibility
-				nativeKey := filepath.FromSlash(key)
-				if _, ok := files[nativeKey]; !ok {
-					t.Errorf("missing expected file %q, got keys: %v", nativeKey, mapKeys(files))
-				}
-			}
+			assertFilesExist(t, files, tt.wantKeys)
 		})
 	}
 }
@@ -120,13 +110,7 @@ func TestExpandAndReadFilesRecursive(t *testing.T) {
 
 	// Should include main.go, cmd/app/app.go, internal/util.go
 	// Should NOT include vendor/dep/dep.go or .git/config
-	want := []string{"main.go", "cmd/app/app.go", "internal/util.go"}
-	for _, w := range want {
-		nativeW := filepath.FromSlash(w)
-		if _, ok := result[nativeW]; !ok {
-			t.Errorf("missing expected file %q", nativeW)
-		}
-	}
+	assertFilesExist(t, result, []string{"main.go", "cmd/app/app.go", "internal/util.go"})
 
 	noWant := []string{"vendor/dep/dep.go", ".git/config"}
 	for _, nw := range noWant {
@@ -141,21 +125,11 @@ func TestExpandAndReadFiles_ShellExpanded(t *testing.T) {
 	// Simulate shell-expanded globs: the shell expands *.go in a subdirectory
 	// into individual relative file paths like "helper.go", "helper_test.go".
 	// workDir is the subdirectory where the shell ran; repoRoot is the repo root.
-	tmpDir := t.TempDir()
-
-	writeFile := func(path, content string) {
-		fullPath := filepath.Join(tmpDir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	writeFile("main.go", "package main\n")
-	writeFile("sub/helper.go", "package sub\n")
-	writeFile("sub/helper_test.go", "package sub\n// test\n")
+	tmpDir := writeTestFiles(t, map[string]string{
+		"main.go":            "package main\n",
+		"sub/helper.go":      "package sub\n",
+		"sub/helper_test.go": "package sub\n// test\n",
+	})
 
 	repoRoot := tmpDir
 	workDir := filepath.Join(tmpDir, "sub")
@@ -167,35 +141,16 @@ func TestExpandAndReadFiles_ShellExpanded(t *testing.T) {
 	}
 
 	// Keys should be relative to repoRoot
-	wantKeys := []string{"sub/helper.go", "sub/helper_test.go"}
-	if len(files) != len(wantKeys) {
-		t.Fatalf("got %d files, want %d: %v", len(files), len(wantKeys), mapKeys(files))
-	}
-	for _, key := range wantKeys {
-		nativeKey := filepath.FromSlash(key)
-		if _, ok := files[nativeKey]; !ok {
-			t.Errorf("missing expected file %q, got keys: %v", nativeKey, mapKeys(files))
-		}
-	}
+	assertFilesExist(t, files, []string{"sub/helper.go", "sub/helper_test.go"})
 }
 
 func TestExpandAndReadFiles_RecursiveFromSubdir(t *testing.T) {
 	// ./... should walk from repoRoot and return all source files,
 	// even when workDir is a subdirectory.
-	tmpDir := t.TempDir()
-
-	writeFile := func(path, content string) {
-		fullPath := filepath.Join(tmpDir, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	writeFile("main.go", "package main\n")
-	writeFile("sub/helper.go", "package sub\n")
+	tmpDir := writeTestFiles(t, map[string]string{
+		"main.go":       "package main\n",
+		"sub/helper.go": "package sub\n",
+	})
 
 	repoRoot := tmpDir
 	workDir := filepath.Join(tmpDir, "sub")
@@ -206,16 +161,7 @@ func TestExpandAndReadFiles_RecursiveFromSubdir(t *testing.T) {
 	}
 
 	// Should find files across the entire repo, not just the subdirectory
-	wantKeys := []string{"main.go", "sub/helper.go"}
-	if len(files) != len(wantKeys) {
-		t.Fatalf("got %d files, want %d: %v", len(files), len(wantKeys), mapKeys(files))
-	}
-	for _, key := range wantKeys {
-		nativeKey := filepath.FromSlash(key)
-		if _, ok := files[nativeKey]; !ok {
-			t.Errorf("missing expected file %q, got keys: %v", nativeKey, mapKeys(files))
-		}
-	}
+	assertFilesExist(t, files, []string{"main.go", "sub/helper.go"})
 }
 
 func TestIsSourceFile(t *testing.T) {
@@ -320,15 +266,15 @@ func TestAnalyzeOptionsDefaults(t *testing.T) {
 
 func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 	// Test that context timeout is respected
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Always return "queued" to force polling
-		job := storage.ReviewJob{
-			ID:     42,
-			Status: storage.JobStatusQueued,
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{job}})
-	}))
-	defer ts.Close()
+	// JobIDStart: 43 means the initial job ID (without enqueue) is 42.
+	// DoneAfterPolls: 999 ensures it stays "queued" long enough for timeout.
+	ts, _ := newMockServer(t, MockServerOpts{
+		JobIDStart:     43,
+		DoneAfterPolls: 999,
+	})
+	// patchServerAddr not strictly needed as we pass ts.URL to waitForAnalysisJob,
+	// but good practice if waitForAnalysisJob used the global.
+	// Here waitForAnalysisJob takes the url arg.
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -340,6 +286,34 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 	if !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("expected context deadline error, got: %v", err)
 	}
+}
+
+func mockAddressServer(t *testing.T, expectedID int64, statusCode int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/review/address" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("failed to decode body: %v", err)
+		}
+		gotJobID := int64(req["job_id"].(float64))
+		gotAddressed := req["addressed"].(bool)
+
+		if gotJobID != expectedID {
+			t.Errorf("job_id = %d, want %d", gotJobID, expectedID)
+		}
+		if !gotAddressed {
+			t.Error("addressed should be true")
+		}
+
+		w.WriteHeader(statusCode)
+	}))
 }
 
 func TestMarkJobAddressed(t *testing.T) {
@@ -355,24 +329,7 @@ func TestMarkJobAddressed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var gotJobID int64
-			var gotAddressed bool
-
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/api/review/address" {
-					t.Errorf("unexpected path: %s", r.URL.Path)
-				}
-				if r.Method != http.MethodPost {
-					t.Errorf("unexpected method: %s", r.Method)
-				}
-
-				var req map[string]any
-				_ = json.NewDecoder(r.Body).Decode(&req)
-				gotJobID = int64(req["job_id"].(float64))
-				gotAddressed = req["addressed"].(bool)
-
-				w.WriteHeader(tt.statusCode)
-			}))
+			ts := mockAddressServer(t, 123, tt.statusCode)
 			defer ts.Close()
 
 			err := markJobAddressed(ts.URL, 123)
@@ -386,12 +343,6 @@ func TestMarkJobAddressed(t *testing.T) {
 
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
-			}
-			if gotJobID != 123 {
-				t.Errorf("job_id = %d, want 123", gotJobID)
-			}
-			if !gotAddressed {
-				t.Error("addressed should be true")
 			}
 		})
 	}
@@ -946,4 +897,17 @@ func TestAnalyzeBranchFlagValidation(t *testing.T) {
 			t.Errorf("arg validation should pass with --branch and analysis type, got: %v", err)
 		}
 	})
+}
+
+func assertFilesExist(t *testing.T, files map[string]string, wantKeys []string) {
+	t.Helper()
+	if len(files) != len(wantKeys) {
+		t.Errorf("got %d files, want %d: %v", len(files), len(wantKeys), mapKeys(files))
+	}
+	for _, key := range wantKeys {
+		nativeKey := filepath.FromSlash(key)
+		if _, ok := files[nativeKey]; !ok {
+			t.Errorf("missing expected file %q, got keys: %v", nativeKey, mapKeys(files))
+		}
+	}
 }
