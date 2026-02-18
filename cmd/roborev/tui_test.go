@@ -26,7 +26,7 @@ const testServerAddr = "http://test.invalid:9999"
 // setupTuiTestEnv isolates the test from the production roborev environment
 // by setting ROBOREV_DATA_DIR to a temp directory. This prevents tests from
 // reading production daemon.json or affecting production state.
-func setupTuiTestEnv(t *testing.T) {
+func setupTuiTestEnv(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
@@ -38,6 +38,7 @@ func setupTuiTestEnv(t *testing.T) {
 			os.Unsetenv("ROBOREV_DATA_DIR")
 		}
 	})
+	return tmpDir
 }
 
 // mockConnError creates a connection error (url.Error) for testing
@@ -371,43 +372,39 @@ func TestTUIGetVisibleJobs(t *testing.T) {
 }
 
 func TestTUIGetVisibleSelectedIdx(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
+	// Shared setup
+	jobs := []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 		makeJob(2, withRepoName("repo-b"), withRepoPath("/path/to/repo-b")),
 		makeJob(3, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 
-	// No filter, valid selection
-	m.selectedIdx = 1
-	if idx := m.getVisibleSelectedIdx(); idx != 1 {
-		t.Errorf("No filter, selectedIdx=1: expected 1, got %d", idx)
+	tests := []struct {
+		name        string
+		selectedIdx int
+		filter      []string
+		want        int
+	}{
+		{"No filter, valid selection", 1, nil, 1},
+		{"No filter, no selection", -1, nil, -1},
+		{"Filter active, valid visible selection", 2, []string{"/path/to/repo-a"}, 1}, // index 2 is job ID 3, which is 2nd in filtered list (index 1)
+		{"Filter active, selection hidden", 1, []string{"/path/to/repo-a"}, -1},      // index 1 is job ID 2, not in repo-a
+		{"Filter active, selectedIdx -1", -1, []string{"/path/to/repo-a"}, -1},
 	}
 
-	// No filter, selectedIdx=-1 returns -1
-	m.selectedIdx = -1
-	if idx := m.getVisibleSelectedIdx(); idx != -1 {
-		t.Errorf("No filter, selectedIdx=-1: expected -1, got %d", idx)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTuiModel(testServerAddr)
+			m.jobs = jobs
+			m.selectedIdx = tt.selectedIdx
+			if tt.filter != nil {
+				m.activeRepoFilter = tt.filter
+			}
 
-	// With filter, selectedIdx=-1 returns -1
-	m.activeRepoFilter = []string{"/path/to/repo-a"}
-	m.selectedIdx = -1
-	if idx := m.getVisibleSelectedIdx(); idx != -1 {
-		t.Errorf("Filter active, selectedIdx=-1: expected -1, got %d", idx)
-	}
-
-	// With filter, selection matches visible job (job ID=3 is second visible in repo-a)
-	m.selectedIdx = 2 // index in m.jobs for job ID=3
-	if idx := m.getVisibleSelectedIdx(); idx != 1 {
-		t.Errorf("Filter active, selectedIdx=2 (ID=3): expected visible idx 1, got %d", idx)
-	}
-
-	// With filter, selection doesn't match filter - returns -1
-	m.selectedIdx = 1 // index in m.jobs for job ID=2 (repo-b, not visible)
-	if idx := m.getVisibleSelectedIdx(); idx != -1 {
-		t.Errorf("Filter active, selection not visible: expected -1, got %d", idx)
+			if got := m.getVisibleSelectedIdx(); got != tt.want {
+				t.Errorf("getVisibleSelectedIdx() = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -523,8 +520,7 @@ func TestTUIHideAddressedDefaultFromConfig(t *testing.T) {
 	skipExternalIO = false
 	defer func() { skipExternalIO = true }()
 
-	tmpDir := t.TempDir()
-	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	tmpDir := setupTuiTestEnv(t)
 
 	configPath := filepath.Join(tmpDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
@@ -833,8 +829,7 @@ func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 	skipExternalIO = false
 	defer func() { skipExternalIO = true }()
 
-	tmpDir := t.TempDir()
-	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	tmpDir := setupTuiTestEnv(t)
 
 	// Write malformed TOML that LoadGlobal will fail to parse
 	malformed := []byte(`this is not valid toml {{{`)
@@ -874,8 +869,7 @@ func TestTUIHideAddressedValidConfigNotMutated(t *testing.T) {
 	skipExternalIO = false
 	defer func() { skipExternalIO = true }()
 
-	tmpDir := t.TempDir()
-	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	tmpDir := setupTuiTestEnv(t)
 
 	// Write a valid config with the hide-addressed default enabled
 	validConfig := []byte("hide_addressed_by_default = true\n")
@@ -1039,7 +1033,7 @@ func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
 }
 
 func TestTUIVersionMismatchDetection(t *testing.T) {
-	setupTuiTestEnv(t)
+	_ = setupTuiTestEnv(t)
 
 	t.Run("detects version mismatch", func(t *testing.T) {
 		m := newTuiModel(testServerAddr)
@@ -1119,7 +1113,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 }
 
 func TestTUIConfigReloadFlash(t *testing.T) {
-	setupTuiTestEnv(t)
+	_ = setupTuiTestEnv(t)
 	m := newTuiModel(testServerAddr)
 
 	t.Run("no flash on first status fetch", func(t *testing.T) {
@@ -1203,212 +1197,150 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 }
 
 func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
-	setupTuiTestEnv(t)
-	t.Run("triggers reconnection after 3 consecutive connection errors", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 2 // Already had 2 connection errors
+	_ = setupTuiTestEnv(t)
 
-		// Third connection error should trigger reconnection
-		m2, cmd := updateModel(t, m, tuiJobsErrMsg{err: mockConnError("connection refused")})
+	type testCase struct {
+		name              string
+		initialErrors     int
+		reconnecting      bool
+		msg               tea.Msg
+		wantErrors        int
+		wantReconnecting  bool
+		wantCmd           bool
+		wantServerAddr    string
+		wantDaemonVersion string
+	}
 
-		if m2.consecutiveErrors != 3 {
-			t.Errorf("Expected consecutiveErrors=3, got %d", m2.consecutiveErrors)
-		}
-		if !m2.reconnecting {
-			t.Error("Expected reconnecting=true after 3 consecutive errors")
-		}
-		if cmd == nil {
-			t.Error("Expected reconnect command to be returned")
-		}
-	})
+	tests := []testCase{
+		{
+			name:             "triggers reconnection after 3 consecutive connection errors",
+			initialErrors:    2,
+			msg:              tuiJobsErrMsg{err: mockConnError("connection refused")},
+			wantErrors:       3,
+			wantReconnecting: true,
+			wantCmd:          true,
+		},
+		{
+			name:             "does not trigger reconnection before 3 errors",
+			initialErrors:    1,
+			msg:              tuiJobsErrMsg{err: mockConnError("connection refused")},
+			wantErrors:       2,
+			wantReconnecting: false,
+			wantCmd:          false,
+		},
+		{
+			name:             "does not count application errors for reconnection",
+			initialErrors:    2,
+			msg:              tuiErrMsg(fmt.Errorf("no review found")),
+			wantErrors:       2,
+			wantReconnecting: false,
+			wantCmd:          false,
+		},
+		{
+			name:             "does not count non-connection errors in jobs fetch",
+			initialErrors:    2,
+			msg:              tuiJobsErrMsg{err: fmt.Errorf("invalid JSON response")},
+			wantErrors:       2,
+			wantReconnecting: false,
+			wantCmd:          false,
+		},
+		{
+			name:             "pagination errors also trigger reconnection",
+			initialErrors:    2,
+			msg:              tuiPaginationErrMsg{err: mockConnError("connection refused")},
+			wantErrors:       3,
+			wantReconnecting: true,
+			wantCmd:          true,
+		},
+		{
+			name:             "status/review connection errors trigger reconnection",
+			initialErrors:    2,
+			msg:              tuiErrMsg(mockConnError("connection refused")),
+			wantErrors:       3,
+			wantReconnecting: true,
+			wantCmd:          true,
+		},
+		{
+			name:             "status/review application errors do not trigger reconnection",
+			initialErrors:    2,
+			msg:              tuiErrMsg(fmt.Errorf("review not found")),
+			wantErrors:       2,
+			wantReconnecting: false,
+			wantCmd:          false,
+		},
+		{
+			name:             "resets error count on successful jobs fetch",
+			initialErrors:    5,
+			msg:              tuiJobsMsg{jobs: []storage.ReviewJob{}, hasMore: false},
+			wantErrors:       0,
+			wantReconnecting: false,
+			wantCmd:          false,
+		},
+		{
+			name:             "resets error count on successful status fetch",
+			initialErrors:    5,
+			msg:              tuiStatusMsg(storage.DaemonStatus{Version: "1.0.0"}),
+			wantErrors:       0,
+			wantReconnecting: false,
+			wantCmd:          false,
+		},
+		{
+			name:              "updates server address on successful reconnection",
+			initialErrors:     0,
+			reconnecting:      true,
+			msg:               tuiReconnectMsg{newAddr: "http://127.0.0.1:7374", version: "2.0.0"},
+			wantErrors:        0,
+			wantReconnecting:  false,
+			wantCmd:           true,
+			wantServerAddr:    "http://127.0.0.1:7374",
+			wantDaemonVersion: "2.0.0",
+		},
+		{
+			name:             "handles reconnection to same address",
+			initialErrors:    3,
+			reconnecting:     true,
+			msg:              tuiReconnectMsg{newAddr: testServerAddr},
+			wantErrors:       3,
+			wantReconnecting: false,
+			wantCmd:          false,
+			wantServerAddr:   testServerAddr,
+		},
+		{
+			name:             "handles failed reconnection",
+			initialErrors:    3,
+			reconnecting:     true,
+			msg:              tuiReconnectMsg{err: fmt.Errorf("no daemon found")},
+			wantErrors:       3,
+			wantReconnecting: false,
+			wantCmd:          false,
+		},
+	}
 
-	t.Run("does not trigger reconnection before 3 errors", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 1 // Only 1 error so far
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTuiModel(testServerAddr)
+			m.consecutiveErrors = tt.initialErrors
+			m.reconnecting = tt.reconnecting
 
-		m2, cmd := updateModel(t, m, tuiJobsErrMsg{err: mockConnError("connection refused")})
+			m2, cmd := updateModel(t, m, tt.msg)
 
-		if m2.consecutiveErrors != 2 {
-			t.Errorf("Expected consecutiveErrors=2, got %d", m2.consecutiveErrors)
-		}
-		if m2.reconnecting {
-			t.Error("Expected reconnecting=false before 3 consecutive errors")
-		}
-		if cmd != nil {
-			t.Error("Expected no command before 3 errors")
-		}
-	})
-
-	t.Run("does not count application errors for reconnection", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 2 // 2 connection errors
-
-		// Application error (404, parse error, etc.) should not increment counter
-		m2, cmd := updateModel(t, m, tuiErrMsg(fmt.Errorf("no review found")))
-
-		if m2.consecutiveErrors != 2 {
-			t.Errorf("Expected consecutiveErrors unchanged at 2, got %d", m2.consecutiveErrors)
-		}
-		if m2.reconnecting {
-			t.Error("Expected reconnecting=false for application errors")
-		}
-		if cmd != nil {
-			t.Error("Expected no reconnect command for application errors")
-		}
-	})
-
-	t.Run("does not count non-connection errors in jobs fetch", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 2
-
-		// Non-connection error (like parse error) should not increment
-		m2, _ := updateModel(t, m, tuiJobsErrMsg{err: fmt.Errorf("invalid JSON response")})
-
-		if m2.consecutiveErrors != 2 {
-			t.Errorf("Expected consecutiveErrors unchanged at 2, got %d", m2.consecutiveErrors)
-		}
-	})
-
-	t.Run("pagination errors also trigger reconnection", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 2
-
-		// Connection error in pagination should trigger reconnection
-		m2, cmd := updateModel(t, m, tuiPaginationErrMsg{err: mockConnError("connection refused")})
-
-		if m2.consecutiveErrors != 3 {
-			t.Errorf("Expected consecutiveErrors=3, got %d", m2.consecutiveErrors)
-		}
-		if !m2.reconnecting {
-			t.Error("Expected reconnecting=true for pagination connection errors")
-		}
-		if cmd == nil {
-			t.Error("Expected reconnect command")
-		}
-	})
-
-	t.Run("status/review connection errors trigger reconnection", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 2
-
-		// Connection error via tuiErrMsg (from fetchStatus, fetchReview, etc.)
-		m2, cmd := updateModel(t, m, tuiErrMsg(mockConnError("connection refused")))
-
-		if m2.consecutiveErrors != 3 {
-			t.Errorf("Expected consecutiveErrors=3, got %d", m2.consecutiveErrors)
-		}
-		if !m2.reconnecting {
-			t.Error("Expected reconnecting=true for tuiErrMsg connection errors")
-		}
-		if cmd == nil {
-			t.Error("Expected reconnect command")
-		}
-	})
-
-	t.Run("status/review application errors do not trigger reconnection", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 2
-
-		// Application error via tuiErrMsg should not increment
-		m2, cmd := updateModel(t, m, tuiErrMsg(fmt.Errorf("review not found")))
-
-		if m2.consecutiveErrors != 2 {
-			t.Errorf("Expected consecutiveErrors unchanged at 2, got %d", m2.consecutiveErrors)
-		}
-		if m2.reconnecting {
-			t.Error("Expected reconnecting=false for application errors")
-		}
-		if cmd != nil {
-			t.Error("Expected no reconnect command for application errors")
-		}
-	})
-
-	t.Run("resets error count on successful jobs fetch", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 5
-
-		m2, _ := updateModel(t, m, tuiJobsMsg{jobs: []storage.ReviewJob{}, hasMore: false})
-
-		if m2.consecutiveErrors != 0 {
-			t.Errorf("Expected consecutiveErrors=0 after success, got %d", m2.consecutiveErrors)
-		}
-	})
-
-	t.Run("resets error count on successful status fetch", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.consecutiveErrors = 5
-
-		m2, _ := updateModel(t, m, tuiStatusMsg(storage.DaemonStatus{Version: "1.0.0"}))
-
-		if m2.consecutiveErrors != 0 {
-			t.Errorf("Expected consecutiveErrors=0 after status success, got %d", m2.consecutiveErrors)
-		}
-	})
-
-	t.Run("updates server address on successful reconnection", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.reconnecting = true
-
-		m2, cmd := updateModel(t, m, tuiReconnectMsg{newAddr: "http://127.0.0.1:7374", version: "2.0.0"})
-
-		if m2.serverAddr != "http://127.0.0.1:7374" {
-			t.Errorf("Expected serverAddr updated to new address, got %s", m2.serverAddr)
-		}
-		if m2.consecutiveErrors != 0 {
-			t.Errorf("Expected consecutiveErrors reset to 0, got %d", m2.consecutiveErrors)
-		}
-		if m2.reconnecting {
-			t.Error("Expected reconnecting=false after successful reconnection")
-		}
-		if m2.err != nil {
-			t.Error("Expected error cleared after successful reconnection")
-		}
-		if m2.daemonVersion != "2.0.0" {
-			t.Errorf("Expected daemonVersion updated to 2.0.0, got %s", m2.daemonVersion)
-		}
-		if cmd == nil {
-			t.Error("Expected fetch commands to be returned after reconnection")
-		}
-	})
-
-	t.Run("handles reconnection to same address", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.reconnecting = true
-		m.consecutiveErrors = 3
-
-		// Same address - no change needed
-		m2, cmd := updateModel(t, m, tuiReconnectMsg{newAddr: testServerAddr})
-
-		if m2.serverAddr != testServerAddr {
-			t.Errorf("Expected serverAddr unchanged, got %s", m2.serverAddr)
-		}
-		if m2.reconnecting {
-			t.Error("Expected reconnecting=false after reconnect attempt")
-		}
-		// Error count not reset since address is same (will retry on next tick)
-		if cmd != nil {
-			t.Error("Expected no fetch commands when address unchanged")
-		}
-	})
-
-	t.Run("handles failed reconnection", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
-		m.reconnecting = true
-		m.consecutiveErrors = 3
-
-		m2, cmd := updateModel(t, m, tuiReconnectMsg{err: fmt.Errorf("no daemon found")})
-
-		if m2.reconnecting {
-			t.Error("Expected reconnecting=false after failed reconnection")
-		}
-		// Error count preserved - will retry on next tick
-		if m2.consecutiveErrors != 3 {
-			t.Errorf("Expected consecutiveErrors preserved, got %d", m2.consecutiveErrors)
-		}
-		if cmd != nil {
-			t.Error("Expected no commands on failed reconnection")
-		}
-	})
+			if m2.consecutiveErrors != tt.wantErrors {
+				t.Errorf("consecutiveErrors = %d, want %d", m2.consecutiveErrors, tt.wantErrors)
+			}
+			if m2.reconnecting != tt.wantReconnecting {
+				t.Errorf("reconnecting = %v, want %v", m2.reconnecting, tt.wantReconnecting)
+			}
+			if (cmd != nil) != tt.wantCmd {
+				t.Errorf("cmd returned = %v, want %v", cmd != nil, tt.wantCmd)
+			}
+			if tt.wantServerAddr != "" && m2.serverAddr != tt.wantServerAddr {
+				t.Errorf("serverAddr = %q, want %q", m2.serverAddr, tt.wantServerAddr)
+			}
+			if tt.wantDaemonVersion != "" && m2.daemonVersion != tt.wantDaemonVersion {
+				t.Errorf("daemonVersion = %q, want %q", m2.daemonVersion, tt.wantDaemonVersion)
+			}
+		})
+	}
 }
 
 func TestSanitizeForDisplay(t *testing.T) {
