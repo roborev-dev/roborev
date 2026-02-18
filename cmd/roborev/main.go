@@ -2386,6 +2386,11 @@ func installHookCmd() *cobra.Command {
 //   - Existing with current version: skip
 //   - Existing with old version: upgrade (remove old, append new)
 //   - --force: overwrite unconditionally
+//
+// hookReadFile is used to re-read the hook file after cleanup during
+// upgrade. Replaceable in tests to simulate read failures.
+var hookReadFile = os.ReadFile
+
 func installOrUpgradeHook(
 	hooksDir, hookName, versionMarker string,
 	generate func() string, force bool,
@@ -2413,7 +2418,7 @@ func installOrUpgradeHook(
 			if rmErr := removeRoborevFromHook(hookPath); rmErr != nil {
 				return fmt.Errorf("upgrade %s: %w", hookName, rmErr)
 			}
-			updated, readErr := os.ReadFile(hookPath)
+			updated, readErr := hookReadFile(hookPath)
 			if readErr != nil && !os.IsNotExist(readErr) {
 				return fmt.Errorf("re-read %s after cleanup: %w", hookName, readErr)
 			}

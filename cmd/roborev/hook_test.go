@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -760,6 +761,47 @@ func TestInstallOrUpgradeHook(t *testing.T) {
 		content, _ := os.ReadFile(hookPath)
 		if string(content) != pythonHook {
 			t.Errorf("hook should be unchanged, got:\n%s", content)
+		}
+	})
+
+	t.Run("upgrade returns error on re-read failure", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		// Outdated hook triggers the upgrade path.
+		outdated := "#!/bin/sh\n" +
+			"# roborev post-commit hook\n" +
+			"ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
+		if err := os.WriteFile(
+			hookPath, []byte(outdated), 0755,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		// Inject a non-ENOENT error on re-read after cleanup.
+		origReadFile := hookReadFile
+		hookReadFile = func(string) ([]byte, error) {
+			return nil, fs.ErrPermission
+		}
+		t.Cleanup(func() { hookReadFile = origReadFile })
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, false,
+		)
+		if err == nil {
+			t.Fatal("expected error from re-read failure")
+		}
+		if !strings.Contains(err.Error(), "re-read") {
+			t.Errorf("error should mention re-read, got: %v", err)
+		}
+		if !errors.Is(err, fs.ErrPermission) {
+			t.Errorf(
+				"error should wrap ErrPermission, got: %v", err,
+			)
 		}
 	})
 
