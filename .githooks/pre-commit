@@ -7,4 +7,4 @@ if ! command -v golangci-lint >/dev/null 2>&1; then
 	exit 1
 fi
 
-golangci-lint run ./...
+output=$(golangci-lint run ./... 2>&1) || { echo "$output" >&2; exit 1; }
