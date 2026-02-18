@@ -222,6 +222,21 @@ func TestEmbedSnippet(t *testing.T) {
 			)
 		}
 	})
+
+	t.Run("shebang without trailing newline", func(t *testing.T) {
+		existing := "#!/bin/sh"
+		snippet := "SNIPPET\n"
+		result := embedSnippet(existing, snippet)
+		if !strings.HasPrefix(result, "#!/bin/sh\n") {
+			t.Errorf(
+				"shebang should get trailing newline, got:\n%q",
+				result,
+			)
+		}
+		if !strings.Contains(result, "SNIPPET") {
+			t.Error("snippet should be present")
+		}
+	})
 }
 
 func TestNeedsUpgrade(t *testing.T) {
@@ -305,6 +320,31 @@ func TestNeedsUpgrade(t *testing.T) {
 			PostRewriteVersionMarker,
 		) {
 			t.Error("should not flag current post-rewrite hook")
+		}
+	})
+}
+
+func TestNotInstalled(t *testing.T) {
+	t.Run("hook file absent", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if !NotInstalled(repo.Root, "post-commit") {
+			t.Error("absent hook should be not installed")
+		}
+	})
+
+	t.Run("hook without roborev", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook("#!/bin/sh\necho hello\n")
+		if !NotInstalled(repo.Root, "post-commit") {
+			t.Error("non-roborev hook should be not installed")
+		}
+	})
+
+	t.Run("hook with roborev", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook(GeneratePostCommit())
+		if NotInstalled(repo.Root, "post-commit") {
+			t.Error("roborev hook should be installed")
 		}
 	})
 }

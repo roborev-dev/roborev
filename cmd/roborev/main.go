@@ -461,7 +461,9 @@ func initCmd() *cobra.Command {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
 			if err := githook.InstallAll(hooksDir, false); err != nil {
-				return fmt.Errorf("install hooks: %w", err)
+				// Non-shell hooks produce an error but shouldn't
+				// abort init — warn and continue to daemon setup.
+				fmt.Printf("  Warning: %v\n", err)
 			}
 
 			// 5. Start daemon (or just register if --no-daemon)
@@ -3130,7 +3132,7 @@ func autoInstallHooks(repoPath string) {
 	for _, name := range []string{"post-commit", "post-rewrite"} {
 		marker := githook.VersionMarker(name)
 		if githook.NeedsUpgrade(repoPath, name, marker) ||
-			githook.Missing(repoPath, name) {
+			githook.NotInstalled(repoPath, name) {
 			if err := githook.Install(hooksDir, name, false); err != nil {
 				fmt.Fprintf(os.Stderr,
 					"Warning: auto-install %s hook: %v\n",

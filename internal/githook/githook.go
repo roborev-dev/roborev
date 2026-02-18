@@ -53,6 +53,24 @@ func NeedsUpgrade(repoPath, hookName, versionMarker string) bool {
 		!strings.Contains(s, versionMarker)
 }
 
+// NotInstalled checks whether the named hook file is absent
+// or does not contain any roborev content.
+func NotInstalled(repoPath, hookName string) bool {
+	hooksDir, err := git.GetHooksPath(repoPath)
+	if err != nil {
+		return false
+	}
+	content, err := os.ReadFile(
+		filepath.Join(hooksDir, hookName),
+	)
+	if err != nil {
+		return true
+	}
+	return !strings.Contains(
+		strings.ToLower(string(content)), "roborev",
+	)
+}
+
 // Missing checks whether a repo has roborev installed
 // (post-commit hook present) but is missing the named hook.
 func Missing(repoPath, hookName string) bool {
@@ -193,7 +211,11 @@ func embedSnippet(existing, snippet string) string {
 	lines := strings.SplitAfter(existing, "\n")
 	if len(lines) > 0 &&
 		strings.HasPrefix(strings.TrimSpace(lines[0]), "#!") {
-		return lines[0] + snippet + strings.Join(lines[1:], "")
+		shebang := lines[0]
+		if !strings.HasSuffix(shebang, "\n") {
+			shebang += "\n"
+		}
+		return shebang + snippet + strings.Join(lines[1:], "")
 	}
 	return snippet + existing
 }
