@@ -300,13 +300,15 @@ func Install(hooksDir, hookName string, force bool) error {
 }
 
 // InstallAll installs both post-commit and post-rewrite hooks.
+// It attempts all hooks and returns a joined error if any fail.
 func InstallAll(hooksDir string, force bool) error {
+	var errs []error
 	for _, name := range []string{"post-commit", "post-rewrite"} {
 		if err := Install(hooksDir, name, force); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Uninstall removes the roborev block from a hook file, or

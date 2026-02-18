@@ -417,3 +417,76 @@ func TestInitInstallsPostRewriteHookOnUpgrade(t *testing.T) {
 		t.Error("post-rewrite hook should contain 'remap --quiet'")
 	}
 }
+
+func TestInitCmdWarnsOnNonShellHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+	root := initNoDaemonSetup(t)
+
+	// Install a non-shell post-commit hook
+	hooksDir := filepath.Join(root, ".git", "hooks")
+	os.MkdirAll(hooksDir, 0755)
+	os.WriteFile(
+		filepath.Join(hooksDir, "post-commit"),
+		[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
+		0755,
+	)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	output := captureStdout(t, func() {
+		cmd := initCmd()
+		cmd.SetArgs([]string{"--no-daemon"})
+		_ = cmd.Execute()
+	})
+
+	// Should warn about non-shell hook but still succeed
+	if !strings.Contains(output, "non-shell interpreter") {
+		t.Errorf("expected non-shell warning, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Ready!") {
+		t.Errorf("init should still succeed with Ready!, got:\n%s", output)
+	}
+}
+
+func TestInitCmdFailsOnHookWriteError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+	root := initNoDaemonSetup(t)
+
+	// Make hooks directory unwritable to trigger a real error
+	hooksDir := filepath.Join(root, ".git", "hooks")
+	os.MkdirAll(hooksDir, 0755)
+	os.Chmod(hooksDir, 0555)
+	t.Cleanup(func() { os.Chmod(hooksDir, 0755) })
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	cmd := initCmd()
+	cmd.SetArgs([]string{"--no-daemon"})
+	err := cmd.Execute()
+
+	// Should fail on permission error, not warn-and-continue
+	if err == nil {
+		t.Fatal("expected error for unwritable hooks directory")
+	}
+	if !strings.Contains(err.Error(), "install hooks") {
+		t.Errorf("error should mention install hooks: %v", err)
+	}
+}

@@ -3136,9 +3136,13 @@ func autoInstallHooks(repoPath string) {
 		if githook.NeedsUpgrade(repoPath, name, marker) ||
 			githook.NotInstalled(repoPath, name) {
 			if err := githook.Install(hooksDir, name, false); err != nil {
-				fmt.Fprintf(os.Stderr,
-					"Warning: auto-install %s hook: %v\n",
-					name, err)
+				// Non-shell hooks are a persistent condition;
+				// don't warn on every invocation.
+				if !errors.Is(err, githook.ErrNonShellHook) {
+					fmt.Fprintf(os.Stderr,
+						"Warning: auto-install %s hook: %v\n",
+						name, err)
+				}
 			}
 		}
 	}
