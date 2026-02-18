@@ -142,6 +142,37 @@ func (p *GitHubAppTokenProvider) exchangeToken(jwt string, installationID int64)
 	return result.Token, result.ExpiresAt, nil
 }
 
+// APIRequest makes an authenticated HTTP request to the GitHub API using
+// an installation access token. The path is appended to the API base URL
+// (e.g., "/repos/owner/repo/statuses/sha"). Callers must close the
+// response body.
+func (p *GitHubAppTokenProvider) APIRequest(
+	method, path string,
+	body io.Reader,
+	installationID int64,
+) (*http.Response, error) {
+	token, err := p.TokenForInstallation(installationID)
+	if err != nil {
+		return nil, fmt.Errorf("get token: %w", err)
+	}
+
+	baseURL := p.baseURL
+	if baseURL == "" {
+		baseURL = "https://api.github.com"
+	}
+
+	req, err := http.NewRequest(method, baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "roborev")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	return client.Do(req)
+}
+
 // parsePrivateKey parses a PEM-encoded RSA private key (PKCS1 or PKCS8).
 func parsePrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemBytes)

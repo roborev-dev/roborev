@@ -214,10 +214,8 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	sb.WriteString(GetSystemPrompt(agentName, promptType))
 	sb.WriteString("\n")
 
-	// Add project-specific guidelines if configured
-	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
-	}
+	// Add project-specific guidelines, merged from base + ref
+	b.writeProjectGuidelines(&sb, loadMergedGuidelines(repoPath, sha))
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -298,10 +296,12 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	sb.WriteString(GetSystemPrompt(agentName, promptType))
 	sb.WriteString("\n")
 
-	// Add project-specific guidelines if configured
-	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		b.writeProjectGuidelines(&sb, repoCfg.ReviewGuidelines)
+	// Add project-specific guidelines, merged from base + end ref
+	endRef := rangeRef
+	if _, after, ok := strings.Cut(rangeRef, ".."); ok {
+		endRef = after
 	}
+	b.writeProjectGuidelines(&sb, loadMergedGuidelines(repoPath, endRef))
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -412,6 +412,33 @@ func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string)
 	sb.WriteString("\n")
 	sb.WriteString(strings.TrimSpace(guidelines))
 	sb.WriteString("\n\n")
+}
+
+// loadMergedGuidelines loads review guidelines from origin/main (base)
+// and the given ref (branch), then merges them so that branch guidelines
+// can add lines but cannot remove base lines. Falls back to the
+// filesystem LoadRepoConfig when origin/main has no .roborev.toml.
+func loadMergedGuidelines(repoPath, ref string) string {
+	// Load base guidelines from origin/main
+	var baseGuidelines string
+	if baseCfg, err := config.LoadRepoConfigFromRef(repoPath, "origin/main"); err == nil && baseCfg != nil {
+		baseGuidelines = baseCfg.ReviewGuidelines
+	}
+
+	// Fall back to filesystem config if origin/main has no .roborev.toml
+	if baseGuidelines == "" {
+		if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
+			baseGuidelines = fsCfg.ReviewGuidelines
+		}
+	}
+
+	// Load branch guidelines from the review ref
+	var branchGuidelines string
+	if branchCfg, err := config.LoadRepoConfigFromRef(repoPath, ref); err == nil && branchCfg != nil {
+		branchGuidelines = branchCfg.ReviewGuidelines
+	}
+
+	return config.MergeGuidelines(baseGuidelines, branchGuidelines)
 }
 
 // writePreviousAttemptsForGitRef writes previous review attempts for the same git ref (commit or range)

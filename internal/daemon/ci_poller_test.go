@@ -1252,3 +1252,131 @@ func TestResolveMinSeverity(t *testing.T) {
 		}
 	})
 }
+
+func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
+
+	type statusCall struct {
+		repo, sha, state, desc string
+	}
+	var statusCalls []statusCall
+	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
+		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
+		return nil
+	}
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 60, HeadRefOid: "status-test-sha", BaseRefName: "main",
+	}, h.Cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(statusCalls))
+	}
+	sc := statusCalls[0]
+	if sc.repo != "acme/api" {
+		t.Errorf("repo=%q, want acme/api", sc.repo)
+	}
+	if sc.sha != "status-test-sha" {
+		t.Errorf("sha=%q, want status-test-sha", sc.sha)
+	}
+	if sc.state != "pending" {
+		t.Errorf("state=%q, want pending", sc.state)
+	}
+}
+
+func TestCIPollerPostBatchResults_SetsSuccessStatus(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	batch, job := h.seedBatchJob(t, "acme/api", 61, "success-sha", "a..b", "codex", "security")
+	h.markJobDoneWithReview(t, job.ID, "codex", "No issues found.")
+
+	type statusCall struct {
+		repo, sha, state, desc string
+	}
+	var statusCalls []statusCall
+	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
+		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
+		return nil
+	}
+	h.Poller.postPRCommentFn = func(string, int, string) error { return nil }
+
+	h.Poller.handleBatchJobDone(batch, job.ID, true)
+
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(statusCalls))
+	}
+	sc := statusCalls[0]
+	if sc.state != "success" {
+		t.Errorf("state=%q, want success", sc.state)
+	}
+	if sc.sha != "success-sha" {
+		t.Errorf("sha=%q, want success-sha", sc.sha)
+	}
+}
+
+func TestCIPollerPostBatchResults_SetsErrorStatusOnAllFailed(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	batch, job := h.seedBatchJob(t, "acme/api", 62, "fail-sha", "a..b", "codex", "security")
+	h.markJobFailed(t, job.ID, "timeout")
+
+	type statusCall struct {
+		repo, sha, state, desc string
+	}
+	var statusCalls []statusCall
+	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
+		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
+		return nil
+	}
+	h.Poller.postPRCommentFn = func(string, int, string) error { return nil }
+
+	h.Poller.handleBatchJobDone(batch, job.ID, false)
+
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(statusCalls))
+	}
+	sc := statusCalls[0]
+	if sc.state != "error" {
+		t.Errorf("state=%q, want error", sc.state)
+	}
+	if sc.desc != "All reviews failed" {
+		t.Errorf("desc=%q, want 'All reviews failed'", sc.desc)
+	}
+}
+
+func TestCIPollerPostBatchResults_SetsErrorStatusOnCommentPostFailure(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	batch, job := h.seedBatchJob(t, "acme/api", 63, "post-fail-sha", "a..b", "codex", "security")
+	h.markJobDoneWithReview(t, job.ID, "codex", "Found issues.")
+
+	type statusCall struct {
+		repo, sha, state, desc string
+	}
+	var statusCalls []statusCall
+	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
+		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
+		return nil
+	}
+	h.Poller.postPRCommentFn = func(string, int, string) error {
+		return context.DeadlineExceeded
+	}
+
+	h.Poller.postBatchResults(batch)
+
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(statusCalls))
+	}
+	sc := statusCalls[0]
+	if sc.state != "error" {
+		t.Errorf("state=%q, want error", sc.state)
+	}
+	if sc.desc != "Review failed to post" {
+		t.Errorf("desc=%q, want 'Review failed to post'", sc.desc)
+	}
+}

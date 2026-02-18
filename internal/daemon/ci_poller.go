@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -38,14 +39,15 @@ type CIPoller struct {
 
 	// Test seams for mocking side effects (gh/git/LLM) in unit tests.
 	// Nil means use the real implementation.
-	listOpenPRsFn    func(context.Context, string) ([]ghPR, error)
-	gitFetchFn       func(context.Context, string) error
-	gitFetchPRHeadFn func(context.Context, string, int) error
-	mergeBaseFn      func(string, string, string) (string, error)
-	postPRCommentFn  func(string, int, string) error
-	synthesizeFn     func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
-	agentResolverFn  func(name string) (string, error) // returns resolved agent name
-	jobCancelFn      func(jobID int64)                 // kills running worker process (optional)
+	listOpenPRsFn     func(context.Context, string) ([]ghPR, error)
+	gitFetchFn        func(context.Context, string) error
+	gitFetchPRHeadFn  func(context.Context, string, int) error
+	mergeBaseFn       func(string, string, string) (string, error)
+	postPRCommentFn   func(string, int, string) error
+	setCommitStatusFn func(ghRepo, sha, state, description string) error
+	synthesizeFn      func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
+	agentResolverFn   func(name string) (string, error) // returns resolved agent name
+	jobCancelFn       func(jobID int64)                 // kills running worker process (optional)
 
 	subID      int // broadcaster subscription ID for event listening
 	stopCh     chan struct{}
@@ -459,6 +461,10 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	log.Printf("CI poller: created batch %d for %s#%d (HEAD=%s, %d jobs)",
 		batch.ID, ghRepo, pr.Number, headShort, totalJobs)
 
+	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "pending", "Review in progress"); err != nil {
+		log.Printf("CI poller: failed to set pending status for %s@%s: %v", ghRepo, headShort, err)
+	}
+
 	return nil
 }
 
@@ -838,9 +844,23 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	if err := p.callPostPRComment(batch.GithubRepo, batch.PRNumber, comment); err != nil {
 		log.Printf("CI poller: error posting batch comment for %s#%d: %v",
 			batch.GithubRepo, batch.PRNumber, err)
+		if err := p.callSetCommitStatus(batch.GithubRepo, batch.HeadSHA, "error", "Review failed to post"); err != nil {
+			log.Printf("CI poller: failed to set error status for %s@%s: %v", batch.GithubRepo, batch.HeadSHA, err)
+		}
 		// Release claim so reconciler can retry
 		p.unclaimBatch(batch.ID)
 		return
+	}
+
+	// Set commit status based on whether any jobs succeeded
+	statusState := "success"
+	statusDesc := "Review complete"
+	if batch.CompletedJobs == 0 {
+		statusState = "error"
+		statusDesc = "All reviews failed"
+	}
+	if err := p.callSetCommitStatus(batch.GithubRepo, batch.HeadSHA, statusState, statusDesc); err != nil {
+		log.Printf("CI poller: failed to set %s status for %s@%s: %v", statusState, batch.GithubRepo, batch.HeadSHA, err)
 	}
 
 	// Clear claimed_at to mark as successfully posted. This prevents
@@ -978,6 +998,51 @@ func (p *CIPoller) callSynthesize(batch *storage.CIPRBatch, reviews []storage.Ba
 		return p.synthesizeFn(batch, reviews, cfg)
 	}
 	return p.synthesizeBatchResults(batch, reviews, cfg)
+}
+
+func (p *CIPoller) callSetCommitStatus(ghRepo, sha, state, description string) error {
+	if p.setCommitStatusFn != nil {
+		return p.setCommitStatusFn(ghRepo, sha, state, description)
+	}
+	return p.setCommitStatus(ghRepo, sha, state, description)
+}
+
+// setCommitStatus posts a commit status check via the GitHub API.
+// Uses the GitHub App token provider for authentication. If no token
+// provider is configured, the call is silently skipped.
+func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error {
+	if p.tokenProvider == nil {
+		return nil
+	}
+
+	owner, _, _ := strings.Cut(ghRepo, "/")
+	cfg := p.cfgGetter.Config()
+	installationID := cfg.CI.InstallationIDForOwner(owner)
+	if installationID == 0 {
+		return nil
+	}
+
+	path := fmt.Sprintf("/repos/%s/statuses/%s", ghRepo, sha)
+	payload := fmt.Sprintf(
+		`{"state":%q,"description":%q,"context":"roborev"}`,
+		state, description,
+	)
+	body := strings.NewReader(payload)
+
+	resp, err := p.tokenProvider.APIRequest("POST", path, body, installationID)
+	if err != nil {
+		return fmt.Errorf("set commit status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf(
+			"set commit status: HTTP %d: %s",
+			resp.StatusCode, string(respBody),
+		)
+	}
+	return nil
 }
 
 // severityAbove maps a minimum severity to the instruction describing which levels to include.

@@ -456,6 +456,70 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	return &cfg, nil
 }
 
+// LoadRepoConfigFromRef loads per-repo config from .roborev.toml at a
+// specific git ref (e.g., a commit SHA or "origin/main"). Returns
+// (nil, nil) if the file doesn't exist at that ref.
+func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
+	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
+	if err != nil {
+		// git show fails when the file doesn't exist at that ref
+		return nil, nil
+	}
+
+	var cfg RepoConfig
+	if _, err := toml.Decode(string(data), &cfg); err != nil {
+		return nil, fmt.Errorf("parse .roborev.toml at %s: %w", ref, err)
+	}
+	return &cfg, nil
+}
+
+// MergeGuidelines combines base guidelines with branch guidelines.
+// Branch guidelines can add new lines but cannot remove existing base
+// lines. Deduplication is line-based: trimmed, non-empty lines from
+// the branch that aren't already in the base set are appended.
+func MergeGuidelines(base, branch string) string {
+	if base == "" && branch == "" {
+		return ""
+	}
+	if branch == "" {
+		return base
+	}
+	if base == "" {
+		return branch
+	}
+
+	baseLines := splitNonEmpty(base)
+	baseSet := make(map[string]struct{}, len(baseLines))
+	for _, line := range baseLines {
+		baseSet[line] = struct{}{}
+	}
+
+	var additions []string
+	for _, line := range splitNonEmpty(branch) {
+		if _, exists := baseSet[line]; !exists {
+			additions = append(additions, line)
+			baseSet[line] = struct{}{} // prevent duplicate additions
+		}
+	}
+
+	if len(additions) == 0 {
+		return base
+	}
+	return strings.TrimRight(base, "\n") + "\n" + strings.Join(additions, "\n")
+}
+
+// splitNonEmpty splits s by newlines and returns trimmed, non-empty lines.
+func splitNonEmpty(s string) []string {
+	var result []string
+	for line := range strings.SplitSeq(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
 // resolve returns the first non-zero value from the candidates, or defaultVal
 // if all candidates are zero. This encapsulates the standard precedence logic
 // (explicit > repo > global > default) used throughout config resolution.
