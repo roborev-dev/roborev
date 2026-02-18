@@ -1448,6 +1448,74 @@ func TestCIPollerPostBatchResults_SetsErrorStatusOnAllFailed(t *testing.T) {
 	}
 }
 
+func TestCIPollerPostBatchResults_SetsFailureStatusOnMixedOutcome(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+
+	// Create a batch with 2 jobs
+	batch, _, err := h.DB.CreateCIBatch("acme/api", 64, "mixed-sha", 2)
+	if err != nil {
+		t.Fatalf("CreateCIBatch: %v", err)
+	}
+
+	// Enqueue two jobs and link them to the batch
+	job1, err := h.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: h.Repo.ID, GitRef: "a..b", Agent: "codex", ReviewType: "security",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob 1: %v", err)
+	}
+	if err := h.DB.RecordBatchJob(batch.ID, job1.ID); err != nil {
+		t.Fatalf("RecordBatchJob 1: %v", err)
+	}
+
+	job2, err := h.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: h.Repo.ID, GitRef: "a..b", Agent: "gemini", ReviewType: "review",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob 2: %v", err)
+	}
+	if err := h.DB.RecordBatchJob(batch.ID, job2.ID); err != nil {
+		t.Fatalf("RecordBatchJob 2: %v", err)
+	}
+
+	// Complete job1, fail job2
+	h.markJobDoneWithReview(t, job1.ID, "codex", "No issues found.")
+	h.markJobFailed(t, job2.ID, "timeout")
+
+	type statusCall struct {
+		repo, sha, state, desc string
+	}
+	var statusCalls []statusCall
+	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
+		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
+		return nil
+	}
+	h.Poller.postPRCommentFn = func(string, int, string) error { return nil }
+
+	// First call: job1 succeeded — batch not yet complete
+	h.Poller.handleBatchJobDone(batch, job1.ID, true)
+	if len(statusCalls) != 0 {
+		t.Fatalf("expected no status call after first job, got %d", len(statusCalls))
+	}
+
+	// Second call: job2 failed — batch now complete
+	h.Poller.handleBatchJobDone(batch, job2.ID, false)
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 status call after batch complete, got %d", len(statusCalls))
+	}
+
+	sc := statusCalls[0]
+	if sc.state != "failure" {
+		t.Errorf("state=%q, want failure", sc.state)
+	}
+	if sc.sha != "mixed-sha" {
+		t.Errorf("sha=%q, want mixed-sha", sc.sha)
+	}
+	if !strings.Contains(sc.desc, "1/2 jobs failed") {
+		t.Errorf("desc=%q, should mention 1/2 jobs failed", sc.desc)
+	}
+}
+
 func TestCIPollerPostBatchResults_SetsErrorStatusOnCommentPostFailure(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	batch, job := h.seedBatchJob(t, "acme/api", 63, "post-fail-sha", "a..b", "codex", "security")

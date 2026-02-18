@@ -852,12 +852,22 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 		return
 	}
 
-	// Set commit status based on whether any jobs succeeded
+	// Set commit status based on job outcomes:
+	//   all succeeded  → success
+	//   mixed          → failure (some reviews did not complete)
+	//   all failed     → error
 	statusState := "success"
 	statusDesc := "Review complete"
-	if batch.CompletedJobs == 0 {
+	switch {
+	case batch.CompletedJobs == 0:
 		statusState = "error"
 		statusDesc = "All reviews failed"
+	case batch.FailedJobs > 0:
+		statusState = "failure"
+		statusDesc = fmt.Sprintf(
+			"Review complete (%d/%d jobs failed)",
+			batch.FailedJobs, batch.TotalJobs,
+		)
 	}
 	if err := p.callSetCommitStatus(batch.GithubRepo, batch.HeadSHA, statusState, statusDesc); err != nil {
 		log.Printf("CI poller: failed to set %s status for %s@%s: %v", statusState, batch.GithubRepo, batch.HeadSHA, err)
