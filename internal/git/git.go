@@ -941,7 +941,8 @@ func GetPatchID(repoPath, sha string) string {
 		return ""
 	}
 	if err := patchID.Start(); err != nil {
-		_ = show.Wait() // cleanup; patchID never started
+		pipe.Close() // unblock show if pipe buffer is full
+		_ = show.Wait()
 		return ""
 	}
 
