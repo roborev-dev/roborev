@@ -2415,6 +2415,13 @@ func installOrUpgradeHook(
 			return nil
 		} else {
 			// Upgrade: remove old snippet, append new one
+			if !isShellHook(existingStr) {
+				return fmt.Errorf(
+					"%s hook uses a non-shell interpreter; "+
+						"add the roborev snippet manually "+
+						"or use --force to overwrite",
+					hookName)
+			}
 			if rmErr := removeRoborevFromHook(hookPath); rmErr != nil {
 				return fmt.Errorf("upgrade %s: %w", hookName, rmErr)
 			}
@@ -3489,6 +3496,10 @@ func installPostRewriteHook(hooksDir string) {
 		} else {
 			// Upgrade: remove old roborev snippet, append new one.
 			// This preserves user content around the snippet.
+			if !isShellHook(existingStr) {
+				fmt.Printf("  Warning: %s uses a non-shell interpreter, skipping\n", hookPath)
+				return
+			}
 			if rmErr := removeRoborevFromHook(hookPath); rmErr != nil {
 				fmt.Printf("  Warning: %v\n", rmErr)
 				return

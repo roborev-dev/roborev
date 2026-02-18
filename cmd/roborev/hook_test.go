@@ -805,6 +805,36 @@ func TestInstallOrUpgradeHook(t *testing.T) {
 		}
 	})
 
+	t.Run("refuses upgrade of non-shell hook mentioning roborev", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		// Non-shell hook that mentions roborev but has no version marker.
+		pythonHook := "#!/usr/bin/env python3\n# reviewed by roborev\nprint('hello')\n"
+		if err := os.WriteFile(hookPath, []byte(pythonHook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, false,
+		)
+		if err == nil {
+			t.Fatal("expected error for non-shell hook in upgrade path")
+		}
+		if !strings.Contains(err.Error(), "non-shell interpreter") {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		// Hook must not be modified.
+		content, _ := os.ReadFile(hookPath)
+		if string(content) != pythonHook {
+			t.Errorf("hook should be unchanged, got:\n%s", content)
+		}
+	})
+
 	t.Run("force overwrites existing hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
