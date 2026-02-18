@@ -1449,11 +1449,31 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.fixSelectedIdx++
 		}
 		return m, nil
-	case "t":
-		// Tail output of running fix job
+	case "enter":
+		// Open review output for completed fix jobs
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
 			job := m.fixJobs[m.fixSelectedIdx]
-			if job.Status == storage.JobStatusRunning {
+			if job.Status == storage.JobStatusDone {
+				m.selectedJobID = job.ID
+				return m, m.fetchReview(job.ID)
+			}
+			if job.Status == storage.JobStatusFailed {
+				errMsg := job.Error
+				if errMsg == "" {
+					errMsg = "unknown error"
+				}
+				m.flashMessage = fmt.Sprintf("Job #%d failed: %s", job.ID, errMsg)
+				m.flashExpiresAt = time.Now().Add(5 * time.Second)
+				m.flashView = tuiViewTasks
+			}
+		}
+		return m, nil
+	case "t":
+		// Tail output: live for running jobs, review for done, error for failed
+		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
+			job := m.fixJobs[m.fixSelectedIdx]
+			switch job.Status {
+			case storage.JobStatusRunning:
 				m.tailJobID = job.ID
 				m.tailLines = nil
 				m.tailScroll = 0
@@ -1462,6 +1482,17 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.tailFromView = tuiViewTasks
 				m.currentView = tuiViewTail
 				return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
+			case storage.JobStatusDone:
+				m.selectedJobID = job.ID
+				return m, m.fetchReview(job.ID)
+			case storage.JobStatusFailed:
+				errMsg := job.Error
+				if errMsg == "" {
+					errMsg = "unknown error"
+				}
+				m.flashMessage = fmt.Sprintf("Job #%d failed: %s", job.ID, errMsg)
+				m.flashExpiresAt = time.Now().Add(5 * time.Second)
+				m.flashView = tuiViewTasks
 			}
 		}
 		return m, nil
