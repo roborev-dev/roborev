@@ -124,31 +124,67 @@ func TestFetchJob(t *testing.T) {
 }
 
 func TestFetchReview(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/review" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.URL.Query().Get("job_id") != "42" {
-			t.Errorf("unexpected job_id: %s", r.URL.Query().Get("job_id"))
-		}
+	tests := []struct {
+		name       string
+		statusCode int
+		review     *storage.Review
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name:       "success",
+			statusCode: http.StatusOK,
+			review: &storage.Review{
+				JobID:  42,
+				Output: "Analysis output here",
+			},
+		},
+		{
+			name:       "server error",
+			statusCode: http.StatusInternalServerError,
+			wantErr:    true,
+			wantErrMsg: "server error",
+		},
+	}
 
-		writeJSON(w, storage.Review{
-			JobID:  42,
-			Output: "Analysis output here",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/review" {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				if r.URL.Query().Get("job_id") != "42" {
+					t.Errorf("unexpected job_id: %s", r.URL.Query().Get("job_id"))
+				}
+
+				w.WriteHeader(tt.statusCode)
+				if tt.review != nil {
+					writeJSON(w, tt.review)
+				}
+			}))
+			defer ts.Close()
+
+			review, err := fetchReview(context.Background(), ts.URL, 42)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				} else if !strings.Contains(err.Error(), tt.wantErrMsg) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.wantErrMsg)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("fetchReview: %v", err)
+			}
+			if review.JobID != tt.review.JobID {
+				t.Errorf("review.JobID = %d, want %d", review.JobID, tt.review.JobID)
+			}
+			if review.Output != tt.review.Output {
+				t.Errorf("review.Output = %q, want %q", review.Output, tt.review.Output)
+			}
 		})
-	}))
-	defer ts.Close()
-
-	review, err := fetchReview(context.Background(), ts.URL, 42)
-	if err != nil {
-		t.Fatalf("fetchReview: %v", err)
-	}
-
-	if review.JobID != 42 {
-		t.Errorf("review.JobID = %d, want 42", review.JobID)
-	}
-	if review.Output != "Analysis output here" {
-		t.Errorf("review.Output = %q, want %q", review.Output, "Analysis output here")
 	}
 }
 
@@ -338,22 +374,24 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 }
 
 func TestRunFixUnaddressed(t *testing.T) {
-	tmpDir := initTestGitRepo(t)
+	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	t.Run("no unaddressed jobs", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			q := r.URL.Query()
-			if q.Get("status") != "done" {
-				t.Errorf("expected status=done, got %q", q.Get("status"))
-			}
-			if q.Get("addressed") != "false" {
-				t.Errorf("expected addressed=false, got %q", q.Get("addressed"))
-			}
-			json.NewEncoder(w).Encode(map[string]any{
-				"jobs":     []storage.ReviewJob{},
-				"has_more": false,
-			})
-		}))
+		_, cleanup := newMockDaemonBuilder(t).
+			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+				q := r.URL.Query()
+				if q.Get("status") != "done" {
+					t.Errorf("expected status=done, got %q", q.Get("status"))
+				}
+				if q.Get("addressed") != "false" {
+					t.Errorf("expected addressed=false, got %q", q.Get("addressed"))
+				}
+				writeJSON(w, map[string]any{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+			}).
+			Build()
 		defer cleanup()
 
 		var output bytes.Buffer
@@ -376,13 +414,13 @@ func TestRunFixUnaddressed(t *testing.T) {
 	t.Run("finds and processes unaddressed jobs", func(t *testing.T) {
 		var reviewCalls, addressCalls atomic.Int32
 		var unaddressedCalls atomic.Int32
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
+		
+		_, cleanup := newMockDaemonBuilder(t).
+			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
 				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
 					if unaddressedCalls.Add(1) == 1 {
-						json.NewEncoder(w).Encode(map[string]any{
+						writeJSON(w, map[string]any{
 							"jobs": []storage.ReviewJob{
 								{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 								{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
@@ -390,31 +428,32 @@ func TestRunFixUnaddressed(t *testing.T) {
 							"has_more": false,
 						})
 					} else {
-						json.NewEncoder(w).Encode(map[string]any{
+						writeJSON(w, map[string]any{
 							"jobs":     []storage.ReviewJob{},
 							"has_more": false,
 						})
 					}
 				} else {
-					json.NewEncoder(w).Encode(map[string]any{
+					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
 						"has_more": false,
 					})
 				}
-			case "/api/review":
+			}).
+			WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 				reviewCalls.Add(1)
-				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
-			case "/api/comment":
-				w.WriteHeader(http.StatusCreated)
-			case "/api/review/address":
+				writeJSON(w, storage.Review{Output: "findings"})
+			}).
+			WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
 				addressCalls.Add(1)
 				w.WriteHeader(http.StatusOK)
-			case "/api/enqueue":
+			}).
+			WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-			}
-		}))
+			}).
+			Build()
 		defer cleanup()
 
 		var output bytes.Buffer
@@ -442,15 +481,17 @@ func TestRunFixUnaddressed(t *testing.T) {
 
 	t.Run("passes branch filter to API", func(t *testing.T) {
 		var gotBranch string
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" && r.URL.Query().Get("addressed") == "false" {
-				gotBranch = r.URL.Query().Get("branch")
-			}
-			json.NewEncoder(w).Encode(map[string]any{
-				"jobs":     []storage.ReviewJob{},
-				"has_more": false,
-			})
-		}))
+		_, cleanup := newMockDaemonBuilder(t).
+			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("addressed") == "false" {
+					gotBranch = r.URL.Query().Get("branch")
+				}
+				writeJSON(w, map[string]any{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+			}).
+			Build()
 		defer cleanup()
 
 		var output bytes.Buffer
@@ -471,12 +512,12 @@ func TestRunFixUnaddressed(t *testing.T) {
 	})
 
 	t.Run("server error", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/jobs" {
+		_, cleanup := newMockDaemonBuilder(t).
+			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte("db error"))
-			}
-		}))
+			}).
+			Build()
 		defer cleanup()
 
 		var output bytes.Buffer
@@ -498,18 +539,17 @@ func TestRunFixUnaddressed(t *testing.T) {
 }
 
 func TestRunFixUnaddressedOrdering(t *testing.T) {
-	tmpDir := initTestGitRepo(t)
+	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
 
-	makeHandler := func() (http.Handler, *atomic.Int32) {
+	makeBuilder := func() (*MockDaemonBuilder, *atomic.Int32) {
 		var unaddressedCalls atomic.Int32
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
+		b := newMockDaemonBuilder(t).
+			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
 				if q.Get("addressed") == "false" {
 					if unaddressedCalls.Add(1) == 1 {
 						// Return newest first (as the API does)
-						json.NewEncoder(w).Encode(map[string]any{
+						writeJSON(w, map[string]any{
 							"jobs": []storage.ReviewJob{
 								{ID: 30, Status: storage.JobStatusDone, Agent: "test"},
 								{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
@@ -518,34 +558,38 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 							"has_more": false,
 						})
 					} else {
-						json.NewEncoder(w).Encode(map[string]any{
+						writeJSON(w, map[string]any{
 							"jobs":     []storage.ReviewJob{},
 							"has_more": false,
 						})
 					}
 				} else {
-					json.NewEncoder(w).Encode(map[string]any{
+					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
 						"has_more": false,
 					})
 				}
-			case "/api/review":
-				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
-			case "/api/comment":
+			}).
+			WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, storage.Review{Output: "findings"})
+			}).
+			WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusCreated)
-			case "/api/review/address":
+			}).
+			WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-			case "/api/enqueue":
+			}).
+			WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-			}
-		}), &unaddressedCalls
+			})
+		return b, &unaddressedCalls
 	}
 
 	t.Run("oldest first by default", func(t *testing.T) {
-		h, _ := makeHandler()
-		_, cleanup := setupMockDaemon(t, h)
+		b, _ := makeBuilder()
+		_, cleanup := b.Build()
 		defer cleanup()
 
 		var output bytes.Buffer
@@ -566,8 +610,8 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 	})
 
 	t.Run("newest first with flag", func(t *testing.T) {
-		h, _ := makeHandler()
-		_, cleanup := setupMockDaemon(t, h)
+		b, _ := makeBuilder()
+		_, cleanup := b.Build()
 		defer cleanup()
 
 		var output bytes.Buffer
@@ -589,19 +633,18 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 }
 
 func TestRunFixUnaddressedRequery(t *testing.T) {
-	tmpDir := initTestGitRepo(t)
+	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	var queryCount atomic.Int32
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/jobs":
+	_, cleanup := newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
 			if q.Get("addressed") == "false" && q.Get("limit") == "0" {
 				n := queryCount.Add(1)
 				switch n {
 				case 1:
 					// First query: return batch 1
-					json.NewEncoder(w).Encode(map[string]any{
+					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 						},
@@ -609,7 +652,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 					})
 				case 2:
 					// Second query: new job appeared
-					json.NewEncoder(w).Encode(map[string]any{
+					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
 							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
@@ -618,30 +661,34 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 					})
 				default:
 					// Third query: no new jobs
-					json.NewEncoder(w).Encode(map[string]any{
+					writeJSON(w, map[string]any{
 						"jobs":     []storage.ReviewJob{},
 						"has_more": false,
 					})
 				}
 			} else {
 				// Individual job fetch
-				json.NewEncoder(w).Encode(map[string]any{
+				writeJSON(w, map[string]any{
 					"jobs": []storage.ReviewJob{
 						{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
 					},
 					"has_more": false,
 				})
 			}
-		case "/api/review":
-			json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
-		case "/api/comment":
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, storage.Review{Output: "findings"})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
-		case "/api/review/address":
+		}).
+		WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-		case "/api/enqueue":
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-		}
-	}))
+		}).
+		Build()
 	defer cleanup()
 
 	var output bytes.Buffer
@@ -669,30 +716,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 	}
 }
 
-func initTestGitRepo(t *testing.T) string {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	tmpDir := t.TempDir()
-	for _, args := range [][]string{
-		{"init"},
-		{"config", "user.email", "test@test.com"},
-		{"config", "user.name", "Test"},
-	} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		_ = cmd.Run()
-	}
-	_ = os.WriteFile(filepath.Join(tmpDir, "f.txt"), []byte("x"), 0644)
-	cmd := exec.Command("git", "add", ".")
-	cmd.Dir = tmpDir
-	_ = cmd.Run()
-	cmd = exec.Command("git", "commit", "-m", "init")
-	cmd.Dir = tmpDir
-	_ = cmd.Run()
-	return tmpDir
-}
+
 
 // fakeAgent implements agent.Agent for testing fixJobDirect.
 type fakeAgent struct {
@@ -1043,7 +1067,7 @@ func TestFixCmdBatchFlagValidation(t *testing.T) {
 }
 
 func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
-	tmpDir := initTestGitRepo(t)
+	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
 	sha := "abc123def456"
 
 	var enqueueCalls atomic.Int32
@@ -1073,38 +1097,28 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 }
 
 func TestRunFixList(t *testing.T) {
-	tmpDir := initTestGitRepo(t)
+	tmpDir := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	t.Run("lists unaddressed jobs with details", func(t *testing.T) {
 		finishedAt := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 		verdict := "FAIL"
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
-				json.NewEncoder(w).Encode(map[string]any{
-					"jobs": []storage.ReviewJob{
-						{
-							ID:            42,
-							GitRef:        "abc123def456",
-							Branch:        "feature-branch",
-							CommitSubject: "Fix the widget",
-							Agent:         "claude-code",
-							Model:         "claude-3-opus",
-							Status:        storage.JobStatusDone,
-							FinishedAt:    &finishedAt,
-							Verdict:       &verdict,
-						},
-					},
-					"has_more": false,
-				})
-			case "/api/review":
-				json.NewEncoder(w).Encode(storage.Review{
-					JobID:  42,
-					Output: "Found 3 issues:\n- Missing error handling\n- Unused variable",
-				})
-			}
-		}))
+		
+		_, cleanup := newMockDaemonBuilder(t).
+			WithJobs([]storage.ReviewJob{{
+				ID:            42,
+				GitRef:        "abc123def456",
+				Branch:        "feature-branch",
+				CommitSubject: "Fix the widget",
+				Agent:         "claude-code",
+				Model:         "claude-3-opus",
+				Status:        storage.JobStatusDone,
+				FinishedAt:    &finishedAt,
+				Verdict:       &verdict,
+			}}).
+			WithReview(42, "Found 3 issues:\n- Missing error handling\n- Unused variable").
+			Build()
 		defer cleanup()
+		// serverAddr is patched by setupMockDaemon called inside Build()
 
 		var output bytes.Buffer
 		cmd := &cobra.Command{}
@@ -1167,12 +1181,9 @@ func TestRunFixList(t *testing.T) {
 	})
 
 	t.Run("no unaddressed jobs", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(map[string]any{
-				"jobs":     []storage.ReviewJob{},
-				"has_more": false,
-			})
-		}))
+		_, cleanup := newMockDaemonBuilder(t).
+			WithJobs([]storage.ReviewJob{}).
+			Build()
 		defer cleanup()
 
 		var output bytes.Buffer
@@ -1200,13 +1211,12 @@ func TestRunFixList(t *testing.T) {
 
 	t.Run("respects newest-first flag", func(t *testing.T) {
 		var gotIDs []int64
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
+		_, cleanup := newMockDaemonBuilder(t).
+			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
 				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
 					// API returns newest first
-					json.NewEncoder(w).Encode(map[string]any{
+					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: 30, Status: storage.JobStatusDone, Agent: "test"},
 							{ID: 20, Status: storage.JobStatusDone, Agent: "test"},
@@ -1218,17 +1228,18 @@ func TestRunFixList(t *testing.T) {
 					var id int64
 					_, _ = fmt.Sscanf(q.Get("id"), "%d", &id)
 					gotIDs = append(gotIDs, id)
-					json.NewEncoder(w).Encode(map[string]any{
+					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
 							{ID: id, Status: storage.JobStatusDone, Agent: "test"},
 						},
 						"has_more": false,
 					})
 				}
-			case "/api/review":
-				json.NewEncoder(w).Encode(storage.Review{Output: "findings"})
-			}
-		}))
+			}).
+			WithReview(30, "findings").
+			WithReview(20, "findings").
+			WithReview(10, "findings").
+			Build()
 		defer cleanup()
 
 		var output bytes.Buffer
@@ -1345,16 +1356,15 @@ func setupWorktree(t *testing.T) (mainRepo *TestGitRepo, worktreeDir string) {
 func setupWorktreeMockDaemon(t *testing.T) (receivedRepo *string) {
 	t.Helper()
 	var repo string
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
+	_, cleanup := newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			repo = r.URL.Query().Get("repo")
-			json.NewEncoder(w).Encode(map[string]any{
+			writeJSON(w, map[string]any{
 				"jobs":     []storage.ReviewJob{},
 				"has_more": false,
 			})
-			return
-		}
-	}))
+		}).
+		Build()
 	t.Cleanup(cleanup)
 	return &repo
 }
@@ -1422,4 +1432,59 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 			t.Errorf("expected main repo path %q, got %q", repo.Dir, *receivedRepo)
 		}
 	})
+}
+
+// MockDaemonBuilder helps construct a mock daemon with specific behavior
+type MockDaemonBuilder struct {
+	t        *testing.T
+	handlers map[string]http.HandlerFunc
+}
+
+func newMockDaemonBuilder(t *testing.T) *MockDaemonBuilder {
+	return &MockDaemonBuilder{
+		t:        t,
+		handlers: make(map[string]http.HandlerFunc),
+	}
+}
+
+func (b *MockDaemonBuilder) WithHandler(path string, handler http.HandlerFunc) *MockDaemonBuilder {
+	b.handlers[path] = handler
+	return b
+}
+
+func (b *MockDaemonBuilder) WithReview(jobID int64, output string) *MockDaemonBuilder {
+	return b.WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(storage.Review{
+			JobID:  jobID,
+			Output: output,
+		})
+	})
+}
+
+func (b *MockDaemonBuilder) WithJobs(jobs []storage.ReviewJob) *MockDaemonBuilder {
+	return b.WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"jobs":     jobs,
+			"has_more": false,
+		})
+	})
+}
+
+func (b *MockDaemonBuilder) Build() (*httptest.Server, func()) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h, ok := b.handlers[r.URL.Path]; ok {
+			h(w, r)
+			return
+		}
+		// Default handlers
+		switch r.URL.Path {
+		case "/api/comment":
+			w.WriteHeader(http.StatusCreated)
+		case "/api/review/address":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	return setupMockDaemon(b.t, handler)
 }
