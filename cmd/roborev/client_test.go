@@ -19,48 +19,77 @@ func writeJSON(w http.ResponseWriter, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// mockJobsHandler returns an http.HandlerFunc that filters the given jobs
-// by git_ref and repo query parameters, matching the daemon's /api/jobs behavior.
-func mockJobsHandler(t *testing.T, jobs []storage.ReviewJob) http.HandlerFunc {
+// newMockHandler creates a handler that asserts method and path, then writes a response.
+// response can be a byte slice (for raw output) or any other type (encoded as JSON).
+func newMockHandler(t *testing.T, method, path string, response any, status int) http.HandlerFunc {
 	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			t.Errorf("expected method %s, got %s", method, r.Method)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Path != path {
+			t.Errorf("expected path %s, got %s", path, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if status != 0 {
+			w.WriteHeader(status)
+		}
+		if response != nil {
+			if b, ok := response.([]byte); ok {
+				_, _ = w.Write(b)
+			} else {
+				writeJSON(w, response)
+			}
+		}
+	}
+}
+
+// mockSequenceHandler returns different responses for sequential calls to /api/jobs.
+// This allows testing fallback logic where multiple calls are made.
+func mockSequenceHandler(t *testing.T, responses ...[]storage.ReviewJob) http.HandlerFunc {
+	t.Helper()
+	call := 0
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/jobs" || r.Method != "GET" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		gitRef := r.URL.Query().Get("git_ref")
-		repo := r.URL.Query().Get("repo")
-		var matching []storage.ReviewJob
-		for _, job := range jobs {
-			if (gitRef == "" || job.GitRef == gitRef) && (repo == "" || job.RepoPath == repo) {
-				matching = append(matching, job)
-			}
+
+		var jobs []storage.ReviewJob
+		if call < len(responses) {
+			jobs = responses[call]
+			call++
+		} else {
+			// Default to empty if more calls than expected
+			jobs = []storage.ReviewJob{}
 		}
-		writeJSON(w, map[string]any{"jobs": matching})
+		writeJSON(w, map[string]any{"jobs": jobs})
 	}
 }
 
 func TestGetCommentsForJob(t *testing.T) {
 	t.Run("returns responses for job", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/comments" || r.Method != "GET" {
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusNotFound)
-				return
+		mockResp := map[string]any{
+			"responses": []storage.Response{
+				{ID: 1, Responder: "user", Response: "Fixed it"},
+				{ID: 2, Responder: "agent", Response: "Verified"},
+			},
+		}
+
+		// Wrap newMockHandler to verify query params
+		baseHandler := newMockHandler(t, "GET", "/api/comments", mockResp, http.StatusOK)
+		handler := func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("job_id") != "42" {
+				t.Errorf("expected job_id=42, got %s", r.URL.Query().Get("job_id"))
 			}
-			jobID := r.URL.Query().Get("job_id")
-			if jobID == "42" {
-				writeJSON(w, map[string]any{
-					"responses": []storage.Response{
-						{ID: 1, Responder: "user", Response: "Fixed it"},
-						{ID: 2, Responder: "agent", Response: "Verified"},
-					},
-				})
-			} else {
-				writeJSON(w, map[string]any{"responses": []storage.Response{}})
-			}
-		}))
+			baseHandler(w, r)
+		}
+
+		_, cleanup := setupMockDaemon(t, http.HandlerFunc(handler))
 		defer cleanup()
 
 		responses, err := getCommentsForJob(42)
@@ -73,9 +102,8 @@ func TestGetCommentsForJob(t *testing.T) {
 	})
 
 	t.Run("returns error on non-200", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-		}))
+		handler := newMockHandler(t, "GET", "/api/comments", nil, http.StatusInternalServerError)
+		_, cleanup := setupMockDaemon(t, handler)
 		defer cleanup()
 
 		_, err := getCommentsForJob(42)
@@ -88,14 +116,11 @@ func TestGetCommentsForJob(t *testing.T) {
 func TestWaitForReview(t *testing.T) {
 	t.Run("returns review when job completes", func(t *testing.T) {
 		mux := http.NewServeMux()
-		mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, map[string]any{
-				"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone}},
-			})
-		})
-		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{ID: 1, JobID: 1, Output: "Review complete"})
-		})
+		mux.Handle("/api/jobs", newMockHandler(t, "GET", "/api/jobs",
+			map[string]any{"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone}}}, 0))
+		mux.Handle("/api/review", newMockHandler(t, "GET", "/api/review",
+			storage.Review{ID: 1, JobID: 1, Output: "Review complete"}, 0))
+
 		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
@@ -121,9 +146,9 @@ func TestWaitForReview(t *testing.T) {
 				"jobs": []storage.ReviewJob{{ID: 1, Status: status}},
 			})
 		})
-		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, storage.Review{ID: 1, JobID: 1, Output: "Review after polling"})
-		})
+		mux.Handle("/api/review", newMockHandler(t, "GET", "/api/review",
+			storage.Review{ID: 1, JobID: 1, Output: "Review after polling"}, 0))
+
 		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
@@ -140,16 +165,10 @@ func TestWaitForReview(t *testing.T) {
 	})
 
 	t.Run("returns error on job failure", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/jobs" || r.Method != "GET" {
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			writeJSON(w, map[string]any{
-				"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusFailed, Error: "agent crashed"}},
-			})
-		}))
+		resp := map[string]any{
+			"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusFailed, Error: "agent crashed"}},
+		}
+		_, cleanup := setupMockDaemon(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
 		defer cleanup()
 
 		_, err := waitForReview(1)
@@ -162,16 +181,10 @@ func TestWaitForReview(t *testing.T) {
 	})
 
 	t.Run("returns error on job canceled", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/jobs" || r.Method != "GET" {
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			writeJSON(w, map[string]any{
-				"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusCanceled}},
-			})
-		}))
+		resp := map[string]any{
+			"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusCanceled}},
+		}
+		_, cleanup := setupMockDaemon(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
 		defer cleanup()
 
 		_, err := waitForReview(1)
@@ -185,184 +198,171 @@ func TestWaitForReview(t *testing.T) {
 }
 
 func TestFindJobForCommit(t *testing.T) {
-	t.Run("finds matching job", func(t *testing.T) {
-		repoDir := t.TempDir()
-		allJobs := []storage.ReviewJob{
-			{ID: 1, GitRef: "abc123", RepoPath: repoDir},
-			{ID: 2, GitRef: "def456", RepoPath: repoDir},
-		}
-		_, cleanup := setupMockDaemon(t, mockJobsHandler(t, allJobs))
-		defer cleanup()
-
-		job, err := findJobForCommit(repoDir, "def456")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if job == nil {
-			t.Fatal("expected to find job")
-		}
-		if job.ID != 2 {
-			t.Errorf("expected job ID 2, got %d", job.ID)
-		}
-	})
-
-	t.Run("returns nil when not found", func(t *testing.T) {
-		repoDir := t.TempDir()
-		allJobs := []storage.ReviewJob{
-			{ID: 1, GitRef: "abc123", RepoPath: repoDir},
-		}
-		_, cleanup := setupMockDaemon(t, mockJobsHandler(t, allJobs))
-		defer cleanup()
-
-		job, err := findJobForCommit(repoDir, "notfound")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if job != nil {
-			t.Error("expected nil job for non-matching SHA")
-		}
-	})
-
-	t.Run("fallback skips jobs from different repo", func(t *testing.T) {
-		otherRepo := t.TempDir()
-		anotherRepo := t.TempDir()
-		queryRepo := t.TempDir()
-		allJobs := []storage.ReviewJob{
-			{ID: 1, GitRef: "abc123", RepoPath: otherRepo},
-			{ID: 2, GitRef: "abc123", RepoPath: anotherRepo},
-		}
-		_, cleanup := setupMockDaemon(t, mockJobsHandler(t, allJobs))
-		defer cleanup()
-
-		job, err := findJobForCommit(queryRepo, "abc123")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if job != nil {
-			t.Error("expected nil job when fallback only has jobs from different repos")
-		}
-	})
-
-	t.Run("fallback matches job with same normalized path", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		repoPath := filepath.Join(tmpDir, "repo")
-		if err := os.MkdirAll(repoPath, 0755); err != nil {
-			t.Fatal(err)
-		}
-
-		allJobs := []storage.ReviewJob{
-			{ID: 1, GitRef: "abc123", RepoPath: repoPath},
-		}
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/jobs" || r.Method != "GET" {
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			gitRef := r.URL.Query().Get("git_ref")
-			repo := r.URL.Query().Get("repo")
-			var matching []storage.ReviewJob
-			for _, job := range allJobs {
-				if repo != "" && job.RepoPath != repo {
-					continue
+	tests := []struct {
+		name          string
+		setupRepo     func(t *testing.T) string // Returns the repo path to search for
+		mockResponses [][]storage.ReviewJob     // Sequence of job lists to return
+		mockHandler   http.HandlerFunc          // Optional custom handler override
+		commitSHA     string
+		expectedID    int64
+		expectFound   bool
+		expectError   string
+	}{
+		{
+			name: "finds matching job",
+			setupRepo: func(t *testing.T) string {
+				return t.TempDir()
+			},
+			commitSHA: "def456",
+			mockResponses: [][]storage.ReviewJob{
+				{{ID: 2, GitRef: "def456", RepoPath: "/tmp/repo"}},
+			},
+			expectedID:  2,
+			expectFound: true,
+		},
+		{
+			name: "returns nil when not found",
+			setupRepo: func(t *testing.T) string {
+				return t.TempDir()
+			},
+			commitSHA: "notfound",
+			mockResponses: [][]storage.ReviewJob{
+				{}, // First call empty (specific repo)
+				{}, // Second call empty (fallback)
+			},
+			expectFound: false,
+		},
+		{
+			name: "fallback skips jobs from different repo",
+			setupRepo: func(t *testing.T) string {
+				return t.TempDir()
+			},
+			commitSHA: "abc123",
+			mockResponses: [][]storage.ReviewJob{
+				{}, // First call empty
+				{
+					{ID: 1, GitRef: "abc123", RepoPath: "/other/repo"},
+					{ID: 2, GitRef: "abc123", RepoPath: "/another/repo"},
+				},
+			},
+			expectFound: false,
+		},
+		{
+			name: "fallback matches job with same normalized path",
+			setupRepo: func(t *testing.T) string {
+				tmpDir := t.TempDir()
+				repoPath := filepath.Join(tmpDir, "repo")
+				if err := os.MkdirAll(repoPath, 0755); err != nil {
+					t.Fatal(err)
 				}
-				if gitRef == "" || job.GitRef == gitRef {
-					matching = append(matching, job)
+				return repoPath
+			},
+			commitSHA: "abc123",
+			mockResponses: [][]storage.ReviewJob{
+				{}, // First call empty (simulating repo mismatch or not found initially)
+				{
+					// This job has the path we just created
+					{ID: 1, GitRef: "abc123", RepoPath: "PLACEHOLDER_REPO_PATH"},
+				},
+			},
+			expectedID:  1,
+			expectFound: true,
+		},
+		{
+			name: "returns error on non-200 response",
+			setupRepo: func(t *testing.T) string {
+				return "/test/repo"
+			},
+			commitSHA: "abc123",
+			mockHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			expectError: "500",
+		},
+		{
+			name: "returns error on invalid JSON",
+			setupRepo: func(t *testing.T) string {
+				return t.TempDir()
+			},
+			commitSHA: "abc123",
+			mockHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("not json"))
+			},
+			expectError: "decode",
+		},
+		{
+			name: "fallback skips jobs with empty or relative paths",
+			setupRepo: func(t *testing.T) string {
+				return t.TempDir()
+			},
+			commitSHA: "abc123",
+			mockResponses: [][]storage.ReviewJob{
+				{}, // First call empty
+				{
+					{ID: 1, GitRef: "abc123", RepoPath: ""},
+					{ID: 2, GitRef: "abc123", RepoPath: "relative/path"},
+					{ID: 3, GitRef: "abc123", RepoPath: "PLACEHOLDER_REPO_PATH"},
+				},
+			},
+			expectedID:  3,
+			expectFound: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoDir := tt.setupRepo(t)
+
+			// Fixup placeholder paths in mock responses
+			if len(tt.mockResponses) > 0 {
+				for i := range tt.mockResponses {
+					for j := range tt.mockResponses[i] {
+						if tt.mockResponses[i][j].RepoPath == "PLACEHOLDER_REPO_PATH" {
+							tt.mockResponses[i][j].RepoPath = repoDir
+						}
+					}
 				}
 			}
-			writeJSON(w, map[string]any{"jobs": matching})
-		}))
-		defer cleanup()
 
-		job, err := findJobForCommit(repoPath, "abc123")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if job == nil {
-			t.Fatal("expected to find job via fallback with normalized path")
-		}
-		if job.ID != 1 {
-			t.Errorf("expected job ID 1, got %d", job.ID)
-		}
-	})
-
-	t.Run("returns error on non-200 response", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-		}))
-		defer cleanup()
-
-		_, err := findJobForCommit("/test/repo", "abc123")
-		if err == nil {
-			t.Fatal("expected error on non-200 response")
-		}
-		if !strings.Contains(err.Error(), "500") {
-			t.Errorf("expected error to mention status code, got: %v", err)
-		}
-	})
-
-	t.Run("returns error on invalid JSON", func(t *testing.T) {
-		repoDir := t.TempDir()
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("not json"))
-		}))
-		defer cleanup()
-
-		_, err := findJobForCommit(repoDir, "abc123")
-		if err == nil {
-			t.Fatal("expected error on invalid JSON")
-		}
-		if !strings.Contains(err.Error(), "decode") {
-			t.Errorf("expected decode error, got: %v", err)
-		}
-	})
-
-	t.Run("fallback skips jobs with empty or relative paths", func(t *testing.T) {
-		repoDir := t.TempDir()
-		allJobs := []storage.ReviewJob{
-			{ID: 1, GitRef: "abc123", RepoPath: ""},
-			{ID: 2, GitRef: "abc123", RepoPath: "relative/path"},
-			{ID: 3, GitRef: "abc123", RepoPath: repoDir},
-		}
-		requestCount := 0
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/jobs" || r.Method != "GET" {
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusNotFound)
-				return
+			var handler http.HandlerFunc
+			if tt.mockHandler != nil {
+				handler = tt.mockHandler
+			} else {
+				handler = mockSequenceHandler(t, tt.mockResponses...)
 			}
-			requestCount++
-			gitRef := r.URL.Query().Get("git_ref")
-			repo := r.URL.Query().Get("repo")
 
-			if repo != "" {
-				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
+			_, cleanup := setupMockDaemon(t, handler)
+			defer cleanup()
+
+			job, err := findJobForCommit(repoDir, tt.commitSHA)
+
+			if tt.expectError != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.expectError) {
+					t.Errorf("expected error to contain %q, got: %v", tt.expectError, err)
+				}
 				return
 			}
 
-			var matching []storage.ReviewJob
-			for _, job := range allJobs {
-				if gitRef == "" || job.GitRef == gitRef {
-					matching = append(matching, job)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.expectFound {
+				if job == nil {
+					t.Fatal("expected to find job")
+				}
+				if job.ID != tt.expectedID {
+					t.Errorf("expected job ID %d, got %d", tt.expectedID, job.ID)
+				}
+			} else {
+				if job != nil {
+					t.Errorf("expected nil job, got ID %d", job.ID)
 				}
 			}
-			writeJSON(w, map[string]any{"jobs": matching})
-		}))
-		defer cleanup()
-
-		job, err := findJobForCommit(repoDir, "abc123")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if job == nil {
-			t.Fatal("expected to find job via fallback")
-		}
-		if job.ID != 3 {
-			t.Errorf("expected job ID 3, got %d", job.ID)
-		}
-		if requestCount != 2 {
-			t.Errorf("expected 2 requests (primary + fallback), got %d", requestCount)
-		}
-	})
+		})
+	}
 }
