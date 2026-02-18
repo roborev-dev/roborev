@@ -3463,8 +3463,10 @@ func TestHandleRemap(t *testing.T) {
 	})
 
 	t.Run("remap rejects oversized body", func(t *testing.T) {
-		// Build a payload larger than 1MB
-		body := []byte(`{"repo_path":"` + repoDir + `","mappings":[`)
+		// Build a payload larger than 1MB.
+		// JSON-encode repoDir so Windows backslashes are escaped.
+		escapedDir, _ := json.Marshal(repoDir)
+		body := []byte(`{"repo_path":` + string(escapedDir) + `,"mappings":[`)
 		entry := []byte(`{"old_sha":"a","new_sha":"b","patch_id":"c","author":"x","subject":"y","timestamp":"2026-01-01T00:00:00Z"},`)
 		for len(body) < 1<<20+1 {
 			body = append(body, entry...)
