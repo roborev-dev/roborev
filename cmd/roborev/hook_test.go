@@ -695,6 +695,35 @@ func TestInstallOrUpgradeHook(t *testing.T) {
 		}
 	})
 
+	t.Run("refuses to append to non-shell hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		pythonHook := "#!/usr/bin/env python3\nprint('hello')\n"
+		if err := os.WriteFile(hookPath, []byte(pythonHook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, false,
+		)
+		if err == nil {
+			t.Fatal("expected error for non-shell hook")
+		}
+		if !strings.Contains(err.Error(), "non-shell interpreter") {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		// Verify hook was not modified
+		content, _ := os.ReadFile(hookPath)
+		if string(content) != pythonHook {
+			t.Errorf("hook should be unchanged, got:\n%s", content)
+		}
+	})
+
 	t.Run("force overwrites existing hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {

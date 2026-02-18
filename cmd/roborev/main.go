@@ -468,6 +468,10 @@ func initCmd() *cobra.Command {
 			if existing, err := os.ReadFile(hookPath); err == nil {
 				existingStr := string(existing)
 				if !strings.Contains(strings.ToLower(existingStr), "roborev") {
+					if !isShellHook(existingStr) {
+						fmt.Printf("  Warning: %s uses a non-shell interpreter, skipping roborev hook\n", hookPath)
+						goto startDaemon
+					}
 					// Append to existing hook
 					hookContent = existingStr + "\n" + hookContent
 				} else if strings.Contains(existingStr, hookVersionMarker) {
@@ -2393,6 +2397,12 @@ func installOrUpgradeHook(
 	if err == nil && !force {
 		existingStr := string(existing)
 		if !strings.Contains(strings.ToLower(existingStr), "roborev") {
+			if !isShellHook(existingStr) {
+				return fmt.Errorf(
+					"%s hook uses a non-shell interpreter; "+
+						"add the roborev snippet manually or use --force to overwrite",
+					hookName)
+			}
 			// No roborev content — append
 			hookContent = existingStr + "\n" + hookContent
 		} else if strings.Contains(existingStr, versionMarker) {
@@ -2455,6 +2465,18 @@ func uninstallHookCmd() *cobra.Command {
 // removal: drops all lines from the first roborev comment marker
 // through the end of that contiguous block (since roborev appends
 // its snippet as a self-contained block at the end).
+// isShellHook returns true if the hook content starts with a shell
+// shebang (sh or bash). Used to avoid appending shell snippets to
+// non-shell hooks (Python, Ruby, etc.).
+func isShellHook(content string) bool {
+	first, _, _ := strings.Cut(content, "\n")
+	first = strings.TrimSpace(first)
+	return strings.HasPrefix(first, "#!/bin/sh") ||
+		strings.HasPrefix(first, "#!/usr/bin/env sh") ||
+		strings.HasPrefix(first, "#!/bin/bash") ||
+		strings.HasPrefix(first, "#!/usr/bin/env bash")
+}
+
 // isRoborevMarker returns true if the line is a generated roborev hook
 // marker comment. Only matches the known generated forms:
 //
@@ -3443,6 +3465,10 @@ func installPostRewriteHook(hooksDir string) {
 	if existing, err := os.ReadFile(hookPath); err == nil {
 		existingStr := string(existing)
 		if !strings.Contains(strings.ToLower(existingStr), "roborev") {
+			if !isShellHook(existingStr) {
+				fmt.Printf("  Warning: %s uses a non-shell interpreter, skipping\n", hookPath)
+				return
+			}
 			// No roborev content — append to existing hook
 			hookContent = existingStr + "\n" + hookContent
 		} else if strings.Contains(existingStr, postRewriteHookVersionMarker) {

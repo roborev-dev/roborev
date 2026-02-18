@@ -37,6 +37,10 @@ security findings:
 - Race conditions in metadata handoff between CLI and daemon (correctness
   concern, not exploitable by external attacker)
 
+- "Markerless" hook blocks or interpreter mismatch — hook install/upgrade uses
+  marker-based detection, every generated hook includes a marker comment, and
+  append logic refuses to add shell snippets to non-shell hooks
+
 ## Config loading and filesystem fallback
 
 Config loading (loadGuidelines, loadCIRepoConfig) reads .roborev.toml from
