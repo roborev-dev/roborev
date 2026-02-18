@@ -897,13 +897,26 @@ func (p *CIPoller) resolveRepoForBatch(batch *storage.CIPRBatch) *storage.Repo {
 // loadCIRepoConfig loads .roborev.toml from the repo's default branch
 // (e.g., origin/main) rather than the working tree. This ensures the CI
 // poller uses current settings even when the local checkout is stale.
-// Falls back to the filesystem if the default branch has no config.
+// Falls back to the filesystem only if the default branch has no config
+// file. Parse errors and other failures are returned, not masked.
 func loadCIRepoConfig(repoPath string) (*config.RepoConfig, error) {
-	if defaultBranch, err := gitpkg.GetDefaultBranch(repoPath); err == nil {
-		if cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch); err == nil && cfg != nil {
-			return cfg, nil
-		}
+	defaultBranch, err := gitpkg.GetDefaultBranch(repoPath)
+	if err != nil {
+		// Can't determine default branch (no origin, bare repo, etc.)
+		// — fall back to filesystem.
+		return config.LoadRepoConfig(repoPath)
 	}
+
+	cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
+	if err != nil {
+		// Config exists but is invalid — surface the error, don't
+		// silently fall back to a stale working-tree copy.
+		return nil, err
+	}
+	if cfg != nil {
+		return cfg, nil
+	}
+	// No .roborev.toml on the default branch — fall back to filesystem.
 	return config.LoadRepoConfig(repoPath)
 }
 

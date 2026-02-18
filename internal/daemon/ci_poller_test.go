@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1251,6 +1253,102 @@ func TestResolveMinSeverity(t *testing.T) {
 			t.Errorf("got %q, want high (normalized)", got)
 		}
 	})
+}
+
+// initGitRepoWithOrigin creates a git repo with an initial commit and
+// origin pointing to itself, so origin/main and GetDefaultBranch work.
+func initGitRepoWithOrigin(t *testing.T) (dir string, runGit func(args ...string) string) {
+	t.Helper()
+	dir = t.TempDir()
+	runGit = func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0644)
+	runGit("add", "-A")
+	runGit("commit", "-m", "initial")
+	runGit("remote", "add", "origin", dir)
+	runGit("fetch", "origin")
+	runGit("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	return dir, runGit
+}
+
+func TestLoadCIRepoConfig_LoadsFromDefaultBranch(t *testing.T) {
+	dir, runGit := initGitRepoWithOrigin(t)
+
+	// Commit .roborev.toml on main with CI agents override
+	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("[ci]\nagents = [\"claude\"]\n"), 0644)
+	runGit("add", ".roborev.toml")
+	runGit("commit", "-m", "add config")
+	runGit("fetch", "origin")
+
+	cfg, err := loadCIRepoConfig(dir)
+	if err != nil {
+		t.Fatalf("loadCIRepoConfig: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if len(cfg.CI.Agents) != 1 || cfg.CI.Agents[0] != "claude" {
+		t.Errorf("agents=%v, want [claude]", cfg.CI.Agents)
+	}
+}
+
+func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
+	dir, _ := initGitRepoWithOrigin(t)
+
+	// No .roborev.toml on origin/main, but put one in the working tree
+	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644)
+
+	cfg, err := loadCIRepoConfig(dir)
+	if err != nil {
+		t.Fatalf("loadCIRepoConfig: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected filesystem fallback config")
+	}
+	if len(cfg.CI.Agents) != 1 || cfg.CI.Agents[0] != "codex" {
+		t.Errorf("agents=%v, want [codex] from filesystem fallback", cfg.CI.Agents)
+	}
+}
+
+func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
+	dir, runGit := initGitRepoWithOrigin(t)
+
+	// Commit invalid TOML on main
+	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("this is not valid toml [[["), 0644)
+	runGit("add", ".roborev.toml")
+	runGit("commit", "-m", "add bad config")
+	runGit("fetch", "origin")
+
+	// Also put valid config in working tree — should NOT be used
+	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644)
+
+	cfg, err := loadCIRepoConfig(dir)
+	if err == nil {
+		t.Fatalf("expected parse error, got cfg=%+v", cfg)
+	}
+	if !strings.Contains(err.Error(), "parse") {
+		t.Errorf("expected parse error, got: %v", err)
+	}
 }
 
 func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
