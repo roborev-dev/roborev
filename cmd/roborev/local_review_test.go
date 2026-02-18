@@ -21,12 +21,14 @@ type reviewHarness struct {
 	Out *bytes.Buffer
 }
 
+// newReviewHarness creates a harness with the real CLI command structure.
 func newReviewHarness(t *testing.T) *reviewHarness {
 	t.Helper()
 	repo := testutil.NewTestRepoWithCommit(t)
-	cmd := &cobra.Command{}
+	cmd := reviewCmd() // Use real factory
 	var out bytes.Buffer
 	cmd.SetOut(&out)
+	cmd.SetErr(&out)
 	return &reviewHarness{t: t, Dir: repo.Root, Cmd: cmd, Out: &out}
 }
 
@@ -39,46 +41,103 @@ func (h *reviewHarness) writeConfig(content string) {
 	}
 }
 
-// runOpts holds optional parameters for runLocalReview, with sensible defaults.
+// runCmd executes the command with the given arguments, automatically adding --local and --repo.
+func (h *reviewHarness) runCmd(args ...string) error {
+	h.t.Helper()
+	// Always enforce --local and --repo to ensure we target the test repo and don't need daemon
+	finalArgs := append([]string{"--local", "--repo", h.Dir}, args...)
+	h.Cmd.SetArgs(finalArgs)
+	return h.Cmd.Execute()
+}
+
+// assertOutputContains checks if the output contains the expected string.
+func (h *reviewHarness) assertOutputContains(want string) {
+	h.t.Helper()
+	if got := h.Out.String(); !strings.Contains(got, want) {
+		h.t.Errorf("Output missing %q. Got:\n%s", want, got)
+	}
+}
+
+// assertOutputNotContains checks if the output does not contain the forbidden string.
+func (h *reviewHarness) assertOutputNotContains(want string) {
+	h.t.Helper()
+	if got := h.Out.String(); strings.Contains(got, want) {
+		h.t.Errorf("Output should not contain %q. Got:\n%s", want, got)
+	}
+}
+
+// assertErrorContains checks if the error contains the expected string.
+func (h *reviewHarness) assertErrorContains(err error, want string) {
+	h.t.Helper()
+	if err == nil {
+		h.t.Fatal("Expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), want) {
+		h.t.Errorf("Error missing %q. Got: %v", want, err)
+	}
+}
+
+// runOpts holds optional parameters for run, mapping to CLI flags.
 type runOpts struct {
 	Revision   string
-	Diff       string
 	Agent      string
 	Model      string
 	Reasoning  string
 	ReviewType string
 	Quiet      bool
+	Dirty      bool
 }
 
-// run calls runLocalReview with defaults applied.
+// run converts opts to CLI flags and executes the command.
 func (h *reviewHarness) run(opts runOpts) error {
 	h.t.Helper()
-	if opts.Revision == "" {
-		opts.Revision = "HEAD"
+	var args []string
+
+	if opts.Revision != "" {
+		args = append(args, opts.Revision)
 	}
-	return runLocalReview(h.Cmd, h.Dir, opts.Revision, opts.Diff, opts.Agent, opts.Model, opts.Reasoning, opts.ReviewType, opts.Quiet)
+	if opts.Dirty {
+		args = append(args, "--dirty")
+	}
+	if opts.Agent != "" {
+		args = append(args, "--agent", opts.Agent)
+	}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	if opts.Reasoning != "" {
+		args = append(args, "--reasoning", opts.Reasoning)
+	}
+	if opts.ReviewType != "" {
+		args = append(args, "--type", opts.ReviewType)
+	}
+	if opts.Quiet {
+		args = append(args, "--quiet")
+	}
+
+	return h.runCmd(args...)
 }
 
 func TestLocalReviewFlag(t *testing.T) {
-	// Test that --local flag is recognized
-	cmd := reviewCmd()
-	cmd.SetArgs([]string{"--local", "--help"})
-
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	if err := cmd.Execute(); err != nil {
+	h := newReviewHarness(t)
+	// Passing --help to cobra usually returns nil error but prints usage.
+	// runCmd adds --local, so we check if --local is in help output.
+	// Note: We need to avoid runCmd enforcing --local if we want to test help for --local flag?
+	// Actually, `roborev review --local --help` is valid.
+	
+	h.Cmd.SetArgs([]string{"review", "--help"}) 
+	// The harness wraps `reviewCmd` which IS the review command.
+	// So calling h.Cmd.Execute() with --help works.
+	// But h.runCmd adds flags.
+	
+	// Let's just use raw SetArgs for this specific test to ensure we test what we think we are testing.
+	h.Cmd.SetArgs([]string{"--local", "--help"})
+	if err := h.Cmd.Execute(); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := out.String()
-	if !strings.Contains(output, "--local") {
-		t.Error("Expected --local flag in help output")
-	}
-	if !strings.Contains(output, "run review locally without daemon") {
-		t.Error("Expected --local description in help output")
-	}
+	h.assertOutputContains("--local")
+	h.assertOutputContains("run review locally without daemon")
 }
 
 func TestLocalReviewRequiresAgent(t *testing.T) {
@@ -89,29 +148,23 @@ func TestLocalReviewRequiresAgent(t *testing.T) {
 		t.Fatalf("Expected no error with test agent, got: %v", err)
 	}
 
-	output := h.Out.String()
-	if !strings.Contains(output, "Running test review") {
-		t.Errorf("Expected 'Running test review' in output, got: %s", output)
-	}
+	h.assertOutputContains("Running test review")
 }
 
 func TestLocalReviewWithDirtyDiff(t *testing.T) {
 	h := newReviewHarness(t)
 
-	diffContent := `diff --git a/test.go b/test.go
-new file mode 100644
---- /dev/null
-+++ b/test.go
-@@ -0,0 +1,3 @@
-+package main
-+
-+func test() {}
-`
+	// Create a new file to make the repo dirty
+	newFile := filepath.Join(h.Dir, "newfile.go")
+	if err := os.WriteFile(newFile, []byte("package main\nfunc test() {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-	err := h.run(runOpts{Revision: "dirty", Diff: diffContent, Agent: "test", Reasoning: "fast"})
+	err := h.run(runOpts{Dirty: true, Agent: "test", Reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
+	// We don't check output for diff content because agent output is mocked.
 }
 
 func TestLocalReviewAgentResolution(t *testing.T) {
@@ -123,10 +176,7 @@ func TestLocalReviewAgentResolution(t *testing.T) {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := h.Out.String()
-	if !strings.Contains(output, "Running test review") {
-		t.Errorf("Expected agent to resolve to 'test', got output: %s", output)
-	}
+	h.assertOutputContains("Running test review")
 }
 
 func TestLocalReviewModelResolution(t *testing.T) {
@@ -141,48 +191,79 @@ model = "test-model"
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := h.Out.String()
-	if !strings.Contains(output, "model: test-model") {
-		t.Errorf("Expected model 'test-model' in output, got: %s", output)
-	}
+	h.assertOutputContains("model: test-model")
 }
 
 func TestLocalReviewReasoningLevels(t *testing.T) {
 	tests := []struct {
+		name      string
 		reasoning string
 		expected  string
 	}{
-		{"fast", "reasoning: fast"},
-		{"standard", "reasoning: standard"},
-		{"thorough", "reasoning: thorough"},
-		{"", "reasoning: thorough"}, // default
+		{"Fast", "fast", "reasoning: fast"},
+		{"Standard", "standard", "reasoning: standard"},
+		{"Thorough", "thorough", "reasoning: thorough"},
+		{"Default", "", "reasoning: thorough"}, // default (agent defaults)
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.reasoning, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			h := newReviewHarness(t)
 			err := h.run(runOpts{Agent: "test", Reasoning: tc.reasoning})
 			if err != nil {
 				t.Fatalf("Expected no error, got: %v", err)
 			}
-
-			output := h.Out.String()
-			if !strings.Contains(output, tc.expected) {
-				t.Errorf("Expected '%s' in output, got: %s", tc.expected, output)
-			}
+			h.assertOutputContains(tc.expected)
 		})
 	}
 }
 
-func TestLocalReviewInvalidReasoning(t *testing.T) {
-	h := newReviewHarness(t)
-
-	err := h.run(runOpts{Agent: "test", Reasoning: "invalid-reasoning"})
-	if err == nil {
-		t.Fatal("Expected error for invalid reasoning")
+func TestLocalReviewValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		opts       runOpts
+		wantErr    string
+		wantOutput string
+	}{
+		{
+			name:    "Invalid Reasoning",
+			opts:    runOpts{Agent: "test", Reasoning: "invalid-reasoning"},
+			wantErr: "invalid reasoning",
+		},
+		{
+			name:    "Invalid Type",
+			opts:    runOpts{Agent: "test", Reasoning: "fast", ReviewType: "bogus"},
+			wantErr: "invalid --type",
+		},
+		{
+			name: "Valid Security Type",
+			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "security"},
+		},
+		{
+			name: "Valid Design Type",
+			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "design"},
+		},
+		{
+			name: "Empty Type Accepted",
+			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: ""},
+		},
 	}
-	if !strings.Contains(err.Error(), "invalid reasoning") {
-		t.Errorf("Expected 'invalid reasoning' in error, got: %v", err)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newReviewHarness(t)
+			err := h.run(tc.opts)
+			if tc.wantErr != "" {
+				h.assertErrorContains(err, tc.wantErr)
+			} else {
+				if err != nil {
+					t.Fatalf("Expected no error, got: %v", err)
+				}
+			}
+			if tc.wantOutput != "" {
+				h.assertOutputContains(tc.wantOutput)
+			}
+		})
 	}
 }
 
@@ -198,10 +279,7 @@ review_agent_fast = "test"
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := h.Out.String()
-	if !strings.Contains(output, "Running test review") {
-		t.Errorf("Expected workflow-specific agent 'test', got output: %s", output)
-	}
+	h.assertOutputContains("Running test review")
 }
 
 func TestLocalReviewWorkflowSpecificModel(t *testing.T) {
@@ -217,10 +295,7 @@ review_model_thorough = "thorough-model"
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := h.Out.String()
-	if !strings.Contains(output, "model: thorough-model") {
-		t.Errorf("Expected workflow-specific model 'thorough-model', got output: %s", output)
-	}
+	h.assertOutputContains("model: thorough-model")
 }
 
 func TestLocalReviewReasoningFromConfig(t *testing.T) {
@@ -235,10 +310,7 @@ review_reasoning = "fast"
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := h.Out.String()
-	if !strings.Contains(output, "reasoning: fast") {
-		t.Errorf("Expected reasoning to resolve to 'fast' from config, got output: %s", output)
-	}
+	h.assertOutputContains("reasoning: fast")
 }
 
 func TestLocalReviewQuietMode(t *testing.T) {
@@ -249,10 +321,7 @@ func TestLocalReviewQuietMode(t *testing.T) {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	output := h.Out.String()
-	if strings.Contains(output, "Running") {
-		t.Errorf("Expected no 'Running' message in quiet mode, got: %s", output)
-	}
+	h.assertOutputNotContains("Running")
 }
 
 func TestLocalReviewSkipsDaemon(t *testing.T) {
@@ -266,48 +335,6 @@ func TestLocalReviewSkipsDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected --local to work without daemon, got: %v", err)
 	}
-}
-
-func TestReviewTypeValidation(t *testing.T) {
-	h := newReviewHarness(t)
-
-	t.Run("invalid type rejected by cobra", func(t *testing.T) {
-		cmd := reviewCmd()
-		cmd.SetArgs([]string{"--local", "--type", "bogus", "--agent", "test", "--reasoning", "fast", "--repo", h.Dir})
-
-		var out bytes.Buffer
-		cmd.SetOut(&out)
-		cmd.SetErr(&out)
-
-		err := cmd.Execute()
-		if err == nil {
-			t.Fatal("expected error for invalid review type")
-		}
-		if !strings.Contains(err.Error(), "invalid --type") {
-			t.Errorf("expected 'invalid --type' error, got: %v", err)
-		}
-	})
-
-	t.Run("security type accepted", func(t *testing.T) {
-		err := h.run(runOpts{Agent: "test", Reasoning: "fast", ReviewType: "security"})
-		if err != nil {
-			t.Fatalf("expected security type to be accepted, got: %v", err)
-		}
-	})
-
-	t.Run("design type accepted", func(t *testing.T) {
-		err := h.run(runOpts{Agent: "test", Reasoning: "fast", ReviewType: "design"})
-		if err != nil {
-			t.Fatalf("expected design type to be accepted, got: %v", err)
-		}
-	})
-
-	t.Run("empty type accepted as default", func(t *testing.T) {
-		err := h.run(runOpts{Agent: "test", Reasoning: "fast", ReviewType: ""})
-		if err != nil {
-			t.Fatalf("expected empty type to be accepted, got: %v", err)
-		}
-	})
 }
 
 // Ensure config package is used (for the linker)
