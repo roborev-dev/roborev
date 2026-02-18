@@ -23,6 +23,38 @@ type jobResponse struct {
 	notFound bool
 }
 
+const testJobID = 42
+
+func mockJobStatusHandler(responses []jobResponse, callCount *int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idx := int(atomic.AddInt32(callCount, 1)) - 1
+		if idx >= len(responses) {
+			idx = len(responses) - 1
+		}
+		resp := responses[idx]
+
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/jobs"):
+			if resp.notFound {
+				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []interface{}{}})
+				return
+			}
+			job := storage.ReviewJob{
+				ID:     testJobID,
+				Status: storage.JobStatus(resp.status),
+				Error:  resp.errMsg,
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
+
+		case strings.HasPrefix(r.URL.Path, "/api/review"):
+			json.NewEncoder(w).Encode(storage.Review{
+				JobID:  testJobID,
+				Output: resp.review,
+			})
+		}
+	}
+}
+
 func TestWaitForAnalysisJob(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -73,39 +105,13 @@ func TestWaitForAnalysisJob(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var callCount int32
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				idx := int(atomic.AddInt32(&callCount, 1)) - 1
-				if idx >= len(tt.responses) {
-					idx = len(tt.responses) - 1
-				}
-				resp := tt.responses[idx]
-
-				switch {
-				case strings.HasPrefix(r.URL.Path, "/api/jobs"):
-					if resp.notFound {
-						json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []interface{}{}})
-						return
-					}
-					job := storage.ReviewJob{
-						ID:     42,
-						Status: storage.JobStatus(resp.status),
-						Error:  resp.errMsg,
-					}
-					json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
-
-				case strings.HasPrefix(r.URL.Path, "/api/review"):
-					json.NewEncoder(w).Encode(storage.Review{
-						JobID:  42,
-						Output: resp.review,
-					})
-				}
-			}))
+			ts := httptest.NewServer(mockJobStatusHandler(tt.responses, &callCount))
 			defer ts.Close()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			review, err := waitForAnalysisJob(ctx, ts.URL, 42)
+			review, err := waitForAnalysisJob(ctx, ts.URL, testJobID)
 
 			if tt.wantErr {
 				if err == nil {
