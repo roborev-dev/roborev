@@ -802,6 +802,53 @@ func TestBuildSinglePrompt_WithMergedGuidelines(t *testing.T) {
 	}
 }
 
+func TestLoadMergedGuidelines_ParseErrorBlocksFallback(t *testing.T) {
+	// If the default branch has an invalid .roborev.toml (parse error),
+	// loadMergedGuidelines should NOT fall back to the filesystem config.
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	run("init", "-b", "main")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
+
+	// Commit invalid TOML on main
+	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("review_guidelines = INVALID[[["), 0644)
+	run("add", "-A")
+	run("commit", "-m", "bad toml")
+
+	run("remote", "add", "origin", dir)
+	run("fetch", "origin")
+
+	// Write valid filesystem config with distinctive guidelines
+	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0644)
+
+	sha := run("rev-parse", "HEAD")
+	guidelines := loadMergedGuidelines(dir, sha)
+
+	// Should NOT contain the filesystem guideline — parse error
+	// on the default branch should prevent fallback.
+	if strings.Contains(guidelines, "Filesystem guideline") {
+		t.Error("parse error on default branch should block filesystem fallback")
+	}
+}
+
 func TestBuildRangePrompt_WithMergedGuidelines(t *testing.T) {
 	dir, baseSHA, featureSHA := setupGuidelinesRepo(t, "main",
 		"Base guideline.", "Range addition.")

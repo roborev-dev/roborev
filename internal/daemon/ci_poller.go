@@ -1062,7 +1062,13 @@ func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf(
+				"set commit status: HTTP %d (body unreadable: %v)",
+				resp.StatusCode, readErr,
+			)
+		}
 		return fmt.Errorf(
 			"set commit status: HTTP %d: %s",
 			resp.StatusCode, string(respBody),

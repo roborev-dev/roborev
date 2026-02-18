@@ -427,10 +427,16 @@ func loadMergedGuidelines(repoPath, ref string) string {
 	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
 		baseCfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
 		if err != nil {
-			// Config exists but is invalid — log and skip (don't
-			// fall back to a potentially stale filesystem copy).
-			log.Printf("prompt: failed to load .roborev.toml from %s: %v", defaultBranch, err)
-			baseFound = true // prevent filesystem fallback
+			// Distinguish parse errors (file exists but invalid TOML)
+			// from transient git failures. Only suppress filesystem
+			// fallback for parse errors — transient failures should
+			// still allow fallback to working-tree config.
+			if strings.Contains(err.Error(), "parse") {
+				log.Printf("prompt: invalid .roborev.toml on %s: %v", defaultBranch, err)
+				baseFound = true // prevent filesystem fallback
+			} else {
+				log.Printf("prompt: failed to read .roborev.toml from %s: %v (will try filesystem)", defaultBranch, err)
+			}
 		} else if baseCfg != nil {
 			baseGuidelines = baseCfg.ReviewGuidelines
 			baseFound = true

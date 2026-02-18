@@ -175,7 +175,7 @@ func TestFormatAllFailedComment(t *testing.T) {
 	comment := formatAllFailedComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
-		"## roborev: Review Failed",
+		"## roborev: Review Failed (`abc123de`)",
 		"All review jobs in this batch failed",
 		"**codex** (security): failed",
 		"**gemini** (review): failed",
