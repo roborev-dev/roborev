@@ -31,6 +31,7 @@ const (
 	JobStatusDone     JobStatus = "done"
 	JobStatusFailed   JobStatus = "failed"
 	JobStatusCanceled JobStatus = "canceled"
+	JobStatusApplied  JobStatus = "applied"
 )
 
 // JobType classifies what kind of work a review job represents.

@@ -2129,10 +2129,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashMessage = fmt.Sprintf("Patch from job #%d applied and committed", msg.jobID)
 			m.flashExpiresAt = time.Now().Add(3 * time.Second)
 			m.flashView = tuiViewTasks
-			// Mark the parent review as addressed
+			// Refresh tasks list to show updated status, and mark parent addressed
+			cmds := []tea.Cmd{m.fetchFixJobs()}
 			if msg.parentJobID > 0 {
-				return m, m.markParentAddressed(msg.parentJobID)
+				cmds = append(cmds, m.markParentAddressed(msg.parentJobID))
 			}
+			return m, tea.Batch(cmds...)
 		}
 	}
 
@@ -2643,8 +2645,8 @@ func (m tuiModel) renderReviewView() string {
 		b.WriteString(tuiStatusStyle.Render(locationLine))
 		b.WriteString("\x1b[K") // Clear to end of line
 
-		// Show verdict and addressed status on next line
-		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != ""
+		// Show verdict and addressed status on next line (skip verdict for fix jobs)
+		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
 		if hasVerdict || review.Addressed {
 			b.WriteString("\n")
 			if hasVerdict {
@@ -2726,7 +2728,7 @@ func (m tuiModel) renderReviewView() string {
 
 	// headerHeight = title + location line + status line (1) + help + verdict/addressed (0|1)
 	headerHeight := titleLines + locationLines + 1 + helpLines
-	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != ""
+	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
 	if hasVerdict || review.Addressed {
 		headerHeight++ // Add 1 for verdict/addressed line
 	}
@@ -3493,6 +3495,9 @@ func (m tuiModel) renderTasksView() string {
 		case storage.JobStatusCanceled:
 			statusLabel = "canceled"
 			statusStyle = tuiCanceledStyle
+		case storage.JobStatusApplied:
+			statusLabel = "applied"
+			statusStyle = tuiDoneStyle
 		}
 
 		parentRef := ""
@@ -3540,6 +3545,7 @@ func (m tuiModel) renderTasksHelpOverlay(b *strings.Builder) string {
 		"    running    Agent is working in an isolated worktree",
 		"    ready      Patch captured and ready to apply to your working tree",
 		"    failed     Agent failed (press enter or t to see error details)",
+		"    applied    Patch was applied and committed to your working tree",
 		"    canceled   Job was canceled by user",
 		"",
 		"  Keybindings",
@@ -3792,6 +3798,9 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 			return tuiApplyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
 				err: fmt.Errorf("patch applied but commit failed: %w", err)}
 		}
+
+		// Mark the fix job as applied on the server
+		_ = m.postJSON("/api/job/applied", map[string]any{"job_id": jobID}, nil)
 
 		return tuiApplyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true}
 	}
