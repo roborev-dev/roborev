@@ -26,10 +26,22 @@ security findings:
   embedded in prompts (all locally generated; a compromised local agent
   already has full shell access)
 - "Secret exposure" from hook stderr logged or forwarded to the model
+- "Untrusted remap data" or "history tampering" from the remap endpoint (the
+  client is the user's own post-rewrite hook, data comes from the user's own
+  git repo, and the daemon is localhost-only)
 - .githooks/ tracked as a supply-chain risk (source templates only; installed
   hooks are frozen copies in .git/hooks/, unaffected by branch switches)
+- "Argument injection" on internal helpers (e.g., git.GetPatchID,
+  git.GetCommitInfo) that receive SHAs already validated or resolved at the
+  call site — validation belongs at trust boundaries, not every internal call
 - Race conditions in metadata handoff between CLI and daemon (correctness
   concern, not exploitable by external attacker)
+
+- "Markerless" hook blocks or interpreter mismatch — hook install/upgrade uses
+  marker-based detection, every generated hook includes a marker comment, and
+  append logic refuses to add shell snippets to non-shell hooks
+- Symlink-following in hook read/write under .git/hooks/ (controlled by the
+  local user; a compromised local filesystem is out of scope)
 
 ## Config loading and filesystem fallback
 

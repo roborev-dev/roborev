@@ -43,6 +43,9 @@ type Client interface {
 
 	// GetCommentsForJob fetches comments for a job
 	GetCommentsForJob(jobID int64) ([]storage.Response, error)
+
+	// Remap updates git_ref for jobs whose commits were rewritten
+	Remap(req RemapRequest) (*RemapResult, error)
 }
 
 // DefaultPollInterval is the default polling interval for WaitForReview.
@@ -392,4 +395,39 @@ func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) 
 	}
 
 	return result.Responses, nil
+}
+
+// RemapResult is the response from POST /api/remap.
+type RemapResult struct {
+	Remapped int `json:"remapped"`
+	Skipped  int `json:"skipped"`
+}
+
+// Remap sends rewritten commit mappings to the daemon so that
+// review jobs are updated to point at the new SHAs.
+func (c *HTTPClient) Remap(req RemapRequest) (*RemapResult, error) {
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Post(
+		c.addr+"/api/remap", "application/json",
+		bytes.NewReader(reqBody),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("remap: %s: %s", resp.Status, body)
+	}
+
+	var result RemapResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

@@ -2492,6 +2492,123 @@ func TestListBranchesWithCounts(t *testing.T) {
 	})
 }
 
+func TestPatchIDMigration(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'patch_id'`).Scan(&count)
+	if err != nil {
+		t.Fatalf("check patch_id column: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected patch_id column to exist, got count=%d", count)
+	}
+}
+
+func TestEnqueueJobWithPatchID(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-patch-id")
+	commit := createCommit(t, db, repo.ID, "abc123")
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "abc123",
+		Agent:    "test",
+		PatchID:  "deadbeef1234",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if job.PatchID != "deadbeef1234" {
+		t.Errorf("expected PatchID=deadbeef1234, got %q", job.PatchID)
+	}
+
+	// Verify it round-trips through GetJobByID
+	got, err := db.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if got.PatchID != "deadbeef1234" {
+		t.Errorf("GetJobByID: expected PatchID=deadbeef1234, got %q", got.PatchID)
+	}
+}
+
+func TestRemapJobGitRef(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-remap")
+	commit := createCommit(t, db, repo.ID, "oldsha")
+
+	t.Run("remap updates matching jobs", func(t *testing.T) {
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "oldsha",
+			Agent:    "test",
+			PatchID:  "patchabc",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+
+		newCommit := createCommit(t, db, repo.ID, "newsha")
+		n, err := db.RemapJobGitRef(repo.ID, "oldsha", "newsha", "patchabc", newCommit.ID)
+		if err != nil {
+			t.Fatalf("RemapJobGitRef: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("expected 1 row updated, got %d", n)
+		}
+
+		got, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if got.GitRef != "newsha" {
+			t.Errorf("expected git_ref=newsha, got %q", got.GitRef)
+		}
+	})
+
+	t.Run("skips on patch_id mismatch", func(t *testing.T) {
+		commit2 := createCommit(t, db, repo.ID, "sha2")
+		_, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:   repo.ID,
+			CommitID: commit2.ID,
+			GitRef:   "sha2",
+			Agent:    "test",
+			PatchID:  "patch_original",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+
+		newCommit := createCommit(t, db, repo.ID, "sha2_new")
+		n, err := db.RemapJobGitRef(repo.ID, "sha2", "sha2_new", "patch_different", newCommit.ID)
+		if err != nil {
+			t.Fatalf("RemapJobGitRef: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("expected 0 rows updated (patch_id mismatch), got %d", n)
+		}
+	})
+
+	t.Run("returns 0 for no matches", func(t *testing.T) {
+		newCommit := createCommit(t, db, repo.ID, "nonexistent_new")
+		n, err := db.RemapJobGitRef(repo.ID, "nonexistent", "nonexistent_new", "patch", newCommit.ID)
+		if err != nil {
+			t.Fatalf("RemapJobGitRef: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("expected 0 rows updated, got %d", n)
+		}
+	})
+}
+
 func openTestDB(t *testing.T) *DB {
 	t.Helper()
 	tmpl, err := getTemplatePath()

@@ -3267,3 +3267,223 @@ func TestHandleBatchJobs(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleRemap(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	// Set up a git repo so handleRemap can resolve paths
+	repoDir := filepath.Join(tmpDir, "remap-repo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+
+	// Resolve symlinks to get the canonical path
+	// (macOS /var -> /private/var symlink)
+	resolvedDir, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		resolvedDir = repoDir
+	}
+
+	repo, err := db.GetOrCreateRepo(resolvedDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := db.GetOrCreateCommit(repo.ID, "oldsha111", "Test", "old commit", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "oldsha111",
+		Agent:    "test",
+		PatchID:  "patchXYZ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("remap updates job", func(t *testing.T) {
+		reqData := RemapRequest{
+			RepoPath: repoDir,
+			Mappings: []RemapMapping{
+				{
+					OldSHA:    "oldsha111",
+					NewSHA:    "newsha222",
+					PatchID:   "patchXYZ",
+					Author:    "Test",
+					Subject:   "new commit",
+					Timestamp: time.Now().Format(time.RFC3339),
+				},
+			},
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var result map[string]int
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result["remapped"] != 1 {
+			t.Errorf("expected remapped=1, got %d", result["remapped"])
+		}
+	})
+
+	t.Run("remap with non-git path returns 400", func(t *testing.T) {
+		reqData := RemapRequest{
+			RepoPath: "/nonexistent/repo",
+			Mappings: []RemapMapping{
+				{OldSHA: "a", NewSHA: "b", PatchID: "c", Author: "x", Subject: "y", Timestamp: time.Now().Format(time.RFC3339)},
+			},
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("remap with unregistered repo returns 404", func(t *testing.T) {
+		// Create a valid git repo that is NOT registered in the DB
+		unregistered := filepath.Join(tmpDir, "unregistered-repo")
+		if err := os.MkdirAll(unregistered, 0755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("git", "init")
+		cmd.Dir = unregistered
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %s: %v", out, err)
+		}
+
+		reqData := RemapRequest{
+			RepoPath: unregistered,
+			Mappings: []RemapMapping{
+				{OldSHA: "a", NewSHA: "b", PatchID: "c", Author: "x", Subject: "y", Timestamp: time.Now().Format(time.RFC3339)},
+			},
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("remap with invalid timestamp returns 400", func(t *testing.T) {
+		reqData := RemapRequest{
+			RepoPath: repoDir,
+			Mappings: []RemapMapping{
+				{
+					OldSHA:    "oldsha111",
+					NewSHA:    "newsha333",
+					PatchID:   "patchXYZ",
+					Author:    "Test",
+					Subject:   "bad ts",
+					Timestamp: "not-a-timestamp",
+				},
+			},
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/remap", reqData)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("remap with empty repo_path returns 400", func(t *testing.T) {
+		reqData := RemapRequest{
+			RepoPath: "",
+			Mappings: []RemapMapping{
+				{
+					OldSHA:    "a",
+					NewSHA:    "b",
+					PatchID:   "c",
+					Author:    "x",
+					Subject:   "y",
+					Timestamp: time.Now().Format(time.RFC3339),
+				},
+			},
+		}
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/remap", reqData,
+		)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s",
+				w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("remap rejects too many mappings", func(t *testing.T) {
+		mappings := make([]RemapMapping, 1001)
+		for i := range mappings {
+			mappings[i] = RemapMapping{
+				OldSHA: "a", NewSHA: "b", PatchID: "c",
+				Author: "x", Subject: "y",
+				Timestamp: time.Now().Format(time.RFC3339),
+			}
+		}
+		reqData := RemapRequest{
+			RepoPath: repoDir,
+			Mappings: mappings,
+		}
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/remap", reqData,
+		)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s",
+				w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("remap rejects oversized body", func(t *testing.T) {
+		// Build a payload larger than 1MB.
+		// JSON-encode repoDir so Windows backslashes are escaped.
+		escapedDir, _ := json.Marshal(repoDir)
+		body := []byte(`{"repo_path":` + string(escapedDir) + `,"mappings":[`)
+		entry := []byte(`{"old_sha":"a","new_sha":"b","patch_id":"c","author":"x","subject":"y","timestamp":"2026-01-01T00:00:00Z"},`)
+		for len(body) < 1<<20+1 {
+			body = append(body, entry...)
+		}
+		body = append(body[:len(body)-1], []byte(`]}`)...)
+
+		req := httptest.NewRequest(
+			http.MethodPost, "/api/remap",
+			bytes.NewReader(body),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("expected 413, got %d: %s",
+				w.Code, w.Body.String())
+		}
+	})
+}

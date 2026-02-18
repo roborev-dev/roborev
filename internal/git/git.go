@@ -917,6 +917,48 @@ func getRemoteURLByName(repoPath, name string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// GetPatchID returns the stable patch-id for a commit. Patch-ids are
+// content-based hashes of the diff, so two commits with the same code
+// change (e.g. before and after a rebase) share the same patch-id.
+// Returns "" for merge commits, empty commits, or on any error.
+func GetPatchID(repoPath, sha string) string {
+	show := exec.Command("git", "-c", "color.ui=false", "show", sha)
+	show.Dir = repoPath
+
+	patchID := exec.Command("git", "patch-id", "--stable")
+	patchID.Dir = repoPath
+
+	pipe, err := show.StdoutPipe()
+	if err != nil {
+		return ""
+	}
+	patchID.Stdin = pipe
+
+	var out bytes.Buffer
+	patchID.Stdout = &out
+
+	if err := show.Start(); err != nil {
+		return ""
+	}
+	if err := patchID.Start(); err != nil {
+		pipe.Close() // unblock show if pipe buffer is full
+		_ = show.Wait()
+		return ""
+	}
+
+	_ = show.Wait() // only patchID's exit status matters
+	if err := patchID.Wait(); err != nil {
+		return ""
+	}
+
+	// Output format: "<patch-id> <commit-sha>\n"
+	fields := strings.Fields(out.String())
+	if len(fields) < 1 {
+		return ""
+	}
+	return fields[0]
+}
+
 func getAnyRemoteURL(repoPath string) string {
 	// List all remotes
 	cmd := exec.Command("git", "remote")

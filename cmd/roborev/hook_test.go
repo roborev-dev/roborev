@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -56,9 +57,8 @@ func TestUninstallHookCmd(t *testing.T) {
 	})
 
 	t.Run("hook with roborev only - removes file", func(t *testing.T) {
-		hookContent := "#!/bin/bash\n# roborev auto-commit hook\nroborev enqueue\n"
 		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(hookContent)
+		repo.WriteHook(generateHookContent())
 		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
@@ -74,9 +74,10 @@ func TestUninstallHookCmd(t *testing.T) {
 	})
 
 	t.Run("hook with roborev and other commands - preserves others", func(t *testing.T) {
-		hookContent := "#!/bin/bash\necho 'before'\nroborev enqueue\necho 'after'\n"
 		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(hookContent)
+		mixed := "#!/bin/sh\necho 'before'\necho 'after'\n" +
+			generateHookContent()
+		repo.WriteHook(mixed)
 		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
@@ -85,15 +86,15 @@ func TestUninstallHookCmd(t *testing.T) {
 			t.Fatalf("uninstall-hook failed: %v", err)
 		}
 
-		// Hook should exist with roborev line removed
+		// Hook should exist with roborev snippet removed
 		content, err := os.ReadFile(repo.HookPath)
 		if err != nil {
 			t.Fatalf("Failed to read hook: %v", err)
 		}
 
 		contentStr := string(content)
-		if strings.Contains(strings.ToLower(contentStr), "roborev") {
-			t.Error("Hook should not contain roborev")
+		if strings.Contains(contentStr, "enqueue --quiet") {
+			t.Error("Hook should not contain generated roborev snippet")
 		}
 		if !strings.Contains(contentStr, "echo 'before'") {
 			t.Error("Hook should still contain 'echo before'")
@@ -103,10 +104,16 @@ func TestUninstallHookCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("hook with capitalized RoboRev", func(t *testing.T) {
-		hookContent := "#!/bin/bash\n# RoboRev hook\nRoboRev enqueue\n"
+	t.Run("also removes post-rewrite hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
-		repo.WriteHook(hookContent)
+		repo.WriteHook(generateHookContent())
+		// Also install post-rewrite hook
+		prPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		os.WriteFile(
+			prPath,
+			[]byte(generatePostRewriteHookContent()),
+			0755,
+		)
 		defer repo.Chdir()()
 
 		cmd := uninstallHookCmd()
@@ -115,9 +122,34 @@ func TestUninstallHookCmd(t *testing.T) {
 			t.Fatalf("uninstall-hook failed: %v", err)
 		}
 
-		// Hook should be removed (only had RoboRev content)
 		if _, err := os.Stat(repo.HookPath); !os.IsNotExist(err) {
-			t.Error("Hook file should have been removed")
+			t.Error("post-commit hook should have been removed")
+		}
+		if _, err := os.Stat(prPath); !os.IsNotExist(err) {
+			t.Error("post-rewrite hook should have been removed")
+		}
+	})
+
+	t.Run("removes post-rewrite even without post-commit", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		// Only install post-rewrite, no post-commit
+		prPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		os.MkdirAll(repo.HooksDir, 0755)
+		os.WriteFile(
+			prPath,
+			[]byte(generatePostRewriteHookContent()),
+			0755,
+		)
+		defer repo.Chdir()()
+
+		cmd := uninstallHookCmd()
+		err := cmd.Execute()
+		if err != nil {
+			t.Fatalf("uninstall-hook failed: %v", err)
+		}
+
+		if _, err := os.Stat(prPath); !os.IsNotExist(err) {
+			t.Error("post-rewrite hook should have been removed")
 		}
 	})
 }
@@ -253,7 +285,7 @@ func TestHookNeedsUpgrade(t *testing.T) {
 	t.Run("outdated hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\n# roborev post-commit hook\nroborev enqueue\n")
-		if !hookNeedsUpgrade(repo.Root) {
+		if !hookNeedsUpgrade(repo.Root, "post-commit", hookVersionMarker) {
 			t.Error("should detect outdated hook")
 		}
 	})
@@ -261,14 +293,14 @@ func TestHookNeedsUpgrade(t *testing.T) {
 	t.Run("current hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\n# roborev post-commit hook v2 - auto-reviews every commit\nroborev enqueue\n")
-		if hookNeedsUpgrade(repo.Root) {
+		if hookNeedsUpgrade(repo.Root, "post-commit", hookVersionMarker) {
 			t.Error("should not flag current hook as outdated")
 		}
 	})
 
 	t.Run("no hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
-		if hookNeedsUpgrade(repo.Root) {
+		if hookNeedsUpgrade(repo.Root, "post-commit", hookVersionMarker) {
 			t.Error("should not flag missing hook as outdated")
 		}
 	})
@@ -276,8 +308,66 @@ func TestHookNeedsUpgrade(t *testing.T) {
 	t.Run("non-roborev hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
-		if hookNeedsUpgrade(repo.Root) {
+		if hookNeedsUpgrade(repo.Root, "post-commit", hookVersionMarker) {
 			t.Error("should not flag non-roborev hook as outdated")
+		}
+	})
+
+	t.Run("post-rewrite outdated", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		hooksDir := filepath.Join(repo.Root, ".git", "hooks")
+		os.MkdirAll(hooksDir, 0755)
+		os.WriteFile(filepath.Join(hooksDir, "post-rewrite"),
+			[]byte("#!/bin/sh\n# roborev hook\nroborev remap\n"), 0755)
+		if !hookNeedsUpgrade(repo.Root, "post-rewrite", postRewriteHookVersionMarker) {
+			t.Error("should detect outdated post-rewrite hook")
+		}
+	})
+
+	t.Run("post-rewrite current", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		hooksDir := filepath.Join(repo.Root, ".git", "hooks")
+		os.MkdirAll(hooksDir, 0755)
+		os.WriteFile(filepath.Join(hooksDir, "post-rewrite"),
+			[]byte("#!/bin/sh\n# roborev post-rewrite hook v1\nroborev remap\n"), 0755)
+		if hookNeedsUpgrade(repo.Root, "post-rewrite", postRewriteHookVersionMarker) {
+			t.Error("should not flag current post-rewrite hook")
+		}
+	})
+}
+
+func TestHookMissing(t *testing.T) {
+	t.Run("missing post-rewrite with roborev post-commit", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook("#!/bin/sh\n# roborev post-commit hook v2\nroborev enqueue\n")
+		if !hookMissing(repo.Root, "post-rewrite") {
+			t.Error("should detect missing post-rewrite when post-commit has roborev")
+		}
+	})
+
+	t.Run("no post-commit hook at all", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if hookMissing(repo.Root, "post-rewrite") {
+			t.Error("should not warn when post-commit is not installed")
+		}
+	})
+
+	t.Run("post-rewrite exists with roborev", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook("#!/bin/sh\n# roborev post-commit hook v2\nroborev enqueue\n")
+		hooksDir := filepath.Join(repo.Root, ".git", "hooks")
+		os.WriteFile(filepath.Join(hooksDir, "post-rewrite"),
+			[]byte("#!/bin/sh\n# roborev post-rewrite hook v1\nroborev remap\n"), 0755)
+		if hookMissing(repo.Root, "post-rewrite") {
+			t.Error("should not warn when post-rewrite has roborev content")
+		}
+	})
+
+	t.Run("non-roborev post-commit", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook("#!/bin/sh\necho hello\n")
+		if hookMissing(repo.Root, "post-rewrite") {
+			t.Error("should not warn when post-commit is not roborev")
 		}
 	})
 }
@@ -454,5 +544,825 @@ func TestInitNoDaemon_Success(t *testing.T) {
 	}
 	if strings.Contains(output, "Setup incomplete") {
 		t.Errorf("should not show 'Setup incomplete' on success, got:\n%s", output)
+	}
+}
+
+func TestInstallHookCmdCreatesPostRewriteHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test checks Unix exec bits, skipping on Windows")
+	}
+
+	repo := testutil.NewTestRepo(t)
+	repo.RemoveHooksDir()
+	defer repo.Chdir()()
+
+	installCmd := installHookCmd()
+	installCmd.SetArgs([]string{})
+	if err := installCmd.Execute(); err != nil {
+		t.Fatalf("install-hook failed: %v", err)
+	}
+
+	prHookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+	content, err := os.ReadFile(prHookPath)
+	if err != nil {
+		t.Fatalf("post-rewrite hook not created: %v", err)
+	}
+
+	if !strings.Contains(string(content), "remap --quiet") {
+		t.Error("post-rewrite hook should contain 'remap --quiet'")
+	}
+	if !strings.Contains(string(content), postRewriteHookVersionMarker) {
+		t.Error("post-rewrite hook should contain version marker")
+	}
+}
+
+func TestInstallOrUpgradeHook(t *testing.T) {
+	t.Run("appends to existing non-roborev hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		existing := "#!/bin/sh\necho 'custom logic'\n"
+		if err := os.WriteFile(hookPath, []byte(existing), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, false,
+		)
+		if err != nil {
+			t.Fatalf("installOrUpgradeHook: %v", err)
+		}
+
+		content, _ := os.ReadFile(hookPath)
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "echo 'custom logic'") {
+			t.Error("original content should be preserved")
+		}
+		if !strings.Contains(contentStr, hookVersionMarker) {
+			t.Error("roborev snippet should be appended")
+		}
+	})
+
+	t.Run("skips current version", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		current := generatePostRewriteHookContent()
+		if err := os.WriteFile(hookPath, []byte(current), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-rewrite",
+			postRewriteHookVersionMarker,
+			generatePostRewriteHookContent, false,
+		)
+		if err != nil {
+			t.Fatalf("installOrUpgradeHook: %v", err)
+		}
+
+		content, _ := os.ReadFile(hookPath)
+		if string(content) != current {
+			t.Error("current hook should not be modified")
+		}
+	})
+
+	t.Run("upgrades outdated roborev hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		// Simulates an older generated hook (has marker but no version)
+		outdated := "#!/bin/sh\n" +
+			"# roborev post-commit hook\n" +
+			"ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
+		if err := os.WriteFile(hookPath, []byte(outdated), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, false,
+		)
+		if err != nil {
+			t.Fatalf("installOrUpgradeHook: %v", err)
+		}
+
+		content, _ := os.ReadFile(hookPath)
+		contentStr := string(content)
+		if !strings.Contains(contentStr, hookVersionMarker) {
+			t.Error("should have new version marker")
+		}
+		// Old marker should be gone
+		if strings.Contains(contentStr, "# roborev post-commit hook\n") {
+			t.Error("old marker should be removed")
+		}
+	})
+
+	t.Run("upgrades mixed hook preserving user content", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		mixed := "#!/bin/sh\necho 'user code'\n# roborev post-rewrite hook\nROBOREV=\"/usr/bin/roborev\"\n\"$ROBOREV\" remap --quiet 2>/dev/null\n"
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-rewrite",
+			postRewriteHookVersionMarker,
+			generatePostRewriteHookContent, false,
+		)
+		if err != nil {
+			t.Fatalf("installOrUpgradeHook: %v", err)
+		}
+
+		content, _ := os.ReadFile(hookPath)
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "echo 'user code'") {
+			t.Error("user content should be preserved")
+		}
+		if !strings.Contains(contentStr, postRewriteHookVersionMarker) {
+			t.Error("should have new version marker")
+		}
+	})
+
+	t.Run("appends to hooks with various shell shebangs", func(t *testing.T) {
+		shebangs := []string{
+			"#!/bin/sh", "#!/usr/bin/env sh",
+			"#!/bin/bash", "#!/usr/bin/env bash",
+			"#!/bin/zsh", "#!/usr/bin/env zsh",
+			"#!/bin/ksh", "#!/usr/bin/env ksh",
+			"#!/bin/dash", "#!/usr/bin/env dash",
+		}
+		for _, shebang := range shebangs {
+			t.Run(shebang, func(t *testing.T) {
+				repo := testutil.NewTestRepo(t)
+				if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				hookPath := filepath.Join(repo.HooksDir, "post-commit")
+				existing := shebang + "\necho 'custom'\n"
+				if err := os.WriteFile(hookPath, []byte(existing), 0755); err != nil {
+					t.Fatal(err)
+				}
+
+				err := installOrUpgradeHook(
+					repo.HooksDir, "post-commit",
+					hookVersionMarker, generateHookContent, false,
+				)
+				if err != nil {
+					t.Fatalf("should append to %s hook: %v", shebang, err)
+				}
+
+				content, _ := os.ReadFile(hookPath)
+				if !strings.Contains(string(content), "echo 'custom'") {
+					t.Error("original content should be preserved")
+				}
+				if !strings.Contains(string(content), hookVersionMarker) {
+					t.Error("roborev content should be appended")
+				}
+			})
+		}
+	})
+
+	t.Run("refuses to append to non-shell hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		pythonHook := "#!/usr/bin/env python3\nprint('hello')\n"
+		if err := os.WriteFile(hookPath, []byte(pythonHook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, false,
+		)
+		if err == nil {
+			t.Fatal("expected error for non-shell hook")
+		}
+		if !strings.Contains(err.Error(), "non-shell interpreter") {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		// Verify hook was not modified
+		content, _ := os.ReadFile(hookPath)
+		if string(content) != pythonHook {
+			t.Errorf("hook should be unchanged, got:\n%s", content)
+		}
+	})
+
+	t.Run("upgrade returns error on re-read failure", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		// Outdated hook triggers the upgrade path.
+		outdated := "#!/bin/sh\n" +
+			"# roborev post-commit hook\n" +
+			"ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
+		if err := os.WriteFile(
+			hookPath, []byte(outdated), 0755,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		// Inject a non-ENOENT error on re-read after cleanup.
+		origReadFile := hookReadFile
+		hookReadFile = func(string) ([]byte, error) {
+			return nil, fs.ErrPermission
+		}
+		t.Cleanup(func() { hookReadFile = origReadFile })
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, false,
+		)
+		if err == nil {
+			t.Fatal("expected error from re-read failure")
+		}
+		if !strings.Contains(err.Error(), "re-read") {
+			t.Errorf("error should mention re-read, got: %v", err)
+		}
+		if !errors.Is(err, fs.ErrPermission) {
+			t.Errorf(
+				"error should wrap ErrPermission, got: %v", err,
+			)
+		}
+	})
+
+	t.Run("refuses upgrade of non-shell hook mentioning roborev", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		// Non-shell hook that mentions roborev but has no version marker.
+		pythonHook := "#!/usr/bin/env python3\n# reviewed by roborev\nprint('hello')\n"
+		if err := os.WriteFile(hookPath, []byte(pythonHook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, false,
+		)
+		if err == nil {
+			t.Fatal("expected error for non-shell hook in upgrade path")
+		}
+		if !strings.Contains(err.Error(), "non-shell interpreter") {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		// Hook must not be modified.
+		content, _ := os.ReadFile(hookPath)
+		if string(content) != pythonHook {
+			t.Errorf("hook should be unchanged, got:\n%s", content)
+		}
+	})
+
+	t.Run("force overwrites existing hook", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		existing := "#!/bin/sh\necho 'custom'\n"
+		if err := os.WriteFile(hookPath, []byte(existing), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := installOrUpgradeHook(
+			repo.HooksDir, "post-commit",
+			hookVersionMarker, generateHookContent, true,
+		)
+		if err != nil {
+			t.Fatalf("installOrUpgradeHook: %v", err)
+		}
+
+		content, _ := os.ReadFile(hookPath)
+		contentStr := string(content)
+		if strings.Contains(contentStr, "echo 'custom'") {
+			t.Error("force should overwrite, not append")
+		}
+		if !strings.Contains(contentStr, hookVersionMarker) {
+			t.Error("should have roborev content")
+		}
+	})
+}
+
+func TestRemoveRoborevFromHook(t *testing.T) {
+	t.Run("generated hook is deleted entirely", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		hookContent := generatePostRewriteHookContent()
+		if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+			t.Error("generated hook should have been deleted entirely")
+		}
+	})
+
+	t.Run("mixed hook preserves non-roborev content", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		mixed := "#!/bin/sh\necho 'custom logic'\n" + generatePostRewriteHookContent()
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if strings.Contains(strings.ToLower(contentStr), "roborev") {
+			t.Errorf("roborev content should be removed, got:\n%s", contentStr)
+		}
+		if !strings.Contains(contentStr, "echo 'custom logic'") {
+			t.Error("custom content should be preserved")
+		}
+		// Verify no orphaned fi
+		if strings.Contains(contentStr, "\nfi\n") || strings.HasSuffix(strings.TrimSpace(contentStr), "fi") {
+			t.Errorf("should not have orphaned fi, got:\n%s", contentStr)
+		}
+	})
+
+	t.Run("custom line mentioning roborev before snippet", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		// Custom line mentions roborev but isn't the generated marker
+		mixed := "#!/bin/sh\necho 'notify roborev team'\n" +
+			generatePostRewriteHookContent()
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		// The custom line should be preserved
+		if !strings.Contains(contentStr, "notify roborev team") {
+			t.Error("custom line mentioning roborev should be preserved")
+		}
+		// The generated snippet should be removed
+		if strings.Contains(contentStr, "remap --quiet") {
+			t.Errorf("generated snippet should be removed, got:\n%s", contentStr)
+		}
+	})
+
+	t.Run("custom if-block after snippet is preserved", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		// Snippet followed by user's own if-block
+		mixed := "#!/bin/sh\n" +
+			generatePostRewriteHookContent() +
+			"if [ -f .notify ]; then\n" +
+			"    echo 'send notification'\n" +
+			"fi\n"
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		// User's if-block must survive
+		if !strings.Contains(contentStr, "send notification") {
+			t.Errorf("user if-block should be preserved, got:\n%s", contentStr)
+		}
+		if !strings.Contains(contentStr, "if [ -f .notify ]") {
+			t.Errorf("user if-statement should be preserved, got:\n%s", contentStr)
+		}
+		// No orphaned fi
+		lines := strings.Split(contentStr, "\n")
+		ifCount, fiCount := 0, 0
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "if ") {
+				ifCount++
+			}
+			if trimmed == "fi" {
+				fiCount++
+			}
+		}
+		if ifCount != fiCount {
+			t.Errorf("if/fi mismatch: %d if vs %d fi in:\n%s",
+				ifCount, fiCount, contentStr)
+		}
+		// Generated snippet should be gone
+		if strings.Contains(contentStr, "remap --quiet") {
+			t.Errorf("generated snippet should be removed, got:\n%s", contentStr)
+		}
+	})
+
+	t.Run("custom comment starting with # roborev is preserved", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		// User comment starts with "# roborev" but isn't a generated marker
+		mixed := "#!/bin/sh\n# roborev notes: this hook was customized\necho 'custom'\n" +
+			generatePostRewriteHookContent()
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "roborev notes") {
+			t.Error("custom comment should be preserved")
+		}
+		if !strings.Contains(contentStr, "echo 'custom'") {
+			t.Error("custom echo should be preserved")
+		}
+		if strings.Contains(contentStr, "remap --quiet") {
+			t.Errorf("generated snippet should be removed, got:\n%s", contentStr)
+		}
+	})
+
+	t.Run("post-snippet user line mentioning roborev is preserved", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		// Snippet followed by user logic that mentions roborev
+		mixed := "#!/bin/sh\n" +
+			generatePostRewriteHookContent() +
+			"echo 'roborev hook finished'\n" +
+			"logger 'roborev done'\n"
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "roborev hook finished") {
+			t.Errorf("user line mentioning roborev should be preserved, got:\n%s", contentStr)
+		}
+		if !strings.Contains(contentStr, "roborev done") {
+			t.Errorf("user logger line should be preserved, got:\n%s", contentStr)
+		}
+		if strings.Contains(contentStr, "remap --quiet") {
+			t.Errorf("generated snippet should be removed, got:\n%s", contentStr)
+		}
+	})
+
+	t.Run("user $ROBOREV line after snippet is preserved", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		// User has their own "$ROBOREV" line (e.g. version check) after snippet
+		mixed := "#!/bin/sh\n" +
+			generatePostRewriteHookContent() +
+			"\"$ROBOREV\" --version\n"
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "\"$ROBOREV\" --version") {
+			t.Errorf("user $ROBOREV line should be preserved, got:\n%s", contentStr)
+		}
+		if strings.Contains(contentStr, "remap --quiet") {
+			t.Errorf("generated snippet should be removed, got:\n%s", contentStr)
+		}
+	})
+
+	t.Run("user $ROBOREV enqueue/remap lines after snippet are preserved", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		// User added their own enqueue/remap invocations with different flags
+		mixed := "#!/bin/sh\n" +
+			generatePostRewriteHookContent() +
+			"\"$ROBOREV\" enqueue --dry-run\n" +
+			"\"$ROBOREV\" remap --verbose\n"
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "enqueue --dry-run") {
+			t.Errorf("user enqueue line should be preserved, got:\n%s", contentStr)
+		}
+		if !strings.Contains(contentStr, "remap --verbose") {
+			t.Errorf("user remap line should be preserved, got:\n%s", contentStr)
+		}
+		if strings.Contains(contentStr, "remap --quiet") {
+			t.Errorf("generated snippet should be removed, got:\n%s", contentStr)
+		}
+	})
+
+	t.Run("user --quietly/--quiet-mode lines are preserved", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		// User lines that start with --quiet but aren't the exact generated form
+		mixed := "#!/bin/sh\n" +
+			generatePostRewriteHookContent() +
+			"\"$ROBOREV\" enqueue --quietly\n" +
+			"\"$ROBOREV\" remap --quiet-mode\n"
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if !strings.Contains(contentStr, "enqueue --quietly") {
+			t.Errorf("user --quietly line should be preserved, got:\n%s", contentStr)
+		}
+		if !strings.Contains(contentStr, "remap --quiet-mode") {
+			t.Errorf("user --quiet-mode line should be preserved, got:\n%s", contentStr)
+		}
+	})
+
+	t.Run("v0 hook (plain roborev invocation) is removed", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		v0Hook := "#!/bin/sh\n" +
+			"# RoboRev post-commit hook - auto-reviews every commit\n" +
+			"roborev enqueue --sha HEAD 2>/dev/null &\n"
+		if err := os.WriteFile(hookPath, []byte(v0Hook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+			content, _ := os.ReadFile(hookPath)
+			t.Errorf("v0 hook should be deleted entirely, got:\n%s", content)
+		}
+	})
+
+	t.Run("v0.5 hook (early variable format) is removed", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		v05Hook := "#!/bin/sh\n" +
+			"# RoboRev post-commit hook - auto-reviews every commit\n" +
+			"ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"if [ ! -x \"$ROBOREV\" ]; then\n" +
+			"    ROBOREV=$(command -v roborev) || exit 0\n" +
+			"fi\n" +
+			"\"$ROBOREV\" enqueue --quiet &\n"
+		if err := os.WriteFile(hookPath, []byte(v05Hook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+			content, _ := os.ReadFile(hookPath)
+			t.Errorf("v0.5 hook should be deleted entirely, got:\n%s", content)
+		}
+	})
+
+	t.Run("v1 hook (PATH-first format) is removed", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		v1Hook := "#!/bin/sh\n" +
+			"# RoboRev post-commit hook - auto-reviews every commit\n" +
+			"ROBOREV=$(command -v roborev 2>/dev/null)\n" +
+			"if [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ]; then\n" +
+			"    ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"    [ ! -x \"$ROBOREV\" ] && exit 0\n" +
+			"fi\n" +
+			"\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
+		if err := os.WriteFile(hookPath, []byte(v1Hook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+			content, _ := os.ReadFile(hookPath)
+			t.Errorf("v1 hook should be deleted entirely, got:\n%s", content)
+		}
+	})
+
+	t.Run("v1 mixed hook removes only roborev block", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		v1Block := "# RoboRev post-commit hook - auto-reviews every commit\n" +
+			"ROBOREV=$(command -v roborev 2>/dev/null)\n" +
+			"if [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ]; then\n" +
+			"    ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"    [ ! -x \"$ROBOREV\" ] && exit 0\n" +
+			"fi\n" +
+			"\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
+		mixed := "#!/bin/sh\necho 'custom'\n" + v1Block
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if strings.Contains(strings.ToLower(contentStr), "roborev") {
+			t.Errorf("roborev content should be removed, got:\n%s", contentStr)
+		}
+		if !strings.Contains(contentStr, "echo 'custom'") {
+			t.Error("custom content should be preserved")
+		}
+	})
+
+	t.Run("no-op if hook has no roborev content", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-rewrite")
+		hookContent := "#!/bin/sh\necho 'unrelated'\n"
+		if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		if string(content) != hookContent {
+			t.Errorf("hook should be unchanged, got:\n%s", content)
+		}
+	})
+}
+
+func TestInitInstallsPostRewriteHookOnUpgrade(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+	root := initNoDaemonSetup(t)
+
+	// Pre-install a current post-commit hook so init takes the
+	// "already installed" goto path
+	hooksDir := filepath.Join(root, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hookContent := generateHookContent()
+	if err := os.WriteFile(filepath.Join(hooksDir, "post-commit"), []byte(hookContent), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	captureStdout(t, func() {
+		cmd := initCmd()
+		cmd.SetArgs([]string{"--no-daemon"})
+		_ = cmd.Execute()
+	})
+
+	// Verify post-rewrite hook was installed despite post-commit
+	// taking the "already installed" path
+	prHookPath := filepath.Join(hooksDir, "post-rewrite")
+	content, err := os.ReadFile(prHookPath)
+	if err != nil {
+		t.Fatalf("post-rewrite hook should be installed even when "+
+			"post-commit is already current: %v", err)
+	}
+	if !strings.Contains(string(content), "remap --quiet") {
+		t.Error("post-rewrite hook should contain 'remap --quiet'")
+	}
+}
+
+func TestGeneratePostRewriteHookContent(t *testing.T) {
+	content := generatePostRewriteHookContent()
+
+	if !strings.HasPrefix(content, "#!/bin/sh\n") {
+		t.Error("hook should start with #!/bin/sh")
+	}
+	if !strings.Contains(content, postRewriteHookVersionMarker) {
+		t.Error("hook should contain version marker")
+	}
+	if !strings.Contains(content, "remap --quiet") {
+		t.Error("hook should call remap --quiet")
 	}
 }

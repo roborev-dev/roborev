@@ -167,6 +167,10 @@ func (m *mockDaemonClient) GetCommentsForJob(jobID int64) ([]storage.Response, e
 	return m.responses[jobID], nil
 }
 
+func (m *mockDaemonClient) Remap(req daemon.RemapRequest) (*daemon.RemapResult, error) {
+	return &daemon.RemapResult{}, nil
+}
+
 // WithReview adds a review to the mock client, returning the client for chaining.
 func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, addressed bool) *mockDaemonClient {
 	m.nextReviewID++

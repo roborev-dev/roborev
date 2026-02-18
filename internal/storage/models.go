@@ -63,6 +63,7 @@ type ReviewJob struct {
 	DiffContent  *string    `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
 	Agentic      bool       `json:"agentic"`                 // Enable agentic mode (allow file edits)
 	ReviewType   string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt
+	PatchID      string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
 	OutputPrefix string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 
 	// Sync fields

@@ -86,6 +86,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/stream/events", s.handleStreamEvents)
 	mux.HandleFunc("/api/jobs/batch", s.handleBatchJobs)
+	mux.HandleFunc("/api/remap", s.handleRemap)
 	mux.HandleFunc("/api/sync/now", s.handleSyncNow)
 	mux.HandleFunc("/api/sync/status", s.handleSyncStatus)
 
@@ -140,8 +141,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// Check for outdated hooks in registered repos
 	if repos, err := s.db.ListRepos(); err == nil {
 		for _, repo := range repos {
-			if hookNeedsUpgrade(repo.RootPath) {
+			if hookNeedsUpgrade(repo.RootPath, "post-commit", hookVersionMarker) {
 				log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
+			}
+			if hookNeedsUpgrade(repo.RootPath, "post-rewrite", postRewriteHookVersionMarker) ||
+				hookMissing(repo.RootPath, "post-rewrite") {
+				log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", repo.RootPath)
 			}
 		}
 	}
@@ -158,19 +163,43 @@ func (s *Server) Start(ctx context.Context) error {
 
 // hookVersionMarker identifies the current hook version.
 const hookVersionMarker = "post-commit hook v2"
+const postRewriteHookVersionMarker = "post-rewrite hook v1"
 
-// hookNeedsUpgrade checks whether a repo's post-commit hook is outdated.
-func hookNeedsUpgrade(repoPath string) bool {
+// hookNeedsUpgrade checks whether a repo's named hook contains roborev
+// but is outdated (missing the given version marker).
+func hookNeedsUpgrade(repoPath, hookName, versionMarker string) bool {
 	hooksDir, err := git.GetHooksPath(repoPath)
 	if err != nil {
 		return false
 	}
-	content, err := os.ReadFile(filepath.Join(hooksDir, "post-commit"))
+	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
 	if err != nil {
 		return false
 	}
 	s := string(content)
-	return strings.Contains(strings.ToLower(s), "roborev") && !strings.Contains(s, hookVersionMarker)
+	return strings.Contains(strings.ToLower(s), "roborev") &&
+		!strings.Contains(s, versionMarker)
+}
+
+// hookMissing checks whether a repo has roborev installed (post-commit
+// hook present) but is missing the named hook entirely.
+func hookMissing(repoPath, hookName string) bool {
+	hooksDir, err := git.GetHooksPath(repoPath)
+	if err != nil {
+		return false
+	}
+	pcContent, err := os.ReadFile(filepath.Join(hooksDir, "post-commit"))
+	if err != nil {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(string(pcContent)), "roborev") {
+		return false
+	}
+	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
+	if err != nil {
+		return true
+	}
+	return !strings.Contains(strings.ToLower(string(content)), "roborev")
 }
 
 // Stop gracefully shuts down the server
@@ -681,6 +710,8 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		patchID := git.GetPatchID(gitCwd, sha)
+
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,
 			CommitID:   commit.ID,
@@ -690,6 +721,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			Model:      model,
 			Reasoning:  reasoning,
 			ReviewType: req.ReviewType,
+			PatchID:    patchID,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
@@ -1384,6 +1416,117 @@ func (s *Server) handleAddressReview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{"success": true})
+}
+
+// RemapRequest is the request body for POST /api/remap.
+type RemapRequest struct {
+	RepoPath string         `json:"repo_path"`
+	Mappings []RemapMapping `json:"mappings"`
+}
+
+// RemapMapping maps a pre-rewrite SHA to its post-rewrite replacement.
+type RemapMapping struct {
+	OldSHA    string `json:"old_sha"`
+	NewSHA    string `json:"new_sha"`
+	PatchID   string `json:"patch_id"`
+	Author    string `json:"author"`
+	Subject   string `json:"subject"`
+	Timestamp string `json:"timestamp"` // RFC3339
+}
+
+func (s *Server) handleRemap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Cap body size: ~200 bytes per mapping, 1000 max → 1MB is generous.
+	const maxRemapBody = 1 << 20 // 1MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxRemapBody)
+
+	var req RemapRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge,
+				"request body too large")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	const maxMappings = 1000
+	if len(req.Mappings) > maxMappings {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("too many mappings (%d, max %d)",
+				len(req.Mappings), maxMappings))
+		return
+	}
+
+	if req.RepoPath == "" {
+		writeError(w, http.StatusBadRequest, "repo_path is required")
+		return
+	}
+
+	repoRoot, err := git.GetMainRepoRoot(req.RepoPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("not a git repository: %s", req.RepoPath))
+		return
+	}
+
+	repo, err := s.db.GetRepoByPath(repoRoot)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound,
+			fmt.Sprintf("unknown repo: %s", repoRoot))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError,
+			fmt.Sprintf("lookup repo: %v", err))
+		return
+	}
+
+	// Validate all timestamps upfront before modifying any state.
+	timestamps := make([]time.Time, len(req.Mappings))
+	for i, m := range req.Mappings {
+		ts, err := time.Parse(time.RFC3339, m.Timestamp)
+		if err != nil {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("invalid timestamp %q: %v", m.Timestamp, err))
+			return
+		}
+		timestamps[i] = ts
+	}
+
+	var remapped, skipped int
+	for i, m := range req.Mappings {
+		n, err := s.db.RemapJob(
+			repo.ID, m.OldSHA, m.NewSHA, m.PatchID,
+			m.Author, m.Subject, timestamps[i],
+		)
+		if err != nil {
+			skipped++
+			continue
+		}
+		remapped += n
+		if n == 0 {
+			skipped++
+		}
+	}
+
+	if remapped > 0 {
+		s.broadcaster.Broadcast(Event{
+			Type: "review.remapped",
+			TS:   time.Now(),
+			Repo: repo.RootPath,
+		})
+	}
+
+	writeJSON(w, map[string]int{
+		"remapped": remapped, "skipped": skipped,
+	})
 }
 
 func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
