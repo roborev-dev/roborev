@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,31 +18,17 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 		t.Skip("skipping daemon integration test on Windows due to file locking differences")
 	}
 
-	// Use temp directories for isolation
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-	configPath := filepath.Join(tmpDir, "config.toml")
+	dbPath, configPath := setupTestDaemon(t)
 
-	// Isolate runtime dir to avoid writing to real ~/.roborev/daemon.json
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
-
-	// Write minimal config
-	if err := os.WriteFile(configPath, []byte(`max_workers = 1`), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	// Create context for cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Create the daemon run command with custom flags
 	// Use a high base port to avoid conflicts with production (7373).
 	// FindAvailablePort will auto-increment if 17373 is busy.
 	cmd := daemonRunCmd()
+	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{
 		"--db", dbPath,
 		"--config", configPath,
@@ -55,15 +42,14 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	}()
 
 	// Wait for daemon to start (check if DB file is created)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(dbPath); err == nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	if !waitFor(t, 5*time.Second, func() bool {
+		_, err := os.Stat(dbPath)
+		return err == nil
+	}) {
+		t.Fatal("timed out waiting for database creation")
 	}
 
-	// Verify DB was created
+	// Verify DB was created (redundant with waitFor success, but keeps original intent)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Fatal("expected database to be created")
 	}
@@ -80,40 +66,27 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	// The runtime file is written before ListenAndServe, so we need to verify
 	// the HTTP server is actually accepting connections.
 	// Use longer timeout for race detector which adds significant overhead.
-	var info *daemon.RuntimeInfo
 	myPID := os.Getpid()
-	deadline = time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+
+	if !waitFor(t, 10*time.Second, func() bool {
 		runtimes, err := daemon.ListAllRuntimes()
 		if err == nil {
 			// Find the runtime for OUR daemon (matching our PID), not a stale one
 			for _, rt := range runtimes {
 				if rt.PID == myPID && daemon.IsDaemonAlive(rt.Addr) {
-					info = rt
-					break
+					return true
 				}
 			}
-			if info != nil {
-				break
-			}
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if info == nil {
+		return false
+	}) {
 		// Provide more context for debugging CI failures
 		runtimes, _ := daemon.ListAllRuntimes()
 		t.Fatalf("daemon did not create runtime file or is not responding (myPID=%d, found %d runtimes)", myPID, len(runtimes))
 	}
 
-	// The daemon runs in a goroutine within this test process.
-	// Use os.Interrupt to trigger the signal handler.
-	proc, err := os.FindProcess(myPID)
-	if err != nil {
-		t.Fatalf("failed to find own process: %v", err)
-	}
-	if err := proc.Signal(os.Interrupt); err != nil {
-		t.Fatalf("failed to send interrupt signal: %v", err)
-	}
+	// Trigger shutdown via context cancellation instead of sending OS signal
+	cancel()
 
 	// Wait for daemon to exit (longer timeout for race detector)
 	select {
@@ -122,4 +95,35 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("daemon did not exit within 10 second timeout")
 	}
+}
+
+func setupTestDaemon(t *testing.T) (string, string) {
+	t.Helper()
+
+	// Use temp directories for isolation
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Isolate runtime dir to avoid writing to real ~/.roborev/daemon.json
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	// Write minimal config
+	if err := os.WriteFile(configPath, []byte(`max_workers = 1`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	return dbPath, configPath
+}
+
+func waitFor(t *testing.T, timeout time.Duration, check func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if check() {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
 }

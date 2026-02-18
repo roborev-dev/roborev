@@ -702,8 +702,13 @@ func daemonRunCmd() *cobra.Command {
 			}
 
 			go func() {
-				sig := <-sigCh
-				log.Printf("Received signal %v, shutting down...", sig)
+				select {
+				case sig := <-sigCh:
+					log.Printf("Received signal %v, shutting down...", sig)
+				case <-cmd.Context().Done():
+					log.Printf("Context cancelled, shutting down...")
+				}
+
 				cancel() // Cancel context to stop config watcher
 				if ciPoller != nil {
 					ciPoller.Stop()
