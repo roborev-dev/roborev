@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/roborev-dev/roborev/internal/config"
@@ -424,7 +425,13 @@ func loadMergedGuidelines(repoPath, ref string) string {
 	var baseGuidelines string
 	baseFound := false
 	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
-		if baseCfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch); err == nil && baseCfg != nil {
+		baseCfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
+		if err != nil {
+			// Config exists but is invalid — log and skip (don't
+			// fall back to a potentially stale filesystem copy).
+			log.Printf("prompt: failed to load .roborev.toml from %s: %v", defaultBranch, err)
+			baseFound = true // prevent filesystem fallback
+		} else if baseCfg != nil {
 			baseGuidelines = baseCfg.ReviewGuidelines
 			baseFound = true
 		}

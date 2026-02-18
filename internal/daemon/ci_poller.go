@@ -828,14 +828,14 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 		comment = formatPRComment(review, verdict)
 	} else if successCount == 0 {
 		// All jobs failed — post raw error comment
-		comment = formatAllFailedComment(reviews)
+		comment = formatAllFailedComment(reviews, batch.HeadSHA)
 	} else {
 		// Multiple jobs — try synthesis
 		cfg := p.cfgGetter.Config()
 		synthesized, err := p.callSynthesize(batch, reviews, cfg)
 		if err != nil {
 			log.Printf("CI poller: synthesis failed for batch %d: %v (falling back to raw)", batch.ID, err)
-			comment = formatRawBatchComment(reviews)
+			comment = formatRawBatchComment(reviews, batch.HeadSHA)
 		} else {
 			comment = synthesized
 		}
@@ -981,7 +981,7 @@ func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []st
 		return "", fmt.Errorf("synthesis review: %w", err)
 	}
 
-	return formatSynthesizedComment(output, reviews), nil
+	return formatSynthesizedComment(output, reviews, batch.HeadSHA), nil
 }
 
 func (p *CIPoller) callListOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
@@ -1124,9 +1124,9 @@ Rules:
 }
 
 // formatSynthesizedComment wraps synthesized output with header and metadata.
-func formatSynthesizedComment(output string, reviews []storage.BatchReviewResult) string {
+func formatSynthesizedComment(output string, reviews []storage.BatchReviewResult, headSHA string) string {
 	var b strings.Builder
-	b.WriteString("## roborev: Combined Review\n\n")
+	fmt.Fprintf(&b, "## roborev: Combined Review (`%s`)\n\n", shortSHA(headSHA))
 	b.WriteString(output)
 
 	// Build metadata
@@ -1156,9 +1156,9 @@ func formatSynthesizedComment(output string, reviews []storage.BatchReviewResult
 
 // formatRawBatchComment formats all review outputs as separate details blocks.
 // Used as a fallback when synthesis fails.
-func formatRawBatchComment(reviews []storage.BatchReviewResult) string {
+func formatRawBatchComment(reviews []storage.BatchReviewResult, headSHA string) string {
 	var b strings.Builder
-	b.WriteString("## roborev: Combined Review\n\n")
+	fmt.Fprintf(&b, "## roborev: Combined Review (`%s`)\n\n", shortSHA(headSHA))
 	b.WriteString("> Synthesis unavailable. Showing raw review outputs.\n\n")
 
 	for _, r := range reviews {
@@ -1183,9 +1183,9 @@ func formatRawBatchComment(reviews []storage.BatchReviewResult) string {
 }
 
 // formatAllFailedComment formats a comment when every job in a batch failed.
-func formatAllFailedComment(reviews []storage.BatchReviewResult) string {
+func formatAllFailedComment(reviews []storage.BatchReviewResult, headSHA string) string {
 	var b strings.Builder
-	b.WriteString("## roborev: Review Failed\n\n")
+	fmt.Fprintf(&b, "## roborev: Review Failed (`%s`)\n\n", shortSHA(headSHA))
 	b.WriteString("All review jobs in this batch failed.\n\n")
 
 	for _, r := range reviews {
@@ -1195,6 +1195,14 @@ func formatAllFailedComment(reviews []storage.BatchReviewResult) string {
 	b.WriteString("\nCheck daemon logs for error details.")
 
 	return b.String()
+}
+
+// shortSHA returns the first 8 characters of a SHA, or the full string if shorter.
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
 }
 
 // formatPRComment formats a review result as a GitHub PR comment in markdown.

@@ -133,10 +133,10 @@ func TestFormatRawBatchComment(t *testing.T) {
 		{JobID: 2, Agent: "gemini", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	comment := formatRawBatchComment(reviews)
+	comment := formatRawBatchComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
-		"## roborev: Combined Review",
+		"## roborev: Combined Review (`abc123de`)",
 		"Synthesis unavailable",
 		"<details>",
 		"Agent: codex | Type: security | Status: done",
@@ -153,10 +153,10 @@ func TestFormatSynthesizedComment(t *testing.T) {
 	}
 
 	output := "All clean. No critical findings."
-	comment := formatSynthesizedComment(output, reviews)
+	comment := formatSynthesizedComment(output, reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
-		"## roborev: Combined Review",
+		"## roborev: Combined Review (`abc123de`)",
 		"All clean. No critical findings.",
 		"Synthesized from 2 reviews",
 		"codex",
@@ -172,7 +172,7 @@ func TestFormatAllFailedComment(t *testing.T) {
 		{JobID: 2, Agent: "gemini", ReviewType: "review", Status: "failed", Error: "api error"},
 	}
 
-	comment := formatAllFailedComment(reviews)
+	comment := formatAllFailedComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Review Failed",
@@ -309,7 +309,7 @@ func TestFormatRawBatchComment_Truncation(t *testing.T) {
 		{JobID: 1, Agent: "codex", ReviewType: "security", Output: strings.Repeat("x", 20000), Status: "done"},
 	}
 
-	comment := formatRawBatchComment(reviews)
+	comment := formatRawBatchComment(reviews, "abc123def456")
 	if !strings.Contains(comment, "...(truncated)") {
 		t.Error("expected truncation for large output")
 	}
@@ -768,7 +768,7 @@ func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {
 
 	p := &CIPoller{}
 	out, err := p.synthesizeBatchResults(
-		&storage.CIPRBatch{ID: 1},
+		&storage.CIPRBatch{ID: 1, HeadSHA: "deadbeef12345678"},
 		[]storage.BatchReviewResult{
 			{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
 			{JobID: 2, Agent: "gemini", ReviewType: "review", Output: "Potential bug in x.go:10", Status: "done"},
@@ -778,8 +778,8 @@ func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("synthesizeBatchResults: %v", err)
 	}
-	if !strings.Contains(out, "## roborev: Combined Review") {
-		t.Fatalf("expected combined review header, got: %q", out)
+	if !strings.Contains(out, "## roborev: Combined Review (`deadbeef`)") {
+		t.Fatalf("expected combined review header with SHA, got: %q", out)
 	}
 }
 
