@@ -879,7 +879,7 @@ func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// Validating without --since on main should fail
-	_, _, _, _, err = validateRefineContext("", "")
+	_, _, _, _, err = validateRefineContext(repoDir, "", "")
 	if err == nil {
 		t.Fatal("expected error when validating on main without --since")
 	}
@@ -911,7 +911,7 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// Validating with --since on main should pass
-	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(baseSHA, "")
+	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repoDir, baseSHA, "")
 	if err != nil {
 		t.Fatalf("validation should pass with --since on main, got: %v", err)
 	}
@@ -947,7 +947,7 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// --since should work on feature branch
-	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(baseSHA, "")
+	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repoDir, baseSHA, "")
 	if err != nil {
 		t.Fatalf("--since should work on feature branch, got: %v", err)
 	}
@@ -979,7 +979,7 @@ func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// Invalid --since ref should fail with clear error
-	_, _, _, _, err = validateRefineContext("nonexistent-ref-abc123", "")
+	_, _, _, _, err = validateRefineContext(repoDir, "nonexistent-ref-abc123", "")
 	if err == nil {
 		t.Fatal("expected error for invalid --since ref")
 	}
@@ -1013,7 +1013,7 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// Using --since with a commit from a different branch (not ancestor of HEAD) should fail
-	_, _, _, _, err = validateRefineContext(otherBranchSHA, "")
+	_, _, _, _, err = validateRefineContext(repoDir, otherBranchSHA, "")
 	if err == nil {
 		t.Fatal("expected error when --since is not an ancestor of HEAD")
 	}
@@ -1043,7 +1043,7 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 	defer os.Chdir(origDir)
 
 	// Feature branch without --since should pass validation (uses merge-base)
-	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", "")
+	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repoDir, "", "")
 	if err != nil {
 		t.Fatalf("feature branch without --since should work, got: %v", err)
 	}
@@ -1438,7 +1438,7 @@ func TestValidateRefineContext_BranchMismatch(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// Currently on "feature", but --branch says "other"
-	_, _, _, _, err = validateRefineContext("", "other")
+	_, _, _, _, err = validateRefineContext(repoDir, "", "other")
 	if err == nil {
 		t.Fatal("expected error for branch mismatch")
 	}
@@ -1472,7 +1472,7 @@ func TestValidateRefineContext_BranchMatch(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// --branch matches current branch — should pass validation
-	_, branch, _, _, err := validateRefineContext("", "feature")
+	_, branch, _, _, err := validateRefineContext(repoDir, "", "feature")
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

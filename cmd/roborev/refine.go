@@ -123,7 +123,13 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 			if opts.allBranches {
 				return runRefineAllBranches(cmd, opts)
 			}
-			return runRefine(opts)
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("get working directory: %w", err)
+			}
+
+			return runRefine(RunContext{WorkingDir: cwd}, opts)
 		},
 	}
 
@@ -205,9 +211,9 @@ func (t *stepTimer) stopLive() {
 // If branchFlag is non-empty, validates that the user is on that branch.
 // This validation happens before any daemon interaction.
 func validateRefineContext(
-	since, branchFlag string,
+	cwd, since, branchFlag string,
 ) (repoPath, currentBranch, defaultBranch, mergeBase string, err error) {
-	repoPath, err = git.GetRepoRoot(".")
+	repoPath, err = git.GetRepoRoot(cwd)
 	if err != nil {
 		return "", "", "", "",
 			fmt.Errorf("not in a git repository: %w", err)
@@ -298,9 +304,19 @@ func validateRefineContext(
 	return repoPath, currentBranch, defaultBranch, mergeBase, nil
 }
 
-func runRefine(opts refineOptions) error {
+// RunContext encapsulates the runtime context for the refine command,
+// allowing tests to override the working directory and polling interval.
+type RunContext struct {
+	WorkingDir      string
+	PollInterval    time.Duration
+	PostCommitDelay time.Duration
+}
+
+func runRefine(ctx RunContext, opts refineOptions) error {
 	// 1. Validate git and branch context (before touching daemon)
-	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(opts.since, opts.branch)
+	repoPath, currentBranch, defaultBranch, mergeBase, err := validateRefineContext(
+		ctx.WorkingDir, opts.since, opts.branch,
+	)
 	if err != nil {
 		return err
 	}
@@ -313,6 +329,15 @@ func runRefine(opts refineOptions) error {
 	client, err := daemon.NewHTTPClientFromRuntime()
 	if err != nil {
 		return fmt.Errorf("cannot connect to daemon: %w", err)
+	}
+	if ctx.PollInterval > 0 {
+		client.SetPollInterval(ctx.PollInterval)
+	}
+
+	// Determine delays
+	commitWaitDelay := postCommitWaitDelay
+	if ctx.PostCommitDelay > 0 {
+		commitWaitDelay = ctx.PostCommitDelay
 	}
 
 	// Print branch context after successful connection
@@ -589,7 +614,7 @@ func runRefine(opts refineOptions) error {
 		}
 
 		// Wait for new commit to be reviewed
-		time.Sleep(postCommitWaitDelay)
+		time.Sleep(commitWaitDelay)
 
 		newJob, err := client.FindJobForCommit(repoPath, newCommit)
 		if err != nil || newJob == nil {
@@ -851,7 +876,7 @@ func runRefineAllBranches(
 		branchOpts.branch = b
 		branchOpts.allBranches = false
 
-		if err := runRefine(branchOpts); err != nil {
+		if err := runRefine(RunContext{WorkingDir: repoPath}, branchOpts); err != nil {
 			fmt.Printf(
 				"Warning: refine on %q: %v\n", b, err,
 			)

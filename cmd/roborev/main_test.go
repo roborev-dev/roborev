@@ -11,12 +11,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,64 +30,7 @@ import (
 // Refine Command Tests
 // ============================================================================
 
-// setupMockDaemon creates a test server and writes a fake daemon.json so
-// getDaemonAddr() returns the test server address.
-func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func()) {
-	t.Helper()
 
-	// Wrap handler to handle /api/status requests.
-	// IsDaemonAlive calls /api/status to verify daemon is alive.
-	// ensureDaemon also calls /api/status to check the daemon version.
-	// We need to return a proper response with version info to prevent
-	// ensureDaemon from trying to restart the daemon (which would kill the test).
-	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/status" && r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(map[string]any{
-				"version": version.Version,
-			})
-			return
-		}
-		handler.ServeHTTP(w, r)
-	})
-
-	ts := httptest.NewServer(wrappedHandler)
-
-	// Use ROBOREV_DATA_DIR to override data directory (works cross-platform)
-	// On Windows, HOME doesn't work since os.UserHomeDir() uses USERPROFILE
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-
-	// Write fake daemon.json
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		t.Fatalf("failed to create data dir: %v", err)
-	}
-	mockAddr := ts.URL[7:] // strip "http://"
-	daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
-	data, err := json.Marshal(daemonInfo)
-	if err != nil {
-		t.Fatalf("failed to marshal daemon.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644); err != nil {
-		t.Fatalf("failed to write daemon.json: %v", err)
-	}
-
-	// Also set serverAddr for functions that use it directly
-	origServerAddr := serverAddr
-	serverAddr = ts.URL
-
-	cleanup := func() {
-		ts.Close()
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-		serverAddr = origServerAddr
-	}
-
-	return ts, cleanup
-}
 
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
@@ -148,116 +89,36 @@ func setupFastPolling(t *testing.T) {
 func setupRefineRepo(t *testing.T) (string, string) {
 	t.Helper()
 
-	repoDir := t.TempDir()
-	runGit := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repoDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		} else if len(out) > 0 {
-			return strings.TrimSpace(string(out))
-		}
-		return ""
-	}
+	repo := NewGitTestRepo(t)
+	repo.CommitFile("file.txt", "base", "base commit")
 
-	runGit("init")
-	runGit("symbolic-ref", "HEAD", "refs/heads/main")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("base"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "base commit")
-	runGit("checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("change"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "feature.txt")
-	runGit("commit", "-m", "feature commit")
+	repo.Run("checkout", "-b", "feature")
+	headSHA := repo.CommitFile("feature.txt", "change", "feature commit")
 
-	headSHA := runGit("rev-parse", "HEAD")
-	return repoDir, headSHA
+	return repo.Dir, headSHA
 }
 
-// functionalMockAgent is a configurable mock agent that accepts behavior as a function.
-type functionalMockAgent struct {
-	nameVal    string
-	reviewFunc func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
-}
 
-func (f *functionalMockAgent) Name() string { return f.nameVal }
 
-func (f *functionalMockAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	if f.reviewFunc == nil {
-		panic("functionalMockAgent.Review called with nil reviewFunc — set reviewFunc before use")
-	}
-	return f.reviewFunc(ctx, repoPath, commitSHA, prompt, output)
-}
 
-func (f *functionalMockAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return f }
-func (f *functionalMockAgent) WithAgentic(agentic bool) agent.Agent                 { return f }
-func (f *functionalMockAgent) WithModel(model string) agent.Agent                   { return f }
-func (f *functionalMockAgent) CommandLine() string                                  { return "" }
-
-// inDir changes to the given directory for the duration of fn, then restores the original directory.
-func inDir(t *testing.T, dir string, fn func()) {
-	t.Helper()
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer os.Chdir(orig)
-	fn()
-}
-
-// MockRefineHooks allows overriding specific endpoints in the mock refine handler.
-type MockRefineHooks struct {
-	OnGetJobs func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool // Return true if handled
-	OnEnqueue func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-}
-
-// createConfigurableMockRefineHandler wraps createMockRefineHandler with hook overrides.
-func createConfigurableMockRefineHandler(state *mockRefineState, hooks MockRefineHooks) http.Handler {
-	base := createMockRefineHandler(state)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" && r.Method == "GET" && hooks.OnGetJobs != nil {
-			if hooks.OnGetJobs(w, r, state) {
-				return
-			}
-		}
-		if r.URL.Path == "/api/enqueue" && r.Method == "POST" && hooks.OnEnqueue != nil {
-			if hooks.OnEnqueue(w, r, state) {
-				return
-			}
-		}
-		base.ServeHTTP(w, r)
-	})
-}
 
 func TestEnqueueReviewRefine(t *testing.T) {
 	t.Run("returns job ID on success", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/enqueue" || r.Method != "POST" {
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
+		md := NewMockDaemon(t, MockRefineHooks{
+			OnEnqueue: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+				var req map[string]string
+				json.NewDecoder(r.Body).Decode(&req)
 
-			var req map[string]string
-			json.NewDecoder(r.Body).Decode(&req)
+				if req["repo_path"] != "/test/repo" || req["git_ref"] != "abc..def" {
+					t.Errorf("unexpected request body: %+v", req)
+				}
 
-			if req["repo_path"] != "/test/repo" || req["git_ref"] != "abc..def" {
-				t.Errorf("unexpected request body: %+v", req)
-			}
-
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(storage.ReviewJob{ID: 123})
-		}))
-		defer cleanup()
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 123})
+				return true
+			},
+		})
+		defer md.Close()
 
 		jobID, err := enqueueReview("/test/repo", "abc..def", "codex")
 		if err != nil {
@@ -269,16 +130,14 @@ func TestEnqueueReviewRefine(t *testing.T) {
 	})
 
 	t.Run("returns error on failure", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/enqueue" || r.Method != "POST" {
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(`{"error":"invalid repo"}`))
-		}))
-		defer cleanup()
+		md := NewMockDaemon(t, MockRefineHooks{
+			OnEnqueue: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"invalid repo"}`))
+				return true
+			},
+		})
+		defer md.Close()
 
 		_, err := enqueueReview("/bad/repo", "HEAD", "codex")
 		if err == nil {
@@ -380,73 +239,76 @@ func TestRefineNoChangeSkipsImmediately(t *testing.T) {
 }
 
 func TestRunRefineSurfacesResponseErrors(t *testing.T) {
-	setupFastPolling(t)
 	repoDir, _ := setupRefineRepo(t)
 
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		case "/api/review":
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnReview: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			json.NewEncoder(w).Encode(storage.Review{
 				ID: 1, JobID: 1, Output: "**Bug found**: fail", Addressed: false,
 			})
-		case "/api/comments":
+			return true
+		},
+		OnComments: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			w.WriteHeader(http.StatusInternalServerError)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer cleanup()
-
-	inDir(t, repoDir, func() {
-		if err := runRefine(refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
-			t.Fatal("expected error, got nil")
-		}
+			return true
+		},
 	})
+	defer md.Close()
+
+	ctx := RunContext{
+		WorkingDir:      repoDir,
+		PollInterval:    1 * time.Millisecond,
+		PostCommitDelay: 1 * time.Millisecond,
+	}
+
+	if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
+		t.Fatal("expected error, got nil")
+	}
 }
 
 func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
-	setupFastPolling(t)
 	repoDir, headSHA := setupRefineRepo(t)
-	state := newMockRefineState()
-	state.reviews[headSHA] = &storage.Review{
+	
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	md.State.reviews[headSHA] = &storage.Review{
 		ID: 1, JobID: 42, Output: "**Bug found**: fail", Addressed: false,
 	}
-
-	_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
-	defer cleanup()
 
 	origIsTerminal := isTerminal
 	isTerminal = func(fd uintptr) bool { return false }
 	defer func() { isTerminal = origIsTerminal }()
 
-	inDir(t, repoDir, func() {
-		output := captureStdout(t, func() {
-			if err := runRefine(refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
-				t.Fatal("expected error, got nil")
-			}
-		})
+	ctx := RunContext{
+		WorkingDir:      repoDir,
+		PollInterval:    1 * time.Millisecond,
+		PostCommitDelay: 1 * time.Millisecond,
+	}
 
-		if strings.Contains(output, "\r") {
-			t.Fatalf("expected no carriage returns in non-tty output, got: %q", output)
-		}
-		if !strings.Contains(output, "Addressing review (job 42)...") {
-			t.Fatalf("expected final timer line in output, got: %q", output)
+	output := captureStdout(t, func() {
+		if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
+
+	if strings.Contains(output, "\r") {
+		t.Fatalf("expected no carriage returns in non-tty output, got: %q", output)
+	}
+	if !strings.Contains(output, "Addressing review (job 42)...") {
+		t.Fatalf("expected final timer line in output, got: %q", output)
+	}
 }
 
 func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
-	setupFastPolling(t)
 	repoDir, headSHA := setupRefineRepo(t)
-	state := newMockRefineState()
-	state.reviews[headSHA] = &storage.Review{
+	
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	md.State.reviews[headSHA] = &storage.Review{
 		ID: 1, JobID: 7, Output: "**Bug found**: fail", Addressed: false,
 	}
-
-	_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
-	defer cleanup()
 
 	origIsTerminal := isTerminal
 	isTerminal = func(fd uintptr) bool { return true }
@@ -457,36 +319,39 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	}})
 	defer agent.Register(agent.NewTestAgent())
 
-	inDir(t, repoDir, func() {
-		output := captureStdout(t, func() {
-			if err := runRefine(refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
-				t.Fatal("expected error, got nil")
-			}
-		})
+	ctx := RunContext{
+		WorkingDir:      repoDir,
+		PollInterval:    1 * time.Millisecond,
+		PostCommitDelay: 1 * time.Millisecond,
+	}
 
-		idx := strings.LastIndex(output, "\rAddressing review (job 7)...")
-		if idx == -1 {
-			t.Fatalf("expected live timer output, got: %q", output)
-		}
-		if !strings.Contains(output[idx:], "\n") {
-			t.Fatalf("expected timer to stop with newline, got: %q", output)
+	output := captureStdout(t, func() {
+		if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
+
+	idx := strings.LastIndex(output, "\rAddressing review (job 7)...")
+	if idx == -1 {
+		t.Fatalf("expected live timer output, got: %q", output)
+	}
+	if !strings.Contains(output[idx:], "\n") {
+		t.Fatalf("expected timer to stop with newline, got: %q", output)
+	}
 }
 
 // TestRunRefineAgentErrorRetriesWithoutApplyingChanges verifies that when the agent
 // returns an error, the error is properly captured and printed (not shadowed), and
 // the refine loop retries in the next iteration without applying any changes.
 func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
-	setupFastPolling(t)
 	repoDir, headSHA := setupRefineRepo(t)
-	state := newMockRefineState()
-	state.reviews[headSHA] = &storage.Review{
+	
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	md.State.reviews[headSHA] = &storage.Review{
 		ID: 1, JobID: 7, Output: "**Bug found**: fail", Addressed: false,
 	}
-
-	_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
-	defer cleanup()
 
 	// Use 2 iterations so we can verify retry behavior
 	agent.Register(&functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
@@ -497,40 +362,44 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	// Capture HEAD before running refine
 	headBefore, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
 
-	inDir(t, repoDir, func() {
-		output := captureStdout(t, func() {
-			// With 2 iterations and a failing agent, should exhaust iterations
-			err := runRefine(refineOptions{agentName: "test", maxIterations: 2, quiet: true})
-			if err == nil {
-				t.Fatal("expected error after exhausting iterations, got nil")
-			}
-		})
+	ctx := RunContext{
+		WorkingDir:      repoDir,
+		PollInterval:    1 * time.Millisecond,
+		PostCommitDelay: 1 * time.Millisecond,
+	}
 
-		// Verify agent error message is printed (not shadowed by ResolveSHA)
-		if !strings.Contains(output, "Agent error: test agent failure") {
-			t.Errorf("expected 'Agent error: test agent failure' in output, got: %q", output)
-		}
-
-		// Verify "Will retry in next iteration" message
-		if !strings.Contains(output, "Will retry in next iteration") {
-			t.Errorf("expected 'Will retry in next iteration' in output, got: %q", output)
-		}
-
-		// Verify no commit was created (HEAD unchanged)
-		headAfter, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
-		if string(headBefore) != string(headAfter) {
-			t.Errorf("expected HEAD to be unchanged after agent error, was %s now %s",
-				strings.TrimSpace(string(headBefore)), strings.TrimSpace(string(headAfter)))
-		}
-
-		// Verify we attempted 2 iterations (both printed)
-		if !strings.Contains(output, "=== Refinement iteration 1/2 ===") {
-			t.Errorf("expected iteration 1/2 in output, got: %q", output)
-		}
-		if !strings.Contains(output, "=== Refinement iteration 2/2 ===") {
-			t.Errorf("expected iteration 2/2 in output, got: %q", output)
+	output := captureStdout(t, func() {
+		// With 2 iterations and a failing agent, should exhaust iterations
+		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
+		if err == nil {
+			t.Fatal("expected error after exhausting iterations, got nil")
 		}
 	})
+
+	// Verify agent error message is printed (not shadowed by ResolveSHA)
+	if !strings.Contains(output, "Agent error: test agent failure") {
+		t.Errorf("expected 'Agent error: test agent failure' in output, got: %q", output)
+	}
+
+	// Verify "Will retry in next iteration" message
+	if !strings.Contains(output, "Will retry in next iteration") {
+		t.Errorf("expected 'Will retry in next iteration' in output, got: %q", output)
+	}
+
+	// Verify no commit was created (HEAD unchanged)
+	headAfter, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if string(headBefore) != string(headAfter) {
+		t.Errorf("expected HEAD to be unchanged after agent error, was %s now %s",
+			strings.TrimSpace(string(headBefore)), strings.TrimSpace(string(headAfter)))
+	}
+
+	// Verify we attempted 2 iterations (both printed)
+	if !strings.Contains(output, "=== Refinement iteration 1/2 ===") {
+		t.Errorf("expected iteration 1/2 in output, got: %q", output)
+	}
+	if !strings.Contains(output, "=== Refinement iteration 2/2 ===") {
+		t.Errorf("expected iteration 2/2 in output, got: %q", output)
+	}
 }
 
 func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
@@ -585,172 +454,9 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 // Integration Tests for Refine Loop Business Logic
 // ============================================================================
 
-// mockRefineState tracks state for simulating the full refine loop
-type mockRefineState struct {
-	mu            sync.Mutex
-	reviews       map[string]*storage.Review   // SHA -> review
-	jobs          map[int64]*storage.ReviewJob // jobID -> job
-	responses     map[int64][]storage.Response // jobID -> responses
-	addressedIDs  []int64                      // review IDs that were marked addressed
-	nextJobID     int64
-	enqueuedRefs  []string // git refs that were enqueued for review
-	respondCalled []struct {
-		jobID     int64
-		responder string
-		response  string
-	}
-}
 
-func newMockRefineState() *mockRefineState {
-	return &mockRefineState{
-		reviews:   make(map[string]*storage.Review),
-		jobs:      make(map[int64]*storage.ReviewJob),
-		responses: make(map[int64][]storage.Response),
-		nextJobID: 1,
-	}
-}
 
-// createMockRefineHandler creates an HTTP handler that simulates daemon behavior
-func createMockRefineHandler(state *mockRefineState) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/status":
-			json.NewEncoder(w).Encode(map[string]any{
-				"version": version.Version,
-			})
 
-		case r.URL.Path == "/api/review" && r.Method == "GET":
-			sha := r.URL.Query().Get("sha")
-			jobIDStr := r.URL.Query().Get("job_id")
-
-			state.mu.Lock()
-			var review *storage.Review
-			if sha != "" {
-				review = state.reviews[sha]
-			} else if jobIDStr != "" {
-				var jobID int64
-				_, _ = fmt.Sscanf(jobIDStr, "%d", &jobID)
-				// Find review by job ID
-				for _, rev := range state.reviews {
-					if rev.JobID == jobID {
-						review = rev
-						break
-					}
-				}
-			}
-			// Copy under lock before encoding
-			var reviewCopy storage.Review
-			if review != nil {
-				reviewCopy = *review
-			}
-			state.mu.Unlock()
-
-			if review == nil {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			json.NewEncoder(w).Encode(reviewCopy)
-
-		case r.URL.Path == "/api/comments" && r.Method == "GET":
-			jobIDStr := r.URL.Query().Get("job_id")
-			var jobID int64
-			_, _ = fmt.Sscanf(jobIDStr, "%d", &jobID)
-			state.mu.Lock()
-			// Copy slice under lock before encoding
-			origResponses := state.responses[jobID]
-			responses := make([]storage.Response, len(origResponses))
-			copy(responses, origResponses)
-			state.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]any{
-				"responses": responses,
-			})
-
-		case r.URL.Path == "/api/comment" && r.Method == "POST":
-			var req struct {
-				JobID     int64  `json:"job_id"`
-				Responder string `json:"responder"`
-				Response  string `json:"response"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			state.mu.Lock()
-			state.respondCalled = append(state.respondCalled, struct {
-				jobID     int64
-				responder string
-				response  string
-			}{req.JobID, req.Responder, req.Response})
-
-			// Add to responses
-			resp := storage.Response{
-				ID:        int64(len(state.responses[req.JobID]) + 1),
-				Responder: req.Responder,
-				Response:  req.Response,
-			}
-			state.responses[req.JobID] = append(state.responses[req.JobID], resp)
-			state.mu.Unlock()
-
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(resp)
-
-		case r.URL.Path == "/api/review/address" && r.Method == "POST":
-			var req struct {
-				ReviewID  int64 `json:"review_id"`
-				Addressed bool  `json:"addressed"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			state.mu.Lock()
-			if req.Addressed {
-				state.addressedIDs = append(state.addressedIDs, req.ReviewID)
-				// Update the review in state
-				for _, rev := range state.reviews {
-					if rev.ID == req.ReviewID {
-						rev.Addressed = true
-						break
-					}
-				}
-			}
-			state.mu.Unlock()
-			w.WriteHeader(http.StatusOK)
-
-		case r.URL.Path == "/api/enqueue" && r.Method == "POST":
-			var req struct {
-				RepoPath string `json:"repo_path"`
-				GitRef   string `json:"git_ref"`
-				Agent    string `json:"agent"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			state.mu.Lock()
-			state.enqueuedRefs = append(state.enqueuedRefs, req.GitRef)
-
-			job := &storage.ReviewJob{
-				ID:     state.nextJobID,
-				GitRef: req.GitRef,
-				Agent:  req.Agent,
-				Status: storage.JobStatusDone,
-			}
-			state.jobs[job.ID] = job
-			state.nextJobID++
-			state.mu.Unlock()
-
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(job)
-
-		case r.URL.Path == "/api/jobs" && r.Method == "GET":
-			state.mu.Lock()
-			var jobs []storage.ReviewJob
-			for _, job := range state.jobs {
-				jobs = append(jobs, *job)
-			}
-			state.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]any{
-				"jobs":     jobs,
-				"has_more": false,
-			})
-
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
-}
 
 func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 	// Test the path where a failed individual review is found
@@ -806,15 +512,14 @@ func TestRefineLoopNoChangeSkipsReview(t *testing.T) {
 	//
 	// Integration coverage: TestRunRefineSurfacesResponseErrors exercises
 	// the full loop including the skip path.
-	state := newMockRefineState()
-	state.responses[42] = []storage.Response{}
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	md.State.responses[42] = []storage.Response{}
 	jobID99 := int64(99)
-	state.responses[99] = []storage.Response{
+	md.State.responses[99] = []storage.Response{
 		{ID: 1, JobID: &jobID99, Responder: "roborev-refine", Response: "Agent could not determine how to address findings"},
 	}
-
-	_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
-	defer cleanup()
 
 	// Job with no prior comments — skip should still apply (no retries needed)
 	responses, err := getCommentsForJob(42)
@@ -872,9 +577,8 @@ func TestRefineLoopEnqueueBranchReview(t *testing.T) {
 	// Test enqueueing a branch (range) review
 
 	t.Run("enqueues range review for branch", func(t *testing.T) {
-		state := newMockRefineState()
-		_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
-		defer cleanup()
+		md := NewMockDaemon(t, MockRefineHooks{})
+		defer md.Close()
 
 		jobID, err := enqueueReview("/test/repo", "abc123..HEAD", "codex")
 		if err != nil {
@@ -885,30 +589,28 @@ func TestRefineLoopEnqueueBranchReview(t *testing.T) {
 		}
 
 		// Verify the range ref was enqueued
-		if len(state.enqueuedRefs) != 1 {
-			t.Fatalf("expected 1 enqueued ref, got %d", len(state.enqueuedRefs))
+		if len(md.State.enqueuedRefs) != 1 {
+			t.Fatalf("expected 1 enqueued ref, got %d", len(md.State.enqueuedRefs))
 		}
-		if state.enqueuedRefs[0] != "abc123..HEAD" {
-			t.Errorf("expected range ref 'abc123..HEAD', got '%s'", state.enqueuedRefs[0])
+		if md.State.enqueuedRefs[0] != "abc123..HEAD" {
+			t.Errorf("expected range ref 'abc123..HEAD', got '%s'", md.State.enqueuedRefs[0])
 		}
 	})
 }
 
 func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
-	setupFastPolling(t)
 	// Test waiting for a review to complete
 
 	t.Run("returns review when job completes successfully", func(t *testing.T) {
-		state := newMockRefineState()
-		state.jobs[42] = &storage.ReviewJob{ID: 42, GitRef: "abc123", Status: storage.JobStatusDone}
-		state.reviews["abc123"] = &storage.Review{
+		md := NewMockDaemon(t, MockRefineHooks{})
+		defer md.Close()
+		
+		md.State.jobs[42] = &storage.ReviewJob{ID: 42, GitRef: "abc123", Status: storage.JobStatusDone}
+		md.State.reviews["abc123"] = &storage.Review{
 			ID: 1, JobID: 42, Output: "All tests pass. No issues found.", Addressed: false,
 		}
 
-		_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
-		defer cleanup()
-
-		review, err := waitForReview(42)
+		review, err := waitForReviewWithInterval(42, 1*time.Millisecond)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -921,18 +623,17 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 	})
 
 	t.Run("returns error when job fails", func(t *testing.T) {
-		state := newMockRefineState()
-		state.jobs[42] = &storage.ReviewJob{
+		md := NewMockDaemon(t, MockRefineHooks{})
+		defer md.Close()
+
+		md.State.jobs[42] = &storage.ReviewJob{
 			ID:     42,
 			GitRef: "abc123",
 			Status: storage.JobStatusFailed,
 			Error:  "Agent timeout after 10 minutes",
 		}
 
-		_, cleanup := setupMockDaemon(t, createMockRefineHandler(state))
-		defer cleanup()
-
-		_, err := waitForReview(42)
+		_, err := waitForReviewWithInterval(42, 1*time.Millisecond)
 		if err == nil {
 			t.Fatal("expected error for failed job")
 		}
@@ -942,8 +643,9 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 	})
 }
 
+
+
 func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
-	setupFastPolling(t)
 	repoDir, _ := setupRefineRepo(t)
 	runGit := func(args ...string) string {
 		cmd := exec.Command("git", args...)
@@ -969,18 +671,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	oldestCommit := commitList[0]
 	newestCommit := commitList[1]
 
-	state := newMockRefineState()
-	state.nextJobID = 100
-	state.reviews[oldestCommit] = &storage.Review{
-		ID: 1, JobID: 1, Output: "**Bug**: old failure", Addressed: false,
-	}
-	state.reviews[newestCommit] = &storage.Review{
-		ID: 2, JobID: 2, Output: "**Bug**: new failure", Addressed: false,
-	}
-
-	// Use configurable handler with custom /api/jobs logic that auto-creates
-	// jobs and failing reviews for unknown git_refs (simulating re-review after fix).
-	handler := createConfigurableMockRefineHandler(state, MockRefineHooks{
+	md := NewMockDaemon(t, MockRefineHooks{
 		OnGetJobs: func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
 			q := r.URL.Query()
 			if idStr := q.Get("id"); idStr != "" {
@@ -1033,9 +724,15 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 			return false // fall through to base handler
 		},
 	})
+	defer md.Close()
 
-	_, cleanup := setupMockDaemon(t, handler)
-	defer cleanup()
+	md.State.nextJobID = 100
+	md.State.reviews[oldestCommit] = &storage.Review{
+		ID: 1, JobID: 1, Output: "**Bug**: old failure", Addressed: false,
+	}
+	md.State.reviews[newestCommit] = &storage.Review{
+		ID: 2, JobID: 2, Output: "**Bug**: new failure", Addressed: false,
+	}
 
 	var changeCount int
 	agent.Register(&functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
@@ -1051,13 +748,17 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	}})
 	defer agent.Register(agent.NewTestAgent())
 
-	inDir(t, repoDir, func() {
-		if err := runRefine(refineOptions{agentName: "test", maxIterations: 2, quiet: true}); err == nil {
-			t.Fatal("expected error from reaching max iterations")
-		}
-	})
+	ctx := RunContext{
+		WorkingDir:      repoDir,
+		PollInterval:    1 * time.Millisecond,
+		PostCommitDelay: 1 * time.Millisecond,
+	}
 
-	for _, call := range state.respondCalled {
+	if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true}); err == nil {
+		t.Fatal("expected error from reaching max iterations")
+	}
+
+	for _, call := range md.State.respondCalled {
 		if call.jobID == 2 {
 			t.Fatalf("expected to stay on failed fix chain; saw response for newer commit job 2")
 		}
@@ -1069,30 +770,12 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 // maxIterations=1 and a job that starts as Running then transitions to Done with a
 // passing review - if iterations were consumed during the wait, the test would fail.
 func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
-	setupFastPolling(t)
 	repoDir, commitSHA := setupRefineRepo(t)
 
 	// Track how many times the job has been polled
 	var pollCount int32
 
-	state := newMockRefineState()
-	// Create a job that starts as Running
-	state.jobs[1] = &storage.ReviewJob{
-		ID:       1,
-		GitRef:   commitSHA,
-		Agent:    "test",
-		Status:   storage.JobStatusRunning, // Starts as pending
-		RepoPath: repoDir,
-	}
-	// Passing review (will be returned once job is Done)
-	state.reviews[commitSHA] = &storage.Review{
-		ID: 1, JobID: 1, Output: "No issues found. LGTM!", Addressed: false,
-	}
-	state.nextJobID = 2
-
-	// Use configurable handler with custom /api/jobs (job transitions from Running to Done)
-	// and custom /api/enqueue (creates passing branch reviews).
-	handler := createConfigurableMockRefineHandler(state, MockRefineHooks{
+	md := NewMockDaemon(t, MockRefineHooks{
 		OnGetJobs: func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
 			q := r.URL.Query()
 			if idStr := q.Get("id"); idStr != "" {
@@ -1160,22 +843,38 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 			return true
 		},
 	})
+	defer md.Close()
 
-	_, cleanup := setupMockDaemon(t, handler)
-	defer cleanup()
+	// Create a job that starts as Running
+	md.State.jobs[1] = &storage.ReviewJob{
+		ID:       1,
+		GitRef:   commitSHA,
+		Agent:    "test",
+		Status:   storage.JobStatusRunning, // Starts as pending
+		RepoPath: repoDir,
+	}
+	// Passing review (will be returned once job is Done)
+	md.State.reviews[commitSHA] = &storage.Review{
+		ID: 1, JobID: 1, Output: "No issues found. LGTM!", Addressed: false,
+	}
+	md.State.nextJobID = 2
 
-	inDir(t, repoDir, func() {
-		// Run refine with maxIterations=1. If waiting on the pending job consumed
-		// an iteration, this would fail with "max iterations reached". Since the
-		// pending job transitions to Done with a passing review (and no failed
-		// reviews exist), refine should succeed.
-		err := runRefine(refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	ctx := RunContext{
+		WorkingDir:      repoDir,
+		PollInterval:    1 * time.Millisecond,
+		PostCommitDelay: 1 * time.Millisecond,
+	}
 
-		// Should succeed - all reviews pass after waiting for the pending one
-		if err != nil {
-			t.Fatalf("expected refine to succeed (pending wait should not consume iteration), got: %v", err)
-		}
-	})
+	// Run refine with maxIterations=1. If waiting on the pending job consumed
+	// an iteration, this would fail with "max iterations reached". Since the
+	// pending job transitions to Done with a passing review (and no failed
+	// reviews exist), refine should succeed.
+	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+
+	// Should succeed - all reviews pass after waiting for the pending one
+	if err != nil {
+		t.Fatalf("expected refine to succeed (pending wait should not consume iteration), got: %v", err)
+	}
 
 	// Verify the job was actually polled multiple times (proving we waited)
 	if atomic.LoadInt32(&pollCount) < 2 {
@@ -1189,15 +888,13 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 
 func TestShowJobFlagRequiresArgument(t *testing.T) {
 	// Setup mock daemon that responds to /api/status with version info
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/status" {
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnStatus: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			json.NewEncoder(w).Encode(map[string]string{"version": version.Version})
-			return
-		}
-		w.WriteHeader(http.StatusOK)
+			return true
+		},
 	})
-	_, cleanup := setupMockDaemon(t, handler)
-	defer cleanup()
+	defer md.Close()
 
 	// Create the show command and execute with --job but no argument
 	cmd := showCmd()
