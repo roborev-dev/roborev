@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +14,31 @@ import (
 func setupConfigFile(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "config.toml")
+}
+
+const (
+	errGitStub = "git unavailable stub"
+	errCwdStub = "cwd failed stub"
+)
+
+func captureOutput(t *testing.T, fn func() error) string {
+	t.Helper()
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+
+	defer func() { os.Stdout = old }()
+
+	if err := fn(); err != nil {
+		t.Fatalf("function failed: %v", err)
+	}
+
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	return string(out)
 }
 
 func readTOML(t *testing.T, path string) map[string]any {
@@ -169,7 +193,7 @@ func TestRepoRoot(t *testing.T) {
 		}
 
 		env := newStubRepoEnv(t)
-		env.SetGitError(fmt.Errorf("git unavailable"))
+		env.SetGitError(errors.New(errGitStub))
 		env.SetWorkingDir(nestedDir)
 
 		got, err := repoRoot()
@@ -183,7 +207,7 @@ func TestRepoRoot(t *testing.T) {
 
 	t.Run("optional lookup returns empty when not in repo", func(t *testing.T) {
 		env := newStubRepoEnv(t)
-		env.SetGitError(fmt.Errorf("git unavailable"))
+		env.SetGitError(errors.New(errGitStub))
 		env.SetWorkingDir(t.TempDir())
 
 		got, err := repoRoot()
@@ -199,7 +223,7 @@ func TestRepoRoot(t *testing.T) {
 func TestRequireRepoRoot(t *testing.T) {
 	t.Run("returns not repo error when required and missing", func(t *testing.T) {
 		env := newStubRepoEnv(t)
-		env.SetGitError(fmt.Errorf("git unavailable"))
+		env.SetGitError(errors.New(errGitStub))
 		env.SetWorkingDir(t.TempDir())
 
 		_, err := requireRepoRoot()
@@ -213,14 +237,14 @@ func TestRequireRepoRoot(t *testing.T) {
 
 	t.Run("surfaces resolver errors", func(t *testing.T) {
 		env := newStubRepoEnv(t)
-		env.SetGitError(fmt.Errorf("git unavailable"))
-		env.SetWorkingDirError(fmt.Errorf("cwd failed"))
+		env.SetGitError(errors.New(errGitStub))
+		env.SetWorkingDirError(errors.New(errCwdStub))
 
 		_, err := requireRepoRoot()
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		if !strings.Contains(err.Error(), "determine repository root: cwd failed") {
+		if !strings.Contains(err.Error(), "determine repository root: "+errCwdStub) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -246,7 +270,7 @@ func TestGetValueForScopeMergedPrefersLocal(t *testing.T) {
 	}
 
 	env := newStubRepoEnv(t)
-	env.SetGitError(fmt.Errorf("git unavailable"))
+	env.SetGitError(errors.New(errGitStub))
 	env.SetWorkingDir(nestedDir)
 
 	got, err := getValueForScope("review_agent", scopeMerged)
@@ -263,14 +287,14 @@ func TestGetValueForScopeMergedRepoResolutionError(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 
 	env := newStubRepoEnv(t)
-	env.SetGitError(fmt.Errorf("git unavailable"))
-	env.SetWorkingDirError(fmt.Errorf("cwd failed"))
+	env.SetGitError(errors.New(errGitStub))
+	env.SetWorkingDirError(errors.New(errCwdStub))
 
 	_, err := getValueForScope("review_agent", scopeMerged)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "determine repository root: cwd failed") {
+	if !strings.Contains(err.Error(), "determine repository root: "+errCwdStub) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -280,14 +304,14 @@ func TestListMergedConfigRepoResolutionError(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 
 	env := newStubRepoEnv(t)
-	env.SetGitError(fmt.Errorf("git unavailable"))
-	env.SetWorkingDirError(fmt.Errorf("cwd failed"))
+	env.SetGitError(errors.New(errGitStub))
+	env.SetWorkingDirError(errors.New(errCwdStub))
 
 	err := listMergedConfig(false)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "determine repository root: cwd failed") {
+	if !strings.Contains(err.Error(), "determine repository root: "+errCwdStub) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -295,26 +319,25 @@ func TestListMergedConfigRepoResolutionError(t *testing.T) {
 func TestSetConfigKey(t *testing.T) {
 	path := setupConfigFile(t)
 
-	t.Run("String", func(t *testing.T) {
-		if err := setConfigKey(path, "default_agent", "gemini", true); err != nil {
-			t.Fatalf("setConfigKey: %v", err)
-		}
-		assertConfigValue(t, path, "default_agent", "gemini")
-	})
+	tests := []struct {
+		name     string
+		key      string
+		val      string
+		expected any
+	}{
+		{"String", "default_agent", "gemini", "gemini"},
+		{"Integer", "max_workers", "8", int64(8)},
+		{"Boolean", "sync.enabled", "true", true},
+	}
 
-	t.Run("Integer", func(t *testing.T) {
-		if err := setConfigKey(path, "max_workers", "8", true); err != nil {
-			t.Fatalf("setConfigKey: %v", err)
-		}
-		assertConfigValue(t, path, "max_workers", int64(8))
-	})
-
-	t.Run("Boolean", func(t *testing.T) {
-		if err := setConfigKey(path, "sync.enabled", "true", true); err != nil {
-			t.Fatalf("setConfigKey: %v", err)
-		}
-		assertConfigValue(t, path, "sync.enabled", true)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := setConfigKey(path, tt.key, tt.val, true); err != nil {
+				t.Fatalf("setConfigKey: %v", err)
+			}
+			assertConfigValue(t, path, tt.key, tt.expected)
+		})
+	}
 
 	t.Run("Persistence", func(t *testing.T) {
 		// Previous values should still be present after multiple sets.
@@ -499,24 +522,7 @@ func TestListGlobalConfigExplicitKeys(t *testing.T) {
 	}
 
 	// Capture stdout
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := listGlobalConfig()
-
-	w.Close()
-	os.Stdout = old
-
-	if err != nil {
-		t.Fatalf("listGlobalConfig error: %v", err)
-	}
-
-	outBytes, err2 := io.ReadAll(r)
-	if err2 != nil {
-		t.Fatalf("read output: %v", err2)
-	}
-	output := string(outBytes)
+	output := captureOutput(t, listGlobalConfig)
 
 	// Explicit default-valued key should be shown
 	if !strings.Contains(output, "max_workers=4") {
@@ -560,24 +566,7 @@ func TestListLocalConfigExplicitKeys(t *testing.T) {
 	env.SetGitRoot(repoDir)
 
 	// Capture stdout
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := listLocalConfig()
-
-	w.Close()
-	os.Stdout = old
-
-	if err != nil {
-		t.Fatalf("listLocalConfig error: %v", err)
-	}
-
-	outBytes, err2 := io.ReadAll(r)
-	if err2 != nil {
-		t.Fatalf("read output: %v", err2)
-	}
-	output := string(outBytes)
+	output := captureOutput(t, listLocalConfig)
 
 	// Explicit key should be shown
 	if !strings.Contains(output, "agent=claude-code") {
@@ -607,7 +596,7 @@ func TestGetValueForScopeMergedRepoOnlyKeyNotSet(t *testing.T) {
 
 	// No repo (no .git dir)
 	env := newStubRepoEnv(t)
-	env.SetGitError(fmt.Errorf("git unavailable"))
+	env.SetGitError(errors.New(errGitStub))
 	env.SetWorkingDir(t.TempDir())
 
 	// "agent" is a repo-only key — should not fall through to global config
