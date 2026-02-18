@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -686,4 +688,37 @@ func TestReviewFastFlag(t *testing.T) {
 			t.Fatal("timeout waiting for enqueue request")
 		}
 	})
+}
+
+func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
+	_, cleanup := setupMockDaemon(t,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("daemon should not be contacted on invalid args")
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	defer cleanup()
+
+	repo := newTestGitRepo(t)
+	hooksDir := filepath.Join(repo.Dir, ".git", "hooks")
+
+	cmd := reviewCmd()
+	cmd.SetArgs([]string{
+		"--repo", repo.Dir, "--branch", "--dirty",
+	})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --branch with --dirty")
+	}
+
+	// Hooks directory should have no roborev-generated files.
+	for _, name := range []string{"post-commit", "post-rewrite"} {
+		if _, statErr := os.Stat(
+			filepath.Join(hooksDir, name),
+		); statErr == nil {
+			t.Errorf(
+				"%s should not exist after invalid args", name,
+			)
+		}
+	}
 }
