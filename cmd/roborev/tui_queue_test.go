@@ -10,66 +10,123 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func TestTUIQueueViewNavigationUpDown(t *testing.T) {
-	// Test up/down/j/k navigation in queue view
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
+func TestTUIQueueNavigation(t *testing.T) {
+	threeJobs := []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2, withStatus(storage.JobStatusQueued)),
 		makeJob(3),
 	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
-	m.currentView = tuiViewQueue
 
-	// 'j' in queue view moves down (higher index)
-	m2, _ := pressKey(m, 'j')
-
-	if m2.selectedIdx != 2 {
-		t.Errorf("j key: expected selectedIdx=2, got %d", m2.selectedIdx)
+	tests := []struct {
+		name         string
+		jobs         []storage.ReviewJob
+		activeFilter []string
+		startIdx     int
+		key          any // rune or tea.KeyType
+		wantIdx      int
+		wantJobID    int64
+	}{
+		{
+			name:      "j moves down",
+			jobs:      threeJobs,
+			startIdx:  1,
+			key:       'j',
+			wantIdx:   2,
+			wantJobID: 3,
+		},
+		{
+			name:      "k moves up",
+			jobs:      threeJobs,
+			startIdx:  1,
+			key:       'k',
+			wantIdx:   0,
+			wantJobID: 1,
+		},
+		{
+			name:      "down arrow moves down",
+			jobs:      threeJobs,
+			startIdx:  1,
+			key:       tea.KeyDown,
+			wantIdx:   2,
+			wantJobID: 3,
+		},
+		{
+			name:      "up arrow moves up",
+			jobs:      threeJobs,
+			startIdx:  1,
+			key:       tea.KeyUp,
+			wantIdx:   0,
+			wantJobID: 1,
+		},
+		{
+			name:      "left arrow moves down",
+			jobs:      threeJobs,
+			startIdx:  1,
+			key:       tea.KeyLeft,
+			wantIdx:   2,
+			wantJobID: 3,
+		},
+		{
+			name:      "right arrow moves up",
+			jobs:      threeJobs,
+			startIdx:  1,
+			key:       tea.KeyRight,
+			wantIdx:   0,
+			wantJobID: 1,
+		},
+		{
+			name:      "g jumps to top (unfiltered)",
+			jobs:      threeJobs,
+			startIdx:  2,
+			key:       'g',
+			wantIdx:   0,
+			wantJobID: 1,
+		},
+		{
+			name: "g jumps to top (filtered)",
+			jobs: []storage.ReviewJob{
+				makeJob(1, withRepoPath("/repo/alpha")),
+				makeJob(2, withRepoPath("/repo/beta")),
+				makeJob(3, withRepoPath("/repo/beta")),
+			},
+			activeFilter: []string{"/repo/beta"},
+			startIdx:     2,
+			key:          'g',
+			wantIdx:      1, // First visible job
+			wantJobID:    2,
+		},
+		{
+			name:      "g jumps to top (empty)",
+			jobs:      []storage.ReviewJob{},
+			startIdx:  0,
+			key:       'g',
+			wantIdx:   0,
+			wantJobID: 0,
+		},
 	}
-	if m2.selectedJobID != 3 {
-		t.Errorf("j key: expected selectedJobID=3, got %d", m2.selectedJobID)
-	}
 
-	// 'k' in queue view moves up (lower index)
-	m3, _ := pressKey(m2, 'k')
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := setupQueue(tt.jobs, tt.startIdx)
+			if tt.activeFilter != nil {
+				m.activeRepoFilter = tt.activeFilter
+			}
 
-	if m3.selectedIdx != 1 {
-		t.Errorf("k key: expected selectedIdx=1, got %d", m3.selectedIdx)
-	}
-}
+			var m2 tuiModel
+			switch k := tt.key.(type) {
+			case rune:
+				m2, _ = pressKey(m, k)
+			case tea.KeyType:
+				m2, _ = pressSpecial(m, k)
+			}
 
-func TestTUIQueueViewArrowsMatchUpDown(t *testing.T) {
-	// Test that left/right in queue view work like k/j (up/down)
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2),
-		makeJob(3),
-	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
-	m.currentView = tuiViewQueue
-
-	// 'left' in queue view should move down (like j)
-	m2, _ := pressSpecial(m, tea.KeyLeft)
-
-	if m2.selectedIdx != 2 {
-		t.Errorf("Left arrow: expected selectedIdx=2, got %d", m2.selectedIdx)
-	}
-
-	// Reset
-	m2.selectedIdx = 1
-	m2.selectedJobID = 2
-
-	// 'right' in queue view should move up (like k)
-	m3, _ := pressSpecial(m2, tea.KeyRight)
-
-	if m3.selectedIdx != 0 {
-		t.Errorf("Right arrow: expected selectedIdx=0, got %d", m3.selectedIdx)
+			if m2.selectedIdx != tt.wantIdx {
+				t.Errorf("expected selectedIdx %d, got %d", tt.wantIdx, m2.selectedIdx)
+			}
+			if m2.selectedJobID != tt.wantJobID {
+				t.Errorf("expected selectedJobID %d, got %d", tt.wantJobID, m2.selectedJobID)
+			}
+		})
 	}
 }
 
@@ -156,68 +213,7 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	}
 }
 
-func TestTUIQueueJumpToTop(t *testing.T) {
-	t.Run("unfiltered queue", func(t *testing.T) {
-		m := newTuiModel("http://localhost")
-		m.jobs = []storage.ReviewJob{
-			makeJob(1),
-			makeJob(2),
-			makeJob(3),
-		}
-		m.selectedIdx = 2
-		m.selectedJobID = 3
-		m.currentView = tuiViewQueue
 
-		m2, _ := pressKey(m, 'g')
-
-		if m2.selectedIdx != 0 {
-			t.Errorf("Expected selectedIdx=0 after jump to top, got %d", m2.selectedIdx)
-		}
-		if m2.selectedJobID != 1 {
-			t.Errorf("Expected selectedJobID=1 after jump to top, got %d", m2.selectedJobID)
-		}
-	})
-
-	t.Run("with active filter skips hidden jobs", func(t *testing.T) {
-		m := newTuiModel("http://localhost")
-		m.jobs = []storage.ReviewJob{
-			makeJob(1, withRepoPath("/repo/alpha")),
-			makeJob(2, withRepoPath("/repo/beta")),
-			makeJob(3, withRepoPath("/repo/beta")),
-		}
-		m.activeRepoFilter = []string{"/repo/beta"}
-		m.selectedIdx = 2
-		m.selectedJobID = 3
-		m.currentView = tuiViewQueue
-
-		m2, _ := pressKey(m, 'g')
-
-		// Job 1 is filtered out; first visible is job 2 at index 1
-		if m2.selectedIdx != 1 {
-			t.Errorf("Expected selectedIdx=1 (first visible), got %d", m2.selectedIdx)
-		}
-		if m2.selectedJobID != 2 {
-			t.Errorf("Expected selectedJobID=2 (first visible), got %d", m2.selectedJobID)
-		}
-	})
-
-	t.Run("empty queue is no-op", func(t *testing.T) {
-		m := newTuiModel("http://localhost")
-		m.jobs = []storage.ReviewJob{}
-		m.selectedIdx = 0
-		m.selectedJobID = 0
-		m.currentView = tuiViewQueue
-
-		m2, _ := pressKey(m, 'g')
-
-		if m2.selectedIdx != 0 {
-			t.Errorf("Expected selectedIdx unchanged at 0, got %d", m2.selectedIdx)
-		}
-		if m2.selectedJobID != 0 {
-			t.Errorf("Expected selectedJobID unchanged at 0, got %d", m2.selectedJobID)
-		}
-	})
-}
 
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 	m := newTuiModel("http://localhost")
@@ -1005,411 +1001,245 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 	}
 }
 
-func TestTUIQueueViewSameStateLateError(t *testing.T) {
-	// Test: true (seq 1) → false (seq 2) → true (seq 3), with late error from first true
-	// Same as TestTUIReviewViewSameStateLateError but for queue view using pendingAddressed
+func setupQueue(jobs []storage.ReviewJob, selectedIdx int) tuiModel {
 	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
+	m.jobs = jobs
+	m.selectedIdx = selectedIdx
+	if len(jobs) > 0 && selectedIdx >= 0 && selectedIdx < len(jobs) {
+		m.selectedJobID = jobs[selectedIdx].ID
 	}
-
-	// Sequence: toggle true (seq 1) → toggle false (seq 2) → toggle true (seq 3)
-	// After third toggle, state is true and pendingAddressed has seq 3
-	*m.jobs[0].Addressed = true                                  // Optimistic update from third toggle
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 3} // Third toggle
-
-	// A late error arrives from the FIRST toggle (seq 1)
-	// This error has newState=true which matches current pending newState,
-	// but seq doesn't match, so it should be treated as stale and ignored.
-	lateErrorMsg := tuiAddressedResultMsg{
-		jobID:    1,
-		oldState: false, // First toggle was from false to true
-		newState: true,  // Same newState as current pending...
-		seq:      1,     // ...but different seq, so this is stale
-		err:      fmt.Errorf("network error from first toggle"),
-	}
-
-	m2, _ := updateModel(t, m, lateErrorMsg)
-
-	// With sequence numbers, the late error should be IGNORED (not rolled back)
-	// because seq: 1 != pending seq: 3
-	if m2.jobs[0].Addressed == nil || *m2.jobs[0].Addressed != true {
-		t.Errorf("Expected addressed to stay true (late error should be ignored), got %v", m2.jobs[0].Addressed)
-	}
-
-	// Error should NOT be set (stale error)
-	if m2.err != nil {
-		t.Errorf("Error should not be set for stale error response, got %v", m2.err)
-	}
-
-	// pendingAddressed should still be set (not cleared by stale response)
-	if _, ok := m2.pendingAddressed[1]; !ok {
-		t.Error("pendingAddressed should not be cleared by stale response")
-	}
+	m.currentView = tuiViewQueue
+	return m
 }
 
-func TestTUIStaleErrorResponseIgnored(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(true))),
-	}
-
-	// User toggles to false, then back to true (pendingAddressed=true)
-	// The job.Addressed was updated optimistically to true
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
-	*m.jobs[0].Addressed = true // Optimistic update already applied
-
-	// A stale error response arrives from the earlier toggle to false
-	staleErrorMsg := tuiAddressedResultMsg{
-		jobID:    1,
-		oldState: true,  // What it was before the (stale) toggle
-		newState: false, // Stale request was for false, but pending is now true
-		seq:      0,     // Stale: doesn't match pending seq (1)
-		err:      fmt.Errorf("network error"),
-	}
-
-	m2, _ := updateModel(t, m, staleErrorMsg)
-
-	// pendingAddressed should NOT be cleared (stale error)
-	if _, ok := m2.pendingAddressed[1]; !ok {
-		t.Error("pendingAddressed should not be cleared by stale error response")
-	}
-	if m2.pendingAddressed[1].newState != true {
-		t.Error("pendingAddressed value should remain true")
-	}
-
-	// Job state should NOT be rolled back (stale error)
-	if m2.jobs[0].Addressed == nil || *m2.jobs[0].Addressed != true {
-		t.Error("Job addressed state should not be rolled back by stale error")
-	}
-
-	// Error should NOT be set (stale error is silently ignored)
-	if m2.err != nil {
-		t.Error("Error should not be set for stale error response")
-	}
-}
-
-func TestTUIPendingReviewAddressedClearedOnSuccess(t *testing.T) {
-	// pendingReviewAddressed (for reviews without jobs) should be cleared on success
-	// because the race condition only affects jobs list refresh, not review-only items
-	m := newTuiModel("http://localhost")
-
-	// Track a review-only pending state (no job ID)
-	m.pendingReviewAddressed[42] = pendingState{newState: true, seq: 1}
-
-	// Success response for review-only (jobID=0, reviewID=42)
-	successMsg := tuiAddressedResultMsg{
-		jobID:      0, // No job - this is review-only
-		reviewID:   42,
-		reviewView: true,
-		oldState:   false,
-		newState:   true,
-		seq:        1,
-		err:        nil,
-	}
-
-	m2, _ := updateModel(t, m, successMsg)
-
-	// pendingReviewAddressed SHOULD be cleared on success (no race condition for review-only)
-	if _, ok := m2.pendingReviewAddressed[42]; ok {
-		t.Error("pendingReviewAddressed should be cleared on success for review-only items")
-	}
-}
-
-func TestTUIPendingAddressedClearsWhenServerNilMatchesFalse(t *testing.T) {
-	// When pending newState is false and server Addressed is nil,
-	// treat nil as false and clear the pending state
-	m := newTuiModel("http://localhost")
-
-	// Job with nil Addressed (e.g., partial payload or non-done status that became done)
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-	}
-
-	// User had toggled to false (unaddressed)
-	m.pendingAddressed[1] = pendingState{newState: false, seq: 1}
-
-	// Jobs refresh arrives with nil Addressed (should match false)
-	jobsMsg := tuiJobsMsg{
-		jobs: []storage.ReviewJob{
-			makeJob(1),
+func TestTUIPendingAddressedTransitions(t *testing.T) {
+	tests := []struct {
+		name                 string
+		initialJobs          []storage.ReviewJob
+		initialPending       map[int64]pendingState // map[ID]state
+		initialReviewPending map[int64]pendingState // map[ReviewID]state for review-only cases
+		initialStats         storage.JobStats
+		hideAddressed        bool
+		msg                  tea.Msg
+		wantPending          bool              // Is pending state expected to remain?
+		wantPendingState     *bool             // If remaining, expected newState? (nil to skip value check)
+		wantAddressed        *bool             // Expected job.Addressed state (nil to skip)
+		wantError            bool              // Expected error in model
+		wantStats            *storage.JobStats // Expected stats (optional)
+	}{
+		{
+			name:           "Late error ignored (same state, diff seq)",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 3}},
+			msg: tuiAddressedResultMsg{
+				jobID: 1, oldState: false, newState: true, seq: 1,
+				err: fmt.Errorf("late error"),
+			},
+			wantPending:      true,
+			wantPendingState: boolPtr(true),
+			wantAddressed:    boolPtr(true), // Optimistically true
+			wantError:        false,
+		},
+		{
+			name:           "Stale error response ignored",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))},
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			msg: tuiAddressedResultMsg{
+				jobID: 1, oldState: true, newState: false, seq: 0,
+				err: fmt.Errorf("network error"),
+			},
+			wantPending:      true,
+			wantPendingState: boolPtr(true),
+			wantAddressed:    boolPtr(true),
+			wantError:        false,
+		},
+		{
+			name:                 "Pending review-only cleared on success",
+			initialReviewPending: map[int64]pendingState{42: {newState: true, seq: 1}},
+			msg: tuiAddressedResultMsg{
+				jobID: 0, reviewID: 42, reviewView: true, oldState: false, newState: true, seq: 1,
+			},
+			wantPending: false, // Should be cleared from pendingReviewAddressed
+		},
+		{
+			name:           "Cleared when server nil matches pending false",
+			initialJobs:    []storage.ReviewJob{makeJob(1)},
+			initialPending: map[int64]pendingState{1: {newState: false, seq: 1}},
+			msg:            tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Addressed is nil
+			wantPending:    false,
+		},
+		{
+			name:           "Not cleared when server nil mismatches pending true",
+			initialJobs:    []storage.ReviewJob{makeJob(1)},
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			msg:            tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Addressed is nil
+			wantPending:    true,
+			wantAddressed:  boolPtr(true),
+		},
+		{
+			name:           "Not cleared by stale response (mismatched newState)",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			msg: tuiAddressedResultMsg{
+				jobID: 1, oldState: true, newState: false, seq: 0,
+			},
+			wantPending:      true,
+			wantPendingState: boolPtr(true),
+		},
+		{
+			name:           "Not cleared on success (waits for refresh)",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			msg: tuiAddressedResultMsg{
+				jobID: 1, oldState: false, newState: true, seq: 1,
+			},
+			wantPending: true,
+		},
+		{
+			name:           "Cleared by jobs refresh",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			msg:            tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))}},
+			wantPending:    false,
+			wantAddressed:  boolPtr(true),
+		},
+		{
+			name:           "Not cleared by stale jobs refresh",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			msg:            tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}},
+			wantPending:    true,
+			wantAddressed:  boolPtr(true),
+		},
+		{
+			name:           "Cleared on current error",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))},
+			initialPending: map[int64]pendingState{1: {newState: false, seq: 1}},
+			msg: tuiAddressedResultMsg{
+				jobID: 1, oldState: true, newState: false, seq: 1,
+				err: fmt.Errorf("server error"),
+			},
+			wantPending:   false,
+			wantAddressed: boolPtr(true), // Rolled back to oldState (true)
+			wantError:     true,
+		},
+		{
+			name:           "HideAddressed stats not double counted",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			hideAddressed:  true,
+			msg: tuiJobsMsg{
+				jobs:  []storage.ReviewJob{},                                    // Filtered out
+				stats: storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Server matches optimistic
+			},
+			wantPending: false,
+			wantStats:   &storage.JobStats{Addressed: 6, Unaddressed: 4},
+		},
+		{
+			name:           "HideAddressed pending not cleared when server lags",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			hideAddressed:  true,
+			msg: tuiJobsMsg{
+				jobs:  []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}, // Server still old
+				stats: storage.JobStats{Done: 10, Addressed: 5, Unaddressed: 5},
+			},
+			wantPending: true,
+			wantStats:   &storage.JobStats{Addressed: 6, Unaddressed: 4}, // Re-applied delta
 		},
 	}
 
-	m2, _ := updateModel(t, m, jobsMsg)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := setupQueue(tt.initialJobs, 0)
+			if tt.initialPending != nil {
+				m.pendingAddressed = tt.initialPending
+				// Apply optimistic updates if pending
+				for id, p := range tt.initialPending {
+					for i := range m.jobs {
+						if m.jobs[i].ID == id {
+							val := p.newState
+							m.jobs[i].Addressed = &val
+						}
+					}
+				}
+			}
+			if tt.initialReviewPending != nil {
+				m.pendingReviewAddressed = tt.initialReviewPending
+			}
+			if tt.hideAddressed {
+				m.hideAddressed = true
+			}
+			// Set initial stats if provided
+			if tt.initialStats.Done != 0 || tt.initialStats.Addressed != 0 || tt.initialStats.Unaddressed != 0 {
+				m.jobStats = tt.initialStats
+			}
 
-	// pendingAddressed should be cleared because nil == false matches newState=false
-	if _, ok := m2.pendingAddressed[1]; ok {
-		t.Error("pendingAddressed should be cleared when server nil matches pending false")
-	}
-}
+			m2, _ := updateModel(t, m, tt.msg)
 
-func TestTUIPendingAddressedNotClearsWhenServerNilMismatchesTrue(t *testing.T) {
-	// When pending newState is true and server Addressed is nil,
-	// do NOT clear (nil != true)
-	m := newTuiModel("http://localhost")
+			// Check pending state (jobs)
+			for id, p := range tt.initialPending {
+				_, exists := m2.pendingAddressed[id]
+				if tt.wantPending && !exists {
+					t.Errorf("expected pending state for job %d to remain", id)
+				}
+				if !tt.wantPending && exists {
+					t.Errorf("expected pending state for job %d to be cleared", id)
+				}
+				if exists && tt.wantPendingState != nil {
+					if m2.pendingAddressed[id].newState != *tt.wantPendingState {
+						t.Errorf("expected pending newState %v, got %v", *tt.wantPendingState, m2.pendingAddressed[id].newState)
+					}
+				}
+				// Also check that seq was preserved if pending remains
+				if exists && m2.pendingAddressed[id].seq != p.seq {
+					t.Errorf("expected pending seq %d, got %d", p.seq, m2.pendingAddressed[id].seq)
+				}
+			}
 
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-	}
+			// Check pending state (reviews)
+			for id := range tt.initialReviewPending {
+				_, exists := m2.pendingReviewAddressed[id]
+				if tt.wantPending && !exists {
+					t.Errorf("expected pending state for review %d to remain", id)
+				}
+				if !tt.wantPending && exists {
+					t.Errorf("expected pending state for review %d to be cleared", id)
+				}
+			}
 
-	// User toggled to true (addressed)
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
+			// Check job addressed state
+			if tt.wantAddressed != nil && len(m2.jobs) > 0 {
+				// Assuming we check the first job for single-job tests
+				got := m2.jobs[0].Addressed
+				if got == nil {
+					if *tt.wantAddressed {
+						t.Error("expected addressed to be true, got nil")
+					}
+				} else if *got != *tt.wantAddressed {
+					t.Errorf("expected addressed %v, got %v", *tt.wantAddressed, *got)
+				}
+			}
 
-	// Jobs refresh arrives with nil Addressed (doesn't match true)
-	jobsMsg := tuiJobsMsg{
-		jobs: []storage.ReviewJob{
-			makeJob(1),
-		},
-	}
+			// Check error
+			if tt.wantError && m2.err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.wantError && m2.err != nil {
+				t.Errorf("unexpected error: %v", m2.err)
+			}
 
-	m2, _ := updateModel(t, m, jobsMsg)
-
-	// pendingAddressed should NOT be cleared because nil != true
-	if _, ok := m2.pendingAddressed[1]; !ok {
-		t.Error("pendingAddressed should NOT be cleared when server nil mismatches pending true")
-	}
-
-	// Job should show as addressed due to pending state re-applied
-	if m2.jobs[0].Addressed == nil || !*m2.jobs[0].Addressed {
-		t.Error("Job should show as addressed due to pending state")
-	}
-}
-
-func TestTUIPendingAddressedNotClearedByStaleResponse(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-	}
-
-	// User toggles addressed to true
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
-
-	// A stale response comes back for a previous toggle to false
-	// (this could happen if user rapidly toggles)
-	staleMsg := tuiAddressedResultMsg{
-		jobID:    1,
-		oldState: true,
-		newState: false, // This response was for a toggle to false
-		seq:      0,     // Stale: doesn't match pending seq (1)
-		err:      nil,
-	}
-
-	m2, _ := updateModel(t, m, staleMsg)
-
-	// pendingAddressed should NOT be cleared because newState (false) != current pending (true)
-	if _, ok := m2.pendingAddressed[1]; !ok {
-		t.Error("pendingAddressed should not be cleared by stale response with mismatched newState")
-	}
-	if m2.pendingAddressed[1].newState != true {
-		t.Error("pendingAddressed value should remain true")
-	}
-}
-
-func TestTUIPendingAddressedNotClearedOnSuccess(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-	}
-
-	// User toggles addressed to true
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
-
-	// Success response comes back
-	successMsg := tuiAddressedResultMsg{
-		jobID:    1,
-		oldState: false,
-		newState: true,
-		seq:      1,
-		err:      nil,
-	}
-
-	m2, _ := updateModel(t, m, successMsg)
-
-	// pendingAddressed should NOT be cleared on success - it waits for jobs refresh
-	// to confirm the update. This prevents race condition where stale jobs response
-	// arrives after success and briefly shows old state.
-	if _, ok := m2.pendingAddressed[1]; !ok {
-		t.Error("pendingAddressed should NOT be cleared on success response")
-	}
-}
-
-func TestTUIPendingAddressedClearedByJobsRefresh(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-	}
-
-	// User toggles addressed to true
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
-
-	// Jobs refresh arrives with server data confirming the update
-
-	jobsMsg := tuiJobsMsg{
-		jobs: []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(true))),
-		},
-	}
-
-	m2, _ := updateModel(t, m, jobsMsg)
-
-	// pendingAddressed should be cleared because server data matches pending state
-	if _, ok := m2.pendingAddressed[1]; ok {
-		t.Error("pendingAddressed should be cleared when jobs refresh confirms update")
-	}
-}
-
-func TestTUIPendingAddressedNotClearedByStaleJobsRefresh(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-	}
-
-	// User toggles addressed to true
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
-
-	// Stale jobs refresh arrives with old data (from request sent before update)
-	staleJobsMsg := tuiJobsMsg{
-		jobs: []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(false))), // Still false!
-		},
-	}
-
-	m2, _ := updateModel(t, m, staleJobsMsg)
-
-	// pendingAddressed should NOT be cleared because server data doesn't match
-	if _, ok := m2.pendingAddressed[1]; !ok {
-		t.Error("pendingAddressed should NOT be cleared when jobs refresh has stale data")
-	}
-
-	// Job should still show as addressed (pending state re-applied)
-	if m2.jobs[0].Addressed == nil || !*m2.jobs[0].Addressed {
-		t.Error("Job should still show as addressed due to pending state")
-	}
-}
-
-func TestTUIPendingAddressedClearedOnCurrentError(t *testing.T) {
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(true))),
-	}
-
-	// User toggles addressed to false
-	m.pendingAddressed[1] = pendingState{newState: false, seq: 1}
-
-	// Error response comes back for the current request (seq matches pending)
-	errorMsg := tuiAddressedResultMsg{
-		jobID:    1,
-		oldState: true,
-		newState: false, // Matches pendingAddressed[1]
-		seq:      1,     // Matches pending seq
-		err:      fmt.Errorf("server error"),
-	}
-
-	m2, _ := updateModel(t, m, errorMsg)
-
-	// pendingAddressed should be cleared on error (we're rolling back)
-	if _, ok := m2.pendingAddressed[1]; ok {
-		t.Error("pendingAddressed should be cleared on current error")
-	}
-
-	// Job state should be rolled back
-	if m2.jobs[0].Addressed == nil || *m2.jobs[0].Addressed != true {
-		t.Error("Job addressed state should be rolled back to oldState on error")
-	}
-
-	// Error should be set
-	if m2.err == nil {
-		t.Error("Error should be set on current error")
-	}
-}
-
-func TestTUIHideAddressedStatsNotDoubleCounted(t *testing.T) {
-	// Regression test: when hideAddressed is active, marking a job
-	// as addressed then receiving a refresh should not double-count
-	// the delta (which made Unaddressed go negative).
-	m := newTuiModel("http://localhost")
-	m.hideAddressed = true
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-	}
-	m.jobStats = storage.JobStats{Done: 10, Addressed: 5, Unaddressed: 5}
-
-	// User marks job 1 as addressed
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
-	m.applyStatsDelta(true) // optimistic: Addressed=6, Unaddressed=4
-
-	if m.jobStats.Addressed != 6 || m.jobStats.Unaddressed != 4 {
-		t.Fatalf("After optimistic delta: Addressed=%d Unaddressed=%d, want 6/4",
-			m.jobStats.Addressed, m.jobStats.Unaddressed)
-	}
-
-	// Server refresh arrives. Server stats already include the change.
-	// Job 1 is absent from response because hideAddressed filters it out.
-	jobsMsg := tuiJobsMsg{
-		jobs:  []storage.ReviewJob{}, // job 1 filtered out
-		stats: storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4},
-	}
-
-	m2, _ := updateModel(t, m, jobsMsg)
-
-	// Pending should be cleared (absence = confirmation when hiding addressed)
-	if _, ok := m2.pendingAddressed[1]; ok {
-		t.Error("pendingAddressed should be cleared when job absent and hideAddressed active")
-	}
-
-	// Stats should match server exactly, not double-count
-	if m2.jobStats.Addressed != 6 {
-		t.Errorf("Addressed = %d, want 6", m2.jobStats.Addressed)
-	}
-	if m2.jobStats.Unaddressed != 4 {
-		t.Errorf("Unaddressed = %d, want 4", m2.jobStats.Unaddressed)
-	}
-}
-
-func TestTUIHideAddressedPendingNotClearedWhenServerLags(t *testing.T) {
-	// When hideAddressed is active but the server hasn't absorbed the
-	// change yet (job still appears as unaddressed), the pending entry
-	// must NOT be cleared.
-	m := newTuiModel("http://localhost")
-	m.hideAddressed = true
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-	}
-	m.jobStats = storage.JobStats{Done: 10, Addressed: 5, Unaddressed: 5}
-
-	// User marks job 1 as addressed
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
-	m.applyStatsDelta(true)
-
-	// Stale server refresh: job 1 still in response as unaddressed
-	// (API call hasn't been processed yet)
-	staleMsg := tuiJobsMsg{
-		jobs: []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(false))),
-		},
-		stats: storage.JobStats{Done: 10, Addressed: 5, Unaddressed: 5},
-	}
-
-	m2, _ := updateModel(t, m, staleMsg)
-
-	// Pending should NOT be cleared (server still shows unaddressed)
-	if _, ok := m2.pendingAddressed[1]; !ok {
-		t.Error("pendingAddressed should NOT be cleared when job still in response as unaddressed")
-	}
-
-	// Delta should be reapplied on top of stale server stats
-	if m2.jobStats.Addressed != 6 {
-		t.Errorf("Addressed = %d, want 6 (stale stats + delta)", m2.jobStats.Addressed)
-	}
-	if m2.jobStats.Unaddressed != 4 {
-		t.Errorf("Unaddressed = %d, want 4 (stale stats + delta)", m2.jobStats.Unaddressed)
+			// Check stats
+			if tt.wantStats != nil {
+				if m2.jobStats.Addressed != tt.wantStats.Addressed {
+					t.Errorf("stats.Addressed = %d, want %d", m2.jobStats.Addressed, tt.wantStats.Addressed)
+				}
+				if m2.jobStats.Unaddressed != tt.wantStats.Unaddressed {
+					t.Errorf("stats.Unaddressed = %d, want %d", m2.jobStats.Unaddressed, tt.wantStats.Unaddressed)
+				}
+			}
+		})
 	}
 }
