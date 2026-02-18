@@ -907,13 +907,11 @@ func TestFailoverJob(t *testing.T) {
 		repo := createRepo(t, db, "/tmp/failover-repo")
 		commit := createCommit(t, db, repo.ID, "fo-abc123")
 
-		// Enqueue with backup agent
 		job, err := db.EnqueueJob(EnqueueOpts{
-			RepoID:      repo.ID,
-			CommitID:    commit.ID,
-			GitRef:      "fo-abc123",
-			Agent:       "primary",
-			BackupAgent: "backup",
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "fo-abc123",
+			Agent:    "primary",
 		})
 		if err != nil {
 			t.Fatalf("EnqueueJob: %v", err)
@@ -923,7 +921,7 @@ func TestFailoverJob(t *testing.T) {
 		claimJob(t, db, "worker-1")
 
 		// Failover should succeed
-		ok, err := db.FailoverJob(job.ID, "worker-1")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
@@ -931,16 +929,13 @@ func TestFailoverJob(t *testing.T) {
 			t.Fatal("Expected failover to succeed")
 		}
 
-		// Verify: agent swapped, backup cleared, retry_count reset, status queued
+		// Verify: agent swapped, retry_count reset, status queued
 		updated, err := db.GetJobByID(job.ID)
 		if err != nil {
 			t.Fatalf("GetJobByID: %v", err)
 		}
 		if updated.Agent != "backup" {
 			t.Errorf("Agent = %q, want %q", updated.Agent, "backup")
-		}
-		if updated.BackupAgent != "" {
-			t.Errorf("BackupAgent = %q, want empty", updated.BackupAgent)
 		}
 		if updated.Status != JobStatusQueued {
 			t.Errorf("Status = %q, want %q", updated.Status, JobStatusQueued)
@@ -951,19 +946,19 @@ func TestFailoverJob(t *testing.T) {
 		}
 	})
 
-	t.Run("fails without backup agent", func(t *testing.T) {
+	t.Run("fails with empty backup agent", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
 		_, _, job := createJobChain(t, db, "/tmp/failover-nobackup", "fo-no-backup")
 		claimJob(t, db, "worker-1")
 
-		ok, err := db.FailoverJob(job.ID, "worker-1")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
 		if ok {
-			t.Error("Expected failover to return false with no backup agent")
+			t.Error("Expected failover to return false with empty backup agent")
 		}
 	})
 
@@ -975,18 +970,17 @@ func TestFailoverJob(t *testing.T) {
 		commit := createCommit(t, db, repo.ID, "fo-same123")
 
 		job, err := db.EnqueueJob(EnqueueOpts{
-			RepoID:      repo.ID,
-			CommitID:    commit.ID,
-			GitRef:      "fo-same123",
-			Agent:       "codex",
-			BackupAgent: "codex",
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "fo-same123",
+			Agent:    "codex",
 		})
 		if err != nil {
 			t.Fatalf("EnqueueJob: %v", err)
 		}
 		claimJob(t, db, "worker-1")
 
-		ok, err := db.FailoverJob(job.ID, "worker-1")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "codex")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
@@ -1004,17 +998,16 @@ func TestFailoverJob(t *testing.T) {
 
 		// Job is queued (not claimed/running)
 		job, err := db.EnqueueJob(EnqueueOpts{
-			RepoID:      repo.ID,
-			CommitID:    commit.ID,
-			GitRef:      "fo-queued",
-			Agent:       "primary",
-			BackupAgent: "backup",
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "fo-queued",
+			Agent:    "primary",
 		})
 		if err != nil {
 			t.Fatalf("EnqueueJob: %v", err)
 		}
 
-		ok, err := db.FailoverJob(job.ID, "worker-1")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
@@ -1023,35 +1016,37 @@ func TestFailoverJob(t *testing.T) {
 		}
 	})
 
-	t.Run("backup agent is null after failover", func(t *testing.T) {
+	t.Run("second failover with same backup is no-op", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/failover-null")
-		commit := createCommit(t, db, repo.ID, "fo-null123")
+		repo := createRepo(t, db, "/tmp/failover-double")
+		commit := createCommit(t, db, repo.ID, "fo-double")
 
 		job, err := db.EnqueueJob(EnqueueOpts{
-			RepoID:      repo.ID,
-			CommitID:    commit.ID,
-			GitRef:      "fo-null123",
-			Agent:       "primary",
-			BackupAgent: "backup",
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "fo-double",
+			Agent:    "primary",
 		})
 		if err != nil {
 			t.Fatalf("EnqueueJob: %v", err)
 		}
 		claimJob(t, db, "worker-1")
 
-		db.FailoverJob(job.ID, "worker-1")
+		// First failover: primary -> backup
+		db.FailoverJob(job.ID, "worker-1", "backup")
 
-		// Second failover should fail (backup_agent is now NULL)
+		// Reclaim, now agent is "backup"
 		claimJob(t, db, "worker-1")
-		ok, err := db.FailoverJob(job.ID, "worker-1")
+
+		// Second failover with same backup agent should fail (agent == backup)
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup")
 		if err != nil {
 			t.Fatalf("FailoverJob second attempt: %v", err)
 		}
 		if ok {
-			t.Error("Expected second failover to return false (backup_agent cleared)")
+			t.Error("Expected second failover to return false (agent already is backup)")
 		}
 	})
 
@@ -1063,11 +1058,10 @@ func TestFailoverJob(t *testing.T) {
 		commit := createCommit(t, db, repo.ID, "fo-wrongw")
 
 		job, err := db.EnqueueJob(EnqueueOpts{
-			RepoID:      repo.ID,
-			CommitID:    commit.ID,
-			GitRef:      "fo-wrongw",
-			Agent:       "primary",
-			BackupAgent: "backup",
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "fo-wrongw",
+			Agent:    "primary",
 		})
 		if err != nil {
 			t.Fatalf("EnqueueJob: %v", err)
@@ -1075,7 +1069,7 @@ func TestFailoverJob(t *testing.T) {
 		claimJob(t, db, "worker-1")
 
 		// A different worker should not be able to failover this job
-		ok, err := db.FailoverJob(job.ID, "worker-2")
+		ok, err := db.FailoverJob(job.ID, "worker-2", "backup")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}

@@ -466,15 +466,18 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 		log.Printf("[%s] Job %d queued for retry (%d/%d)", workerID, job.ID, retryCount, maxRetries)
 	} else {
 		// Retries exhausted -- attempt failover to backup agent if this is an agent error
-		if agentError && job.BackupAgent != "" {
-			failedOver, foErr := wp.db.FailoverJob(job.ID, workerID)
-			if foErr != nil {
-				log.Printf("[%s] Error attempting failover for job %d: %v", workerID, job.ID, foErr)
-			}
-			if failedOver {
-				log.Printf("[%s] Job %d failing over from %s to %s after %d retries: %s",
-					workerID, job.ID, agentName, job.BackupAgent, maxRetries, errorMsg)
-				return
+		if agentError {
+			backupAgent := wp.resolveBackupAgent(job)
+			if backupAgent != "" {
+				failedOver, foErr := wp.db.FailoverJob(job.ID, workerID, backupAgent)
+				if foErr != nil {
+					log.Printf("[%s] Error attempting failover for job %d: %v", workerID, job.ID, foErr)
+				}
+				if failedOver {
+					log.Printf("[%s] Job %d failing over from %s to %s after %d retries: %s",
+						workerID, job.ID, agentName, backupAgent, maxRetries, errorMsg)
+					return
+				}
 			}
 		}
 
@@ -489,6 +492,32 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 			}
 		}
 	}
+}
+
+// resolveBackupAgent determines the backup agent for a job from config.
+// Returns the canonicalized backup agent name, or "" if none is
+// available or it's the same as the job's current agent.
+func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
+	cfg := wp.cfgGetter.Config()
+	workflow := "review"
+	if !config.IsDefaultReviewType(job.ReviewType) {
+		workflow = job.ReviewType
+	}
+	backup := config.ResolveBackupAgentForWorkflow(
+		job.RepoPath, cfg, workflow,
+	)
+	if backup == "" {
+		return ""
+	}
+	// Canonicalize: resolve alias, verify installed, skip if same as primary
+	resolved, err := agent.Get(backup)
+	if err != nil || !agent.IsAvailable(resolved.Name()) {
+		return ""
+	}
+	if resolved.Name() == job.Agent {
+		return ""
+	}
+	return resolved.Name()
 }
 
 // broadcastFailed sends a review.failed event for a job

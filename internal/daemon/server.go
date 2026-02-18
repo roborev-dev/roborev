@@ -576,7 +576,6 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve agent for workflow at this reasoning level
 	agentName := config.ResolveAgentForWorkflow(req.Agent, repoRoot, s.configWatcher.Config(), workflow, reasoning)
-	backupAgent := config.ResolveBackupAgentForWorkflow(repoRoot, s.configWatcher.Config(), workflow)
 
 	// Resolve to an installed agent: if the configured agent isn't available,
 	// fall back through the chain (codex -> claude-code -> gemini -> ...).
@@ -586,21 +585,6 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		agentName = resolved.Name()
-	}
-
-	// Canonicalize backup agent: resolve alias to canonical name, then verify
-	// the agent is actually installed. Clear if unknown, unavailable, or same
-	// as primary (failover to the same agent is a no-op). Uses strict
-	// resolution (Get+IsAvailable) instead of GetAvailable to avoid silently
-	// falling back to a different agent.
-	if backupAgent != "" {
-		if resolved, err := agent.Get(backupAgent); err != nil || !agent.IsAvailable(resolved.Name()) {
-			backupAgent = "" // unknown or not installed, skip failover
-		} else if resolved.Name() == agentName {
-			backupAgent = "" // same as primary after resolution
-		} else {
-			backupAgent = resolved.Name()
-		}
 	}
 
 	// Resolve model for workflow at this reasoning level
@@ -633,7 +617,6 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			RepoID:       repo.ID,
 			Branch:       req.Branch,
 			Agent:        agentName,
-			BackupAgent:  backupAgent,
 			Model:        model,
 			Reasoning:    reasoning,
 			ReviewType:   req.ReviewType,
@@ -654,7 +637,6 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			GitRef:      gitRef,
 			Branch:      req.Branch,
 			Agent:       agentName,
-			BackupAgent: backupAgent,
 			Model:       model,
 			Reasoning:   reasoning,
 			ReviewType:  req.ReviewType,
@@ -694,14 +676,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		// Store as full SHA range
 		fullRef := startSHA + ".." + endSHA
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:      repo.ID,
-			GitRef:      fullRef,
-			Branch:      req.Branch,
-			Agent:       agentName,
-			BackupAgent: backupAgent,
-			Model:       model,
-			Reasoning:   reasoning,
-			ReviewType:  req.ReviewType,
+			RepoID:     repo.ID,
+			GitRef:     fullRef,
+			Branch:     req.Branch,
+			Agent:      agentName,
+			Model:      model,
+			Reasoning:  reasoning,
+			ReviewType: req.ReviewType,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
@@ -732,16 +713,15 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		patchID := git.GetPatchID(gitCwd, sha)
 
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:      repo.ID,
-			CommitID:    commit.ID,
-			GitRef:      sha,
-			Branch:      req.Branch,
-			Agent:       agentName,
-			BackupAgent: backupAgent,
-			Model:       model,
-			Reasoning:   reasoning,
-			ReviewType:  req.ReviewType,
-			PatchID:     patchID,
+			RepoID:     repo.ID,
+			CommitID:   commit.ID,
+			GitRef:     sha,
+			Branch:     req.Branch,
+			Agent:      agentName,
+			Model:      model,
+			Reasoning:  reasoning,
+			ReviewType: req.ReviewType,
+			PatchID:    patchID,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))

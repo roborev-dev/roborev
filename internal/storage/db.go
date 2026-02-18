@@ -596,18 +596,6 @@ func (db *DB) migrate() error {
 		}
 	}
 
-	// Migration: add backup_agent column to review_jobs if missing
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'backup_agent'`).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("check backup_agent column: %w", err)
-	}
-	if count == 0 {
-		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN backup_agent TEXT`)
-		if err != nil {
-			return fmt.Errorf("add backup_agent column: %w", err)
-		}
-	}
-
 	// Migration: add index on reviews.addressed for server-side filtering
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reviews_addressed ON reviews(addressed)`)
 	if err != nil {
