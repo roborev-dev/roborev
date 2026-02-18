@@ -3493,7 +3493,13 @@ func installPostRewriteHook(hooksDir string) {
 				fmt.Printf("  Warning: %v\n", rmErr)
 				return
 			}
-			if updated, err := os.ReadFile(hookPath); err == nil {
+			updated, readErr := os.ReadFile(hookPath)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				fmt.Printf("  Warning: re-read %s after cleanup: %v\n",
+					hookPath, readErr)
+				return
+			}
+			if readErr == nil {
 				remaining := string(updated)
 				if remaining != "" && !strings.HasSuffix(remaining, "\n") {
 					remaining += "\n"
