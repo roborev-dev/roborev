@@ -3,6 +3,7 @@ package main
 // Tests for the show command
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -134,6 +135,70 @@ func TestShowOutputFormat(t *testing.T) {
 		expectedPattern := "Review for " + shortSHA + " (job 42, by codex)"
 		if !strings.Contains(output, expectedPattern) {
 			t.Errorf("expected '%s' in output, got: %s", expectedPattern, output)
+		}
+	})
+}
+
+func TestShowJSONOutput(t *testing.T) {
+	t.Run("--json outputs valid JSON", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial commit")
+
+		review := storage.Review{
+			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+		}
+		mockReviewDaemon(t, review)
+
+		chdir(t, repo.Dir)
+
+		cmd := showCmd()
+		var buf strings.Builder
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"--job", "42", "--json"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		output := buf.String()
+		var parsed storage.Review
+		if err := json.Unmarshal([]byte(output), &parsed); err != nil {
+			t.Fatalf("--json output not valid JSON: %v\noutput: %s", err, output)
+		}
+		if parsed.JobID != 42 {
+			t.Errorf("expected job_id=42, got %d", parsed.JobID)
+		}
+		if parsed.Output != "LGTM" {
+			t.Errorf("expected output=LGTM, got %q", parsed.Output)
+		}
+		if parsed.Agent != "test" {
+			t.Errorf("expected agent=test, got %q", parsed.Agent)
+		}
+	})
+
+	t.Run("--json skips formatted header", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial commit")
+
+		mockReviewDaemon(t, storage.Review{
+			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+		})
+
+		chdir(t, repo.Dir)
+
+		cmd := showCmd()
+		var buf strings.Builder
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"--job", "42", "--json"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		output := buf.String()
+		if strings.Contains(output, "Review for") {
+			t.Errorf("--json should not contain formatted header, got: %s", output)
+		}
+		if strings.Contains(output, "---") {
+			t.Errorf("--json should not contain separator, got: %s", output)
 		}
 	})
 }
