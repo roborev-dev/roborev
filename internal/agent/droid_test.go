@@ -139,21 +139,11 @@ func TestDroidReviewPipesPromptViaStdin(t *testing.T) {
 		t.Fatalf("Review failed: %v", err)
 	}
 
-	stdin, err := os.ReadFile(mock.StdinFile)
-	if err != nil {
-		t.Fatalf("read stdin capture: %v", err)
-	}
-	if strings.TrimSpace(string(stdin)) != prompt {
-		t.Errorf("stdin = %q, want %q", string(stdin), prompt)
-	}
+	// Prompt must be in stdin
+	assertFileContent(t, mock.StdinFile, prompt)
 
-	args, err := os.ReadFile(mock.ArgsFile)
-	if err != nil {
-		t.Fatalf("read args capture: %v", err)
-	}
-	if strings.Contains(string(args), prompt) {
-		t.Errorf("prompt leaked into argv: %s", string(args))
-	}
+	// Prompt must not be in argv
+	assertFileNotContains(t, mock.ArgsFile, prompt)
 }
 
 func TestDroidReviewAgenticModeFromGlobal(t *testing.T) {
