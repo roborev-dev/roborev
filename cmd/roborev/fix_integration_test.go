@@ -10,73 +10,99 @@ import (
 	"testing"
 )
 
-func TestEnqueueIfNeededSkipsWhenJobAppearsAfterWait(t *testing.T) {
-	tmpDir := initTestGitRepo(t)
-	sha := "abc123def456"
+func TestEnqueueIfNeeded(t *testing.T) {
+	// Constants used across tests
+	const sha = "abc123def456"
 
-	var jobCheckCalls atomic.Int32
-	var enqueueCalls atomic.Int32
+	tests := []struct {
+		name             string
+		handlerFactory   func(*atomic.Int32, *atomic.Int32) http.HandlerFunc
+		expectedChecks   int32
+		expectedEnqueues int32
+		minChecks        int32
+	}{
+		{
+			name: "SkipsWhenJobAppearsAfterWait",
+			handlerFactory: func(jobCheckCalls *atomic.Int32, enqueueCalls *atomic.Int32) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/jobs":
+						n := jobCheckCalls.Add(1)
+						if n == 1 {
+							// First check: no jobs yet
+							json.NewEncoder(w).Encode(map[string]interface{}{
+								"jobs": []map[string]interface{}{},
+							})
+						} else {
+							// Second check: hook has fired
+							json.NewEncoder(w).Encode(map[string]interface{}{
+								"jobs": []map[string]interface{}{{"id": 42}},
+							})
+						}
+					case "/api/enqueue":
+						enqueueCalls.Add(1)
+						w.WriteHeader(http.StatusCreated)
+						json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
+				}
+			},
+			expectedChecks:   2,
+			expectedEnqueues: 0,
+		},
+		{
+			name: "EnqueuesWhenNoJobExists",
+			handlerFactory: func(jobCheckCalls *atomic.Int32, enqueueCalls *atomic.Int32) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/jobs":
+						jobCheckCalls.Add(1)
+						json.NewEncoder(w).Encode(map[string]interface{}{
+							"jobs": []map[string]interface{}{},
+						})
+					case "/api/enqueue":
+						enqueueCalls.Add(1)
+						w.WriteHeader(http.StatusCreated)
+						json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
+				}
+			},
+			minChecks:        1,
+			expectedEnqueues: 1,
+		},
+	}
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/jobs":
-			n := jobCheckCalls.Add(1)
-			if n == 1 {
-				// First check: no jobs yet
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"jobs": []map[string]interface{}{},
-				})
-			} else {
-				// Second check: hook has fired
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"jobs": []map[string]interface{}{{"id": 42}},
-				})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := initTestGitRepo(t)
+
+			var jobCheckCalls atomic.Int32
+			var enqueueCalls atomic.Int32
+
+			ts := httptest.NewServer(tt.handlerFactory(&jobCheckCalls, &enqueueCalls))
+			defer ts.Close()
+
+			err := enqueueIfNeeded(ts.URL, tmpDir, sha)
+			if err != nil {
+				t.Fatalf("enqueueIfNeeded: %v", err)
 			}
-		case "/api/enqueue":
-			enqueueCalls.Add(1)
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
-		}
-	}))
-	defer ts.Close()
 
-	err := enqueueIfNeeded(ts.URL, tmpDir, sha)
-	if err != nil {
-		t.Fatalf("enqueueIfNeeded: %v", err)
-	}
-	if jobCheckCalls.Load() != 2 {
-		t.Errorf("expected 2 job checks, got %d", jobCheckCalls.Load())
-	}
-	if enqueueCalls.Load() != 0 {
-		t.Error("should not enqueue when job appears on second check")
-	}
-}
+			if tt.expectedChecks > 0 {
+				if jobCheckCalls.Load() != tt.expectedChecks {
+					t.Errorf("expected %d job checks, got %d", tt.expectedChecks, jobCheckCalls.Load())
+				}
+			} else if tt.minChecks > 0 {
+				if jobCheckCalls.Load() < tt.minChecks {
+					t.Errorf("expected at least %d job checks, got %d", tt.minChecks, jobCheckCalls.Load())
+				}
+			}
 
-func TestEnqueueIfNeededEnqueuesWhenNoJobExists(t *testing.T) {
-	tmpDir := initTestGitRepo(t)
-	sha := "abc123def456"
-
-	var enqueueCalls atomic.Int32
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/jobs":
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"jobs": []map[string]interface{}{},
-			})
-		case "/api/enqueue":
-			enqueueCalls.Add(1)
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
-		}
-	}))
-	defer ts.Close()
-
-	err := enqueueIfNeeded(ts.URL, tmpDir, sha)
-	if err != nil {
-		t.Fatalf("enqueueIfNeeded: %v", err)
-	}
-	if enqueueCalls.Load() != 1 {
-		t.Errorf("should have enqueued exactly once, got %d", enqueueCalls.Load())
+			if enqueueCalls.Load() != tt.expectedEnqueues {
+				t.Errorf("expected %d enqueues, got %d", tt.expectedEnqueues, enqueueCalls.Load())
+			}
+		})
 	}
 }
