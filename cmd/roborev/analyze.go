@@ -351,7 +351,7 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 
 	// If --wait, poll until job completes and show result
 	if opts.wait {
-		return waitForPromptJob(cmd, serverAddr, job.ID, opts.quiet)
+		return waitForPromptJob(cmd, serverAddr, job.ID, opts.quiet, promptPollInterval)
 	}
 
 	return nil
@@ -454,7 +454,7 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 			if !opts.quiet {
 				cmd.Printf("\n=== Job %d (%d/%d) ===\n", info.ID, i+1, len(jobInfos))
 			}
-			if err := waitForPromptJob(cmd, serverAddr, info.ID, opts.quiet); err != nil {
+			if err := waitForPromptJob(cmd, serverAddr, info.ID, opts.quiet, promptPollInterval); err != nil {
 				if !opts.quiet {
 					cmd.Printf("Warning: job %d failed: %v\n", info.ID, err)
 				}

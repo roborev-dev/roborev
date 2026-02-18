@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/version"
 )
 
 // createRepoWithConfig creates a temp directory with a .roborev.toml file.
@@ -28,33 +29,50 @@ func createRepoWithConfig(t *testing.T, configContent string) string {
 	return repoPath
 }
 
-// newMockReviewServer creates a test server that returns the given review on /api/review.
-func newMockReviewServer(t *testing.T, review storage.Review) *httptest.Server {
-	t.Helper()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/review" {
-			writeJSON(w, review)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(s.Close)
-	return s
+type mockServerConfig struct {
+	jobs        []storage.ReviewJob
+	review      *storage.Review
+	status      int // Default 200
+	receivedRef *string
 }
 
-// newMockJobsServer creates a test server that returns the given jobs on /api/jobs
-// and optionally serves /api/review with the provided review.
-func newMockJobsServer(t *testing.T, jobs []storage.ReviewJob, review *storage.Review) *httptest.Server {
+// newRunTestServer creates a unified test server for run command tests.
+func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 	t.Helper()
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cfg.status != 0 && cfg.status != 200 {
+			w.WriteHeader(cfg.status)
+			if cfg.status == http.StatusInternalServerError {
+				w.Write([]byte("server error"))
+			}
+			return
+		}
+
 		switch r.URL.Path {
+		case "/api/status":
+			// Required for ensureDaemon()
+			writeJSON(w, map[string]string{"version": version.Version})
 		case "/api/jobs":
-			writeJSON(w, map[string][]storage.ReviewJob{"jobs": jobs})
+			writeJSON(w, map[string][]storage.ReviewJob{"jobs": cfg.jobs})
 		case "/api/review":
-			if review != nil {
-				writeJSON(w, *review)
+			if cfg.review != nil {
+				writeJSON(w, *cfg.review)
 			} else {
 				w.WriteHeader(http.StatusNotFound)
+			}
+		case "/api/enqueue":
+			if r.Method == "POST" {
+				var req map[string]any
+				json.NewDecoder(r.Body).Decode(&req)
+				if cfg.receivedRef != nil {
+					*cfg.receivedRef = req["git_ref"].(string)
+				}
+				w.WriteHeader(http.StatusCreated)
+				writeJSON(w, storage.ReviewJob{
+					ID:     1,
+					Agent:  "test",
+					GitRef: req["git_ref"].(string),
+				})
 			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -63,6 +81,7 @@ func newMockJobsServer(t *testing.T, jobs []storage.ReviewJob, review *storage.R
 	t.Cleanup(s.Close)
 	return s
 }
+
 
 // stubReview creates a storage.Review with common defaults.
 var nextStubReviewID atomic.Int64
@@ -74,14 +93,6 @@ func stubReview(jobID int64, agent, output string) storage.Review {
 		Agent:  agent,
 		Output: output,
 	}
-}
-
-// patchPromptPollInterval sets promptPollInterval to a fast value and restores it on cleanup.
-func patchPromptPollInterval(t *testing.T, d time.Duration) {
-	t.Helper()
-	old := promptPollInterval
-	promptPollInterval = d
-	t.Cleanup(func() { promptPollInterval = old })
 }
 
 func TestBuildPromptWithContext(t *testing.T) {
@@ -177,7 +188,7 @@ func TestBuildPromptWithContext(t *testing.T) {
 func TestShowPromptResult(t *testing.T) {
 	t.Run("displays result without verdict exit code", func(t *testing.T) {
 		review := stubReview(123, "test-agent", "Paris")
-		server := newMockReviewServer(t, review)
+		server := newRunTestServer(t, mockServerConfig{review: &review})
 
 		cmd, out := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
@@ -197,7 +208,7 @@ func TestShowPromptResult(t *testing.T) {
 
 	t.Run("returns nil for output that would be FAIL verdict in review", func(t *testing.T) {
 		review := stubReview(123, "test-agent", "Found several issues:\n1. Bug in line 5\n2. Missing error handling")
-		server := newMockReviewServer(t, review)
+		server := newRunTestServer(t, mockServerConfig{review: &review})
 
 		cmd, _ := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
@@ -209,7 +220,7 @@ func TestShowPromptResult(t *testing.T) {
 
 	t.Run("quiet mode suppresses output", func(t *testing.T) {
 		review := stubReview(123, "test-agent", "Some output")
-		server := newMockReviewServer(t, review)
+		server := newRunTestServer(t, mockServerConfig{review: &review})
 
 		cmd, out := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, true, "") // quiet=true
@@ -241,12 +252,7 @@ func TestShowPromptResult(t *testing.T) {
 	})
 
 	t.Run("handles server error", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("internal error"))
-		}))
-		t.Cleanup(server.Close)
-
+		server := newRunTestServer(t, mockServerConfig{status: http.StatusInternalServerError})
 		cmd, _ := newTestCmd(t)
 		err := showPromptResult(cmd, server.URL, 123, false, "")
 
@@ -285,40 +291,23 @@ func TestRunLabelFlag(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var receivedRef string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/enqueue" {
-					var req map[string]any
-					json.NewDecoder(r.Body).Decode(&req)
-					receivedRef = req["git_ref"].(string)
-
-					w.WriteHeader(http.StatusCreated)
-					writeJSON(w, storage.ReviewJob{
-						ID:     1,
-						Agent:  "test",
-						GitRef: receivedRef,
-					})
-				}
-			}))
-			t.Cleanup(server.Close)
-
+			server := newRunTestServer(t, mockServerConfig{receivedRef: &receivedRef})
 			patchServerAddr(t, server.URL)
 
-			gitRef := "run"
+			cmd := runCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+
+			args := []string{"test prompt"}
 			if tt.label != "" {
-				gitRef = tt.label
+				args = append(args, "--label", tt.label)
 			}
+			cmd.SetArgs(args)
 
-			reqBody, _ := json.Marshal(map[string]any{
-				"repo_path":     "/test",
-				"git_ref":       gitRef,
-				"custom_prompt": "test prompt",
-			})
-
-			resp, err := http.Post(server.URL+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+			err := cmd.Execute()
 			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
+				t.Fatalf("Unexpected error executing command: %v", err)
 			}
-			resp.Body.Close()
 
 			if receivedRef != tt.expectedRef {
 				t.Errorf("Expected git_ref %q, got %q", tt.expectedRef, receivedRef)
@@ -328,101 +317,80 @@ func TestRunLabelFlag(t *testing.T) {
 }
 
 func TestWaitForPromptJob(t *testing.T) {
-	t.Run("returns success when job completes", func(t *testing.T) {
-		review := stubReview(123, "test-agent", "Test result")
-		doneJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusDone}
-		server := newMockJobsServer(t, []storage.ReviewJob{doneJob}, &review)
+	review := stubReview(123, "test-agent", "Result")
 
-		cmd, out := newTestCmd(t)
-		err := waitForPromptJob(cmd, server.URL, 123, false)
+	tests := []struct {
+		name        string
+		jobs        []storage.ReviewJob
+		review      *storage.Review
+		quiet       bool
+		expectError string
+		expectOut   []string
+	}{
+		{
+			name:      "success",
+			jobs:      []storage.ReviewJob{{ID: 123, Status: storage.JobStatusDone}},
+			review:    &review,
+			expectOut: []string{"done!", "Result"},
+		},
+		{
+			name:        "failed job",
+			jobs:        []storage.ReviewJob{{ID: 123, Status: storage.JobStatusFailed, Error: "oops"}},
+			expectError: "oops",
+			expectOut:   []string{"failed!"},
+		},
+		{
+			name:        "canceled job",
+			jobs:        []storage.ReviewJob{{ID: 123, Status: storage.JobStatusCanceled}},
+			expectError: "canceled",
+			expectOut:   []string{"canceled!"},
+		},
+		{
+			name:        "job not found",
+			jobs:        []storage.ReviewJob{},
+			expectError: "not found",
+		},
+		{
+			name:      "quiet mode success",
+			jobs:      []storage.ReviewJob{{ID: 123, Status: storage.JobStatusDone}},
+			review:    &review,
+			quiet:     true,
+			expectOut: []string{}, // Should be empty
+		},
+	}
 
-		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newRunTestServer(t, mockServerConfig{jobs: tt.jobs, review: tt.review})
+			cmd, out := newTestCmd(t)
 
-		output := out.String()
-		if !strings.Contains(output, "done!") {
-			t.Error("Expected 'done!' in output")
-		}
-		if !strings.Contains(output, "Test result") {
-			t.Error("Expected result in output")
-		}
-	})
+			// Use small poll interval for tests
+			err := waitForPromptJob(cmd, server.URL, 123, tt.quiet, 1*time.Millisecond)
 
-	t.Run("returns error when job fails", func(t *testing.T) {
-		failedJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusFailed, Error: "agent crashed"}
-		server := newMockJobsServer(t, []storage.ReviewJob{failedJob}, nil)
+			if tt.expectError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.expectError) {
+					t.Errorf("Expected error containing %q, got %v", tt.expectError, err)
+				}
+			} else if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
 
-		cmd, out := newTestCmd(t)
-		err := waitForPromptJob(cmd, server.URL, 123, false)
-
-		if err == nil {
-			t.Error("Expected error for failed job")
-		}
-		if !strings.Contains(err.Error(), "agent crashed") {
-			t.Errorf("Expected error message to contain reason, got: %v", err)
-		}
-
-		output := out.String()
-		if !strings.Contains(output, "failed!") {
-			t.Error("Expected 'failed!' in output")
-		}
-	})
-
-	t.Run("returns error when job canceled", func(t *testing.T) {
-		canceledJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusCanceled}
-		server := newMockJobsServer(t, []storage.ReviewJob{canceledJob}, nil)
-
-		cmd, out := newTestCmd(t)
-		err := waitForPromptJob(cmd, server.URL, 123, false)
-
-		if err == nil {
-			t.Error("Expected error for canceled job")
-		}
-		if !strings.Contains(err.Error(), "canceled") {
-			t.Errorf("Expected 'canceled' in error, got: %v", err)
-		}
-
-		output := out.String()
-		if !strings.Contains(output, "canceled!") {
-			t.Error("Expected 'canceled!' in output")
-		}
-	})
-
-	t.Run("returns error when job not found", func(t *testing.T) {
-		server := newMockJobsServer(t, []storage.ReviewJob{}, nil)
-
-		cmd, _ := newTestCmd(t)
-		err := waitForPromptJob(cmd, server.URL, 999, false)
-
-		if err == nil {
-			t.Error("Expected error for missing job")
-		}
-		if !strings.Contains(err.Error(), "not found") {
-			t.Errorf("Expected 'not found' in error, got: %v", err)
-		}
-	})
-
-	t.Run("quiet mode suppresses waiting message", func(t *testing.T) {
-		review := stubReview(123, "test-agent", "Test result")
-		doneJob := storage.ReviewJob{ID: 123, Status: storage.JobStatusDone}
-		server := newMockJobsServer(t, []storage.ReviewJob{doneJob}, &review)
-
-		cmd, out := newTestCmd(t)
-		err := waitForPromptJob(cmd, server.URL, 123, true) // quiet=true
-
-		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
-		}
-
-		if out.Len() > 0 {
-			t.Errorf("Expected no output in quiet mode, got: %s", out.String())
-		}
-	})
+			output := out.String()
+			if tt.quiet {
+				if output != "" {
+					t.Errorf("Expected no output in quiet mode, got: %q", output)
+				}
+			} else {
+				for _, s := range tt.expectOut {
+					if !strings.Contains(output, s) {
+						t.Errorf("Expected output to contain %q, got: %q", s, output)
+					}
+				}
+			}
+		})
+	}
 
 	t.Run("polls while job is running", func(t *testing.T) {
-		patchPromptPollInterval(t, 1*time.Millisecond)
-
 		pollCount := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
@@ -442,7 +410,7 @@ func TestWaitForPromptJob(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		cmd, _ := newTestCmd(t)
-		err := waitForPromptJob(cmd, server.URL, 123, true)
+		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
