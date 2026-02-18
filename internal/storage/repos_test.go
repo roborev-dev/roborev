@@ -553,7 +553,7 @@ func TestGetRepoStats(t *testing.T) {
 
 	// Fail job3
 	claimJob(t, db, "worker-1")
-	if err := db.FailJob(job3.ID, "agent error"); err != nil {
+	if _, err := db.FailJob(job3.ID, "", "agent error"); err != nil {
 		t.Fatalf("FailJob failed: %v", err)
 	}
 
@@ -1073,7 +1073,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		}
 
 		// 4. Retry the job (reset to queued)
-		retried, err := db.RetryJob(claimed.ID, 3)
+		retried, err := db.RetryJob(claimed.ID, "", 3)
 		if err != nil {
 			t.Fatalf("RetryJob failed: %v", err)
 		}
@@ -1124,7 +1124,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		}
 
 		// 3. Retry
-		retried, err := db.RetryJob(claimed.ID, 3)
+		retried, err := db.RetryJob(claimed.ID, "", 3)
 		if err != nil {
 			t.Fatalf("RetryJob failed: %v", err)
 		}
@@ -1170,7 +1170,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			t.Error("Compact job: IsPromptJob() should be true")
 		}
 
-		retried, err := db.RetryJob(claimed.ID, 3)
+		retried, err := db.RetryJob(claimed.ID, "", 3)
 		if err != nil {
 			t.Fatalf("RetryJob failed: %v", err)
 		}
@@ -1210,7 +1210,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			t.Fatalf("SaveJobPrompt failed: %v", err)
 		}
 
-		retried, err := db.RetryJob(claimed.ID, 3)
+		retried, err := db.RetryJob(claimed.ID, "", 3)
 		if err != nil {
 			t.Fatalf("RetryJob failed: %v", err)
 		}
@@ -1246,7 +1246,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			t.Fatalf("SaveJobPrompt failed: %v", err)
 		}
 
-		retried, err := db.RetryJob(claimed.ID, 3)
+		retried, err := db.RetryJob(claimed.ID, "", 3)
 		if err != nil {
 			t.Fatalf("RetryJob failed: %v", err)
 		}

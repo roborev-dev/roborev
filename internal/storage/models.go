@@ -65,6 +65,7 @@ type ReviewJob struct {
 	ReviewType   string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt
 	PatchID      string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
 	OutputPrefix string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	BackupAgent  string     `json:"backup_agent,omitempty"`  // Backup agent for failover
 
 	// Sync fields
 	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync

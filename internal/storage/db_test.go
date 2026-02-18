@@ -311,7 +311,7 @@ func TestJobFailure(t *testing.T) {
 	claimJob(t, db, "worker-1")
 
 	// Fail the job
-	err := db.FailJob(job.ID, "test error message")
+	_, err := db.FailJob(job.ID, "", "test error message")
 	if err != nil {
 		t.Fatalf("FailJob failed: %v", err)
 	}
@@ -325,6 +325,95 @@ func TestJobFailure(t *testing.T) {
 	}
 	if updatedJob.Error != "test error message" {
 		t.Errorf("Expected error message 'test error message', got '%s'", updatedJob.Error)
+	}
+}
+
+func TestFailJobOwnerScoped(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "fail-owner")
+	claimJob(t, db, "worker-1")
+
+	// Wrong worker should not be able to fail the job
+	updated, err := db.FailJob(job.ID, "worker-2", "stale fail")
+	if err != nil {
+		t.Fatalf("FailJob with wrong worker failed: %v", err)
+	}
+	if updated {
+		t.Error("FailJob should return false for wrong worker")
+	}
+
+	// Job should still be running
+	j, err := db.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID failed: %v", err)
+	}
+	if j.Status != JobStatusRunning {
+		t.Errorf("Expected status 'running', got '%s'", j.Status)
+	}
+
+	// Correct worker should succeed
+	updated, err = db.FailJob(job.ID, "worker-1", "legit fail")
+	if err != nil {
+		t.Fatalf("FailJob with correct worker failed: %v", err)
+	}
+	if !updated {
+		t.Error("FailJob should return true for correct worker")
+	}
+
+	j, err = db.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID failed: %v", err)
+	}
+	if j.Status != JobStatusFailed {
+		t.Errorf("Expected status 'failed', got '%s'", j.Status)
+	}
+	if j.Error != "legit fail" {
+		t.Errorf("Expected error 'legit fail', got '%s'", j.Error)
+	}
+}
+
+func TestRetryJobOwnerScoped(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-owner")
+	claimJob(t, db, "worker-1")
+
+	// Wrong worker should not be able to retry the job
+	retried, err := db.RetryJob(job.ID, "worker-2", 3)
+	if err != nil {
+		t.Fatalf("RetryJob with wrong worker failed: %v", err)
+	}
+	if retried {
+		t.Error("RetryJob should return false for wrong worker")
+	}
+
+	// Job should still be running (not requeued)
+	j, err := db.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID failed: %v", err)
+	}
+	if j.Status != JobStatusRunning {
+		t.Errorf("Expected status 'running', got '%s'", j.Status)
+	}
+
+	// Correct worker should succeed
+	retried, err = db.RetryJob(job.ID, "worker-1", 3)
+	if err != nil {
+		t.Fatalf("RetryJob with correct worker failed: %v", err)
+	}
+	if !retried {
+		t.Error("RetryJob should return true for correct worker")
+	}
+
+	j, err = db.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID failed: %v", err)
+	}
+	if j.Status != JobStatusQueued {
+		t.Errorf("Expected status 'queued', got '%s'", j.Status)
 	}
 }
 
@@ -395,7 +484,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-error", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict-error", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.FailJob(job.ID, "API rate limit exceeded")
+		db.FailJob(job.ID, "", "API rate limit exceeded")
 
 		// Manually insert a review to simulate edge case
 		_, err := db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output) VALUES (?, 'codex', 'prompt', 'No issues found.')`, job.ID)
@@ -610,7 +699,7 @@ func TestJobCounts(t *testing.T) {
 	_, _ = db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "fail1", Agent: "codex"})
 	claimed2, _ := db.ClaimJob("w2")
 	if claimed2 != nil {
-		db.FailJob(claimed2.ID, "err")
+		db.FailJob(claimed2.ID, "", "err")
 	}
 
 	queued, _, done, failed, _, err := db.GetJobCounts()
@@ -710,7 +799,7 @@ func TestRetryJob(t *testing.T) {
 	claimJob(t, db, "worker-1")
 
 	// Retry should succeed (retry_count: 0 -> 1)
-	retried, err := db.RetryJob(job.ID, 3)
+	retried, err := db.RetryJob(job.ID, "", 3)
 	if err != nil {
 		t.Fatalf("RetryJob failed: %v", err)
 	}
@@ -730,9 +819,9 @@ func TestRetryJob(t *testing.T) {
 
 	// Claim again and retry twice more (retry_count: 1->2, 2->3)
 	_, _ = db.ClaimJob("worker-1")
-	db.RetryJob(job.ID, 3) // retry_count becomes 2
+	db.RetryJob(job.ID, "", 3) // retry_count becomes 2
 	_, _ = db.ClaimJob("worker-1")
-	db.RetryJob(job.ID, 3) // retry_count becomes 3
+	db.RetryJob(job.ID, "", 3) // retry_count becomes 3
 
 	count, _ = db.GetJobRetryCount(job.ID)
 	if count != 3 {
@@ -741,7 +830,7 @@ func TestRetryJob(t *testing.T) {
 
 	// Claim again - next retry should fail (at max)
 	_, _ = db.ClaimJob("worker-1")
-	retried, err = db.RetryJob(job.ID, 3)
+	retried, err = db.RetryJob(job.ID, "", 3)
 	if err != nil {
 		t.Fatalf("RetryJob at max failed: %v", err)
 	}
@@ -763,7 +852,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 	_, _, job := createJobChain(t, db, "/tmp/test-repo", "retry-status")
 
 	// Try to retry a queued job (should fail - not running)
-	retried, err := db.RetryJob(job.ID, 3)
+	retried, err := db.RetryJob(job.ID, "", 3)
 	if err != nil {
 		t.Fatalf("RetryJob on queued job failed: %v", err)
 	}
@@ -775,7 +864,7 @@ func TestRetryJobOnlyWorksForRunning(t *testing.T) {
 	_, _ = db.ClaimJob("worker-1")
 	db.CompleteJob(job.ID, "codex", "p", "o")
 
-	retried, err = db.RetryJob(job.ID, 3)
+	retried, err = db.RetryJob(job.ID, "", 3)
 	if err != nil {
 		t.Fatalf("RetryJob on done job failed: %v", err)
 	}
@@ -793,8 +882,8 @@ func TestRetryJobAtomic(t *testing.T) {
 
 	// Simulate two concurrent retries - only first should succeed
 	// (In practice this tests the atomic update)
-	retried1, _ := db.RetryJob(job.ID, 3)
-	retried2, _ := db.RetryJob(job.ID, 3) // Job is now queued, not running
+	retried1, _ := db.RetryJob(job.ID, "", 3)
+	retried2, _ := db.RetryJob(job.ID, "", 3) // Job is now queued, not running
 
 	if !retried1 {
 		t.Error("First retry should succeed")
@@ -808,6 +897,201 @@ func TestRetryJobAtomic(t *testing.T) {
 	if count != 1 {
 		t.Errorf("Expected retry_count=1 (atomic), got %d", count)
 	}
+}
+
+func TestFailoverJob(t *testing.T) {
+	t.Run("succeeds with backup agent", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/failover-repo")
+		commit := createCommit(t, db, repo.ID, "fo-abc123")
+
+		// Enqueue with backup agent
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:      repo.ID,
+			CommitID:    commit.ID,
+			GitRef:      "fo-abc123",
+			Agent:       "primary",
+			BackupAgent: "backup",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+
+		// Claim to make it running
+		claimJob(t, db, "worker-1")
+
+		// Failover should succeed
+		ok, err := db.FailoverJob(job.ID, "worker-1")
+		if err != nil {
+			t.Fatalf("FailoverJob: %v", err)
+		}
+		if !ok {
+			t.Fatal("Expected failover to succeed")
+		}
+
+		// Verify: agent swapped, backup cleared, retry_count reset, status queued
+		updated, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if updated.Agent != "backup" {
+			t.Errorf("Agent = %q, want %q", updated.Agent, "backup")
+		}
+		if updated.BackupAgent != "" {
+			t.Errorf("BackupAgent = %q, want empty", updated.BackupAgent)
+		}
+		if updated.Status != JobStatusQueued {
+			t.Errorf("Status = %q, want %q", updated.Status, JobStatusQueued)
+		}
+		count, _ := db.GetJobRetryCount(job.ID)
+		if count != 0 {
+			t.Errorf("RetryCount = %d, want 0", count)
+		}
+	})
+
+	t.Run("fails without backup agent", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		_, _, job := createJobChain(t, db, "/tmp/failover-nobackup", "fo-no-backup")
+		claimJob(t, db, "worker-1")
+
+		ok, err := db.FailoverJob(job.ID, "worker-1")
+		if err != nil {
+			t.Fatalf("FailoverJob: %v", err)
+		}
+		if ok {
+			t.Error("Expected failover to return false with no backup agent")
+		}
+	})
+
+	t.Run("fails when backup equals agent", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/failover-same")
+		commit := createCommit(t, db, repo.ID, "fo-same123")
+
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:      repo.ID,
+			CommitID:    commit.ID,
+			GitRef:      "fo-same123",
+			Agent:       "codex",
+			BackupAgent: "codex",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+		claimJob(t, db, "worker-1")
+
+		ok, err := db.FailoverJob(job.ID, "worker-1")
+		if err != nil {
+			t.Fatalf("FailoverJob: %v", err)
+		}
+		if ok {
+			t.Error("Expected failover to return false when backup == agent")
+		}
+	})
+
+	t.Run("fails when not running", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/failover-queued")
+		commit := createCommit(t, db, repo.ID, "fo-queued")
+
+		// Job is queued (not claimed/running)
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:      repo.ID,
+			CommitID:    commit.ID,
+			GitRef:      "fo-queued",
+			Agent:       "primary",
+			BackupAgent: "backup",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+
+		ok, err := db.FailoverJob(job.ID, "worker-1")
+		if err != nil {
+			t.Fatalf("FailoverJob: %v", err)
+		}
+		if ok {
+			t.Error("Expected failover to return false for queued job")
+		}
+	})
+
+	t.Run("backup agent is null after failover", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/failover-null")
+		commit := createCommit(t, db, repo.ID, "fo-null123")
+
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:      repo.ID,
+			CommitID:    commit.ID,
+			GitRef:      "fo-null123",
+			Agent:       "primary",
+			BackupAgent: "backup",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+		claimJob(t, db, "worker-1")
+
+		db.FailoverJob(job.ID, "worker-1")
+
+		// Second failover should fail (backup_agent is now NULL)
+		claimJob(t, db, "worker-1")
+		ok, err := db.FailoverJob(job.ID, "worker-1")
+		if err != nil {
+			t.Fatalf("FailoverJob second attempt: %v", err)
+		}
+		if ok {
+			t.Error("Expected second failover to return false (backup_agent cleared)")
+		}
+	})
+
+	t.Run("fails when wrong worker", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/failover-wrongworker")
+		commit := createCommit(t, db, repo.ID, "fo-wrongw")
+
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:      repo.ID,
+			CommitID:    commit.ID,
+			GitRef:      "fo-wrongw",
+			Agent:       "primary",
+			BackupAgent: "backup",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+		claimJob(t, db, "worker-1")
+
+		// A different worker should not be able to failover this job
+		ok, err := db.FailoverJob(job.ID, "worker-2")
+		if err != nil {
+			t.Fatalf("FailoverJob: %v", err)
+		}
+		if ok {
+			t.Error("Expected failover to return false when called by wrong worker")
+		}
+
+		// Verify original agent is unchanged
+		updated, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if updated.Agent != "primary" {
+			t.Errorf("Agent = %q, want %q (should not have changed)", updated.Agent, "primary")
+		}
+	})
 }
 
 func TestCancelJob(t *testing.T) {
@@ -863,7 +1147,7 @@ func TestCancelJob(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-failed", "A", "S", time.Now())
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "cancel-failed", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.FailJob(job.ID, "some error")
+		db.FailJob(job.ID, "", "some error")
 
 		err := db.CancelJob(job.ID)
 		if err == nil {
@@ -901,7 +1185,7 @@ func TestCancelJob(t *testing.T) {
 		db.CancelJob(job.ID)
 
 		// FailJob should not overwrite canceled status
-		db.FailJob(job.ID, "some error")
+		db.FailJob(job.ID, "", "some error")
 
 		updated, _ := db.GetJobByID(job.ID)
 		if updated.Status != JobStatusCanceled {
@@ -1505,7 +1789,7 @@ func TestListReposWithReviewCounts(t *testing.T) {
 		// Claim and fail another job
 		claimed2, _ := db.ClaimJob("worker-1")
 		if claimed2 != nil {
-			db.FailJob(claimed2.ID, "test error")
+			db.FailJob(claimed2.ID, "", "test error")
 		}
 
 		// Counts should still be the same (counts all jobs, not just completed)
@@ -1872,7 +2156,7 @@ func TestReenqueueJob(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "A", "S", time.Now())
 		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-failed", Agent: "codex"})
 		db.ClaimJob("worker-1")
-		db.FailJob(job.ID, "some error")
+		db.FailJob(job.ID, "", "some error")
 
 		err := db.ReenqueueJob(job.ID)
 		if err != nil {

@@ -717,6 +717,7 @@ type EnqueueOpts struct {
 	GitRef       string // SHA, "start..end" range, or "dirty"
 	Branch       string
 	Agent        string
+	BackupAgent  string // Backup agent for failover (resolved at enqueue time)
 	Model        string
 	Reasoning    string
 	ReviewType   string // e.g. "security" — changes which system prompt is used
@@ -780,12 +781,12 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	}
 
 	result, err := db.Exec(`
-		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning,
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, backup_agent, model, reasoning,
 			status, job_type, review_type, patch_id, diff_content, prompt, agentic, output_prefix,
 			uuid, source_machine_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch),
-		opts.Agent, nullString(opts.Model), reasoning,
+		opts.Agent, nullString(opts.BackupAgent), nullString(opts.Model), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
 		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt,
 		nullString(opts.OutputPrefix),
@@ -801,6 +802,7 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 		GitRef:          gitRef,
 		Branch:          opts.Branch,
 		Agent:           opts.Agent,
+		BackupAgent:     opts.BackupAgent,
 		Model:           opts.Model,
 		Reasoning:       reasoning,
 		JobType:         jobType,
@@ -867,10 +869,11 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var reviewType sql.NullString
 	var outputPrefix sql.NullString
 	var patchID sql.NullString
+	var backupAgent sql.NullString
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.model, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), j.job_type, j.review_type,
-		       j.output_prefix, j.patch_id
+		       j.output_prefix, j.patch_id, j.backup_agent
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -879,7 +882,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &job.Agent, &model, &job.Reasoning, &job.Status, &enqueuedAt,
 		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent, &prompt, &agenticInt, &jobType, &reviewType,
-		&outputPrefix, &patchID)
+		&outputPrefix, &patchID, &backupAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -914,6 +917,9 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	}
 	if patchID.Valid {
 		job.PatchID = patchID.String
+	}
+	if backupAgent.Valid {
+		job.BackupAgent = backupAgent.String
 	}
 	job.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 	job.Status = JobStatusRunning
@@ -1004,12 +1010,30 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 }
 
 // FailJob marks a job as failed with an error message.
-// Only updates if job is still in 'running' state (respects cancellation).
-func (db *DB) FailJob(jobID int64, errorMsg string) error {
+// Only updates if job is still in 'running' state and owned by the given worker
+// (respects cancellation and prevents stale workers from failing reclaimed jobs).
+// Pass empty workerID to skip the ownership check (for admin/test callers).
+// Returns true if the job was actually updated (false when ownership or status
+// check prevented the update).
+func (db *DB) FailJob(jobID int64, workerID string, errorMsg string) (bool, error) {
 	now := time.Now().Format(time.RFC3339)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
-		now, errorMsg, now, jobID)
-	return err
+	var result sql.Result
+	var err error
+	if workerID != "" {
+		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running' AND worker_id = ?`,
+			now, errorMsg, now, jobID, workerID)
+	} else {
+		result, err = db.Exec(`UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
+			now, errorMsg, now, jobID)
+	}
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 // CancelJob marks a running or queued job as canceled
@@ -1087,17 +1111,26 @@ func (db *DB) ReenqueueJob(jobID int64) error {
 	return nil
 }
 
-// RetryJob atomically resets a running job to queued for retry.
-// Returns false if max retries reached or job is not in running state.
-// maxRetries is the number of retries allowed (e.g., 3 means up to 4 total attempts).
-func (db *DB) RetryJob(jobID int64, maxRetries int) (bool, error) {
-	// Atomically update only if retry_count < maxRetries and status is running
-	// This prevents race conditions with multiple workers
-	result, err := db.Exec(`
-		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1
-		WHERE id = ? AND retry_count < ? AND status = 'running'
-	`, jobID, maxRetries)
+// RetryJob requeues a running job for retry if retry_count < maxRetries.
+// When workerID is non-empty the update is scoped to the owning worker,
+// preventing a stale/zombie worker from requeuing a reclaimed job.
+// Pass empty workerID to skip the ownership check (for admin/test callers).
+func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int) (bool, error) {
+	var result sql.Result
+	var err error
+	if workerID != "" {
+		result, err = db.Exec(`
+			UPDATE review_jobs
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1
+			WHERE id = ? AND retry_count < ? AND status = 'running' AND worker_id = ?
+		`, jobID, maxRetries, workerID)
+	} else {
+		result, err = db.Exec(`
+			UPDATE review_jobs
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1
+			WHERE id = ? AND retry_count < ? AND status = 'running'
+		`, jobID, maxRetries)
+	}
 	if err != nil {
 		return false, err
 	}
@@ -1108,6 +1141,34 @@ func (db *DB) RetryJob(jobID int64, maxRetries int) (bool, error) {
 	}
 
 	return rows > 0, nil
+}
+
+// FailoverJob atomically switches a failed job to its backup agent and requeues it.
+// Returns false if the job has no backup agent, is not in running state, the
+// backup agent is the same as the current agent, or the worker doesn't own the job.
+func (db *DB) FailoverJob(jobID int64, workerID string) (bool, error) {
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET agent = backup_agent,
+		    backup_agent = NULL,
+		    retry_count = 0,
+		    status = 'queued',
+		    worker_id = NULL,
+		    started_at = NULL,
+		    finished_at = NULL,
+		    error = NULL
+		WHERE id = ?
+		  AND status = 'running'
+		  AND worker_id = ?
+		  AND backup_agent IS NOT NULL
+		  AND backup_agent != ''
+		  AND backup_agent != agent
+	`, jobID, workerID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
 }
 
 // GetJobRetryCount returns the retry count for a job
@@ -1158,7 +1219,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.addressed, rv.output,
-		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id
+		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id, j.backup_agent
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -1225,7 +1286,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, jobTypeStr, reviewTypeStr, patchIDStr, backupAgentStr sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var addressed sql.NullInt64
@@ -1234,7 +1295,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
 			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &addressed, &output,
-			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr)
+			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr, &backupAgentStr)
 		if err != nil {
 			return nil, err
 		}
@@ -1284,6 +1345,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		if branch.Valid {
 			j.Branch = branch.String
+		}
+		if backupAgentStr.Valid {
+			j.BackupAgent = backupAgentStr.String
 		}
 		if addressed.Valid {
 			val := addressed.Int64 != 0
@@ -1359,18 +1423,18 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var agentic int
 
-	var model, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
+	var model, branch, jobTypeStr, reviewTypeStr, patchIDStr, backupAgentStr sql.NullString
 	err := db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
-		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type, j.patch_id
+		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type, j.patch_id, j.backup_agent
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE j.id = ?
 	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &agentic,
-		&j.RepoPath, &j.RepoName, &commitSubject, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr)
+		&j.RepoPath, &j.RepoName, &commitSubject, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr, &backupAgentStr)
 	if err != nil {
 		return nil, err
 	}
@@ -1414,6 +1478,9 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	}
 	if branch.Valid {
 		j.Branch = branch.String
+	}
+	if backupAgentStr.Valid {
+		j.BackupAgent = backupAgentStr.String
 	}
 
 	return &j, nil

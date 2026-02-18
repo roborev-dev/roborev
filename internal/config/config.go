@@ -49,6 +49,7 @@ type Config struct {
 	ReviewContextCount int    `toml:"review_context_count"`
 	DefaultAgent       string `toml:"default_agent"`
 	DefaultModel       string `toml:"default_model"` // Default model for agents (format varies by agent)
+	DefaultBackupAgent string `toml:"default_backup_agent"`
 	JobTimeoutMinutes  int    `toml:"job_timeout_minutes"`
 
 	// Workflow-specific agent/model configuration
@@ -92,7 +93,15 @@ type Config struct {
 	DesignModelFast       string `toml:"design_model_fast"`
 	DesignModelStandard   string `toml:"design_model_standard"`
 	DesignModelThorough   string `toml:"design_model_thorough"`
-	AllowUnsafeAgents     *bool  `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
+
+	// Backup agents for failover
+	ReviewBackupAgent   string `toml:"review_backup_agent"`
+	RefineBackupAgent   string `toml:"refine_backup_agent"`
+	FixBackupAgent      string `toml:"fix_backup_agent"`
+	SecurityBackupAgent string `toml:"security_backup_agent"`
+	DesignBackupAgent   string `toml:"design_backup_agent"`
+
+	AllowUnsafeAgents *bool `toml:"allow_unsafe_agents"` // nil = not set, allows commands to choose their own default
 
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
@@ -348,6 +357,7 @@ type RepoCIConfig struct {
 type RepoConfig struct {
 	Agent              string   `toml:"agent"`
 	Model              string   `toml:"model"` // Model for agents (format varies by agent)
+	BackupAgent        string   `toml:"backup_agent"`
 	ReviewContextCount int      `toml:"review_context_count"`
 	ReviewGuidelines   string   `toml:"review_guidelines"`
 	JobTimeoutMinutes  int      `toml:"job_timeout_minutes"`
@@ -401,6 +411,13 @@ type RepoConfig struct {
 	DesignModelFast       string `toml:"design_model_fast"`
 	DesignModelStandard   string `toml:"design_model_standard"`
 	DesignModelThorough   string `toml:"design_model_thorough"`
+
+	// Backup agents for failover
+	ReviewBackupAgent   string `toml:"review_backup_agent"`
+	RefineBackupAgent   string `toml:"refine_backup_agent"`
+	FixBackupAgent      string `toml:"fix_backup_agent"`
+	SecurityBackupAgent string `toml:"security_backup_agent"`
+	DesignBackupAgent   string `toml:"design_backup_agent"`
 
 	// Hooks configuration (per-repo)
 	Hooks []HookConfig `toml:"hooks"`
@@ -727,6 +744,55 @@ func ResolveModelForWorkflow(cli, repoPath string, globalCfg *Config, workflow, 
 	}
 	repoCfg, _ := LoadRepoConfig(repoPath)
 	return getWorkflowValue(repoCfg, globalCfg, workflow, level, false)
+}
+
+// ResolveBackupAgentForWorkflow returns the backup agent for a workflow,
+// or empty string if none is configured.
+// Priority:
+//  1. Repo {workflow}_backup_agent
+//  2. Repo backup_agent (generic)
+//  3. Global {workflow}_backup_agent
+//  4. Global default_backup_agent
+//  5. "" (no backup)
+func ResolveBackupAgentForWorkflow(repoPath string, globalCfg *Config, workflow string) string {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+
+	// Repo layer: workflow-specific > generic
+	if repoCfg != nil {
+		if s := lookupFieldByTag(reflect.ValueOf(*repoCfg), workflow+"_backup_agent"); s != "" {
+			return s
+		}
+		if s := strings.TrimSpace(repoCfg.BackupAgent); s != "" {
+			return s
+		}
+	}
+
+	// Global layer: workflow-specific > default
+	if globalCfg != nil {
+		if s := lookupFieldByTag(reflect.ValueOf(*globalCfg), workflow+"_backup_agent"); s != "" {
+			return s
+		}
+		if s := strings.TrimSpace(globalCfg.DefaultBackupAgent); s != "" {
+			return s
+		}
+	}
+
+	return ""
+}
+
+// lookupFieldByTag finds a struct field by its TOML tag and returns its trimmed value.
+func lookupFieldByTag(v reflect.Value, key string) string {
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("toml")
+		if tag == "" {
+			continue
+		}
+		if strings.Split(tag, ",")[0] == key {
+			return strings.TrimSpace(v.Field(i).String())
+		}
+	}
+	return ""
 }
 
 // getWorkflowValue looks up agent or model config following Option A priority.

@@ -318,7 +318,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	baseAgent, err := agent.GetAvailable(job.Agent)
 	if err != nil {
 		log.Printf("[%s] Error getting agent: %v", workerID, err)
-		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
+		wp.failOrRetryAgent(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
 		return
 	}
 
@@ -376,7 +376,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			return // Job already marked as canceled in DB, nothing more to do
 		}
 		log.Printf("[%s] Agent error: %v", workerID, err)
-		wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("agent: %v", err))
+		wp.failOrRetryAgent(workerID, job, agentName, fmt.Sprintf("agent: %v", err))
 		return
 	}
 
@@ -385,7 +385,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// not produce a "done" review that misleads --wait callers.
 	if job.JobType == "compact" && !IsValidCompactOutput(output) {
 		log.Printf("[%s] Compact job %d produced invalid output, failing", workerID, job.ID)
-		wp.failOrRetry(workerID, job, agentName, "compact output invalid (empty or error)")
+		wp.failOrRetryAgent(workerID, job, agentName, "compact output invalid (empty or error)")
 		return
 	}
 
@@ -433,17 +433,30 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	})
 }
 
-// failOrRetry attempts to retry the job, or marks it as failed if max retries reached
+// failOrRetry attempts to retry the job, or marks it as failed if max retries reached.
+// This is used for non-agent errors (e.g., prompt build failures) where switching agents won't help.
 func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agentName string, errorMsg string) {
-	retried, err := wp.db.RetryJob(job.ID, maxRetries)
+	wp.failOrRetryInner(workerID, job, agentName, errorMsg, false)
+}
+
+// failOrRetryAgent is like failOrRetry but allows failover to a backup agent
+// when retries are exhausted. Used for agent-execution errors where switching
+// agents may resolve the issue.
+func (wp *WorkerPool) failOrRetryAgent(workerID string, job *storage.ReviewJob, agentName string, errorMsg string) {
+	wp.failOrRetryInner(workerID, job, agentName, errorMsg, true)
+}
+
+func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, agentName string, errorMsg string, agentError bool) {
+	retried, err := wp.db.RetryJob(job.ID, workerID, maxRetries)
 	if err != nil {
 		log.Printf("[%s] Error retrying job: %v", workerID, err)
-		if err := wp.db.FailJob(job.ID, errorMsg); err != nil {
-			log.Printf("[%s] Failed to mark job %d as failed: %v", workerID, job.ID, err)
-		}
-		wp.broadcastFailed(job, agentName, errorMsg)
-		if wp.errorLog != nil {
-			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
+		if updated, fErr := wp.db.FailJob(job.ID, workerID, errorMsg); fErr != nil {
+			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
+		} else if updated {
+			wp.broadcastFailed(job, agentName, errorMsg)
+			if wp.errorLog != nil {
+				wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
+			}
 		}
 		return
 	}
@@ -452,13 +465,28 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 		retryCount, _ := wp.db.GetJobRetryCount(job.ID)
 		log.Printf("[%s] Job %d queued for retry (%d/%d)", workerID, job.ID, retryCount, maxRetries)
 	} else {
-		log.Printf("[%s] Job %d failed after %d retries", workerID, job.ID, maxRetries)
-		if err := wp.db.FailJob(job.ID, errorMsg); err != nil {
-			log.Printf("[%s] Failed to mark job %d as failed: %v", workerID, job.ID, err)
+		// Retries exhausted -- attempt failover to backup agent if this is an agent error
+		if agentError && job.BackupAgent != "" {
+			failedOver, foErr := wp.db.FailoverJob(job.ID, workerID)
+			if foErr != nil {
+				log.Printf("[%s] Error attempting failover for job %d: %v", workerID, job.ID, foErr)
+			}
+			if failedOver {
+				log.Printf("[%s] Job %d failing over from %s to %s after %d retries: %s",
+					workerID, job.ID, agentName, job.BackupAgent, maxRetries, errorMsg)
+				return
+			}
 		}
-		wp.broadcastFailed(job, agentName, errorMsg)
-		if wp.errorLog != nil {
-			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed after %d retries: %s", job.ID, maxRetries, errorMsg), job.ID)
+
+		// No backup or failover failed -- mark as failed
+		if updated, fErr := wp.db.FailJob(job.ID, workerID, errorMsg); fErr != nil {
+			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
+		} else if updated {
+			log.Printf("[%s] Job %d failed after %d retries", workerID, job.ID, maxRetries)
+			wp.broadcastFailed(job, agentName, errorMsg)
+			if wp.errorLog != nil {
+				wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed after %d retries: %s", job.ID, maxRetries, errorMsg), job.ID)
+			}
 		}
 	}
 }

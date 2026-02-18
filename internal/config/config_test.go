@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1224,6 +1225,101 @@ func TestResolveModelForWorkflow(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestResolveBackupAgentForWorkflow(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     map[string]string
+		global   map[string]string
+		workflow string
+		expect   string
+	}{
+		// No backup configured
+		{"empty config", nil, nil, "review", ""},
+		{"only primary agent configured", M{"review_agent": "claude"}, nil, "review", ""},
+
+		// Global backup agent
+		{"global backup only", nil, M{"review_backup_agent": "test"}, "review", "test"},
+		{"global backup for refine", nil, M{"refine_backup_agent": "claude"}, "refine", "claude"},
+		{"global backup for fix", nil, M{"fix_backup_agent": "codex"}, "fix", "codex"},
+		{"global backup for security", nil, M{"security_backup_agent": "gemini"}, "security", "gemini"},
+		{"global backup for design", nil, M{"design_backup_agent": "droid"}, "design", "droid"},
+
+		// Repo backup agent overrides global
+		{"repo overrides global", M{"review_backup_agent": "repo-test"}, M{"review_backup_agent": "global-test"}, "review", "repo-test"},
+		{"repo backup only", M{"review_backup_agent": "test"}, nil, "review", "test"},
+
+		// Different workflows resolve independently
+		{"review backup doesn't affect refine", M{"review_backup_agent": "claude"}, nil, "refine", ""},
+		{"each workflow has own backup", M{"review_backup_agent": "claude", "refine_backup_agent": "codex"}, nil, "review", "claude"},
+		{"each workflow has own backup - refine", M{"review_backup_agent": "claude", "refine_backup_agent": "codex"}, nil, "refine", "codex"},
+
+		// Unknown workflow returns empty
+		{"unknown workflow", M{"review_backup_agent": "test"}, nil, "unknown", ""},
+
+		// No reasoning level support for backup agents
+		{"no level variants recognized", M{"review_backup_agent_fast": "claude"}, nil, "review", ""},
+		{"backup agent doesn't use levels", M{"review_backup_agent": "claude"}, nil, "review", "claude"},
+
+		// Default/generic backup agent fallback
+		{"global default_backup_agent", nil, M{"default_backup_agent": "test"}, "review", "test"},
+		{"global default_backup_agent for any workflow", nil, M{"default_backup_agent": "test"}, "fix", "test"},
+		{"global workflow-specific overrides default", nil, M{"default_backup_agent": "test", "review_backup_agent": "claude"}, "review", "claude"},
+		{"global default used when workflow not set", nil, M{"default_backup_agent": "test", "review_backup_agent": "claude"}, "fix", "test"},
+		{"repo backup_agent generic", M{"backup_agent": "repo-fallback"}, nil, "review", "repo-fallback"},
+		{"repo backup_agent generic for any workflow", M{"backup_agent": "repo-fallback"}, nil, "refine", "repo-fallback"},
+		{"repo workflow-specific overrides repo generic", M{"backup_agent": "generic", "review_backup_agent": "specific"}, nil, "review", "specific"},
+		{"repo generic overrides global workflow-specific", M{"backup_agent": "repo"}, M{"review_backup_agent": "global"}, "review", "repo"},
+		{"repo generic overrides global default", M{"backup_agent": "repo"}, M{"default_backup_agent": "global"}, "review", "repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp dir for repo config
+			repoDir := t.TempDir()
+
+			// Write repo config if provided
+			if tt.repo != nil {
+				writeRepoConfig(t, repoDir, tt.repo)
+			}
+
+			// Create global config if provided
+			var globalCfg *Config
+			if tt.global != nil {
+				globalCfg = &Config{}
+				populateConfigFromMap(globalCfg, tt.global)
+			}
+
+			// Test the function
+			result := ResolveBackupAgentForWorkflow(repoDir, globalCfg, tt.workflow)
+
+			if result != tt.expect {
+				t.Errorf("ResolveBackupAgentForWorkflow(%q, global, %q) = %q, want %q",
+					repoDir, tt.workflow, result, tt.expect)
+			}
+		})
+	}
+}
+
+// populateConfigFromMap is a helper to set config fields from a map
+func populateConfigFromMap(cfg *Config, m map[string]string) {
+	v := reflect.ValueOf(cfg).Elem()
+	t := v.Type()
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		tag := field.Tag.Get("toml")
+		if tag == "" {
+			continue
+		}
+		tagName := strings.Split(tag, ",")[0]
+		if val, ok := m[tagName]; ok {
+			if field.Type.Kind() == reflect.String {
+				v.Field(i).SetString(val)
+			}
+		}
 	}
 }
 

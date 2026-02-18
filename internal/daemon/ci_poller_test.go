@@ -1255,6 +1255,76 @@ func TestResolveMinSeverity(t *testing.T) {
 	})
 }
 
+func TestCIPollerProcessPR_BackupAgentCanonicalization(t *testing.T) {
+	t.Run("unknown backup agent is cleared", func(t *testing.T) {
+		h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+		h.Cfg.CI.ReviewTypes = []string{"review"}
+		h.Cfg.CI.Agents = []string{"test"}
+		h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+		h.stubProcessPRGit()
+
+		// Write repo config with an unknown backup agent
+		repoConfig := h.RepoPath + "/.roborev.toml"
+		if err := os.WriteFile(repoConfig, []byte(`backup_agent = "nonexistent-agent-xyz"`), 0644); err != nil {
+			t.Fatalf("write repo config: %v", err)
+		}
+
+		err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+			Number:      1,
+			HeadRefOid:  "head-abc",
+			BaseRefName: "main",
+		}, h.Cfg)
+		if err != nil {
+			t.Fatalf("processPR: %v", err)
+		}
+
+		jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-head-abc..head-abc"))
+		if err != nil {
+			t.Fatalf("ListJobs: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Fatalf("expected 1 job, got %d", len(jobs))
+		}
+		if jobs[0].BackupAgent != "" {
+			t.Errorf("expected backup_agent cleared for unknown agent, got %q", jobs[0].BackupAgent)
+		}
+	})
+
+	t.Run("backup same as primary is cleared", func(t *testing.T) {
+		h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+		h.Cfg.CI.ReviewTypes = []string{"review"}
+		h.Cfg.CI.Agents = []string{"test"}
+		h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+		h.stubProcessPRGit()
+
+		// Write repo config with backup_agent = "test" (same as primary)
+		repoConfig := h.RepoPath + "/.roborev.toml"
+		if err := os.WriteFile(repoConfig, []byte(`backup_agent = "test"`), 0644); err != nil {
+			t.Fatalf("write repo config: %v", err)
+		}
+
+		err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+			Number:      2,
+			HeadRefOid:  "head-def",
+			BaseRefName: "main",
+		}, h.Cfg)
+		if err != nil {
+			t.Fatalf("processPR: %v", err)
+		}
+
+		jobs, err := h.DB.ListJobs("", h.RepoPath, 0, 0, storage.WithGitRef("base-head-def..head-def"))
+		if err != nil {
+			t.Fatalf("ListJobs: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Fatalf("expected 1 job, got %d", len(jobs))
+		}
+		if jobs[0].BackupAgent != "" {
+			t.Errorf("expected backup_agent cleared when same as primary, got %q", jobs[0].BackupAgent)
+		}
+	})
+}
+
 // initGitRepoWithOrigin creates a git repo with an initial commit and
 // origin pointing to itself, so origin/main and GetDefaultBranch work.
 func initGitRepoWithOrigin(t *testing.T) (dir string, runGit func(args ...string) string) {
@@ -1278,7 +1348,9 @@ func initGitRepoWithOrigin(t *testing.T) (dir string, runGit func(args ...string
 	runGit("init", "-b", "main")
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
 	runGit("add", "-A")
 	runGit("commit", "-m", "initial")
 	runGit("remote", "add", "origin", dir)
@@ -1291,8 +1363,10 @@ func TestLoadCIRepoConfig_LoadsFromDefaultBranch(t *testing.T) {
 	dir, runGit := initGitRepoWithOrigin(t)
 
 	// Commit .roborev.toml on main with CI agents override
-	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-		[]byte("[ci]\nagents = [\"claude\"]\n"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("[ci]\nagents = [\"claude\"]\n"), 0644); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
 	runGit("add", ".roborev.toml")
 	runGit("commit", "-m", "add config")
 	runGit("fetch", "origin")
@@ -1313,8 +1387,10 @@ func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
 	dir, _ := initGitRepoWithOrigin(t)
 
 	// No .roborev.toml on origin/main, but put one in the working tree
-	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
 
 	cfg, err := loadCIRepoConfig(dir)
 	if err != nil {
@@ -1332,15 +1408,19 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 	dir, runGit := initGitRepoWithOrigin(t)
 
 	// Commit invalid TOML on main
-	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-		[]byte("this is not valid toml [[["), 0644)
+	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("this is not valid toml [[["), 0644); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
 	runGit("add", ".roborev.toml")
 	runGit("commit", "-m", "add bad config")
 	runGit("fetch", "origin")
 
-	// Also put valid config in working tree — should NOT be used
-	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644)
+	// Also put valid config in working tree -- should NOT be used
+	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
 
 	cfg, err := loadCIRepoConfig(dir)
 	if err == nil {
@@ -1387,6 +1467,9 @@ func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
 	}
 	if sc.state != "pending" {
 		t.Errorf("state=%q, want pending", sc.state)
+	}
+	if sc.desc != "Review in progress" {
+		t.Errorf("desc=%q, want %q", sc.desc, "Review in progress")
 	}
 }
 
