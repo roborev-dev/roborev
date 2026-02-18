@@ -37,52 +37,41 @@ func TestRenderMarkdownLinesFallsBackOnEmpty(t *testing.T) {
 	}
 }
 
-func TestMarkdownCacheHit(t *testing.T) {
-	c := &markdownCache{}
+func TestMarkdownCacheBehavior(t *testing.T) {
+	baseText := "Hello\nWorld"
+	baseWidth := 80
+	baseID := int64(1)
 
-	// First call should render
-	lines1 := c.getReviewLines("Hello\nWorld", 80, 80, 1)
-	if len(lines1) == 0 {
-		t.Fatal("Expected non-empty lines")
+	c := &markdownCache{}
+	// Prime cache
+	lines1 := c.getReviewLines(baseText, baseWidth, baseWidth, baseID)
+
+	tests := []struct {
+		name      string
+		text      string
+		width     int
+		id        int
+		expectHit bool
+	}{
+		{"SameInputs", baseText, baseWidth, int(baseID), true},
+		{"DiffText", "Different", baseWidth, int(baseID), false},
+		{"DiffWidth", baseText, 40, int(baseID), false},
+		{"DiffID", baseText, baseWidth, 2, false},
 	}
 
-	// Second call with same inputs should return cached result (same slice)
-	lines2 := c.getReviewLines("Hello\nWorld", 80, 80, 1)
-	if &lines1[0] != &lines2[0] {
-		t.Error("Expected cache hit to return same slice")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines2 := c.getReviewLines(tt.text, tt.width, tt.width, int64(tt.id))
+			// Check if the underlying array is the same
+			isSameObject := &lines1[0] == &lines2[0]
 
-func TestMarkdownCacheInvalidatesOnTextChange(t *testing.T) {
-	c := &markdownCache{}
-	lines1 := c.getReviewLines("Hello", 80, 80, 1)
-	lines2 := c.getReviewLines("Goodbye", 80, 80, 1)
-
-	// Different text should produce different content
-	if strings.TrimSpace(lines1[len(lines1)-1]) == strings.TrimSpace(lines2[len(lines2)-1]) {
-		t.Error("Expected different content after text change")
-	}
-}
-
-func TestMarkdownCacheInvalidatesOnWidthChange(t *testing.T) {
-	c := &markdownCache{}
-	lines1 := c.getReviewLines("Hello", 80, 80, 1)
-	lines2 := c.getReviewLines("Hello", 40, 40, 1)
-
-	// Same text but different width should re-render (different slice)
-	if &lines1[0] == &lines2[0] {
-		t.Error("Expected cache miss when width changes")
-	}
-}
-
-func TestMarkdownCacheInvalidatesOnReviewIDChange(t *testing.T) {
-	c := &markdownCache{}
-	lines1 := c.getReviewLines("Hello", 80, 80, 1)
-	lines2 := c.getReviewLines("Hello", 80, 80, 2)
-
-	// Same text but different review ID should re-render
-	if &lines1[0] == &lines2[0] {
-		t.Error("Expected cache miss when review ID changes")
+			if tt.expectHit && !isSameObject {
+				t.Error("Expected cache hit (same slice pointer)")
+			}
+			if !tt.expectHit && isSameObject {
+				t.Error("Expected cache miss (different slice pointer)")
+			}
+		})
 	}
 }
 
@@ -101,150 +90,124 @@ func TestMarkdownCachePromptSeparateFromReview(t *testing.T) {
 	}
 }
 
-func TestNilMdCacheRenderReviewView(t *testing.T) {
-	// Verify that a zero-value model (nil mdCache) does not panic in renderReviewView
-	m := tuiModel{
-		width:       80,
-		height:      24,
-		currentView: tuiViewReview,
-		currentReview: &storage.Review{
-			ID:     1,
-			Output: "test output",
-			Job: &storage.ReviewJob{
-				ID:     1,
-				GitRef: "abc1234",
-			},
+func TestRenderViewSafety_NilCache(t *testing.T) {
+	tests := []struct {
+		name   string
+		view   tuiView
+		setup  func(*storage.Review)
+		render func(tuiModel) string
+		want   string
+	}{
+		{
+			name:   "ReviewView",
+			view:   tuiViewReview,
+			setup:  func(r *storage.Review) { r.Output = "output text" },
+			render: func(m tuiModel) string { return m.renderReviewView() },
+			want:   "output text",
+		},
+		{
+			name:   "PromptView",
+			view:   tuiViewPrompt,
+			setup:  func(r *storage.Review) { r.Prompt = "prompt text" },
+			render: func(m tuiModel) string { return m.renderPromptView() },
+			want:   "prompt text",
 		},
 	}
 
-	// Should not panic
-	output := m.renderReviewView()
-	if !strings.Contains(output, "test output") {
-		t.Error("Expected output to contain review text")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tuiModel{
+				width:       80,
+				height:      24,
+				currentView: tt.view,
+				currentReview: &storage.Review{
+					ID:  1,
+					Job: &storage.ReviewJob{GitRef: "abc1234"},
+				},
+			}
+			tt.setup(m.currentReview)
+
+			// Should not panic despite nil mdCache
+			if got := tt.render(m); !strings.Contains(got, tt.want) {
+				t.Errorf("Expected output containing %q", tt.want)
+			}
+		})
 	}
 }
 
-func TestNilMdCacheRenderPromptView(t *testing.T) {
-	// Verify that a zero-value model (nil mdCache) does not panic in renderPromptView
-	m := tuiModel{
-		width:       80,
-		height:      24,
-		currentView: tuiViewPrompt,
-		currentReview: &storage.Review{
-			ID:     1,
-			Prompt: "test prompt",
-			Job: &storage.ReviewJob{
-				ID:     1,
-				GitRef: "abc1234",
+func TestScrollPageUpAfterPageDown(t *testing.T) {
+	tests := []struct {
+		name      string
+		view      tuiView
+		setup     func(*tuiModel, string)
+		render    func(*tuiModel) string
+		getScroll func(tuiModel) int
+		getMax    func(tuiModel) int
+	}{
+		{
+			name: "PromptView",
+			view: tuiViewPrompt,
+			setup: func(m *tuiModel, content string) {
+				m.currentReview.Prompt = content
 			},
+			render:    func(m *tuiModel) string { return m.renderPromptView() },
+			getScroll: func(m tuiModel) int { return m.promptScroll },
+			getMax:    func(m tuiModel) int { return m.mdCache.lastPromptMaxScroll },
+		},
+		{
+			name: "ReviewView",
+			view: tuiViewReview,
+			setup: func(m *tuiModel, content string) {
+				m.currentReview.Output = content
+			},
+			render:    func(m *tuiModel) string { return m.renderReviewView() },
+			getScroll: func(m tuiModel) int { return m.reviewScroll },
+			getMax:    func(m tuiModel) int { return m.mdCache.lastReviewMaxScroll },
 		},
 	}
 
-	// Should not panic
-	output := m.renderPromptView()
-	if !strings.Contains(output, "test prompt") {
-		t.Error("Expected output to contain prompt text")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var lines []string
+			for i := range 100 {
+				lines = append(lines, fmt.Sprintf("Line %d of content", i+1))
+			}
+			longContent := strings.Join(lines, "\n")
 
-func TestPromptScrollPageUpAfterPageDown(t *testing.T) {
-	// Generate enough content to require scrolling (more than terminal height)
-	var lines []string
-	for i := range 100 {
-		lines = append(lines, fmt.Sprintf("Line %d of the prompt content", i+1))
-	}
-	longContent := strings.Join(lines, "\n")
+			m := tuiModel{
+				width:       80,
+				height:      24,
+				currentView: tt.view,
+				mdCache:     newMarkdownCache(2),
+				currentReview: &storage.Review{
+					ID:  1,
+					Job: &storage.ReviewJob{GitRef: "abc"},
+				},
+			}
+			tt.setup(&m, longContent)
 
-	m := tuiModel{
-		width:       80,
-		height:      24,
-		currentView: tuiViewPrompt,
-		mdCache:     newMarkdownCache(2),
-		currentReview: &storage.Review{
-			ID:     1,
-			Prompt: longContent,
-			Job: &storage.ReviewJob{
-				ID:     1,
-				GitRef: "abc1234",
-			},
-		},
-	}
+			tt.render(&m)
+			maxScroll := tt.getMax(m)
+			if maxScroll == 0 {
+				t.Fatal("Expected non-zero max scroll")
+			}
 
-	// First render populates the cache with maxScroll
-	m.renderPromptView()
+			// Page down past end
+			for range 20 {
+				m, _ = pressSpecial(m, tea.KeyPgDown)
+			}
 
-	if m.mdCache.lastPromptMaxScroll == 0 {
-		t.Fatal("Expected non-zero max scroll for long content")
-	}
+			if s := tt.getScroll(m); s > maxScroll {
+				t.Errorf("Scroll %d exceeded max %d", s, maxScroll)
+			}
 
-	// Page down several times past the end
-	for range 20 {
-		m, _ = pressSpecial(m, tea.KeyPgDown)
-	}
-
-	// promptScroll should be clamped to maxScroll, not inflated
-	if m.promptScroll > m.mdCache.lastPromptMaxScroll {
-		t.Errorf("promptScroll %d should not exceed maxScroll %d after page-down",
-			m.promptScroll, m.mdCache.lastPromptMaxScroll)
-	}
-
-	// Now page up once should visibly scroll up
-	scrollBefore := m.promptScroll
-	m, _ = pressSpecial(m, tea.KeyPgUp)
-
-	if m.promptScroll >= scrollBefore {
-		t.Errorf("Page up should reduce scroll: before=%d, after=%d",
-			scrollBefore, m.promptScroll)
-	}
-}
-
-func TestReviewScrollPageUpAfterPageDown(t *testing.T) {
-	var lines []string
-	for i := range 100 {
-		lines = append(lines, fmt.Sprintf("Line %d of the review output", i+1))
-	}
-	longContent := strings.Join(lines, "\n")
-
-	m := tuiModel{
-		width:       80,
-		height:      24,
-		currentView: tuiViewReview,
-		mdCache:     newMarkdownCache(2),
-		currentReview: &storage.Review{
-			ID:     1,
-			Output: longContent,
-			Job: &storage.ReviewJob{
-				ID:       1,
-				GitRef:   "abc1234",
-				RepoName: "testrepo",
-			},
-		},
-	}
-
-	// First render populates the cache
-	m.renderReviewView()
-
-	if m.mdCache.lastReviewMaxScroll == 0 {
-		t.Fatal("Expected non-zero max scroll for long content")
-	}
-
-	// Page down past the end
-	for range 20 {
-		m, _ = pressSpecial(m, tea.KeyPgDown)
-	}
-
-	if m.reviewScroll > m.mdCache.lastReviewMaxScroll {
-		t.Errorf("reviewScroll %d should not exceed maxScroll %d",
-			m.reviewScroll, m.mdCache.lastReviewMaxScroll)
-	}
-
-	// Page up should work immediately
-	scrollBefore := m.reviewScroll
-	m, _ = pressSpecial(m, tea.KeyPgUp)
-
-	if m.reviewScroll >= scrollBefore {
-		t.Errorf("Page up should reduce scroll: before=%d, after=%d",
-			scrollBefore, m.reviewScroll)
+			// Page up
+			before := tt.getScroll(m)
+			m, _ = pressSpecial(m, tea.KeyPgUp)
+			if tt.getScroll(m) >= before {
+				t.Error("Page up did not reduce scroll")
+			}
+		})
 	}
 }
 
