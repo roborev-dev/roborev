@@ -13,33 +13,51 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
-func TestInitCmdCreatesHooksDirectory(t *testing.T) {
+func setupHookTest(t *testing.T) *testutil.TestRepo {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses shell script stub, skipping on Windows")
 	}
 
-	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	os.Setenv("HOME", t.TempDir())
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
 
 	repo := testutil.NewTestRepo(t)
+
+	t.Cleanup(testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n"))
+	t.Cleanup(repo.Chdir())
+
+	return repo
+}
+
+func runInitCmd(t *testing.T) {
+	t.Helper()
+	cmd := initCmd()
+	cmd.SetArgs([]string{"--agent", "test"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init command failed: %v", err)
+	}
+}
+
+func readHookContent(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read hook at %s: %v", path, err)
+	}
+	return string(content)
+}
+
+func TestInitCmdCreatesHooksDirectory(t *testing.T) {
+	repo := setupHookTest(t)
 	repo.RemoveHooksDir()
 
 	if _, err := os.Stat(repo.HooksDir); !os.IsNotExist(err) {
 		t.Fatal("hooks directory should not exist before test")
 	}
 
-	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
-	defer repo.Chdir()()
-
-	initCommand := initCmd()
-	initCommand.SetArgs([]string{"--agent", "test"})
-	err := initCommand.Execute()
-
-	if err != nil {
-		t.Fatalf("init command failed: %v", err)
-	}
+	runInitCmd(t)
 
 	if _, err := os.Stat(repo.HooksDir); os.IsNotExist(err) {
 		t.Error("hooks directory was not created")
@@ -59,16 +77,7 @@ func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 }
 
 func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	repo := testutil.NewTestRepo(t)
+	repo := setupHookTest(t)
 
 	// Write a realistic old-style hook (v2 format)
 	oldHook := "#!/bin/sh\n" +
@@ -81,22 +90,9 @@ func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
 		"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
 	repo.WriteHook(oldHook)
 
-	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
-	defer repo.Chdir()()
+	runInitCmd(t)
 
-	initCommand := initCmd()
-	initCommand.SetArgs([]string{"--agent", "test"})
-	err := initCommand.Execute()
-	if err != nil {
-		t.Fatalf("init command failed: %v", err)
-	}
-
-	content, err := os.ReadFile(repo.HookPath)
-	if err != nil {
-		t.Fatalf("Failed to read hook: %v", err)
-	}
-
-	contentStr := string(content)
+	contentStr := readHookContent(t, repo.HookPath)
 	if !strings.Contains(contentStr, githook.PostCommitVersionMarker) {
 		t.Errorf("upgraded hook should contain v3 marker, got:\n%s", contentStr)
 	}
@@ -109,16 +105,7 @@ func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
 }
 
 func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	repo := testutil.NewTestRepo(t)
+	repo := setupHookTest(t)
 
 	// Mixed hook: user content + old v2 roborev snippet
 	oldHook := "#!/bin/sh\n" +
@@ -132,22 +119,10 @@ func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
 		"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
 	repo.WriteHook(oldHook)
 
-	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
-	defer repo.Chdir()()
+	runInitCmd(t)
 
-	initCommand := initCmd()
-	initCommand.SetArgs([]string{"--agent", "test"})
-	err := initCommand.Execute()
-	if err != nil {
-		t.Fatalf("init command failed: %v", err)
-	}
+	contentStr := readHookContent(t, repo.HookPath)
 
-	content, err := os.ReadFile(repo.HookPath)
-	if err != nil {
-		t.Fatalf("Failed to read hook: %v", err)
-	}
-
-	contentStr := string(content)
 	if !strings.Contains(contentStr, "echo 'my custom hook'") {
 		t.Error("upgrade should preserve non-roborev lines")
 	}
@@ -160,16 +135,7 @@ func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
 }
 
 func TestInitCmdEarlyExitHookStillRunsRoborev(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell script stub, skipping on Windows")
-	}
-
-	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
-
-	repo := testutil.NewTestRepo(t)
+	repo := setupHookTest(t)
 
 	// Husky-style hook with exit 0 at the end
 	huskyHook := "#!/bin/sh\n" +
@@ -178,22 +144,9 @@ func TestInitCmdEarlyExitHookStillRunsRoborev(t *testing.T) {
 		"exit 0\n"
 	repo.WriteHook(huskyHook)
 
-	defer testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n")()
-	defer repo.Chdir()()
+	runInitCmd(t)
 
-	initCommand := initCmd()
-	initCommand.SetArgs([]string{"--agent", "test"})
-	err := initCommand.Execute()
-	if err != nil {
-		t.Fatalf("init command failed: %v", err)
-	}
-
-	content, err := os.ReadFile(repo.HookPath)
-	if err != nil {
-		t.Fatalf("Failed to read hook: %v", err)
-	}
-
-	contentStr := string(content)
+	contentStr := readHookContent(t, repo.HookPath)
 
 	// Roborev snippet should appear before exit 0
 	snippetIdx := strings.Index(contentStr, "_roborev_hook")
@@ -217,13 +170,8 @@ func TestInitCmdEarlyExitHookStillRunsRoborev(t *testing.T) {
 	}
 
 	// Post-rewrite hook should also be installed
-	prContent, err := os.ReadFile(
-		filepath.Join(repo.HooksDir, "post-rewrite"),
-	)
-	if err != nil {
-		t.Fatalf("post-rewrite hook should be created: %v", err)
-	}
-	if !strings.Contains(string(prContent), githook.PostRewriteVersionMarker) {
+	prContent := readHookContent(t, filepath.Join(repo.HooksDir, "post-rewrite"))
+	if !strings.Contains(prContent, githook.PostRewriteVersionMarker) {
 		t.Error("post-rewrite hook should have version marker")
 	}
 }
