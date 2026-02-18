@@ -414,18 +414,21 @@ func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string)
 	sb.WriteString("\n\n")
 }
 
-// loadMergedGuidelines loads review guidelines from origin/main (base)
-// and the given ref (branch), then merges them so that branch guidelines
-// can add lines but cannot remove base lines. Falls back to the
-// filesystem LoadRepoConfig when origin/main has no .roborev.toml.
+// loadMergedGuidelines loads review guidelines from the repo's default
+// branch (detected via git) and the given ref, then merges them so
+// branch guidelines can add lines but cannot remove base lines.
+// Falls back to filesystem LoadRepoConfig when the default branch
+// has no .roborev.toml.
 func loadMergedGuidelines(repoPath, ref string) string {
-	// Load base guidelines from origin/main
+	// Detect the default branch (origin/main, origin/master, etc.)
 	var baseGuidelines string
-	if baseCfg, err := config.LoadRepoConfigFromRef(repoPath, "origin/main"); err == nil && baseCfg != nil {
-		baseGuidelines = baseCfg.ReviewGuidelines
+	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
+		if baseCfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch); err == nil && baseCfg != nil {
+			baseGuidelines = baseCfg.ReviewGuidelines
+		}
 	}
 
-	// Fall back to filesystem config if origin/main has no .roborev.toml
+	// Fall back to filesystem config if default branch has no .roborev.toml
 	if baseGuidelines == "" {
 		if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
 			baseGuidelines = fsCfg.ReviewGuidelines

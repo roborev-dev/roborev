@@ -458,12 +458,19 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 
 // LoadRepoConfigFromRef loads per-repo config from .roborev.toml at a
 // specific git ref (e.g., a commit SHA or "origin/main"). Returns
-// (nil, nil) if the file doesn't exist at that ref.
+// (nil, nil) if the file doesn't exist at that ref. Returns an error
+// for unexpected git failures (bad repo, corrupted objects, etc.).
 func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
 	if err != nil {
-		// git show fails when the file doesn't exist at that ref
-		return nil, nil
+		errMsg := err.Error()
+		// "does not exist in" = file never existed at that ref
+		// "exists on disk, but not in" = file on disk but not in ref
+		if strings.Contains(errMsg, "does not exist") ||
+			strings.Contains(errMsg, "not in") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read .roborev.toml at %s: %w", ref, err)
 	}
 
 	var cfg RepoConfig

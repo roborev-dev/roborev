@@ -168,6 +168,9 @@ func (p *GitHubAppTokenProvider) APIRequest(
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "roborev")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	return client.Do(req)
