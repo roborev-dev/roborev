@@ -8,23 +8,26 @@ import (
 )
 
 func TestResolveRepoIdentifier(t *testing.T) {
-	t.Run("returns name unchanged", func(t *testing.T) {
-		// Names without path separators should be returned as-is
-		result := resolveRepoIdentifier("my-project")
-		if result != "my-project" {
-			t.Errorf("Expected 'my-project', got %q", result)
+	// 1. Simple identifiers (no disk interaction or simple non-path)
+	t.Run("simple identifiers", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			input string
+			want  string
+		}{
+			{"name unchanged", "my-project", "my-project"},
+			{"name with slash unchanged", "org/project", "org/project"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				assertPath(t, resolveRepoIdentifier(tt.input), tt.want)
+			})
 		}
 	})
 
-	t.Run("returns name with slash unchanged when not a path", func(t *testing.T) {
-		// Names like "org/project" should be returned as-is if they don't exist on disk
-		result := resolveRepoIdentifier("org/project")
-		if result != "org/project" {
-			t.Errorf("Expected 'org/project', got %q", result)
-		}
-	})
-
-	t.Run("returns name with slash when path is inaccessible", func(t *testing.T) {
+	// 2. Permission test (isolated)
+	t.Run("inaccessible path", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("skipping permission test on Windows")
 		}
@@ -37,85 +40,104 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		if err := os.Mkdir(orgDir, 0755); err != nil {
 			t.Fatalf("Failed to create org dir: %v", err)
 		}
+
+		// Ensure we are in a safe directory (tmpDir) before modifying permissions of orgDir
+		chdir(t, tmpDir)
+
 		if err := os.Chmod(orgDir, 0000); err != nil {
 			t.Fatalf("Failed to chmod: %v", err)
 		}
 		defer func() { _ = os.Chmod(orgDir, 0755) }()
 
-		chdir(t, tmpDir)
-
-		result := resolveRepoIdentifier("org/project")
-		if result != "org/project" {
-			t.Errorf("Expected 'org/project' (name), got %q", result)
-		}
+		// The test expects "org/project" because it can't stat "org" to see if it's a repo,
+		// so it treats it as a name string.
+		assertPath(t, resolveRepoIdentifier("org/project"), "org/project")
 	})
 
-	t.Run("resolves dot to git root", func(t *testing.T) {
-		tmpDir := newTestGitRepo(t).Dir
-		subDir := filepath.Join(tmpDir, "sub", "dir")
+	// 3. Git repo resolution
+	t.Run("git repo resolution", func(t *testing.T) {
+		root := newTestGitRepo(t).Dir
+		// Create common structure: root/sub/dir
+		subDir := filepath.Join(root, "sub", "dir")
 		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
-		chdir(t, subDir)
-
-		result := resolveRepoIdentifier(".")
-		if result != tmpDir {
-			t.Errorf("Expected %q (git root), got %q", tmpDir, result)
-		}
-	})
-
-	t.Run("resolves relative path to git root", func(t *testing.T) {
-		tmpDir := newTestGitRepo(t).Dir
-		subDir := filepath.Join(tmpDir, "sub")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
-		chdir(t, subDir)
-
-		result := resolveRepoIdentifier("./")
-		if result != tmpDir {
-			t.Errorf("Expected %q (git root), got %q", tmpDir, result)
-		}
-	})
-
-	t.Run("resolves absolute path to git root", func(t *testing.T) {
-		tmpDir := newTestGitRepo(t).Dir
-		subDir := filepath.Join(tmpDir, "sub", "dir")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
+			t.Fatal(err)
 		}
 
-		result := resolveRepoIdentifier(subDir)
-		if result != tmpDir {
-			t.Errorf("Expected %q (git root), got %q", tmpDir, result)
-		}
-	})
-
-	t.Run("non-git path returns absolute path", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		resolved, err := filepath.EvalSymlinks(tmpDir)
+		// Also create a non-git temp dir for that one case
+		nonGitDir := t.TempDir()
+		resolvedNonGit, err := filepath.EvalSymlinks(nonGitDir)
 		if err != nil {
 			t.Fatalf("Failed to resolve symlinks: %v", err)
 		}
-		chdir(t, resolved)
 
-		result := resolveRepoIdentifier(".")
-		if result != resolved {
-			t.Errorf("Expected %q (abs path), got %q", resolved, result)
+		tests := []struct {
+			name     string
+			baseDir  string // where to chdir. if empty, use root
+			cwd      string // relative to baseDir.
+			input    string
+			want     string // exact match
+			wantRoot bool   // if true, want = root. overrides want.
+		}{
+			{
+				name:     "dot in subdir",
+				cwd:      "sub/dir",
+				input:    ".",
+				wantRoot: true,
+			},
+			{
+				name:     "relative path",
+				cwd:      "sub",
+				input:    "./",
+				wantRoot: true,
+			},
+			{
+				name:     "absolute path",
+				input:    subDir, // absolute path input
+				wantRoot: true,
+			},
+			{
+				name:     "parent traversal",
+				cwd:      "sub/dir",
+				input:    "..",
+				wantRoot: true,
+			},
+			{
+				name:    "non-git path returns absolute path",
+				baseDir: resolvedNonGit,
+				input:   ".",
+				want:    resolvedNonGit,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				base := root
+				if tt.baseDir != "" {
+					base = tt.baseDir
+				}
+
+				targetCwd := base
+				if tt.cwd != "" {
+					targetCwd = filepath.Join(base, tt.cwd)
+				}
+
+				chdir(t, targetCwd)
+
+				got := resolveRepoIdentifier(tt.input)
+				want := tt.want
+				if tt.wantRoot {
+					want = root
+				}
+
+				assertPath(t, got, want)
+			})
 		}
 	})
+}
 
-	t.Run("dotdot resolves correctly", func(t *testing.T) {
-		tmpDir := newTestGitRepo(t).Dir
-		subDir := filepath.Join(tmpDir, "a", "b", "c")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
-		chdir(t, subDir)
-
-		result := resolveRepoIdentifier("..")
-		if result != tmpDir {
-			t.Errorf("Expected %q (git root), got %q", tmpDir, result)
-		}
-	})
+func assertPath(t *testing.T, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
 }
