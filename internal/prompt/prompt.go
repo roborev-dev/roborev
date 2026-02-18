@@ -298,8 +298,8 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	// Add project-specific guidelines, merged from base + end ref
 	endRef := rangeRef
-	if _, after, ok := strings.Cut(rangeRef, ".."); ok {
-		endRef = after
+	if _, end, ok := git.ParseRange(rangeRef); ok {
+		endRef = end
 	}
 	b.writeProjectGuidelines(&sb, loadMergedGuidelines(repoPath, endRef))
 
@@ -417,19 +417,23 @@ func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string)
 // loadMergedGuidelines loads review guidelines from the repo's default
 // branch (detected via git) and the given ref, then merges them so
 // branch guidelines can add lines but cannot remove base lines.
-// Falls back to filesystem LoadRepoConfig when the default branch
-// has no .roborev.toml.
+// Falls back to filesystem LoadRepoConfig only when no .roborev.toml
+// exists on the default branch (not when it exists with empty guidelines).
 func loadMergedGuidelines(repoPath, ref string) string {
 	// Detect the default branch (origin/main, origin/master, etc.)
 	var baseGuidelines string
+	baseFound := false
 	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
 		if baseCfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch); err == nil && baseCfg != nil {
 			baseGuidelines = baseCfg.ReviewGuidelines
+			baseFound = true
 		}
 	}
 
-	// Fall back to filesystem config if default branch has no .roborev.toml
-	if baseGuidelines == "" {
+	// Fall back to filesystem config only if no .roborev.toml on the
+	// default branch. An existing config with empty guidelines is
+	// intentional and should not trigger a filesystem fallback.
+	if !baseFound {
 		if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
 			baseGuidelines = fsCfg.ReviewGuidelines
 		}

@@ -1805,6 +1805,31 @@ func TestMergeGuidelines(t *testing.T) {
 			t.Errorf("expected Rule B. once, got %d times", count)
 		}
 	})
+
+	t.Run("preserves leading indentation in additions", func(t *testing.T) {
+		base := "Top-level rule."
+		branch := "Top-level rule.\n  - Indented sub-item\n    - Nested item"
+		got := MergeGuidelines(base, branch)
+		if !strings.Contains(got, "  - Indented sub-item") {
+			t.Errorf("expected leading spaces preserved, got %q", got)
+		}
+		if !strings.Contains(got, "    - Nested item") {
+			t.Errorf("expected nested indentation preserved, got %q", got)
+		}
+	})
+
+	t.Run("dedup matches despite different indentation", func(t *testing.T) {
+		base := "  Rule A."
+		branch := "Rule A.\nRule B."
+		got := MergeGuidelines(base, branch)
+		// "Rule A." trimmed matches "  Rule A." trimmed — should not be added
+		if strings.Count(got, "Rule A.") != 1 {
+			t.Errorf("expected Rule A. once (dedup despite indent), got %q", got)
+		}
+		if !strings.Contains(got, "Rule B.") {
+			t.Error("expected Rule B. from branch")
+		}
+	})
 }
 
 func TestLoadRepoConfigFromRef(t *testing.T) {

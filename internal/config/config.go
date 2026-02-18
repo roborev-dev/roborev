@@ -464,10 +464,11 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
 	if err != nil {
 		errMsg := err.Error()
-		// "does not exist in" = file never existed at that ref
-		// "exists on disk, but not in" = file on disk but not in ref
-		if strings.Contains(errMsg, "does not exist") ||
-			strings.Contains(errMsg, "not in") {
+		// git show emits these specific patterns when the path is missing:
+		//   "path '...' does not exist in '...'"
+		//   "path '...' exists on disk, but not in '...'"
+		if strings.Contains(errMsg, "does not exist in") ||
+			strings.Contains(errMsg, "exists on disk, but not in") {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read .roborev.toml at %s: %w", ref, err)
@@ -482,8 +483,8 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 
 // MergeGuidelines combines base guidelines with branch guidelines.
 // Branch guidelines can add new lines but cannot remove existing base
-// lines. Deduplication is line-based: trimmed, non-empty lines from
-// the branch that aren't already in the base set are appended.
+// lines. Deduplication compares trimmed lines, but additions preserve
+// their original formatting (including leading indentation).
 func MergeGuidelines(base, branch string) string {
 	if base == "" && branch == "" {
 		return ""
@@ -495,17 +496,24 @@ func MergeGuidelines(base, branch string) string {
 		return branch
 	}
 
-	baseLines := splitNonEmpty(base)
-	baseSet := make(map[string]struct{}, len(baseLines))
-	for _, line := range baseLines {
-		baseSet[line] = struct{}{}
+	// Build a set of trimmed base lines for comparison
+	baseSet := make(map[string]struct{})
+	for _, trimmed := range trimmedNonEmpty(base) {
+		baseSet[trimmed] = struct{}{}
 	}
 
+	// Collect branch lines whose trimmed form isn't in the base set,
+	// preserving original formatting (leading indentation).
 	var additions []string
-	for _, line := range splitNonEmpty(branch) {
-		if _, exists := baseSet[line]; !exists {
-			additions = append(additions, line)
-			baseSet[line] = struct{}{} // prevent duplicate additions
+	for line := range strings.SplitSeq(branch, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := baseSet[trimmed]; !exists {
+			original := strings.TrimRight(line, " \t\r")
+			additions = append(additions, original)
+			baseSet[trimmed] = struct{}{} // prevent duplicate additions
 		}
 	}
 
@@ -515,8 +523,9 @@ func MergeGuidelines(base, branch string) string {
 	return strings.TrimRight(base, "\n") + "\n" + strings.Join(additions, "\n")
 }
 
-// splitNonEmpty splits s by newlines and returns trimmed, non-empty lines.
-func splitNonEmpty(s string) []string {
+// trimmedNonEmpty returns trimmed, non-empty lines from s (for set
+// comparison only — not for preserving original formatting).
+func trimmedNonEmpty(s string) []string {
 	var result []string
 	for line := range strings.SplitSeq(s, "\n") {
 		trimmed := strings.TrimSpace(line)
