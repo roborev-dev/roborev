@@ -1092,10 +1092,18 @@ func (m tuiModel) handleJobsMsg(msg tuiJobsMsg) (tea.Model, tea.Cmd) {
 
 	m.updateDisplayNameCache(msg.jobs)
 
+	// Filter out fix jobs — they belong in the Tasks view, not the main queue
+	filtered := make([]storage.ReviewJob, 0, len(msg.jobs))
+	for _, j := range msg.jobs {
+		if !j.IsFixJob() {
+			filtered = append(filtered, j)
+		}
+	}
+
 	if msg.append {
-		m.jobs = append(m.jobs, msg.jobs...)
+		m.jobs = append(m.jobs, filtered...)
 	} else {
-		m.jobs = msg.jobs
+		m.jobs = filtered
 	}
 
 	// Clear pending addressed states that server has confirmed

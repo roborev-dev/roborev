@@ -1639,7 +1639,7 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20) // 50MB limit
 	var req struct {
 		ParentJobID int64  `json:"parent_job_id"`
-		Prompt      string `json:"prompt,omitempty"`    // Optional custom prompt override
+		Prompt      string `json:"prompt,omitempty"`       // Optional custom prompt override
 		StaleJobID  int64  `json:"stale_job_id,omitempty"` // Optional: server looks up patch from this job for rebase
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
