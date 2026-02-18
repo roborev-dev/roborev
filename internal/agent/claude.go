@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -166,10 +167,24 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	result, err := parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
+		// Build a detailed error including any partial output and stream errors
+		var detail strings.Builder
+		fmt.Fprintf(&detail, "%s failed: %v", a.Name(), waitErr)
 		if err != nil {
-			return "", fmt.Errorf("claude failed: %w (parse error: %v)\nstderr: %s", waitErr, err, stderr.String())
+			fmt.Fprintf(&detail, "\nstream: %v", err)
 		}
-		return "", fmt.Errorf("claude failed: %w\nstderr: %s", waitErr, stderr.String())
+		if s := stderr.String(); s != "" {
+			fmt.Fprintf(&detail, "\nstderr: %s", s)
+		}
+		if result != "" {
+			// Truncate partial output to keep error messages readable
+			partial := result
+			if len(partial) > 500 {
+				partial = partial[:500] + "..."
+			}
+			fmt.Fprintf(&detail, "\npartial output: %s", partial)
+		}
+		return "", errors.New(detail.String())
 	}
 
 	if err != nil {
@@ -187,15 +202,21 @@ type claudeStreamMessage struct {
 		Content string `json:"content,omitempty"`
 	} `json:"message,omitempty"`
 	Result string `json:"result,omitempty"`
+	Error  struct {
+		Message string `json:"message,omitempty"`
+	} `json:"error,omitempty"`
 }
 
 // parseStreamJSON parses Claude's stream-json output and extracts the final result.
 // Uses bufio.Reader.ReadString to read lines without buffer size limits.
-func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
+// On success, returns (result, nil). On failure, returns (partialOutput, error)
+// where partialOutput contains any assistant messages collected before the error.
+func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 	br := bufio.NewReader(r)
 
 	var lastResult string
 	var assistantMessages []string
+	var errorMessages []string
 	var validEventsParsed bool
 
 	for {
@@ -225,6 +246,11 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 				if msg.Type == "result" && msg.Result != "" {
 					lastResult = msg.Result
 				}
+
+				// Capture error events from Claude Code
+				if msg.Type == "error" && msg.Error.Message != "" {
+					errorMessages = append(errorMessages, msg.Error.Message)
+				}
 			}
 			// Skip malformed JSON lines silently
 		}
@@ -237,6 +263,14 @@ func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 	// Error if we didn't parse any valid events
 	if !validEventsParsed {
 		return "", fmt.Errorf("no valid stream-json events parsed from output")
+	}
+
+	// Build partial output for error context
+	partial := strings.Join(assistantMessages, "\n")
+
+	// If error events were received, report them with any partial output
+	if len(errorMessages) > 0 {
+		return partial, fmt.Errorf("stream errors: %s", strings.Join(errorMessages, "; "))
 	}
 
 	// Prefer the result field if present, otherwise join assistant messages
