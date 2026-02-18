@@ -40,6 +40,8 @@ security findings:
 - "Markerless" hook blocks or interpreter mismatch — hook install/upgrade uses
   marker-based detection, every generated hook includes a marker comment, and
   append logic refuses to add shell snippets to non-shell hooks
+- Symlink-following in hook read/write under .git/hooks/ (controlled by the
+  local user; a compromised local filesystem is out of scope)
 
 ## Config loading and filesystem fallback
 

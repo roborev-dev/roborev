@@ -2413,7 +2413,11 @@ func installOrUpgradeHook(
 			if rmErr := removeRoborevFromHook(hookPath); rmErr != nil {
 				return fmt.Errorf("upgrade %s: %w", hookName, rmErr)
 			}
-			if updated, readErr := os.ReadFile(hookPath); readErr == nil {
+			updated, readErr := os.ReadFile(hookPath)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				return fmt.Errorf("re-read %s after cleanup: %w", hookName, readErr)
+			}
+			if readErr == nil {
 				remaining := string(updated)
 				if remaining != "" && !strings.HasSuffix(remaining, "\n") {
 					remaining += "\n"
