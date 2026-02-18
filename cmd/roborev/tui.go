@@ -10,6 +10,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -382,10 +383,11 @@ type tuiFixTriggerResultMsg struct {
 }
 
 type tuiApplyPatchResultMsg struct {
-	jobID   int64
-	success bool
-	err     error
-	rebase  bool // True if patch didn't apply and needs rebase
+	jobID       int64
+	parentJobID int64 // Parent review job (to mark addressed on success)
+	success     bool
+	err         error
+	rebase      bool // True if patch didn't apply and needs rebase
 }
 
 // ClipboardWriter is an interface for clipboard operations (allows mocking in tests)
@@ -1310,6 +1312,15 @@ func (m tuiModel) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd
 	}
 }
 
+// markParentAddressed marks the parent review job as addressed after a fix is applied.
+// Runs as a fire-and-forget command; errors are silently ignored since the fix already succeeded.
+func (m tuiModel) markParentAddressed(parentJobID int64) tea.Cmd {
+	return func() tea.Msg {
+		_ = m.postAddressed(parentJobID, true, "")
+		return nil
+	}
+}
+
 // updateSelectedJobID updates the tracked job ID after navigation
 func (m *tuiModel) updateSelectedJobID() {
 	if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
@@ -2078,16 +2089,24 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashMessage = fmt.Sprintf("Patch for job #%d doesn't apply cleanly - triggering rebase", msg.jobID)
 			m.flashExpiresAt = time.Now().Add(5 * time.Second)
 			m.flashView = tuiViewTasks
-			// Auto-trigger a new fix job with the stale patch as context
 			return m, m.triggerRebase(msg.jobID)
+		} else if msg.success && msg.err != nil {
+			// Patch applied but commit failed
+			m.flashMessage = fmt.Sprintf("Job #%d: %v", msg.jobID, msg.err)
+			m.flashExpiresAt = time.Now().Add(5 * time.Second)
+			m.flashView = tuiViewTasks
 		} else if msg.err != nil {
 			m.flashMessage = fmt.Sprintf("Apply failed: %v", msg.err)
 			m.flashExpiresAt = time.Now().Add(3 * time.Second)
 			m.flashView = tuiViewTasks
 		} else {
-			m.flashMessage = fmt.Sprintf("Patch from job #%d applied successfully", msg.jobID)
+			m.flashMessage = fmt.Sprintf("Patch from job #%d applied and committed", msg.jobID)
 			m.flashExpiresAt = time.Now().Add(3 * time.Second)
 			m.flashView = tuiViewTasks
+			// Mark the parent review as addressed
+			if msg.parentJobID > 0 {
+				return m, m.markParentAddressed(msg.parentJobID)
+			}
 		}
 	}
 
@@ -3588,8 +3607,40 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 			return tuiApplyPatchResultMsg{jobID: jobID, err: err}
 		}
 
-		return tuiApplyPatchResultMsg{jobID: jobID, success: true}
+		var parentJobID int64
+		if jobDetail.ParentJobID != nil {
+			parentJobID = *jobDetail.ParentJobID
+		}
+
+		// Stage and commit
+		commitMsg := fmt.Sprintf("fix: apply roborev fix job #%d", jobID)
+		if parentJobID > 0 {
+			ref := jobDetail.GitRef
+			if len(ref) > 7 {
+				ref = ref[:7]
+			}
+			commitMsg = fmt.Sprintf("fix: apply roborev fix for %s (job #%d)", ref, jobID)
+		}
+		if err := commitPatch(jobDetail.RepoPath, commitMsg); err != nil {
+			return tuiApplyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
+				err: fmt.Errorf("patch applied but commit failed: %w", err)}
+		}
+
+		return tuiApplyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true}
 	}
+}
+
+// commitPatch stages all changes and commits them with the given message.
+func commitPatch(repoPath, message string) error {
+	addCmd := exec.Command("git", "-C", repoPath, "add", "-A")
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git add: %w: %s", err, out)
+	}
+	commitCmd := exec.Command("git", "-C", repoPath, "commit", "-m", message)
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git commit: %w: %s", err, out)
+	}
+	return nil
 }
 
 // triggerRebase triggers a new fix job that re-applies a stale patch to the current HEAD.

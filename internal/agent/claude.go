@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -169,7 +168,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if waitErr := cmd.Wait(); waitErr != nil {
 		// Build a detailed error including any partial output and stream errors
 		var detail strings.Builder
-		fmt.Fprintf(&detail, "%s failed: %v", a.Name(), waitErr)
+		fmt.Fprintf(&detail, "%s failed", a.Name())
 		if err != nil {
 			fmt.Fprintf(&detail, "\nstream: %v", err)
 		}
@@ -184,7 +183,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 			}
 			fmt.Fprintf(&detail, "\npartial output: %s", partial)
 		}
-		return "", errors.New(detail.String())
+		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
 	}
 
 	if err != nil {
@@ -268,8 +267,8 @@ func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, er
 	// Build partial output for error context
 	partial := strings.Join(assistantMessages, "\n")
 
-	// If error events were received, report them with any partial output
-	if len(errorMessages) > 0 {
+	// If error events were received but we got no result, report them with any partial output
+	if len(errorMessages) > 0 && lastResult == "" {
 		return partial, fmt.Errorf("stream errors: %s", strings.Join(errorMessages, "; "))
 	}
 
