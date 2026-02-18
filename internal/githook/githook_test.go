@@ -2,6 +2,7 @@ package githook
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -1311,4 +1312,54 @@ func TestVersionMarker(t *testing.T) {
 	if m := VersionMarker("unknown"); m != "" {
 		t.Errorf("unknown should return empty, got %q", m)
 	}
+}
+
+func TestHasRealErrors(t *testing.T) {
+	realErr := errors.New("permission denied")
+
+	t.Run("nil", func(t *testing.T) {
+		if HasRealErrors(nil) {
+			t.Error("nil should return false")
+		}
+	})
+
+	t.Run("only non-shell", func(t *testing.T) {
+		err := fmt.Errorf("hook: %w", ErrNonShellHook)
+		if HasRealErrors(err) {
+			t.Error("single ErrNonShellHook should return false")
+		}
+	})
+
+	t.Run("only real", func(t *testing.T) {
+		if !HasRealErrors(realErr) {
+			t.Error("real error should return true")
+		}
+	})
+
+	t.Run("joined all non-shell", func(t *testing.T) {
+		err := errors.Join(
+			fmt.Errorf("a: %w", ErrNonShellHook),
+			fmt.Errorf("b: %w", ErrNonShellHook),
+		)
+		if HasRealErrors(err) {
+			t.Error("joined non-shell only should return false")
+		}
+	})
+
+	t.Run("joined mixed", func(t *testing.T) {
+		err := errors.Join(
+			fmt.Errorf("a: %w", ErrNonShellHook),
+			realErr,
+		)
+		if !HasRealErrors(err) {
+			t.Error("joined with real error should return true")
+		}
+	})
+
+	t.Run("joined all real", func(t *testing.T) {
+		err := errors.Join(realErr, errors.New("disk full"))
+		if !HasRealErrors(err) {
+			t.Error("joined real errors should return true")
+		}
+	})
 }

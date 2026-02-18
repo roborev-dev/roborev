@@ -19,6 +19,26 @@ import (
 // interpreter and cannot be safely modified.
 var ErrNonShellHook = errors.New("non-shell interpreter")
 
+// HasRealErrors returns true if err contains any error that
+// is not ErrNonShellHook. Use this instead of errors.Is when
+// checking joined errors that may contain both non-shell
+// warnings and real failures.
+func HasRealErrors(err error) bool {
+	if err == nil {
+		return false
+	}
+	type unwrapper interface{ Unwrap() []error }
+	if joined, ok := err.(unwrapper); ok {
+		for _, e := range joined.Unwrap() {
+			if !errors.Is(e, ErrNonShellHook) {
+				return true
+			}
+		}
+		return false
+	}
+	return !errors.Is(err, ErrNonShellHook)
+}
+
 // Version markers identify the current hook template version.
 // Bump these when the hook template changes to trigger
 // upgrade warnings and auto-upgrades.

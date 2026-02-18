@@ -461,11 +461,10 @@ func initCmd() *cobra.Command {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
 			if err := githook.InstallAll(hooksDir, false); err != nil {
-				if errors.Is(err, githook.ErrNonShellHook) {
-					fmt.Printf("  Warning: %v\n", err)
-				} else {
+				if githook.HasRealErrors(err) {
 					return fmt.Errorf("install hooks: %w", err)
 				}
+				fmt.Printf("  Warning: %v\n", err)
 			}
 
 			// 5. Start daemon (or just register if --no-daemon)
@@ -810,19 +809,6 @@ Examples:
 				return nil // Intentional skip, exit 0
 			}
 
-			// Auto-install/upgrade hooks when running from CLI
-			// (not when called from a hook via --quiet)
-			if !quiet {
-				autoInstallHooks(root)
-			}
-
-			// Ensure daemon is running (skip for --local mode)
-			if !local {
-				if err := ensureDaemon(); err != nil {
-					return err // Return error (quiet mode silences output, not exit code)
-				}
-			}
-
 			// Validate mutually exclusive options
 			if branch != "" && dirty {
 				return fmt.Errorf("cannot use --branch with --dirty")
@@ -843,6 +829,21 @@ Examples:
 			// Validate --type flag
 			if reviewType != "" && reviewType != "security" && reviewType != "design" {
 				return fmt.Errorf("invalid --type %q (valid: security, design)", reviewType)
+			}
+
+			// Auto-install/upgrade hooks when running from CLI
+			// (not when called from a hook via --quiet).
+			// Runs after validation so invalid args don't
+			// cause side effects.
+			if !quiet {
+				autoInstallHooks(root)
+			}
+
+			// Ensure daemon is running (skip for --local mode)
+			if !local {
+				if err := ensureDaemon(); err != nil {
+					return err // Return error (quiet mode silences output, not exit code)
+				}
 			}
 
 			var gitRef string
@@ -3124,8 +3125,10 @@ func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySe
 	return reasoning
 }
 
-// autoInstallHooks installs or upgrades hooks when running
-// from the CLI (not from hooks themselves).
+// autoInstallHooks upgrades outdated hooks and installs
+// companion hooks (e.g. post-rewrite when post-commit
+// exists). It does NOT install hooks from scratch so that
+// explicit uninstall-hook is respected.
 func autoInstallHooks(repoPath string) {
 	hooksDir, err := git.GetHooksPath(repoPath)
 	if err != nil {
@@ -3134,7 +3137,7 @@ func autoInstallHooks(repoPath string) {
 	for _, name := range []string{"post-commit", "post-rewrite"} {
 		marker := githook.VersionMarker(name)
 		if githook.NeedsUpgrade(repoPath, name, marker) ||
-			githook.NotInstalled(repoPath, name) {
+			githook.Missing(repoPath, name) {
 			if err := githook.Install(hooksDir, name, false); err != nil {
 				// Non-shell hooks are a persistent condition;
 				// don't warn on every invocation.
