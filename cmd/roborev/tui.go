@@ -3445,16 +3445,15 @@ func (m tuiModel) renderTasksView() string {
 		return b.String()
 	}
 
-	// Column layout: fixed columns + flexible subject
-	// Fixed: "  " + Status(8) + " " + Job(5) + " " + Parent(11) + " " + Ref(refW) + " "
-	const statusW = 8
+	// Column layout: status, job, parent are fixed; ref and subject split remaining space.
+	const statusW = 8                                     // "canceled" is the longest
 	const idW = 5                                         // "#" + 4-digit number
 	const parentW = 11                                    // "fixes #NNNN"
-	fixedW := 2 + statusW + 1 + idW + 1 + parentW + 1 + 1 // prefix spacing + trailing space
-	// Give ref and subject the remaining width: ref gets 15%, subject gets the rest
-	flexW := max(m.width-fixedW, 10)
-	refW := max(7, flexW*15/100)
-	subjectW := max(5, flexW-refW-1) // -1 for space between ref and subject
+	fixedW := 2 + statusW + 1 + idW + 1 + parentW + 1 + 1 // prefix + inter-column spaces
+	flexW := max(m.width-fixedW, 15)
+	// Ref gets 25% of flexible space, subject gets 75%
+	refW := max(7, flexW*25/100)
+	subjectW := max(5, flexW-refW-1)
 
 	// Header
 	header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %s",
