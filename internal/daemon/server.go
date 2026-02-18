@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +15,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/githook"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
 )
@@ -143,11 +142,11 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.ciPoller == nil {
 		if repos, err := s.db.ListRepos(); err == nil {
 			for _, repo := range repos {
-				if hookNeedsUpgrade(repo.RootPath, "post-commit", hookVersionMarker) {
+				if githook.NeedsUpgrade(repo.RootPath, "post-commit", githook.PostCommitVersionMarker) {
 					log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
 				}
-				if hookNeedsUpgrade(repo.RootPath, "post-rewrite", postRewriteHookVersionMarker) ||
-					hookMissing(repo.RootPath, "post-rewrite") {
+				if githook.NeedsUpgrade(repo.RootPath, "post-rewrite", githook.PostRewriteVersionMarker) ||
+					githook.Missing(repo.RootPath, "post-rewrite") {
 					log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", repo.RootPath)
 				}
 			}
@@ -162,47 +161,6 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-// hookVersionMarker identifies the current hook version.
-const hookVersionMarker = "post-commit hook v2"
-const postRewriteHookVersionMarker = "post-rewrite hook v1"
-
-// hookNeedsUpgrade checks whether a repo's named hook contains roborev
-// but is outdated (missing the given version marker).
-func hookNeedsUpgrade(repoPath, hookName, versionMarker string) bool {
-	hooksDir, err := git.GetHooksPath(repoPath)
-	if err != nil {
-		return false
-	}
-	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
-	if err != nil {
-		return false
-	}
-	s := string(content)
-	return strings.Contains(strings.ToLower(s), "roborev") &&
-		!strings.Contains(s, versionMarker)
-}
-
-// hookMissing checks whether a repo has roborev installed (post-commit
-// hook present) but is missing the named hook entirely.
-func hookMissing(repoPath, hookName string) bool {
-	hooksDir, err := git.GetHooksPath(repoPath)
-	if err != nil {
-		return false
-	}
-	pcContent, err := os.ReadFile(filepath.Join(hooksDir, "post-commit"))
-	if err != nil {
-		return false
-	}
-	if !strings.Contains(strings.ToLower(string(pcContent)), "roborev") {
-		return false
-	}
-	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
-	if err != nil {
-		return true
-	}
-	return !strings.Contains(strings.ToLower(string(content)), "roborev")
 }
 
 // Stop gracefully shuts down the server

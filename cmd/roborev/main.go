@@ -28,6 +28,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/githook"
 	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/skills"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -451,63 +452,17 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			// 4. Install post-commit hook
+			// 4. Install hooks (post-commit + post-rewrite)
 			hooksDir, err := git.GetHooksPath(root)
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)
 			}
-			hookPath := filepath.Join(hooksDir, "post-commit")
-			hookContent := generateHookContent()
-
-			// Ensure hooks directory exists
 			if err := os.MkdirAll(hooksDir, 0755); err != nil {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
-
-			// Check for existing hook
-			if existing, err := os.ReadFile(hookPath); err == nil {
-				existingStr := string(existing)
-				if !strings.Contains(strings.ToLower(existingStr), "roborev") {
-					if !isShellHook(existingStr) {
-						fmt.Printf("  Warning: %s uses a non-shell interpreter, skipping roborev hook\n", hookPath)
-						goto startDaemon
-					}
-					// Append to existing hook
-					hookContent = existingStr + "\n" + hookContent
-				} else if strings.Contains(existingStr, hookVersionMarker) {
-					fmt.Println("  Hook already installed")
-					goto startDaemon
-				} else {
-					// Upgrade: try patching in place first (preserves hook structure)
-					// v1 → v2: remove trailing & from enqueue line, add version marker
-					upgraded := existingStr
-					upgraded = strings.Replace(upgraded, "2>/dev/null &", "2>/dev/null", 1)
-					upgraded = strings.Replace(upgraded, "post-commit hook -", "post-commit hook v2 -", 1)
-					if !strings.Contains(upgraded, hookVersionMarker) {
-						// Comment was edited — just append a marker so we don't re-upgrade
-						if !strings.HasSuffix(upgraded, "\n") {
-							upgraded += "\n"
-						}
-						upgraded += "# " + hookVersionMarker + "\n"
-					}
-					if err := os.WriteFile(hookPath, []byte(upgraded), 0755); err != nil {
-						return fmt.Errorf("upgrade hook: %w", err)
-					}
-					fmt.Println("  Upgraded post-commit hook")
-					goto startDaemon
-				}
+			if err := githook.InstallAll(hooksDir, false); err != nil {
+				return fmt.Errorf("install hooks: %w", err)
 			}
-
-			if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
-				return fmt.Errorf("install hook: %w", err)
-			}
-			fmt.Printf("  Installed post-commit hook\n")
-
-		startDaemon:
-			// 4b. Install post-rewrite hook (for rebase review preservation)
-			// Runs on all paths (fresh install, upgrade, already-installed)
-			// so existing users get the new hook on next `roborev init`.
-			installPostRewriteHook(hooksDir)
 
 			// 5. Start daemon (or just register if --no-daemon)
 			var initIncomplete bool
@@ -849,6 +804,12 @@ Examples:
 					cmd.Println("Skipping: rebase in progress")
 				}
 				return nil // Intentional skip, exit 0
+			}
+
+			// Auto-install/upgrade hooks when running from CLI
+			// (not when called from a hook via --quiet)
+			if !quiet {
+				autoInstallHooks(root)
 			}
 
 			// Ensure daemon is running (skip for --local mode)
@@ -1577,12 +1538,12 @@ func statusCmd() *cobra.Command {
 
 			// Check for outdated hooks in current repo
 			if root, err := git.GetRepoRoot("."); err == nil {
-				if hookNeedsUpgrade(root, "post-commit", hookVersionMarker) {
+				if githook.NeedsUpgrade(root, "post-commit", githook.PostCommitVersionMarker) {
 					fmt.Println()
 					fmt.Println("Warning: post-commit hook is outdated -- run 'roborev init' to upgrade")
 				}
-				if hookNeedsUpgrade(root, "post-rewrite", postRewriteHookVersionMarker) ||
-					hookMissing(root, "post-rewrite") {
+				if githook.NeedsUpgrade(root, "post-rewrite", githook.PostRewriteVersionMarker) ||
+					githook.Missing(root, "post-rewrite") {
 					fmt.Println()
 					fmt.Println("Warning: post-rewrite hook is missing or outdated -- run 'roborev init' to install")
 				}
@@ -2355,95 +2316,13 @@ func installHookCmd() *cobra.Command {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
 
-			if err := installOrUpgradeHook(
-				hooksDir, "post-commit",
-				hookVersionMarker, generateHookContent, force,
-			); err != nil {
-				return err
-			}
-
-			if err := installOrUpgradeHook(
-				hooksDir, "post-rewrite",
-				postRewriteHookVersionMarker,
-				generatePostRewriteHookContent, force,
-			); err != nil {
-				return err
-			}
-
-			return nil
+			return githook.InstallAll(hooksDir, force)
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing hook")
 
 	return cmd
-}
-
-// installOrUpgradeHook handles the append/upgrade/skip logic for a
-// single hook file, following the design doc's per-path behavior:
-//   - No existing hook: write fresh
-//   - Existing without roborev: append
-//   - Existing with current version: skip
-//   - Existing with old version: upgrade (remove old, append new)
-//   - --force: overwrite unconditionally
-//
-// hookReadFile is used to re-read the hook file after cleanup during
-// upgrade. Replaceable in tests to simulate read failures.
-var hookReadFile = os.ReadFile
-
-func installOrUpgradeHook(
-	hooksDir, hookName, versionMarker string,
-	generate func() string, force bool,
-) error {
-	hookPath := filepath.Join(hooksDir, hookName)
-	hookContent := generate()
-
-	existing, err := os.ReadFile(hookPath)
-	if err == nil && !force {
-		existingStr := string(existing)
-		if !strings.Contains(strings.ToLower(existingStr), "roborev") {
-			if !isShellHook(existingStr) {
-				return fmt.Errorf(
-					"%s hook uses a non-shell interpreter; "+
-						"add the roborev snippet manually or use --force to overwrite",
-					hookName)
-			}
-			// No roborev content — append
-			hookContent = existingStr + "\n" + hookContent
-		} else if strings.Contains(existingStr, versionMarker) {
-			fmt.Printf("%s hook already installed (current)\n", hookName)
-			return nil
-		} else {
-			// Upgrade: remove old snippet, append new one
-			if !isShellHook(existingStr) {
-				return fmt.Errorf(
-					"%s hook uses a non-shell interpreter; "+
-						"add the roborev snippet manually "+
-						"or use --force to overwrite",
-					hookName)
-			}
-			if rmErr := removeRoborevFromHook(hookPath); rmErr != nil {
-				return fmt.Errorf("upgrade %s: %w", hookName, rmErr)
-			}
-			updated, readErr := hookReadFile(hookPath)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				return fmt.Errorf("re-read %s after cleanup: %w", hookName, readErr)
-			}
-			if readErr == nil {
-				remaining := string(updated)
-				if remaining != "" && !strings.HasSuffix(remaining, "\n") {
-					remaining += "\n"
-				}
-				hookContent = remaining + hookContent
-			}
-		}
-	}
-
-	if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
-		return fmt.Errorf("write %s hook: %w", hookName, err)
-	}
-	fmt.Printf("Installed %s hook at %s\n", hookName, hookPath)
-	return nil
 }
 
 func uninstallHookCmd() *cobra.Command {
@@ -2464,7 +2343,7 @@ func uninstallHookCmd() *cobra.Command {
 			for _, hookName := range []string{
 				"post-commit", "post-rewrite",
 			} {
-				if err := removeRoborevFromHook(
+				if err := githook.Uninstall(
 					filepath.Join(hooksDir, hookName),
 				); err != nil {
 					return err
@@ -2474,169 +2353,6 @@ func uninstallHookCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// removeRoborevFromHook removes the roborev block from a hook file,
-// or deletes it entirely if nothing else remains. Uses block-based
-// removal: drops all lines from the first roborev comment marker
-// through the end of that contiguous block (since roborev appends
-// its snippet as a self-contained block at the end).
-// isShellHook returns true if the hook content starts with a
-// POSIX-compatible shell shebang (sh, bash, zsh, ksh, dash).
-// Used to avoid appending shell snippets to non-shell hooks.
-func isShellHook(content string) bool {
-	first, _, _ := strings.Cut(content, "\n")
-	first = strings.TrimSpace(first)
-	for _, sh := range []string{"sh", "bash", "zsh", "ksh", "dash"} {
-		if strings.HasPrefix(first, "#!/bin/"+sh) ||
-			strings.HasPrefix(first, "#!/usr/bin/env "+sh) {
-			return true
-		}
-	}
-	return false
-}
-
-// isRoborevMarker returns true if the line is a generated roborev hook
-// marker comment. Only matches the known generated forms:
-//
-//	# roborev post-commit hook ...
-//	# roborev post-rewrite hook ...
-func isRoborevMarker(line string) bool {
-	trimmed := strings.TrimSpace(strings.ToLower(line))
-	return strings.HasPrefix(trimmed, "# roborev post-commit hook") ||
-		strings.HasPrefix(trimmed, "# roborev post-rewrite hook")
-}
-
-// hasCommandPrefix checks if line starts with prefix and the prefix
-// is followed by end-of-string, whitespace, or a shell operator
-// (e.g. redirection). This prevents "enqueue --quiet" from matching
-// "enqueue --quietly".
-func hasCommandPrefix(line, prefix string) bool {
-	if !strings.HasPrefix(line, prefix) {
-		return false
-	}
-	if len(line) == len(prefix) {
-		return true
-	}
-	next := line[len(prefix)]
-	return next == ' ' || next == '\t' || next == '>' ||
-		next == '|' || next == '&' || next == ';'
-}
-
-// isRoborevSnippetLine returns true if the line is part of a
-// generated roborev hook snippet (current or legacy versions).
-func isRoborevSnippetLine(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return false
-	}
-	return strings.HasPrefix(trimmed, "ROBOREV=") ||
-		strings.HasPrefix(trimmed, "ROBOREV=$(") ||
-		hasCommandPrefix(trimmed, "\"$ROBOREV\" enqueue --quiet") ||
-		hasCommandPrefix(trimmed, "\"$ROBOREV\" remap --quiet") ||
-		hasCommandPrefix(trimmed, "roborev enqueue") ||
-		hasCommandPrefix(trimmed, "roborev remap") ||
-		strings.HasPrefix(trimmed, "if [ ! -x \"$ROBOREV\"") ||
-		strings.HasPrefix(trimmed, "if [ -z \"$ROBOREV\"") ||
-		strings.HasPrefix(trimmed, "[ -z \"$ROBOREV\"") ||
-		strings.HasPrefix(trimmed, "[ ! -x \"$ROBOREV\"")
-}
-
-func removeRoborevFromHook(hookPath string) error {
-	content, err := os.ReadFile(hookPath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read %s: %w", filepath.Base(hookPath), err)
-	}
-
-	hookStr := string(content)
-	if !strings.Contains(strings.ToLower(hookStr), "roborev") {
-		return nil
-	}
-
-	lines := strings.Split(hookStr, "\n")
-
-	// Find the start: anchor on the generated marker comment line
-	// (e.g. "# roborev post-commit hook v2 - ..."), not just any
-	// line that mentions roborev.
-	blockStart := -1
-	for i, line := range lines {
-		if isRoborevMarker(line) {
-			blockStart = i
-			break
-		}
-	}
-	if blockStart < 0 {
-		return nil
-	}
-
-	// Find the end: scan forward from the marker, consuming only
-	// lines that are part of the generated snippet. Stop at the
-	// first line that isn't a snippet line AND isn't "fi" closing
-	// a snippet's if-block.
-	blockEnd := blockStart
-	inIfBlock := false
-	for i := blockStart + 1; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" {
-			// Blank lines between snippet lines are consumed; a
-			// blank line after the snippet ends the block.
-			if i+1 < len(lines) && isRoborevSnippetLine(lines[i+1]) {
-				blockEnd = i
-				continue
-			}
-			break
-		}
-		if isRoborevSnippetLine(trimmed) {
-			blockEnd = i
-			if strings.HasPrefix(trimmed, "if ") {
-				inIfBlock = true
-			}
-			continue
-		}
-		// "fi" only belongs to the block if we saw an "if" inside it
-		if trimmed == "fi" && inIfBlock {
-			blockEnd = i
-			inIfBlock = false
-			continue
-		}
-		break
-	}
-
-	// Keep everything before and after the block
-	remaining := make([]string, 0, len(lines))
-	remaining = append(remaining, lines[:blockStart]...)
-	remaining = append(remaining, lines[blockEnd+1:]...)
-
-	// Check if anything meaningful remains
-	hasContent := false
-	for _, line := range remaining {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#!") {
-			hasContent = true
-			break
-		}
-	}
-
-	hookName := filepath.Base(hookPath)
-	if hasContent {
-		newContent := strings.Join(remaining, "\n")
-		if !strings.HasSuffix(newContent, "\n") {
-			newContent += "\n"
-		}
-		if err := os.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
-			return fmt.Errorf("write %s: %w", hookName, err)
-		}
-		fmt.Printf("Removed roborev from %s\n", hookName)
-	} else {
-		if err := os.Remove(hookPath); err != nil {
-			return fmt.Errorf("remove %s: %w", hookName, err)
-		}
-		fmt.Printf("Removed %s hook\n", hookName)
-	}
-	return nil
 }
 
 func skillsCmd() *cobra.Command {
@@ -3404,151 +3120,22 @@ func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySe
 	return reasoning
 }
 
-// hookVersionMarker is the string that identifies the current hook version.
-// Bump this when the hook template changes to trigger upgrade warnings.
-const hookVersionMarker = "post-commit hook v2"
-
-const postRewriteHookVersionMarker = "post-rewrite hook v1"
-
-// hookNeedsUpgrade checks whether a repo's named hook contains roborev
-// but is outdated (missing the given version marker).
-func hookNeedsUpgrade(repoPath, hookName, versionMarker string) bool {
+// autoInstallHooks installs or upgrades hooks when running
+// from the CLI (not from hooks themselves).
+func autoInstallHooks(repoPath string) {
 	hooksDir, err := git.GetHooksPath(repoPath)
 	if err != nil {
-		return false
-	}
-	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
-	if err != nil {
-		return false
-	}
-	s := string(content)
-	return strings.Contains(strings.ToLower(s), "roborev") &&
-		!strings.Contains(s, versionMarker)
-}
-
-// hookMissing checks whether a repo has roborev installed (post-commit
-// hook present) but is missing the named hook entirely.
-func hookMissing(repoPath, hookName string) bool {
-	hooksDir, err := git.GetHooksPath(repoPath)
-	if err != nil {
-		return false
-	}
-	// Only warn if roborev is installed (post-commit hook exists)
-	pcContent, err := os.ReadFile(filepath.Join(hooksDir, "post-commit"))
-	if err != nil {
-		return false
-	}
-	if !strings.Contains(strings.ToLower(string(pcContent)), "roborev") {
-		return false
-	}
-	// Check if the target hook is missing or has no roborev content
-	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
-	if err != nil {
-		return true // hook file doesn't exist
-	}
-	return !strings.Contains(strings.ToLower(string(content)), "roborev")
-}
-
-func generateHookContent() string {
-	// Get path to the currently running binary (not just first in PATH)
-	roborevPath, err := os.Executable()
-	if err == nil {
-		// Resolve symlinks to get the real path
-		if resolved, err := filepath.EvalSymlinks(roborevPath); err == nil {
-			roborevPath = resolved
-		}
-	} else {
-		// Fallback to PATH lookup if os.Executable fails (shouldn't happen)
-		roborevPath, _ = exec.LookPath("roborev")
-		if roborevPath == "" {
-			roborevPath = "roborev"
-		}
-	}
-
-	// Prefer baked path (security), fall back to PATH only if baked is missing
-	return fmt.Sprintf(`#!/bin/sh
-# roborev post-commit hook v2 - auto-reviews every commit
-ROBOREV=%q
-if [ ! -x "$ROBOREV" ]; then
-    ROBOREV=$(command -v roborev 2>/dev/null)
-    [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
-fi
-"$ROBOREV" enqueue --quiet 2>/dev/null
-`, roborevPath)
-}
-
-func installPostRewriteHook(hooksDir string) {
-	hookPath := filepath.Join(hooksDir, "post-rewrite")
-	hookContent := generatePostRewriteHookContent()
-
-	if existing, err := os.ReadFile(hookPath); err == nil {
-		existingStr := string(existing)
-		if !strings.Contains(strings.ToLower(existingStr), "roborev") {
-			if !isShellHook(existingStr) {
-				fmt.Printf("  Warning: %s uses a non-shell interpreter, skipping\n", hookPath)
-				return
-			}
-			// No roborev content — append to existing hook
-			hookContent = existingStr + "\n" + hookContent
-		} else if strings.Contains(existingStr, postRewriteHookVersionMarker) {
-			fmt.Println("  Post-rewrite hook already installed")
-			return
-		} else {
-			// Upgrade: remove old roborev snippet, append new one.
-			// This preserves user content around the snippet.
-			if !isShellHook(existingStr) {
-				fmt.Printf("  Warning: %s uses a non-shell interpreter, skipping\n", hookPath)
-				return
-			}
-			if rmErr := removeRoborevFromHook(hookPath); rmErr != nil {
-				fmt.Printf("  Warning: %v\n", rmErr)
-				return
-			}
-			updated, readErr := os.ReadFile(hookPath)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				fmt.Printf("  Warning: re-read %s after cleanup: %v\n",
-					hookPath, readErr)
-				return
-			}
-			if readErr == nil {
-				remaining := string(updated)
-				if remaining != "" && !strings.HasSuffix(remaining, "\n") {
-					remaining += "\n"
-				}
-				hookContent = remaining + hookContent
-			}
-			// If the file was deleted (snippet-only), hookContent
-			// is already the fresh generated content.
-		}
-	}
-
-	if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
-		fmt.Printf("  Warning: could not install post-rewrite hook: %v\n", err)
 		return
 	}
-	fmt.Printf("  Installed post-rewrite hook\n")
-}
-
-func generatePostRewriteHookContent() string {
-	roborevPath, err := os.Executable()
-	if err == nil {
-		if resolved, err := filepath.EvalSymlinks(roborevPath); err == nil {
-			roborevPath = resolved
-		}
-	} else {
-		roborevPath, _ = exec.LookPath("roborev")
-		if roborevPath == "" {
-			roborevPath = "roborev"
+	for _, name := range []string{"post-commit", "post-rewrite"} {
+		marker := githook.VersionMarker(name)
+		if githook.NeedsUpgrade(repoPath, name, marker) ||
+			githook.Missing(repoPath, name) {
+			if err := githook.Install(hooksDir, name, false); err != nil {
+				fmt.Fprintf(os.Stderr,
+					"Warning: auto-install %s hook: %v\n",
+					name, err)
+			}
 		}
 	}
-
-	return fmt.Sprintf(`#!/bin/sh
-# roborev post-rewrite hook v1 - remaps reviews after rebase/amend
-ROBOREV=%q
-if [ ! -x "$ROBOREV" ]; then
-    ROBOREV=$(command -v roborev 2>/dev/null)
-    [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
-fi
-"$ROBOREV" remap --quiet 2>/dev/null
-`, roborevPath)
 }
