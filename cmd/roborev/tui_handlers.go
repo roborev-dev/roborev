@@ -1484,8 +1484,8 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// View task: prompt for running, review for done/applied, error for failed
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
 			job := m.fixJobs[m.fixSelectedIdx]
-			switch job.Status {
-			case storage.JobStatusRunning:
+			switch {
+			case job.Status == storage.JobStatusRunning:
 				if job.Prompt != "" {
 					m.currentReview = &storage.Review{
 						Agent:  job.Agent,
@@ -1507,11 +1507,11 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.tailFromView = tuiViewTasks
 				m.currentView = tuiViewTail
 				return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
-			case storage.JobStatusDone, storage.JobStatusApplied, storage.JobStatusRebased:
+			case job.HasViewableOutput():
 				m.selectedJobID = job.ID
 				m.reviewFromView = tuiViewTasks
 				return m, m.fetchReview(job.ID)
-			case storage.JobStatusFailed:
+			case job.Status == storage.JobStatusFailed:
 				errMsg := job.Error
 				if errMsg == "" {
 					errMsg = "unknown error"
@@ -1526,8 +1526,8 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Tail output: live for running jobs, review for done, error for failed
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
 			job := m.fixJobs[m.fixSelectedIdx]
-			switch job.Status {
-			case storage.JobStatusRunning:
+			switch {
+			case job.Status == storage.JobStatusRunning:
 				m.tailJobID = job.ID
 				m.tailLines = nil
 				m.tailScroll = 0
@@ -1536,11 +1536,11 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.tailFromView = tuiViewTasks
 				m.currentView = tuiViewTail
 				return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
-			case storage.JobStatusDone, storage.JobStatusApplied, storage.JobStatusRebased:
+			case job.HasViewableOutput():
 				m.selectedJobID = job.ID
 				m.reviewFromView = tuiViewTasks
 				return m, m.fetchReview(job.ID)
-			case storage.JobStatusFailed:
+			case job.Status == storage.JobStatusFailed:
 				errMsg := job.Error
 				if errMsg == "" {
 					errMsg = "unknown error"
@@ -1587,7 +1587,7 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// View patch for completed fix jobs
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
 			job := m.fixJobs[m.fixSelectedIdx]
-			if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusApplied || job.Status == storage.JobStatusRebased {
+			if job.HasViewableOutput() {
 				return m, m.fetchPatch(job.ID)
 			}
 		}

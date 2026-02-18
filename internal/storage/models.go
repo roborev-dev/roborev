@@ -131,6 +131,12 @@ func (j ReviewJob) IsFixJob() bool {
 	return j.JobType == JobTypeFix
 }
 
+// HasViewableOutput returns true if this job has completed and its review/patch
+// can be viewed. This covers done, applied, and rebased terminal states.
+func (j ReviewJob) HasViewableOutput() bool {
+	return j.Status == JobStatusDone || j.Status == JobStatusApplied || j.Status == JobStatusRebased
+}
+
 // JobWithReview pairs a job with its review for batch operations
 type JobWithReview struct {
 	Job    ReviewJob `json:"job"`

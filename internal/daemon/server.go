@@ -1740,7 +1740,7 @@ func (s *Server) handleGetPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if (job.Status != storage.JobStatusDone && job.Status != storage.JobStatusApplied && job.Status != storage.JobStatusRebased) || job.Patch == nil {
+	if !job.HasViewableOutput() || job.Patch == nil {
 		writeError(w, http.StatusNotFound, "no patch available for this job")
 		return
 	}
