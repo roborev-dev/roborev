@@ -3445,21 +3445,27 @@ func (m tuiModel) renderTasksView() string {
 		return b.String()
 	}
 
-	// Dynamic column widths based on terminal width
-	// Columns: status(8) + id(6) + parent(varies) + ref(varies) + subject(rest)
-	statusW := 8
-	idW := 6
-	parentW := 16
-	refW := 12
-	padding := 10 // spaces between columns
-	subjectW := max(m.width-statusW-idW-parentW-refW-padding, 10)
-	if m.width > 120 {
-		refW = 20
-		subjectW = max(m.width-statusW-idW-parentW-refW-padding, 20)
-	}
+	// Column layout: fixed columns + flexible subject
+	// Fixed: "  " + Status(8) + " " + Job(5) + " " + Parent(11) + " " + Ref(refW) + " "
+	const statusW = 8
+	const idW = 5                                         // "#" + 4-digit number
+	const parentW = 11                                    // "fixes #NNNN"
+	fixedW := 2 + statusW + 1 + idW + 1 + parentW + 1 + 1 // prefix spacing + trailing space
+	// Give ref and subject the remaining width: ref gets 15%, subject gets the rest
+	flexW := max(m.width-fixedW, 10)
+	refW := max(7, flexW*15/100)
+	subjectW := max(5, flexW-refW-1) // -1 for space between ref and subject
+
+	// Header
+	header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %s",
+		statusW, "Status", idW, "Job", parentW, "Parent", refW, "Ref", "Subject")
+	b.WriteString(tuiStatusStyle.Render(header))
+	b.WriteString("\x1b[K\n")
+	b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
+	b.WriteString("\x1b[K\n")
 
 	// Render each fix job
-	visibleRows := m.height - 5 // title + help + padding
+	visibleRows := m.height - 7 // title + header + separator + help + padding
 	visibleRows = max(visibleRows, 1)
 	startIdx := 0
 	if m.fixSelectedIdx >= visibleRows {
@@ -3490,31 +3496,24 @@ func (m tuiModel) renderTasksView() string {
 			statusStyle = tuiCanceledStyle
 		}
 
-		// Parent job reference
 		parentRef := ""
 		if job.ParentJobID != nil {
 			parentRef = fmt.Sprintf("fixes #%d", *job.ParentJobID)
 		}
-
-		line := fmt.Sprintf("  %-*s  #%-4d  %-*s  %-*s  %s",
-			statusW, statusLabel,
-			job.ID,
-			parentW, truncateString(parentRef, parentW),
-			refW, truncateString(job.GitRef, refW),
-			truncateString(job.CommitSubject, subjectW),
-		)
+		ref := job.GitRef
+		if len(ref) > refW {
+			ref = ref[:max(1, refW-3)] + "..."
+		}
+		subject := truncateString(job.CommitSubject, subjectW)
 
 		if i == m.fixSelectedIdx {
+			line := fmt.Sprintf("  %-*s #%-4d %-*s %-*s %s",
+				statusW, statusLabel, job.ID, parentW, parentRef, refW, ref, subject)
 			b.WriteString(tuiSelectedStyle.Render(line))
 		} else {
-			// Apply status color to the status portion only
 			styledStatus := statusStyle.Render(fmt.Sprintf("%-*s", statusW, statusLabel))
-			rest := fmt.Sprintf("  #%-4d  %-*s  %-*s  %s",
-				job.ID,
-				parentW, truncateString(parentRef, parentW),
-				refW, truncateString(job.GitRef, refW),
-				truncateString(job.CommitSubject, subjectW),
-			)
+			rest := fmt.Sprintf(" #%-4d %-*s %-*s %s",
+				job.ID, parentW, parentRef, refW, ref, subject)
 			b.WriteString("  " + styledStatus + rest)
 		}
 		b.WriteString("\x1b[K\n")
