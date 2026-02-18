@@ -333,3 +333,93 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 		t.Error("Job should have been canceled via final check path")
 	}
 }
+
+func TestResolveBackupAgent(t *testing.T) {
+	tests := []struct {
+		name       string
+		jobAgent   string
+		reviewType string
+		cfgField   string // Config field to set
+		cfgValue   string // Value to set
+		want       string
+	}{
+		{
+			name:     "no backup configured",
+			jobAgent: "test",
+			want:     "",
+		},
+		{
+			name:     "unknown backup agent",
+			jobAgent: "test",
+			cfgField: "DefaultBackupAgent",
+			cfgValue: "nonexistent-agent-xyz",
+			want:     "",
+		},
+		{
+			name:     "backup same as primary",
+			jobAgent: "test",
+			cfgField: "DefaultBackupAgent",
+			cfgValue: "test",
+			want:     "",
+		},
+		{
+			name:     "default review type uses review workflow",
+			jobAgent: "codex",
+			cfgField: "ReviewBackupAgent",
+			cfgValue: "test",
+			want:     "test",
+		},
+		{
+			name:       "security review type uses security workflow",
+			jobAgent:   "codex",
+			reviewType: "security",
+			cfgField:   "SecurityBackupAgent",
+			cfgValue:   "test",
+			want:       "test",
+		},
+		{
+			name:       "workflow mismatch returns empty",
+			jobAgent:   "codex",
+			reviewType: "security",
+			cfgField:   "ReviewBackupAgent",
+			cfgValue:   "test",
+			want:       "",
+		},
+		{
+			name:     "default_backup_agent fallback",
+			jobAgent: "codex",
+			cfgField: "DefaultBackupAgent",
+			cfgValue: "test",
+			want:     "test",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.DefaultConfig()
+
+			// Set the config field using a switch (avoids reflect)
+			switch tt.cfgField {
+			case "DefaultBackupAgent":
+				cfg.DefaultBackupAgent = tt.cfgValue
+			case "ReviewBackupAgent":
+				cfg.ReviewBackupAgent = tt.cfgValue
+			case "SecurityBackupAgent":
+				cfg.SecurityBackupAgent = tt.cfgValue
+			case "DesignBackupAgent":
+				cfg.DesignBackupAgent = tt.cfgValue
+			}
+
+			pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil)
+			job := &storage.ReviewJob{
+				Agent:      tt.jobAgent,
+				ReviewType: tt.reviewType,
+			}
+
+			got := pool.resolveBackupAgent(job)
+			if got != tt.want {
+				t.Errorf("resolveBackupAgent() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
