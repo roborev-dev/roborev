@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -15,6 +16,26 @@ import (
 // gitSHAPattern matches a full hex git SHA: 40 chars (SHA-1)
 // or 64 chars (SHA-256).
 var gitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+func parseRemapPairs(r io.Reader) ([][2]string, error) {
+	var pairs [][2]string
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pairs = append(pairs, [2]string{fields[0], fields[1]})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return pairs, nil
+}
 
 func remapCmd() *cobra.Command {
 	var quiet bool
@@ -36,19 +57,14 @@ new commits. Called automatically by the post-rewrite hook.`,
 				repoRoot = gitCwd
 			}
 
-			// Parse stdin: "old_sha new_sha" per line
+			pairs, err := parseRemapPairs(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("read stdin: %w", err)
+			}
+
 			var mappings []daemon.RemapMapping
-			scanner := bufio.NewScanner(os.Stdin)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "" {
-					continue
-				}
-				fields := strings.Fields(line)
-				if len(fields) < 2 {
-					continue
-				}
-				oldSHA, newSHA := fields[0], fields[1]
+			for _, pair := range pairs {
+				oldSHA, newSHA := pair[0], pair[1]
 
 				if !gitSHAPattern.MatchString(oldSHA) ||
 					!gitSHAPattern.MatchString(newSHA) {
@@ -79,9 +95,6 @@ new commits. Called automatically by the post-rewrite hook.`,
 					Subject:   info.Subject,
 					Timestamp: info.Timestamp.Format("2006-01-02T15:04:05Z07:00"),
 				})
-			}
-			if err := scanner.Err(); err != nil {
-				return fmt.Errorf("read stdin: %w", err)
 			}
 
 			if len(mappings) == 0 {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -8,18 +9,9 @@ import (
 func TestRemapStdinParsing(t *testing.T) {
 	input := "abc123 def456\nfoo bar\n\n  baz qux  \n"
 
-	lines := strings.Split(strings.TrimSpace(input), "\n")
-	var pairs [][2]string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		pairs = append(pairs, [2]string{fields[0], fields[1]})
+	got, err := parseRemapPairs(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parseRemapPairs() error = %v", err)
 	}
 
 	expected := [][2]string{
@@ -28,13 +20,8 @@ func TestRemapStdinParsing(t *testing.T) {
 		{"baz", "qux"},
 	}
 
-	if len(pairs) != len(expected) {
-		t.Fatalf("expected %d pairs, got %d", len(expected), len(pairs))
-	}
-	for i, p := range pairs {
-		if p != expected[i] {
-			t.Errorf("pair %d: expected %v, got %v", i, expected[i], p)
-		}
+	if !reflect.DeepEqual(got, expected) {
+		t.Errorf("parseRemapPairs() = %v, want %v", got, expected)
 	}
 }
 
@@ -42,29 +29,32 @@ func TestGitSHAValidation(t *testing.T) {
 	sha256Valid := "abc123def456abc123def456abc123def456abc1" +
 		"aabbccddeeff00112233aabb"
 	tests := []struct {
+		name  string
 		input string
 		valid bool
 	}{
-		{"abc123def456abc123def456abc123def456abc1", true},
-		{"0000000000000000000000000000000000000000", true},
-		{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true},
-		{sha256Valid, true}, // SHA-256 (64 chars)
-		{"abc123", false},   // too short
-		{"ABC123DEF456ABC123DEF456ABC123DEF456ABC1", false}, // uppercase
-		{"--option", false}, // flag injection
-		{"-n1", false},      // short flag
-		{"abc123def456abc123def456abc123def456abc1x", false}, // 41 chars
-		{"abc123def456abc123def456abc123def456abc", false},   // 39 chars
-		{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", false},  // non-hex
-		{"abc123def456abc123def456abc123def456abc1 ", false}, // trailing space
-		{sha256Valid + "aa", false},                          // 66 chars
-		{sha256Valid[:63], false},                            // 63 chars
+		{"ValidSHA1", "abc123def456abc123def456abc123def456abc1", true},
+		{"ZeroSHA1", "0000000000000000000000000000000000000000", true},
+		{"AllAlphaSHA1", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true},
+		{"ValidSHA256", sha256Valid, true},
+		{"TooShort", "abc123", false},
+		{"UppercaseInvalid", "ABC123DEF456ABC123DEF456ABC123DEF456ABC1", false},
+		{"FlagInjection", "--option", false},
+		{"ShortFlag", "-n1", false},
+		{"TooLong41Chars", "abc123def456abc123def456abc123def456abc1x", false},
+		{"TooShort39Chars", "abc123def456abc123def456abc123def456abc", false},
+		{"NonHex", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", false},
+		{"TrailingSpace", "abc123def456abc123def456abc123def456abc1 ", false},
+		{"TooLongSHA256Plus2", sha256Valid + "aa", false},
+		{"TooShortSHA256Minus1", sha256Valid[:63], false},
 	}
 	for _, tt := range tests {
-		got := gitSHAPattern.MatchString(tt.input)
-		if got != tt.valid {
-			t.Errorf("gitSHAPattern.MatchString(%q) = %v, want %v",
-				tt.input, got, tt.valid)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := gitSHAPattern.MatchString(tt.input)
+			if got != tt.valid {
+				t.Errorf("gitSHAPattern.MatchString(%q) = %v, want %v",
+					tt.input, got, tt.valid)
+			}
+		})
 	}
 }
