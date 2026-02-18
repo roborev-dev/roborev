@@ -245,6 +245,8 @@ type tuiModel struct {
 
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
+
+	clipboard ClipboardWriter
 }
 
 // pendingState tracks a pending addressed toggle with sequence number
@@ -371,9 +373,6 @@ func (r *realClipboard) WriteText(text string) error {
 	return clipboard.WriteAll(text)
 }
 
-// clipboardWriter is the clipboard implementation used by the TUI (can be overridden for tests)
-var clipboardWriter ClipboardWriter = &realClipboard{}
-
 // isConnectionError checks if an error indicates a network/connection failure
 // (as opposed to an application-level error like 404 or invalid response).
 // Only connection errors should trigger reconnection attempts.
@@ -446,6 +445,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		branchNames:            make(map[int64]string),       // Cache derived branch names to avoid git calls on render
 		pendingAddressed:       make(map[int64]pendingState), // Track pending addressed changes (by job ID)
 		pendingReviewAddressed: make(map[int64]pendingState), // Track pending addressed changes (by review ID)
+		clipboard:              &realClipboard{},
 		mdCache:                newMarkdownCache(tabWidth),
 	}
 }
@@ -1121,7 +1121,7 @@ func (m tuiModel) copyToClipboard(review *storage.Review) tea.Cmd {
 		if content == "" {
 			return tuiClipboardResultMsg{err: fmt.Errorf("no content to copy"), view: view}
 		}
-		err := clipboardWriter.WriteText(content)
+		err := m.clipboard.WriteText(content)
 		return tuiClipboardResultMsg{err: err, view: view}
 	}
 }
@@ -1144,7 +1144,7 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 		}
 
 		content := formatClipboardContent(review)
-		err = clipboardWriter.WriteText(content)
+		err = m.clipboard.WriteText(content)
 		return tuiClipboardResultMsg{err: err, view: view}
 	}
 }

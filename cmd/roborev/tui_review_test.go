@@ -176,217 +176,179 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 	}
 }
 
-func TestTUIReviewNavigationJNext(t *testing.T) {
-	// Test 'j' navigates to next viewable job (higher index) in review view
-	m := newTuiModel("http://localhost")
-
-	// Setup: 5 jobs, middle ones are queued/running (not viewable)
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2, withStatus(storage.JobStatusQueued)),
-		makeJob(3, withStatus(storage.JobStatusRunning)),
-		makeJob(4, withStatus(storage.JobStatusFailed)),
-		makeJob(5),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.currentView = tuiViewReview
-	m.currentReview = makeReview(10, &storage.ReviewJob{ID: 1})
-	m.reviewScroll = 5 // Ensure scroll resets
-
-	// Press 'j' - should skip to job 4 (failed, viewable)
-	m2, cmd := pressKey(m, 'j')
-
-	if m2.selectedIdx != 3 {
-		t.Errorf("Expected selectedIdx=3 (job ID=4), got %d", m2.selectedIdx)
-	}
-	if m2.selectedJobID != 4 {
-		t.Errorf("Expected selectedJobID=4, got %d", m2.selectedJobID)
-	}
-	if m2.reviewScroll != 0 {
-		t.Errorf("Expected reviewScroll to reset to 0, got %d", m2.reviewScroll)
-	}
-	// For failed jobs, currentReview is set inline (no fetch command)
-	if m2.currentReview == nil {
-		t.Error("Expected currentReview to be set for failed job")
-	}
-	if cmd != nil {
-		t.Error("Expected no command for failed job (inline display)")
-	}
-}
-
-func TestTUIReviewNavigationKPrev(t *testing.T) {
-	// Test 'k' navigates to previous viewable job (lower index) in review view
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2, withStatus(storage.JobStatusQueued)),
-		makeJob(3, withStatus(storage.JobStatusRunning)),
-		makeJob(4, withStatus(storage.JobStatusFailed)),
-		makeJob(5),
-	}
-	m.selectedIdx = 4
-	m.selectedJobID = 5
-	m.currentView = tuiViewReview
-	m.currentReview = makeReview(50, &storage.ReviewJob{ID: 5})
-	m.reviewScroll = 10
-
-	// Press 'k' - should skip to job 4 (failed, viewable)
-	m2, _ := pressKey(m, 'k')
-
-	if m2.selectedIdx != 3 {
-		t.Errorf("Expected selectedIdx=3 (job ID=4), got %d", m2.selectedIdx)
-	}
-	if m2.selectedJobID != 4 {
-		t.Errorf("Expected selectedJobID=4, got %d", m2.selectedJobID)
-	}
-	if m2.reviewScroll != 0 {
-		t.Errorf("Expected reviewScroll to reset to 0, got %d", m2.reviewScroll)
-	}
-}
-
-func TestTUIReviewNavigationLeftRight(t *testing.T) {
-	// Test left/right arrows mirror j/k in review view
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2),
-		makeJob(3),
-	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
-	m.currentView = tuiViewReview
-	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2})
-
-	// Press 'left' - should navigate to next (higher index), like 'j'
-	m2, cmd := pressSpecial(m, tea.KeyLeft)
-
-	if m2.selectedIdx != 2 {
-		t.Errorf("Left arrow: expected selectedIdx=2, got %d", m2.selectedIdx)
-	}
-	if m2.selectedJobID != 3 {
-		t.Errorf("Left arrow: expected selectedJobID=3, got %d", m2.selectedJobID)
-	}
-	// Should trigger fetch for done job
-	if cmd == nil {
-		t.Error("Left arrow: expected fetch command for done job")
-	}
-
-	// Reset and test 'right' - should navigate to prev (lower index), like 'k'
-	m.selectedIdx = 1
-	m.selectedJobID = 2
-	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2})
-
-	m3, cmd := pressSpecial(m, tea.KeyRight)
-
-	if m3.selectedIdx != 0 {
-		t.Errorf("Right arrow: expected selectedIdx=0, got %d", m3.selectedIdx)
-	}
-	if m3.selectedJobID != 1 {
-		t.Errorf("Right arrow: expected selectedJobID=1, got %d", m3.selectedJobID)
-	}
-	if cmd == nil {
-		t.Error("Right arrow: expected fetch command for done job")
-	}
-}
-
-func TestTUIReviewNavigationBoundaries(t *testing.T) {
-	// Test navigation at boundaries (first/last viewable job)
-	m := newTuiModel("http://localhost")
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2, withStatus(storage.JobStatusQueued)), // Not viewable
-		makeJob(3),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.currentView = tuiViewReview
-	m.currentReview = makeReview(10, &storage.ReviewJob{ID: 1})
-
-	// Press 'k' (right) at first viewable job - should show flash message
-	m2, cmd := pressKey(m, 'k')
-
-	if m2.selectedIdx != 0 {
-		t.Errorf("Expected selectedIdx to remain 0 at boundary, got %d", m2.selectedIdx)
-	}
-	if m2.selectedJobID != 1 {
-		t.Errorf("Expected selectedJobID to remain 1 at boundary, got %d", m2.selectedJobID)
-	}
-	if cmd != nil {
-		t.Error("Expected no command at boundary")
-	}
-	if m2.flashMessage != "No newer review" {
-		t.Errorf("Expected flash message 'No newer review', got %q", m2.flashMessage)
-	}
-	if m2.flashView != tuiViewReview {
-		t.Errorf("Expected flashView to be tuiViewReview, got %d", m2.flashView)
-	}
-	if m2.flashExpiresAt.IsZero() || m2.flashExpiresAt.Before(time.Now()) {
-		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m2.flashExpiresAt)
+func TestTUIReviewNavigation(t *testing.T) {
+	tests := []struct {
+		name          string
+		initialJobs   []storage.ReviewJob
+		initialIdx    int
+		initialID     int64
+		initialScroll int
+		key           any // rune or tea.KeyType
+		wantIdx       int
+		wantJobID     int64
+		wantScroll    int
+		wantFlash     string
+		wantCmd       bool // Expect a command (fetch)
+	}{
+		{
+			name: "J Next skips queued/running",
+			initialJobs: []storage.ReviewJob{
+				makeJob(1),
+				makeJob(2, withStatus(storage.JobStatusQueued)),
+				makeJob(3, withStatus(storage.JobStatusRunning)),
+				makeJob(4, withStatus(storage.JobStatusFailed)),
+				makeJob(5),
+			},
+			initialIdx:    0,
+			initialID:     1,
+			initialScroll: 5,
+			key:           'j',
+			wantIdx:       3,
+			wantJobID:     4,
+			wantScroll:    0,
+			wantCmd:       false, // Failed job = inline, no fetch
+		},
+		{
+			name: "K Prev skips queued/running",
+			initialJobs: []storage.ReviewJob{
+				makeJob(1),
+				makeJob(2, withStatus(storage.JobStatusQueued)),
+				makeJob(3, withStatus(storage.JobStatusRunning)),
+				makeJob(4, withStatus(storage.JobStatusFailed)),
+				makeJob(5),
+			},
+			initialIdx:    4,
+			initialID:     5,
+			initialScroll: 10,
+			key:           'k',
+			wantIdx:       3,
+			wantJobID:     4,
+			wantScroll:    0,
+			wantCmd:       false,
+		},
+		{
+			name: "Left Arrow acts like J (Next)",
+			initialJobs: []storage.ReviewJob{
+				makeJob(1),
+				makeJob(2),
+				makeJob(3),
+			},
+			initialIdx: 1,
+			initialID:  2,
+			key:        tea.KeyLeft,
+			wantIdx:    2,
+			wantJobID:  3,
+			wantCmd:    true,
+		},
+		{
+			name: "Right Arrow acts like K (Prev)",
+			initialJobs: []storage.ReviewJob{
+				makeJob(1),
+				makeJob(2),
+				makeJob(3),
+			},
+			initialIdx: 1,
+			initialID:  2,
+			key:        tea.KeyRight,
+			wantIdx:    0,
+			wantJobID:  1,
+			wantCmd:    true,
+		},
+		{
+			name: "Boundary Start (K/Right)",
+			initialJobs: []storage.ReviewJob{
+				makeJob(1),
+				makeJob(2, withStatus(storage.JobStatusQueued)),
+				makeJob(3),
+			},
+			initialIdx: 0,
+			initialID:  1,
+			key:        'k',
+			wantIdx:    0,
+			wantJobID:  1,
+			wantFlash:  "No newer review",
+		},
+		{
+			name: "Boundary End (J/Left)",
+			initialJobs: []storage.ReviewJob{
+				makeJob(1),
+				makeJob(2, withStatus(storage.JobStatusQueued)),
+				makeJob(3),
+			},
+			initialIdx: 2,
+			initialID:  3,
+			key:        'j',
+			wantIdx:    2,
+			wantJobID:  3,
+			wantFlash:  "No older review",
+		},
+		{
+			name: "Navigate to Failed Job Inline",
+			initialJobs: []storage.ReviewJob{
+				makeJob(1),
+				makeJob(2, withStatus(storage.JobStatusFailed), withAgent("codex"), withError("something went wrong")),
+			},
+			initialIdx: 0,
+			initialID:  1,
+			key:        'j',
+			wantIdx:    1,
+			wantJobID:  2,
+			wantCmd:    false,
+		},
 	}
 
-	// Now at last viewable job
-	m.selectedIdx = 2
-	m.selectedJobID = 3
-	m.currentReview = makeReview(30, &storage.ReviewJob{ID: 3})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTuiModel("http://localhost")
+			m.jobs = tt.initialJobs
+			m.selectedIdx = tt.initialIdx
+			m.selectedJobID = tt.initialID
+			m.currentView = tuiViewReview
+			// Setup current review to match initial selection
+			m.currentReview = makeReview(10, &tt.initialJobs[tt.initialIdx])
+			m.reviewScroll = tt.initialScroll
 
-	// Press 'j' (left) at last viewable job - should show flash message
-	m3, cmd := pressKey(m, 'j')
+			var m2 tuiModel
+			var cmd tea.Cmd
 
-	if m3.selectedIdx != 2 {
-		t.Errorf("Expected selectedIdx to remain 2 at boundary, got %d", m3.selectedIdx)
-	}
-	if m3.selectedJobID != 3 {
-		t.Errorf("Expected selectedJobID to remain 3 at boundary, got %d", m3.selectedJobID)
-	}
-	if cmd != nil {
-		t.Error("Expected no command at boundary")
-	}
-	if m3.flashMessage != "No older review" {
-		t.Errorf("Expected flash message 'No older review', got %q", m3.flashMessage)
-	}
-	if m3.flashView != tuiViewReview {
-		t.Errorf("Expected flashView to be tuiViewReview, got %d", m3.flashView)
-	}
-	if m3.flashExpiresAt.IsZero() || m3.flashExpiresAt.Before(time.Now()) {
-		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m3.flashExpiresAt)
-	}
-}
+			switch k := tt.key.(type) {
+			case rune:
+				m2, cmd = pressKey(m, k)
+			case tea.KeyType:
+				m2, cmd = pressSpecial(m, k)
+			}
 
-func TestTUIReviewNavigationFailedJobInline(t *testing.T) {
-	// Test that navigating to a failed job displays error inline
-	m := newTuiModel("http://localhost")
+			assertSelection(t, m2, tt.wantIdx, tt.wantJobID)
 
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2, withStatus(storage.JobStatusFailed), withAgent("codex"), withError("something went wrong")),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.currentView = tuiViewReview
-	m.currentReview = makeReview(10, &storage.ReviewJob{ID: 1})
+			if tt.wantScroll != -1 && m2.reviewScroll != tt.wantScroll {
+				t.Errorf("reviewScroll: got %d, want %d", m2.reviewScroll, tt.wantScroll)
+			}
 
-	// Press 'j' - should navigate to failed job and display inline
-	m2, cmd := pressKey(m, 'j')
+			if tt.wantFlash != "" {
+				if m2.flashMessage != tt.wantFlash {
+					t.Errorf("flashMessage: got %q, want %q", m2.flashMessage, tt.wantFlash)
+				}
+				if m2.flashView != tuiViewReview {
+					t.Errorf("flashView: got %d, want %d", m2.flashView, tuiViewReview)
+				}
+			}
 
-	if m2.selectedIdx != 1 {
-		t.Errorf("Expected selectedIdx=1, got %d", m2.selectedIdx)
-	}
-	if m2.currentReview == nil {
-		t.Fatal("Expected currentReview to be set for failed job")
-	}
-	if m2.currentReview.Agent != "codex" {
-		t.Errorf("Expected agent='codex', got '%s'", m2.currentReview.Agent)
-	}
-	if !strings.Contains(m2.currentReview.Output, "something went wrong") {
-		t.Errorf("Expected output to contain error, got '%s'", m2.currentReview.Output)
-	}
-	// No fetch command for failed jobs - displayed inline
-	if cmd != nil {
-		t.Error("Expected no command for failed job (inline display)")
+			if tt.wantCmd && cmd == nil {
+				t.Error("expected command, got nil")
+			} else if !tt.wantCmd && cmd != nil {
+				t.Error("expected no command, got one")
+			}
+
+			// Specific check for failed job inline content
+			if tt.name == "Navigate to Failed Job Inline" {
+				if m2.currentReview == nil {
+					t.Fatal("Expected currentReview to be set for failed job")
+				}
+				if !strings.Contains(m2.currentReview.Output, "something went wrong") {
+					t.Errorf("Expected output to contain error, got '%s'", m2.currentReview.Output)
+				}
+			}
+		})
 	}
 }
 
@@ -1911,13 +1873,10 @@ func (m *mockClipboard) WriteText(text string) error {
 }
 
 func TestTUIYankCopyFromReviewView(t *testing.T) {
-	// Save original clipboard writer and restore after test
-	originalClipboard := clipboardWriter
 	mock := &mockClipboard{}
-	clipboardWriter = mock
-	defer func() { clipboardWriter = originalClipboard }()
 
 	m := newTuiModel("http://localhost")
+	m.clipboard = mock
 	m.currentView = tuiViewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("This is the review content to copy"))
 
@@ -2042,11 +2001,7 @@ func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
-	// Save original clipboard writer and restore after test
-	originalClipboard := clipboardWriter
 	mock := &mockClipboard{}
-	clipboardWriter = mock
-	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a review
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
@@ -2065,6 +2020,7 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(review)
 	})
+	m.clipboard = mock
 
 	// Execute fetchReviewAndCopy
 	cmd := m.fetchReviewAndCopy(123, nil)
@@ -2139,13 +2095,10 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 }
 
 func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
-	// Save original clipboard writer and restore after test
-	originalClipboard := clipboardWriter
 	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: xclip not found")}
-	clipboardWriter = mock
-	defer func() { clipboardWriter = originalClipboard }()
 
 	m := newTuiModel("http://localhost")
+	m.clipboard = mock
 	m.currentView = tuiViewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 
@@ -2173,11 +2126,7 @@ func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
-	// Save original clipboard writer and restore after test
-	originalClipboard := clipboardWriter
 	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: pbcopy not found")}
-	clipboardWriter = mock
-	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a valid review
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
@@ -2189,6 +2138,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(review)
 	})
+	m.clipboard = mock
 
 	// Fetch succeeds but clipboard write fails
 	cmd := m.fetchReviewAndCopy(123, nil)
@@ -2209,11 +2159,7 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
-	// Save original clipboard writer and restore after test
-	originalClipboard := clipboardWriter
 	mock := &mockClipboard{}
-	clipboardWriter = mock
-	defer func() { clipboardWriter = originalClipboard }()
 
 	// Create test server that returns a review WITHOUT Job populated
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
@@ -2226,6 +2172,7 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(review)
 	})
+	m.clipboard = mock
 
 	// Pass a job parameter - this should be injected when review.Job is nil
 	j := makeJob(123, withRepoPath("/path/to/repo"), withRef("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"))
