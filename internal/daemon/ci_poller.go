@@ -266,7 +266,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	agents := cfg.CI.ResolvedAgents()
 	reasoning := "thorough"
 
-	repoCfg, repoCfgErr := config.LoadRepoConfig(repo.RootPath)
+	repoCfg, repoCfgErr := loadCIRepoConfig(repo.RootPath)
 	if repoCfgErr != nil {
 		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, repoCfgErr)
 	}
@@ -894,15 +894,28 @@ func (p *CIPoller) resolveRepoForBatch(batch *storage.CIPRBatch) *storage.Repo {
 	return repo
 }
 
+// loadCIRepoConfig loads .roborev.toml from the repo's default branch
+// (e.g., origin/main) rather than the working tree. This ensures the CI
+// poller uses current settings even when the local checkout is stale.
+// Falls back to the filesystem if the default branch has no config.
+func loadCIRepoConfig(repoPath string) (*config.RepoConfig, error) {
+	if defaultBranch, err := gitpkg.GetDefaultBranch(repoPath); err == nil {
+		if cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch); err == nil && cfg != nil {
+			return cfg, nil
+		}
+	}
+	return config.LoadRepoConfig(repoPath)
+}
+
 // resolveMinSeverity determines the effective min_severity for synthesis.
 // Priority: per-repo .roborev.toml [ci] min_severity > global [ci] min_severity > "" (no filter).
 // Invalid values are logged and skipped.
 func resolveMinSeverity(globalMinSeverity, repoPath, ghRepo string) string {
 	minSeverity := globalMinSeverity
 
-	// Try per-repo override
+	// Try per-repo override (from default branch, not working tree)
 	if repoPath != "" {
-		repoCfg, err := config.LoadRepoConfig(repoPath)
+		repoCfg, err := loadCIRepoConfig(repoPath)
 		if err != nil {
 			log.Printf("CI poller: failed to load repo config from %s: %v (using global min_severity)", repoPath, err)
 		} else if repoCfg != nil {
