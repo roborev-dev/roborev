@@ -481,61 +481,6 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	return &cfg, nil
 }
 
-// MergeGuidelines combines base guidelines with branch guidelines.
-// Branch guidelines can add new lines but cannot remove existing base
-// lines. Deduplication compares trimmed lines, but additions preserve
-// their original formatting (including leading indentation).
-func MergeGuidelines(base, branch string) string {
-	if base == "" && branch == "" {
-		return ""
-	}
-	if branch == "" {
-		return base
-	}
-	if base == "" {
-		return branch
-	}
-
-	// Build a set of trimmed base lines for comparison
-	baseSet := make(map[string]struct{})
-	for _, trimmed := range trimmedNonEmpty(base) {
-		baseSet[trimmed] = struct{}{}
-	}
-
-	// Collect branch lines whose trimmed form isn't in the base set,
-	// preserving original formatting (leading indentation).
-	var additions []string
-	for line := range strings.SplitSeq(branch, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if _, exists := baseSet[trimmed]; !exists {
-			original := strings.TrimRight(line, " \t\r")
-			additions = append(additions, original)
-			baseSet[trimmed] = struct{}{} // prevent duplicate additions
-		}
-	}
-
-	if len(additions) == 0 {
-		return base
-	}
-	return strings.TrimRight(base, "\n") + "\n" + strings.Join(additions, "\n")
-}
-
-// trimmedNonEmpty returns trimmed, non-empty lines from s (for set
-// comparison only — not for preserving original formatting).
-func trimmedNonEmpty(s string) []string {
-	var result []string
-	for line := range strings.SplitSeq(s, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	return result
-}
-
 // resolve returns the first non-zero value from the candidates, or defaultVal
 // if all candidates are zero. This encapsulates the standard precedence logic
 // (explicit > repo > global > default) used throughout config resolution.

@@ -215,8 +215,8 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	sb.WriteString(GetSystemPrompt(agentName, promptType))
 	sb.WriteString("\n")
 
-	// Add project-specific guidelines, merged from base + ref
-	b.writeProjectGuidelines(&sb, loadMergedGuidelines(repoPath, sha))
+	// Add project-specific guidelines from default branch
+	b.writeProjectGuidelines(&sb, loadGuidelines(repoPath))
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -297,12 +297,8 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	sb.WriteString(GetSystemPrompt(agentName, promptType))
 	sb.WriteString("\n")
 
-	// Add project-specific guidelines, merged from base + end ref
-	endRef := rangeRef
-	if _, end, ok := git.ParseRange(rangeRef); ok {
-		endRef = end
-	}
-	b.writeProjectGuidelines(&sb, loadMergedGuidelines(repoPath, endRef))
+	// Add project-specific guidelines from default branch
+	b.writeProjectGuidelines(&sb, loadGuidelines(repoPath))
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -420,45 +416,31 @@ func (b *Builder) writeProjectGuidelines(sb *strings.Builder, guidelines string)
 // branch guidelines can add lines but cannot remove base lines.
 // Falls back to filesystem LoadRepoConfig only when no .roborev.toml
 // exists on the default branch (not when it exists with empty guidelines).
-func loadMergedGuidelines(repoPath, ref string) string {
-	// Detect the default branch (origin/main, origin/master, etc.)
-	var baseGuidelines string
-	baseFound := false
+func loadGuidelines(repoPath string) string {
+	// Load review guidelines from the default branch (origin/main,
+	// origin/master, etc.). Branch-specific guidelines are intentionally
+	// ignored to prevent prompt injection from untrusted PR authors.
 	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
-		baseCfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
+		cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
 		if err != nil {
-			// Distinguish parse errors (file exists but invalid TOML)
-			// from transient git failures. Only suppress filesystem
-			// fallback for parse errors — transient failures should
-			// still allow fallback to working-tree config.
 			if strings.Contains(err.Error(), "parse") {
-				log.Printf("prompt: invalid .roborev.toml on %s: %v", defaultBranch, err)
-				baseFound = true // prevent filesystem fallback
-			} else {
-				log.Printf("prompt: failed to read .roborev.toml from %s: %v (will try filesystem)", defaultBranch, err)
+				log.Printf("prompt: invalid .roborev.toml on %s: %v",
+					defaultBranch, err)
+				return ""
 			}
-		} else if baseCfg != nil {
-			baseGuidelines = baseCfg.ReviewGuidelines
-			baseFound = true
+			log.Printf("prompt: failed to read .roborev.toml from %s: %v"+
+				" (will try filesystem)", defaultBranch, err)
+		} else if cfg != nil {
+			return cfg.ReviewGuidelines
 		}
 	}
 
-	// Fall back to filesystem config only if no .roborev.toml on the
-	// default branch. An existing config with empty guidelines is
-	// intentional and should not trigger a filesystem fallback.
-	if !baseFound {
-		if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
-			baseGuidelines = fsCfg.ReviewGuidelines
-		}
+	// Fall back to filesystem config when default branch has no config
+	// (e.g., no remote, or .roborev.toml not yet committed).
+	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
+		return fsCfg.ReviewGuidelines
 	}
-
-	// Load branch guidelines from the review ref
-	var branchGuidelines string
-	if branchCfg, err := config.LoadRepoConfigFromRef(repoPath, ref); err == nil && branchCfg != nil {
-		branchGuidelines = branchCfg.ReviewGuidelines
-	}
-
-	return config.MergeGuidelines(baseGuidelines, branchGuidelines)
+	return ""
 }
 
 // writePreviousAttemptsForGitRef writes previous review attempts for the same git ref (commit or range)
