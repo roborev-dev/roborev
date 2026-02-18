@@ -1148,6 +1148,7 @@ func (db *DB) FailoverJob(jobID int64, workerID string, backupAgent string) (boo
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET agent = ?,
+		    model = NULL,
 		    retry_count = 0,
 		    status = 'queued',
 		    worker_id = NULL,

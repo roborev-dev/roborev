@@ -378,6 +378,14 @@ func TestResolveBackupAgent(t *testing.T) {
 			want:       "test",
 		},
 		{
+			name:       "design review type uses design workflow",
+			jobAgent:   "codex",
+			reviewType: "design",
+			cfgField:   "DesignBackupAgent",
+			cfgValue:   "test",
+			want:       "test",
+		},
+		{
 			name:       "workflow mismatch returns empty",
 			jobAgent:   "codex",
 			reviewType: "security",
@@ -413,6 +421,7 @@ func TestResolveBackupAgent(t *testing.T) {
 			pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil)
 			job := &storage.ReviewJob{
 				Agent:      tt.jobAgent,
+				RepoPath:   t.TempDir(),
 				ReviewType: tt.reviewType,
 			}
 

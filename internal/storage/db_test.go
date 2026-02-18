@@ -946,6 +946,46 @@ func TestFailoverJob(t *testing.T) {
 		}
 	})
 
+	t.Run("clears model on failover", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/failover-model")
+		commit := createCommit(t, db, repo.ID, "fo-model")
+
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "fo-model",
+			Agent:    "primary",
+			Model:    "o3-mini",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+		if job.Model != "o3-mini" {
+			t.Fatalf("Model = %q, want %q", job.Model, "o3-mini")
+		}
+
+		claimJob(t, db, "worker-1")
+
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup")
+		if err != nil {
+			t.Fatalf("FailoverJob: %v", err)
+		}
+		if !ok {
+			t.Fatal("Expected failover to succeed")
+		}
+
+		updated, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if updated.Model != "" {
+			t.Errorf("Model = %q, want empty (cleared on failover)", updated.Model)
+		}
+	})
+
 	t.Run("fails with empty backup agent", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
