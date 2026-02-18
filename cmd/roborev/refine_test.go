@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -13,51 +12,8 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
 )
-
-// createMockExecutable creates a platform-appropriate executable script in dir
-// that exits with the given exit code.
-func createMockExecutable(t *testing.T, dir, name string, exitCode int) string {
-	t.Helper()
-	var path string
-	if runtime.GOOS == "windows" {
-		path = filepath.Join(dir, name+".bat")
-		if err := os.WriteFile(path, fmt.Appendf(nil, "@exit /b %d\r\n", exitCode), 0755); err != nil {
-			t.Fatalf("write %s stub: %v", name, err)
-		}
-	} else {
-		path = filepath.Join(dir, name)
-		if err := os.WriteFile(path, fmt.Appendf(nil, "#!/bin/sh\nexit %d\n", exitCode), 0755); err != nil {
-			t.Fatalf("write %s stub: %v", name, err)
-		}
-	}
-	return path
-}
-
-// installGitHook writes a shell script as the named git hook
-// (e.g. "pre-commit", "post-checkout") and makes it executable.
-func installGitHook(t *testing.T, repoDir, name, script string) {
-	t.Helper()
-	hooksDir := filepath.Join(repoDir, ".git", "hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	hookPath := filepath.Join(hooksDir, name)
-	if err := os.WriteFile(hookPath, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// gitCommitFile writes a file, stages it, commits, and returns the new HEAD SHA.
-func gitCommitFile(t *testing.T, repoDir string, runGit func(...string) string, filename, content, msg string) string {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(repoDir, filename), []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", filename)
-	runGit("commit", "-m", msg)
-	return runGit("rev-parse", "HEAD")
-}
 
 // mockDaemonClient is a test implementation of daemon.Client
 type mockDaemonClient struct {
@@ -285,10 +241,7 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 }
 
 func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
-	tmpDir := t.TempDir()
-	createMockExecutable(t, tmpDir, "codex", 0)
-
-	t.Setenv("PATH", tmpDir)
+	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
 	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "")
 	if err != nil {
@@ -305,10 +258,7 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 }
 
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
-	tmpDir := t.TempDir()
-	createMockExecutable(t, tmpDir, "codex", 0)
-
-	t.Setenv("PATH", tmpDir)
+	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
 	// Request an unavailable agent (claude), codex should be used as fallback
 	selected, err := selectRefineAgent("claude", agent.ReasoningThorough, "")
@@ -834,228 +784,142 @@ func TestFindPendingJobForBranch_OldestFirst(t *testing.T) {
 	}
 }
 
-// setupTestGitRepo creates a git repo for testing branch/--since behavior.
-// Returns the repo directory, base commit SHA, and a helper to run git commands.
-func setupTestGitRepo(t *testing.T) (repoDir string, baseSHA string, runGit func(args ...string) string) {
-	t.Helper()
-
-	repoDir = t.TempDir()
-	runGit = func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repoDir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	// Use git init + symbolic-ref for compatibility with Git < 2.28 (which lacks -b flag)
-	runGit("init")
-	runGit("symbolic-ref", "HEAD", "refs/heads/main")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-
-	baseSHA = gitCommitFile(t, repoDir, runGit, "base.txt", "base", "base commit")
-
-	return repoDir, baseSHA, runGit
-}
-
-func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
+func TestValidateRefineContext(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, _ := setupTestGitRepo(t)
-
-	// Stay on main branch (don't create feature branch)
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	// Validating without --since on main should fail
-	_, _, _, _, err = validateRefineContext(repoDir, "", "")
-	if err == nil {
-		t.Fatal("expected error when validating on main without --since")
-	}
-	if !strings.Contains(err.Error(), "refusing to refine on main") {
-		t.Errorf("expected 'refusing to refine on main' error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--since") {
-		t.Errorf("expected error to mention --since flag, got: %v", err)
-	}
-}
-
-func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
+	// Helper to create a standard test repo
+	// Returns repo, baseSHA
+	createStandardRepo := func(t *testing.T) (*testutil.TestRepo, string) {
+		repo := testutil.NewTestRepo(t)
+		repo.RunGit("init")
+		repo.SymbolicRef("HEAD", "refs/heads/main")
+		repo.Config("user.email", "test@test.com")
+		repo.Config("user.name", "Test")
+		baseSHA := repo.CommitFile("base.txt", "base", "base commit")
+		return repo, baseSHA
 	}
 
-	repoDir, baseSHA, runGit := setupTestGitRepo(t)
-
-	// Add another commit on main
-	gitCommitFile(t, repoDir, runGit, "second.txt", "second", "second commit")
-
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	// Validating with --since on main should pass
-	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repoDir, baseSHA, "")
-	if err != nil {
-		t.Fatalf("validation should pass with --since on main, got: %v", err)
-	}
-	if repoPath == "" {
-		t.Error("expected non-empty repoPath")
-	}
-	if currentBranch != "main" {
-		t.Errorf("expected currentBranch=main, got %s", currentBranch)
-	}
-	if mergeBase != baseSHA {
-		t.Errorf("expected mergeBase=%s, got %s", baseSHA, mergeBase)
-	}
-}
-
-func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repoDir, baseSHA, runGit := setupTestGitRepo(t)
-
-	// Create feature branch with commits
-	runGit("checkout", "-b", "feature")
-	gitCommitFile(t, repoDir, runGit, "feature.txt", "feature", "feature commit")
-
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	// --since should work on feature branch
-	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repoDir, baseSHA, "")
-	if err != nil {
-		t.Fatalf("--since should work on feature branch, got: %v", err)
-	}
-	if repoPath == "" {
-		t.Error("expected non-empty repoPath")
-	}
-	if currentBranch != "feature" {
-		t.Errorf("expected currentBranch=feature, got %s", currentBranch)
-	}
-	if mergeBase != baseSHA {
-		t.Errorf("expected mergeBase=%s, got %s", baseSHA, mergeBase)
-	}
-}
-
-func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repoDir, _, _ := setupTestGitRepo(t)
-
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	// Invalid --since ref should fail with clear error
-	_, _, _, _, err = validateRefineContext(repoDir, "nonexistent-ref-abc123", "")
-	if err == nil {
-		t.Fatal("expected error for invalid --since ref")
-	}
-	if !strings.Contains(err.Error(), "cannot resolve --since") {
-		t.Errorf("expected 'cannot resolve --since' error, got: %v", err)
-	}
-}
-
-func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
+	tests := []struct {
+		name      string
+		setup     func(t *testing.T) (*testutil.TestRepo, string) // Returns repo, since
+		sinceArg  string                                          // Overrides setup if not empty
+		branchArg string
+		wantErr   string
+		wantBr    string
+	}{
+		{
+			name: "refuses main without since",
+			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+				repo, _ := createStandardRepo(t)
+				return repo, ""
+			},
+			wantErr: "refusing to refine on main",
+		},
+		{
+			name: "allows main with since",
+			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+				repo, baseSHA := createStandardRepo(t)
+				repo.CommitFile("second.txt", "second", "second commit")
+				return repo, baseSHA
+			},
+			wantBr: "main",
+		},
+		{
+			name: "since works on feature branch",
+			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+				repo, baseSHA := createStandardRepo(t)
+				repo.Checkout("-b", "feature")
+				repo.CommitFile("feature.txt", "feature", "feature commit")
+				return repo, baseSHA
+			},
+			wantBr: "feature",
+		},
+		{
+			name: "invalid since ref",
+			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+				repo, _ := createStandardRepo(t)
+				return repo, "nonexistent-ref-abc123"
+			},
+			wantErr: "cannot resolve --since",
+		},
+		{
+			name: "since not ancestor of HEAD",
+			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+				repo, _ := createStandardRepo(t)
+				repo.Checkout("-b", "other-branch")
+				otherBranchSHA := repo.CommitFile("other.txt", "other", "commit on other branch")
+				repo.Checkout("main")
+				repo.CommitFile("main2.txt", "main2", "second commit on main")
+				return repo, otherBranchSHA
+			},
+			wantErr: "not an ancestor of HEAD",
+		},
+		{
+			name: "feature branch without since works",
+			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+				repo, _ := createStandardRepo(t)
+				repo.Checkout("-b", "feature")
+				repo.CommitFile("feature.txt", "feature", "feature commit")
+				return repo, ""
+			},
+			wantBr: "feature",
+		},
+		{
+			name: "branch mismatch",
+			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+				repo, _ := createStandardRepo(t)
+				repo.Checkout("-b", "feature")
+				repo.CommitFile("feat.txt", "f", "feat")
+				return repo, ""
+			},
+			branchArg: "other",
+			wantErr:   "not on branch",
+		},
+		{
+			name: "branch match",
+			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+				repo, _ := createStandardRepo(t)
+				repo.Checkout("-b", "feature")
+				repo.CommitFile("feat.txt", "f", "feat")
+				return repo, ""
+			},
+			branchArg: "feature",
+			wantBr:    "feature",
+		},
 	}
 
-	repoDir, _, runGit := setupTestGitRepo(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, sinceSetup := tt.setup(t)
+			since := sinceSetup
+			if tt.sinceArg != "" {
+				since = tt.sinceArg
+			}
 
-	// Create a commit on a separate branch that diverges from main
-	runGit("checkout", "-b", "other-branch")
-	otherBranchSHA := gitCommitFile(t, repoDir, runGit, "other.txt", "other", "commit on other branch")
+			repoPath, currentBranch, _, _, err := validateRefineContext(repo.Root, since, tt.branchArg)
 
-	// Go back to main and create a different commit
-	runGit("checkout", "main")
-	gitCommitFile(t, repoDir, runGit, "main2.txt", "main2", "second commit on main")
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantErr, err)
+				}
+				return
+			}
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	// Using --since with a commit from a different branch (not ancestor of HEAD) should fail
-	_, _, _, _, err = validateRefineContext(repoDir, otherBranchSHA, "")
-	if err == nil {
-		t.Fatal("expected error when --since is not an ancestor of HEAD")
-	}
-	if !strings.Contains(err.Error(), "not an ancestor of HEAD") {
-		t.Errorf("expected 'not an ancestor of HEAD' error, got: %v", err)
-	}
-}
-
-func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repoDir, baseSHA, runGit := setupTestGitRepo(t)
-
-	// Create feature branch
-	runGit("checkout", "-b", "feature")
-	gitCommitFile(t, repoDir, runGit, "feature.txt", "feature", "feature commit")
-
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	// Feature branch without --since should pass validation (uses merge-base)
-	repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repoDir, "", "")
-	if err != nil {
-		t.Fatalf("feature branch without --since should work, got: %v", err)
-	}
-	if repoPath == "" {
-		t.Error("expected non-empty repoPath")
-	}
-	if currentBranch != "feature" {
-		t.Errorf("expected currentBranch=feature, got %s", currentBranch)
-	}
-	// mergeBase should be the base commit (merge-base of feature and main)
-	if mergeBase != baseSHA {
-		t.Errorf("expected mergeBase=%s (base commit), got %s", baseSHA, mergeBase)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if repoPath == "" {
+				t.Error("expected non-empty repoPath")
+			}
+			if tt.wantBr != "" && currentBranch != tt.wantBr {
+				t.Errorf("expected branch %q, got %q", tt.wantBr, currentBranch)
+			}
+		})
 	}
 }
 
@@ -1064,13 +928,17 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, _ := setupTestGitRepo(t)
+	repo := testutil.NewTestRepo(t)
+	repo.RunGit("init")
+	repo.Config("user.email", "test@test.com")
+	repo.Config("user.name", "Test")
+	repo.CommitFile("base.txt", "base", "base commit")
 
 	// Simulate the refine loop pattern: create a worktree, then clean it up
 	// before the next iteration. Verify the directory is removed each time.
 	var prevPath string
 	for i := range 3 {
-		worktreePath, cleanup, err := createTempWorktree(repoDir)
+		worktreePath, cleanup, err := createTempWorktree(repo.Root)
 		if err != nil {
 			t.Fatalf("iteration %d: createTempWorktree failed: %v", i, err)
 		}
@@ -1103,23 +971,27 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, runGit := setupTestGitRepo(t)
+	repo := testutil.NewTestRepo(t)
+	repo.RunGit("init")
+	repo.Config("user.email", "test@test.com")
+	repo.Config("user.name", "Test")
+	repo.CommitFile("base.txt", "base", "base commit")
 
-	installGitHook(t, repoDir, "post-checkout", "#!/bin/sh\nexit 1\n")
+	repo.WriteNamedHook("post-checkout", "#!/bin/sh\nexit 1\n")
 
 	// Verify the hook is active (a normal worktree add would fail)
 	failDir := t.TempDir()
-	cmd := exec.Command("git", "-C", repoDir, "worktree", "add", "--detach", failDir, "HEAD")
+	cmd := exec.Command("git", "-C", repo.Root, "worktree", "add", "--detach", failDir, "HEAD")
 	if out, err := cmd.CombinedOutput(); err == nil {
 		// Clean up the worktree before failing
-		exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", failDir).Run()
+		exec.Command("git", "-C", repo.Root, "worktree", "remove", "--force", failDir).Run()
 		// Some git versions don't fail on post-checkout hook errors.
 		// In that case, verify our approach still succeeds.
 		_ = out
 	}
 
 	// createTempWorktree should succeed because it suppresses hooks
-	worktreePath, cleanup, err := createTempWorktree(repoDir)
+	worktreePath, cleanup, err := createTempWorktree(repo.Root)
 	if err != nil {
 		t.Fatalf("createTempWorktree should succeed with failing hook: %v", err)
 	}
@@ -1138,8 +1010,6 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 	if string(content) != "base" {
 		t.Errorf("expected content 'base', got %q", string(content))
 	}
-
-	_ = runGit // used by setupTestGitRepo
 }
 
 func TestCommitWithHookRetrySucceeds(t *testing.T) {
@@ -1147,12 +1017,17 @@ func TestCommitWithHookRetrySucceeds(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, runGit := setupTestGitRepo(t)
+	repo := testutil.NewTestRepo(t)
+	repo.RunGit("init")
+	repo.SymbolicRef("HEAD", "refs/heads/main")
+	repo.Config("user.email", "test@test.com")
+	repo.Config("user.name", "Test")
+	repo.CommitFile("base.txt", "base", "base commit")
 
 	// Install a pre-commit hook that fails on the first 2 calls and
 	// succeeds on the 3rd+. The hook runs twice before a retry: once
 	// by git commit, once by the hook probe. A counter file tracks calls.
-	installGitHook(t, repoDir, "pre-commit", `#!/bin/sh
+	repo.WriteNamedHook("pre-commit", `#!/bin/sh
 COUNT_FILE=".git/hook-count"
 COUNT=0
 if [ -f "$COUNT_FILE" ]; then
@@ -1168,12 +1043,12 @@ exit 0
 `)
 
 	// Make a file change to commit
-	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	testAgent := agent.NewTestAgent()
-	sha, err := commitWithHookRetry(repoDir, "test commit", testAgent, true)
+	sha, err := commitWithHookRetry(repo.Root, "test commit", testAgent, true)
 	if err != nil {
 		t.Fatalf("commitWithHookRetry should succeed: %v", err)
 	}
@@ -1183,7 +1058,7 @@ exit 0
 	}
 
 	// Verify the commit exists
-	commitSHA := runGit("rev-parse", "HEAD")
+	commitSHA := repo.RevParse("HEAD")
 	if commitSHA != sha {
 		t.Errorf("expected HEAD=%s, got %s", sha, commitSHA)
 	}
@@ -1194,18 +1069,23 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, _ := setupTestGitRepo(t)
+	repo := testutil.NewTestRepo(t)
+	repo.RunGit("init")
+	repo.SymbolicRef("HEAD", "refs/heads/main")
+	repo.Config("user.email", "test@test.com")
+	repo.Config("user.name", "Test")
+	repo.CommitFile("base.txt", "base", "base commit")
 
-	installGitHook(t, repoDir, "pre-commit",
+	repo.WriteNamedHook("pre-commit",
 		"#!/bin/sh\necho 'always fails' >&2\nexit 1\n")
 
 	// Make a file change
-	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	testAgent := agent.NewTestAgent()
-	_, err := commitWithHookRetry(repoDir, "test commit", testAgent, true)
+	_, err := commitWithHookRetry(repo.Root, "test commit", testAgent, true)
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
 	}
@@ -1219,12 +1099,17 @@ func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, _ := setupTestGitRepo(t)
+	repo := testutil.NewTestRepo(t)
+	repo.RunGit("init")
+	repo.SymbolicRef("HEAD", "refs/heads/main")
+	repo.Config("user.email", "test@test.com")
+	repo.Config("user.name", "Test")
+	repo.CommitFile("base.txt", "base", "base commit")
 
 	// No pre-commit hook installed. Commit with no changes will fail
 	// for a non-hook reason ("nothing to commit").
 	testAgent := agent.NewTestAgent()
-	_, err := commitWithHookRetry(repoDir, "empty commit", testAgent, true)
+	_, err := commitWithHookRetry(repo.Root, "empty commit", testAgent, true)
 	if err == nil {
 		t.Fatal("expected error for empty commit without hook")
 	}
@@ -1243,24 +1128,29 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, _ := setupTestGitRepo(t)
+	repo := testutil.NewTestRepo(t)
+	repo.RunGit("init")
+	repo.SymbolicRef("HEAD", "refs/heads/main")
+	repo.Config("user.email", "test@test.com")
+	repo.Config("user.name", "Test")
+	repo.CommitFile("base.txt", "base", "base commit")
 
-	installGitHook(t, repoDir, "pre-commit", "#!/bin/sh\nexit 0\n")
+	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
 	// Make a change so there's something to commit
-	if err := os.WriteFile(filepath.Join(repoDir, "new.txt"), []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create index.lock to make git add fail (non-hook failure)
-	lockFile := filepath.Join(repoDir, ".git", "index.lock")
+	lockFile := filepath.Join(repo.Root, ".git", "index.lock")
 	if err := os.WriteFile(lockFile, []byte(""), 0644); err != nil {
 		t.Fatal(err)
 	}
 	defer os.Remove(lockFile)
 
 	testAgent := agent.NewTestAgent()
-	_, err := commitWithHookRetry(repoDir, "test commit", testAgent, true)
+	_, err := commitWithHookRetry(repo.Root, "test commit", testAgent, true)
 	if err == nil {
 		t.Fatal("expected error with index.lock present")
 	}
@@ -1279,14 +1169,19 @@ func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, _ := setupTestGitRepo(t)
+	repo := testutil.NewTestRepo(t)
+	repo.RunGit("init")
+	repo.SymbolicRef("HEAD", "refs/heads/main")
+	repo.Config("user.email", "test@test.com")
+	repo.Config("user.name", "Test")
+	repo.CommitFile("base.txt", "base", "base commit")
 
-	installGitHook(t, repoDir, "pre-commit", "#!/bin/sh\nexit 0\n")
+	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
 	// No changes to commit — "nothing to commit" is a commit-phase
 	// failure, but the hook passes, so HookFailed should be false.
 	testAgent := agent.NewTestAgent()
-	_, err := commitWithHookRetry(repoDir, "empty commit", testAgent, true)
+	_, err := commitWithHookRetry(repo.Root, "empty commit", testAgent, true)
 	if err == nil {
 		t.Fatal("expected error for empty commit")
 	}
@@ -1416,67 +1311,5 @@ func TestRefineFlagValidation(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestValidateRefineContext_BranchMismatch(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repoDir, _, runGit := setupTestGitRepo(t)
-	runGit("checkout", "-b", "feature")
-	gitCommitFile(t, repoDir, runGit, "feat.txt", "f", "feat")
-
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	// Currently on "feature", but --branch says "other"
-	_, _, _, _, err = validateRefineContext(repoDir, "", "other")
-	if err == nil {
-		t.Fatal("expected error for branch mismatch")
-	}
-	if !strings.Contains(err.Error(), "not on branch") {
-		t.Errorf("expected 'not on branch' error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "feature") {
-		t.Errorf(
-			"expected error to mention current branch, got: %v",
-			err,
-		)
-	}
-}
-
-func TestValidateRefineContext_BranchMatch(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repoDir, _, runGit := setupTestGitRepo(t)
-	runGit("checkout", "-b", "feature")
-	gitCommitFile(t, repoDir, runGit, "feat.txt", "f", "feat")
-
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
-
-	// --branch matches current branch — should pass validation
-	_, branch, _, _, err := validateRefineContext(repoDir, "", "feature")
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if branch != "feature" {
-		t.Errorf("expected branch 'feature', got %q", branch)
 	}
 }

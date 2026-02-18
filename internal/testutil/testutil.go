@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -80,6 +81,58 @@ func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 	return repo
 }
 
+// RunGit runs a git command in the repo directory.
+func (r *TestRepo) RunGit(args ...string) {
+	r.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.Root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		r.t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+}
+
+// RevParse runs git rev-parse and returns the trimmed output.
+func (r *TestRepo) RevParse(args ...string) string {
+	r.t.Helper()
+	cmd := exec.Command("git", append([]string{"rev-parse"}, args...)...)
+	cmd.Dir = r.Root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		r.t.Fatalf("git rev-parse %v failed: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// CommitFile writes a file, stages it, commits, and returns the new HEAD SHA.
+func (r *TestRepo) CommitFile(filename, content, msg string) string {
+	r.t.Helper()
+	if err := os.WriteFile(filepath.Join(r.Root, filename), []byte(content), 0644); err != nil {
+		r.t.Fatal(err)
+	}
+	r.RunGit("add", filename)
+	r.RunGit("commit", "-m", msg)
+	return r.RevParse("HEAD")
+}
+
+// Config sets a git config value.
+func (r *TestRepo) Config(key, value string) {
+	r.t.Helper()
+	r.RunGit("config", key, value)
+}
+
+// Checkout runs git checkout.
+func (r *TestRepo) Checkout(args ...string) {
+	r.t.Helper()
+	allArgs := append([]string{"checkout"}, args...)
+	r.RunGit(allArgs...)
+}
+
+// SymbolicRef runs git symbolic-ref.
+func (r *TestRepo) SymbolicRef(ref, target string) {
+	r.t.Helper()
+	r.RunGit("symbolic-ref", ref, target)
+}
+
 // Chdir changes the working directory to the repo root and returns a
 // restore function. The caller should defer the returned function.
 func (r *TestRepo) Chdir() func() {
@@ -101,10 +154,17 @@ func (r *TestRepo) Chdir() func() {
 // WriteHook writes a post-commit hook with the given content.
 func (r *TestRepo) WriteHook(content string) {
 	r.t.Helper()
+	r.WriteNamedHook("post-commit", content)
+}
+
+// WriteNamedHook writes a hook with the given name and content.
+func (r *TestRepo) WriteNamedHook(name, content string) {
+	r.t.Helper()
 	if err := os.MkdirAll(r.HooksDir, 0755); err != nil {
 		r.t.Fatal(err)
 	}
-	if err := os.WriteFile(r.HookPath, []byte(content), 0755); err != nil {
+	hookPath := filepath.Join(r.HooksDir, name)
+	if err := os.WriteFile(hookPath, []byte(content), 0755); err != nil {
 		r.t.Fatal(err)
 	}
 }
@@ -114,6 +174,34 @@ func (r *TestRepo) RemoveHooksDir() {
 	r.t.Helper()
 	if err := os.RemoveAll(r.HooksDir); err != nil {
 		r.t.Fatal(err)
+	}
+}
+
+// MockExecutable creates a fake executable in PATH that exits with the given code.
+// Returns a cleanup function.
+func MockExecutable(t *testing.T, binName string, exitCode int) func() {
+	t.Helper()
+	tmpBin := t.TempDir()
+	var path string
+	var content []byte
+
+	if runtime.GOOS == "windows" {
+		path = filepath.Join(tmpBin, binName+".bat")
+		content = fmt.Appendf(nil, "@exit /b %d\r\n", exitCode)
+	} else {
+		path = filepath.Join(tmpBin, binName)
+		content = fmt.Appendf(nil, "#!/bin/sh\nexit %d\n", exitCode)
+	}
+
+	if err := os.WriteFile(path, content, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origPath := os.Getenv("PATH")
+	os.Setenv("PATH", tmpBin+string(os.PathListSeparator)+origPath)
+
+	return func() {
+		os.Setenv("PATH", origPath)
 	}
 }
 
