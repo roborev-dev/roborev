@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -19,46 +20,57 @@ func toolsArgValue(t *testing.T, args []string) string {
 	return ""
 }
 
-func TestClaudeBuildArgs(t *testing.T) {
-	a := NewClaudeAgent("claude")
-
-	// Non-agentic mode (review only): read-only tools, no dangerous flag
-	args := a.buildArgs(false)
-	for _, req := range []string{"--output-format", "stream-json", "--verbose", "-p", "--allowedTools"} {
-		assertContainsArg(t, args, req)
-	}
-	assertNotContainsArg(t, args, claudeDangerousFlag)
-	tools := toolsArgValue(t, args)
-	toolList := strings.Split(tools, ",")
-	for _, forb := range []string{"Edit", "Write", "Bash"} {
-		for _, tool := range toolList {
-			if strings.TrimSpace(tool) == forb {
-				t.Errorf("non-agentic tools should not contain %q, got %q", forb, tools)
-			}
-		}
+func assertTools(t *testing.T, args []string, want []string, dontWant []string) {
+	t.Helper()
+	val := toolsArgValue(t, args)
+	gotTools := strings.Split(val, ",")
+	for i := range gotTools {
+		gotTools[i] = strings.TrimSpace(gotTools[i])
 	}
 
-	// Agentic mode: write tools + dangerous flag
-	args = a.buildArgs(true)
-	assertContainsArg(t, args, claudeDangerousFlag)
-	assertContainsArg(t, args, "--allowedTools")
-	tools = toolsArgValue(t, args)
-	toolList = strings.Split(tools, ",")
-	for _, req := range []string{"Edit", "Write"} {
-		found := false
-		for _, tool := range toolList {
-			if strings.TrimSpace(tool) == req {
-				found = true
-				break
-			}
+	// Check required
+	for _, w := range want {
+		if !slices.Contains(gotTools, w) {
+			t.Errorf("missing tool %q in %v", w, gotTools)
 		}
-		if !found {
-			t.Errorf("agentic tools should contain %q, got %q", req, tools)
+	}
+	// Check forbidden
+	for _, d := range dontWant {
+		if slices.Contains(gotTools, d) {
+			t.Errorf("forbidden tool %q found in %v", d, gotTools)
 		}
 	}
 }
 
-func TestClaudeSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
+func TestClaudeBuildArgs(t *testing.T) {
+	a := NewClaudeAgent("claude")
+
+	t.Run("ReviewMode", func(t *testing.T) {
+		// Non-agentic mode (review only): read-only tools, no dangerous flag
+		args := a.buildArgs(false)
+		for _, req := range []string{"--output-format", "stream-json", "--verbose", "-p", "--allowedTools"} {
+			assertContainsArg(t, args, req)
+		}
+		assertNotContainsArg(t, args, claudeDangerousFlag)
+
+		assertTools(t, args,
+			[]string{"Read", "Glob", "Grep"},
+			[]string{"Edit", "Write", "Bash"})
+	})
+
+	t.Run("AgenticMode", func(t *testing.T) {
+		// Agentic mode: write tools + dangerous flag
+		args := a.buildArgs(true)
+		assertContainsArg(t, args, claudeDangerousFlag)
+		assertContainsArg(t, args, "--allowedTools")
+
+		assertTools(t, args,
+			[]string{"Edit", "Write", "Bash"},
+			nil)
+	})
+}
+
+func TestClaudeDangerousFlagSupport(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+claudeDangerousFlag+"\"; exit 1\n")
 
 	supported, err := claudeSupportsDangerousFlag(context.Background(), cmdPath)
@@ -77,10 +89,7 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 
 	a := NewClaudeAgent(cmdPath)
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "does not support") {
+	if err == nil || !strings.Contains(err.Error(), "does not support") {
 		t.Fatalf("expected unsupported flag error, got %v", err)
 	}
 }
@@ -201,85 +210,43 @@ func TestAnthropicAPIKey(t *testing.T) {
 }
 
 func TestFilterEnv(t *testing.T) {
-	env := []string{
-		"PATH=/usr/bin",
-		"HOME=/home/test",
-		"ANTHROPIC_API_KEY=secret-key",
-		"OTHER_VAR=value",
+	tests := []struct {
+		name     string
+		env      []string
+		keys     []string
+		expected []string
+	}{
+		{
+			name:     "SingleKey",
+			env:      []string{"PATH=/bin", "KEY=secret", "OTHER=val"},
+			keys:     []string{"KEY"},
+			expected: []string{"PATH=/bin", "OTHER=val"},
+		},
+		{
+			name:     "MultipleKeys",
+			env:      []string{"PATH=/bin", "KEY1=s1", "KEY2=s2", "HOME=/home"},
+			keys:     []string{"KEY1", "KEY2"},
+			expected: []string{"PATH=/bin", "HOME=/home"},
+		},
+		{
+			name:     "ExactMatchOnly",
+			env:      []string{"PRE_KEY=1", "KEY=1", "KEY_POST=1"},
+			keys:     []string{"KEY"},
+			expected: []string{"PRE_KEY=1", "KEY_POST=1"},
+		},
 	}
 
-	filtered := filterEnv(env, "ANTHROPIC_API_KEY")
-
-	// Should have 3 items (ANTHROPIC_API_KEY removed)
-	if len(filtered) != 3 {
-		t.Fatalf("expected 3 env vars, got %d: %v", len(filtered), filtered)
-	}
-
-	// Verify ANTHROPIC_API_KEY is not present
-	for _, e := range filtered {
-		if strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
-			t.Fatalf("ANTHROPIC_API_KEY should be filtered out, got %v", filtered)
-		}
-	}
-
-	// Verify other vars are present
-	found := make(map[string]bool)
-	for _, e := range filtered {
-		if strings.HasPrefix(e, "PATH=") {
-			found["PATH"] = true
-		}
-		if strings.HasPrefix(e, "HOME=") {
-			found["HOME"] = true
-		}
-		if strings.HasPrefix(e, "OTHER_VAR=") {
-			found["OTHER_VAR"] = true
-		}
-	}
-	if !found["PATH"] || !found["HOME"] || !found["OTHER_VAR"] {
-		t.Fatalf("missing expected env vars in filtered result: %v", filtered)
-	}
-}
-
-func TestFilterEnvMultipleKeys(t *testing.T) {
-	env := []string{
-		"PATH=/usr/bin",
-		"ANTHROPIC_API_KEY=secret",
-		"CLAUDECODE=1",
-		"HOME=/home/test",
-	}
-
-	filtered := filterEnv(env, "ANTHROPIC_API_KEY", "CLAUDECODE")
-
-	if len(filtered) != 2 {
-		t.Fatalf("expected 2 env vars, got %d: %v", len(filtered), filtered)
-	}
-	for _, e := range filtered {
-		if strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
-			t.Fatal("ANTHROPIC_API_KEY should be stripped")
-		}
-		if strings.HasPrefix(e, "CLAUDECODE=") {
-			t.Fatal("CLAUDECODE should be stripped")
-		}
-	}
-}
-
-func TestFilterEnvExactMatchOnly(t *testing.T) {
-	env := []string{
-		"CLAUDE=1",
-		"CLAUDECODE=1",
-		"CLAUDE_NO_SOUND=1",
-		"PATH=/usr/bin",
-	}
-
-	filtered := filterEnv(env, "CLAUDE")
-
-	if len(filtered) != 3 {
-		t.Fatalf("expected 3 env vars, got %d: %v", len(filtered), filtered)
-	}
-	for _, e := range filtered {
-		k, _, _ := strings.Cut(e, "=")
-		if k == "CLAUDE" {
-			t.Fatal("CLAUDE should be stripped")
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterEnv(tt.env, tt.keys...)
+			if len(got) != len(tt.expected) {
+				t.Errorf("expected %d vars, got %d", len(tt.expected), len(got))
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("expected %q at index %d, got %q", tt.expected[i], i, got[i])
+				}
+			}
+		})
 	}
 }
