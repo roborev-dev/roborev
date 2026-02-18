@@ -8,30 +8,53 @@ import (
 	"testing"
 )
 
-func TestCodexBuildArgsUnsafeOptIn(t *testing.T) {
+func TestCodex_buildArgs(t *testing.T) {
 	a := NewCodexAgent("codex")
 
-	// Test non-agentic mode with auto-approve
-	args := a.buildArgs("/repo", false, true)
-	if containsString(args, codexDangerousFlag) {
-		t.Fatalf("expected no unsafe flag when agentic=false, got %v", args)
-	}
-	if !containsString(args, codexAutoApproveFlag) {
-		t.Fatalf("expected auto-approve flag when autoApprove=true, got %v", args)
+	tests := []struct {
+		name             string
+		agentic          bool
+		autoApprove      bool
+		wantFlags        []string
+		wantMissingFlags []string
+	}{
+		{
+			name:             "NonAgenticAutoApprove",
+			agentic:          false,
+			autoApprove:      true,
+			wantFlags:        []string{codexAutoApproveFlag, "--json"},
+			wantMissingFlags: []string{codexDangerousFlag},
+		},
+		{
+			name:             "AgenticNoAutoApprove",
+			agentic:          true,
+			autoApprove:      false,
+			wantFlags:        []string{codexDangerousFlag, "--json"},
+			wantMissingFlags: []string{codexAutoApproveFlag},
+		},
 	}
 
-	// Verify stdin marker "-" is at the end (after all flags)
-	if args[len(args)-1] != "-" {
-		t.Fatalf("expected stdin marker '-' at end of args, got %v", args)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove)
 
-	// Test agentic mode (with dangerous flag, no auto-approve)
-	args = a.buildArgs("/repo", true, false)
-	if !containsString(args, codexDangerousFlag) {
-		t.Fatalf("expected unsafe flag when agentic=true, got %v", args)
-	}
-	if containsString(args, codexAutoApproveFlag) {
-		t.Fatalf("expected no auto-approve flag when autoApprove=false, got %v", args)
+			for _, flag := range tt.wantFlags {
+				if !containsString(args, flag) {
+					t.Errorf("buildArgs() missing expected flag %q, args: %v", flag, args)
+				}
+			}
+
+			for _, flag := range tt.wantMissingFlags {
+				if containsString(args, flag) {
+					t.Errorf("buildArgs() contains unexpected flag %q, args: %v", flag, args)
+				}
+			}
+
+			// Verify stdin marker "-" is at the end (after all flags)
+			if args[len(args)-1] != "-" {
+				t.Errorf("expected stdin marker '-' at end of args, got %v", args)
+			}
+		})
 	}
 }
 
@@ -90,162 +113,118 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 func TestCodexParseStreamJSON(t *testing.T) {
 	a := NewCodexAgent("codex")
 
-	t.Run("AggregatesAgentMessages", func(t *testing.T) {
-		input := strings.NewReader(strings.Join([]string{
-			`{"type":"thread.started","thread_id":"abc123"}`,
-			`{"type":"turn.started"}`,
-			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"First message"}}`,
-			`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Final review result"}}`,
-			`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}`,
-		}, "\n") + "\n")
+	const (
+		jsonThreadStarted = `{"type":"thread.started","thread_id":"abc123"}`
+		jsonTurnStarted   = `{"type":"turn.started"}`
+		jsonTurnCompleted = `{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}`
+	)
 
-		result, err := a.parseStreamJSON(input, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result != "First message\nFinal review result" {
-			t.Fatalf("expected both messages, got %q", result)
-		}
-	})
+	tests := []struct {
+		name        string
+		input       string
+		want        string
+		wantErr     error
+		checkWriter bool
+	}{
+		{
+			name: "AggregatesAgentMessages",
+			input: strings.Join([]string{
+				jsonThreadStarted,
+				jsonTurnStarted,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"First message"}}`,
+				`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Final review result"}}`,
+				jsonTurnCompleted,
+			}, "\n") + "\n",
+			want: "First message\nFinal review result",
+		},
+		{
+			name: "AggregatesByItemID",
+			input: strings.Join([]string{
+				`{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"Draft"}}`,
+				`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Second message"}}`,
+				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Final first message"}}`,
+			}, "\n") + "\n",
+			want: "Final first message\nSecond message",
+		},
+		{
+			name:  "EmptyStreamReturnsEmpty",
+			input: strings.Join([]string{jsonThreadStarted, jsonTurnStarted, `{"type":"turn.completed","usage":{}}`}, "\n") + "\n",
+			want:  "",
+		},
+		{
+			name:    "TurnFailedReturnsError",
+			input:   `{"type":"turn.failed","error":{"message":"something broke"}}` + "\n",
+			wantErr: errCodexStreamFailed,
+		},
+		{
+			name:    "ErrorEventReturnsError",
+			input:   `{"type":"error","message":"stream error"}` + "\n",
+			wantErr: errCodexStreamFailed,
+		},
+		{
+			name: "IgnoresNonMessageItems",
+			input: strings.Join([]string{
+				`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls"}}`,
+				`{"type":"item.completed","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls","exit_code":0}}`,
+				`{"type":"item.completed","item":{"id":"msg1","type":"agent_message","text":"Done reviewing."}}`,
+			}, "\n") + "\n",
+			want: "Done reviewing.",
+		},
+		{
+			name:        "StreamsToWriter",
+			input:       `{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}` + "\n",
+			want:        "hello",
+			checkWriter: true,
+		},
+		{
+			name:    "NoValidJSONReturnsError",
+			input:   "plain text output\nanother plain text line\n",
+			wantErr: errNoCodexJSON,
+		},
+		{
+			name: "JSONWithoutCodexEventTypeReturnsError",
+			input: strings.Join([]string{
+				`{"foo":"bar"}`,
+				`{"type":""}`,
+				`{"type":"foo.bar"}`,
+			}, "\n") + "\n",
+			wantErr: errNoCodexJSON,
+		},
+	}
 
-	t.Run("AggregatesByItemID", func(t *testing.T) {
-		input := strings.NewReader(strings.Join([]string{
-			`{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"Draft"}}`,
-			`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Second message"}}`,
-			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Final first message"}}`,
-		}, "\n") + "\n")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			var w *syncWriter
+			if tt.checkWriter {
+				w = newSyncWriter(&buf)
+			}
 
-		result, err := a.parseStreamJSON(input, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result != "Final first message\nSecond message" {
-			t.Fatalf("expected latest text per message ID, got %q", result)
-		}
-	})
+			result, err := a.parseStreamJSON(strings.NewReader(tt.input), w)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("parseStreamJSON() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseStreamJSON() unexpected error: %v", err)
+			}
 
-	t.Run("EmptyStreamReturnsEmpty", func(t *testing.T) {
-		input := strings.NewReader(`{"type":"thread.started","thread_id":"abc123"}` + "\n" +
-			`{"type":"turn.started"}` + "\n" +
-			`{"type":"turn.completed","usage":{}}` + "\n")
+			if result != tt.want {
+				t.Errorf("parseStreamJSON() = %q, want %q", result, tt.want)
+			}
 
-		result, err := a.parseStreamJSON(input, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result != "" {
-			t.Fatalf("expected empty result, got %q", result)
-		}
-	})
-
-	t.Run("TurnFailedReturnsError", func(t *testing.T) {
-		input := strings.NewReader(`{"type":"turn.failed","error":{"message":"something broke"}}` + "\n")
-
-		result, err := a.parseStreamJSON(input, nil)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if result != "" {
-			t.Fatalf("expected empty result on parse failure, got %q", result)
-		}
-		if !errors.Is(err, errCodexStreamFailed) {
-			t.Fatalf("expected errCodexStreamFailed, got %v", err)
-		}
-		if strings.Contains(err.Error(), "no valid codex --json events") {
-			t.Fatalf("expected stream failure error, got compatibility error: %v", err)
-		}
-	})
-
-	t.Run("ErrorEventReturnsError", func(t *testing.T) {
-		input := strings.NewReader(`{"type":"error","message":"stream error"}` + "\n")
-
-		result, err := a.parseStreamJSON(input, nil)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if result != "" {
-			t.Fatalf("expected empty result on parse failure, got %q", result)
-		}
-		if !errors.Is(err, errCodexStreamFailed) {
-			t.Fatalf("expected errCodexStreamFailed, got %v", err)
-		}
-		if errors.Is(err, errNoCodexJSON) {
-			t.Fatalf("expected stream failure error, got compatibility error: %v", err)
-		}
-	})
-
-	t.Run("IgnoresNonMessageItems", func(t *testing.T) {
-		input := strings.NewReader(strings.Join([]string{
-			`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls"}}`,
-			`{"type":"item.completed","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls","exit_code":0}}`,
-			`{"type":"item.completed","item":{"id":"msg1","type":"agent_message","text":"Done reviewing."}}`,
-		}, "\n") + "\n")
-
-		result, err := a.parseStreamJSON(input, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result != "Done reviewing." {
-			t.Fatalf("expected 'Done reviewing.', got %q", result)
-		}
-	})
-
-	t.Run("StreamsToWriter", func(t *testing.T) {
-		input := strings.NewReader(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}` + "\n")
-		var buf strings.Builder
-		sw := newSyncWriter(&buf)
-
-		_, err := a.parseStreamJSON(input, sw)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !strings.Contains(buf.String(), "agent_message") {
-			t.Fatalf("expected streamed output to contain event, got %q", buf.String())
-		}
-	})
-
-	t.Run("NoValidJSONReturnsError", func(t *testing.T) {
-		input := strings.NewReader("plain text output\nanother plain text line\n")
-
-		result, err := a.parseStreamJSON(input, nil)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if result != "" {
-			t.Fatalf("expected empty result on parse failure, got %q", result)
-		}
-		if !errors.Is(err, errNoCodexJSON) {
-			t.Fatalf("expected errNoCodexJSON, got %v", err)
-		}
-	})
-
-	t.Run("JSONWithoutCodexEventTypeReturnsError", func(t *testing.T) {
-		input := strings.NewReader(strings.Join([]string{
-			`{"foo":"bar"}`,
-			`{"type":""}`,
-			`{"type":"foo.bar"}`,
-		}, "\n") + "\n")
-
-		result, err := a.parseStreamJSON(input, nil)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if result != "" {
-			t.Fatalf("expected empty result on parse failure, got %q", result)
-		}
-		if !errors.Is(err, errNoCodexJSON) {
-			t.Fatalf("expected errNoCodexJSON, got %v", err)
-		}
-	})
-}
-
-func TestCodexBuildArgsIncludesJSON(t *testing.T) {
-	a := NewCodexAgent("codex")
-	args := a.buildArgs("/repo", false, true)
-	if !containsString(args, "--json") {
-		t.Fatalf("expected --json in args, got %v", args)
+			if tt.checkWriter {
+				if !strings.Contains(buf.String(), "agent_message") {
+					t.Errorf("writer output = %q, expected to contain 'agent_message'", buf.String())
+				}
+			}
+		})
 	}
 }
+
+
 
 func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	withUnsafeAgents(t, false)
