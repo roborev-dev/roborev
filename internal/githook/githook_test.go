@@ -417,6 +417,31 @@ func TestMissing(t *testing.T) {
 			t.Error("should not warn for non-roborev")
 		}
 	})
+
+	t.Run("non-ENOENT read error returns false",
+		func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("permission test unreliable on Windows")
+			}
+			repo := testutil.NewTestRepo(t)
+			repo.WriteHook(
+				"#!/bin/sh\n# roborev " +
+					PostCommitVersionMarker + "\n" +
+					"roborev enqueue\n",
+			)
+			// Create post-rewrite as a directory so ReadFile
+			// fails with a non-ENOENT error.
+			prPath := filepath.Join(
+				repo.Root, ".git", "hooks", "post-rewrite",
+			)
+			os.MkdirAll(prPath, 0755)
+			if Missing(repo.Root, "post-rewrite") {
+				t.Error(
+					"non-ENOENT error should return false",
+				)
+			}
+		},
+	)
 }
 
 func TestInstall(t *testing.T) {

@@ -116,7 +116,7 @@ func Missing(repoPath, hookName string) bool {
 	}
 	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
 	if err != nil {
-		return true
+		return os.IsNotExist(err)
 	}
 	return !strings.Contains(
 		strings.ToLower(string(content)), "roborev",

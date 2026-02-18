@@ -490,3 +490,47 @@ func TestInitCmdFailsOnHookWriteError(t *testing.T) {
 		t.Errorf("error should mention install hooks: %v", err)
 	}
 }
+
+func TestInitCmdFailsOnMixedHookErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell script stub, skipping on Windows")
+	}
+	root := initNoDaemonSetup(t)
+
+	// Non-shell post-commit (produces ErrNonShellHook) +
+	// unwritable post-rewrite (produces real write error).
+	// InstallAll joins both; init must treat as fatal.
+	hooksDir := filepath.Join(root, ".git", "hooks")
+	os.MkdirAll(hooksDir, 0755)
+	os.WriteFile(
+		filepath.Join(hooksDir, "post-commit"),
+		[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
+		0755,
+	)
+	// Create post-rewrite as a directory so writing it fails.
+	os.MkdirAll(
+		filepath.Join(hooksDir, "post-rewrite"), 0755,
+	)
+
+	ts := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+		}),
+	)
+	defer ts.Close()
+
+	oldAddr := serverAddr
+	serverAddr = ts.URL
+	defer func() { serverAddr = oldAddr }()
+
+	cmd := initCmd()
+	cmd.SetArgs([]string{"--no-daemon"})
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatal("expected error when mixed errors from InstallAll")
+	}
+	if !strings.Contains(err.Error(), "install hooks") {
+		t.Errorf("error should mention install hooks: %v", err)
+	}
+}
