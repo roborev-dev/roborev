@@ -50,6 +50,15 @@ external input. Do not flag "prompt injection" for prior review text embedded
 in compact or synthesis prompts. The threat model does not include adversarial
 AI agent output; a compromised local agent has full shell access already.
 
+Config loading (LoadRepoConfig, loadGuidelines, loadCIRepoConfig) reads
+.roborev.toml from the default branch when possible and falls back to the
+working-tree filesystem when the default branch has no config (e.g., no remote,
+config not yet committed). The daemon never checks out PR branches — the working
+tree is always the operator's own checkout. Do not flag filesystem fallback as
+a trust-boundary issue or claim that untrusted PR authors can influence config
+via the working tree. The fallback is intentional for the bootstrap case and
+repos without remotes.
+
 Similarly, job metadata passed between the CLI and daemon via sidecar files or
 the local HTTP API is local-to-local communication within a single user session.
 Race conditions in metadata handoff are correctness concerns, not security
