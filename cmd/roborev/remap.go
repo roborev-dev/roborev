@@ -20,11 +20,12 @@ func remapCmd() *cobra.Command {
 	var quiet bool
 
 	cmd := &cobra.Command{
-		Use:   "remap",
-		Short: "Remap review jobs after a rebase",
+		Use:    "remap",
+		Short:  "Remap review jobs after a rebase",
+		Hidden: true,
 		Long: `Reads old-sha/new-sha pairs from stdin (one per line,
 space-separated) and updates review jobs to point at the
-new commits. Intended to be called from a post-rewrite hook.`,
+new commits. Called automatically by the post-rewrite hook.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			gitCwd, err := git.GetRepoRoot(".")
 			if err != nil {
