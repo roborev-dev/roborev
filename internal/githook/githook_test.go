@@ -347,6 +347,24 @@ func TestNotInstalled(t *testing.T) {
 			t.Error("roborev hook should be installed")
 		}
 	})
+
+	t.Run("non-ENOENT read error returns false",
+		func(t *testing.T) {
+			repo := testutil.NewTestRepo(t)
+			// Create a directory where the hook file would be.
+			// Reading a directory is a non-ENOENT I/O error.
+			hookPath := filepath.Join(
+				repo.Root, ".git", "hooks", "post-commit",
+			)
+			os.MkdirAll(hookPath, 0755)
+			if NotInstalled(repo.Root, "post-commit") {
+				t.Error(
+					"non-ENOENT error should not report " +
+						"as not installed",
+				)
+			}
+		},
+	)
 }
 
 func TestMissing(t *testing.T) {
@@ -758,10 +776,8 @@ func TestInstall(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for non-shell hook")
 		}
-		if !strings.Contains(
-			err.Error(), "non-shell interpreter",
-		) {
-			t.Errorf("unexpected error: %v", err)
+		if !errors.Is(err, ErrNonShellHook) {
+			t.Errorf("should wrap ErrNonShellHook: %v", err)
 		}
 
 		content, _ := os.ReadFile(hookPath)
@@ -834,10 +850,10 @@ func TestInstall(t *testing.T) {
 				"expected error for non-shell upgrade",
 			)
 		}
-		if !strings.Contains(
-			err.Error(), "non-shell interpreter",
-		) {
-			t.Errorf("unexpected error: %v", err)
+		if !errors.Is(err, ErrNonShellHook) {
+			t.Errorf(
+				"should wrap ErrNonShellHook: %v", err,
+			)
 		}
 
 		content, _ := os.ReadFile(hookPath)

@@ -5,6 +5,7 @@
 package githook
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,10 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/git"
 )
+
+// ErrNonShellHook is returned when a hook uses a non-shell
+// interpreter and cannot be safely modified.
+var ErrNonShellHook = errors.New("non-shell interpreter")
 
 // Version markers identify the current hook template version.
 // Bump these when the hook template changes to trigger
@@ -64,7 +69,7 @@ func NotInstalled(repoPath, hookName string) bool {
 		filepath.Join(hooksDir, hookName),
 	)
 	if err != nil {
-		return true
+		return os.IsNotExist(err)
 	}
 	return !strings.Contains(
 		strings.ToLower(string(content)), "roborev",
@@ -239,10 +244,9 @@ func Install(hooksDir, hookName string, force bool) error {
 		) {
 			if !isShellHook(existingStr) {
 				return fmt.Errorf(
-					"%s hook uses a non-shell interpreter; "+
-						"add the roborev snippet manually "+
-						"or use --force to overwrite",
-					hookName)
+					"%s hook: %w; add the roborev snippet "+
+						"manually or use --force to overwrite",
+					hookName, ErrNonShellHook)
 			}
 			hookContent = embedSnippet(
 				existingStr,
@@ -258,10 +262,9 @@ func Install(hooksDir, hookName string, force bool) error {
 			// Upgrade: remove old snippet, embed new one
 			if !isShellHook(existingStr) {
 				return fmt.Errorf(
-					"%s hook uses a non-shell interpreter; "+
-						"add the roborev snippet manually "+
-						"or use --force to overwrite",
-					hookName)
+					"%s hook: %w; add the roborev snippet "+
+						"manually or use --force to overwrite",
+					hookName, ErrNonShellHook)
 			}
 			if rmErr := Uninstall(hookPath); rmErr != nil {
 				return fmt.Errorf(

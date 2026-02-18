@@ -461,9 +461,11 @@ func initCmd() *cobra.Command {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
 			if err := githook.InstallAll(hooksDir, false); err != nil {
-				// Non-shell hooks produce an error but shouldn't
-				// abort init — warn and continue to daemon setup.
-				fmt.Printf("  Warning: %v\n", err)
+				if errors.Is(err, githook.ErrNonShellHook) {
+					fmt.Printf("  Warning: %v\n", err)
+				} else {
+					return fmt.Errorf("install hooks: %w", err)
+				}
 			}
 
 			// 5. Start daemon (or just register if --no-daemon)
