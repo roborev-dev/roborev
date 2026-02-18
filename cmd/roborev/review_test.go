@@ -13,27 +13,31 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
-	"github.com/roborev-dev/roborev/internal/version"
 )
+
+func respondJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(payload)
+}
 
 func TestEnqueueCmdPositionalArg(t *testing.T) {
 	// Track what SHA was sent to the server
 	var receivedSHA string
 
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/enqueue" {
-			var req struct {
-				GitRef string `json:"git_ref"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			receivedSHA = req.GitRef
-
-			job := storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"}
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(job)
-			return
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			GitRef string `json:"git_ref"`
 		}
-	}))
+		json.NewDecoder(r.Body).Decode(&req)
+		receivedSHA = req.GitRef
+
+		job := storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"}
+		respondJSON(w, http.StatusCreated, job)
+	})
+
+	_, cleanup := setupMockDaemon(t, mux)
 	defer cleanup()
 
 	// Create a temp git repo with two commits
@@ -93,17 +97,15 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 }
 
 func TestEnqueueSkippedBranch(t *testing.T) {
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/enqueue" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{
-				"skipped": true,
-				"reason":  "branch \"wip\" is excluded from reviews",
-			})
-			return
-		}
-	}))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"skipped": true,
+			"reason":  "branch \"wip\" is excluded from reviews",
+		})
+	})
+
+	_, cleanup := setupMockDaemon(t, mux)
 	defer cleanup()
 
 	repo := newTestGitRepo(t)
@@ -149,25 +151,20 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 	repo.CommitFile("file.txt", "content", "initial commit")
 
 	t.Run("passing review exits 0 with no output", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/enqueue" {
-				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(job)
-				return
-			}
-			if r.URL.Path == "/api/jobs" {
-				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{job}, "has_more": false})
-				return
-			}
-			if r.URL.Path == "/api/review" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
-				return
-			}
-		}))
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
+			respondJSON(w, http.StatusCreated, job)
+		})
+		mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
+			respondJSON(w, http.StatusOK, map[string]any{"jobs": []storage.ReviewJob{job}, "has_more": false})
+		})
+		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
+		})
+
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		var stdout, stderr bytes.Buffer
@@ -189,25 +186,20 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 	})
 
 	t.Run("failing review exits 1 with no output", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/enqueue" {
-				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(job)
-				return
-			}
-			if r.URL.Path == "/api/jobs" {
-				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{job}, "has_more": false})
-				return
-			}
-			if r.URL.Path == "/api/review" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling"})
-				return
-			}
-		}))
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
+			respondJSON(w, http.StatusCreated, job)
+		})
+		mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
+			respondJSON(w, http.StatusOK, map[string]any{"jobs": []storage.ReviewJob{job}, "has_more": false})
+		})
+		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling"})
+		})
+
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		var stdout, stderr bytes.Buffer
@@ -244,24 +236,21 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 	t.Run("unknown status exceeds max retries", func(t *testing.T) {
 		callCount := 0
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/enqueue" {
-				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(job)
-				return
-			}
-			if r.URL.Path == "/api/jobs" {
-				callCount++
-				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "future_status"}
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]any{
-					"jobs":     []storage.ReviewJob{job},
-					"has_more": false,
-				})
-				return
-			}
-		}))
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
+			respondJSON(w, http.StatusCreated, job)
+		})
+		mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "future_status"}
+			respondJSON(w, http.StatusOK, map[string]any{
+				"jobs":     []storage.ReviewJob{job},
+				"has_more": false,
+			})
+		})
+
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		cmd := reviewCmd()
@@ -283,46 +272,24 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 	})
 
 	t.Run("counter resets on known status", func(t *testing.T) {
-		callCount := 0
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/enqueue" {
-				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(job)
-				return
-			}
-			if r.URL.Path == "/api/jobs" {
-				callCount++
-				var status string
-				switch {
-				case callCount <= 5:
-					status = "future_status"
-				case callCount == 6:
-					status = "running"
-				case callCount <= 11:
-					status = "future_status"
-				default:
-					status = "done"
-				}
-				job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatus(status)}
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]any{
-					"jobs":     []storage.ReviewJob{job},
-					"has_more": false,
-				})
-				return
-			}
-			if r.URL.Path == "/api/review" {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(storage.Review{
-					ID:     1,
-					JobID:  1,
-					Agent:  "test",
-					Output: "No issues found. LGTM!",
-				})
-				return
-			}
-		}))
+		poller := &mockJobPoller{}
+		
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
+			respondJSON(w, http.StatusCreated, job)
+		})
+		mux.HandleFunc("/api/jobs", poller.HandleJobs)
+		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			respondJSON(w, http.StatusOK, storage.Review{
+				ID:     1,
+				JobID:  1,
+				Agent:  "test",
+				Output: "No issues found. LGTM!",
+			})
+		})
+
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		cmd := reviewCmd()
@@ -332,31 +299,53 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected success (counter should reset on known status), got error: %v", err)
 		}
-		if callCount != 12 {
-			t.Errorf("expected 12 calls, got %d", callCount)
+		if poller.callCount != 12 {
+			t.Errorf("expected 12 calls, got %d", poller.callCount)
 		}
+	})
+}
+
+type mockJobPoller struct {
+	callCount int
+}
+
+func (m *mockJobPoller) HandleJobs(w http.ResponseWriter, r *http.Request) {
+	m.callCount++
+	var status string
+	switch {
+	case m.callCount <= 5:
+		status = "future_status"
+	case m.callCount == 6:
+		status = "running"
+	case m.callCount <= 11:
+		status = "future_status"
+	default:
+		status = "done"
+	}
+	job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatus(status)}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"jobs":     []storage.ReviewJob{job},
+		"has_more": false,
 	})
 }
 
 func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with valid ref succeeds", func(t *testing.T) {
 		gitRefChan := make(chan string, 1)
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/enqueue" {
-				var req struct {
-					GitRef string `json:"git_ref"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Errorf("failed to decode request: %v", err)
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-				gitRefChan <- req.GitRef
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				GitRef string `json:"git_ref"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("failed to decode request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-		}))
+			gitRefChan <- req.GitRef
+			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
+		})
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -380,10 +369,14 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since with invalid ref fails", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		// no handler needed for enqueue as it shouldn't be called, but we need to setup mock daemon
+		// to allow version check if any (though typically version check hits /api/status which is handled by wrapper)
+		// but setupMockDaemon wrapper handles /api/status.
+		// The original code was returning version on any request.
+		// Let's just pass empty mux, as /api/status is handled by setupMockDaemon wrapper.
+		
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -401,10 +394,8 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since with no commits ahead fails", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -422,10 +413,8 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since and branch are mutually exclusive", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -442,10 +431,8 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since and dirty are mutually exclusive", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -462,10 +449,8 @@ func TestReviewSinceFlag(t *testing.T) {
 	})
 
 	t.Run("since with positional args fails", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -484,10 +469,8 @@ func TestReviewSinceFlag(t *testing.T) {
 
 func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch and dirty are mutually exclusive", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -504,10 +487,8 @@ func TestReviewBranchFlag(t *testing.T) {
 	})
 
 	t.Run("branch with positional args fails", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -527,10 +508,8 @@ func TestReviewBranchFlag(t *testing.T) {
 	})
 
 	t.Run("branch on default branch fails", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -549,10 +528,8 @@ func TestReviewBranchFlag(t *testing.T) {
 	})
 
 	t.Run("branch with no commits fails", func(t *testing.T) {
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{"version": version.Version})
-		}))
+		mux := http.NewServeMux()
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -573,18 +550,16 @@ func TestReviewBranchFlag(t *testing.T) {
 
 	t.Run("branch review succeeds with commits", func(t *testing.T) {
 		var receivedGitRef string
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/enqueue" {
-				var req struct {
-					GitRef string `json:"git_ref"`
-				}
-				json.NewDecoder(r.Body).Decode(&req)
-				receivedGitRef = req.GitRef
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
-				return
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				GitRef string `json:"git_ref"`
 			}
-		}))
+			json.NewDecoder(r.Body).Decode(&req)
+			receivedGitRef = req.GitRef
+			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
+		})
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -613,22 +588,20 @@ func TestReviewBranchFlag(t *testing.T) {
 func TestReviewFastFlag(t *testing.T) {
 	t.Run("fast flag sets reasoning to fast", func(t *testing.T) {
 		reasoningChan := make(chan string, 1)
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/enqueue" {
-				var req struct {
-					Reasoning string `json:"reasoning"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Errorf("failed to decode request: %v", err)
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-				reasoningChan <- req.Reasoning
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test"})
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Reasoning string `json:"reasoning"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("failed to decode request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-		}))
+			reasoningChan <- req.Reasoning
+			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, Agent: "test"})
+		})
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -652,22 +625,20 @@ func TestReviewFastFlag(t *testing.T) {
 
 	t.Run("explicit reasoning takes precedence over fast", func(t *testing.T) {
 		reasoningChan := make(chan string, 1)
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/enqueue" {
-				var req struct {
-					Reasoning string `json:"reasoning"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Errorf("failed to decode request: %v", err)
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-				reasoningChan <- req.Reasoning
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test"})
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Reasoning string `json:"reasoning"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("failed to decode request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-		}))
+			reasoningChan <- req.Reasoning
+			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, Agent: "test"})
+		})
+		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
 		repo := newTestGitRepo(t)
@@ -691,12 +662,14 @@ func TestReviewFastFlag(t *testing.T) {
 }
 
 func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
-	_, cleanup := setupMockDaemon(t,
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			t.Error("daemon should not be contacted on invalid args")
-			w.WriteHeader(http.StatusOK)
-		}),
-	)
+	mux := http.NewServeMux()
+	// Catch-all handler to fail the test if any request is made
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("daemon should not be contacted on invalid args")
+		w.WriteHeader(http.StatusOK)
+	})
+	
+	_, cleanup := setupMockDaemon(t, mux)
 	defer cleanup()
 
 	repo := newTestGitRepo(t)
