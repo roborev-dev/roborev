@@ -3436,4 +3436,29 @@ func TestHandleRemap(t *testing.T) {
 				w.Code, w.Body.String())
 		}
 	})
+
+	t.Run("remap rejects too many mappings", func(t *testing.T) {
+		mappings := make([]RemapMapping, 1001)
+		for i := range mappings {
+			mappings[i] = RemapMapping{
+				OldSHA: "a", NewSHA: "b", PatchID: "c",
+				Author: "x", Subject: "y",
+				Timestamp: time.Now().Format(time.RFC3339),
+			}
+		}
+		reqData := RemapRequest{
+			RepoPath: repoDir,
+			Mappings: mappings,
+		}
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/remap", reqData,
+		)
+		w := httptest.NewRecorder()
+		server.handleRemap(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s",
+				w.Code, w.Body.String())
+		}
+	})
 }

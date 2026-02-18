@@ -2482,27 +2482,23 @@ func hasCommandPrefix(line, prefix string) bool {
 		next == '|' || next == '&' || next == ';'
 }
 
-// isRoborevSnippetLine returns true if the line is part of the
-// generated roborev hook snippet. Matches only the exact patterns
-// produced by generateHookContent/generatePostRewriteHookContent:
-//
-//	ROBOREV="..."                        (variable assignment)
-//	if [ ! -x "$ROBOREV" ]              (guard condition)
-//	ROBOREV=$(command -v roborev ...)    (fallback assignment)
-//	[ -z "$ROBOREV" ] ...                (fallback guard)
-//	"$ROBOREV" enqueue --quiet ...        (post-commit invocation)
-//	"$ROBOREV" remap --quiet ...         (post-rewrite invocation)
+// isRoborevSnippetLine returns true if the line is part of a
+// generated roborev hook snippet (current or legacy versions).
 func isRoborevSnippetLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
 		return false
 	}
 	return strings.HasPrefix(trimmed, "ROBOREV=") ||
+		strings.HasPrefix(trimmed, "ROBOREV=$(") ||
 		hasCommandPrefix(trimmed, "\"$ROBOREV\" enqueue --quiet") ||
 		hasCommandPrefix(trimmed, "\"$ROBOREV\" remap --quiet") ||
+		hasCommandPrefix(trimmed, "roborev enqueue") ||
+		hasCommandPrefix(trimmed, "roborev remap") ||
 		strings.HasPrefix(trimmed, "if [ ! -x \"$ROBOREV\"") ||
+		strings.HasPrefix(trimmed, "if [ -z \"$ROBOREV\"") ||
 		strings.HasPrefix(trimmed, "[ -z \"$ROBOREV\"") ||
-		strings.HasPrefix(trimmed, "ROBOREV=$(command")
+		strings.HasPrefix(trimmed, "[ ! -x \"$ROBOREV\"")
 }
 
 func removeRoborevFromHook(hookPath string) error {

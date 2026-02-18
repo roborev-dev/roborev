@@ -1440,9 +1440,27 @@ func (s *Server) handleRemap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Cap body size: ~200 bytes per mapping, 1000 max → 1MB is generous.
+	const maxRemapBody = 1 << 20 // 1MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxRemapBody)
+
 	var req RemapRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge,
+				"request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	const maxMappings = 1000
+	if len(req.Mappings) > maxMappings {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("too many mappings (%d, max %d)",
+				len(req.Mappings), maxMappings))
 		return
 	}
 

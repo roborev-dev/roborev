@@ -1030,6 +1030,119 @@ func TestRemoveRoborevFromHook(t *testing.T) {
 		}
 	})
 
+	t.Run("v0 hook (plain roborev invocation) is removed", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		v0Hook := "#!/bin/sh\n" +
+			"# RoboRev post-commit hook - auto-reviews every commit\n" +
+			"roborev enqueue --sha HEAD 2>/dev/null &\n"
+		if err := os.WriteFile(hookPath, []byte(v0Hook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+			content, _ := os.ReadFile(hookPath)
+			t.Errorf("v0 hook should be deleted entirely, got:\n%s", content)
+		}
+	})
+
+	t.Run("v0.5 hook (early variable format) is removed", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		v05Hook := "#!/bin/sh\n" +
+			"# RoboRev post-commit hook - auto-reviews every commit\n" +
+			"ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"if [ ! -x \"$ROBOREV\" ]; then\n" +
+			"    ROBOREV=$(command -v roborev) || exit 0\n" +
+			"fi\n" +
+			"\"$ROBOREV\" enqueue --quiet &\n"
+		if err := os.WriteFile(hookPath, []byte(v05Hook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+			content, _ := os.ReadFile(hookPath)
+			t.Errorf("v0.5 hook should be deleted entirely, got:\n%s", content)
+		}
+	})
+
+	t.Run("v1 hook (PATH-first format) is removed", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		v1Hook := "#!/bin/sh\n" +
+			"# RoboRev post-commit hook - auto-reviews every commit\n" +
+			"ROBOREV=$(command -v roborev 2>/dev/null)\n" +
+			"if [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ]; then\n" +
+			"    ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"    [ ! -x \"$ROBOREV\" ] && exit 0\n" +
+			"fi\n" +
+			"\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
+		if err := os.WriteFile(hookPath, []byte(v1Hook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+			content, _ := os.ReadFile(hookPath)
+			t.Errorf("v1 hook should be deleted entirely, got:\n%s", content)
+		}
+	})
+
+	t.Run("v1 mixed hook removes only roborev block", func(t *testing.T) {
+		repo := testutil.NewTestRepo(t)
+		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(repo.HooksDir, "post-commit")
+		v1Block := "# RoboRev post-commit hook - auto-reviews every commit\n" +
+			"ROBOREV=$(command -v roborev 2>/dev/null)\n" +
+			"if [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ]; then\n" +
+			"    ROBOREV=\"/usr/local/bin/roborev\"\n" +
+			"    [ ! -x \"$ROBOREV\" ] && exit 0\n" +
+			"fi\n" +
+			"\"$ROBOREV\" enqueue --quiet 2>/dev/null &\n"
+		mixed := "#!/bin/sh\necho 'custom'\n" + v1Block
+		if err := os.WriteFile(hookPath, []byte(mixed), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := removeRoborevFromHook(hookPath); err != nil {
+			t.Fatalf("removeRoborevFromHook: %v", err)
+		}
+
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook should still exist: %v", err)
+		}
+		contentStr := string(content)
+		if strings.Contains(strings.ToLower(contentStr), "roborev") {
+			t.Errorf("roborev content should be removed, got:\n%s", contentStr)
+		}
+		if !strings.Contains(contentStr, "echo 'custom'") {
+			t.Error("custom content should be preserved")
+		}
+	})
+
 	t.Run("no-op if hook has no roborev content", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
