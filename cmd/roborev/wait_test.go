@@ -12,26 +12,46 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-// waitMockHandler builds an HTTP handler for wait command tests.
-// If job is non-nil it is returned for every /api/jobs query; otherwise an
-// empty list is returned. If review is non-nil it is served on /api/review.
-func waitMockHandler(job *storage.ReviewJob, review *storage.Review) http.HandlerFunc {
+type mockConfig struct {
+	Jobs        []storage.ReviewJob
+	Review      *storage.Review
+	JobsErr     int                   // Optional HTTP error code
+	OnJobsQuery func(r *http.Request) // Optional spy callback
+}
+
+func newWaitMockHandler(cfg mockConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
-			var jobs []storage.ReviewJob
-			if job != nil {
-				jobs = []storage.ReviewJob{*job}
+			if cfg.OnJobsQuery != nil {
+				cfg.OnJobsQuery(r)
+			}
+			if cfg.JobsErr != 0 {
+				w.WriteHeader(cfg.JobsErr)
+				// For compatibility with existing tests expecting specific error body
+				if cfg.JobsErr == http.StatusInternalServerError {
+					w.Write([]byte("database locked"))
+				}
+				return
 			}
 			w.WriteHeader(http.StatusOK)
+			// Ensure empty slice is encoded as [] not null if initialized but empty
+			jobs := cfg.Jobs
+			if jobs == nil {
+				jobs = []storage.ReviewJob{}
+			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"jobs":     jobs,
 				"has_more": false,
 			})
 			return
 		}
-		if r.URL.Path == "/api/review" && review != nil {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(review)
+		if r.URL.Path == "/api/review" {
+			if cfg.Review != nil {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(cfg.Review)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
 			return
 		}
 	}
@@ -68,11 +88,6 @@ func newWaitEnv(t *testing.T, handler http.Handler) *waitEnv {
 	t.Cleanup(cleanup)
 	chdir(t, repo.Dir)
 	return &waitEnv{repo: repo, sha: sha}
-}
-
-// noopHandler returns an HTTP handler that does nothing.
-func noopHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 }
 
 // runWait executes the wait command with the given args and returns
@@ -126,7 +141,7 @@ func TestWaitArgValidation(t *testing.T) {
 		},
 	}
 
-	newWaitEnv(t, noopHandler())
+	newWaitEnv(t, newWaitMockHandler(mockConfig{}))
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,43 +180,98 @@ func TestWaitArgValidationWithoutDaemon(t *testing.T) {
 	}
 }
 
-func TestWaitExitsWhenNoJobFound(t *testing.T) {
+func TestWait_Scenarios(t *testing.T) {
 	setupFastPolling(t)
-	newWaitEnv(t, waitMockHandler(nil, nil))
 
-	t.Run("No job for SHA", func(t *testing.T) {
-		stdout, err := runWait(t, "--sha", "HEAD")
-		requireExitCode(t, err, 1)
-		if !strings.Contains(stdout, "No job found") {
-			t.Errorf("expected 'No job found' message, got: %q", stdout)
-		}
-	})
+	cases := []struct {
+		name          string
+		args          []string
+		mock          mockConfig
+		expectErr     bool
+		expectErrCode int
+		expectOut     string
+	}{
+		{
+			name:          "No job for SHA",
+			args:          []string{"--sha", "HEAD"},
+			mock:          mockConfig{}, // No jobs
+			expectErr:     true,
+			expectErrCode: 1,
+			expectOut:     "No job found",
+		},
+		{
+			name:          "Quiet mode suppresses output",
+			args:          []string{"--sha", "HEAD", "--quiet"},
+			mock:          mockConfig{},
+			expectErr:     true,
+			expectErrCode: 1,
+			expectOut:     "",
+		},
+		{
+			name:          "Job ID not found",
+			args:          []string{"--job", "99999"},
+			mock:          mockConfig{},
+			expectErr:     true,
+			expectErrCode: 1,
+		},
+		{
+			name: "Passing Review",
+			args: []string{"--sha", "HEAD", "--quiet"},
+			mock: mockConfig{
+				Jobs:   []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
+				Review: &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."},
+			},
+			expectErr: false,
+		},
+		{
+			name: "Failing Review",
+			args: []string{"--sha", "HEAD", "--quiet"},
+			mock: mockConfig{
+				Jobs:   []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
+				Review: &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug\n2. Missing check"},
+			},
+			expectErr:     true,
+			expectErrCode: 1,
+		},
+		{
+			name: "Positional Arg As Git Ref",
+			args: []string{"HEAD", "--quiet"},
+			mock: mockConfig{
+				Jobs:   []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
+				Review: &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."},
+			},
+			expectErr: false,
+		},
+	}
 
-	t.Run("Quiet mode suppresses output", func(t *testing.T) {
-		stdout, err := runWait(t, "--sha", "HEAD", "--quiet")
-		requireExitCode(t, err, 1)
-		if stdout != "" {
-			t.Errorf("expected no stdout in quiet mode, got: %q", stdout)
-		}
-	})
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			newWaitEnv(t, newWaitMockHandler(tc.mock))
+			stdout, err := runWait(t, tc.args...)
 
-func TestWaitExitsWhenJobIDNotFound(t *testing.T) {
-	setupFastPolling(t)
-	newWaitEnv(t, waitMockHandler(nil, nil))
+			if tc.expectErr {
+				requireExitCode(t, err, tc.expectErrCode)
+			} else if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
 
-	_, err := runWait(t, "--job", "99999")
-	requireExitCode(t, err, 1)
+			if tc.expectOut == "" {
+				if tc.name == "Quiet mode suppresses output" && stdout != "" {
+					t.Errorf("expected no stdout in quiet mode, got: %q", stdout)
+				}
+			} else {
+				if !strings.Contains(stdout, tc.expectOut) {
+					t.Errorf("expected stdout to contain %q, got: %q", tc.expectOut, stdout)
+				}
+			}
+		})
+	}
 }
 
 func TestWaitJobIDPollingNon200Response(t *testing.T) {
 	setupFastPolling(t)
-	newWaitEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("database locked"))
-			return
-		}
+	newWaitEnv(t, newWaitMockHandler(mockConfig{
+		JobsErr: http.StatusInternalServerError,
 	}))
 
 	_, err := runWait(t, "--job", "42")
@@ -210,45 +280,6 @@ func TestWaitJobIDPollingNon200Response(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("expected error to contain status code, got: %v", err)
-	}
-}
-
-func TestWaitPassingReview(t *testing.T) {
-	setupFastPolling(t)
-	newWaitEnv(t, waitMockHandler(
-		&storage.ReviewJob{ID: 1, Agent: "test", Status: "done"},
-		&storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."},
-	))
-
-	_, err := runWait(t, "--sha", "HEAD", "--quiet")
-	if err != nil {
-		t.Errorf("expected exit 0 for passing review, got error: %v", err)
-	}
-}
-
-func TestWaitFailingReview(t *testing.T) {
-	setupFastPolling(t)
-	newWaitEnv(t, waitMockHandler(
-		&storage.ReviewJob{ID: 1, Agent: "test", Status: "done"},
-		&storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug\n2. Missing check"},
-	))
-
-	_, err := runWait(t, "--sha", "HEAD", "--quiet")
-	requireExitCode(t, err, 1)
-}
-
-func TestWaitPositionalArgAsGitRef(t *testing.T) {
-	setupFastPolling(t)
-	newWaitEnv(t, waitMockHandler(
-		&storage.ReviewJob{ID: 1, Agent: "test", Status: "done"},
-		&storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."},
-	))
-
-	// Pass HEAD as a positional arg (not --sha flag) to exercise the
-	// git-ref-first resolution path.
-	_, err := runWait(t, "HEAD", "--quiet")
-	if err != nil {
-		t.Errorf("expected exit 0 for positional git ref, got error: %v", err)
 	}
 }
 
@@ -261,23 +292,17 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 	// "42" is not a valid git ref, so the wait command should fall back to
 	// treating it as a numeric job ID and query by id (not git_ref).
 	var lastJobsQuery string
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
+	mock := mockConfig{
+		Jobs: []storage.ReviewJob{{ID: 42, GitRef: "abc", Agent: "test", Status: "done"}},
+		Review: &storage.Review{
+			ID: 1, JobID: 42, Agent: "test", Output: "No issues found.",
+		},
+		OnJobsQuery: func(r *http.Request) {
 			lastJobsQuery = r.URL.RawQuery
-			job := storage.ReviewJob{ID: 42, GitRef: "abc", Agent: "test", Status: "done"}
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{
-				"jobs":     []storage.ReviewJob{job},
-				"has_more": false,
-			})
-			return
-		}
-		if r.URL.Path == "/api/review" {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 42, Agent: "test", Output: "No issues found."})
-			return
-		}
-	}))
+		},
+	}
+
+	_, cleanup := setupMockDaemon(t, newWaitMockHandler(mock))
 	t.Cleanup(cleanup)
 	chdir(t, repo.Dir)
 
@@ -298,21 +323,11 @@ func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 	// plain error (from showReview), not an *exitError. Both map to exit 1
 	// in practice, but the distinction matters for error reporting: plain
 	// errors print Cobra's "Error:" prefix while exitError silences it.
-	job := storage.ReviewJob{ID: 1, Agent: "test", Status: "done"}
-	newWaitEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{
-				"jobs":     []storage.ReviewJob{job},
-				"has_more": false,
-			})
-			return
-		}
-		if r.URL.Path == "/api/review" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-	}))
+	mock := mockConfig{
+		Jobs: []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
+		// Review is nil, so 404
+	}
+	newWaitEnv(t, newWaitMockHandler(mock))
 
 	_, err := runWait(t, "--sha", "HEAD", "--quiet")
 	if err == nil {
@@ -326,12 +341,8 @@ func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
 
 func TestWaitLookupNon200Response(t *testing.T) {
 	setupFastPolling(t)
-	newWaitEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("database locked"))
-			return
-		}
+	newWaitEnv(t, newWaitMockHandler(mockConfig{
+		JobsErr: http.StatusInternalServerError,
 	}))
 
 	_, err := runWait(t, "--sha", "HEAD")
@@ -343,47 +354,49 @@ func TestWaitLookupNon200Response(t *testing.T) {
 	}
 }
 
-func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
-	setupFastPolling(t)
-
+// setupRepoWithWorktree creates a repo, a worktree, and commits in both.
+// It returns the repo path, worktree path, main SHA, and worktree SHA.
+func setupRepoWithWorktree(t *testing.T) (repoDir, wtDir, mainSHA, wtSHA string) {
+	t.Helper()
 	// Create main repo with initial commit
 	repo := newTestGitRepo(t)
-	mainSHA := repo.CommitFile("file.txt", "content", "initial on main")
+	mainSHA = repo.CommitFile("file.txt", "content", "initial on main")
 
 	// Create a worktree on a new branch with a different commit
-	worktreeDir := t.TempDir()
-	os.Remove(worktreeDir) // git worktree add needs to create it
-	repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
+	wtDir = t.TempDir()
+	os.Remove(wtDir) // git worktree add needs to create it
+	repo.Run("worktree", "add", "-b", "wt-branch", wtDir)
 
 	// Make a new commit in the worktree so HEAD differs from main
-	wtRepo := &TestGitRepo{Dir: worktreeDir, t: t}
-	wtSHA := wtRepo.CommitFile("wt-file.txt", "worktree content", "commit in worktree")
+	wtRepo := &TestGitRepo{Dir: wtDir, t: t}
+	wtSHA = wtRepo.CommitFile("wt-file.txt", "worktree content", "commit in worktree")
 
 	if mainSHA == wtSHA {
 		t.Fatal("expected different SHAs for main and worktree commits")
 	}
+	return repo.Dir, wtDir, mainSHA, wtSHA
+}
+
+func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
+	setupFastPolling(t)
+
+	repoDir, worktreeDir, mainSHA, wtSHA := setupRepoWithWorktree(t)
 
 	var lookupQuery string
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
+	mock := mockConfig{
+		Jobs: []storage.ReviewJob{{ID: 1, GitRef: wtSHA, Agent: "test", Status: "done"}},
+		Review: &storage.Review{
+			ID: 1, JobID: 1, Agent: "test", Output: "No issues found.",
+		},
+		OnJobsQuery: func(r *http.Request) {
 			// Capture only the lookup query (has git_ref), not the poll query (has id)
 			if r.URL.Query().Get("git_ref") != "" {
 				lookupQuery = r.URL.RawQuery
 			}
-			job := storage.ReviewJob{ID: 1, GitRef: wtSHA, Agent: "test", Status: "done"}
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{
-				"jobs":     []storage.ReviewJob{job},
-				"has_more": false,
-			})
-			return
-		}
-		if r.URL.Path == "/api/review" {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
-			return
-		}
-	}))
+		},
+	}
+
+	_, cleanup := setupMockDaemon(t, newWaitMockHandler(mock))
 	t.Cleanup(cleanup)
 
 	chdir(t, worktreeDir)
@@ -409,7 +422,7 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 	if strings.Contains(lookupQuery, url.QueryEscape(worktreeDir)) {
 		t.Errorf("repo param should be main repo path, not worktree path; got: %s", lookupQuery)
 	}
-	if !strings.Contains(lookupQuery, url.QueryEscape(repo.Dir)) {
-		t.Errorf("expected repo=%s (main repo) in query, got: %s", repo.Dir, lookupQuery)
+	if !strings.Contains(lookupQuery, url.QueryEscape(repoDir)) {
+		t.Errorf("expected repo=%s (main repo) in query, got: %s", repoDir, lookupQuery)
 	}
 }
