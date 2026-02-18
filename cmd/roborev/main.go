@@ -2471,10 +2471,13 @@ func uninstallHookCmd() *cobra.Command {
 func isShellHook(content string) bool {
 	first, _, _ := strings.Cut(content, "\n")
 	first = strings.TrimSpace(first)
-	return strings.HasPrefix(first, "#!/bin/sh") ||
-		strings.HasPrefix(first, "#!/usr/bin/env sh") ||
-		strings.HasPrefix(first, "#!/bin/bash") ||
-		strings.HasPrefix(first, "#!/usr/bin/env bash")
+	for _, sh := range []string{"sh", "bash", "zsh", "ksh", "dash"} {
+		if strings.HasPrefix(first, "#!/bin/"+sh) ||
+			strings.HasPrefix(first, "#!/usr/bin/env "+sh) {
+			return true
+		}
+	}
+	return false
 }
 
 // isRoborevMarker returns true if the line is a generated roborev hook
