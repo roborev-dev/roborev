@@ -695,6 +695,45 @@ func TestInstallOrUpgradeHook(t *testing.T) {
 		}
 	})
 
+	t.Run("appends to hooks with various shell shebangs", func(t *testing.T) {
+		shebangs := []string{
+			"#!/bin/sh", "#!/usr/bin/env sh",
+			"#!/bin/bash", "#!/usr/bin/env bash",
+			"#!/bin/zsh", "#!/usr/bin/env zsh",
+			"#!/bin/ksh", "#!/usr/bin/env ksh",
+			"#!/bin/dash", "#!/usr/bin/env dash",
+		}
+		for _, shebang := range shebangs {
+			t.Run(shebang, func(t *testing.T) {
+				repo := testutil.NewTestRepo(t)
+				if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				hookPath := filepath.Join(repo.HooksDir, "post-commit")
+				existing := shebang + "\necho 'custom'\n"
+				if err := os.WriteFile(hookPath, []byte(existing), 0755); err != nil {
+					t.Fatal(err)
+				}
+
+				err := installOrUpgradeHook(
+					repo.HooksDir, "post-commit",
+					hookVersionMarker, generateHookContent, false,
+				)
+				if err != nil {
+					t.Fatalf("should append to %s hook: %v", shebang, err)
+				}
+
+				content, _ := os.ReadFile(hookPath)
+				if !strings.Contains(string(content), "echo 'custom'") {
+					t.Error("original content should be preserved")
+				}
+				if !strings.Contains(string(content), hookVersionMarker) {
+					t.Error("roborev content should be appended")
+				}
+			})
+		}
+	})
+
 	t.Run("refuses to append to non-shell hook", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {

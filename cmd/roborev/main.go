@@ -2465,9 +2465,9 @@ func uninstallHookCmd() *cobra.Command {
 // removal: drops all lines from the first roborev comment marker
 // through the end of that contiguous block (since roborev appends
 // its snippet as a self-contained block at the end).
-// isShellHook returns true if the hook content starts with a shell
-// shebang (sh or bash). Used to avoid appending shell snippets to
-// non-shell hooks (Python, Ruby, etc.).
+// isShellHook returns true if the hook content starts with a
+// POSIX-compatible shell shebang (sh, bash, zsh, ksh, dash).
+// Used to avoid appending shell snippets to non-shell hooks.
 func isShellHook(content string) bool {
 	first, _, _ := strings.Cut(content, "\n")
 	first = strings.TrimSpace(first)
