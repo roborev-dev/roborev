@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func createTestErrorLog(t *testing.T) (*ErrorLog, string) {
@@ -55,6 +57,11 @@ func TestErrorLogLog(t *testing.T) {
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	if err := decoder.Decode(&entry); err != nil {
 		t.Fatalf("Failed to parse error entry: %v", err)
+	}
+
+	// Verify no trailing data
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		t.Errorf("Expected EOF after first entry, got %v", err)
 	}
 
 	if entry.Level != "error" {
@@ -158,7 +165,18 @@ func TestErrorLogConcurrency(t *testing.T) {
 		}(i)
 	}
 
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// continued
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for concurrent logging to finish")
+	}
 
 	// Should have 100 entries
 	recent := el.Recent()
