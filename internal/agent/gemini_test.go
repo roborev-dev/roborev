@@ -39,17 +39,13 @@ func TestGeminiBuildArgs(t *testing.T) {
 	tests := []struct {
 		name         string
 		agentic      bool
-		wantArgs     []string          // Exact tokens expected in args
-		wantArgPairs map[string]string // Expected flag -> value pairs
-		unwantedArgs []string          // Exact tokens expected NOT to be in args
+		wantFlags    []string          // Standalone boolean flags
+		wantArgPairs map[string]string // Flag -> exact next token
+		unwantedArgs []string          // Tokens expected NOT in args
 	}{
 		{
 			name:    "ReviewMode",
 			agentic: false,
-			wantArgs: []string{
-				"--output-format", "stream-json",
-				"--allowed-tools", "Read,Glob,Grep",
-			},
 			wantArgPairs: map[string]string{
 				"--output-format": "stream-json",
 				"--allowed-tools": "Read,Glob,Grep",
@@ -59,13 +55,9 @@ func TestGeminiBuildArgs(t *testing.T) {
 			},
 		},
 		{
-			name:    "AgenticMode",
-			agentic: true,
-			wantArgs: []string{
-				"--output-format", "stream-json",
-				"--yolo",
-				"--allowed-tools", "Edit,Write,Read,Glob,Grep,Bash,Shell",
-			},
+			name:      "AgenticMode",
+			agentic:   true,
+			wantFlags: []string{"--yolo"},
 			wantArgPairs: map[string]string{
 				"--output-format": "stream-json",
 				"--allowed-tools": "Edit,Write,Read,Glob,Grep,Bash,Shell",
@@ -78,33 +70,33 @@ func TestGeminiBuildArgs(t *testing.T) {
 			a := NewGeminiAgent("gemini")
 			args := a.buildArgs(tc.agentic)
 
-			// Check exact args presence
-			for _, want := range tc.wantArgs {
-				if !slices.Contains(args, want) {
-					t.Errorf("expected args to contain exact token %q, got %v", want, args)
+			// Check standalone boolean flags
+			for _, flag := range tc.wantFlags {
+				if !slices.Contains(args, flag) {
+					t.Errorf("missing flag %q in args %v", flag, args)
 				}
 			}
 
-			// Check arg pairs (e.g. --output-format stream-json)
+			// Check flag-value pairs by exact next token
 			for flag, val := range tc.wantArgPairs {
 				idx := slices.Index(args, flag)
 				if idx == -1 {
-					// Error already reported in wantArgs loop, but continue safe
+					t.Errorf("missing flag %q in args %v", flag, args)
 					continue
 				}
 				if idx+1 >= len(args) {
-					t.Errorf("expected value for flag %q, but it was the last argument", flag)
+					t.Errorf("flag %q is last arg, expected value %q", flag, val)
 					continue
 				}
 				if args[idx+1] != val {
-					t.Errorf("expected flag %q to be followed by %q, got %q", flag, val, args[idx+1])
+					t.Errorf("flag %q: got value %q, want %q", flag, args[idx+1], val)
 				}
 			}
 
 			// Check absence of specific tokens
 			for _, unwanted := range tc.unwantedArgs {
 				if slices.Contains(args, unwanted) {
-					t.Errorf("expected args NOT to contain token %q", unwanted)
+					t.Errorf("unexpected token %q in args %v", unwanted, args)
 				}
 			}
 		})
