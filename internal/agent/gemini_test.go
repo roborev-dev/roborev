@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -36,19 +37,23 @@ func TestTruncateStderr(t *testing.T) {
 
 func TestGeminiBuildArgs(t *testing.T) {
 	tests := []struct {
-		name       string
-		agentic    bool
-		wantArgs   []string
-		wantNoArgs []string
+		name             string
+		agentic          bool
+		wantFlags        []string
+		wantSubstrings   []string
+		wantNoSubstrings []string
 	}{
 		{
 			name:    "ReviewMode",
 			agentic: false,
-			wantArgs: []string{
-				"stream-json",
+			wantFlags: []string{
+				"--output-format", "stream-json",
 				"--allowed-tools",
 			},
-			wantNoArgs: []string{
+			wantSubstrings: []string{
+				"Read,Glob,Grep",
+			},
+			wantNoSubstrings: []string{
 				"--yolo",
 				"Edit", "Write", "Bash", "Shell",
 			},
@@ -56,10 +61,13 @@ func TestGeminiBuildArgs(t *testing.T) {
 		{
 			name:    "AgenticMode",
 			agentic: true,
-			wantArgs: []string{
+			wantFlags: []string{
+				"--output-format", "stream-json",
 				"--yolo",
 				"--allowed-tools",
-				"Edit", "Write",
+			},
+			wantSubstrings: []string{
+				"Edit,Write,Read,Glob,Grep,Bash,Shell",
 			},
 		},
 	}
@@ -70,14 +78,25 @@ func TestGeminiBuildArgs(t *testing.T) {
 			args := a.buildArgs(tc.agentic)
 			argsStr := strings.Join(args, " ")
 
-			for _, want := range tc.wantArgs {
-				if !strings.Contains(argsStr, want) {
-					t.Errorf("expected args to contain %q", want)
+			// Check for specific output format flag pairing
+			if len(args) < 2 || args[0] != "--output-format" || args[1] != "stream-json" {
+				t.Errorf("expected first args to be --output-format stream-json, got %v", args)
+			}
+
+			for _, want := range tc.wantFlags {
+				if !slices.Contains(args, want) {
+					t.Errorf("expected args to contain exact flag %q, got %v", want, args)
 				}
 			}
-			for _, wantNo := range tc.wantNoArgs {
+
+			for _, want := range tc.wantSubstrings {
+				if !strings.Contains(argsStr, want) {
+					t.Errorf("expected args string to contain %q", want)
+				}
+			}
+			for _, wantNo := range tc.wantNoSubstrings {
 				if strings.Contains(argsStr, wantNo) {
-					t.Errorf("expected args NOT to contain %q", wantNo)
+					t.Errorf("expected args string NOT to contain %q", wantNo)
 				}
 			}
 		})
