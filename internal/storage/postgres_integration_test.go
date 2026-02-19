@@ -383,7 +383,10 @@ func TestIntegration_FinalPush_NoCommit(t *testing.T) {
 	env := newIntegrationEnv(t, 30*time.Second)
 	db := env.openDB("test.db")
 
-	repo, _ := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush-nocommit.git")
+	repo, err := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush-nocommit.git")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
 
 	// Create a job without a commit (CommitID=0)
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: 0, GitRef: "HEAD", Agent: "test"})
@@ -404,6 +407,10 @@ func TestIntegration_FinalPush_NoCommit(t *testing.T) {
 	}
 
 	env.assertPgCount("review_jobs", 1)
+	env.assertPgCountWhere(
+		"review_jobs", "commit_id IS NULL", nil, 1,
+	)
+	env.assertPgCount("reviews", 1)
 }
 
 func TestIntegration_SchemaCreation(t *testing.T) {
