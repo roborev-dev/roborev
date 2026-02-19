@@ -286,12 +286,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	wp.registerRunningJob(job.ID, cancel)
 	defer wp.unregisterRunningJob(job.ID)
 
-	// Skip immediately if the agent is in quota cooldown
-	if wp.isAgentCoolingDown(job.Agent) {
+	// Skip immediately if the agent is in quota cooldown.
+	// Resolve alias so "claude" checks cooldown for "claude-code".
+	canonicalAgent := agent.CanonicalName(job.Agent)
+	if wp.isAgentCoolingDown(canonicalAgent) {
 		log.Printf("[%s] Agent %s in cooldown, skipping job %d",
-			workerID, job.Agent, job.ID)
-		wp.failoverOrFail(workerID, job, job.Agent,
-			fmt.Sprintf("agent %s quota cooldown active", job.Agent))
+			workerID, canonicalAgent, job.ID)
+		wp.failoverOrFail(workerID, job, canonicalAgent,
+			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
 
@@ -540,7 +542,7 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	if err != nil || !agent.IsAvailable(resolved.Name()) {
 		return ""
 	}
-	if resolved.Name() == job.Agent {
+	if resolved.Name() == agent.CanonicalName(job.Agent) {
 		return ""
 	}
 	return resolved.Name()
@@ -568,6 +570,8 @@ const quotaErrorPrefix = "quota: "
 // defaultCooldown is the fallback duration when the error message doesn't
 // contain a parseable "reset after" token.
 const defaultCooldown = 30 * time.Minute
+const minCooldown = 1 * time.Minute
+const maxCooldown = 24 * time.Hour
 
 // isQuotaError returns true if the error message indicates a hard API
 // quota exhaustion (case-insensitive). Transient rate-limit/429 errors
@@ -609,6 +613,12 @@ func parseQuotaCooldown(errMsg string, fallback time.Duration) time.Duration {
 	d, err := time.ParseDuration(token)
 	if err != nil || d <= 0 {
 		return fallback
+	}
+	if d < minCooldown {
+		return minCooldown
+	}
+	if d > maxCooldown {
+		return maxCooldown
 	}
 	return d
 }

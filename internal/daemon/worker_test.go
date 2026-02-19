@@ -363,6 +363,18 @@ func TestParseQuotaCooldown(t *testing.T) {
 			fallback: 30 * time.Minute,
 			want:     1*time.Hour + 30*time.Minute,
 		},
+		{
+			name:     "clamped to max 24h",
+			errMsg:   "reset after 99999h",
+			fallback: 30 * time.Minute,
+			want:     24 * time.Hour,
+		},
+		{
+			name:     "clamped to min 1m",
+			errMsg:   "reset after 5s",
+			fallback: 30 * time.Minute,
+			want:     1 * time.Minute,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -452,6 +464,75 @@ func TestAgentCooldown_RefreshDuringUpgrade(t *testing.T) {
 	// refreshed entry — should return true.
 	if !pool.isAgentCoolingDown("gemini") {
 		t.Error("expected refreshed cooldown to return true")
+	}
+}
+
+func TestProcessJob_CooldownResolvesAlias(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	// Enqueue a job with the alias "claude" (canonical: "claude-code")
+	commit, err := tc.DB.GetOrCreateCommit(
+		tc.Repo.ID, sha, "A", "S", time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit: %v", err)
+	}
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    "claude",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	claimed, err := tc.DB.ClaimJob("test-worker")
+	if err != nil || claimed.ID != job.ID {
+		t.Fatalf("ClaimJob: err=%v, claimed=%v", err, claimed)
+	}
+
+	// Cool down "claude-code" (canonical name)
+	tc.Pool.cooldownAgent(
+		"claude-code", time.Now().Add(1*time.Hour),
+	)
+
+	// processJob should detect cooldown via alias resolution
+	tc.Pool.processJob("test-worker", claimed)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if updated.Status != storage.JobStatusFailed {
+		t.Errorf(
+			"status=%q, want failed (cooldown via alias)",
+			updated.Status,
+		)
+	}
+}
+
+func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
+	// "claude" is an alias for "claude-code". If job.Agent is "claude"
+	// and backup resolves to "claude-code", they are the same agent.
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "claude-code"
+	pool := NewWorkerPool(
+		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil,
+	)
+	job := &storage.ReviewJob{
+		Agent:    "claude",
+		RepoPath: t.TempDir(),
+	}
+	got := pool.resolveBackupAgent(job)
+	// Should return "" because claude == claude-code after alias
+	// resolution. (May also return "" if claude-code binary is not
+	// installed, which is fine — both reasons are correct.)
+	if got != "" {
+		t.Errorf(
+			"resolveBackupAgent() = %q, want empty (alias match)",
+			got,
+		)
 	}
 }
 

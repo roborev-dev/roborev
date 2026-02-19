@@ -111,6 +111,12 @@ func resolveAlias(name string) string {
 	return name
 }
 
+// CanonicalName resolves an agent alias to its canonical name.
+// Returns the name unchanged if it is not an alias.
+func CanonicalName(name string) string {
+	return resolveAlias(name)
+}
+
 // Register adds an agent to the registry
 func Register(a Agent) {
 	registry[a.Name()] = a
