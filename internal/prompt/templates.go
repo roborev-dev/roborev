@@ -37,7 +37,7 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 	tmplName := fmt.Sprintf("templates/%s_%s.tmpl", agentName, templateType)
 	content, err := templateFS.ReadFile(tmplName)
 	if err == nil {
-		return appendDateLine(string(content), now)
+		return appendDateLine(string(content)+noSkillsInstruction, now)
 	}
 
 	// Fallback to default constants
@@ -61,7 +61,7 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 	default:
 		base = SystemPromptSingle
 	}
-	return appendDateLine(base, now)
+	return appendDateLine(base+noSkillsInstruction, now)
 }
 
 // appendDateLine adds the current UTC date to a system prompt.
