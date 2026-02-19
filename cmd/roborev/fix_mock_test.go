@@ -21,33 +21,36 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 	defer cleanup()
 
 	tests := []struct {
-		jobID      int64
+		name       string
+		query      string
 		wantOutput string
-		wantErr    bool
+		wantStatus int
 	}{
-		{10, "Review for Job 10", false},
-		{20, "Review for Job 20", false},
-		{30, "Review for Job 30", false},
-		{40, "", true}, // Not found
+		{"Valid-10", "job_id=10", "Review for Job 10", http.StatusOK},
+		{"Valid-20", "job_id=20", "Review for Job 20", http.StatusOK},
+		{"Valid-30", "job_id=30", "Review for Job 30", http.StatusOK},
+		{"NotFound-40", "job_id=40", "", http.StatusNotFound},
+		{"Invalid-abc", "job_id=abc", "", http.StatusBadRequest},
+		{"Missing", "", "", http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("Job-%d", tt.jobID), func(t *testing.T) {
-			resp, err := http.Get(fmt.Sprintf("%s/api/review?job_id=%d", ts.URL, tt.jobID))
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("%s/api/review", ts.URL)
+			if tt.query != "" {
+				url += "?" + tt.query
+			}
+			resp, err := http.Get(url)
 			if err != nil {
 				t.Fatalf("failed to make request: %v", err)
 			}
 			defer resp.Body.Close()
 
-			if tt.wantErr {
-				if resp.StatusCode != http.StatusNotFound {
-					t.Errorf("expected status 404, got %d", resp.StatusCode)
-				}
-				return
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("expected status %d, got %d", tt.wantStatus, resp.StatusCode)
 			}
 
-			if resp.StatusCode != http.StatusOK {
-				t.Errorf("expected status 200, got %d", resp.StatusCode)
+			if tt.wantStatus != http.StatusOK {
 				return
 			}
 
@@ -56,9 +59,6 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 				t.Fatalf("failed to decode response: %v", err)
 			}
 
-			if review.JobID != tt.jobID {
-				t.Errorf("expected JobID %d, got %d", tt.jobID, review.JobID)
-			}
 			if review.Output != tt.wantOutput {
 				t.Errorf("expected output %q, got %q", tt.wantOutput, review.Output)
 			}

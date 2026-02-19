@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1473,8 +1474,11 @@ func (b *MockDaemonBuilder) Build() (*httptest.Server, func()) {
 	if _, ok := b.handlers["/api/review"]; !ok && len(b.reviews) > 0 {
 		b.handlers["/api/review"] = func(w http.ResponseWriter, r *http.Request) {
 			jobIDStr := r.URL.Query().Get("job_id")
-			var jobID int64
-			fmt.Sscanf(jobIDStr, "%d", &jobID)
+			jobID, err := strconv.ParseInt(jobIDStr, 10, 64)
+			if err != nil {
+				http.Error(w, "invalid job_id", http.StatusBadRequest)
+				return
+			}
 
 			if review, ok := b.reviews[jobID]; ok {
 				json.NewEncoder(w).Encode(review)
