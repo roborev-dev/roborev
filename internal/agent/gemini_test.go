@@ -35,38 +35,52 @@ func TestTruncateStderr(t *testing.T) {
 }
 
 func TestGeminiBuildArgs(t *testing.T) {
-	a := NewGeminiAgent("gemini")
+	tests := []struct {
+		name       string
+		agentic    bool
+		wantArgs   []string
+		wantNoArgs []string
+	}{
+		{
+			name:    "ReviewMode",
+			agentic: false,
+			wantArgs: []string{
+				"stream-json",
+				"--allowed-tools",
+			},
+			wantNoArgs: []string{
+				"--yolo",
+				"Edit", "Write", "Bash", "Shell",
+			},
+		},
+		{
+			name:    "AgenticMode",
+			agentic: true,
+			wantArgs: []string{
+				"--yolo",
+				"--allowed-tools",
+				"Edit", "Write",
+			},
+		},
+	}
 
-	// Non-agentic mode (review only): read-only tools, no yolo
-	args := a.buildArgs(false)
-	argsStr := strings.Join(args, " ")
-	if containsString(args, "--yolo") {
-		t.Fatalf("expected no --yolo in review mode, got %v", args)
-	}
-	if !containsString(args, "--output-format") || !containsString(args, "stream-json") {
-		t.Fatalf("expected --output-format stream-json, got %v", args)
-	}
-	if !containsString(args, "--allowed-tools") {
-		t.Fatalf("expected --allowed-tools, got %v", args)
-	}
-	// Review mode should have read-only tools (no Edit, Write, Bash, or Shell)
-	if strings.Contains(argsStr, "Edit") || strings.Contains(argsStr, "Write") ||
-		strings.Contains(argsStr, "Bash") || strings.Contains(argsStr, "Shell") {
-		t.Fatalf("expected read-only tools in review mode (no Edit/Write/Bash/Shell), got %v", args)
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewGeminiAgent("gemini")
+			args := a.buildArgs(tc.agentic)
+			argsStr := strings.Join(args, " ")
 
-	// Agentic mode: write tools + yolo
-	args = a.buildArgs(true)
-	argsStr = strings.Join(args, " ")
-	if !containsString(args, "--yolo") {
-		t.Fatalf("expected --yolo in agentic mode, got %v", args)
-	}
-	if !containsString(args, "--allowed-tools") {
-		t.Fatalf("expected --allowed-tools in agentic mode, got %v", args)
-	}
-	// Agentic mode should have write tools
-	if !strings.Contains(argsStr, "Edit") || !strings.Contains(argsStr, "Write") {
-		t.Fatalf("expected write tools in agentic mode, got %v", args)
+			for _, want := range tc.wantArgs {
+				if !strings.Contains(argsStr, want) {
+					t.Errorf("expected args to contain %q", want)
+				}
+			}
+			for _, wantNo := range tc.wantNoArgs {
+				if strings.Contains(argsStr, wantNo) {
+					t.Errorf("expected args NOT to contain %q", wantNo)
+				}
+			}
+		})
 	}
 }
 
@@ -175,123 +189,95 @@ No issues found in the code.
 	}
 }
 
-func TestGeminiReview_PlainTextError(t *testing.T) {
+func TestGemini_Review_Integration(t *testing.T) {
 	skipIfWindows(t)
-	// End-to-end test: create a temp script that emits plain text (no stream-json)
-	// should return an error since we require stream-json
-	scriptPath := writeTempCommand(t, `#!/bin/sh
+
+	tests := []struct {
+		name        string
+		script      string
+		wantResult  string
+		wantErr     string // substring match
+		wantIsError error  // errors.Is match
+	}{
+		{
+			name: "PlainTextError",
+			script: `#!/bin/sh
 echo "Plain text review output"
 echo "No issues found."
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	_, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
-	if err == nil {
-		t.Fatal("expected error for plain text output, got nil")
-	}
-	// Should return actionable error message
-	if !strings.Contains(err.Error(), "stream-json") {
-		t.Errorf("expected error to mention stream-json, got %v", err)
-	}
-	// Should preserve sentinel for errors.Is
-	if !errors.Is(err, errNoStreamJSON) {
-		t.Errorf("expected errors.Is(err, errNoStreamJSON) to be true, got false")
-	}
-}
-
-func TestGeminiReview_PlainTextErrorWithStderr(t *testing.T) {
-	scriptPath := writeTempCommand(t, `#!/bin/sh
+`,
+			wantErr:     "stream-json",
+			wantIsError: errNoStreamJSON,
+		},
+		{
+			name: "PlainTextErrorWithStderr",
+			script: `#!/bin/sh
 echo "Plain text review output"
 echo "Some stderr message" >&2
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	_, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
-	if err == nil {
-		t.Fatal("expected error for plain text output, got nil")
-	}
-	// Should include stderr in error message
-	if !strings.Contains(err.Error(), "Some stderr message") {
-		t.Errorf("expected error to include stderr, got %v", err)
-	}
-}
-
-func TestGeminiReview_LargeStderrTruncation(t *testing.T) {
-	scriptPath := writeTempCommand(t, `#!/bin/sh
+`,
+			wantErr: "Some stderr message",
+		},
+		{
+			name: "LargeStderrTruncation",
+			script: `#!/bin/sh
 echo "Plain text"
-for i in $(seq 1 200); do
-	echo "This is a long stderr line number $i that will contribute to the total size" >&2
-done
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	_, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	// Should be truncated
-	if !strings.Contains(err.Error(), "... (truncated)") {
-		t.Errorf("expected error to indicate truncation, got %v", err)
-	}
-}
-
-func TestGeminiReview_StreamJSON(t *testing.T) {
-	scriptPath := writeTempCommand(t, `#!/bin/sh
+yes "This is a long stderr line that will contribute to the total size" | head -n 200 >&2
+`,
+			wantErr: "... (truncated)",
+		},
+		{
+			name: "StreamJSON_Success",
+			script: `#!/bin/sh
 echo '{"type":"system","subtype":"init"}'
 echo '{"type":"result","result":"Review complete. All good!"}'
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	result, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
-
-	// Should return the parsed result
-	if result != "Review complete. All good!" {
-		t.Errorf("expected parsed result, got %q", result)
-	}
-}
-
-func TestGeminiReview_StreamJSONNoResult(t *testing.T) {
-	scriptPath := writeTempCommand(t, `#!/bin/sh
+`,
+			wantResult: "Review complete. All good!",
+		},
+		{
+			name: "StreamJSONNoResult",
+			script: `#!/bin/sh
 echo '{"type":"system","subtype":"init"}'
 echo '{"type":"tool","name":"Read","input":{"path":"foo.go"}}'
 echo '{"type":"tool_result","content":"file contents here"}'
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	result, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
-	if err != nil {
-		t.Fatalf("Review failed: %v", err)
-	}
-
-	// Should return "No review output generated" since no result/assistant content
-	if result != "No review output generated" {
-		t.Errorf("expected 'No review output generated', got %q", result)
-	}
-}
-
-func TestGeminiReview_IOError(t *testing.T) {
-	scriptPath := writeTempCommand(t, `#!/bin/sh
+`,
+			wantResult: "No review output generated",
+		},
+		{
+			name: "IOError",
+			script: `#!/bin/sh
 echo "Error message" >&2
 exit 1
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	_, err := a.Review(context.Background(), t.TempDir(), "abc123", "Review this code", &output)
-	if err == nil {
-		t.Fatal("expected error for failed command, got nil")
+`,
+			wantErr: "gemini failed",
+		},
 	}
-	// Should contain information about the failure
-	if !strings.Contains(err.Error(), "gemini failed") {
-		t.Errorf("expected error to mention 'gemini failed', got %v", err)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scriptPath := writeTempCommand(t, tc.script)
+			a := NewGeminiAgent(scriptPath)
+			var output bytes.Buffer
+
+			res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
+
+			if tc.wantErr != "" || tc.wantIsError != nil {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("expected error to contain %q, got %q", tc.wantErr, err.Error())
+				}
+				if tc.wantIsError != nil && !errors.Is(err, tc.wantIsError) {
+					t.Errorf("expected error type %v, got %v", tc.wantIsError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res != tc.wantResult {
+				t.Errorf("expected result %q, got %q", tc.wantResult, res)
+			}
+		})
 	}
 }
 
