@@ -1234,7 +1234,7 @@ func formatRawBatchComment(reviews []storage.BatchReviewResult, headSHA string) 
 // formatAllFailedComment formats a comment when every job in a batch failed.
 func formatAllFailedComment(reviews []storage.BatchReviewResult, headSHA string) string {
 	quotaSkips := countQuotaFailures(reviews)
-	allQuota := quotaSkips == len(reviews)
+	allQuota := len(reviews) > 0 && quotaSkips == len(reviews)
 
 	var b strings.Builder
 	if allQuota {

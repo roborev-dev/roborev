@@ -289,25 +289,25 @@ func TestIsQuotaError(t *testing.T) {
 		errMsg string
 		want   bool
 	}{
+		// Hard quota exhaustion — should trigger cooldown/skip
 		{"quota exceeded for model", true},
 		{"QUOTA_EXCEEDED: limit reached", true},
 		{"quota exhausted, reset after 8h", true},
 		{"QUOTA_EXHAUSTED: try later", true},
 		{"insufficient_quota: limit reached", true},
-		{"Rate limit reached", true},
-		{"rate_limit_error: too fast", true},
 		{"You have exhausted your capacity", true},
-		{"Too Many Requests (429)", true},
-		{"HTTP 429: slow down", true},
-		{"status 429 received from API", true},
-		{"Error 429: rate limited", true},
 		{"RESOURCE EXHAUSTED: try later", true},
+		// Transient rate limits — should NOT trigger cooldown (use retries)
+		{"Rate limit reached", false},
+		{"rate_limit_error: too fast", false},
+		{"Too Many Requests (429)", false},
+		{"HTTP 429: slow down", false},
+		{"status 429 received from API", false},
+		// Other non-quota errors
 		{"connection reset by peer", false},
 		{"timeout after 30s", false},
 		{"agent not found", false},
 		{"disk quota full", false},
-		{"error code 1429", false},
-		{"timeout after 429ms", false},
 		{"", false},
 	}
 	for _, tt := range tests {

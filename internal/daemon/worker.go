@@ -568,25 +568,19 @@ const quotaErrorPrefix = "quota: "
 // contain a parseable "reset after" token.
 const defaultCooldown = 30 * time.Minute
 
-// isQuotaError returns true if the error message indicates an API quota
-// or rate-limit exhaustion (case-insensitive). Patterns are scoped to
-// provider API errors to avoid false positives (e.g., disk quota).
+// isQuotaError returns true if the error message indicates a hard API
+// quota exhaustion (case-insensitive). Transient rate-limit/429 errors
+// are excluded — those should go through normal retries, not cooldown.
 func isQuotaError(errMsg string) bool {
 	lower := strings.ToLower(errMsg)
 	patterns := []string{
 		"resource exhausted",
-		"rate limit",
-		"rate_limit",
 		"quota exceeded",
 		"quota_exceeded",
 		"quota exhausted",
 		"quota_exhausted",
 		"insufficient_quota",
 		"exhausted your capacity",
-		"too many requests",
-		"http 429",
-		"status 429",
-		"error 429",
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
@@ -630,18 +624,26 @@ func (wp *WorkerPool) cooldownAgent(name string, until time.Time) {
 }
 
 // isAgentCoolingDown returns true if the agent is currently in a
-// quota cooldown period.
+// quota cooldown period. Expired entries are cleaned up eagerly.
 func (wp *WorkerPool) isAgentCoolingDown(name string) bool {
 	wp.agentCooldownsMu.RLock()
-	defer wp.agentCooldownsMu.RUnlock()
 	expiry, ok := wp.agentCooldowns[name]
 	if !ok {
+		wp.agentCooldownsMu.RUnlock()
 		return false
 	}
 	if time.Now().After(expiry) {
-		// Expired — clean up lazily on next write
+		wp.agentCooldownsMu.RUnlock()
+		// Upgrade to write lock and delete expired entry
+		wp.agentCooldownsMu.Lock()
+		// Re-check under write lock (may have been updated)
+		if exp, ok := wp.agentCooldowns[name]; ok && time.Now().After(exp) {
+			delete(wp.agentCooldowns, name)
+		}
+		wp.agentCooldownsMu.Unlock()
 		return false
 	}
+	wp.agentCooldownsMu.RUnlock()
 	return true
 }
 
