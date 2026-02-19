@@ -137,6 +137,10 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	if activeWorkers == 0 {
+		t.Fatal("expected active worker within timeout")
+	}
+
 	tc.Pool.Stop()
 
 	t.Logf("Peak active workers: %d", activeWorkers)
@@ -421,18 +425,10 @@ func TestResolveBackupAgent(t *testing.T) {
 			cfg := config.DefaultConfig()
 
 			// Merge test config with defaults
-			if tt.config.DefaultBackupAgent != "" {
-				cfg.DefaultBackupAgent = tt.config.DefaultBackupAgent
-			}
-			if tt.config.ReviewBackupAgent != "" {
-				cfg.ReviewBackupAgent = tt.config.ReviewBackupAgent
-			}
-			if tt.config.SecurityBackupAgent != "" {
-				cfg.SecurityBackupAgent = tt.config.SecurityBackupAgent
-			}
-			if tt.config.DesignBackupAgent != "" {
-				cfg.DesignBackupAgent = tt.config.DesignBackupAgent
-			}
+			cfg.DefaultBackupAgent = tt.config.DefaultBackupAgent
+			cfg.ReviewBackupAgent = tt.config.ReviewBackupAgent
+			cfg.SecurityBackupAgent = tt.config.SecurityBackupAgent
+			cfg.DesignBackupAgent = tt.config.DesignBackupAgent
 
 			pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil)
 			job := &storage.ReviewJob{
