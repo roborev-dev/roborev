@@ -1442,3 +1442,132 @@ func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 		}
 	}
 }
+
+func TestPatchFiles(t *testing.T) {
+	tests := []struct {
+		name  string
+		patch string
+		want  []string
+	}{
+		{
+			name: "simple add",
+			patch: `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1 +1,2 @@
+ package main
++// new line
+`,
+			want: []string{"main.go"},
+		},
+		{
+			name: "file in b/ directory not double-stripped",
+			patch: `diff --git a/b/main.go b/b/main.go
+--- a/b/main.go
++++ b/b/main.go
+@@ -1 +1,2 @@
+ package main
++// new line
+`,
+			want: []string{"b/main.go"},
+		},
+		{
+			name: "file in a/ directory not double-stripped",
+			patch: `diff --git a/a/utils.go b/a/utils.go
+--- a/a/utils.go
++++ b/a/utils.go
+@@ -1 +1,2 @@
+ package a
++// new line
+`,
+			want: []string{"a/utils.go"},
+		},
+		{
+			name: "new file with /dev/null",
+			patch: `diff --git a/new.go b/new.go
+--- /dev/null
++++ b/new.go
+@@ -0,0 +1 @@
++package main
+`,
+			want: []string{"new.go"},
+		},
+		{
+			name: "deleted file with /dev/null",
+			patch: `diff --git a/old.go b/old.go
+--- a/old.go
++++ /dev/null
+@@ -1 +0,0 @@
+-package main
+`,
+			want: []string{"old.go"},
+		},
+		{
+			name: "rename",
+			patch: `diff --git a/old.go b/renamed.go
+--- a/old.go
++++ b/renamed.go
+@@ -1 +1 @@
+-package old
++package renamed
+`,
+			want: []string{"old.go", "renamed.go"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := patchFiles(tt.patch)
+			if err != nil {
+				t.Fatalf("patchFiles returned error: %v", err)
+			}
+			wantSet := map[string]bool{}
+			for _, f := range tt.want {
+				wantSet[f] = true
+			}
+			gotSet := map[string]bool{}
+			for _, f := range got {
+				gotSet[f] = true
+			}
+			for f := range wantSet {
+				if !gotSet[f] {
+					t.Errorf("missing expected file %q", f)
+				}
+			}
+			for f := range gotSet {
+				if !wantSet[f] {
+					t.Errorf("unexpected file %q", f)
+				}
+			}
+		})
+	}
+}
+
+func TestTUIFixTriggerResultMsgWarning(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTasks
+	m.width = 80
+	m.height = 24
+
+	job := &storage.ReviewJob{ID: 42}
+	msg := tuiFixTriggerResultMsg{
+		job:     job,
+		warning: "rebase job #42 enqueued but failed to mark #10 as rebased: server error",
+	}
+
+	result, cmd := m.Update(msg)
+	updated := result.(tuiModel)
+
+	if !strings.Contains(updated.flashMessage, "failed to mark") {
+		t.Errorf(
+			"expected flash to contain warning, got %q",
+			updated.flashMessage,
+		)
+	}
+	if updated.flashView != tuiViewTasks {
+		t.Errorf("expected flash view tasks, got %v", updated.flashView)
+	}
+	if cmd == nil {
+		t.Error("expected fetchFixJobs cmd, got nil")
+	}
+}

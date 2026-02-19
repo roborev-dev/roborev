@@ -3461,3 +3461,79 @@ func TestHandleListCommentsJobIDParsing(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleListJobsJobTypeFilter(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	repoDir := filepath.Join(tmpDir, "repo-jt")
+	testutil.InitTestGitRepo(t, repoDir)
+	repo, _ := db.GetOrCreateRepo(repoDir)
+	commit, _ := db.GetOrCreateCommit(
+		repo.ID, "jt-abc", "Author", "Subject", time.Now(),
+	)
+
+	// Create a review job
+	db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "jt-abc",
+		Agent:    "test",
+	})
+
+	// Create a fix job
+	db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:      repo.ID,
+		CommitID:    commit.ID,
+		GitRef:      "jt-abc",
+		Agent:       "test",
+		JobType:     storage.JobTypeFix,
+		ParentJobID: 1,
+	})
+
+	t.Run("job_type=fix returns only fix jobs", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodGet, "/api/jobs?job_type=fix", nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		if len(resp.Jobs) != 1 {
+			t.Fatalf("Expected 1 fix job, got %d", len(resp.Jobs))
+		}
+		if resp.Jobs[0].JobType != storage.JobTypeFix {
+			t.Errorf(
+				"Expected job_type 'fix', got %q", resp.Jobs[0].JobType,
+			)
+		}
+	})
+
+	t.Run("no job_type returns all jobs", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodGet, "/api/jobs", nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		if len(resp.Jobs) != 2 {
+			t.Errorf("Expected 2 jobs total, got %d", len(resp.Jobs))
+		}
+	})
+}

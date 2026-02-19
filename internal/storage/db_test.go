@@ -3287,3 +3287,73 @@ func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit,
 	job := enqueueJob(t, db, repo.ID, commit.ID, sha)
 	return repo, commit, job
 }
+
+func TestListJobsWithJobTypeFilter(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/repo-jobtype")
+	commit := createCommit(t, db, repo.ID, "jt-sha")
+
+	// Create a review job (default type)
+	enqueueJob(t, db, repo.ID, commit.ID, "jt-sha")
+
+	// Create a fix job
+	_, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:      repo.ID,
+		CommitID:    commit.ID,
+		GitRef:      "jt-sha",
+		Agent:       "codex",
+		JobType:     JobTypeFix,
+		ParentJobID: 1,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob fix failed: %v", err)
+	}
+
+	t.Run("filter by fix returns only fix jobs", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithJobType("fix"))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Fatalf("Expected 1 fix job, got %d", len(jobs))
+		}
+		if jobs[0].JobType != JobTypeFix {
+			t.Errorf("Expected job_type 'fix', got %q", jobs[0].JobType)
+		}
+	})
+
+	t.Run("filter by review returns only review jobs", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithJobType("review"))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Fatalf("Expected 1 review job, got %d", len(jobs))
+		}
+		if jobs[0].JobType != JobTypeReview {
+			t.Errorf("Expected job_type 'review', got %q", jobs[0].JobType)
+		}
+	})
+
+	t.Run("no filter returns all jobs", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0)
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 2 {
+			t.Errorf("Expected 2 jobs with no filter, got %d", len(jobs))
+		}
+	})
+
+	t.Run("nonexistent type returns empty", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithJobType("nonexistent"))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 0 {
+			t.Errorf("Expected 0 jobs for nonexistent type, got %d", len(jobs))
+		}
+	})
+}
