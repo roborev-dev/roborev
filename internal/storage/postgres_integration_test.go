@@ -235,14 +235,22 @@ func createBatchReviews(t *testing.T, db *DB, repoID int64, count int, shaPrefix
 }
 
 // waitCondition waits for a condition to be true or times out.
-func waitCondition(t *testing.T, timeout time.Duration, msg string, condition func() bool) {
+func waitCondition(t *testing.T, timeout time.Duration, msg string, condition func() (bool, error)) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		if condition() {
+		ok, err := condition()
+		if err != nil {
+			lastErr = err
+		}
+		if ok {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	if lastErr != nil {
+		t.Fatalf("Timeout waiting for: %s (last error: %v)", msg, lastErr)
 	}
 	t.Fatalf("Timeout waiting for: %s", msg)
 }
@@ -357,6 +365,33 @@ func TestIntegration_FinalPush(t *testing.T) {
 	env.assertPgCount("review_jobs", 150)
 }
 
+func TestIntegration_FinalPush_NoCommit(t *testing.T) {
+	env := newIntegrationEnv(t, 30*time.Second)
+	db := env.openDB("test.db")
+
+	repo, _ := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush-nocommit.git")
+
+	// Create a job without a commit (CommitID=0)
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: 0, GitRef: "HEAD", Agent: "test"})
+	if err != nil {
+		t.Fatalf("EnqueueJob failed: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
+		t.Fatalf("failed to set job running: %v", err)
+	}
+	if err := db.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
+
+	worker := startSyncWorker(t, db, env.pgURL, "finalpush-nocommit-test", "1h")
+
+	if err := worker.FinalPush(); err != nil {
+		t.Fatalf("FinalPush failed: %v", err)
+	}
+
+	env.assertPgCount("review_jobs", 1)
+}
+
 func TestIntegration_SchemaCreation(t *testing.T) {
 	env := newIntegrationEnv(t, 30*time.Second)
 
@@ -415,10 +450,13 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
 	}
 
-	checkJobs := func(db *DB, count int) func() bool {
-		return func() bool {
-			jobs, _ := db.ListJobs("", "", 1000, 0)
-			return len(jobs) >= count
+	checkJobs := func(db *DB, count int) func() (bool, error) {
+		return func() (bool, error) {
+			jobs, err := db.ListJobs("", "", 1000, 0)
+			if err != nil {
+				return false, err
+			}
+			return len(jobs) >= count, nil
 		}
 	}
 
@@ -530,10 +568,13 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
 	}
 
-	checkJobs := func(db *DB, count int) func() bool {
-		return func() bool {
-			jobs, _ := db.ListJobs("", "", 1000, 0)
-			return len(jobs) >= count
+	checkJobs := func(db *DB, count int) func() (bool, error) {
+		return func() (bool, error) {
+			jobs, err := db.ListJobs("", "", 1000, 0)
+			if err != nil {
+				return false, err
+			}
+			return len(jobs) >= count, nil
 		}
 	}
 
@@ -672,10 +713,13 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		}
 	}
 
-	checkJobs := func(db *DB, count int) func() bool {
-		return func() bool {
-			jobs, _ := db.ListJobs("", "", 1000, 0)
-			return len(jobs) >= count
+	checkJobs := func(db *DB, count int) func() (bool, error) {
+		return func() (bool, error) {
+			jobs, err := db.ListJobs("", "", 1000, 0)
+			if err != nil {
+				return false, err
+			}
+			return len(jobs) >= count, nil
 		}
 	}
 
@@ -968,10 +1012,13 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 		t.Fatalf("Machine B: SyncNow failed: %v", err)
 	}
 
-	checkJobs := func(db *DB, count int) func() bool {
-		return func() bool {
-			jobs, _ := db.ListJobs("", "", 1000, 0)
-			return len(jobs) >= count
+	checkJobs := func(db *DB, count int) func() (bool, error) {
+		return func() (bool, error) {
+			jobs, err := db.ListJobs("", "", 1000, 0)
+			if err != nil {
+				return false, err
+			}
+			return len(jobs) >= count, nil
 		}
 	}
 
