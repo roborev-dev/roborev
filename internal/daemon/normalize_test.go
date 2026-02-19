@@ -189,8 +189,8 @@ func TestGetNormalizer(t *testing.T) {
 		},
 		{
 			agent:    "unknown",
-			input:    "plain text",
-			wantText: "plain text",
+			input:    `{"type":"assistant","message":{"content":"hi"}}`,
+			wantText: `{"type":"assistant","message":{"content":"hi"}}`,
 		},
 	}
 
