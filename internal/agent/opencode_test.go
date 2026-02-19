@@ -8,6 +8,7 @@ import (
 )
 
 func TestFilterOpencodeToolCallLines(t *testing.T) {
+	t.Parallel()
 	readCall := makeToolCallJSON("read", map[string]any{"path": "/foo"})
 	editCall := makeToolCallJSON("edit", map[string]any{})
 
@@ -18,7 +19,7 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 	}{
 		{
 			name:     "only tool-call lines",
-			input:    readCall + "\n" + editCall,
+			input:    strings.Join([]string{readCall, editCall}, "\n"),
 			expected: "",
 		},
 		{
@@ -28,7 +29,7 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 		},
 		{
 			name:     "mixed",
-			input:    makeToolCallJSON("read", map[string]any{}) + "\n" + "Real text\n" + makeToolCallJSON("edit", map[string]any{}),
+			input:    strings.Join([]string{makeToolCallJSON("read", map[string]any{}), "Real text", makeToolCallJSON("edit", map[string]any{})}, "\n"),
 			expected: "Real text",
 		},
 		{
@@ -69,6 +70,7 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := filterOpencodeToolCallLines(tt.input)
 			if got != tt.expected {
 				t.Errorf("filterOpencodeToolCallLines(%q) = %q, want %q", tt.input, got, tt.expected)
@@ -78,6 +80,7 @@ func TestFilterOpencodeToolCallLines(t *testing.T) {
 }
 
 func TestOpenCodeModelFlag(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		model        string
@@ -98,6 +101,7 @@ func TestOpenCodeModelFlag(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			a := NewOpenCodeAgent("opencode")
 			a.Model = tt.model
 			cl := a.CommandLine()
@@ -112,6 +116,7 @@ func TestOpenCodeModelFlag(t *testing.T) {
 }
 
 func TestOpenCodeReviewModelFlag(t *testing.T) {
+	t.Parallel()
 	skipIfWindows(t)
 	tests := []struct {
 		name      string
@@ -133,24 +138,10 @@ func TestOpenCodeReviewModelFlag(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := mockAgentCLI(t, MockCLIOpts{
-				CaptureArgs: true,
-				StdoutLines: []string{"ok"},
-			})
-			a := NewOpenCodeAgent(mock.CmdPath)
-			a.Model = tt.model
-			_, err := a.Review(
-				context.Background(), t.TempDir(),
-				"abc123", "review this", nil,
-			)
-			if err != nil {
-				t.Fatalf("Review: %v", err)
-			}
-			raw, err := os.ReadFile(mock.ArgsFile)
-			if err != nil {
-				t.Fatalf("read captured args: %v", err)
-			}
-			args := strings.TrimSpace(string(raw))
+			t.Parallel()
+			_, args, _ := runMockReview(t, tt.model, "review this", nil)
+			args = strings.TrimSpace(args)
+
 			if tt.wantFlag {
 				assertContains(t, args, "--model")
 				assertContains(t, args, tt.wantModel)
@@ -162,45 +153,74 @@ func TestOpenCodeReviewModelFlag(t *testing.T) {
 }
 
 func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
+	t.Parallel()
 	skipIfWindows(t)
+
+	prompt := "Review this commit carefully"
+	_, args, stdin := runMockReview(t, "", prompt, nil)
+
+	// Prompt must be in stdin
+	if strings.TrimSpace(stdin) != prompt {
+		t.Errorf("stdin content = %q, want %q", stdin, prompt)
+	}
+
+	// Prompt must not be in argv
+	assertNotContains(t, args, prompt)
+}
+
+func TestOpenCodeReviewFiltersToolCallLines(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	stdoutLines := []string{
+		makeToolCallJSON("read", map[string]any{"path": "/foo"}),
+		"**Review:** Fix the typo.",
+		makeToolCallJSON("edit", map[string]any{}),
+		"Done.",
+	}
+
+	result, _, _ := runMockReview(t, "", "prompt", stdoutLines)
+
+	assertContains(t, result, "**Review:**")
+	assertContains(t, result, "Done.")
+	assertNotContains(t, result, `"name":"read"`)
+}
+
+func runMockReview(t *testing.T, model, prompt string, stdoutLines []string) (output, args, stdin string) {
+	t.Helper()
+
+	if stdoutLines == nil {
+		stdoutLines = []string{"ok"}
+	}
 
 	mock := mockAgentCLI(t, MockCLIOpts{
 		CaptureArgs:  true,
 		CaptureStdin: true,
-		StdoutLines:  []string{"ok"},
+		StdoutLines:  stdoutLines,
 	})
 
 	a := NewOpenCodeAgent(mock.CmdPath)
-	prompt := "Review this commit carefully"
-	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", prompt, nil,
-	)
+	if model != "" {
+		a.Model = model
+	}
+
+	out, err := a.Review(context.Background(), t.TempDir(), "HEAD", prompt, nil)
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
 
-	// Prompt must be in stdin
-	assertFileContent(t, mock.StdinFile, prompt)
+	argsBytes := readFileOrFatal(t, mock.ArgsFile)
+	stdinBytes := readFileOrFatal(t, mock.StdinFile)
 
-	// Prompt must not be in argv
-	assertFileNotContains(t, mock.ArgsFile, prompt)
+	return out, string(argsBytes), string(stdinBytes)
 }
 
-func TestOpenCodeReviewFiltersToolCallLines(t *testing.T) {
-	skipIfWindows(t)
-	script := NewScriptBuilder().
-		AddToolCall("read", map[string]any{"path": "/foo"}).
-		AddOutput("**Review:** Fix the typo.").
-		AddToolCall("edit", map[string]any{}).
-		AddOutput("Done.").
-		Build()
-	cmdPath := writeTempCommand(t, script)
-	a := NewOpenCodeAgent(cmdPath)
-	result, err := a.Review(context.Background(), t.TempDir(), "head", "prompt", nil)
+func readFileOrFatal(t *testing.T, path string) []byte {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("Review: %v", err)
+		t.Fatalf("failed to read file %s: %v", path, err)
 	}
-	assertContains(t, result, "**Review:**")
-	assertContains(t, result, "Done.")
-	assertNotContains(t, result, `"name":"read"`)
+	return data
 }

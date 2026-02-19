@@ -144,15 +144,13 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 	// Capture args
 	if opts.CaptureArgs {
 		result.ArgsFile = filepath.Join(tmpDir, "args.txt")
-		t.Setenv("MOCK_ARGS_FILE", result.ArgsFile)
-		script.WriteString(`echo "$@" > "$MOCK_ARGS_FILE"` + "\n")
+		fmt.Fprintf(&script, "echo \"$@\" > %q\n", result.ArgsFile)
 	}
 
 	// Capture stdin
 	if opts.CaptureStdin {
 		result.StdinFile = filepath.Join(tmpDir, "stdin.txt")
-		t.Setenv("MOCK_STDIN_FILE", result.StdinFile)
-		script.WriteString(`cat > "$MOCK_STDIN_FILE"` + "\n")
+		fmt.Fprintf(&script, "cat > %q\n", result.StdinFile)
 	}
 
 	// Emit configured stdout lines
