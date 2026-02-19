@@ -125,6 +125,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 		want        string
 		wantErr     error
 		checkWriter bool
+		extraCheck  func(*testing.T, error)
 	}{
 		{
 			name: "AggregatesAgentMessages",
@@ -155,11 +156,21 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			name:    "TurnFailedReturnsError",
 			input:   `{"type":"turn.failed","error":{"message":"something broke"}}` + "\n",
 			wantErr: errCodexStreamFailed,
+			extraCheck: func(t *testing.T, err error) {
+				if errors.Is(err, errNoCodexJSON) {
+					t.Errorf("got errNoCodexJSON, want only stream failure")
+				}
+			},
 		},
 		{
 			name:    "ErrorEventReturnsError",
 			input:   `{"type":"error","message":"stream error"}` + "\n",
 			wantErr: errCodexStreamFailed,
+			extraCheck: func(t *testing.T, err error) {
+				if errors.Is(err, errNoCodexJSON) {
+					t.Errorf("got errNoCodexJSON, want only stream failure")
+				}
+			},
 		},
 		{
 			name: "IgnoresNonMessageItems",
@@ -204,6 +215,12 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Errorf("parseStreamJSON() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				if result != "" {
+					t.Errorf("parseStreamJSON() result = %q, want empty string on error", result)
+				}
+				if tt.extraCheck != nil {
+					tt.extraCheck(t, err)
 				}
 				return
 			}
