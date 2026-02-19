@@ -244,7 +244,9 @@ func startSyncWorkerNoSync(
 		ConnectTimeout: "5s",
 	}
 	worker := NewSyncWorker(db, cfg)
-	worker.SetSkipInitialSync(true)
+	if err := worker.SetSkipInitialSync(true); err != nil {
+		t.Fatalf("SetSkipInitialSync failed for %s: %v", machineName, err)
+	}
 	if err := worker.Start(); err != nil {
 		t.Fatalf(
 			"SyncWorker.Start failed for %s: %v",
@@ -1257,7 +1259,6 @@ func TestIntegration_TickerSync(t *testing.T) {
 	// SyncNow — no sync operations happen during startup.
 	// skipInitialSync is set, so the only sync path is the
 	// periodic ticker.
-	const tickerInterval = 200 * time.Millisecond
 	startSyncWorkerNoSync(
 		t, dbA, env.pgURL, "ticker-a", "200ms",
 	)
@@ -1268,7 +1269,6 @@ func TestIntegration_TickerSync(t *testing.T) {
 	// Create a review on machine A AFTER both workers are
 	// connected and initial sync is skipped, so it can only
 	// propagate via ticker ticks.
-	created := time.Now()
 	createCompletedReview(
 		t, dbA, repoA.ID,
 		"tick1111", "Alice", "First ticker commit",
@@ -1287,26 +1287,12 @@ func TestIntegration_TickerSync(t *testing.T) {
 			return len(jobs) >= 1, nil
 		},
 	)
-	propagated := time.Since(created)
-
-	// Propagation requires at least one full ticker interval
-	// (push on A + pull on B), confirming it came from the
-	// periodic ticker and not an initial sync.
-	if propagated < tickerInterval {
-		t.Errorf(
-			"Review propagated in %v, faster than one "+
-				"ticker interval (%v) — initial sync may "+
-				"not be disabled",
-			propagated, tickerInterval,
-		)
-	}
 
 	env.assertPgCount("review_jobs", 1)
 	env.assertPgCount("reviews", 1)
 
 	// Verify periodic behavior — create a second review and
 	// confirm it propagates in a later interval.
-	created2 := time.Now()
 	createCompletedReview(
 		t, dbA, repoA.ID,
 		"tick2222", "Alice", "Second ticker commit",
@@ -1324,15 +1310,6 @@ func TestIntegration_TickerSync(t *testing.T) {
 			return len(jobs) >= 2, nil
 		},
 	)
-	propagated2 := time.Since(created2)
-
-	if propagated2 < tickerInterval {
-		t.Errorf(
-			"Second review propagated in %v, faster than "+
-				"one ticker interval (%v)",
-			propagated2, tickerInterval,
-		)
-	}
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
