@@ -51,13 +51,7 @@ func (r *TestRepo) Run(args ...string) string {
 // CommitFile writes a file and commits it.
 func (r *TestRepo) CommitFile(filename, content, msg string) {
 	r.T.Helper()
-	path := filepath.Join(r.Dir, filename)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		r.T.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		r.T.Fatal(err)
-	}
+	r.WriteFile(filename, content)
 	r.Run("add", filename)
 	r.Run("commit", "-m", msg)
 }
@@ -188,15 +182,25 @@ func TestIsUnbornHead(t *testing.T) {
 }
 
 func TestNormalizeMSYSPath(t *testing.T) {
+	expectedCUsers := "/c/Users/test"
+	expectedCapCUsers := "/C/Users/test"
+	expectedUnix := "/home/user/repo"
+
+	if runtime.GOOS == "windows" {
+		expectedCUsers = "C:\\Users\\test"
+		expectedCapCUsers = "C:\\Users\\test"
+		expectedUnix = "\\home\\user\\repo"
+	}
+
 	tests := []struct {
 		name     string
 		input    string
-		expected string // Expected on Windows; on other platforms we just check FromSlash behavior
+		expected string
 	}{
 		{"forward slash path", "C:/Users/test", "C:" + string(filepath.Separator) + "Users" + string(filepath.Separator) + "test"},
-		{"MSYS lowercase drive", "/c/Users/test", ""}, // Platform-specific expected
-		{"MSYS uppercase drive", "/C/Users/test", ""}, // Platform-specific expected
-		{"Unix absolute path", "/home/user/repo", ""}, // Platform-specific expected
+		{"MSYS lowercase drive", "/c/Users/test", expectedCUsers},
+		{"MSYS uppercase drive", "/C/Users/test", expectedCapCUsers},
+		{"Unix absolute path", "/home/user/repo", expectedUnix},
 		{"relative path", "some/path", "some" + string(filepath.Separator) + "path"},
 		{"with trailing newline", "C:/Users/test\n", "C:" + string(filepath.Separator) + "Users" + string(filepath.Separator) + "test"},
 	}
@@ -204,44 +208,8 @@ func TestNormalizeMSYSPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := normalizeMSYSPath(tt.input)
-
-			switch tt.name {
-			case "MSYS lowercase drive":
-				if runtime.GOOS == "windows" {
-					if result != "C:\\Users\\test" {
-						t.Errorf("Expected C:\\Users\\test, got %s", result)
-					}
-				} else {
-					// On non-Windows, /c/Users/test stays as-is (just separator change)
-					if result != "/c/Users/test" {
-						t.Errorf("Expected /c/Users/test, got %s", result)
-					}
-				}
-			case "MSYS uppercase drive":
-				if runtime.GOOS == "windows" {
-					if result != "C:\\Users\\test" {
-						t.Errorf("Expected C:\\Users\\test, got %s", result)
-					}
-				} else {
-					if result != "/C/Users/test" {
-						t.Errorf("Expected /C/Users/test, got %s", result)
-					}
-				}
-			case "Unix absolute path":
-				if runtime.GOOS == "windows" {
-					// /home is not a drive letter pattern, so stays as \home
-					if result != "\\home\\user\\repo" {
-						t.Errorf("Expected \\home\\user\\repo, got %s", result)
-					}
-				} else {
-					if result != "/home/user/repo" {
-						t.Errorf("Expected /home/user/repo, got %s", result)
-					}
-				}
-			default:
-				if result != tt.expected {
-					t.Errorf("Expected %s, got %s", tt.expected, result)
-				}
+			if result != tt.expected {
+				t.Errorf("Expected %s, got %s", tt.expected, result)
 			}
 		})
 	}
@@ -312,20 +280,20 @@ func TestGetHooksPath(t *testing.T) {
 }
 
 func TestIsRebaseInProgress(t *testing.T) {
-	repo := NewTestRepo(t)
-
 	t.Run("no rebase", func(t *testing.T) {
+		repo := NewTestRepo(t)
 		if IsRebaseInProgress(repo.Dir) {
 			t.Error("expected no rebase in progress")
 		}
 	})
 
 	t.Run("rebase-merge directory", func(t *testing.T) {
+		repo := NewTestRepo(t)
 		rebaseMerge := filepath.Join(repo.Dir, ".git", "rebase-merge")
 		if err := os.MkdirAll(rebaseMerge, 0755); err != nil {
 			t.Fatal(err)
 		}
-		defer os.RemoveAll(rebaseMerge)
+		// No defer needed; t.TempDir() handles cleanup automatically
 
 		if !IsRebaseInProgress(repo.Dir) {
 			t.Error("expected rebase in progress with rebase-merge")
@@ -333,11 +301,11 @@ func TestIsRebaseInProgress(t *testing.T) {
 	})
 
 	t.Run("rebase-apply directory", func(t *testing.T) {
+		repo := NewTestRepo(t)
 		rebaseApply := filepath.Join(repo.Dir, ".git", "rebase-apply")
 		if err := os.MkdirAll(rebaseApply, 0755); err != nil {
 			t.Fatal(err)
 		}
-		defer os.RemoveAll(rebaseApply)
 
 		if !IsRebaseInProgress(repo.Dir) {
 			t.Error("expected rebase in progress with rebase-apply")
@@ -352,6 +320,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 	})
 
 	t.Run("worktree with rebase", func(t *testing.T) {
+		repo := NewTestRepo(t)
 		repo.CommitFile("file.txt", "content", "initial")
 
 		wt := repo.AddWorktree("test-branch")
@@ -387,7 +356,6 @@ func TestIsRebaseInProgress(t *testing.T) {
 		if err := os.MkdirAll(rebaseMerge, 0755); err != nil {
 			t.Fatal(err)
 		}
-		defer os.RemoveAll(rebaseMerge)
 
 		if !IsRebaseInProgress(wt.Dir) {
 			t.Error("expected rebase in progress in worktree")
