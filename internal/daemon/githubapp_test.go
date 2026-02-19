@@ -6,12 +6,18 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+)
+
+const (
+	testAppID          = 12345
+	testInstallationID = 67890
 )
 
 // sharedTestKey generates one 2048-bit RSA key for the entire test
@@ -64,6 +70,46 @@ func generateTestKeyPKCS8(t *testing.T) (*rsa.PrivateKey, string) {
 	return key, string(pemBytes)
 }
 
+func setupMockProvider(t *testing.T, handler http.HandlerFunc) (*GitHubAppTokenProvider, *httptest.Server) {
+	t.Helper()
+	_, pemData := testKey(t)
+	tp, err := NewGitHubAppTokenProvider(testAppID, pemData)
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	tp.baseURL = srv.URL
+	return tp, srv
+}
+
+func parseInsecureJWT(t *testing.T, token string) (map[string]any, map[string]any) {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 JWT parts, got %d", len(parts))
+	}
+
+	headerBytes, err := base64URLDecode(parts[0])
+	if err != nil {
+		t.Fatalf("decode header: %v", err)
+	}
+	var header map[string]any
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		t.Fatalf("parse header: %v", err)
+	}
+
+	payloadBytes, err := base64URLDecode(parts[1])
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		t.Fatalf("parse payload: %v", err)
+	}
+	return header, payload
+}
+
 func TestParsePrivateKey_PKCS1(t *testing.T) {
 	_, pemData := testKey(t)
 	key, err := parsePrivateKey([]byte(pemData))
@@ -98,7 +144,7 @@ func TestParsePrivateKey_Invalid(t *testing.T) {
 
 func TestSignJWT_Structure(t *testing.T) {
 	_, pemData := testKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, pemData)
+	tp, err := NewGitHubAppTokenProvider(testAppID, pemData)
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -108,40 +154,18 @@ func TestSignJWT_Structure(t *testing.T) {
 		t.Fatalf("sign JWT: %v", err)
 	}
 
-	parts := strings.Split(jwt, ".")
-	if len(parts) != 3 {
-		t.Fatalf("expected 3 JWT parts, got %d", len(parts))
-	}
+	header, payload := parseInsecureJWT(t, jwt)
 
-	// Decode and verify header
-	headerBytes, err := base64URLDecode(parts[0])
-	if err != nil {
-		t.Fatalf("decode header: %v", err)
-	}
-	var header map[string]string
-	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		t.Fatalf("parse header: %v", err)
-	}
 	if header["alg"] != "RS256" {
-		t.Errorf("expected alg RS256, got %s", header["alg"])
+		t.Errorf("expected alg RS256, got %v", header["alg"])
 	}
 	if header["typ"] != "JWT" {
-		t.Errorf("expected typ JWT, got %s", header["typ"])
-	}
-
-	// Decode and verify payload
-	payloadBytes, err := base64URLDecode(parts[1])
-	if err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		t.Fatalf("parse payload: %v", err)
+		t.Errorf("expected typ JWT, got %v", header["typ"])
 	}
 
 	iss, ok := payload["iss"].(float64)
-	if !ok || int64(iss) != 12345 {
-		t.Errorf("expected iss=12345, got %v", payload["iss"])
+	if !ok || int64(iss) != testAppID {
+		t.Errorf("expected iss=%d, got %v", testAppID, payload["iss"])
 	}
 
 	iat, ok := payload["iat"].(float64)
@@ -164,14 +188,8 @@ func TestSignJWT_Structure(t *testing.T) {
 }
 
 func TestTokenCaching(t *testing.T) {
-	_, pemData := testKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, pemData)
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-
 	callCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tp, _ := setupMockProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 
 		// Verify Authorization header has Bearer JWT
@@ -181,7 +199,8 @@ func TestTokenCaching(t *testing.T) {
 		}
 
 		// Verify the URL path
-		if r.URL.Path != "/app/installations/67890/access_tokens" {
+		expectedPath := fmt.Sprintf("/app/installations/%d/access_tokens", testInstallationID)
+		if r.URL.Path != expectedPath {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 
@@ -195,13 +214,10 @@ func TestTokenCaching(t *testing.T) {
 			"token":      "ghs_test_token_123",
 			"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 		})
-	}))
-	defer srv.Close()
-
-	tp.baseURL = srv.URL
+	})
 
 	// First call should hit the server
-	token1, err := tp.TokenForInstallation(67890)
+	token1, err := tp.TokenForInstallation(testInstallationID)
 	if err != nil {
 		t.Fatalf("first TokenForInstallation(): %v", err)
 	}
@@ -213,7 +229,7 @@ func TestTokenCaching(t *testing.T) {
 	}
 
 	// Second call should use cache
-	token2, err := tp.TokenForInstallation(67890)
+	token2, err := tp.TokenForInstallation(testInstallationID)
 	if err != nil {
 		t.Fatalf("second TokenForInstallation(): %v", err)
 	}
@@ -226,34 +242,25 @@ func TestTokenCaching(t *testing.T) {
 }
 
 func TestTokenRefreshOnExpiry(t *testing.T) {
-	_, pemData := testKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, pemData)
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-
 	callCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tp, _ := setupMockProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]any{
 			"token":      "ghs_refreshed",
 			"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 		})
-	}))
-	defer srv.Close()
+	})
 
-	tp.baseURL = srv.URL
-
-	// Manually set an expired cached token for installation 67890
+	// Manually set an expired cached token for installation
 	tp.mu.Lock()
-	tp.tokens[int64(67890)] = &cachedToken{
+	tp.tokens[int64(testInstallationID)] = &cachedToken{
 		token:   "ghs_old",
 		expires: time.Now().Add(2 * time.Minute), // Within 5 min buffer → should refresh
 	}
 	tp.mu.Unlock()
 
-	token, err := tp.TokenForInstallation(67890)
+	token, err := tp.TokenForInstallation(testInstallationID)
 	if err != nil {
 		t.Fatalf("TokenForInstallation(): %v", err)
 	}
@@ -266,21 +273,12 @@ func TestTokenRefreshOnExpiry(t *testing.T) {
 }
 
 func TestTokenExchangeError(t *testing.T) {
-	_, pemData := testKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, pemData)
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tp, _ := setupMockProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"message":"Bad credentials"}`))
-	}))
-	defer srv.Close()
+	})
 
-	tp.baseURL = srv.URL
-
-	_, err = tp.TokenForInstallation(67890)
+	_, err := tp.TokenForInstallation(testInstallationID)
 	if err == nil {
 		t.Fatal("expected error on 401")
 	}
@@ -290,14 +288,8 @@ func TestTokenExchangeError(t *testing.T) {
 }
 
 func TestTokenCaching_MultipleInstallations(t *testing.T) {
-	_, pemData := testKey(t)
-	tp, err := NewGitHubAppTokenProvider(12345, pemData)
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-
 	callCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tp, _ := setupMockProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		// Return a token that encodes which installation was requested
 		var token string
@@ -313,10 +305,7 @@ func TestTokenCaching_MultipleInstallations(t *testing.T) {
 			"token":      token,
 			"expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 		})
-	}))
-	defer srv.Close()
-
-	tp.baseURL = srv.URL
+	})
 
 	// Get token for installation 111
 	token1, err := tp.TokenForInstallation(111)
