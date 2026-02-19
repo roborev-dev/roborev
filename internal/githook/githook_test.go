@@ -449,16 +449,21 @@ func TestInstall(t *testing.T) {
 		expectedError  error
 		expectContent  []string
 		expectMissing  []string
+		expectPrefix   string
+		expectExact    string
+		orderedChecks  []string
 	}{
 		{
 			name:          "fresh install creates standalone hook",
 			hookName:      "post-commit",
-			expectContent: []string{"#!/bin/sh\n", PostCommitVersionMarker},
+			expectPrefix:  "#!/bin/sh\n",
+			expectContent: []string{PostCommitVersionMarker},
 		},
 		{
 			name:           "embeds after shebang in existing hook",
 			hookName:       "post-commit",
 			initialContent: "#!/bin/sh\necho 'custom'\n",
+			expectPrefix:   "#!/bin/sh\n",
 			expectContent:  []string{"echo 'custom'", PostCommitVersionMarker},
 		},
 		{
@@ -476,12 +481,13 @@ func TestInstall(t *testing.T) {
 				"npx lint-staged\n" +
 				"exit 0\n",
 			expectContent: []string{"_roborev_hook", "exit 0"},
+			orderedChecks: []string{"_roborev_hook", "exit 0"},
 		},
 		{
 			name:           "skips current version",
 			hookName:       "post-rewrite",
 			initialContent: GeneratePostRewrite(),
-			expectContent:  []string{GeneratePostRewrite()},
+			expectExact:    GeneratePostRewrite(),
 		},
 		{
 			name:     "upgrades outdated hook",
@@ -521,20 +527,21 @@ func TestInstall(t *testing.T) {
 			hookName:       "post-commit",
 			initialContent: "#!/usr/bin/env python3\nprint('hello')\n",
 			expectedError:  ErrNonShellHook,
-			expectContent:  []string{"#!/usr/bin/env python3\nprint('hello')\n"},
+			expectExact:    "#!/usr/bin/env python3\nprint('hello')\n",
 		},
 		{
 			name:           "refuses upgrade of non-shell hook",
 			hookName:       "post-commit",
 			initialContent: "#!/usr/bin/env python3\n# reviewed by roborev\nprint('hello')\n",
 			expectedError:  ErrNonShellHook,
-			expectContent:  []string{"#!/usr/bin/env python3\n# reviewed by roborev\nprint('hello')\n"},
+			expectExact:    "#!/usr/bin/env python3\n# reviewed by roborev\nprint('hello')\n",
 		},
 		{
 			name:           "force overwrites existing hook",
 			hookName:       "post-commit",
 			initialContent: "#!/bin/sh\necho 'custom'\n",
 			force:          true,
+			expectPrefix:   "#!/bin/sh\n",
 			expectContent:  []string{PostCommitVersionMarker},
 			expectMissing:  []string{"echo 'custom'"},
 		},
@@ -564,11 +571,35 @@ func TestInstall(t *testing.T) {
 				t.Fatalf("Install: %v", err)
 			}
 
-			if len(tc.expectContent) > 0 {
-				assertFileContains(t, hookPath, tc.expectContent...)
-			}
-			if len(tc.expectMissing) > 0 {
-				assertFileNotContains(t, hookPath, tc.expectMissing...)
+			if tc.expectExact != "" {
+				assertFileEquals(t, hookPath, tc.expectExact)
+			} else {
+				if tc.expectPrefix != "" {
+					assertFileHasPrefix(t, hookPath, tc.expectPrefix)
+				}
+				if len(tc.expectContent) > 0 {
+					assertFileContains(t, hookPath, tc.expectContent...)
+				}
+				if len(tc.expectMissing) > 0 {
+					assertFileNotContains(t, hookPath, tc.expectMissing...)
+				}
+				if len(tc.orderedChecks) > 1 {
+					content, err := os.ReadFile(hookPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					s := string(content)
+					lastIdx := -1
+					for _, check := range tc.orderedChecks {
+						idx := strings.Index(s, check)
+						if idx == -1 {
+							t.Errorf("missing %q in hook content", check)
+						} else if idx < lastIdx {
+							t.Errorf("order violation: %q found at %d, previous check found at %d", check, idx, lastIdx)
+						}
+						lastIdx = idx
+					}
+				}
 			}
 		})
 	}
@@ -660,6 +691,7 @@ func TestUninstall(t *testing.T) {
 		expectDeleted  bool
 		expectContent  []string
 		expectMissing  []string
+		expectExact    string
 	}{
 		{
 			name:           "generated hook is deleted entirely",
@@ -727,13 +759,14 @@ func TestUninstall(t *testing.T) {
 		{
 			name:     "custom if-block after snippet preserved",
 			hookName: "post-rewrite",
-			initialContent: "#!/bin/sh\n" +
-				GeneratePostRewrite() +
+			initialContent: GeneratePostRewrite() +
 				"if [ -f .notify ]; then\n" +
 				"    echo 'send notification'\n" +
 				"fi\n",
-			expectContent: []string{"send notification"},
-			expectMissing: []string{"remap --quiet"},
+			expectExact: "#!/bin/sh\n" +
+				"if [ -f .notify ]; then\n" +
+				"    echo 'send notification'\n" +
+				"fi\n",
 		},
 	}
 
@@ -754,6 +787,8 @@ func TestUninstall(t *testing.T) {
 				if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
 					t.Error("should be deleted entirely")
 				}
+			} else if tc.expectExact != "" {
+				assertFileEquals(t, hookPath, tc.expectExact)
 			} else {
 				if len(tc.expectContent) > 0 {
 					assertFileContains(t, hookPath, tc.expectContent...)
@@ -874,6 +909,28 @@ func assertFileNotContains(t *testing.T, path string, substrings ...string) {
 		if strings.Contains(str, sub) {
 			t.Errorf("file %s should NOT contain %q", filepath.Base(path), sub)
 		}
+	}
+}
+
+func assertFileEquals(t *testing.T, path string, expected string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	if string(content) != expected {
+		t.Errorf("file %s content mismatch.\nGot:\n%q\nWant:\n%q", filepath.Base(path), string(content), expected)
+	}
+}
+
+func assertFileHasPrefix(t *testing.T, path string, prefix string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	if !strings.HasPrefix(string(content), prefix) {
+		t.Errorf("file %s should start with:\n%q\nGot start:\n%q", filepath.Base(path), prefix, string(content))
 	}
 }
 
