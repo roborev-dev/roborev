@@ -259,6 +259,10 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	})
 
 	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		if opts.OnJobs != nil {
 			atomic.AddInt32(&state.JobsCount, 1)
 			opts.OnJobs(w, r)
@@ -278,6 +282,10 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	})
 
 	mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		atomic.AddInt32(&state.ReviewCount, 1)
 		output := opts.ReviewOutput
 		if output == "" {
@@ -300,6 +308,10 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	})
 
 	mux.HandleFunc("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		atomic.AddInt32(&state.AddressCount, 1)
 		w.WriteHeader(http.StatusOK)
 	})
