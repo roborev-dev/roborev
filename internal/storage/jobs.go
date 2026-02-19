@@ -1532,6 +1532,7 @@ func (db *DB) RemapJobGitRef(
 		UPDATE review_jobs
 		SET git_ref = ?, commit_id = ?, patch_id = ?, updated_at = ?
 		WHERE git_ref = ? AND repo_id = ?
+		AND status != 'running'
 		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
 	`, newSHA, newCommitID, nullString(patchID), now, oldSHA, repoID, patchID)
 	if err != nil {
@@ -1561,6 +1562,7 @@ func (db *DB) RemapJob(
 	err = tx.QueryRow(`
 		SELECT COUNT(*) FROM review_jobs
 		WHERE git_ref = ? AND repo_id = ?
+		AND status != 'running'
 		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
 	`, oldSHA, repoID, patchID).Scan(&matchCount)
 	if err != nil {
@@ -1595,6 +1597,7 @@ func (db *DB) RemapJob(
 		UPDATE review_jobs
 		SET git_ref = ?, commit_id = ?, patch_id = ?, updated_at = ?
 		WHERE git_ref = ? AND repo_id = ?
+		AND status != 'running'
 		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
 	`, newSHA, commitID, nullString(patchID), now,
 		oldSHA, repoID, patchID)

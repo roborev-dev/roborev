@@ -2452,9 +2452,9 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 }
 
 func TestRemapJobGitRef_RunningJob(t *testing.T) {
-	// Per design doc: remap should include running jobs for maximum coverage.
-	// CompleteJob updates status/finished_at by job ID, not git_ref,
-	// so there is no race.
+	// Running jobs must be skipped by remap: the worker has already
+	// built the prompt with the old SHA, so updating git_ref would
+	// create a mismatch between the stored prompt and the ref.
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -2475,7 +2475,7 @@ func TestRemapJobGitRef_RunningJob(t *testing.T) {
 	// Set job to running
 	setJobStatus(t, db, job.ID, JobStatusRunning)
 
-	// Remap should succeed on running jobs
+	// Remap should skip running jobs
 	newCommit := createCommit(t, db, repo.ID, "running-newsha")
 	n, err := db.RemapJobGitRef(
 		repo.ID, "running-oldsha", "running-newsha",
@@ -2484,19 +2484,19 @@ func TestRemapJobGitRef_RunningJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemapJobGitRef: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("expected 1 row updated, got %d", n)
+	if n != 0 {
+		t.Errorf("expected 0 rows updated for running job, got %d", n)
 	}
 
 	got, err := db.GetJobByID(job.ID)
 	if err != nil {
 		t.Fatalf("GetJobByID: %v", err)
 	}
-	if got.GitRef != "running-newsha" {
-		t.Errorf("expected git_ref=running-newsha, got %q", got.GitRef)
-	}
-	if JobStatus(got.Status) != JobStatusRunning {
-		t.Errorf("status should remain running, got %q", got.Status)
+	if got.GitRef != "running-oldsha" {
+		t.Errorf(
+			"running job git_ref should be unchanged, got %q",
+			got.GitRef,
+		)
 	}
 }
 
