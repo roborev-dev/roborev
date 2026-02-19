@@ -78,6 +78,7 @@ type MockCLIOpts struct {
 	CaptureArgs  bool   // Write "$@" to a capture file
 	CaptureStdin bool   // Write stdin to a capture file
 	StdoutLines  []string
+	StderrLines  []string
 }
 
 // MockCLIResult holds paths to the mock command and any capture files.
@@ -165,6 +166,19 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 			t.Fatalf("write stdout file: %v", err)
 		}
 		script.WriteString(fmt.Sprintf(`cat %q`, stdoutFile) + "\n")
+	}
+
+	// Emit configured stderr lines
+	if len(opts.StderrLines) > 0 {
+		stderrFile := filepath.Join(tmpDir, "stderr.txt")
+		content := strings.Join(opts.StderrLines, "\n")
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		if err := os.WriteFile(stderrFile, []byte(content), 0644); err != nil {
+			t.Fatalf("write stderr file: %v", err)
+		}
+		script.WriteString(fmt.Sprintf(`cat %q >&2`, stderrFile) + "\n")
 	}
 
 	script.WriteString("exit " + strings.TrimSpace(fmt.Sprintf("%d", opts.ExitCode)) + "\n")
