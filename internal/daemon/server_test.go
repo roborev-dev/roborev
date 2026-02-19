@@ -3387,3 +3387,135 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleListJobsIDParsing(t *testing.T) {
+	server, _, _ := newTestServer(t)
+
+	tests := []struct {
+		name       string
+		query      string
+		wantStatus int
+	}{
+		{
+			"non-numeric id",
+			"id=abc",
+			http.StatusBadRequest,
+		},
+		{
+			"partial numeric id",
+			"id=10abc",
+			http.StatusBadRequest,
+		},
+		{
+			"float id",
+			"id=1.5",
+			http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodGet, "/api/jobs?"+tt.query, nil,
+			)
+			w := httptest.NewRecorder()
+
+			server.handleListJobs(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf(
+					"expected status %d, got %d: %s",
+					tt.wantStatus, w.Code, w.Body.String(),
+				)
+			}
+		})
+	}
+}
+
+func TestHandleJobOutputIDParsing(t *testing.T) {
+	server, _, _ := newTestServer(t)
+
+	tests := []struct {
+		name       string
+		query      string
+		wantStatus int
+	}{
+		{
+			"non-numeric job_id",
+			"job_id=abc",
+			http.StatusBadRequest,
+		},
+		{
+			"partial numeric job_id",
+			"job_id=10abc",
+			http.StatusBadRequest,
+		},
+		{
+			"float job_id",
+			"job_id=1.5",
+			http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodGet, "/api/job-output?"+tt.query, nil,
+			)
+			w := httptest.NewRecorder()
+
+			server.handleJobOutput(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf(
+					"expected status %d, got %d: %s",
+					tt.wantStatus, w.Code, w.Body.String(),
+				)
+			}
+		})
+	}
+}
+
+func TestHandleListCommentsJobIDParsing(t *testing.T) {
+	server, _, _ := newTestServer(t)
+
+	tests := []struct {
+		name       string
+		query      string
+		wantStatus int
+	}{
+		{
+			"non-numeric job_id",
+			"job_id=abc",
+			http.StatusBadRequest,
+		},
+		{
+			"partial numeric job_id",
+			"job_id=10abc",
+			http.StatusBadRequest,
+		},
+		{
+			"float job_id",
+			"job_id=1.5",
+			http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodGet, "/api/comments?"+tt.query, nil,
+			)
+			w := httptest.NewRecorder()
+
+			server.handleListComments(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf(
+					"expected status %d, got %d: %s",
+					tt.wantStatus, w.Code, w.Body.String(),
+				)
+			}
+		})
+	}
+}
