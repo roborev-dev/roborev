@@ -54,6 +54,26 @@ func (e *MigrationTestEnv) DropTable(schema, table string) {
 	}
 }
 
+func (e *MigrationTestEnv) CleanupDropSchema(schema string) {
+	e.t.Helper()
+	e.t.Cleanup(func() {
+		_, err := e.pool.Exec(e.ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		if err != nil {
+			e.t.Errorf("Failed to cleanup schema %s: %v", schema, err)
+		}
+	})
+}
+
+func (e *MigrationTestEnv) CleanupDropTable(schema, table string) {
+	e.t.Helper()
+	e.t.Cleanup(func() {
+		_, err := e.pool.Exec(e.ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize())
+		if err != nil {
+			e.t.Errorf("Failed to cleanup table %s.%s: %v", schema, table, err)
+		}
+	})
+}
+
 func (e *MigrationTestEnv) SkipIfTableInSchema(schema, table string) {
 	e.t.Helper()
 	var exists bool

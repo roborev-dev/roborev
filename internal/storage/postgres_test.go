@@ -301,7 +301,9 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 	// First, check if schema exists
 	env := NewMigrationTestEnv(t)
 	var schemaExists bool
-	env.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'roborev')`).Scan(&schemaExists)
+	if err := env.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'roborev')`).Scan(&schemaExists); err != nil {
+		t.Fatalf("Failed to check if schema exists: %v", err)
+	}
 
 	if schemaExists {
 		// Don't actually drop if it has data - just verify the bootstrap works
@@ -331,6 +333,7 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 		}
 	} else {
 		env.DropSchema("roborev")
+		env.CleanupDropSchema("roborev")
 
 		// Fresh database - NewPgPool should succeed with AfterConnect bootstrap
 		pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
@@ -381,6 +384,10 @@ func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 	env.SkipIfTableInSchema("roborev", "schema_version")
 	env.SkipIfTableInSchema("public", "schema_version")
 
+	// Clean up after test
+	env.CleanupDropSchema("roborev")
+	env.CleanupDropTable("public", "schema_version")
+
 	// Create legacy table in public schema
 	env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
 	env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
@@ -401,12 +408,14 @@ func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 
 	// Verify legacy table was migrated (no longer in public)
 	var publicExists bool
-	pool.pool.QueryRow(ctx, `
+	if err := pool.pool.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM information_schema.tables
 			WHERE table_schema = 'public' AND table_name = 'schema_version'
 		)
-	`).Scan(&publicExists)
+	`).Scan(&publicExists); err != nil {
+		t.Fatalf("Failed to check if public.schema_version exists: %v", err)
+	}
 	if publicExists {
 		t.Error("Expected public.schema_version to NOT exist")
 	}
@@ -428,6 +437,11 @@ func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing
 	ctx := t.Context()
 
 	env := NewMigrationTestEnv(t)
+	// Clean up after test
+	env.CleanupDropSchema("roborev")
+	env.CleanupDropTable("public", "schema_version")
+	env.CleanupDropTable("public", "repos")
+
 	env.DropTable("public", "schema_version")
 	env.DropTable("public", "repos")
 	env.DropSchema("roborev")
@@ -463,17 +477,23 @@ func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing
 
 	// Verify public tables gone
 	var exists bool
-	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='schema_version')`).Scan(&exists)
+	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='schema_version')`).Scan(&exists); err != nil {
+		t.Fatalf("Failed to check public.schema_version: %v", err)
+	}
 	if exists {
 		t.Error("Expected public.schema_version to be gone")
 	}
-	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists)
+	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
+		t.Fatalf("Failed to check public.repos: %v", err)
+	}
 	if exists {
 		t.Error("Expected public.repos to be gone")
 	}
 
 	// Verify roborev.machines exists
-	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='roborev' AND table_name='machines')`).Scan(&exists)
+	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='roborev' AND table_name='machines')`).Scan(&exists); err != nil {
+		t.Fatalf("Failed to check roborev.machines: %v", err)
+	}
 	if !exists {
 		t.Error("Expected roborev.machines to exist")
 	}
@@ -504,6 +524,11 @@ func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
 	ctx := t.Context()
 
 	env := NewMigrationTestEnv(t)
+	// Clean up after test
+	env.CleanupDropSchema("roborev")
+	env.CleanupDropTable("public", "schema_version")
+	env.CleanupDropTable("public", "repos")
+
 	env.DropTable("public", "repos")
 	env.DropTable("public", "schema_version")
 	env.DropSchema("roborev")
@@ -542,6 +567,11 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	ctx := t.Context()
 
 	env := NewMigrationTestEnv(t)
+	// Clean up after test
+	env.CleanupDropSchema("roborev")
+	env.CleanupDropTable("public", "schema_version")
+	env.CleanupDropTable("public", "repos")
+
 	env.DropTable("public", "repos")
 	env.DropTable("public", "schema_version")
 	env.DropSchema("roborev")
@@ -572,7 +602,9 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	}
 
 	var exists bool
-	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists)
+	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
+		t.Fatalf("Failed to check public.repos: %v", err)
+	}
 	if exists {
 		t.Error("Expected public.repos to be gone")
 	}
@@ -595,6 +627,11 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	ctx := t.Context()
 
 	env := NewMigrationTestEnv(t)
+	// Clean up after test
+	env.CleanupDropSchema("roborev")
+	env.CleanupDropTable("public", "schema_version")
+	env.CleanupDropTable("public", "repos")
+
 	env.DropTable("public", "repos")
 	env.DropTable("public", "schema_version")
 	env.DropSchema("roborev")
@@ -623,7 +660,9 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	}
 
 	var exists bool
-	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists)
+	if err := pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists); err != nil {
+		t.Fatalf("Failed to check public.repos: %v", err)
+	}
 	if exists {
 		t.Error("Expected public.repos to be gone")
 	}
@@ -1055,6 +1094,9 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	ctx := t.Context()
 
 	env := NewMigrationTestEnv(t)
+	// Clean up after test
+	env.CleanupDropSchema("roborev")
+
 	// Drop any existing schema to start fresh - this test needs to verify v1→v2 migration
 	env.DropSchema("roborev")
 
