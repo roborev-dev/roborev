@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,8 +58,23 @@ type MockStep struct {
 // This allows testing fallback logic where multiple calls are made.
 func mockSequenceHandler(t *testing.T, steps ...MockStep) http.HandlerFunc {
 	t.Helper()
-	call := 0
+	var (
+		mu   sync.Mutex
+		call int
+	)
+
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if call != len(steps) {
+			t.Errorf("expected %d calls to mockSequenceHandler, got %d", len(steps), call)
+		}
+	})
+
 	return func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
 		if r.URL.Path != "/api/jobs" || r.Method != "GET" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -66,7 +82,8 @@ func mockSequenceHandler(t *testing.T, steps ...MockStep) http.HandlerFunc {
 		}
 
 		if call >= len(steps) {
-			t.Fatalf("unexpected extra call to %s (expected %d calls)", r.URL.Path, len(steps))
+			t.Errorf("unexpected extra call to %s (expected %d calls)", r.URL.Path, len(steps))
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
