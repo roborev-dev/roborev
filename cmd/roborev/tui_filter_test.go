@@ -165,6 +165,70 @@ func TestTUIFilterNavigation(t *testing.T) {
 	}
 }
 
+func TestTUIFilterSearchSequential(t *testing.T) {
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-alpha", 5),
+		makeNode("repo-beta", 3),
+		makeNode("other", 2),
+	})
+
+	// Initial state: All + 3 repos = 4 entries
+	if len(m.filterFlatList) != 4 {
+		t.Fatalf("Initial: expected 4 entries, got %d", len(m.filterFlatList))
+	}
+
+	// 1. Search "repo" -> should match repo-alpha, repo-beta
+	m.filterSearch = "repo"
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 2 {
+		t.Errorf("Step 1: expected 2 entries (repo-*), got %d", len(m.filterFlatList))
+	}
+
+	// 2. Refine to "alpha" -> should match only repo-alpha
+	m.filterSearch = "alpha"
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 1 {
+		t.Errorf("Step 2: expected 1 entry (repo-alpha), got %d", len(m.filterFlatList))
+	}
+	if len(m.filterFlatList) > 0 {
+		entry := m.filterFlatList[0]
+		if entry.repoIdx == -1 {
+			t.Error("Step 2: expected repo-alpha, got All")
+		} else if m.filterTree[entry.repoIdx].name != "repo-alpha" {
+			t.Errorf("Step 2: expected repo-alpha, got %s", m.filterTree[entry.repoIdx].name)
+		}
+	}
+
+	// 3. Clear search -> should restore full list
+	m.filterSearch = ""
+	m.rebuildFilterFlatList()
+	if len(m.filterFlatList) != 4 {
+		t.Errorf("Step 3: expected 4 entries after clear, got %d", len(m.filterFlatList))
+	}
+}
+
+func TestTUIFilterNavigationSequential(t *testing.T) {
+	m := initFilterModel([]treeFilterNode{
+		makeNode("repo-a", 1),
+		makeNode("repo-b", 1),
+		makeNode("repo-c", 1),
+	})
+	// Flat list: All(0), repo-a(1), repo-b(2), repo-c(3)
+
+	// Sequence: j, j, j, k -> should end at index 2 (repo-b)
+	keys := []rune{'j', 'j', 'j', 'k'}
+
+	// Helper to process keys sequentially on the same model
+	m2 := m
+	for _, k := range keys {
+		m2, _ = pressKey(m2, k)
+	}
+
+	if m2.filterSelectedIdx != 2 {
+		t.Errorf("Expected final index 2 (repo-b), got %d", m2.filterSelectedIdx)
+	}
+}
+
 func TestTUIFilterSelectRepo(t *testing.T) {
 	m := initFilterModel([]treeFilterNode{
 		makeNode("repo-a", 2),
