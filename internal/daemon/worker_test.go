@@ -283,6 +283,108 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	}
 }
 
+func TestIsQuotaError(t *testing.T) {
+	tests := []struct {
+		errMsg string
+		want   bool
+	}{
+		{"quota exceeded for model", true},
+		{"Rate limit reached", true},
+		{"rate_limit_error: too fast", true},
+		{"You have exhausted your capacity", true},
+		{"Too Many Requests (429)", true},
+		{"QUOTA exhausted", true},
+		{"connection reset by peer", false},
+		{"timeout after 30s", false},
+		{"agent not found", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.errMsg, func(t *testing.T) {
+			if got := isQuotaError(tt.errMsg); got != tt.want {
+				t.Errorf("isQuotaError(%q) = %v, want %v",
+					tt.errMsg, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseQuotaCooldown(t *testing.T) {
+	tests := []struct {
+		name     string
+		errMsg   string
+		fallback time.Duration
+		want     time.Duration
+	}{
+		{
+			name:     "extracts go duration",
+			errMsg:   "quota exhausted, reset after 8h26m13s please wait",
+			fallback: 30 * time.Minute,
+			want:     8*time.Hour + 26*time.Minute + 13*time.Second,
+		},
+		{
+			name:     "no reset token falls back",
+			errMsg:   "quota exceeded for model gemini-2.5-pro",
+			fallback: 30 * time.Minute,
+			want:     30 * time.Minute,
+		},
+		{
+			name:     "unparseable duration falls back",
+			errMsg:   "reset after bogus",
+			fallback: 15 * time.Minute,
+			want:     15 * time.Minute,
+		},
+		{
+			name:     "duration at end of string",
+			errMsg:   "reset after 2h30m",
+			fallback: 30 * time.Minute,
+			want:     2*time.Hour + 30*time.Minute,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseQuotaCooldown(tt.errMsg, tt.fallback)
+			if got != tt.want {
+				t.Errorf("parseQuotaCooldown() = %v, want %v",
+					got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAgentCooldown(t *testing.T) {
+	cfg := config.DefaultConfig()
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil)
+
+	// Not cooling down initially
+	if pool.isAgentCoolingDown("gemini") {
+		t.Error("expected gemini not in cooldown initially")
+	}
+
+	// Set cooldown
+	pool.cooldownAgent("gemini", time.Now().Add(1*time.Hour))
+	if !pool.isAgentCoolingDown("gemini") {
+		t.Error("expected gemini in cooldown after set")
+	}
+
+	// Different agent not affected
+	if pool.isAgentCoolingDown("codex") {
+		t.Error("expected codex not in cooldown")
+	}
+
+	// Expired cooldown returns false
+	pool.cooldownAgent("codex", time.Now().Add(-1*time.Second))
+	if pool.isAgentCoolingDown("codex") {
+		t.Error("expected expired cooldown to return false")
+	}
+
+	// cooldownAgent never shortens
+	pool.cooldownAgent("gemini", time.Now().Add(1*time.Minute))
+	if !pool.isAgentCoolingDown("gemini") {
+		t.Error("cooldown should not have been shortened")
+	}
+}
+
 func TestResolveBackupAgent(t *testing.T) {
 	tests := []struct {
 		name       string

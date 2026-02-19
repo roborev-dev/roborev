@@ -853,20 +853,34 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	}
 
 	// Set commit status based on job outcomes:
-	//   all succeeded  → success
-	//   mixed          → failure (some reviews did not complete)
-	//   all failed     → error
+	//   all succeeded                → success
+	//   all failures are quota skips → success (with note)
+	//   mixed real failures          → failure
+	//   all failed (real)            → error
+	quotaSkips := countQuotaFailures(reviews)
+	realFailures := batch.FailedJobs - quotaSkips
 	statusState := "success"
 	statusDesc := "Review complete"
 	switch {
+	case batch.CompletedJobs == 0 && realFailures == 0 && quotaSkips > 0:
+		// All failures are quota skips — not the code's fault
+		statusDesc = fmt.Sprintf(
+			"Review complete (%d agent(s) skipped — quota)",
+			quotaSkips,
+		)
 	case batch.CompletedJobs == 0:
 		statusState = "error"
 		statusDesc = "All reviews failed"
-	case batch.FailedJobs > 0:
+	case realFailures > 0:
 		statusState = "failure"
 		statusDesc = fmt.Sprintf(
 			"Review complete (%d/%d jobs failed)",
-			batch.FailedJobs, batch.TotalJobs,
+			realFailures, batch.TotalJobs,
+		)
+	case quotaSkips > 0:
+		statusDesc = fmt.Sprintf(
+			"Review complete (%d agent(s) skipped — quota)",
+			quotaSkips,
 		)
 	}
 	if err := p.callSetCommitStatus(batch.GithubRepo, batch.HeadSHA, statusState, statusDesc); err != nil {
@@ -1120,11 +1134,15 @@ Rules:
 
 	for i, r := range reviews {
 		fmt.Fprintf(&b, "---\n### Review %d: Agent=%s, Type=%s", i+1, r.Agent, r.ReviewType)
-		if r.Status == "failed" {
+		if isQuotaFailure(r) {
+			b.WriteString(" [SKIPPED]")
+		} else if r.Status == "failed" {
 			b.WriteString(" [FAILED]")
 		}
 		b.WriteString("\n")
-		if r.Output != "" {
+		if isQuotaFailure(r) {
+			b.WriteString("(review skipped — agent quota exhausted)")
+		} else if r.Output != "" {
 			output := r.Output
 			if len(output) > maxPerReview {
 				output = output[:maxPerReview] + "\n\n...(truncated)"
@@ -1167,6 +1185,10 @@ func formatSynthesizedComment(output string, reviews []storage.BatchReviewResult
 	fmt.Fprintf(&b, "\n\n---\n*Synthesized from %d reviews (agents: %s | types: %s)*\n",
 		len(reviews), strings.Join(agents, ", "), strings.Join(types, ", "))
 
+	if note := skippedAgentNote(reviews); note != "" {
+		b.WriteString(note)
+	}
+
 	return b.String()
 }
 
@@ -1178,9 +1200,15 @@ func formatRawBatchComment(reviews []storage.BatchReviewResult, headSHA string) 
 	b.WriteString("> Synthesis unavailable. Showing raw review outputs.\n\n")
 
 	for _, r := range reviews {
-		summary := fmt.Sprintf("Agent: %s | Type: %s | Status: %s", r.Agent, r.ReviewType, r.Status)
+		status := r.Status
+		if isQuotaFailure(r) {
+			status = "skipped (quota)"
+		}
+		summary := fmt.Sprintf("Agent: %s | Type: %s | Status: %s", r.Agent, r.ReviewType, status)
 		fmt.Fprintf(&b, "<details>\n<summary>%s</summary>\n\n", summary)
-		if r.Status == "failed" {
+		if isQuotaFailure(r) {
+			b.WriteString("Review skipped — agent quota exhausted.\n")
+		} else if r.Status == "failed" {
 			b.WriteString("**Error:** Review failed. Check daemon logs for details.\n")
 		} else if r.Output != "" {
 			output := r.Output
@@ -1195,22 +1223,90 @@ func formatRawBatchComment(reviews []storage.BatchReviewResult, headSHA string) 
 		b.WriteString("\n\n</details>\n\n")
 	}
 
+	if note := skippedAgentNote(reviews); note != "" {
+		b.WriteString(note)
+	}
+
 	return b.String()
 }
 
 // formatAllFailedComment formats a comment when every job in a batch failed.
 func formatAllFailedComment(reviews []storage.BatchReviewResult, headSHA string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "## roborev: Review Failed (`%s`)\n\n", shortSHA(headSHA))
-	b.WriteString("All review jobs in this batch failed.\n\n")
+	quotaSkips := countQuotaFailures(reviews)
+	allQuota := quotaSkips == len(reviews)
 
-	for _, r := range reviews {
-		fmt.Fprintf(&b, "- **%s** (%s): failed\n", r.Agent, r.ReviewType)
+	var b strings.Builder
+	if allQuota {
+		fmt.Fprintf(&b, "## roborev: Review Skipped (`%s`)\n\n", shortSHA(headSHA))
+		b.WriteString("All review agents were skipped due to quota exhaustion.\n\n")
+	} else {
+		fmt.Fprintf(&b, "## roborev: Review Failed (`%s`)\n\n", shortSHA(headSHA))
+		b.WriteString("All review jobs in this batch failed.\n\n")
 	}
 
-	b.WriteString("\nCheck daemon logs for error details.")
+	for _, r := range reviews {
+		if isQuotaFailure(r) {
+			fmt.Fprintf(&b, "- **%s** (%s): skipped (quota)\n", r.Agent, r.ReviewType)
+		} else {
+			fmt.Fprintf(&b, "- **%s** (%s): failed\n", r.Agent, r.ReviewType)
+		}
+	}
+
+	if !allQuota {
+		b.WriteString("\nCheck daemon logs for error details.")
+	}
+
+	if note := skippedAgentNote(reviews); note != "" {
+		b.WriteString(note)
+	}
 
 	return b.String()
+}
+
+// isQuotaFailure returns true if a batch review's error indicates a quota
+// skip rather than a real failure. Matches the prefix set by worker.go.
+func isQuotaFailure(r storage.BatchReviewResult) bool {
+	return r.Status == "failed" && strings.HasPrefix(r.Error, quotaErrorPrefix)
+}
+
+// countQuotaFailures returns the number of reviews that failed due to
+// agent quota exhaustion rather than a real error.
+func countQuotaFailures(reviews []storage.BatchReviewResult) int {
+	n := 0
+	for _, r := range reviews {
+		if isQuotaFailure(r) {
+			n++
+		}
+	}
+	return n
+}
+
+// skippedAgentNote returns a markdown note listing agents that were
+// skipped due to quota exhaustion. Returns "" if none were skipped.
+func skippedAgentNote(reviews []storage.BatchReviewResult) string {
+	agents := make(map[string]struct{})
+	for _, r := range reviews {
+		if isQuotaFailure(r) {
+			agents[r.Agent] = struct{}{}
+		}
+	}
+	if len(agents) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(agents))
+	for a := range agents {
+		names = append(names, a)
+	}
+	if len(names) == 1 {
+		return fmt.Sprintf(
+			"\n*Note: %s review skipped (agent quota exhausted)*\n",
+			names[0],
+		)
+	}
+	return fmt.Sprintf(
+		"\n*Note: %s reviews skipped (agent quota exhausted)*\n",
+		strings.Join(names, ", "),
+	)
 }
 
 // shortSHA returns the first 8 characters of a SHA, or the full string if shorter.

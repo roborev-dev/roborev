@@ -1550,6 +1550,133 @@ func TestCIPollerPostBatchResults_SetsFailureStatusOnMixedOutcome(t *testing.T) 
 	}
 }
 
+func TestCIPollerPostBatchResults_QuotaSkippedNotFailure(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+
+	// One success, one quota-skipped
+	batch, jobs := h.seedBatchWithJobs(t, 70, "quota-sha",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "No issues found."},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "gemini quota exhausted"},
+	)
+
+	capturedStatuses := h.CaptureCommitStatuses()
+	h.CaptureComments()
+
+	// Simulate: job1 succeeded, job2 failed (quota)
+	h.Poller.handleBatchJobDone(batch, jobs[0].ID, true)
+	h.Poller.handleBatchJobDone(batch, jobs[1].ID, false)
+
+	if len(*capturedStatuses) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+	}
+	sc := (*capturedStatuses)[0]
+	// Quota skip with at least one success → success, not failure
+	if sc.State != "success" {
+		t.Errorf("state=%q, want success (quota skip not a failure)", sc.State)
+	}
+	if !strings.Contains(sc.Desc, "skipped") {
+		t.Errorf("desc=%q, expected mention of skipped", sc.Desc)
+	}
+}
+
+func TestCIPollerPostBatchResults_AllQuotaSkippedIsSuccess(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+
+	batch, jobs := h.seedBatchWithJobs(t, 71, "all-quota-sha",
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "gemini quota exhausted"},
+	)
+
+	capturedStatuses := h.CaptureCommitStatuses()
+	h.CaptureComments()
+
+	h.Poller.handleBatchJobDone(batch, jobs[0].ID, false)
+
+	if len(*capturedStatuses) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+	}
+	sc := (*capturedStatuses)[0]
+	if sc.State != "success" {
+		t.Errorf("state=%q, want success (all-quota batch is not an error)", sc.State)
+	}
+	if !strings.Contains(sc.Desc, "skipped") {
+		t.Errorf("desc=%q, expected mention of skipped", sc.Desc)
+	}
+}
+
+func TestCIPollerPostBatchResults_MixedQuotaAndRealFailure(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+
+	batch, jobs := h.seedBatchWithJobs(t, 72, "mixed-quota-sha",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "failed", Error: "timeout"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "quota exhausted"},
+	)
+
+	capturedStatuses := h.CaptureCommitStatuses()
+	h.CaptureComments()
+
+	h.Poller.handleBatchJobDone(batch, jobs[0].ID, false)
+	h.Poller.handleBatchJobDone(batch, jobs[1].ID, false)
+
+	if len(*capturedStatuses) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
+	}
+	sc := (*capturedStatuses)[0]
+	// Real failure + quota skip → error (CompletedJobs == 0 and realFailures > 0)
+	if sc.State != "error" {
+		t.Errorf("state=%q, want error (real failure present)", sc.State)
+	}
+}
+
+func TestFormatAllFailedComment_AllQuotaSkipped(t *testing.T) {
+	reviews := []storage.BatchReviewResult{
+		{JobID: 1, Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "quota exhausted"},
+	}
+
+	comment := formatAllFailedComment(reviews, "abc123def456")
+
+	assertContainsAll(t, comment, "comment",
+		"## roborev: Review Skipped",
+		"quota exhaustion",
+		"skipped (quota)",
+	)
+	if strings.Contains(comment, "Check daemon logs") {
+		t.Error("all-quota comment should not mention daemon logs")
+	}
+}
+
+func TestFormatRawBatchComment_QuotaSkippedNote(t *testing.T) {
+	reviews := []storage.BatchReviewResult{
+		{JobID: 1, Agent: "codex", ReviewType: "security", Output: "Finding A", Status: "done"},
+		{JobID: 2, Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "quota exhausted"},
+	}
+
+	comment := formatRawBatchComment(reviews, "abc123def456")
+
+	assertContainsAll(t, comment, "comment",
+		"skipped (quota)",
+		"gemini review skipped",
+	)
+}
+
+func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
+	reviews := []storage.BatchReviewResult{
+		{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues.", Status: "done"},
+		{JobID: 2, Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "quota exhausted"},
+	}
+
+	prompt := buildSynthesisPrompt(reviews, "")
+
+	assertContainsAll(t, prompt, "prompt",
+		"[SKIPPED]",
+		"review skipped",
+	)
+	// Should NOT contain [FAILED] for the quota-skipped review
+	// Count occurrences of [FAILED]
+	if strings.Contains(prompt, "[FAILED]") {
+		t.Error("quota-skipped review should use [SKIPPED], not [FAILED]")
+	}
+}
+
 func TestCIPollerPostBatchResults_SetsErrorStatusOnCommentPostFailure(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	batch, _ := h.seedBatchWithJobs(t, 63, "post-fail-sha", jobSpec{
