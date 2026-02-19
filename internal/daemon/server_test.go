@@ -3700,6 +3700,54 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("non-terminal stale job statuses are rejected", func(t *testing.T) {
+		for _, status := range []storage.JobStatus{
+			storage.JobStatusQueued,
+			storage.JobStatusRunning,
+			storage.JobStatusFailed,
+			storage.JobStatusCanceled,
+		} {
+			t.Run(string(status), func(t *testing.T) {
+				fixJob, _ := db.EnqueueJob(storage.EnqueueOpts{
+					RepoID:      repo.ID,
+					CommitID:    commit.ID,
+					GitRef:      "fix-val-abc",
+					Agent:       "test",
+					JobType:     storage.JobTypeFix,
+					ParentJobID: reviewJob.ID,
+				})
+				// Move to desired status
+				switch status {
+				case storage.JobStatusRunning:
+					db.ClaimJob("w-term")
+				case storage.JobStatusFailed:
+					db.ClaimJob("w-term")
+					db.FailJob(fixJob.ID, "w-term", "broke")
+				case storage.JobStatusCanceled:
+					db.CancelJob(fixJob.ID)
+				}
+				// queued needs no extra action
+
+				body := map[string]any{
+					"parent_job_id": reviewJob.ID,
+					"stale_job_id":  fixJob.ID,
+				}
+				req := testutil.MakeJSONRequest(
+					t, http.MethodPost, "/api/job/fix", body,
+				)
+				w := httptest.NewRecorder()
+				server.handleFixJob(w, req)
+
+				if w.Code != http.StatusBadRequest {
+					t.Errorf(
+						"Expected 400 for %s stale job, got %d: %s",
+						status, w.Code, w.Body.String(),
+					)
+				}
+			})
+		}
+	})
+
 	t.Run("stale job from different repo is rejected", func(t *testing.T) {
 		// Create a fix job in a different repo
 		repo2Dir := filepath.Join(tmpDir, "repo-fix-val-2")

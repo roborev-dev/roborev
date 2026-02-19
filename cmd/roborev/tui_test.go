@@ -1549,6 +1549,18 @@ func TestPatchFiles(t *testing.T) {
 	}
 }
 
+func TestDirtyPatchFilesError(t *testing.T) {
+	// dirtyPatchFiles should return an error when git diff fails
+	// (e.g., invalid repo path), not silently return nil.
+	_, err := dirtyPatchFiles("/nonexistent/repo/path", []string{"file.go"})
+	if err == nil {
+		t.Fatal("expected error from dirtyPatchFiles with invalid repo, got nil")
+	}
+	if !strings.Contains(err.Error(), "git diff") {
+		t.Errorf("expected error to mention 'git diff', got: %v", err)
+	}
+}
+
 func TestTUIFixTriggerResultMsg(t *testing.T) {
 	t.Run("warning shows flash and triggers refresh", func(t *testing.T) {
 		m := newTuiModel("http://localhost")
