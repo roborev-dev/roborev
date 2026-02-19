@@ -354,7 +354,21 @@ func TestIntegration_FinalPush(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush.git")
 
-	createBatchReviews(t, db, repo.ID, 150, "HEAD", "test", "subject")
+	// Create 150 jobs without commits to match previous test behavior
+	// (replacing createBatchReviews which forces commits)
+	for i := 0; i < 150; i++ {
+		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: 0, GitRef: "HEAD", Agent: "test"})
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
+		// Update status and complete manually
+		if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
+			t.Fatalf("failed to set job running: %v", err)
+		}
+		if err := db.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+	}
 
 	worker := startSyncWorker(t, db, env.pgURL, "finalpush-test", "1h")
 
@@ -694,9 +708,9 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		t.Fatalf("Machine C: GetOrCreateRepo failed: %v", err)
 	}
 
-	workerA := startSyncWorker(t, dbA, env.pgURL, "alice-laptop", "50ms")
-	workerB := startSyncWorker(t, dbB, env.pgURL, "bob-desktop", "50ms")
-	workerC := startSyncWorker(t, dbC, env.pgURL, "carol-workstation", "50ms")
+	workerA := startSyncWorker(t, dbA, env.pgURL, "alice-laptop", "1h")
+	workerB := startSyncWorker(t, dbB, env.pgURL, "bob-desktop", "1h")
+	workerC := startSyncWorker(t, dbC, env.pgURL, "carol-workstation", "1h")
 
 	var jobsCreatedByA, jobsCreatedByB, jobsCreatedByC []string
 
