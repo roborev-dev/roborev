@@ -95,12 +95,11 @@ func (h *ciPollerHarness) seedBatchWithJobs(t *testing.T, prNum int, sha string,
 
 	var jobs []*storage.ReviewJob
 	for _, spec := range specs {
-		rt := spec.ReviewType
-		if rt == "" {
-			rt = "security"
+		if spec.ReviewType == "" {
+			t.Fatalf("seedBatchWithJobs: ReviewType required in jobSpec for agent %q", spec.Agent)
 		}
 		job, err := h.DB.EnqueueJob(storage.EnqueueOpts{
-			RepoID: h.Repo.ID, GitRef: "a..b", Agent: spec.Agent, ReviewType: rt,
+			RepoID: h.Repo.ID, GitRef: "a..b", Agent: spec.Agent, ReviewType: spec.ReviewType,
 		})
 		if err != nil {
 			t.Fatalf("EnqueueJob: %v", err)
@@ -116,6 +115,10 @@ func (h *ciPollerHarness) seedBatchWithJobs(t *testing.T, prNum int, sha string,
 			h.markJobFailed(t, job.ID, spec.Error)
 		case "canceled":
 			h.markJobCanceled(t, job.ID, spec.Error)
+		case "", "queued":
+			// no-op, job remains in queued state
+		default:
+			t.Fatalf("seedBatchWithJobs: unknown status %q", spec.Status)
 		}
 		jobs = append(jobs, job)
 	}
