@@ -1874,6 +1874,9 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 	if err != nil {
 		h.t.Fatalf("Failed to claim job: %v", err)
 	}
+	if claimed == nil {
+		h.t.Fatal("ClaimJob returned nil job")
+	}
 	if claimed.ID != job.ID {
 		h.t.Fatalf("Claimed wrong job: expected %d, got %d", job.ID, claimed.ID)
 	}
