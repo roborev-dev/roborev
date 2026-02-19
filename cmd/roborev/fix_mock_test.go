@@ -23,15 +23,17 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 	tests := []struct {
 		name       string
 		query      string
+		wantJobID  int64
 		wantOutput string
 		wantStatus int
 	}{
-		{"Valid-10", "job_id=10", "Review for Job 10", http.StatusOK},
-		{"Valid-20", "job_id=20", "Review for Job 20", http.StatusOK},
-		{"Valid-30", "job_id=30", "Review for Job 30", http.StatusOK},
-		{"NotFound-40", "job_id=40", "", http.StatusNotFound},
-		{"Invalid-abc", "job_id=abc", "", http.StatusBadRequest},
-		{"Missing", "", "", http.StatusBadRequest},
+		{"Valid-10", "job_id=10", 10, "Review for Job 10", http.StatusOK},
+		{"Valid-20", "job_id=20", 20, "Review for Job 20", http.StatusOK},
+		{"Valid-30", "job_id=30", 30, "Review for Job 30", http.StatusOK},
+		{"NotFound-40", "job_id=40", 0, "", http.StatusNotFound},
+		{"Invalid-abc", "job_id=abc", 0, "", http.StatusBadRequest},
+		{"PartialNumeric", "job_id=10abc", 0, "", http.StatusBadRequest},
+		{"Missing", "", 0, "", http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -59,6 +61,9 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 				t.Fatalf("failed to decode response: %v", err)
 			}
 
+			if review.JobID != tt.wantJobID {
+				t.Errorf("expected JobID %d, got %d", tt.wantJobID, review.JobID)
+			}
 			if review.Output != tt.wantOutput {
 				t.Errorf("expected output %q, got %q", tt.wantOutput, review.Output)
 			}

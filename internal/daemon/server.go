@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -706,8 +707,8 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 	// Support fetching a single job by ID
 	if idStr := r.URL.Query().Get("id"); idStr != "" {
-		var jobID int64
-		if _, err := fmt.Sscanf(idStr, "%d", &jobID); err != nil {
+		jobID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid id parameter")
 			return
 		}
@@ -971,8 +972,8 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var jobID int64
-	if _, err := fmt.Sscanf(jobIDStr, "%d", &jobID); err != nil {
+	jobID, err := strconv.ParseInt(jobIDStr, 10, 64)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid job_id")
 		return
 	}
@@ -1174,8 +1175,8 @@ func (s *Server) handleGetReview(w http.ResponseWriter, r *http.Request) {
 
 	// Support lookup by job_id (preferred) or sha
 	if jobIDStr := r.URL.Query().Get("job_id"); jobIDStr != "" {
-		var jobID int64
-		if _, err := fmt.Sscanf(jobIDStr, "%d", &jobID); err != nil {
+		jobID, parseErr := strconv.ParseInt(jobIDStr, 10, 64)
+		if parseErr != nil {
 			writeError(w, http.StatusBadRequest, "invalid job_id")
 			return
 		}
@@ -1268,8 +1269,8 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 
 	// Support lookup by job_id (preferred) or sha (legacy)
 	if jobIDStr := r.URL.Query().Get("job_id"); jobIDStr != "" {
-		var jobID int64
-		if _, scanErr := fmt.Sscanf(jobIDStr, "%d", &jobID); scanErr != nil {
+		jobID, parseErr := strconv.ParseInt(jobIDStr, 10, 64)
+		if parseErr != nil {
 			writeError(w, http.StatusBadRequest, "invalid job_id")
 			return
 		}

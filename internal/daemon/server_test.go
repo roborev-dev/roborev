@@ -3297,3 +3297,93 @@ func TestHandleRemap(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleGetReviewJobIDParsing(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	repoPath := filepath.Join(tmpDir, "repo-review-parse")
+	repo, err := db.GetOrCreateRepo(repoPath)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, "abc123", "msg", "Author", time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit: %v", err)
+	}
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "abc123",
+		Branch:   "main",
+		Agent:    "test",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	claimed, err := db.ClaimJob("test-worker")
+	if err != nil {
+		t.Fatalf("ClaimJob: %v", err)
+	}
+	if claimed == nil || claimed.ID != job.ID {
+		t.Fatalf("ClaimJob: expected job %d", job.ID)
+	}
+	if err := db.CompleteJob(
+		job.ID, "test", "prompt", "review output",
+	); err != nil {
+		t.Fatalf("CompleteJob: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		query      string
+		wantStatus int
+	}{
+		{
+			"valid job_id",
+			fmt.Sprintf("job_id=%d", job.ID),
+			http.StatusOK,
+		},
+		{
+			"missing params",
+			"",
+			http.StatusBadRequest,
+		},
+		{
+			"non-numeric job_id",
+			"job_id=abc",
+			http.StatusBadRequest,
+		},
+		{
+			"partial numeric job_id",
+			"job_id=10abc",
+			http.StatusBadRequest,
+		},
+		{
+			"not found job_id",
+			"job_id=999999",
+			http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "/api/review"
+			if tt.query != "" {
+				url += "?" + tt.query
+			}
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			w := httptest.NewRecorder()
+
+			server.handleGetReview(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf(
+					"expected status %d, got %d: %s",
+					tt.wantStatus, w.Code, w.Body.String(),
+				)
+			}
+		})
+	}
+}
