@@ -1053,29 +1053,37 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 	})
 }
 
+// startStreamHandler starts the stream handler in a goroutine and waits for subscription.
+// Returns a cancel function, the recorder, and a done channel.
+func startStreamHandler(t *testing.T, server *Server, url string) (context.CancelFunc, *safeRecorder, chan struct{}) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, url, nil).WithContext(ctx)
+	w := newSafeRecorder()
+
+	initialCount := server.broadcaster.SubscriberCount()
+
+	// Run handler in goroutine
+	done := make(chan struct{})
+	go func() {
+		server.handleStreamEvents(w, req)
+		close(done)
+	}()
+
+	// Wait for handler to subscribe
+	if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
+		cancel() // Clean up context if timeout
+		t.Fatal("Timed out waiting for subscriber")
+	}
+
+	return cancel, w, done
+}
+
 func TestHandleStreamEvents(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
 	t.Run("returns correct headers", func(t *testing.T) {
-		// Create a request with a context that we can cancel
-		ctx, cancel := context.WithCancel(context.Background())
-		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
-		w := newSafeRecorder()
-
-		// Capture initial subscriber count to detect when this handler subscribes
-		initialCount := server.broadcaster.SubscriberCount()
-
-		// Run handler in goroutine since it blocks
-		done := make(chan struct{})
-		go func() {
-			server.handleStreamEvents(w, req)
-			close(done)
-		}()
-
-		// Wait for handler to subscribe
-		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
-			t.Fatal("Timed out waiting for subscriber")
-		}
+		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
 
 		// Cancel request to stop the handler
 		cancel()
@@ -1105,23 +1113,7 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("streams events as JSONL", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
-		w := newSafeRecorder()
-
-		initialCount := server.broadcaster.SubscriberCount()
-
-		// Run handler in goroutine
-		done := make(chan struct{})
-		go func() {
-			server.handleStreamEvents(w, req)
-			close(done)
-		}()
-
-		// Wait for handler to subscribe
-		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
-			t.Fatal("Timed out waiting for subscriber")
-		}
+		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
 
 		// Broadcast test events
 		event1 := Event{
@@ -1149,6 +1141,7 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		// Wait for events to be written
 		if !waitForEvents(w, 2, time.Second) {
+			cancel()
 			t.Fatal("Timed out waiting for events")
 		}
 
@@ -1194,21 +1187,7 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("all event types are supported", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
-		w := newSafeRecorder()
-
-		initialCount := server.broadcaster.SubscriberCount()
-
-		done := make(chan struct{})
-		go func() {
-			server.handleStreamEvents(w, req)
-			close(done)
-		}()
-
-		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
-			t.Fatal("Timed out waiting for subscriber")
-		}
+		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
 
 		// Broadcast all event types
 		server.broadcaster.Broadcast(Event{
@@ -1247,6 +1226,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		})
 
 		if !waitForEvents(w, 4, time.Second) {
+			cancel()
 			t.Fatal("Timed out waiting for events")
 		}
 		cancel()
@@ -1320,21 +1300,7 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("omitempty fields are excluded when empty", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		req := httptest.NewRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
-		w := newSafeRecorder()
-
-		initialCount := server.broadcaster.SubscriberCount()
-
-		done := make(chan struct{})
-		go func() {
-			server.handleStreamEvents(w, req)
-			close(done)
-		}()
-
-		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
-			t.Fatal("Timed out waiting for subscriber")
-		}
+		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
 
 		// Event with no optional fields set
 		server.broadcaster.Broadcast(Event{
@@ -1347,6 +1313,7 @@ func TestHandleStreamEvents(t *testing.T) {
 		})
 
 		if !waitForEvents(w, 1, time.Second) {
+			cancel()
 			t.Fatal("Timed out waiting for events")
 		}
 		cancel()
@@ -1363,23 +1330,8 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("repo filter only sends matching events", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
 		// Filter for repo1 only
-		req := httptest.NewRequest(http.MethodGet, "/api/stream/events?repo="+url.QueryEscape("/test/repo1"), nil).WithContext(ctx)
-		w := newSafeRecorder()
-
-		initialCount := server.broadcaster.SubscriberCount()
-
-		// Run handler in goroutine
-		done := make(chan struct{})
-		go func() {
-			server.handleStreamEvents(w, req)
-			close(done)
-		}()
-
-		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
-			t.Fatal("Timed out waiting for subscriber")
-		}
+		cancel, w, done := startStreamHandler(t, server, "/api/stream/events?repo="+url.QueryEscape("/test/repo1"))
 
 		// Broadcast events for different repos
 		server.broadcaster.Broadcast(Event{
@@ -1406,6 +1358,7 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		// Wait for events to be written (expect 2 for repo1, repo2 event is filtered)
 		if !waitForEvents(w, 2, time.Second) {
+			cancel()
 			t.Fatal("Timed out waiting for events")
 		}
 
@@ -1442,24 +1395,8 @@ func TestHandleStreamEvents(t *testing.T) {
 	})
 
 	t.Run("special characters in repo filter are handled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		// Repo path with spaces
 		repoPath := "/test/my repo with spaces"
-		req := httptest.NewRequest(http.MethodGet, "/api/stream/events?repo="+url.QueryEscape(repoPath), nil).WithContext(ctx)
-		w := newSafeRecorder()
-
-		initialCount := server.broadcaster.SubscriberCount()
-
-		// Run handler in goroutine
-		done := make(chan struct{})
-		go func() {
-			server.handleStreamEvents(w, req)
-			close(done)
-		}()
-
-		if !waitForSubscriberIncrease(server.broadcaster, initialCount, time.Second) {
-			t.Fatal("Timed out waiting for subscriber")
-		}
+		cancel, w, done := startStreamHandler(t, server, "/api/stream/events?repo="+url.QueryEscape(repoPath))
 
 		// Broadcast event for the repo with spaces
 		server.broadcaster.Broadcast(Event{
@@ -1480,6 +1417,7 @@ func TestHandleStreamEvents(t *testing.T) {
 
 		// Wait for the event that passes filter
 		if !waitForEvents(w, 1, time.Second) {
+			cancel()
 			t.Fatal("Timed out waiting for events")
 		}
 		cancel()
