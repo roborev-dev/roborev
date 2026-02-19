@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -1155,7 +1156,9 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := setupQueue(tt.initialJobs, 0)
 			if tt.initialPending != nil {
-				m.pendingAddressed = tt.initialPending
+				// Deep copy to avoid aliasing
+				m.pendingAddressed = make(map[int64]pendingState, len(tt.initialPending))
+				maps.Copy(m.pendingAddressed, tt.initialPending)
 				// Apply optimistic updates if pending
 				for id, p := range tt.initialPending {
 					for i := range m.jobs {
@@ -1167,7 +1170,9 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 				}
 			}
 			if tt.initialReviewPending != nil {
-				m.pendingReviewAddressed = tt.initialReviewPending
+				// Deep copy to avoid aliasing
+				m.pendingReviewAddressed = make(map[int64]pendingState, len(tt.initialReviewPending))
+				maps.Copy(m.pendingReviewAddressed, tt.initialReviewPending)
 			}
 			if tt.hideAddressed {
 				m.hideAddressed = true
@@ -1181,7 +1186,7 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 
 			// Check pending state (jobs)
 			for id, p := range tt.initialPending {
-				_, exists := m2.pendingAddressed[id]
+				val, exists := m2.pendingAddressed[id]
 				if tt.wantPending && !exists {
 					t.Errorf("expected pending state for job %d to remain", id)
 				}
@@ -1189,13 +1194,13 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 					t.Errorf("expected pending state for job %d to be cleared", id)
 				}
 				if exists && tt.wantPendingState != nil {
-					if m2.pendingAddressed[id].newState != *tt.wantPendingState {
-						t.Errorf("expected pending newState %v, got %v", *tt.wantPendingState, m2.pendingAddressed[id].newState)
+					if val.newState != *tt.wantPendingState {
+						t.Errorf("expected pending newState %v, got %v", *tt.wantPendingState, val.newState)
 					}
 				}
 				// Also check that seq was preserved if pending remains
-				if exists && m2.pendingAddressed[id].seq != p.seq {
-					t.Errorf("expected pending seq %d, got %d", p.seq, m2.pendingAddressed[id].seq)
+				if exists && val.seq != p.seq {
+					t.Errorf("expected pending seq %d, got %d", p.seq, val.seq)
 				}
 			}
 
@@ -1241,5 +1246,44 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTUIQueueNavigationSequences(t *testing.T) {
+	// Test sequence of keypresses to ensure state is maintained
+	threeJobs := []storage.ReviewJob{
+		makeJob(1),
+		makeJob(2),
+		makeJob(3),
+	}
+
+	m := setupQueue(threeJobs, 0)
+
+	// Sequence: j (down), j (down), k (up)
+	// Start: idx=0
+	m, _ = pressKey(m, 'j')
+	if m.selectedIdx != 1 {
+		t.Errorf("after 'j', expected selectedIdx 1, got %d", m.selectedIdx)
+	}
+
+	m, _ = pressKey(m, 'j')
+	if m.selectedIdx != 2 {
+		t.Errorf("after second 'j', expected selectedIdx 2, got %d", m.selectedIdx)
+	}
+
+	m, _ = pressKey(m, 'k')
+	if m.selectedIdx != 1 {
+		t.Errorf("after 'k', expected selectedIdx 1, got %d", m.selectedIdx)
+	}
+
+	// Sequence: j (down to bottom), g (top)
+	m, _ = pressKey(m, 'j')
+	if m.selectedIdx != 2 {
+		t.Errorf("after 'j', expected selectedIdx 2, got %d", m.selectedIdx)
+	}
+
+	m, _ = pressKey(m, 'g')
+	if m.selectedIdx != 0 {
+		t.Errorf("after 'g', expected selectedIdx 0, got %d", m.selectedIdx)
 	}
 }
