@@ -61,37 +61,24 @@ func assertOrigins(t *testing.T, actual []KeyValueOrigin, expected map[string]ex
 	}
 }
 
+func assertDeterministic(t *testing.T, fn func() string) {
+	t.Helper()
+
+	var prev string
+	for i := range 20 {
+		got := fn()
+		if prev != "" && got != prev {
+			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
+		}
+		prev = got
+	}
+}
+
 func TestGetConfigValue(t *testing.T) {
 	cfg := &Config{
 		DefaultAgent:       "codex",
 		MaxWorkers:         4,
 		ReviewContextCount: 3,
-	}
-
-	tests := []struct {
-		key  string
-		want string
-	}{
-		{"default_agent", "codex"},
-		{"max_workers", "4"},
-		{"review_context_count", "3"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
-			got, err := GetConfigValue(cfg, tt.key)
-			if err != nil {
-				t.Fatalf("GetConfigValue(%q) error: %v", tt.key, err)
-			}
-			if got != tt.want {
-				t.Errorf("GetConfigValue(%q) = %q, want %q", tt.key, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGetConfigValueNested(t *testing.T) {
-	cfg := &Config{
 		Sync: SyncConfig{
 			Enabled:     true,
 			PostgresURL: "postgres://localhost/test",
@@ -109,6 +96,9 @@ func TestGetConfigValueNested(t *testing.T) {
 		key  string
 		want string
 	}{
+		{"default_agent", "codex"},
+		{"max_workers", "4"},
+		{"review_context_count", "3"},
 		{"sync.enabled", "true"},
 		{"sync.postgres_url", "postgres://localhost/test"},
 		{"ci.poll_interval", "10m"},
@@ -174,11 +164,33 @@ func TestSetConfigValue(t *testing.T) {
 			val:    "private-key-data",
 			verify: func(c *Config) bool { return c.CI.GitHubAppPrivateKey == "private-key-data" },
 		},
+		{
+			name:   "set bool ptr",
+			key:    "allow_unsafe_agents",
+			val:    "true",
+			verify: func(c *Config) bool { return c.AllowUnsafeAgents != nil && *c.AllowUnsafeAgents },
+		},
+		{
+			name:   "set slice",
+			key:    "ci.repos",
+			val:    "org/repo1,org/repo2",
+			verify: func(c *Config) bool { return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2" },
+		},
+		{
+			name:   "set slice empty",
+			key:    "ci.repos",
+			val:    "",
+			verify: func(c *Config) bool { return len(c.CI.Repos) == 0 },
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{}
+			cfg := &Config{
+				CI: CIConfig{
+					Repos: []string{"initial"},
+				},
+			}
 			err := SetConfigValue(cfg, tt.key, tt.val)
 			if err != nil {
 				t.Fatalf("SetConfigValue(%q, %q) error: %v", tt.key, tt.val, err)
@@ -218,46 +230,10 @@ func TestSetConfigValueMultipleKeys(t *testing.T) {
 	})
 }
 
-func TestSetConfigValueBoolPtr(t *testing.T) {
-	cfg := &Config{}
-	if err := SetConfigValue(cfg, "allow_unsafe_agents", "true"); err != nil {
-		t.Fatalf("SetConfigValue error: %v", err)
-	}
-	if cfg.AllowUnsafeAgents == nil || !*cfg.AllowUnsafeAgents {
-		t.Error("AllowUnsafeAgents should be true")
-	}
-}
-
 func TestSetConfigValueInvalidType(t *testing.T) {
 	cfg := &Config{}
 	if err := SetConfigValue(cfg, "max_workers", "notanumber"); err == nil {
 		t.Fatal("expected error for invalid integer")
-	}
-}
-
-func TestSetConfigValueSlice(t *testing.T) {
-	cfg := &Config{
-		CI: CIConfig{},
-	}
-	if err := SetConfigValue(cfg, "ci.repos", "org/repo1,org/repo2"); err != nil {
-		t.Fatalf("SetConfigValue error: %v", err)
-	}
-	if len(cfg.CI.Repos) != 2 || cfg.CI.Repos[0] != "org/repo1" || cfg.CI.Repos[1] != "org/repo2" {
-		t.Errorf("CI.Repos = %v, want [org/repo1 org/repo2]", cfg.CI.Repos)
-	}
-}
-
-func TestSetConfigValueSliceEmpty(t *testing.T) {
-	cfg := &Config{
-		CI: CIConfig{
-			Repos: []string{"org/repo1"},
-		},
-	}
-	if err := SetConfigValue(cfg, "ci.repos", ""); err != nil {
-		t.Fatalf("SetConfigValue error: %v", err)
-	}
-	if len(cfg.CI.Repos) != 0 {
-		t.Errorf("CI.Repos = %v, want empty slice", cfg.CI.Repos)
 	}
 }
 
@@ -473,16 +449,11 @@ func TestFormatMapDeterministic(t *testing.T) {
 	}
 
 	// Run multiple times to verify determinism
-	var prev string
-	for range 10 {
+	assertDeterministic(t, func() string {
 		kvs := ListConfigKeys(cfg)
 		found := toMap(kvs)
-		got := found["sync.repo_names"]
-		if prev != "" && got != prev {
-			t.Fatalf("non-deterministic map output: %q vs %q", prev, got)
-		}
-		prev = got
-	}
+		return found["sync.repo_names"]
+	})
 
 	// Verify sorted order
 	kvs := ListConfigKeys(cfg)
@@ -508,14 +479,9 @@ func TestFormatMapCollidingKeys(t *testing.T) {
 	}
 
 	// Run multiple times to verify determinism despite colliding String() output
-	var prev string
-	for i := range 20 {
-		got := formatMap(reflect.ValueOf(m))
-		if prev != "" && got != prev {
-			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
-		}
-		prev = got
-	}
+	assertDeterministic(t, func() string {
+		return formatMap(reflect.ValueOf(m))
+	})
 
 	// All three entries must be present
 	result := formatMap(reflect.ValueOf(m))
@@ -548,19 +514,16 @@ func TestFormatMapFullyCollidingKeys(t *testing.T) {
 	}
 
 	// Run multiple times to verify determinism despite colliding %v and %#v
-	var prev string
-	for i := range 20 {
-		got := formatMap(reflect.ValueOf(m))
-		if prev != "" && got != prev {
-			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
-		}
-		prev = got
-	}
+	assertDeterministic(t, func() string {
+		return formatMap(reflect.ValueOf(m))
+	})
 
 	// Structural comparison orders by underlying int: 10 < 20 < 30
 	want := "same:x,same:y,same:z"
-	if prev != want {
-		t.Errorf("formatMap = %q, want %q", prev, want)
+	// Note: previous implementation compared prev with want, here we check deterministic result
+	got := formatMap(reflect.ValueOf(m))
+	if got != want {
+		t.Errorf("formatMap = %q, want %q", got, want)
 	}
 }
 
@@ -753,14 +716,9 @@ func TestFormatMapNilInterfaceKeys(t *testing.T) {
 		42:    "int-val",
 	}
 
-	var prev string
-	for i := range 20 {
-		got := formatMap(reflect.ValueOf(m))
-		if prev != "" && got != prev {
-			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
-		}
-		prev = got
-	}
+	assertDeterministic(t, func() string {
+		return formatMap(reflect.ValueOf(m))
+	})
 
 	// All entries must be present (nil interface key should not panic)
 	result := formatMap(reflect.ValueOf(m))
@@ -786,14 +744,9 @@ func TestFormatMapNaNFloatKeys(t *testing.T) {
 		1.0:  "one",
 	}
 
-	var prev string
-	for i := range 20 {
-		got := formatMap(reflect.ValueOf(m))
-		if prev != "" && got != prev {
-			t.Fatalf("non-deterministic output on iteration %d: %q vs %q", i, prev, got)
-		}
-		prev = got
-	}
+	assertDeterministic(t, func() string {
+		return formatMap(reflect.ValueOf(m))
+	})
 
 	// All entries must be present
 	result := formatMap(reflect.ValueOf(m))
@@ -806,8 +759,7 @@ func TestFormatMapNaNFloatKeys(t *testing.T) {
 
 func TestCompareKeysNilInterfaces(t *testing.T) {
 	// Direct unit tests for compareKeys nil-interface handling.
-	nilIface := reflect.ValueOf((*int)(nil)).Convert(reflect.TypeFor[any]())
-
+	
 	// Two nil interfaces are equal.
 	var i1, i2 any
 	v1 := reflect.ValueOf(&i1).Elem()
@@ -827,6 +779,4 @@ func TestCompareKeysNilInterfaces(t *testing.T) {
 	if c := compareKeys(v2, v1); c != 1 {
 		t.Errorf("compareKeys(42, nil) = %d, want 1", c)
 	}
-
-	_ = nilIface
 }
