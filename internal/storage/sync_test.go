@@ -1164,8 +1164,9 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 
 	t.Run("job with updated_at after synced_at is returned", func(t *testing.T) {
 		// Update the job's updated_at to be after synced_at
+		pastTime := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 		futureTime := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-		h.setJobTimestamps(job.ID, sql.NullString{String: "", Valid: false}, futureTime)
+		h.setJobTimestamps(job.ID, sql.NullString{String: pastTime, Valid: true}, futureTime)
 
 		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
 		if err != nil {
@@ -1326,8 +1327,9 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 
 	t.Run("review with updated_at after synced_at is returned", func(t *testing.T) {
 		// Update the review's updated_at to be after synced_at
+		pastTime := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 		futureTime := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-		h.setReviewTimestamps(review.ID, sql.NullString{String: "", Valid: false}, futureTime)
+		h.setReviewTimestamps(review.ID, sql.NullString{String: pastTime, Valid: true}, futureTime)
 
 		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
 		if err != nil {
@@ -1868,9 +1870,12 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 	if err != nil {
 		h.t.Fatalf("Failed to enqueue job: %v", err)
 	}
-	_, err = h.db.ClaimJob("worker")
+	claimed, err := h.db.ClaimJob("worker")
 	if err != nil {
 		h.t.Fatalf("Failed to claim job: %v", err)
+	}
+	if claimed.ID != job.ID {
+		h.t.Fatalf("Claimed wrong job: expected %d, got %d", job.ID, claimed.ID)
 	}
 	err = h.db.CompleteJob(job.ID, "test", "prompt", "output")
 	if err != nil {
