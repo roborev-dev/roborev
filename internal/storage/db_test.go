@@ -445,11 +445,8 @@ func TestReviewVerdictComputation(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-
 	t.Run("verdict populated when output exists and no error", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-pass", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict-pass", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "verdict-pass")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found. The code looks good.")
 
@@ -466,8 +463,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 	})
 
 	t.Run("verdict nil when output is empty", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-empty", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict-empty", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "verdict-empty")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "the prompt", "") // empty output
 
@@ -481,8 +477,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 	})
 
 	t.Run("verdict nil when job has error", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-error", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict-error", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "verdict-error")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "", "API rate limit exceeded")
 
@@ -502,8 +497,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 	})
 
 	t.Run("GetReviewByCommitSHA also respects verdict guard", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "verdict-sha", "Author", "Subject", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "verdict-sha", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "verdict-sha")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "the prompt", "No issues found.")
 
@@ -552,9 +546,7 @@ func TestMarkReviewAddressed(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-	commit, _ := db.GetOrCreateCommit(repo.ID, "addr123", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "addr123", Agent: "codex"})
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "addr123")
 	db.ClaimJob("worker-1")
 	db.CompleteJob(job.ID, "codex", "prompt", "output")
 
@@ -613,9 +605,7 @@ func TestMarkReviewAddressedByJobID(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-	commit, _ := db.GetOrCreateCommit(repo.ID, "jobaddr123", "Author", "Subject", time.Now())
-	job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "jobaddr123", Agent: "codex"})
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "jobaddr123")
 	db.ClaimJob("worker-1")
 	db.CompleteJob(job.ID, "codex", "prompt", "output")
 
@@ -674,29 +664,32 @@ func TestJobCounts(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
+	repo := createRepo(t, db, "/tmp/test-repo")
 
 	// Create 3 jobs that will stay queued
 	for i := range 3 {
 		sha := fmt.Sprintf("queued%d", i)
-		commit, _ := db.GetOrCreateCommit(repo.ID, sha, "A", "S", time.Now())
-		db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "codex"})
+		commit := createCommit(t, db, repo.ID, sha)
+		enqueueJob(t, db, repo.ID, commit.ID, sha)
 	}
 
 	// Create a job, claim it, and complete it
-	commit, _ := db.GetOrCreateCommit(repo.ID, "done1", "A", "S", time.Now())
-	job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "done1", Agent: "codex"})
-	_, _ = db.ClaimJob("w1")        // Claims oldest queued job (one of queued0-2)
-	_, _ = db.ClaimJob("w1")        // Claims next
-	_, _ = db.ClaimJob("w1")        // Claims next
+	commit := createCommit(t, db, repo.ID, "done1")
+	job := enqueueJob(t, db, repo.ID, commit.ID, "done1")
+	_, _ = db.ClaimJob("drain1")    // Claims oldest queued job (one of queued0-2)
+	_, _ = db.ClaimJob("drain2")    // Claims next
+	_, _ = db.ClaimJob("drain3")    // Claims next
 	claimed, _ := db.ClaimJob("w1") // Should claim "done1" job now
 	if claimed != nil {
+		if claimed.ID != job.ID {
+			t.Errorf("Expected to claim job 'done1' (ID %d), got %d", job.ID, claimed.ID)
+		}
 		db.CompleteJob(claimed.ID, "codex", "p", "o")
 	}
 
 	// Create a job, claim it, and fail it
-	commit2, _ := db.GetOrCreateCommit(repo.ID, "fail1", "A", "S", time.Now())
-	_, _ = db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "fail1", Agent: "codex"})
+	commit2 := createCommit(t, db, repo.ID, "fail1")
+	enqueueJob(t, db, repo.ID, commit2.ID, "fail1")
 	claimed2, _ := db.ClaimJob("w2")
 	if claimed2 != nil {
 		db.FailJob(claimed2.ID, "", "err")
@@ -708,26 +701,26 @@ func TestJobCounts(t *testing.T) {
 	}
 
 	// We expect: 0 queued (all were claimed), 1 done, 1 failed, 3 running
-	// Actually let's just verify done and failed are correct
+	if queued != 0 {
+		t.Errorf("Expected 0 queued jobs, got %d", queued)
+	}
 	if done != 1 {
 		t.Errorf("Expected 1 done, got %d", done)
 	}
 	if failed != 1 {
 		t.Errorf("Expected 1 failed, got %d", failed)
 	}
-	_ = queued
-	_ = job
 }
 
 func TestCountStalledJobs(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
+	repo := createRepo(t, db, "/tmp/test-repo")
 
 	// Create a job and claim it (makes it running with current timestamp)
-	commit1, _ := db.GetOrCreateCommit(repo.ID, "recent1", "A", "S", time.Now())
-	db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit1.ID, GitRef: "recent1", Agent: "codex"})
+	commit1 := createCommit(t, db, repo.ID, "recent1")
+	enqueueJob(t, db, repo.ID, commit1.ID, "recent1")
 	_, _ = db.ClaimJob("worker-1")
 
 	// No stalled jobs yet (just started)
@@ -741,13 +734,9 @@ func TestCountStalledJobs(t *testing.T) {
 
 	// Create a job and manually set started_at to 1 hour ago (simulating stalled job)
 	// Use UTC format (ends with Z) to test basic case
-	commit2, _ := db.GetOrCreateCommit(repo.ID, "stalled1", "A", "S", time.Now())
-	job2, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "stalled1", Agent: "codex"})
-	oldTimeUTC := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, oldTimeUTC, job2.ID)
-	if err != nil {
-		t.Fatalf("Failed to update job: %v", err)
-	}
+	commit2 := createCommit(t, db, repo.ID, "stalled1")
+	job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stalled1")
+	backdateJobStart(t, db, job2.ID, 1*time.Hour)
 
 	// Now we should have 1 stalled job (running > 30 min)
 	count, err = db.CountStalledJobs(30 * time.Minute)
@@ -760,15 +749,11 @@ func TestCountStalledJobs(t *testing.T) {
 
 	// Create another stalled job with a non-UTC timezone offset to verify datetime() handles offsets
 	// This exercises the fix for RFC3339 timestamps with timezone offsets like "-07:00"
-	commit3, _ := db.GetOrCreateCommit(repo.ID, "stalled2", "A", "S", time.Now())
-	job3, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit3.ID, GitRef: "stalled2", Agent: "codex"})
+	commit3 := createCommit(t, db, repo.ID, "stalled2")
+	job3 := enqueueJob(t, db, repo.ID, commit3.ID, "stalled2")
 	// Use a fixed timezone offset (e.g., UTC-7) instead of UTC
 	tzMinus7 := time.FixedZone("UTC-7", -7*60*60)
-	oldTimeWithOffset := time.Now().Add(-1 * time.Hour).In(tzMinus7).Format(time.RFC3339)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, oldTimeWithOffset, job3.ID)
-	if err != nil {
-		t.Fatalf("Failed to update job with timezone offset: %v", err)
-	}
+	backdateJobStartWithOffset(t, db, job3.ID, 1*time.Hour, tzMinus7)
 
 	// Should now have 2 stalled jobs - verifies datetime() parses both Z and offset formats
 	count, err = db.CountStalledJobs(30 * time.Minute)
@@ -1132,11 +1117,8 @@ func TestCancelJob(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-
 	t.Run("cancel queued job", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-queued", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "cancel-queued", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "cancel-queued")
 
 		err := db.CancelJob(job.ID)
 		if err != nil {
@@ -1150,8 +1132,7 @@ func TestCancelJob(t *testing.T) {
 	})
 
 	t.Run("cancel running job", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-running", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "cancel-running", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "cancel-running")
 		db.ClaimJob("worker-1")
 
 		err := db.CancelJob(job.ID)
@@ -1166,8 +1147,7 @@ func TestCancelJob(t *testing.T) {
 	})
 
 	t.Run("cancel done job fails", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-done", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "cancel-done", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "cancel-done")
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
@@ -1178,8 +1158,7 @@ func TestCancelJob(t *testing.T) {
 	})
 
 	t.Run("cancel failed job fails", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-failed", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "cancel-failed", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "cancel-failed")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "", "some error")
 
@@ -1190,8 +1169,7 @@ func TestCancelJob(t *testing.T) {
 	})
 
 	t.Run("complete respects canceled status", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "complete-canceled", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "complete-canceled", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "complete-canceled")
 		db.ClaimJob("worker-1")
 		db.CancelJob(job.ID)
 
@@ -1213,8 +1191,7 @@ func TestCancelJob(t *testing.T) {
 	})
 
 	t.Run("fail respects canceled status", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "fail-canceled", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "fail-canceled", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "fail-canceled")
 		db.ClaimJob("worker-1")
 		db.CancelJob(job.ID)
 
@@ -1229,8 +1206,7 @@ func TestCancelJob(t *testing.T) {
 
 	t.Run("canceled jobs counted correctly", func(t *testing.T) {
 		// Create and cancel a new job
-		commit, _ := db.GetOrCreateCommit(repo.ID, "cancel-count", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "cancel-count", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "cancel-count")
 		db.CancelJob(job.ID)
 
 		_, _, _, _, canceled, err := db.GetJobCounts()
@@ -2184,11 +2160,8 @@ func TestReenqueueJob(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
-
 	t.Run("rerun failed job", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-failed", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-failed")
 		db.ClaimJob("worker-1")
 		db.FailJob(job.ID, "", "some error")
 
@@ -2213,8 +2186,7 @@ func TestReenqueueJob(t *testing.T) {
 	})
 
 	t.Run("rerun canceled job", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-canceled", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-canceled", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-canceled")
 		db.CancelJob(job.ID)
 
 		err := db.ReenqueueJob(job.ID)
@@ -2229,8 +2201,7 @@ func TestReenqueueJob(t *testing.T) {
 	})
 
 	t.Run("rerun done job", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-done", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-done", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-done")
 		// ClaimJob returns the claimed job; keep claiming until we get ours
 		var claimed *ReviewJob
 		for {
@@ -2258,8 +2229,7 @@ func TestReenqueueJob(t *testing.T) {
 	})
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-queued", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-queued", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-queued")
 
 		err := db.ReenqueueJob(job.ID)
 		if err == nil {
@@ -2268,8 +2238,7 @@ func TestReenqueueJob(t *testing.T) {
 	})
 
 	t.Run("rerun running job fails", func(t *testing.T) {
-		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-running", "A", "S", time.Now())
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-running", Agent: "codex"})
+		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-running")
 		db.ClaimJob("worker-1")
 
 		err := db.ReenqueueJob(job.ID)
@@ -2290,9 +2259,7 @@ func TestReenqueueJob(t *testing.T) {
 		isolatedDB := openTestDB(t)
 		defer isolatedDB.Close()
 
-		isolatedRepo, _ := isolatedDB.GetOrCreateRepo("/tmp/isolated-repo")
-		commit, _ := isolatedDB.GetOrCreateCommit(isolatedRepo.ID, "rerun-complete-cycle", "A", "S", time.Now())
-		job, _ := isolatedDB.EnqueueJob(EnqueueOpts{RepoID: isolatedRepo.ID, CommitID: commit.ID, GitRef: "rerun-complete-cycle", Agent: "codex"})
+		_, _, job := createJobChain(t, isolatedDB, "/tmp/isolated-repo", "rerun-complete-cycle")
 
 		// First completion cycle
 		claimed, _ := isolatedDB.ClaimJob("worker-1")
@@ -2657,22 +2624,22 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 	defer db.Close()
 
 	// Create repos
-	repo1, _ := db.GetOrCreateRepo("/tmp/repo1")
-	repo2, _ := db.GetOrCreateRepo("/tmp/repo2")
+	repo1 := createRepo(t, db, "/tmp/repo1")
+	repo2 := createRepo(t, db, "/tmp/repo2")
 
 	// Create commits and jobs with different branches
-	commit1, _ := db.GetOrCreateCommit(repo1.ID, "abc123", "Author", "Subject", time.Now())
-	commit2, _ := db.GetOrCreateCommit(repo1.ID, "def456", "Author", "Subject", time.Now())
-	commit3, _ := db.GetOrCreateCommit(repo2.ID, "ghi789", "Author", "Subject", time.Now())
+	commit1 := createCommit(t, db, repo1.ID, "abc123")
+	commit2 := createCommit(t, db, repo1.ID, "def456")
+	commit3 := createCommit(t, db, repo2.ID, "ghi789")
 
-	db.EnqueueJob(EnqueueOpts{RepoID: repo1.ID, CommitID: commit1.ID, GitRef: "abc123", Agent: "claude"})
-	db.EnqueueJob(EnqueueOpts{RepoID: repo1.ID, CommitID: commit2.ID, GitRef: "def456", Agent: "claude"})
-	db.EnqueueJob(EnqueueOpts{RepoID: repo2.ID, CommitID: commit3.ID, GitRef: "ghi789", Agent: "claude"})
+	job1 := enqueueJob(t, db, repo1.ID, commit1.ID, "abc123")
+	job2 := enqueueJob(t, db, repo1.ID, commit2.ID, "def456")
+	job3 := enqueueJob(t, db, repo2.ID, commit3.ID, "ghi789")
 
 	// Update some jobs with branches
-	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id = 1")
-	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id = 3")
-	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 2")
+	setJobBranch(t, db, job1.ID, "main")
+	setJobBranch(t, db, job3.ID, "main")
+	setJobBranch(t, db, job2.ID, "feature")
 
 	t.Run("filter by main branch", func(t *testing.T) {
 		repos, totalCount, err := db.ListReposWithReviewCountsByBranch("main")
@@ -2702,8 +2669,8 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 
 	t.Run("filter by (none) branch", func(t *testing.T) {
 		// Add a job with no branch
-		commit4, _ := db.GetOrCreateCommit(repo1.ID, "jkl012", "Author", "Subject", time.Now())
-		db.EnqueueJob(EnqueueOpts{RepoID: repo1.ID, CommitID: commit4.ID, GitRef: "jkl012", Agent: "claude"})
+		commit4 := createCommit(t, db, repo1.ID, "jkl012")
+		enqueueJob(t, db, repo1.ID, commit4.ID, "jkl012")
 
 		repos, totalCount, err := db.ListReposWithReviewCountsByBranch("(none)")
 		if err != nil {
@@ -2733,25 +2700,27 @@ func TestListBranchesWithCounts(t *testing.T) {
 	defer db.Close()
 
 	// Create repos
-	repo1, _ := db.GetOrCreateRepo("/tmp/repo1")
-	repo2, _ := db.GetOrCreateRepo("/tmp/repo2")
+	repo1 := createRepo(t, db, "/tmp/repo1")
+	repo2 := createRepo(t, db, "/tmp/repo2")
 
 	// Create commits and jobs with different branches
-	commit1, _ := db.GetOrCreateCommit(repo1.ID, "abc123", "Author", "Subject", time.Now())
-	commit2, _ := db.GetOrCreateCommit(repo1.ID, "def456", "Author", "Subject", time.Now())
-	commit3, _ := db.GetOrCreateCommit(repo1.ID, "ghi789", "Author", "Subject", time.Now())
-	commit4, _ := db.GetOrCreateCommit(repo2.ID, "jkl012", "Author", "Subject", time.Now())
-	commit5, _ := db.GetOrCreateCommit(repo2.ID, "mno345", "Author", "Subject", time.Now())
+	commit1 := createCommit(t, db, repo1.ID, "abc123")
+	commit2 := createCommit(t, db, repo1.ID, "def456")
+	commit3 := createCommit(t, db, repo1.ID, "ghi789")
+	commit4 := createCommit(t, db, repo2.ID, "jkl012")
+	commit5 := createCommit(t, db, repo2.ID, "mno345")
 
-	db.EnqueueJob(EnqueueOpts{RepoID: repo1.ID, CommitID: commit1.ID, GitRef: "abc123", Agent: "claude"})
-	db.EnqueueJob(EnqueueOpts{RepoID: repo1.ID, CommitID: commit2.ID, GitRef: "def456", Agent: "claude"})
-	db.EnqueueJob(EnqueueOpts{RepoID: repo1.ID, CommitID: commit3.ID, GitRef: "ghi789", Agent: "claude"})
-	db.EnqueueJob(EnqueueOpts{RepoID: repo2.ID, CommitID: commit4.ID, GitRef: "jkl012", Agent: "claude"})
-	db.EnqueueJob(EnqueueOpts{RepoID: repo2.ID, CommitID: commit5.ID, GitRef: "mno345", Agent: "claude"})
+	job1 := enqueueJob(t, db, repo1.ID, commit1.ID, "abc123")
+	job2 := enqueueJob(t, db, repo1.ID, commit2.ID, "def456")
+	job3 := enqueueJob(t, db, repo1.ID, commit3.ID, "ghi789")
+	job4 := enqueueJob(t, db, repo2.ID, commit4.ID, "jkl012")
+	job5 := enqueueJob(t, db, repo2.ID, commit5.ID, "mno345")
 
 	// Update branches
-	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4)")
-	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+	setJobBranch(t, db, job1.ID, "main")
+	setJobBranch(t, db, job2.ID, "main")
+	setJobBranch(t, db, job4.ID, "main")
+	setJobBranch(t, db, job3.ID, "feature")
 	// job 5 has no branch (NULL)
 
 	t.Run("list all branches", func(t *testing.T) {
@@ -2799,7 +2768,7 @@ func TestListBranchesWithCounts(t *testing.T) {
 	})
 
 	t.Run("no nulls when all have branches", func(t *testing.T) {
-		db.Exec("UPDATE review_jobs SET branch = 'develop' WHERE id = 5")
+		setJobBranch(t, db, job5.ID, "develop")
 		result, err := db.ListBranchesWithCounts(nil)
 		if err != nil {
 			t.Fatalf("ListBranchesWithCounts failed: %v", err)
@@ -3156,6 +3125,36 @@ func TestJobTypeBackfill(t *testing.T) {
 	}
 	if i != len(expected) {
 		t.Errorf("got %d rows, want %d", i, len(expected))
+	}
+}
+
+// backdateJobStart updates a job's started_at time to the specified duration ago.
+func backdateJobStart(t *testing.T, db *DB, jobID int64, d time.Duration) {
+	t.Helper()
+	startTime := time.Now().Add(-d).UTC().Format(time.RFC3339)
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
+	if err != nil {
+		t.Fatalf("failed to backdate job: %v", err)
+	}
+}
+
+// backdateJobStartWithOffset updates a job's started_at time to the specified duration ago,
+// preserving the timezone offset of the generated time.
+func backdateJobStartWithOffset(t *testing.T, db *DB, jobID int64, d time.Duration, loc *time.Location) {
+	t.Helper()
+	startTime := time.Now().Add(-d).In(loc).Format(time.RFC3339)
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
+	if err != nil {
+		t.Fatalf("failed to backdate job with offset: %v", err)
+	}
+}
+
+// setJobBranch updates a job's branch.
+func setJobBranch(t *testing.T, db *DB, jobID int64, branch string) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ?`, branch, jobID)
+	if err != nil {
+		t.Fatalf("failed to set job branch: %v", err)
 	}
 }
 
