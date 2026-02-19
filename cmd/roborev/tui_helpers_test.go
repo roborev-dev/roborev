@@ -57,12 +57,15 @@ func TestMarkdownCacheBehavior(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Always start with a fresh cache to ensure isolation
 			c := &markdownCache{}
-			// Prime cache
+			// Prime cache with base state
 			lines1 := c.getReviewLines(baseText, baseWidth, baseWidth, baseID)
 
+			// Exercise the cache with the test case inputs
 			lines2 := c.getReviewLines(tt.text, tt.width, tt.width, int64(tt.id))
-			// Check if the underlying array is the same
+
+			// Check if the underlying array is the same (cache hit vs miss)
 			if len(lines1) == 0 || len(lines2) == 0 {
 				t.Fatal("Unexpected empty lines from render")
 			}
@@ -80,9 +83,13 @@ func TestMarkdownCacheBehavior(t *testing.T) {
 
 			// Additional check for content correctness on text change
 			if tt.name == "DiffText" {
-				// Content should definitely differ
-				if len(lines1) == len(lines2) && lines1[0] == lines2[0] {
-					t.Error("Expected content to change when input text changes")
+				// Verify the content actually reflects the new input
+				combined := ""
+				for _, line := range lines2 {
+					combined += testANSIRegex.ReplaceAllString(line, "")
+				}
+				if !strings.Contains(combined, "Different") {
+					t.Errorf("Expected output to contain 'Different', got %q", combined)
 				}
 			}
 		})
