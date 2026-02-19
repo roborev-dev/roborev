@@ -49,9 +49,8 @@ func decodeHealthStatus(t *testing.T, w *httptest.ResponseRecorder) storage.Heal
 }
 
 func TestHealth(t *testing.T) {
-	server := setupTestServer(t)
-
 	t.Run("Happy Path", func(t *testing.T) {
+		server := setupTestServer(t)
 		w := executeHealthCheck(server, http.MethodGet)
 		if w.Code != http.StatusOK {
 			t.Fatalf("Expected status 200, got %d", w.Code)
@@ -69,6 +68,7 @@ func TestHealth(t *testing.T) {
 	})
 
 	t.Run("With Errors", func(t *testing.T) {
+		server := setupTestServer(t)
 		// Log specific errors
 		if server.errorLog != nil {
 			server.errorLog.LogError("worker", "test error 1", 123)
@@ -86,6 +86,7 @@ func TestHealth(t *testing.T) {
 	})
 
 	t.Run("Method Not Allowed", func(t *testing.T) {
+		server := setupTestServer(t)
 		w := executeHealthCheck(server, http.MethodPost)
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("Expected status 405, got %d", w.Code)
