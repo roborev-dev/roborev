@@ -48,11 +48,28 @@ func TestStripKiroOutput(t *testing.T) {
 }
 
 func TestStripKiroOutputNoMarker(t *testing.T) {
-	// If there's no "> " marker, return ANSI-stripped text as-is.
+	// If there's no "> " marker in the first 30 lines, return ANSI-stripped text as-is.
 	raw := "\x1b[1msome output without marker\x1b[0m\n"
 	got := stripKiroOutput(raw)
 	if got != "some output without marker" {
 		t.Errorf("unexpected result: %q", got)
+	}
+}
+
+func TestStripKiroOutputBlockquoteNotStripped(t *testing.T) {
+	// A "> " blockquote deep in review content should not be treated as the start marker.
+	// Build output where "> " only appears after line 30.
+	var lines []string
+	for i := 0; i < 31; i++ {
+		lines = append(lines, "chrome line")
+	}
+	lines = append(lines, "> this is a blockquote in review content")
+	lines = append(lines, "more content")
+	raw := strings.Join(lines, "\n")
+
+	got := stripKiroOutput(raw)
+	if !strings.Contains(got, "> this is a blockquote") {
+		t.Errorf("blockquote should be preserved in output, got: %q", got)
 	}
 }
 

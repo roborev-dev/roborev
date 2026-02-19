@@ -21,10 +21,15 @@ func stripKiroOutput(raw string) string {
 	s := ansiEscape.ReplaceAllString(raw, "")
 
 	// Kiro prepends a splash screen and tip box before the response.
-	// The actual response begins at the first line prefixed with "> ".
+	// The "> " prompt marker appears near the top; limit the search to avoid
+	// mistaking markdown blockquotes in review content for the start marker.
 	lines := strings.Split(s, "\n")
+	limit := 30
+	if len(lines) < limit {
+		limit = len(lines)
+	}
 	start := -1
-	for i, line := range lines {
+	for i, line := range lines[:limit] {
 		if strings.HasPrefix(line, "> ") || line == ">" {
 			start = i
 			break
