@@ -155,6 +155,39 @@ func TestNewServerAllowUnsafeAgents(t *testing.T) {
 	})
 }
 
+// seedRepoWithJobs creates a repo and enqueues a number of jobs with predictable SHAs.
+// shaPrefix is used to generate SHAs like "{prefix}sha{a,b,c...}".
+func seedRepoWithJobs(t *testing.T, db *storage.DB, repoPath string, jobCount int, shaPrefix string) (*storage.Repo, []*storage.ReviewJob) {
+	t.Helper()
+	repo, err := db.GetOrCreateRepo(repoPath)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	}
+
+	var jobs []*storage.ReviewJob
+	for i := range jobCount {
+		sha := fmt.Sprintf("%ssha%c", shaPrefix, 'a'+i)
+		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
+		if err != nil {
+			t.Fatalf("GetOrCreateCommit failed: %v", err)
+		}
+		job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
+		if err != nil {
+			t.Fatalf("EnqueueJob failed: %v", err)
+		}
+		jobs = append(jobs, job)
+	}
+	return repo, jobs
+}
+
+// setJobBranch directly updates a job's branch in the DB (for test setup).
+func setJobBranch(t *testing.T, db *storage.DB, jobID int64, branch string) {
+	t.Helper()
+	if _, err := db.Exec("UPDATE review_jobs SET branch = ? WHERE id = ?", branch, jobID); err != nil {
+		t.Fatalf("setJobBranch failed: %v", err)
+	}
+}
+
 func TestHandleListRepos(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
@@ -185,38 +218,8 @@ func TestHandleListRepos(t *testing.T) {
 	})
 
 	// Create repos and jobs
-	repo1, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	repo2, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-
-	// Add 3 jobs to repo1
-	for i := range 3 {
-		sha := "repo1sha" + string(rune('a'+i))
-		commit, err := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"}); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-	}
-
-	// Add 2 jobs to repo2
-	for i := range 2 {
-		sha := "repo2sha" + string(rune('a'+i))
-		commit, err := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"}); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-	}
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
 
 	t.Run("repos with jobs", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
@@ -271,25 +274,16 @@ func TestHandleListRepos(t *testing.T) {
 func TestHandleListReposWithBranchFilter(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
-	// Create repos
-	repo1, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
-	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
-
-	// Add jobs to repos
-	for i := range 3 {
-		sha := "repo1sha" + string(rune('a'+i))
-		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
-	}
-	for i := range 2 {
-		sha := "repo2sha" + string(rune('a'+i))
-		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
-	}
+	// Create repos and jobs
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
 
 	// Set branches: repo1 jobs 1,2 = main, job 3 = feature; repo2 jobs 4,5 = main
-	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4, 5)")
-	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+	setJobBranch(t, db, 1, "main")
+	setJobBranch(t, db, 2, "main")
+	setJobBranch(t, db, 4, "main")
+	setJobBranch(t, db, 5, "main")
+	setJobBranch(t, db, 3, "feature")
 
 	t.Run("filter by main branch", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=main", nil)
@@ -356,25 +350,16 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 func TestHandleListBranches(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
-	// Create repos
-	repo1, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
-	repo2, _ := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
-
-	// Add jobs to repos
-	for i := range 3 {
-		sha := "repo1sha" + string(rune('a'+i))
-		commit, _ := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
-	}
-	for i := range 2 {
-		sha := "repo2sha" + string(rune('a'+i))
-		commit, _ := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
-	}
+	// Create repos and jobs
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
 
 	// Set branches: jobs 1,2,4 = main, job 3 = feature, job 5 = no branch
-	db.Exec("UPDATE review_jobs SET branch = 'main' WHERE id IN (1, 2, 4)")
-	db.Exec("UPDATE review_jobs SET branch = 'feature' WHERE id = 3")
+	setJobBranch(t, db, 1, "main")
+	setJobBranch(t, db, 2, "main")
+	setJobBranch(t, db, 4, "main")
+	setJobBranch(t, db, 3, "feature")
+	// job 5 left empty
 
 	t.Run("list all branches", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/branches", nil)
@@ -489,38 +474,8 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	// Create repos and jobs
-	repo1, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo1"))
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	repo2, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo2"))
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-
-	// Add 3 jobs to repo1
-	for i := range 3 {
-		sha := "repo1sha" + string(rune('a'+i))
-		commit, err := db.GetOrCreateCommit(repo1.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo1.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"}); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-	}
-
-	// Add 2 jobs to repo2
-	for i := range 2 {
-		sha := "repo2sha" + string(rune('a'+i))
-		commit, err := db.GetOrCreateCommit(repo2.ID, sha, "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		if _, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo2.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"}); err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-	}
+	repo1, _ := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
 
 	t.Run("no filter returns all jobs", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
@@ -883,23 +838,8 @@ func TestHandleCancelJob(t *testing.T) {
 func TestListJobsPagination(t *testing.T) {
 	server, db, _ := newTestServer(t)
 
-	// Create test repo and jobs
-	repo, err := db.GetOrCreateRepo("/test/repo")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-
-	// Create 10 jobs
-	for i := range 10 {
-		commit, err := db.GetOrCreateCommit(repo.ID, fmt.Sprintf("sha%d", i), "author", fmt.Sprintf("subject%d", i), time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: fmt.Sprintf("sha%d", i), Agent: "test"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-	}
+	// Create test repo and 10 jobs
+	seedRepoWithJobs(t, db, "/test/repo", 10, "")
 
 	t.Run("has_more true when more jobs exist", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/jobs?limit=5", nil)
@@ -915,9 +855,7 @@ func TestListJobsPagination(t *testing.T) {
 			Jobs    []storage.ReviewJob `json:"jobs"`
 			HasMore bool                `json:"has_more"`
 		}
-		if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 5 {
 			t.Errorf("Expected 5 jobs, got %d", len(result.Jobs))
@@ -941,9 +879,7 @@ func TestListJobsPagination(t *testing.T) {
 			Jobs    []storage.ReviewJob `json:"jobs"`
 			HasMore bool                `json:"has_more"`
 		}
-		if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 10 {
 			t.Errorf("Expected 10 jobs, got %d", len(result.Jobs))
@@ -962,7 +898,7 @@ func TestListJobsPagination(t *testing.T) {
 		var result1 struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w1.Body).Decode(&result1)
+		testutil.DecodeJSON(t, w1, &result1)
 
 		// Second page
 		req2 := httptest.NewRequest("GET", "/api/jobs?limit=3&offset=3", nil)
@@ -972,7 +908,7 @@ func TestListJobsPagination(t *testing.T) {
 		var result2 struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w2.Body).Decode(&result2)
+		testutil.DecodeJSON(t, w2, &result2)
 
 		// Ensure no overlap
 		for _, j1 := range result1.Jobs {
@@ -998,9 +934,7 @@ func TestListJobsPagination(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &result)
 
 		// Should return all 10 jobs since offset is ignored with limit=0
 		if len(result.Jobs) != 10 {
@@ -1032,9 +966,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 1 {
 			t.Errorf("Expected 1 job, got %d", len(result.Jobs))
@@ -1052,7 +984,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&result)
+		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 0 {
 			t.Errorf("Expected 0 jobs, got %d", len(result.Jobs))
@@ -1067,7 +999,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&result)
+		testutil.DecodeJSON(t, w, &result)
 
 		if len(result.Jobs) != 1 {
 			t.Errorf("Expected 1 job with range ref, got %d", len(result.Jobs))
@@ -1100,7 +1032,7 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&result)
+		testutil.DecodeJSON(t, w, &result)
 		if len(result.Jobs) != 1 {
 			t.Errorf("Expected 1 unaddressed job, got %d", len(result.Jobs))
 		}
@@ -1114,7 +1046,7 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		json.NewDecoder(w.Body).Decode(&result)
+		testutil.DecodeJSON(t, w, &result)
 		if len(result.Jobs) != 2 {
 			t.Errorf("Expected 2 jobs on main, got %d", len(result.Jobs))
 		}
@@ -1773,9 +1705,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		}
 
 		var repo storage.Repo
-		if err := json.NewDecoder(w.Body).Decode(&repo); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &repo)
 		if repo.ID == 0 {
 			t.Error("Expected non-zero repo ID")
 		}
@@ -1858,9 +1788,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 		}
 
 		var response map[string]any
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if skipped, ok := response["skipped"].(bool); !ok || !skipped {
 			t.Errorf("Expected skipped=true, got %v", response)
@@ -1930,9 +1858,7 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	}
 
 	var respJob storage.ReviewJob
-	if err := json.NewDecoder(w.Body).Decode(&respJob); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	testutil.DecodeJSON(t, w, &respJob)
 
 	// Verify the job has the detected branch, not empty
 	job, err := db.GetJobByID(respJob.ID)
@@ -1969,9 +1895,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		}
 
 		var response map[string]any
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "too large") {
 			t.Errorf("Expected error about body size, got %v", response)
@@ -1996,9 +1920,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		}
 
 		var response map[string]any
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "diff_content required") {
 			t.Errorf("Expected error about diff_content required, got %v", response)
@@ -2026,45 +1948,13 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 }
 
 func TestHandleListJobsByID(t *testing.T) {
-	server, _, tmpDir := newTestServer(t)
+	server, db, tmpDir := newTestServer(t)
 
-	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
-
-	// Create multiple jobs
-	var job1ID, job2ID, job3ID int64
-
-	// Enqueue job 1
-	reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
-	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
-	w := httptest.NewRecorder()
-	server.handleEnqueue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("Failed to create job 1: %d %s", w.Code, w.Body.String())
-	}
-	var respJob storage.ReviewJob
-	json.NewDecoder(w.Body).Decode(&respJob)
-	job1ID = respJob.ID
-
-	// Enqueue job 2
-	req = testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
-	w = httptest.NewRecorder()
-	server.handleEnqueue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("Failed to create job 2: %d %s", w.Code, w.Body.String())
-	}
-	json.NewDecoder(w.Body).Decode(&respJob)
-	job2ID = respJob.ID
-
-	// Enqueue job 3
-	req = testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
-	w = httptest.NewRecorder()
-	server.handleEnqueue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("Failed to create job 3: %d %s", w.Code, w.Body.String())
-	}
-	json.NewDecoder(w.Body).Decode(&respJob)
-	job3ID = respJob.ID
+	// Create repos and jobs
+	_, jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "testrepo"), 3, "repo1")
+	job1ID := jobs[0].ID
+	job2ID := jobs[1].ID
+	job3ID := jobs[2].ID
 
 	t.Run("fetches specific job by ID", func(t *testing.T) {
 		// Request job 1 specifically
@@ -2080,9 +1970,7 @@ func TestHandleListJobsByID(t *testing.T) {
 			Jobs    []storage.ReviewJob `json:"jobs"`
 			HasMore bool                `json:"has_more"`
 		}
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 1 {
 			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
@@ -2105,9 +1993,7 @@ func TestHandleListJobsByID(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 1 {
 			t.Errorf("Expected exactly 1 job, got %d", len(response.Jobs))
@@ -2130,9 +2016,7 @@ func TestHandleListJobsByID(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		if len(response.Jobs) != 0 {
 			t.Errorf("Expected 0 jobs for non-existent ID, got %d", len(response.Jobs))
@@ -2162,9 +2046,7 @@ func TestHandleListJobsByID(t *testing.T) {
 		var response struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &response)
 
 		// Should have all 3 jobs
 		if len(response.Jobs) != 3 {
@@ -2205,9 +2087,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 
 		var job storage.ReviewJob
-		if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &job)
 
 		if job.GitRef != "prompt" {
 			t.Errorf("Expected git_ref 'prompt', got '%s'", job.GitRef)
@@ -2267,7 +2147,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 
 		var job storage.ReviewJob
-		json.NewDecoder(w.Body).Decode(&job)
+		testutil.DecodeJSON(t, w, &job)
 
 		if job.Reasoning != "fast" {
 			t.Errorf("Expected reasoning 'fast', got '%s'", job.Reasoning)
@@ -2292,7 +2172,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 
 		var job storage.ReviewJob
-		json.NewDecoder(w.Body).Decode(&job)
+		testutil.DecodeJSON(t, w, &job)
 
 		if !job.Agentic {
 			t.Error("Expected Agentic to be true")
@@ -2316,7 +2196,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		}
 
 		var job storage.ReviewJob
-		json.NewDecoder(w.Body).Decode(&job)
+		testutil.DecodeJSON(t, w, &job)
 
 		if job.Agentic {
 			t.Error("Expected Agentic to be false by default")
@@ -2784,9 +2664,7 @@ func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
 
 			// Decode the job from the response to verify ReviewType
 			var job storage.ReviewJob
-			if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
-				t.Fatalf("decode response: %v", err)
-			}
+			testutil.DecodeJSON(t, w, &job)
 			if job.ReviewType != tt.wantStored {
 				t.Errorf("ReviewType=%q, want %q", job.ReviewType, tt.wantStored)
 			}
@@ -2909,9 +2787,7 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			}
 
 			var job storage.ReviewJob
-			if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
-				t.Fatalf("Failed to decode response: %v", err)
-			}
+			testutil.DecodeJSON(t, w, &job)
 
 			if job.Agent != tt.expectedAgent {
 				t.Errorf("Expected agent %q, got %q", tt.expectedAgent, job.Agent)
@@ -3025,9 +2901,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 			t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 		}
 		var job storage.ReviewJob
-		if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
-			t.Fatalf("decode response: %v", err)
-		}
+		testutil.DecodeJSON(t, w, &job)
 		return job
 	}
 
@@ -3113,9 +2987,7 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 	}
 
 	var job storage.ReviewJob
-	if err := json.NewDecoder(w.Body).Decode(&job); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	testutil.DecodeJSON(t, w, &job)
 
 	// The stored range should use the empty tree SHA as the start
 	expectedRef := gitpkg.EmptyTreeSHA + ".." + endSHA
