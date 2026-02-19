@@ -8,7 +8,7 @@ import (
 
 const testRoborevExe = `C:\Program Files\roborev\roborev.exe`
 
-func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
+func TestClassifyCommandLine(t *testing.T) {
 	tests := []struct {
 		name    string
 		cmdLine string
@@ -91,6 +91,11 @@ func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 			cmdLine: testRoborevExe + ` daemon status run`,
 			want:    processNotRoborev,
 		},
+		{
+			name:    "strips NUL bytes before matching",
+			cmdLine: "r\x00o\x00b\x00o\x00r\x00e\x00v\x00 \x00d\x00a\x00e\x00m\x00o\x00n\x00 \x00r\x00u\x00n\x00",
+			want:    processIsRoborev,
+		},
 	}
 
 	for _, tt := range tests {
@@ -103,20 +108,6 @@ func TestClassifyCommandLineHandlesEncodings(t *testing.T) {
 	}
 }
 
-func TestClassifyCommandLineStripsNulBytes(t *testing.T) {
-	// Simulate UTF-16LE remnants with NUL bytes interspersed
-	// "roborev daemon run" with NUL bytes between chars (simulating partial UTF-16)
-	cmdWithNuls := "r\x00o\x00b\x00o\x00r\x00e\x00v\x00 \x00d\x00a\x00e\x00m\x00o\x00n\x00 \x00r\x00u\x00n\x00"
-
-	// classifyCommandLine strips NUL bytes before matching
-	result := classifyCommandLine(cmdWithNuls)
-
-	// After stripping NULs, should match "roborev daemon run"
-	if result != processIsRoborev {
-		t.Errorf("classifyCommandLine should match after stripping NUL bytes, got %v", result)
-	}
-}
-
 func TestWmicHeaderOnlyOutput(t *testing.T) {
 	// Verify that WMIC output containing only the header is treated as empty.
 	// This simulates the flow in getCommandLineWmic without spawning wmic.
@@ -124,37 +115,35 @@ func TestWmicHeaderOnlyOutput(t *testing.T) {
 	tests := []struct {
 		name       string
 		wmicOutput string
-		wantEmpty  bool
+		want       string
 	}{
 		{
 			name:       "header only",
 			wmicOutput: "CommandLine\r\n",
-			wantEmpty:  true,
+			want:       "",
 		},
 		{
 			name:       "header with trailing whitespace",
 			wmicOutput: "CommandLine  \r\n  \r\n",
-			wantEmpty:  true,
+			want:       "",
 		},
 		{
 			name:       "header with UTF-16LE BOM (after NUL removal)",
 			wmicOutput: "\xff\xfeCommandLine\r\n",
-			wantEmpty:  true,
+			want:       "",
 		},
 		{
 			name:       "header with actual data",
 			wmicOutput: "CommandLine\r\nroborev.exe daemon run --port 7373\r\n",
-			wantEmpty:  false,
+			want:       "roborev.exe daemon run --port 7373",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := parseWmicOutput(tt.wmicOutput)
-			gotEmpty := result == ""
-			if gotEmpty != tt.wantEmpty {
-				t.Errorf("header extraction: got empty=%v, want empty=%v (result=%q)",
-					gotEmpty, tt.wantEmpty, result)
+			if result != tt.want {
+				t.Errorf("parseWmicOutput(%q) = %q, want %q", tt.wmicOutput, result, tt.want)
 			}
 		})
 	}
