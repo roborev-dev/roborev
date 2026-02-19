@@ -572,6 +572,16 @@ func TestGetRepoStats(t *testing.T) {
 			t.Fatalf("MarkReviewAddressed failed: %v", err)
 		}
 
+		// Create a second job that will be unaddressed
+		commit2 := createCommit(t, db, repo.ID, "stats-sha2")
+		job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stats-sha2")
+
+		// Complete job2
+		claimJob(t, db, "worker-1")
+		if err := db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: PASS**\nAlso looks good!"); err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
 		stats, err := db.GetRepoStats(repo.ID)
 		if err != nil {
 			t.Fatalf("GetRepoStats failed: %v", err)
@@ -579,8 +589,8 @@ func TestGetRepoStats(t *testing.T) {
 		if stats.AddressedReviews != 1 {
 			t.Errorf("Expected 1 addressed review, got %d", stats.AddressedReviews)
 		}
-		if stats.UnaddressedReviews != 0 {
-			t.Errorf("Expected 0 unaddressed review, got %d", stats.UnaddressedReviews)
+		if stats.UnaddressedReviews != 1 {
+			t.Errorf("Expected 1 unaddressed review, got %d", stats.UnaddressedReviews)
 		}
 	})
 
