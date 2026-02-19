@@ -50,6 +50,78 @@ func (h *ciPollerHarness) stubProcessPRGit() {
 	h.Poller.agentResolverFn = func(name string) (string, error) { return name, nil }
 }
 
+type capturedComment struct {
+	Repo string
+	PR   int
+	Body string
+}
+
+func (h *ciPollerHarness) CaptureComments() *[]capturedComment {
+	var captured []capturedComment
+	h.Poller.postPRCommentFn = func(repo string, pr int, body string) error {
+		captured = append(captured, capturedComment{repo, pr, body})
+		return nil
+	}
+	return &captured
+}
+
+type capturedStatus struct {
+	Repo, SHA, State, Desc string
+}
+
+func (h *ciPollerHarness) CaptureCommitStatuses() *[]capturedStatus {
+	var captured []capturedStatus
+	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
+		captured = append(captured, capturedStatus{repo, sha, state, desc})
+		return nil
+	}
+	return &captured
+}
+
+type jobSpec struct {
+	Agent      string
+	ReviewType string
+	Status     string // "done", "failed", "canceled", "queued"
+	Output     string
+	Error      string
+}
+
+func (h *ciPollerHarness) seedBatchWithJobs(t *testing.T, prNum int, sha string, specs ...jobSpec) (*storage.CIPRBatch, []*storage.ReviewJob) {
+	t.Helper()
+	batch, _, err := h.DB.CreateCIBatch("acme/api", prNum, sha, len(specs))
+	if err != nil {
+		t.Fatalf("CreateCIBatch: %v", err)
+	}
+
+	var jobs []*storage.ReviewJob
+	for _, spec := range specs {
+		rt := spec.ReviewType
+		if rt == "" {
+			rt = "security"
+		}
+		job, err := h.DB.EnqueueJob(storage.EnqueueOpts{
+			RepoID: h.Repo.ID, GitRef: "a..b", Agent: spec.Agent, ReviewType: rt,
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+		if err := h.DB.RecordBatchJob(batch.ID, job.ID); err != nil {
+			t.Fatalf("RecordBatchJob: %v", err)
+		}
+
+		switch spec.Status {
+		case "done":
+			h.markJobDoneWithReview(t, job.ID, spec.Agent, spec.Output)
+		case "failed":
+			h.markJobFailed(t, job.ID, spec.Error)
+		case "canceled":
+			h.markJobCanceled(t, job.ID, spec.Error)
+		}
+		jobs = append(jobs, job)
+	}
+	return batch, jobs
+}
+
 // seedBatchJob creates a CI batch, enqueues a job, and links them.
 func (h *ciPollerHarness) seedBatchJob(t *testing.T, ghRepo string, prNum int, headSHA, gitRef, agent, reviewType string) (*storage.CIPRBatch, *storage.ReviewJob) {
 	t.Helper()
@@ -453,41 +525,35 @@ func TestCIPollerHandleBatchJobDone_PartialBatchDoesNotPost(t *testing.T) {
 		t.Fatalf("RecordBatchJob: %v", err)
 	}
 
-	posted := 0
-	h.Poller.postPRCommentFn = func(string, int, string) error {
-		posted++
-		return nil
-	}
+	captured := h.CaptureComments()
 
 	h.Poller.handleBatchJobDone(batch, job.ID, true)
 
-	if posted != 0 {
-		t.Fatalf("expected no PR comment yet, got %d", posted)
+	if len(*captured) != 0 {
+		t.Fatalf("expected no PR comment yet, got %d", len(*captured))
 	}
 }
 
 func TestCIPollerHandleBatchJobDone_CompleteBatchPostsAndFinalizes(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
-	batch, job := h.seedBatchJob(t, "acme/api", 2, "sha", "a..b", "codex", "security")
-	h.markJobDoneWithReview(t, job.ID, "codex", "No issues found.")
+	batch, jobs := h.seedBatchWithJobs(t, 2, "sha", jobSpec{
+		Agent: "codex", ReviewType: "security", Status: "done", Output: "No issues found.",
+	})
+	job := jobs[0]
 
-	var postedRepo string
-	var postedPR int
-	var postedBody string
-	h.Poller.postPRCommentFn = func(repo string, pr int, body string) error {
-		postedRepo = repo
-		postedPR = pr
-		postedBody = body
-		return nil
-	}
+	captured := h.CaptureComments()
 
 	h.Poller.handleBatchJobDone(batch, job.ID, true)
 
-	if postedRepo != "acme/api" || postedPR != 2 {
-		t.Fatalf("posted to %s#%d, want acme/api#2", postedRepo, postedPR)
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 posted comment, got %d", len(*captured))
 	}
-	if !strings.Contains(postedBody, "roborev") {
-		t.Fatalf("expected roborev comment body, got: %q", postedBody)
+	c := (*captured)[0]
+	if c.Repo != "acme/api" || c.PR != 2 {
+		t.Fatalf("posted to %s#%d, want acme/api#2", c.Repo, c.PR)
+	}
+	if !strings.Contains(c.Body, "roborev") {
+		t.Fatalf("expected roborev comment body, got: %q", c.Body)
 	}
 
 	var synthesized int
@@ -505,17 +571,18 @@ func TestCIPollerHandleBatchJobDone_CompleteBatchPostsAndFinalizes(t *testing.T)
 
 func TestCIPollerReconcileStaleBatches_PostsCanceledJobsAsFailed(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api")
-	batch, job := h.seedBatchJob(t, "acme/api", 9, "sha", "a..b", "codex", "security")
-	h.markJobCanceled(t, job.ID, "manual cancel")
+	batch, _ := h.seedBatchWithJobs(t, 9, "sha", jobSpec{
+		Agent: "codex", ReviewType: "security", Status: "canceled", Error: "manual cancel",
+	})
 
-	var postedBody string
-	h.Poller.postPRCommentFn = func(_ string, _ int, body string) error {
-		postedBody = body
-		return nil
-	}
+	captured := h.CaptureComments()
 
 	h.Poller.reconcileStaleBatches()
 
+	if len(*captured) == 0 {
+		t.Fatal("expected comment to be posted, got none")
+	}
+	postedBody := (*captured)[0].Body
 	if !strings.Contains(postedBody, "All review jobs in this batch failed.") {
 		t.Fatalf("expected all-failed comment, got: %q", postedBody)
 	}
@@ -543,93 +610,70 @@ func TestCIPollerHandleReviewCompleted_LegacyCIReviewPostsComment(t *testing.T) 
 		t.Fatalf("RecordCIReview: %v", err)
 	}
 
-	called := 0
-	h.Poller.postPRCommentFn = func(repo string, pr int, body string) error {
-		called++
-		if repo != "acme/api" || pr != 12 {
-			t.Fatalf("posted to %s#%d, want acme/api#12", repo, pr)
-		}
-		if !strings.Contains(body, "roborev") {
-			t.Fatalf("unexpected body: %q", body)
-		}
-		return nil
-	}
+	captured := h.CaptureComments()
 
 	h.Poller.handleReviewCompleted(Event{JobID: job.ID, Verdict: "P"})
 
-	if called != 1 {
-		t.Fatalf("expected one post call, got %d", called)
+	if len(*captured) != 1 {
+		t.Fatalf("expected one post call, got %d", len(*captured))
+	}
+	c := (*captured)[0]
+	if c.Repo != "acme/api" || c.PR != 12 {
+		t.Fatalf("posted to %s#%d, want acme/api#12", c.Repo, c.PR)
+	}
+	if !strings.Contains(c.Body, "roborev") {
+		t.Fatalf("unexpected body: %q", c.Body)
 	}
 }
 
 func TestCIPollerHandleReviewFailed_BatchPath(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
-	batch, job := h.seedBatchJob(t, "acme/api", 13, "head-sha", "a..b", "codex", "security")
-	_ = batch
-	h.markJobFailed(t, job.ID, "timeout")
+	_, jobs := h.seedBatchWithJobs(t, 13, "head-sha", jobSpec{
+		Agent: "codex", ReviewType: "security", Status: "failed", Error: "timeout",
+	})
+	job := jobs[0]
 
-	var postedBody string
-	h.Poller.postPRCommentFn = func(_ string, _ int, body string) error {
-		postedBody = body
-		return nil
-	}
+	captured := h.CaptureComments()
 
 	h.Poller.handleReviewFailed(Event{JobID: job.ID})
 
-	if !strings.Contains(postedBody, "Review Failed") {
-		t.Fatalf("expected failure comment, got: %q", postedBody)
+	if len(*captured) == 0 {
+		t.Fatal("expected failure comment, got none")
+	}
+	if !strings.Contains((*captured)[0].Body, "Review Failed") {
+		t.Fatalf("expected failure comment, got: %q", (*captured)[0].Body)
 	}
 }
 
 func TestCIPollerPostBatchResults_SynthesisPathUsesMock(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 
-	batch, _, err := h.DB.CreateCIBatch("acme/api", 14, "head-sha", 2)
-	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
-	}
-	job1, err := h.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID: h.Repo.ID, GitRef: "a..b", Agent: "codex", ReviewType: "security",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob job1: %v", err)
-	}
-	job2, err := h.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID: h.Repo.ID, GitRef: "a..b", Agent: "gemini", ReviewType: "review",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob job2: %v", err)
-	}
-	if err := h.DB.RecordBatchJob(batch.ID, job1.ID); err != nil {
-		t.Fatalf("RecordBatchJob job1: %v", err)
-	}
-	if err := h.DB.RecordBatchJob(batch.ID, job2.ID); err != nil {
-		t.Fatalf("RecordBatchJob job2: %v", err)
-	}
-	h.markJobDoneWithReview(t, job1.ID, "codex", "finding A")
-	h.markJobFailed(t, job2.ID, "timeout")
+	batch, _ := h.seedBatchWithJobs(t, 14, "head-sha",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "finding A"},
+		jobSpec{Agent: "gemini", ReviewType: "review", Status: "failed", Error: "timeout"},
+	)
 
 	h.Poller.synthesizeFn = func(_ *storage.CIPRBatch, _ []storage.BatchReviewResult, _ *config.Config) (string, error) {
 		return "SYNTHESIZED-RESULT", nil
 	}
 
-	var postedBody string
-	h.Poller.postPRCommentFn = func(_ string, _ int, body string) error {
-		postedBody = body
-		return nil
-	}
+	captured := h.CaptureComments()
 
 	h.Poller.postBatchResults(batch)
 
-	if !strings.Contains(postedBody, "SYNTHESIZED-RESULT") {
-		t.Fatalf("expected synthesized output, got: %q", postedBody)
+	if len(*captured) == 0 {
+		t.Fatal("expected comment, got none")
+	}
+	if !strings.Contains((*captured)[0].Body, "SYNTHESIZED-RESULT") {
+		t.Fatalf("expected synthesized output, got: %q", (*captured)[0].Body)
 	}
 }
 
 func TestCIPollerPostBatchResults_PostFailureUnclaimsBatch(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	batch, job := h.seedBatchJob(t, "acme/api", 15, "head-sha", "a..b", "codex", "security")
-	h.markJobFailed(t, job.ID, "timeout")
+	batch, _ := h.seedBatchWithJobs(t, 15, "head-sha", jobSpec{
+		Agent: "codex", ReviewType: "security", Status: "failed", Error: "timeout",
+	})
 
 	h.Poller.postPRCommentFn = func(string, int, string) error {
 		return context.DeadlineExceeded
@@ -1192,67 +1236,84 @@ func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
 }
 
 func TestResolveMinSeverity(t *testing.T) {
-	t.Run("empty global, no repo config", func(t *testing.T) {
-		got := resolveMinSeverity("", t.TempDir(), "acme/api")
-		if got != "" {
-			t.Errorf("got %q, want empty", got)
-		}
-	})
+	tests := []struct {
+		name       string
+		global     string
+		repoConfig string
+		repoPath   string
+		want       string
+	}{
+		{
+			name:     "empty global, no repo config",
+			global:   "",
+			repoPath: "temp",
+			want:     "",
+		},
+		{
+			name:     "global value used when no repo config",
+			global:   "high",
+			repoPath: "temp",
+			want:     "high",
+		},
+		{
+			name:       "repo override takes precedence over global",
+			global:     "low",
+			repoConfig: "[ci]\nmin_severity = \"critical\"\n",
+			repoPath:   "temp",
+			want:       "critical",
+		},
+		{
+			name:       "invalid repo value falls back to global",
+			global:     "medium",
+			repoConfig: "[ci]\nmin_severity = \"bogus\"\n",
+			repoPath:   "temp",
+			want:       "medium",
+		},
+		{
+			name:     "invalid global value returns empty",
+			global:   "bogus",
+			repoPath: "temp",
+			want:     "",
+		},
+		{
+			name:       "empty repo override uses global",
+			global:     "high",
+			repoConfig: "[ci]\nreasoning = \"fast\"\n",
+			repoPath:   "temp",
+			want:       "high",
+		},
+		{
+			name:     "empty repoPath skips repo config",
+			global:   "medium",
+			repoPath: "",
+			want:     "medium",
+		},
+		{
+			name:     "global value is case-normalized",
+			global:   "HIGH",
+			repoPath: "temp",
+			want:     "high",
+		},
+	}
 
-	t.Run("global value used when no repo config", func(t *testing.T) {
-		got := resolveMinSeverity("high", t.TempDir(), "acme/api")
-		if got != "high" {
-			t.Errorf("got %q, want high", got)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := tt.repoPath
+			if dir == "temp" {
+				dir = t.TempDir()
+			}
+			if tt.repoConfig != "" && dir != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(tt.repoConfig), 0644); err != nil {
+					t.Fatalf("write config: %v", err)
+				}
+			}
 
-	t.Run("repo override takes precedence over global", func(t *testing.T) {
-		dir := t.TempDir()
-		os.WriteFile(dir+"/.roborev.toml", []byte("[ci]\nmin_severity = \"critical\"\n"), 0644)
-		got := resolveMinSeverity("low", dir, "acme/api")
-		if got != "critical" {
-			t.Errorf("got %q, want critical (repo override)", got)
-		}
-	})
-
-	t.Run("invalid repo value falls back to global", func(t *testing.T) {
-		dir := t.TempDir()
-		os.WriteFile(dir+"/.roborev.toml", []byte("[ci]\nmin_severity = \"bogus\"\n"), 0644)
-		got := resolveMinSeverity("medium", dir, "acme/api")
-		if got != "medium" {
-			t.Errorf("got %q, want medium (fallback to global)", got)
-		}
-	})
-
-	t.Run("invalid global value returns empty", func(t *testing.T) {
-		got := resolveMinSeverity("bogus", t.TempDir(), "acme/api")
-		if got != "" {
-			t.Errorf("got %q, want empty (invalid global ignored)", got)
-		}
-	})
-
-	t.Run("empty repo override uses global", func(t *testing.T) {
-		dir := t.TempDir()
-		os.WriteFile(dir+"/.roborev.toml", []byte("[ci]\nreasoning = \"fast\"\n"), 0644)
-		got := resolveMinSeverity("high", dir, "acme/api")
-		if got != "high" {
-			t.Errorf("got %q, want high (repo has no min_severity)", got)
-		}
-	})
-
-	t.Run("empty repoPath skips repo config", func(t *testing.T) {
-		got := resolveMinSeverity("medium", "", "acme/api")
-		if got != "medium" {
-			t.Errorf("got %q, want medium", got)
-		}
-	})
-
-	t.Run("global value is case-normalized", func(t *testing.T) {
-		got := resolveMinSeverity("HIGH", t.TempDir(), "acme/api")
-		if got != "high" {
-			t.Errorf("got %q, want high (normalized)", got)
-		}
-	})
+			got := resolveMinSeverity(tt.global, dir, "acme/api")
+			if got != tt.want {
+				t.Errorf("resolveMinSeverity() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 // initGitRepoWithOrigin creates a git repo with an initial commit and
@@ -1369,14 +1430,7 @@ func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	type statusCall struct {
-		repo, sha, state, desc string
-	}
-	var statusCalls []statusCall
-	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
-		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
-		return nil
-	}
+	captured := h.CaptureCommitStatuses()
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 60, HeadRefOid: "status-test-sha", BaseRefName: "main",
@@ -1385,177 +1439,135 @@ func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
 		t.Fatalf("processPR: %v", err)
 	}
 
-	if len(statusCalls) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(statusCalls))
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(*captured))
 	}
-	sc := statusCalls[0]
-	if sc.repo != "acme/api" {
-		t.Errorf("repo=%q, want acme/api", sc.repo)
+	sc := (*captured)[0]
+	if sc.Repo != "acme/api" {
+		t.Errorf("repo=%q, want acme/api", sc.Repo)
 	}
-	if sc.sha != "status-test-sha" {
-		t.Errorf("sha=%q, want status-test-sha", sc.sha)
+	if sc.SHA != "status-test-sha" {
+		t.Errorf("sha=%q, want status-test-sha", sc.SHA)
 	}
-	if sc.state != "pending" {
-		t.Errorf("state=%q, want pending", sc.state)
+	if sc.State != "pending" {
+		t.Errorf("state=%q, want pending", sc.State)
 	}
-	if sc.desc != "Review in progress" {
-		t.Errorf("desc=%q, want %q", sc.desc, "Review in progress")
+	if sc.Desc != "Review in progress" {
+		t.Errorf("desc=%q, want %q", sc.Desc, "Review in progress")
 	}
 }
 
 func TestCIPollerPostBatchResults_SetsSuccessStatus(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
-	batch, job := h.seedBatchJob(t, "acme/api", 61, "success-sha", "a..b", "codex", "security")
-	h.markJobDoneWithReview(t, job.ID, "codex", "No issues found.")
+	batch, jobs := h.seedBatchWithJobs(t, 61, "success-sha", jobSpec{
+		Agent: "codex", ReviewType: "security", Status: "done", Output: "No issues found.",
+	})
+	job := jobs[0]
 
-	type statusCall struct {
-		repo, sha, state, desc string
-	}
-	var statusCalls []statusCall
-	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
-		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
-		return nil
-	}
-	h.Poller.postPRCommentFn = func(string, int, string) error { return nil }
+	capturedStatuses := h.CaptureCommitStatuses()
+	// Stub post comment to avoid nil pointer (or use CaptureComments)
+	h.CaptureComments()
 
 	h.Poller.handleBatchJobDone(batch, job.ID, true)
 
-	if len(statusCalls) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(statusCalls))
+	if len(*capturedStatuses) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
 	}
-	sc := statusCalls[0]
-	if sc.state != "success" {
-		t.Errorf("state=%q, want success", sc.state)
+	sc := (*capturedStatuses)[0]
+	if sc.State != "success" {
+		t.Errorf("state=%q, want success", sc.State)
 	}
-	if sc.sha != "success-sha" {
-		t.Errorf("sha=%q, want success-sha", sc.sha)
+	if sc.SHA != "success-sha" {
+		t.Errorf("sha=%q, want success-sha", sc.SHA)
 	}
 }
 
 func TestCIPollerPostBatchResults_SetsErrorStatusOnAllFailed(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
-	batch, job := h.seedBatchJob(t, "acme/api", 62, "fail-sha", "a..b", "codex", "security")
-	h.markJobFailed(t, job.ID, "timeout")
+	batch, jobs := h.seedBatchWithJobs(t, 62, "fail-sha", jobSpec{
+		Agent: "codex", ReviewType: "security", Status: "failed", Error: "timeout",
+	})
+	job := jobs[0]
 
-	type statusCall struct {
-		repo, sha, state, desc string
-	}
-	var statusCalls []statusCall
-	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
-		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
-		return nil
-	}
-	h.Poller.postPRCommentFn = func(string, int, string) error { return nil }
+	capturedStatuses := h.CaptureCommitStatuses()
+	h.CaptureComments()
 
 	h.Poller.handleBatchJobDone(batch, job.ID, false)
 
-	if len(statusCalls) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(statusCalls))
+	if len(*capturedStatuses) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
 	}
-	sc := statusCalls[0]
-	if sc.state != "error" {
-		t.Errorf("state=%q, want error", sc.state)
+	sc := (*capturedStatuses)[0]
+	if sc.State != "error" {
+		t.Errorf("state=%q, want error", sc.State)
 	}
-	if sc.desc != "All reviews failed" {
-		t.Errorf("desc=%q, want 'All reviews failed'", sc.desc)
+	if sc.Desc != "All reviews failed" {
+		t.Errorf("desc=%q, want 'All reviews failed'", sc.Desc)
 	}
 }
 
 func TestCIPollerPostBatchResults_SetsFailureStatusOnMixedOutcome(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 
-	// Create a batch with 2 jobs
-	batch, _, err := h.DB.CreateCIBatch("acme/api", 64, "mixed-sha", 2)
-	if err != nil {
-		t.Fatalf("CreateCIBatch: %v", err)
-	}
+	// Create a batch with 2 jobs (initially queued/empty status)
+	batch, jobs := h.seedBatchWithJobs(t, 64, "mixed-sha",
+		jobSpec{Agent: "codex", ReviewType: "security"},
+		jobSpec{Agent: "gemini", ReviewType: "review"},
+	)
+	job1, job2 := jobs[0], jobs[1]
 
-	// Enqueue two jobs and link them to the batch
-	job1, err := h.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID: h.Repo.ID, GitRef: "a..b", Agent: "codex", ReviewType: "security",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob 1: %v", err)
-	}
-	if err := h.DB.RecordBatchJob(batch.ID, job1.ID); err != nil {
-		t.Fatalf("RecordBatchJob 1: %v", err)
-	}
-
-	job2, err := h.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID: h.Repo.ID, GitRef: "a..b", Agent: "gemini", ReviewType: "review",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob 2: %v", err)
-	}
-	if err := h.DB.RecordBatchJob(batch.ID, job2.ID); err != nil {
-		t.Fatalf("RecordBatchJob 2: %v", err)
-	}
-
-	// Complete job1, fail job2
+	// Complete job1, fail job2 manually to test incremental updates
 	h.markJobDoneWithReview(t, job1.ID, "codex", "No issues found.")
 	h.markJobFailed(t, job2.ID, "timeout")
 
-	type statusCall struct {
-		repo, sha, state, desc string
-	}
-	var statusCalls []statusCall
-	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
-		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
-		return nil
-	}
-	h.Poller.postPRCommentFn = func(string, int, string) error { return nil }
+	capturedStatuses := h.CaptureCommitStatuses()
+	h.CaptureComments()
 
 	// First call: job1 succeeded — batch not yet complete
 	h.Poller.handleBatchJobDone(batch, job1.ID, true)
-	if len(statusCalls) != 0 {
-		t.Fatalf("expected no status call after first job, got %d", len(statusCalls))
+	if len(*capturedStatuses) != 0 {
+		t.Fatalf("expected no status call after first job, got %d", len(*capturedStatuses))
 	}
 
 	// Second call: job2 failed — batch now complete
 	h.Poller.handleBatchJobDone(batch, job2.ID, false)
-	if len(statusCalls) != 1 {
-		t.Fatalf("expected 1 status call after batch complete, got %d", len(statusCalls))
+	if len(*capturedStatuses) != 1 {
+		t.Fatalf("expected 1 status call after batch complete, got %d", len(*capturedStatuses))
 	}
 
-	sc := statusCalls[0]
-	if sc.state != "failure" {
-		t.Errorf("state=%q, want failure", sc.state)
+	sc := (*capturedStatuses)[0]
+	if sc.State != "failure" {
+		t.Errorf("state=%q, want failure", sc.State)
 	}
-	if sc.sha != "mixed-sha" {
-		t.Errorf("sha=%q, want mixed-sha", sc.sha)
+	if sc.SHA != "mixed-sha" {
+		t.Errorf("sha=%q, want mixed-sha", sc.SHA)
 	}
-	if !strings.Contains(sc.desc, "1/2 jobs failed") {
-		t.Errorf("desc=%q, should mention 1/2 jobs failed", sc.desc)
+	if !strings.Contains(sc.Desc, "1/2 jobs failed") {
+		t.Errorf("desc=%q, should mention 1/2 jobs failed", sc.Desc)
 	}
 }
 
 func TestCIPollerPostBatchResults_SetsErrorStatusOnCommentPostFailure(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
-	batch, job := h.seedBatchJob(t, "acme/api", 63, "post-fail-sha", "a..b", "codex", "security")
-	h.markJobDoneWithReview(t, job.ID, "codex", "Found issues.")
+	batch, _ := h.seedBatchWithJobs(t, 63, "post-fail-sha", jobSpec{
+		Agent: "codex", ReviewType: "security", Status: "done", Output: "Found issues.",
+	})
 
-	type statusCall struct {
-		repo, sha, state, desc string
-	}
-	var statusCalls []statusCall
-	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
-		statusCalls = append(statusCalls, statusCall{repo, sha, state, desc})
-		return nil
-	}
+	capturedStatuses := h.CaptureCommitStatuses()
 	h.Poller.postPRCommentFn = func(string, int, string) error {
 		return context.DeadlineExceeded
 	}
 
 	h.Poller.postBatchResults(batch)
 
-	if len(statusCalls) != 1 {
-		t.Fatalf("expected 1 status call, got %d", len(statusCalls))
+	if len(*capturedStatuses) != 1 {
+		t.Fatalf("expected 1 status call, got %d", len(*capturedStatuses))
 	}
-	sc := statusCalls[0]
-	if sc.state != "error" {
-		t.Errorf("state=%q, want error", sc.state)
+	sc := (*capturedStatuses)[0]
+	if sc.State != "error" {
+		t.Errorf("state=%q, want error", sc.State)
 	}
-	if sc.desc != "Review failed to post" {
-		t.Errorf("desc=%q, want 'Review failed to post'", sc.desc)
+	if sc.Desc != "Review failed to post" {
+		t.Errorf("desc=%q, want 'Review failed to post'", sc.Desc)
 	}
 }
