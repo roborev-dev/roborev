@@ -1,12 +1,14 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 )
 
 func createTestErrorLog(t *testing.T) (*ErrorLog, string) {
@@ -28,11 +30,7 @@ func seedErrorLog(el *ErrorLog, count int) {
 }
 
 func TestNewErrorLog(t *testing.T) {
-	el, path := createTestErrorLog(t)
-
-	if el == nil {
-		t.Fatal("NewErrorLog returned nil")
-	}
+	_, path := createTestErrorLog(t)
 
 	// Verify file was created
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -54,7 +52,8 @@ func TestErrorLogLog(t *testing.T) {
 	}
 
 	var entry ErrorEntry
-	if err := json.Unmarshal(content[:len(content)-1], &entry); err != nil { // -1 to remove newline
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	if err := decoder.Decode(&entry); err != nil {
 		t.Fatalf("Failed to parse error entry: %v", err)
 	}
 
@@ -77,7 +76,7 @@ func TestErrorLogRecent(t *testing.T) {
 
 	// Log several errors
 	for i := 1; i <= 5; i++ {
-		el.Log("error", "worker", "error "+string(rune('0'+i)), int64(i))
+		el.Log("error", "worker", fmt.Sprintf("error %d", i), int64(i))
 	}
 
 	// Get recent errors - should be in reverse order (newest first)
@@ -87,12 +86,12 @@ func TestErrorLogRecent(t *testing.T) {
 	}
 
 	// First entry should be the most recent (error 5)
-	if !strings.Contains(recent[0].Message, "5") {
-		t.Errorf("Expected first error to be '5', got %q", recent[0].Message)
+	if !strings.Contains(recent[0].Message, "error 5") {
+		t.Errorf("Expected first error to be 'error 5', got %q", recent[0].Message)
 	}
 	// Last entry should be the oldest (error 1)
-	if !strings.Contains(recent[4].Message, "1") {
-		t.Errorf("Expected last error to be '1', got %q", recent[4].Message)
+	if !strings.Contains(recent[4].Message, "error 1") {
+		t.Errorf("Expected last error to be 'error 1', got %q", recent[4].Message)
 	}
 }
 
@@ -104,7 +103,15 @@ func TestErrorLogRecentN(t *testing.T) {
 	// Get only 3 recent errors
 	recent := el.RecentN(3)
 	if len(recent) != 3 {
-		t.Errorf("Expected 3 recent errors, got %d", len(recent))
+		t.Fatalf("Expected 3 recent errors, got %d", len(recent))
+	}
+
+	// Should be 10, 9, 8
+	expectedIDs := []int64{10, 9, 8}
+	for i, entry := range recent {
+		if entry.JobID != expectedIDs[i] {
+			t.Errorf("Expected index %d to be JobID %d, got %d", i, expectedIDs[i], entry.JobID)
+		}
 	}
 }
 
@@ -140,24 +147,18 @@ func TestErrorLogConcurrency(t *testing.T) {
 	el, _ := createTestErrorLog(t)
 
 	// Log from multiple goroutines
-	done := make(chan bool)
+	var wg sync.WaitGroup
 	for i := range 10 {
+		wg.Add(1)
 		go func(id int) {
+			defer wg.Done()
 			for j := range 10 {
 				el.Log("error", "worker", "concurrent error", int64(id*10+j))
 			}
-			done <- true
 		}(i)
 	}
 
-	// Wait for all goroutines
-	for range 10 {
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Fatal("Timeout waiting for concurrent logging")
-		}
-	}
+	wg.Wait()
 
 	// Should have 100 entries
 	recent := el.Recent()
