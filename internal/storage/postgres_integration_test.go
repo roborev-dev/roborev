@@ -221,29 +221,30 @@ func waitForSyncWorkerConnection(worker *SyncWorker, timeout time.Duration) erro
 	return fmt.Errorf("timeout waiting for sync worker connection")
 }
 
-// pollForJobCount polls until the expected job count is reached or timeout
-func pollForJobCount(db *DB, expected int, timeout time.Duration) error {
+// createBatchReviews creates N completed reviews and returns their UUIDs.
+func createBatchReviews(t *testing.T, db *DB, repoID int64, count int, shaPrefix, author, subjectPrefix string) []string {
+	t.Helper()
+	var uuids []string
+	for i := 0; i < count; i++ {
+		sha := fmt.Sprintf("%s_%02d", shaPrefix, i)
+		subject := fmt.Sprintf("%s %d", subjectPrefix, i)
+		job, _ := createCompletedReview(t, db, repoID, sha, author, subject, "prompt", fmt.Sprintf("Review %s", sha))
+		uuids = append(uuids, job.UUID)
+	}
+	return uuids
+}
+
+// waitCondition waits for a condition to be true or times out.
+func waitCondition(t *testing.T, timeout time.Duration, msg string, condition func() bool) {
+	t.Helper()
 	deadline := time.Now().Add(timeout)
-	var lastErr error
-	var lastCount int
 	for time.Now().Before(deadline) {
-		jobs, err := db.ListJobs("", "", 1000, 0)
-		if err != nil {
-			lastErr = err
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		lastErr = nil
-		lastCount = len(jobs)
-		if lastCount >= expected {
-			return nil
+		if condition() {
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if lastErr != nil {
-		return fmt.Errorf("timeout waiting for %d jobs (last error: %w)", expected, lastErr)
-	}
-	return fmt.Errorf("timeout waiting for %d jobs, got %d", expected, lastCount)
+	t.Fatalf("Timeout waiting for: %s", msg)
 }
 
 func TestIntegration_SyncFullCycle(t *testing.T) {
@@ -345,18 +346,7 @@ func TestIntegration_FinalPush(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush.git")
 
-	for i := 0; i < 150; i++ {
-		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
-		if err != nil {
-			t.Fatalf("EnqueueRangeJob %d failed: %v", i, err)
-		}
-		if _, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
-			t.Fatalf("Update job %d to running failed: %v", i, err)
-		}
-		if err = db.CompleteJob(job.ID, "test", "prompt", fmt.Sprintf("output %d", i)); err != nil {
-			t.Fatalf("CompleteJob %d failed: %v", i, err)
-		}
-	}
+	createBatchReviews(t, db, repo.ID, 150, "HEAD", "test", "subject")
 
 	worker := startSyncWorker(t, db, env.pgURL, "finalpush-test", "1h")
 
@@ -425,12 +415,15 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
 	}
 
-	if err := pollForJobCount(dbA, 2, 10*time.Second); err != nil {
-		t.Fatalf("Machine A: %v", err)
+	checkJobs := func(db *DB, count int) func() bool {
+		return func() bool {
+			jobs, _ := db.ListJobs("", "", 1000, 0)
+			return len(jobs) >= count
+		}
 	}
-	if err := pollForJobCount(dbB, 2, 10*time.Second); err != nil {
-		t.Fatalf("Machine B: %v", err)
-	}
+
+	waitCondition(t, 10*time.Second, "Machine A job count", checkJobs(dbA, 2))
+	waitCondition(t, 10*time.Second, "Machine B job count", checkJobs(dbB, 2))
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
@@ -537,12 +530,15 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
 	}
 
-	if err := pollForJobCount(dbA, 2, 10*time.Second); err != nil {
-		t.Fatalf("Machine A: %v", err)
+	checkJobs := func(db *DB, count int) func() bool {
+		return func() bool {
+			jobs, _ := db.ListJobs("", "", 1000, 0)
+			return len(jobs) >= count
+		}
 	}
-	if err := pollForJobCount(dbB, 2, 10*time.Second); err != nil {
-		t.Fatalf("Machine B: %v", err)
-	}
+
+	waitCondition(t, 10*time.Second, "Machine A job count", checkJobs(dbA, 2))
+	waitCondition(t, 10*time.Second, "Machine B job count", checkJobs(dbB, 2))
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
@@ -657,302 +653,263 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		t.Fatalf("Machine C: GetOrCreateRepo failed: %v", err)
 	}
 
-	var jobsCreatedByA, jobsCreatedByB, jobsCreatedByC []string
-
-	// Round 1: Each machine creates 10 reviews before any syncing
-	t.Log("Round 1: Each machine creates 10 reviews (no sync yet)")
-	for i := 0; i < 10; i++ {
-		job, _ := createCompletedReview(t, dbA, repoA.ID, fmt.Sprintf("a1_%02d", i), "Alice", fmt.Sprintf("Alice commit %d", i), "prompt", fmt.Sprintf("Review A1-%d", i))
-		jobsCreatedByA = append(jobsCreatedByA, job.UUID)
-
-		job, _ = createCompletedReview(t, dbB, repoB.ID, fmt.Sprintf("b1_%02d", i), "Bob", fmt.Sprintf("Bob commit %d", i), "prompt", fmt.Sprintf("Review B1-%d", i))
-		jobsCreatedByB = append(jobsCreatedByB, job.UUID)
-
-		job, _ = createCompletedReview(t, dbC, repoC.ID, fmt.Sprintf("c1_%02d", i), "Carol", fmt.Sprintf("Carol commit %d", i), "prompt", fmt.Sprintf("Review C1-%d", i))
-		jobsCreatedByC = append(jobsCreatedByC, job.UUID)
-	}
-
 	workerA := startSyncWorker(t, dbA, env.pgURL, "alice-laptop", "50ms")
 	workerB := startSyncWorker(t, dbB, env.pgURL, "bob-desktop", "50ms")
 	workerC := startSyncWorker(t, dbC, env.pgURL, "carol-workstation", "50ms")
 
-	// First sync cycle
-	t.Log("First sync cycle")
-	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A: SyncNow failed: %v", err)
-	}
-	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B: SyncNow failed: %v", err)
-	}
-	if _, err := workerC.SyncNow(); err != nil {
-		t.Fatalf("Machine C: SyncNow failed: %v", err)
-	}
-	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A: Second SyncNow failed: %v", err)
-	}
-	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
-	}
-	if _, err := workerC.SyncNow(); err != nil {
-		t.Fatalf("Machine C: Second SyncNow failed: %v", err)
+	var jobsCreatedByA, jobsCreatedByB, jobsCreatedByC []string
+
+	syncAll := func(t *testing.T) {
+		t.Helper()
+		if _, err := workerA.SyncNow(); err != nil {
+			t.Fatalf("Machine A sync failed: %v", err)
+		}
+		if _, err := workerB.SyncNow(); err != nil {
+			t.Fatalf("Machine B sync failed: %v", err)
+		}
+		if _, err := workerC.SyncNow(); err != nil {
+			t.Fatalf("Machine C sync failed: %v", err)
+		}
 	}
 
-	if err := pollForJobCount(dbA, 30, 10*time.Second); err != nil {
-		t.Fatalf("Machine A round 1: %v", err)
+	checkJobs := func(db *DB, count int) func() bool {
+		return func() bool {
+			jobs, _ := db.ListJobs("", "", 1000, 0)
+			return len(jobs) >= count
+		}
 	}
 
-	env.assertPgCount("review_jobs", 30)
+	t.Run("Round 1: Sequential", func(t *testing.T) {
+		t.Log("Round 1: Each machine creates 10 reviews (no sync yet)")
+		jobsCreatedByA = append(jobsCreatedByA, createBatchReviews(t, dbA, repoA.ID, 10, "a1", "Alice", "Alice commit")...)
+		jobsCreatedByB = append(jobsCreatedByB, createBatchReviews(t, dbB, repoB.ID, 10, "b1", "Bob", "Bob commit")...)
+		jobsCreatedByC = append(jobsCreatedByC, createBatchReviews(t, dbC, repoC.ID, 10, "c1", "Carol", "Carol commit")...)
 
-	// Round 2: Interleaved - A creates 5, syncs, B creates 5, syncs, C creates 5, syncs
-	t.Log("Round 2: Interleaved creation and syncing")
-	for i := 0; i < 5; i++ {
-		job, _ := createCompletedReview(t, dbA, repoA.ID, fmt.Sprintf("a2_%02d", i), "Alice", fmt.Sprintf("Alice round2 %d", i), "prompt", fmt.Sprintf("Review A2-%d", i))
-		jobsCreatedByA = append(jobsCreatedByA, job.UUID)
-	}
-	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A round 2: SyncNow failed: %v", err)
-	}
+		// Sync twice to push and pull
+		syncAll(t)
+		syncAll(t)
 
-	for i := 0; i < 5; i++ {
-		job, _ := createCompletedReview(t, dbB, repoB.ID, fmt.Sprintf("b2_%02d", i), "Bob", fmt.Sprintf("Bob round2 %d", i), "prompt", fmt.Sprintf("Review B2-%d", i))
-		jobsCreatedByB = append(jobsCreatedByB, job.UUID)
-	}
-	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B round 2: SyncNow failed: %v", err)
-	}
+		waitCondition(t, 10*time.Second, "Machine A round 1 job count", checkJobs(dbA, 30))
+		env.assertPgCount("review_jobs", 30)
+	})
 
-	for i := 0; i < 5; i++ {
-		job, _ := createCompletedReview(t, dbC, repoC.ID, fmt.Sprintf("c2_%02d", i), "Carol", fmt.Sprintf("Carol round2 %d", i), "prompt", fmt.Sprintf("Review C2-%d", i))
-		jobsCreatedByC = append(jobsCreatedByC, job.UUID)
-	}
-	if _, err := workerC.SyncNow(); err != nil {
-		t.Fatalf("Machine C round 2: SyncNow failed: %v", err)
-	}
+	t.Run("Round 2: Interleaved", func(t *testing.T) {
+		t.Log("Round 2: Interleaved creation and syncing")
+		jobsCreatedByA = append(jobsCreatedByA, createBatchReviews(t, dbA, repoA.ID, 5, "a2", "Alice", "Alice round2")...)
+		if _, err := workerA.SyncNow(); err != nil {
+			t.Fatalf("Machine A round 2: SyncNow failed: %v", err)
+		}
 
-	// All machines sync again
-	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A round 2 final: SyncNow failed: %v", err)
-	}
-	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B round 2 final: SyncNow failed: %v", err)
-	}
-	if _, err := workerC.SyncNow(); err != nil {
-		t.Fatalf("Machine C round 2 final: SyncNow failed: %v", err)
-	}
+		jobsCreatedByB = append(jobsCreatedByB, createBatchReviews(t, dbB, repoB.ID, 5, "b2", "Bob", "Bob round2")...)
+		if _, err := workerB.SyncNow(); err != nil {
+			t.Fatalf("Machine B round 2: SyncNow failed: %v", err)
+		}
 
-	if err := pollForJobCount(dbA, 45, 10*time.Second); err != nil {
-		t.Fatalf("Machine A round 2: %v", err)
-	}
+		jobsCreatedByC = append(jobsCreatedByC, createBatchReviews(t, dbC, repoC.ID, 5, "c2", "Carol", "Carol round2")...)
+		if _, err := workerC.SyncNow(); err != nil {
+			t.Fatalf("Machine C round 2: SyncNow failed: %v", err)
+		}
 
-	env.assertPgCount("review_jobs", 45)
+		// All machines sync again
+		syncAll(t)
 
-	// Round 3: Concurrent creation
-	t.Log("Round 3: Concurrent creation during sync")
+		waitCondition(t, 10*time.Second, "Machine A round 2 job count", checkJobs(dbA, 45))
+		env.assertPgCount("review_jobs", 45)
+	})
 
-	type jobResult struct {
-		uuid string
-		err  error
-	}
-	jobResultsA := make(chan jobResult, 10)
-	jobResultsB := make(chan jobResult, 10)
-	jobResultsC := make(chan jobResult, 10)
-	syncErrsA := make(chan error, 4)
-	syncErrsB := make(chan error, 4)
-	syncErrsC := make(chan error, 4)
-	done := make(chan bool, 3)
+	t.Run("Round 3: Concurrent", func(t *testing.T) {
+		t.Log("Round 3: Concurrent creation during sync")
 
-	go func() {
-		for i := 0; i < 10; i++ {
-			job, _, err := tryCreateCompletedReview(dbA, repoA.ID, fmt.Sprintf("a3_%02d", i), "Alice", fmt.Sprintf("Alice concurrent %d", i), "prompt", fmt.Sprintf("Review A3-%d", i))
-			if err != nil {
-				jobResultsA <- jobResult{err: err}
-				continue
-			}
-			jobResultsA <- jobResult{uuid: job.UUID}
-			if i%3 == 0 {
-				if _, err := workerA.SyncNow(); err != nil {
-					syncErrsA <- fmt.Errorf("Machine A round 3 sync at job %d: %w", i, err)
+		type jobResult struct {
+			uuid string
+			err  error
+		}
+		jobResultsA := make(chan jobResult, 10)
+		jobResultsB := make(chan jobResult, 10)
+		jobResultsC := make(chan jobResult, 10)
+		syncErrsA := make(chan error, 4)
+		syncErrsB := make(chan error, 4)
+		syncErrsC := make(chan error, 4)
+		done := make(chan bool, 3)
+
+		go func() {
+			for i := 0; i < 10; i++ {
+				job, _, err := tryCreateCompletedReview(dbA, repoA.ID, fmt.Sprintf("a3_%02d", i), "Alice", fmt.Sprintf("Alice concurrent %d", i), "prompt", fmt.Sprintf("Review A3-%d", i))
+				if err != nil {
+					jobResultsA <- jobResult{err: err}
+					continue
 				}
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		close(jobResultsA)
-		close(syncErrsA)
-		done <- true
-	}()
-
-	go func() {
-		for i := 0; i < 10; i++ {
-			job, _, err := tryCreateCompletedReview(dbB, repoB.ID, fmt.Sprintf("b3_%02d", i), "Bob", fmt.Sprintf("Bob concurrent %d", i), "prompt", fmt.Sprintf("Review B3-%d", i))
-			if err != nil {
-				jobResultsB <- jobResult{err: err}
-				continue
-			}
-			jobResultsB <- jobResult{uuid: job.UUID}
-			if i%3 == 0 {
-				if _, err := workerB.SyncNow(); err != nil {
-					syncErrsB <- fmt.Errorf("Machine B round 3 sync at job %d: %w", i, err)
+				jobResultsA <- jobResult{uuid: job.UUID}
+				if i%3 == 0 {
+					if _, err := workerA.SyncNow(); err != nil {
+						syncErrsA <- fmt.Errorf("Machine A round 3 sync at job %d: %w", i, err)
+					}
 				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		close(jobResultsB)
-		close(syncErrsB)
-		done <- true
-	}()
+			close(jobResultsA)
+			close(syncErrsA)
+			done <- true
+		}()
 
-	go func() {
-		for i := 0; i < 10; i++ {
-			job, _, err := tryCreateCompletedReview(dbC, repoC.ID, fmt.Sprintf("c3_%02d", i), "Carol", fmt.Sprintf("Carol concurrent %d", i), "prompt", fmt.Sprintf("Review C3-%d", i))
-			if err != nil {
-				jobResultsC <- jobResult{err: err}
-				continue
-			}
-			jobResultsC <- jobResult{uuid: job.UUID}
-			if i%3 == 0 {
-				if _, err := workerC.SyncNow(); err != nil {
-					syncErrsC <- fmt.Errorf("Machine C round 3 sync at job %d: %w", i, err)
+		go func() {
+			for i := 0; i < 10; i++ {
+				job, _, err := tryCreateCompletedReview(dbB, repoB.ID, fmt.Sprintf("b3_%02d", i), "Bob", fmt.Sprintf("Bob concurrent %d", i), "prompt", fmt.Sprintf("Review B3-%d", i))
+				if err != nil {
+					jobResultsB <- jobResult{err: err}
+					continue
 				}
+				jobResultsB <- jobResult{uuid: job.UUID}
+				if i%3 == 0 {
+					if _, err := workerB.SyncNow(); err != nil {
+						syncErrsB <- fmt.Errorf("Machine B round 3 sync at job %d: %w", i, err)
+					}
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			time.Sleep(10 * time.Millisecond)
+			close(jobResultsB)
+			close(syncErrsB)
+			done <- true
+		}()
+
+		go func() {
+			for i := 0; i < 10; i++ {
+				job, _, err := tryCreateCompletedReview(dbC, repoC.ID, fmt.Sprintf("c3_%02d", i), "Carol", fmt.Sprintf("Carol concurrent %d", i), "prompt", fmt.Sprintf("Review C3-%d", i))
+				if err != nil {
+					jobResultsC <- jobResult{err: err}
+					continue
+				}
+				jobResultsC <- jobResult{uuid: job.UUID}
+				if i%3 == 0 {
+					if _, err := workerC.SyncNow(); err != nil {
+						syncErrsC <- fmt.Errorf("Machine C round 3 sync at job %d: %w", i, err)
+					}
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			close(jobResultsC)
+			close(syncErrsC)
+			done <- true
+		}()
+
+		<-done
+		<-done
+		<-done
+
+		for r := range jobResultsA {
+			if r.err != nil {
+				t.Errorf("%v", r.err)
+			} else {
+				jobsCreatedByA = append(jobsCreatedByA, r.uuid)
+			}
 		}
-		close(jobResultsC)
-		close(syncErrsC)
-		done <- true
-	}()
-
-	<-done
-	<-done
-	<-done
-
-	for r := range jobResultsA {
-		if r.err != nil {
-			t.Errorf("%v", r.err)
-		} else {
-			jobsCreatedByA = append(jobsCreatedByA, r.uuid)
+		for r := range jobResultsB {
+			if r.err != nil {
+				t.Errorf("%v", r.err)
+			} else {
+				jobsCreatedByB = append(jobsCreatedByB, r.uuid)
+			}
 		}
-	}
-	for r := range jobResultsB {
-		if r.err != nil {
-			t.Errorf("%v", r.err)
-		} else {
-			jobsCreatedByB = append(jobsCreatedByB, r.uuid)
+		for r := range jobResultsC {
+			if r.err != nil {
+				t.Errorf("%v", r.err)
+			} else {
+				jobsCreatedByC = append(jobsCreatedByC, r.uuid)
+			}
 		}
-	}
-	for r := range jobResultsC {
-		if r.err != nil {
-			t.Errorf("%v", r.err)
-		} else {
-			jobsCreatedByC = append(jobsCreatedByC, r.uuid)
+
+		for err := range syncErrsA {
+			t.Errorf("%v", err)
 		}
-	}
-
-	for err := range syncErrsA {
-		t.Errorf("%v", err)
-	}
-	for err := range syncErrsB {
-		t.Errorf("%v", err)
-	}
-	for err := range syncErrsC {
-		t.Errorf("%v", err)
-	}
-
-	// Final sync
-	t.Log("Final sync cycle")
-	if _, err := workerA.SyncNow(); err != nil {
-		t.Fatalf("Machine A final: SyncNow failed: %v", err)
-	}
-	if _, err := workerB.SyncNow(); err != nil {
-		t.Fatalf("Machine B final: SyncNow failed: %v", err)
-	}
-	if _, err := workerC.SyncNow(); err != nil {
-		t.Fatalf("Machine C final: SyncNow failed: %v", err)
-	}
-
-	expectedTotal := 75
-
-	if err := pollForJobCount(dbA, expectedTotal, 15*time.Second); err != nil {
-		t.Fatalf("Machine A final: %v", err)
-	}
-	if err := pollForJobCount(dbB, expectedTotal, 15*time.Second); err != nil {
-		t.Fatalf("Machine B final: %v", err)
-	}
-	if err := pollForJobCount(dbC, expectedTotal, 15*time.Second); err != nil {
-		t.Fatalf("Machine C final: %v", err)
-	}
-
-	env.assertPgCount("review_jobs", expectedTotal)
-
-	// Verify each machine can see all jobs
-	jobsA, err := dbA.ListJobs("", "", 1000, 0)
-	if err != nil {
-		t.Fatalf("Machine A: ListJobs failed: %v", err)
-	}
-	jobsB, err := dbB.ListJobs("", "", 1000, 0)
-	if err != nil {
-		t.Fatalf("Machine B: ListJobs failed: %v", err)
-	}
-	jobsC, err := dbC.ListJobs("", "", 1000, 0)
-	if err != nil {
-		t.Fatalf("Machine C: ListJobs failed: %v", err)
-	}
-
-	if len(jobsA) != expectedTotal {
-		t.Errorf("Machine A should see %d jobs, got %d", expectedTotal, len(jobsA))
-	}
-	if len(jobsB) != expectedTotal {
-		t.Errorf("Machine B should see %d jobs, got %d", expectedTotal, len(jobsB))
-	}
-	if len(jobsC) != expectedTotal {
-		t.Errorf("Machine C should see %d jobs, got %d", expectedTotal, len(jobsC))
-	}
-
-	// Verify each machine has the others' specific jobs
-	jobsAMap := make(map[string]bool)
-	for _, j := range jobsA {
-		jobsAMap[j.UUID] = true
-	}
-	jobsBMap := make(map[string]bool)
-	for _, j := range jobsB {
-		jobsBMap[j.UUID] = true
-	}
-	jobsCMap := make(map[string]bool)
-	for _, j := range jobsC {
-		jobsCMap[j.UUID] = true
-	}
-
-	for _, uuid := range jobsCreatedByB {
-		if !jobsAMap[uuid] {
-			t.Errorf("Machine A missing job %s created by B", uuid)
+		for err := range syncErrsB {
+			t.Errorf("%v", err)
 		}
-	}
-	for _, uuid := range jobsCreatedByC {
-		if !jobsAMap[uuid] {
-			t.Errorf("Machine A missing job %s created by C", uuid)
+		for err := range syncErrsC {
+			t.Errorf("%v", err)
 		}
-	}
-	for _, uuid := range jobsCreatedByA {
-		if !jobsBMap[uuid] {
-			t.Errorf("Machine B missing job %s created by A", uuid)
-		}
-	}
-	for _, uuid := range jobsCreatedByC {
-		if !jobsBMap[uuid] {
-			t.Errorf("Machine B missing job %s created by C", uuid)
-		}
-	}
-	for _, uuid := range jobsCreatedByA {
-		if !jobsCMap[uuid] {
-			t.Errorf("Machine C missing job %s created by A", uuid)
-		}
-	}
-	for _, uuid := range jobsCreatedByB {
-		if !jobsCMap[uuid] {
-			t.Errorf("Machine C missing job %s created by B", uuid)
-		}
-	}
 
-	t.Logf("Realistic multiplayer test passed: %d total jobs synced across 3 machines", expectedTotal)
+		// Final sync
+		syncAll(t)
+
+		expectedTotal := 75
+
+		waitCondition(t, 15*time.Second, "Machine A final job count", checkJobs(dbA, expectedTotal))
+		waitCondition(t, 15*time.Second, "Machine B final job count", checkJobs(dbB, expectedTotal))
+		waitCondition(t, 15*time.Second, "Machine C final job count", checkJobs(dbC, expectedTotal))
+
+		env.assertPgCount("review_jobs", expectedTotal)
+
+		// Verify each machine can see all jobs
+		jobsA, err := dbA.ListJobs("", "", 1000, 0)
+		if err != nil {
+			t.Fatalf("Machine A: ListJobs failed: %v", err)
+		}
+		jobsB, err := dbB.ListJobs("", "", 1000, 0)
+		if err != nil {
+			t.Fatalf("Machine B: ListJobs failed: %v", err)
+		}
+		jobsC, err := dbC.ListJobs("", "", 1000, 0)
+		if err != nil {
+			t.Fatalf("Machine C: ListJobs failed: %v", err)
+		}
+
+		if len(jobsA) != expectedTotal {
+			t.Errorf("Machine A should see %d jobs, got %d", expectedTotal, len(jobsA))
+		}
+		if len(jobsB) != expectedTotal {
+			t.Errorf("Machine B should see %d jobs, got %d", expectedTotal, len(jobsB))
+		}
+		if len(jobsC) != expectedTotal {
+			t.Errorf("Machine C should see %d jobs, got %d", expectedTotal, len(jobsC))
+		}
+
+		// Verify each machine has the others' specific jobs
+		jobsAMap := make(map[string]bool)
+		for _, j := range jobsA {
+			jobsAMap[j.UUID] = true
+		}
+		jobsBMap := make(map[string]bool)
+		for _, j := range jobsB {
+			jobsBMap[j.UUID] = true
+		}
+		jobsCMap := make(map[string]bool)
+		for _, j := range jobsC {
+			jobsCMap[j.UUID] = true
+		}
+
+		for _, uuid := range jobsCreatedByB {
+			if !jobsAMap[uuid] {
+				t.Errorf("Machine A missing job %s created by B", uuid)
+			}
+		}
+		for _, uuid := range jobsCreatedByC {
+			if !jobsAMap[uuid] {
+				t.Errorf("Machine A missing job %s created by C", uuid)
+			}
+		}
+		for _, uuid := range jobsCreatedByA {
+			if !jobsBMap[uuid] {
+				t.Errorf("Machine B missing job %s created by A", uuid)
+			}
+		}
+		for _, uuid := range jobsCreatedByC {
+			if !jobsBMap[uuid] {
+				t.Errorf("Machine B missing job %s created by C", uuid)
+			}
+		}
+		for _, uuid := range jobsCreatedByA {
+			if !jobsCMap[uuid] {
+				t.Errorf("Machine C missing job %s created by A", uuid)
+			}
+		}
+		for _, uuid := range jobsCreatedByB {
+			if !jobsCMap[uuid] {
+				t.Errorf("Machine C missing job %s created by B", uuid)
+			}
+		}
+	})
+
+	t.Logf("Realistic multiplayer test passed")
 	t.Logf("  Machine A created: %d, Machine B created: %d, Machine C created: %d",
 		len(jobsCreatedByA), len(jobsCreatedByB), len(jobsCreatedByC))
 }
@@ -1011,9 +968,14 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 		t.Fatalf("Machine B: SyncNow failed: %v", err)
 	}
 
-	if err := pollForJobCount(dbB, 3, 10*time.Second); err != nil {
-		t.Fatalf("Machine B: %v", err)
+	checkJobs := func(db *DB, count int) func() bool {
+		return func() bool {
+			jobs, _ := db.ListJobs("", "", 1000, 0)
+			return len(jobs) >= count
+		}
 	}
+
+	waitCondition(t, 10*time.Second, "Machine B job count", checkJobs(dbB, 3))
 
 	jobsB, err := dbB.ListJobs("", "", 100, 0)
 	if err != nil {
@@ -1040,22 +1002,7 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 
 	numJobs := 80
 	t.Logf("Creating %d jobs to test batch syncing", numJobs)
-	for i := 0; i < numJobs; i++ {
-		commit, err := db.GetOrCreateCommit(repo.ID, fmt.Sprintf("commit%03d", i), fmt.Sprintf("Author %d", i), fmt.Sprintf("Message %d", i), time.Now())
-		if err != nil {
-			t.Fatalf("Failed to create commit %d: %v", i, err)
-		}
-		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: fmt.Sprintf("commit%03d", i), Agent: "test"})
-		if err != nil {
-			t.Fatalf("Failed to enqueue job %d: %v", i, err)
-		}
-		if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
-			t.Fatalf("Failed to update job status %d: %v", i, err)
-		}
-		if err := db.CompleteJob(job.ID, "test", "test prompt", fmt.Sprintf("Review output %d", i)); err != nil {
-			t.Fatalf("Failed to complete job %d: %v", i, err)
-		}
-	}
+	createBatchReviews(t, db, repo.ID, numJobs, "commit", "Author", "Message")
 
 	machineID, err := db.GetMachineID()
 	if err != nil {
@@ -1129,40 +1076,7 @@ func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
 
 	// Create enough jobs to require multiple push batches
 	numJobs := 80
-	for i := 0; i < numJobs; i++ {
-		sha := fmt.Sprintf("abort%03d", i)
-		commit, err := db.GetOrCreateCommit(
-			repo.ID, sha,
-			fmt.Sprintf("Author %d", i),
-			fmt.Sprintf("Message %d", i),
-			time.Now(),
-		)
-		if err != nil {
-			t.Fatalf("Failed to create commit %d: %v", i, err)
-		}
-		job, err := db.EnqueueJob(EnqueueOpts{
-			RepoID:   repo.ID,
-			CommitID: commit.ID,
-			GitRef:   sha,
-			Agent:    "test",
-		})
-		if err != nil {
-			t.Fatalf("Failed to enqueue job %d: %v", i, err)
-		}
-		if _, err := db.Exec(
-			`UPDATE review_jobs SET status = 'running',
-			 started_at = datetime('now') WHERE id = ?`,
-			job.ID,
-		); err != nil {
-			t.Fatalf("Failed to update job %d: %v", i, err)
-		}
-		if err := db.CompleteJob(
-			job.ID, "test", "prompt",
-			fmt.Sprintf("Review %d", i),
-		); err != nil {
-			t.Fatalf("Failed to complete job %d: %v", i, err)
-		}
-	}
+	createBatchReviews(t, db, repo.ID, numJobs, "abort", "Author", "Message")
 
 	// progressFn returns false on first call to simulate
 	// client disconnect; sync should abort early
