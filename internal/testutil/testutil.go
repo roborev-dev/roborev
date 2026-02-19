@@ -205,6 +205,34 @@ func MockExecutable(t *testing.T, binName string, exitCode int) func() {
 	}
 }
 
+// MockExecutableIsolated creates a fake executable in a new directory and sets PATH to ONLY that directory.
+// Returns a cleanup function.
+func MockExecutableIsolated(t *testing.T, binName string, exitCode int) func() {
+	t.Helper()
+	tmpBin := t.TempDir()
+	var path string
+	var content []byte
+
+	if runtime.GOOS == "windows" {
+		path = filepath.Join(tmpBin, binName+".bat")
+		content = fmt.Appendf(nil, "@exit /b %d\r\n", exitCode)
+	} else {
+		path = filepath.Join(tmpBin, binName)
+		content = fmt.Appendf(nil, "#!/bin/sh\nexit %d\n", exitCode)
+	}
+
+	if err := os.WriteFile(path, content, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origPath := os.Getenv("PATH")
+	os.Setenv("PATH", tmpBin)
+
+	return func() {
+		os.Setenv("PATH", origPath)
+	}
+}
+
 // MockBinaryInPath creates a fake executable in PATH and returns a cleanup function.
 func MockBinaryInPath(t *testing.T, binName, scriptContent string) func() {
 	t.Helper()

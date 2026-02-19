@@ -258,7 +258,7 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 }
 
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
-	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
+	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
 	// Request an unavailable agent, codex should be used as fallback
 	selected, err := selectRefineAgent("nonexistent-agent", agent.ReasoningThorough, "")
@@ -803,87 +803,87 @@ func TestValidateRefineContext(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		setup     func(t *testing.T) (*testutil.TestRepo, string) // Returns repo, since
-		sinceArg  string                                          // Overrides setup if not empty
+		setup     func(t *testing.T) (*testutil.TestRepo, string, string) // Returns repo, since, expectedMergeBase
+		sinceArg  string                                                  // Overrides setup if not empty
 		branchArg string
 		wantErr   string
 		wantBr    string
 	}{
 		{
 			name: "refuses main without since",
-			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+			setup: func(t *testing.T) (*testutil.TestRepo, string, string) {
 				repo, _ := createStandardRepo(t)
-				return repo, ""
+				return repo, "", ""
 			},
-			wantErr: "refusing to refine on main",
+			wantErr: "refusing to refine on main branch without --since flag",
 		},
 		{
 			name: "allows main with since",
-			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+			setup: func(t *testing.T) (*testutil.TestRepo, string, string) {
 				repo, baseSHA := createStandardRepo(t)
 				repo.CommitFile("second.txt", "second", "second commit")
-				return repo, baseSHA
+				return repo, baseSHA, baseSHA
 			},
 			wantBr: "main",
 		},
 		{
 			name: "since works on feature branch",
-			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+			setup: func(t *testing.T) (*testutil.TestRepo, string, string) {
 				repo, baseSHA := createStandardRepo(t)
 				repo.Checkout("-b", "feature")
 				repo.CommitFile("feature.txt", "feature", "feature commit")
-				return repo, baseSHA
+				return repo, baseSHA, baseSHA
 			},
 			wantBr: "feature",
 		},
 		{
 			name: "invalid since ref",
-			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+			setup: func(t *testing.T) (*testutil.TestRepo, string, string) {
 				repo, _ := createStandardRepo(t)
-				return repo, "nonexistent-ref-abc123"
+				return repo, "nonexistent-ref-abc123", ""
 			},
 			wantErr: "cannot resolve --since",
 		},
 		{
 			name: "since not ancestor of HEAD",
-			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+			setup: func(t *testing.T) (*testutil.TestRepo, string, string) {
 				repo, _ := createStandardRepo(t)
 				repo.Checkout("-b", "other-branch")
 				otherBranchSHA := repo.CommitFile("other.txt", "other", "commit on other branch")
 				repo.Checkout("main")
 				repo.CommitFile("main2.txt", "main2", "second commit on main")
-				return repo, otherBranchSHA
+				return repo, otherBranchSHA, ""
 			},
-			wantErr: "not an ancestor of HEAD",
+			wantErr: "is not an ancestor of HEAD",
 		},
 		{
 			name: "feature branch without since works",
-			setup: func(t *testing.T) (*testutil.TestRepo, string) {
-				repo, _ := createStandardRepo(t)
+			setup: func(t *testing.T) (*testutil.TestRepo, string, string) {
+				repo, baseSHA := createStandardRepo(t)
 				repo.Checkout("-b", "feature")
 				repo.CommitFile("feature.txt", "feature", "feature commit")
-				return repo, ""
+				return repo, "", baseSHA
 			},
 			wantBr: "feature",
 		},
 		{
 			name: "branch mismatch",
-			setup: func(t *testing.T) (*testutil.TestRepo, string) {
+			setup: func(t *testing.T) (*testutil.TestRepo, string, string) {
 				repo, _ := createStandardRepo(t)
 				repo.Checkout("-b", "feature")
 				repo.CommitFile("feat.txt", "f", "feat")
-				return repo, ""
+				return repo, "", ""
 			},
 			branchArg: "other",
 			wantErr:   "not on branch",
 		},
 		{
 			name: "branch match",
-			setup: func(t *testing.T) (*testutil.TestRepo, string) {
-				repo, _ := createStandardRepo(t)
+			setup: func(t *testing.T) (*testutil.TestRepo, string, string) {
+				repo, baseSHA := createStandardRepo(t)
 				repo.Checkout("-b", "feature")
 				repo.CommitFile("feat.txt", "f", "feat")
-				return repo, ""
+				return repo, "", baseSHA
 			},
 			branchArg: "feature",
 			wantBr:    "feature",
@@ -892,13 +892,13 @@ func TestValidateRefineContext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo, sinceSetup := tt.setup(t)
+			repo, sinceSetup, expectedBase := tt.setup(t)
 			since := sinceSetup
 			if tt.sinceArg != "" {
 				since = tt.sinceArg
 			}
 
-			repoPath, currentBranch, _, _, err := validateRefineContext(repo.Root, since, tt.branchArg)
+			repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repo.Root, since, tt.branchArg)
 
 			if tt.wantErr != "" {
 				if err == nil {
@@ -918,6 +918,9 @@ func TestValidateRefineContext(t *testing.T) {
 			}
 			if tt.wantBr != "" && currentBranch != tt.wantBr {
 				t.Errorf("expected branch %q, got %q", tt.wantBr, currentBranch)
+			}
+			if expectedBase != "" && mergeBase != expectedBase {
+				t.Errorf("expected merge base %q, got %q", expectedBase, mergeBase)
 			}
 		})
 	}
