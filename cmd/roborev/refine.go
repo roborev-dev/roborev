@@ -1316,16 +1316,7 @@ func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel
 
 	baseAgent, err := agent.GetAvailable(resolvedAgent)
 	if err != nil {
-		// Fallback to codex if available (unless we already tried codex)
-		if resolvedAgent != "codex" && agent.IsAvailable("codex") {
-			baseAgent, err = agent.Get("codex")
-			if err != nil {
-				return nil, err
-			}
-			fmt.Printf("Warning: %s not available, falling back to codex\n", resolvedAgent)
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 	return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
 }
