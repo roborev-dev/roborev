@@ -584,6 +584,9 @@ func isQuotaError(errMsg string) bool {
 		"insufficient_quota",
 		"exhausted your capacity",
 		"too many requests",
+		"http 429",
+		"status 429",
+		"error 429",
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
