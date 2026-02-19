@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -202,37 +203,25 @@ func TestAgentWithModelPersistence(t *testing.T) {
 		t.Run(tt.name+"/WithModel sets model", func(t *testing.T) {
 			a := tt.newAgent().WithModel(tt.model)
 			cmdLine := a.CommandLine()
-			expected := tt.flag + " " + tt.wantModel
-			if !strings.Contains(cmdLine, expected) {
-				t.Errorf("CommandLine %q does not contain %q", cmdLine, expected)
-			}
+			assertArgsContain(t, cmdLine, tt.flag, tt.wantModel)
 		})
 
 		t.Run(tt.name+"/model persists through WithReasoning", func(t *testing.T) {
 			a := tt.newAgent().WithModel(tt.model).WithReasoning(ReasoningThorough)
 			cmdLine := a.CommandLine()
-			expected := tt.flag + " " + tt.wantModel
-			if !strings.Contains(cmdLine, expected) {
-				t.Errorf("CommandLine %q does not contain %q", cmdLine, expected)
-			}
+			assertArgsContain(t, cmdLine, tt.flag, tt.wantModel)
 		})
 
 		t.Run(tt.name+"/model persists through WithAgentic", func(t *testing.T) {
 			a := tt.newAgent().WithModel(tt.model).WithAgentic(true)
 			cmdLine := a.CommandLine()
-			expected := tt.flag + " " + tt.wantModel
-			if !strings.Contains(cmdLine, expected) {
-				t.Errorf("CommandLine %q does not contain %q", cmdLine, expected)
-			}
+			assertArgsContain(t, cmdLine, tt.flag, tt.wantModel)
 		})
 
 		t.Run(tt.name+"/model persists through chained calls", func(t *testing.T) {
 			a := tt.newAgent().WithModel(tt.model).WithReasoning(ReasoningFast).WithAgentic(true)
 			cmdLine := a.CommandLine()
-			expected := tt.flag + " " + tt.wantModel
-			if !strings.Contains(cmdLine, expected) {
-				t.Errorf("CommandLine %q does not contain %q", cmdLine, expected)
-			}
+			assertArgsContain(t, cmdLine, tt.flag, tt.wantModel)
 		})
 	}
 }
@@ -349,10 +338,7 @@ func TestAgentBuildArgsWithModel(t *testing.T) {
 				if !hasFlag {
 					t.Errorf("expected flag %q in command line %q", tt.flag, cmdLine)
 				}
-				expectedSeq := tt.flag + " " + tt.model
-				if !strings.Contains(cmdLine, expectedSeq) {
-					t.Errorf("expected sequence %q in command line %q", expectedSeq, cmdLine)
-				}
+				assertArgsContain(t, cmdLine, tt.flag, tt.model)
 			} else {
 				if hasFlag {
 					t.Errorf("expected no flag %q in command line %q", tt.flag, cmdLine)
@@ -371,6 +357,80 @@ func TestCodexBuildArgsModelWithReasoning(t *testing.T) {
 	}
 	if !strings.Contains(cmdLine, `-c model_reasoning_effort="high"`) {
 		t.Errorf("expected reasoning effort config in command line %q", cmdLine)
+	}
+}
+
+func assertArgsContain(t *testing.T, cmdLine, flag, value string) {
+	t.Helper()
+	tokens := strings.Fields(cmdLine)
+	for i := 0; i < len(tokens)-1; i++ {
+		if tokens[i] == flag && tokens[i+1] == value {
+			return
+		}
+	}
+	t.Errorf("command line %q expected to contain flag %q followed by value %q", cmdLine, flag, value)
+}
+
+func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
+	skipIfWindows(t)
+
+	tests := []struct {
+		name       string
+		createFunc func(cmdPath string) Agent
+		helpOutput string
+		jsonOutput string
+		flag       string
+		value      string
+	}{
+		{
+			name:       "codex",
+			createFunc: func(p string) Agent { return NewCodexAgent(p).WithModel("o3") },
+			helpOutput: "--full-auto",
+			jsonOutput: `{"type": "item.completed", "item": {"type": "agent_message", "text": "review result"}}`,
+			flag:       "-m",
+			value:      "o3",
+		},
+		{
+			name:       "claude",
+			createFunc: func(p string) Agent { return NewClaudeAgent(p).WithModel("opus") },
+			helpOutput: "", // Non-agentic mode doesn't check help
+			jsonOutput: `{"type": "result", "result": "review result"}`,
+			flag:       "--model",
+			value:      "opus",
+		},
+		{
+			name:       "gemini",
+			createFunc: func(p string) Agent { return NewGeminiAgent(p).WithModel("gemini-1.5-pro") },
+			helpOutput: "",
+			jsonOutput: `{"type": "result", "result": "review result"}`,
+			flag:       "-m",
+			value:      "gemini-1.5-pro",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := MockCLIOpts{
+				HelpOutput:  tt.helpOutput,
+				CaptureArgs: true,
+				StdoutLines: []string{tt.jsonOutput},
+			}
+			mock := mockAgentCLI(t, opts)
+
+			agent := tt.createFunc(mock.CmdPath)
+			_, err := agent.Review(context.Background(), t.TempDir(), "head", "prompt", nil)
+			if err != nil {
+				t.Fatalf("Review failed: %v", err)
+			}
+
+			argsBytes, err := os.ReadFile(mock.ArgsFile)
+			if err != nil {
+				t.Fatalf("read args file: %v", err)
+			}
+			args := string(argsBytes)
+
+			assertArgsContain(t, args, tt.flag, tt.value)
+		})
 	}
 }
 
