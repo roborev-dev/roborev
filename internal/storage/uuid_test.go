@@ -7,6 +7,11 @@ import (
 
 var uuidV4Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
+const (
+	formatIterations = 100
+	uniqueIterations = 10000
+)
+
 func assertUUIDFormat(t *testing.T, uuid string) {
 	t.Helper()
 	if !uuidV4Pattern.MatchString(uuid) {
@@ -26,18 +31,13 @@ func checkUniqueness(t *testing.T, generator func() string, iterations int) {
 	}
 }
 
-func TestGenerateUUID(t *testing.T) {
-	seen := make(map[string]bool, 100)
-	for i := range 100 {
+func TestGenerateUUID_Format(t *testing.T) {
+	for range formatIterations {
 		uuid := GenerateUUID()
 		assertUUIDFormat(t, uuid)
-		if seen[uuid] {
-			t.Fatalf("Collision detected at iteration %d: %s", i, uuid)
-		}
-		seen[uuid] = true
 	}
 }
 
 func TestGenerateUUID_Uniqueness(t *testing.T) {
-	checkUniqueness(t, GenerateUUID, 10000)
+	checkUniqueness(t, GenerateUUID, uniqueIterations)
 }
