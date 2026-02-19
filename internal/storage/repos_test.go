@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -11,7 +12,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo := createRepo(t, db, "/tmp/prompt-test")
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "prompt-test"))
 
 	t.Run("creates job with custom prompt", func(t *testing.T) {
 		customPrompt := "Explain the architecture of this codebase"
@@ -84,7 +85,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/agentic-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "agentic-test"))
 
 		// Enqueue with agentic=true
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
@@ -120,7 +121,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/agentic-default-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "agentic-default-test"))
 
 		// Enqueue with agentic=false
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
@@ -146,7 +147,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/claim-prefix-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "claim-prefix-test"))
 
 		prefix := "## Compact Analysis\n\n---\n\n"
 		mustEnqueuePromptJob(t, db, EnqueueOpts{
@@ -167,7 +168,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/claim-no-prefix-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "claim-no-prefix-test"))
 
 		mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID: repo.ID,
@@ -186,7 +187,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/output-prefix-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "output-prefix-test"))
 
 		outputPrefix := "## Test Analysis\n\n**Files:**\n- file1.go\n- file2.go\n\n---\n\n"
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
@@ -221,7 +222,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/empty-prefix-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "empty-prefix-test"))
 
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID:       repo.ID,
@@ -254,7 +255,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/label-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "label-test"))
 
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID: repo.ID,
@@ -288,7 +289,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/empty-label-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "empty-label-test"))
 
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID: repo.ID,
@@ -306,7 +307,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/run-label-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "run-label-test"))
 
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
 			RepoID: repo.ID,
@@ -325,10 +326,11 @@ func TestRenameRepo(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo := createRepo(t, db, "/tmp/rename-test")
+	initialPath := filepath.Join(t.TempDir(), "rename-test")
+	repo := createRepo(t, db, initialPath)
 
 	t.Run("rename by path", func(t *testing.T) {
-		affected, err := db.RenameRepo("/tmp/rename-test", "new-name")
+		affected, err := db.RenameRepo(initialPath, "new-name")
 		if err != nil {
 			t.Fatalf("RenameRepo failed: %v", err)
 		}
@@ -390,8 +392,8 @@ func TestListRepos(t *testing.T) {
 	})
 
 	// Create repos
-	createRepo(t, db, "/tmp/repo-a")
-	createRepo(t, db, "/tmp/repo-b")
+	createRepo(t, db, filepath.Join(t.TempDir(), "repo-a"))
+	createRepo(t, db, filepath.Join(t.TempDir(), "repo-b"))
 
 	t.Run("lists repos in order", func(t *testing.T) {
 		repos, err := db.ListRepos()
@@ -412,7 +414,7 @@ func TestGetRepoByID(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo := createRepo(t, db, "/tmp/getbyid-test")
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "getbyid-test"))
 
 	t.Run("found", func(t *testing.T) {
 		found, err := db.GetRepoByID(repo.ID)
@@ -442,7 +444,7 @@ func TestGetRepoByName(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo := createRepo(t, db, "/tmp/getbyname-test")
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "getbyname-test"))
 
 	t.Run("found", func(t *testing.T) {
 		found, err := db.GetRepoByName("getbyname-test")
@@ -466,10 +468,11 @@ func TestFindRepo(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo := createRepo(t, db, "/tmp/findrepo-test")
+	initialPath := filepath.Join(t.TempDir(), "findrepo-test")
+	repo := createRepo(t, db, initialPath)
 
 	t.Run("find by path", func(t *testing.T) {
-		found, err := db.FindRepo("/tmp/findrepo-test")
+		found, err := db.FindRepo(initialPath)
 		if err != nil {
 			t.Fatalf("FindRepo by path failed: %v", err)
 		}
@@ -489,7 +492,7 @@ func TestFindRepo(t *testing.T) {
 	})
 
 	t.Run("created_at is populated", func(t *testing.T) {
-		found, err := db.FindRepo("/tmp/findrepo-test")
+		found, err := db.FindRepo(initialPath)
 		if err != nil {
 			t.Fatalf("FindRepo failed: %v", err)
 		}
@@ -511,12 +514,12 @@ func TestFindRepo(t *testing.T) {
 }
 
 func TestGetRepoStats(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, "/tmp/stats-test")
-
 	t.Run("empty repo", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "stats-test"))
+
 		stats, err := db.GetRepoStats(repo.ID)
 		if err != nil {
 			t.Fatalf("GetRepoStats failed: %v", err)
@@ -529,35 +532,40 @@ func TestGetRepoStats(t *testing.T) {
 		}
 	})
 
-	// Add some jobs
-	commit1 := createCommit(t, db, repo.ID, "stats-sha1")
-	job1 := enqueueJob(t, db, repo.ID, commit1.ID, "stats-sha1")
-
-	commit2 := createCommit(t, db, repo.ID, "stats-sha2")
-	job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stats-sha2")
-
-	commit3 := createCommit(t, db, repo.ID, "stats-sha3")
-	job3 := enqueueJob(t, db, repo.ID, commit3.ID, "stats-sha3")
-
-	// Complete job1 with PASS verdict
-	claimJob(t, db, "worker-1")
-	if err := db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!"); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
-	}
-
-	// Complete job2 with FAIL verdict
-	claimJob(t, db, "worker-1")
-	if err := db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: FAIL**\nIssues found."); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
-	}
-
-	// Fail job3
-	claimJob(t, db, "worker-1")
-	if _, err := db.FailJob(job3.ID, "", "agent error"); err != nil {
-		t.Fatalf("FailJob failed: %v", err)
-	}
-
 	t.Run("stats with jobs", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "stats-jobs-test"))
+
+		// Add some jobs
+		commit1 := createCommit(t, db, repo.ID, "stats-sha1")
+		job1 := enqueueJob(t, db, repo.ID, commit1.ID, "stats-sha1")
+
+		commit2 := createCommit(t, db, repo.ID, "stats-sha2")
+		job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stats-sha2")
+
+		commit3 := createCommit(t, db, repo.ID, "stats-sha3")
+		job3 := enqueueJob(t, db, repo.ID, commit3.ID, "stats-sha3")
+
+		// Complete job1 with PASS verdict
+		claimJob(t, db, "worker-1")
+		if err := db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!"); err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
+		// Complete job2 with FAIL verdict
+		claimJob(t, db, "worker-1")
+		if err := db.CompleteJob(job2.ID, "codex", "prompt", "**Verdict: FAIL**\nIssues found."); err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
+		// Fail job3
+		claimJob(t, db, "worker-1")
+		if _, err := db.FailJob(job3.ID, "", "agent error"); err != nil {
+			t.Fatalf("FailJob failed: %v", err)
+		}
+
 		stats, err := db.GetRepoStats(repo.ID)
 		if err != nil {
 			t.Fatalf("GetRepoStats failed: %v", err)
@@ -587,6 +595,19 @@ func TestGetRepoStats(t *testing.T) {
 	})
 
 	t.Run("addressed reviews counted", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "stats-addressed-test"))
+		commit1 := createCommit(t, db, repo.ID, "stats-sha1")
+		job1 := enqueueJob(t, db, repo.ID, commit1.ID, "stats-sha1")
+
+		// Complete job1
+		claimJob(t, db, "worker-1")
+		if err := db.CompleteJob(job1.ID, "codex", "prompt", "**Verdict: PASS**\nLooks good!"); err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+
 		// Mark job1's review as addressed
 		review, err := db.GetReviewByJobID(job1.ID)
 		if err != nil {
@@ -603,12 +624,14 @@ func TestGetRepoStats(t *testing.T) {
 		if stats.AddressedReviews != 1 {
 			t.Errorf("Expected 1 addressed review, got %d", stats.AddressedReviews)
 		}
-		if stats.UnaddressedReviews != 1 {
-			t.Errorf("Expected 1 unaddressed review, got %d", stats.UnaddressedReviews)
+		if stats.UnaddressedReviews != 0 {
+			t.Errorf("Expected 0 unaddressed review, got %d", stats.UnaddressedReviews)
 		}
 	})
 
 	t.Run("nonexistent repo", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
 		_, err := db.GetRepoStats(99999)
 		if err == nil {
 			t.Error("Expected error for nonexistent repo ID")
@@ -619,7 +642,7 @@ func TestGetRepoStats(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/stats-prompt-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "stats-prompt-test"))
 
 		// Create a regular job with PASS verdict
 		commit := createCommit(t, db, repo.ID, "stats-prompt-sha1")
@@ -662,7 +685,7 @@ func TestDeleteRepo(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/delete-empty")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "delete-empty"))
 
 		err := db.DeleteRepo(repo.ID, false)
 		if err != nil {
@@ -680,7 +703,7 @@ func TestDeleteRepo(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/delete-with-jobs")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "delete-with-jobs"))
 		commit := createCommit(t, db, repo.ID, "delete-sha")
 		enqueueJob(t, db, repo.ID, commit.ID, "delete-sha")
 
@@ -704,7 +727,7 @@ func TestDeleteRepo(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/delete-cascade")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "delete-cascade"))
 		commit := createCommit(t, db, repo.ID, "cascade-sha")
 		job := enqueueJob(t, db, repo.ID, commit.ID, "cascade-sha")
 		claimJob(t, db, "worker-1")
@@ -752,8 +775,8 @@ func TestMergeRepos(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		source := createRepo(t, db, "/tmp/merge-source")
-		target := createRepo(t, db, "/tmp/merge-target")
+		source := createRepo(t, db, filepath.Join(t.TempDir(), "merge-source"))
+		target := createRepo(t, db, filepath.Join(t.TempDir(), "merge-target"))
 
 		// Create jobs in source
 		commit1 := createCommit(t, db, source.ID, "merge-sha1")
@@ -790,7 +813,7 @@ func TestMergeRepos(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/merge-same")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "merge-same"))
 
 		moved, err := db.MergeRepos(repo.ID, repo.ID)
 		if err != nil {
@@ -811,8 +834,8 @@ func TestMergeRepos(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		source := createRepo(t, db, "/tmp/merge-empty-source")
-		target := createRepo(t, db, "/tmp/merge-empty-target")
+		source := createRepo(t, db, filepath.Join(t.TempDir(), "merge-empty-source"))
+		target := createRepo(t, db, filepath.Join(t.TempDir(), "merge-empty-target"))
 
 		moved, err := db.MergeRepos(source.ID, target.ID)
 		if err != nil {
@@ -833,8 +856,8 @@ func TestMergeRepos(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		source := createRepo(t, db, "/tmp/merge-commits-source")
-		target := createRepo(t, db, "/tmp/merge-commits-target")
+		source := createRepo(t, db, filepath.Join(t.TempDir(), "merge-commits-source"))
+		target := createRepo(t, db, filepath.Join(t.TempDir(), "merge-commits-target"))
 
 		// Create commits in source
 		commit1 := createCommit(t, db, source.ID, "commit-sha-1")
@@ -874,7 +897,7 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo := createRepo(t, db, "/tmp/delete-commits-test")
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "delete-commits-test"))
 	commit1 := createCommit(t, db, repo.ID, "del-commit-1")
 	commit2 := createCommit(t, db, repo.ID, "del-commit-2")
 	enqueueJob(t, db, repo.ID, commit1.ID, "del-commit-1")
@@ -904,7 +927,7 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo := createRepo(t, db, "/tmp/delete-legacy-resp-test")
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "delete-legacy-resp-test"))
 	commit := createCommit(t, db, repo.ID, "legacy-resp-commit")
 
 	// Add legacy commit-based comment (not job-based)
@@ -938,7 +961,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/verdict-prompt-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "verdict-prompt-test"))
 
 		// Create a prompt job and complete it with output containing verdict-like text
 		promptJob := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
@@ -969,7 +992,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/verdict-regular-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "verdict-regular-test"))
 		commit := createCommit(t, db, repo.ID, "verdict-sha")
 
 		// Create a regular job and complete it
@@ -1003,7 +1026,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/verdict-branch-prompt")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "verdict-branch-prompt"))
 		// Create a commit for a branch literally named "prompt"
 		commit := createCommit(t, db, repo.ID, "branch-prompt-sha")
 
@@ -1048,7 +1071,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/retry-review-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "retry-review-test"))
 		commit := createCommit(t, db, repo.ID, "retry-sha1")
 
 		// 1. Enqueue a review job (no prompt, JobType=review)
@@ -1101,7 +1124,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/retry-task-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "retry-task-test"))
 
 		// 1. Enqueue a task job with a prompt
 		taskPrompt := "Analyze the codebase architecture"
@@ -1149,7 +1172,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/retry-compact-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "retry-compact-test"))
 
 		// Enqueue a compact job (explicit JobType)
 		compactPrompt := "Verify these findings are still relevant..."
@@ -1191,7 +1214,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/retry-dirty-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "retry-dirty-test"))
 
 		// Enqueue a dirty job
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
@@ -1228,7 +1251,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
 
-		repo := createRepo(t, db, "/tmp/retry-range-test")
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "retry-range-test"))
 
 		// Enqueue a range job
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
