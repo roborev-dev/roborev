@@ -42,10 +42,6 @@ func TestMarkdownCacheBehavior(t *testing.T) {
 	baseWidth := 80
 	baseID := int64(1)
 
-	c := &markdownCache{}
-	// Prime cache
-	lines1 := c.getReviewLines(baseText, baseWidth, baseWidth, baseID)
-
 	tests := []struct {
 		name      string
 		text      string
@@ -61,15 +57,33 @@ func TestMarkdownCacheBehavior(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := &markdownCache{}
+			// Prime cache
+			lines1 := c.getReviewLines(baseText, baseWidth, baseWidth, baseID)
+
 			lines2 := c.getReviewLines(tt.text, tt.width, tt.width, int64(tt.id))
 			// Check if the underlying array is the same
+			if len(lines1) == 0 || len(lines2) == 0 {
+				t.Fatal("Unexpected empty lines from render")
+			}
 			isSameObject := &lines1[0] == &lines2[0]
 
-			if tt.expectHit && !isSameObject {
-				t.Error("Expected cache hit (same slice pointer)")
+			if tt.expectHit {
+				if !isSameObject {
+					t.Error("Expected cache hit (same slice pointer)")
+				}
+			} else {
+				if isSameObject {
+					t.Error("Expected cache miss (different slice pointer)")
+				}
 			}
-			if !tt.expectHit && isSameObject {
-				t.Error("Expected cache miss (different slice pointer)")
+
+			// Additional check for content correctness on text change
+			if tt.name == "DiffText" {
+				// Content should definitely differ
+				if len(lines1) == len(lines2) && lines1[0] == lines2[0] {
+					t.Error("Expected content to change when input text changes")
+				}
 			}
 		})
 	}
