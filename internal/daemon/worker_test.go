@@ -291,16 +291,20 @@ func TestIsQuotaError(t *testing.T) {
 	}{
 		{"quota exceeded for model", true},
 		{"QUOTA_EXCEEDED: limit reached", true},
+		{"quota exhausted, reset after 8h", true},
+		{"QUOTA_EXHAUSTED: try later", true},
+		{"insufficient_quota: limit reached", true},
 		{"Rate limit reached", true},
 		{"rate_limit_error: too fast", true},
 		{"You have exhausted your capacity", true},
 		{"Too Many Requests (429)", true},
-		{"HTTP 429: slow down", true},
 		{"RESOURCE EXHAUSTED: try later", true},
 		{"connection reset by peer", false},
 		{"timeout after 30s", false},
 		{"agent not found", false},
 		{"disk quota full", false},
+		{"error code 1429", false},
+		{"timeout after 429ms", false},
 		{"", false},
 	}
 	for _, tt := range tests {
@@ -449,6 +453,30 @@ func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Error("no broadcast event received")
+	}
+}
+
+func TestFailOrRetryInner_QuotaExhaustedVariant(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, "test-worker")
+
+	// "quota exhausted" (not "quota exceeded") must also trigger quota-skip
+	tc.Pool.failOrRetryInner("test-worker", job, "gemini", "quota exhausted, reset after 2h", true)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if updated.Status != storage.JobStatusFailed {
+		t.Errorf("status=%q, want failed", updated.Status)
+	}
+	if !strings.HasPrefix(updated.Error, quotaErrorPrefix) {
+		t.Errorf("error=%q, want prefix %q", updated.Error, quotaErrorPrefix)
+	}
+	retryCount, _ := tc.DB.GetJobRetryCount(job.ID)
+	if retryCount != 0 {
+		t.Errorf("retry_count=%d, want 0", retryCount)
 	}
 }
 

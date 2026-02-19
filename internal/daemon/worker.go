@@ -579,9 +579,11 @@ func isQuotaError(errMsg string) bool {
 		"rate_limit",
 		"quota exceeded",
 		"quota_exceeded",
+		"quota exhausted",
+		"quota_exhausted",
+		"insufficient_quota",
 		"exhausted your capacity",
 		"too many requests",
-		"429",
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
