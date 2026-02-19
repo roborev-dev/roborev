@@ -700,6 +700,7 @@ func daemonRunCmd() *cobra.Command {
 				// SIGTERM is not available on Windows
 				signal.Notify(sigCh, os.Signal(syscall.Signal(15))) // SIGTERM
 			}
+			defer signal.Stop(sigCh)
 
 			go func() {
 				select {

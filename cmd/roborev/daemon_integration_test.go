@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -126,4 +129,86 @@ func waitFor(t *testing.T, timeout time.Duration, check func() bool) bool {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false
+}
+
+func TestDaemonShutdownBySignal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping signal test on Windows")
+	}
+
+	// 1. Build a test binary
+	tmpDir := t.TempDir()
+	binPath := filepath.Join(tmpDir, "roborev-test")
+	// Use "." since we are in cmd/roborev package
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build test binary: %v\n%s", err, out)
+	}
+
+	// 2. Setup config/db paths
+	dbPath := filepath.Join(tmpDir, "test.db")
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(`max_workers = 1`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// 3. Start daemon in subprocess
+	// Use a different port (27373) to avoid conflicts
+	cmd := exec.Command(binPath, "daemon", "run",
+		"--db", dbPath,
+		"--config", configPath,
+		"--addr", "127.0.0.1:27373",
+	)
+	// Important: Set ROBOREV_DATA_DIR so it writes runtime file to our tmpDir
+	cmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+tmpDir)
+
+	// Capture output for debugging
+	outputBuffer := new(bytes.Buffer)
+	cmd.Stdout = outputBuffer
+	cmd.Stderr = outputBuffer
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start daemon: %v", err)
+	}
+
+	// Ensure cleanup in case of failure
+	defer func() {
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			_ = cmd.Process.Kill()
+		}
+	}()
+
+	// 4. Wait for daemon to be ready
+	// The daemon writes daemon.<pid>.json
+	daemonJSON := filepath.Join(tmpDir, fmt.Sprintf("daemon.%d.json", cmd.Process.Pid))
+	if !waitFor(t, 5*time.Second, func() bool {
+		_, err := os.Stat(daemonJSON)
+		return err == nil
+	}) {
+		t.Fatalf("timed out waiting for daemon to start (%s not found). Output:\n%s", daemonJSON, outputBuffer.String())
+	}
+
+	// 5. Send SIGINT
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("failed to send SIGINT: %v", err)
+	}
+
+	// 6. Wait for exit
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			// Check if it's an exit status error. Ideally exit code 0.
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				t.Fatalf("daemon exited with non-zero status: %v (code %d)", err, exitErr.ExitCode())
+			}
+			t.Fatalf("daemon wait returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for daemon to exit after SIGINT")
+	}
 }
