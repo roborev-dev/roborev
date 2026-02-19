@@ -420,4 +420,94 @@ func TestWaitForPromptJob(t *testing.T) {
 			t.Errorf("Expected at least 3 polls, got: %d", pollCount)
 		}
 	})
+
+	t.Run("retries on unknown status", func(t *testing.T) {
+		pollCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				pollCount++
+				status := storage.JobStatus("unknown_status")
+				if pollCount >= 3 {
+					status = storage.JobStatusDone
+				}
+				writeJSON(w, map[string][]storage.ReviewJob{
+					"jobs": {{ID: 123, Status: status}},
+				})
+			case "/api/review":
+				writeJSON(w, stubReview(123, "test-agent", "Final result"))
+			}
+		}))
+		t.Cleanup(server.Close)
+
+		cmd, _ := newTestCmd(t)
+		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+
+		if pollCount < 3 {
+			t.Errorf("Expected at least 3 polls, got: %d", pollCount)
+		}
+	})
+
+	t.Run("fails after max unknown retries", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				writeJSON(w, map[string][]storage.ReviewJob{
+					"jobs": {{ID: 123, Status: "unknown_status"}},
+				})
+			}
+		}))
+		t.Cleanup(server.Close)
+
+		cmd, _ := newTestCmd(t)
+		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
+
+		if err == nil {
+			t.Error("Expected error for max unknown retries")
+		}
+		if !strings.Contains(err.Error(), "giving up") {
+			t.Errorf("Expected 'giving up' error, got: %v", err)
+		}
+	})
+
+	t.Run("resets unknown counter on known status", func(t *testing.T) {
+		pollCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				pollCount++
+				status := storage.JobStatus("unknown_status")
+				// 1..5: unknown (count=5)
+				// 6: running (count resets to 0)
+				// 7..12: unknown (count=6)
+				// 13: done
+				if pollCount == 6 {
+					status = storage.JobStatusRunning
+				} else if pollCount >= 13 {
+					status = storage.JobStatusDone
+				}
+				writeJSON(w, map[string][]storage.ReviewJob{
+					"jobs": {{ID: 123, Status: status}},
+				})
+			case "/api/review":
+				writeJSON(w, stubReview(123, "test-agent", "Final result"))
+			}
+		}))
+		t.Cleanup(server.Close)
+
+		cmd, _ := newTestCmd(t)
+		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+
+		if pollCount < 13 {
+			t.Errorf("Expected at least 13 polls, got: %d", pollCount)
+		}
+	})
 }

@@ -193,6 +193,10 @@ var promptPollInterval = 500 * time.Millisecond
 func waitForPromptJob(cmd *cobra.Command, serverAddr string, jobID int64, quiet bool, pollInterval time.Duration) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 
+	if pollInterval <= 0 {
+		pollInterval = promptPollInterval
+	}
+
 	if !quiet {
 		cmd.Printf("Waiting for task to complete...")
 	}
