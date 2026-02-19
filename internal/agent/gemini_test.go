@@ -52,6 +52,7 @@ func TestGeminiBuildArgs(t *testing.T) {
 			},
 			unwantedArgs: []string{
 				"--yolo",
+				"Edit", "Write", "Bash", "Shell",
 			},
 		},
 		{
@@ -79,11 +80,22 @@ func TestGeminiBuildArgs(t *testing.T) {
 
 			// Check flag-value pairs by exact next token
 			for flag, val := range tc.wantArgPairs {
-				idx := slices.Index(args, flag)
-				if idx == -1 {
-					t.Errorf("missing flag %q in args %v", flag, args)
+				// Assert the flag appears exactly once
+				count := 0
+				for _, a := range args {
+					if a == flag {
+						count++
+					}
+				}
+				if count != 1 {
+					t.Errorf(
+						"flag %q appears %d times, want exactly 1 in args %v",
+						flag, count, args,
+					)
 					continue
 				}
+
+				idx := slices.Index(args, flag)
 				if idx+1 >= len(args) {
 					t.Errorf("flag %q is last arg, expected value %q", flag, val)
 					continue
