@@ -95,17 +95,17 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 				return
 			}
 		}
-		if r.URL.Path == "/api/review" && hooks.OnReview != nil {
+		if r.URL.Path == "/api/review" && r.Method == "GET" && hooks.OnReview != nil {
 			if hooks.OnReview(w, r, state) {
 				return
 			}
 		}
-		if r.URL.Path == "/api/comments" && hooks.OnComments != nil {
+		if r.URL.Path == "/api/comments" && r.Method == "GET" && hooks.OnComments != nil {
 			if hooks.OnComments(w, r, state) {
 				return
 			}
 		}
-		if r.URL.Path == "/api/status" && hooks.OnStatus != nil {
+		if r.URL.Path == "/api/status" && r.Method == "GET" && hooks.OnStatus != nil {
 			if hooks.OnStatus(w, r, state) {
 				return
 			}
