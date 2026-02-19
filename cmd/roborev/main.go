@@ -44,6 +44,17 @@ var (
 	// Polling intervals for waitForJob - exposed for testing
 	pollStartInterval = 1 * time.Second
 	pollMaxInterval   = 5 * time.Second
+
+	// setupSignalHandler allows tests to mock signal handling
+	setupSignalHandler = func() (chan os.Signal, func()) {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt)
+		if runtime.GOOS != "windows" {
+			// SIGTERM is not available on Windows
+			signal.Notify(sigCh, os.Signal(syscall.Signal(15))) // SIGTERM
+		}
+		return sigCh, func() { signal.Stop(sigCh) }
+	}
 )
 
 func main() {
@@ -694,13 +705,8 @@ func daemonRunCmd() *cobra.Command {
 			}
 
 			// Handle shutdown signals
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, os.Interrupt)
-			if runtime.GOOS != "windows" {
-				// SIGTERM is not available on Windows
-				signal.Notify(sigCh, os.Signal(syscall.Signal(15))) // SIGTERM
-			}
-			defer signal.Stop(sigCh)
+			sigCh, stopSignals := setupSignalHandler()
+			defer stopSignals()
 
 			go func() {
 				select {

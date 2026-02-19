@@ -21,6 +21,18 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 		t.Skip("skipping daemon integration test on Windows due to file locking differences")
 	}
 
+	// Mock setupSignalHandler to verify cleanup
+	var cleanupCalled bool
+	origSetupSignalHandler := setupSignalHandler
+	setupSignalHandler = func() (chan os.Signal, func()) {
+		// Return a dummy channel that will never fire signals
+		sigCh := make(chan os.Signal, 1)
+		return sigCh, func() {
+			cleanupCalled = true
+		}
+	}
+	defer func() { setupSignalHandler = origSetupSignalHandler }()
+
 	dbPath, configPath := setupTestDaemon(t)
 
 	// Create context for cancellation
@@ -95,6 +107,9 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	select {
 	case <-errCh:
 		// Daemon exited - good
+		if !cleanupCalled {
+			t.Error("expected signal.Stop (cleanup) to be called")
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("daemon did not exit within 10 second timeout")
 	}
@@ -172,9 +187,11 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	}
 
 	// Ensure cleanup in case of failure
+	var waited bool
 	defer func() {
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		if !waited && (cmd.ProcessState == nil || !cmd.ProcessState.Exited()) {
 			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
 		}
 	}()
 
@@ -185,6 +202,10 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 		_, err := os.Stat(daemonJSON)
 		return err == nil
 	}) {
+		// Kill process to ensure output buffer is finalized
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		waited = true
 		t.Fatalf("timed out waiting for daemon to start (%s not found). Output:\n%s", daemonJSON, outputBuffer.String())
 	}
 
@@ -201,6 +222,7 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 
 	select {
 	case err := <-done:
+		waited = true
 		if err != nil {
 			// Check if it's an exit status error. Ideally exit code 0.
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -209,6 +231,10 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 			t.Fatalf("daemon wait returned error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
+		// Kill process before reading buffer
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		waited = true
 		t.Fatal("timed out waiting for daemon to exit after SIGINT")
 	}
 }
