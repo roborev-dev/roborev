@@ -296,8 +296,12 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 func createCompletedJob(t *testing.T, db *DB, repoID int64, gitRef, output string) *ReviewJob {
 	t.Helper()
 	job := enqueueJob(t, db, repoID, 0, gitRef)
-	if _, err := db.ClaimJob("test-worker"); err != nil {
+	claimed, err := db.ClaimJob("test-worker")
+	if err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
+	}
+	if claimed.ID != job.ID {
+		t.Fatalf("Claimed job ID %d, expected %d", claimed.ID, job.ID)
 	}
 
 	if err := db.CompleteJob(job.ID, "test-agent", "prompt", output); err != nil {
@@ -308,6 +312,9 @@ func createCompletedJob(t *testing.T, db *DB, repoID int64, gitRef, output strin
 	updatedJob, err := db.GetJobByID(job.ID)
 	if err != nil {
 		t.Fatalf("GetJobByID failed: %v", err)
+	}
+	if updatedJob.Status != JobStatusDone {
+		t.Fatalf("Expected job status %s, got %s", JobStatusDone, updatedJob.Status)
 	}
 	return updatedJob
 }
