@@ -474,13 +474,18 @@ func TestWaitForPromptJob(t *testing.T) {
 	})
 
 	t.Run("falls back to default interval when pollInterval is zero", func(t *testing.T) {
-		pollCount := 0
+		// Override the fallback interval to a known value
+		origInterval := promptPollInterval
+		promptPollInterval = 5 * time.Millisecond
+		t.Cleanup(func() { promptPollInterval = origInterval })
+
+		var pollTimes []time.Time
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/jobs":
-				pollCount++
+				pollTimes = append(pollTimes, time.Now())
 				status := storage.JobStatusRunning
-				if pollCount >= 2 {
+				if len(pollTimes) >= 3 {
 					status = storage.JobStatusDone
 				}
 				writeJSON(w, map[string][]storage.ReviewJob{
@@ -496,21 +501,37 @@ func TestWaitForPromptJob(t *testing.T) {
 		err := waitForPromptJob(cmd, server.URL, 123, true, 0)
 
 		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
+			t.Fatalf("Expected no error, got: %v", err)
 		}
-		if pollCount < 2 {
-			t.Errorf("Expected at least 2 polls, got: %d", pollCount)
+		if len(pollTimes) < 3 {
+			t.Fatalf("Expected at least 3 polls, got: %d", len(pollTimes))
+		}
+		// Verify polls are spaced by at least 3ms (fallback is 5ms;
+		// allow slack for scheduling jitter but reject busy-polling)
+		for i := 1; i < len(pollTimes); i++ {
+			gap := pollTimes[i].Sub(pollTimes[i-1])
+			if gap < 3*time.Millisecond {
+				t.Errorf(
+					"Poll gap %d→%d was %v, expected ≥3ms (fallback interval)",
+					i-1, i, gap,
+				)
+			}
 		}
 	})
 
 	t.Run("falls back to default interval when pollInterval is negative", func(t *testing.T) {
-		pollCount := 0
+		// Override the fallback interval to a known value
+		origInterval := promptPollInterval
+		promptPollInterval = 5 * time.Millisecond
+		t.Cleanup(func() { promptPollInterval = origInterval })
+
+		var pollTimes []time.Time
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/jobs":
-				pollCount++
+				pollTimes = append(pollTimes, time.Now())
 				status := storage.JobStatusRunning
-				if pollCount >= 2 {
+				if len(pollTimes) >= 3 {
 					status = storage.JobStatusDone
 				}
 				writeJSON(w, map[string][]storage.ReviewJob{
@@ -526,10 +547,21 @@ func TestWaitForPromptJob(t *testing.T) {
 		err := waitForPromptJob(cmd, server.URL, 123, true, -1*time.Millisecond)
 
 		if err != nil {
-			t.Errorf("Expected no error, got: %v", err)
+			t.Fatalf("Expected no error, got: %v", err)
 		}
-		if pollCount < 2 {
-			t.Errorf("Expected at least 2 polls, got: %d", pollCount)
+		if len(pollTimes) < 3 {
+			t.Fatalf("Expected at least 3 polls, got: %d", len(pollTimes))
+		}
+		// Verify polls are spaced by at least 3ms (fallback is 5ms;
+		// allow slack for scheduling jitter but reject busy-polling)
+		for i := 1; i < len(pollTimes); i++ {
+			gap := pollTimes[i].Sub(pollTimes[i-1])
+			if gap < 3*time.Millisecond {
+				t.Errorf(
+					"Poll gap %d→%d was %v, expected ≥3ms (fallback interval)",
+					i-1, i, gap,
+				)
+			}
 		}
 	})
 
