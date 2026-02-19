@@ -67,11 +67,11 @@ func (r *GitTestRepo) CommitFile(name, content, msg string) string {
 
 // MockDaemon encapsulates a mock daemon server and its state.
 type MockDaemon struct {
-	Server        *httptest.Server
-	State         *mockRefineState
-	hooks         MockRefineHooks
-	cleanup       func()
-	t             *testing.T
+	Server         *httptest.Server
+	State          *mockRefineState
+	hooks          MockRefineHooks
+	cleanup        func()
+	t              *testing.T
 	origServerAddr string
 	origDataDir    string
 }
@@ -80,33 +80,51 @@ type MockDaemon struct {
 func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 	t.Helper()
 	state := newMockRefineState()
-	
+
 	// Create handler
 	baseHandler := createMockRefineHandler(state)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Handle hook overrides
-		if r.URL.Path == "/api/jobs" && r.Method == "GET" && hooks.OnGetJobs != nil {
-			if hooks.OnGetJobs(w, r, state) {
+		// Enforce correct methods and dispatch hooks for known paths.
+		// Wrong methods return 405 to match production daemon behavior.
+		switch r.URL.Path {
+		case "/api/jobs":
+			if r.Method != http.MethodGet {
+				mockMethodNotAllowed(w)
 				return
 			}
-		}
-		if r.URL.Path == "/api/enqueue" && r.Method == "POST" && hooks.OnEnqueue != nil {
-			if hooks.OnEnqueue(w, r, state) {
+			if hooks.OnGetJobs != nil && hooks.OnGetJobs(w, r, state) {
 				return
 			}
-		}
-		if r.URL.Path == "/api/review" && r.Method == "GET" && hooks.OnReview != nil {
-			if hooks.OnReview(w, r, state) {
+		case "/api/enqueue":
+			if r.Method != http.MethodPost {
+				mockMethodNotAllowed(w)
 				return
 			}
-		}
-		if r.URL.Path == "/api/comments" && r.Method == "GET" && hooks.OnComments != nil {
-			if hooks.OnComments(w, r, state) {
+			if hooks.OnEnqueue != nil && hooks.OnEnqueue(w, r, state) {
 				return
 			}
-		}
-		if r.URL.Path == "/api/status" && r.Method == "GET" && hooks.OnStatus != nil {
-			if hooks.OnStatus(w, r, state) {
+		case "/api/review":
+			if r.Method != http.MethodGet {
+				mockMethodNotAllowed(w)
+				return
+			}
+			if hooks.OnReview != nil && hooks.OnReview(w, r, state) {
+				return
+			}
+		case "/api/comments":
+			if r.Method != http.MethodGet {
+				mockMethodNotAllowed(w)
+				return
+			}
+			if hooks.OnComments != nil && hooks.OnComments(w, r, state) {
+				return
+			}
+		case "/api/status":
+			if r.Method != http.MethodGet {
+				mockMethodNotAllowed(w)
+				return
+			}
+			if hooks.OnStatus != nil && hooks.OnStatus(w, r, state) {
 				return
 			}
 		}
@@ -118,7 +136,7 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 			})
 			return
 		}
-		
+
 		baseHandler.ServeHTTP(w, r)
 	})
 
@@ -194,11 +212,11 @@ func (f *functionalMockAgent) CommandLine() string                              
 
 // MockRefineHooks allows overriding specific endpoints in the mock refine handler.
 type MockRefineHooks struct {
-	OnGetJobs   func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool // Return true if handled
-	OnEnqueue   func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnReview    func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnComments  func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnStatus    func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnGetJobs  func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool // Return true if handled
+	OnEnqueue  func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnReview   func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnComments func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnStatus   func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 }
 
 // mockRefineState tracks state for simulating the full refine loop
@@ -226,16 +244,33 @@ func newMockRefineState() *mockRefineState {
 	}
 }
 
+// mockMethodNotAllowed writes a 405 JSON error matching daemon behavior.
+func mockMethodNotAllowed(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": "method not allowed",
+	})
+}
+
 // createMockRefineHandler creates an HTTP handler that simulates daemon behavior
 func createMockRefineHandler(state *mockRefineState) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/status":
+		switch r.URL.Path {
+		case "/api/status":
+			if r.Method != http.MethodGet {
+				mockMethodNotAllowed(w)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"version": version.Version,
 			})
 
-		case r.URL.Path == "/api/review" && r.Method == "GET":
+		case "/api/review":
+			if r.Method != http.MethodGet {
+				mockMethodNotAllowed(w)
+				return
+			}
 			sha := r.URL.Query().Get("sha")
 			jobIDStr := r.URL.Query().Get("job_id")
 
@@ -267,7 +302,11 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			}
 			_ = json.NewEncoder(w).Encode(reviewCopy)
 
-		case r.URL.Path == "/api/comments" && r.Method == "GET":
+		case "/api/comments":
+			if r.Method != http.MethodGet {
+				mockMethodNotAllowed(w)
+				return
+			}
 			jobIDStr := r.URL.Query().Get("job_id")
 			var jobID int64
 			_, _ = fmt.Sscanf(jobIDStr, "%d", &jobID)
@@ -281,7 +320,11 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 				"responses": responses,
 			})
 
-		case r.URL.Path == "/api/comment" && r.Method == "POST":
+		case "/api/comment":
+			if r.Method != http.MethodPost {
+				mockMethodNotAllowed(w)
+				return
+			}
 			var req struct {
 				JobID     int64  `json:"job_id"`
 				Responder string `json:"responder"`
@@ -307,7 +350,11 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(resp)
 
-		case r.URL.Path == "/api/review/address" && r.Method == "POST":
+		case "/api/review/address":
+			if r.Method != http.MethodPost {
+				mockMethodNotAllowed(w)
+				return
+			}
 			var req struct {
 				ReviewID  int64 `json:"review_id"`
 				Addressed bool  `json:"addressed"`
@@ -327,7 +374,11 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			state.mu.Unlock()
 			w.WriteHeader(http.StatusOK)
 
-		case r.URL.Path == "/api/enqueue" && r.Method == "POST":
+		case "/api/enqueue":
+			if r.Method != http.MethodPost {
+				mockMethodNotAllowed(w)
+				return
+			}
 			var req struct {
 				RepoPath string `json:"repo_path"`
 				GitRef   string `json:"git_ref"`
@@ -350,7 +401,11 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(job)
 
-		case r.URL.Path == "/api/jobs" && r.Method == "GET":
+		case "/api/jobs":
+			if r.Method != http.MethodGet {
+				mockMethodNotAllowed(w)
+				return
+			}
 			state.mu.Lock()
 			var jobs []storage.ReviewJob
 			for _, job := range state.jobs {

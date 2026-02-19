@@ -82,7 +82,6 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 	return s
 }
 
-
 // stubReview creates a storage.Review with common defaults.
 var nextStubReviewID atomic.Int64
 

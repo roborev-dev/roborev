@@ -739,5 +739,3 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 		t.Errorf("expected no log output when no hooks match, got %q", buf.String())
 	}
 }
-
-

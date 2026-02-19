@@ -415,7 +415,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 	t.Run("finds and processes unaddressed jobs", func(t *testing.T) {
 		var reviewCalls, addressCalls atomic.Int32
 		var unaddressedCalls atomic.Int32
-		
+
 		_, cleanup := newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
@@ -714,8 +714,6 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 		t.Errorf("expected 3 queries, got %d", queryCount.Load())
 	}
 }
-
-
 
 // fakeAgent implements agent.Agent for testing fixJobDirect.
 type fakeAgent struct {
@@ -1101,7 +1099,7 @@ func TestRunFixList(t *testing.T) {
 	t.Run("lists unaddressed jobs with details", func(t *testing.T) {
 		finishedAt := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 		verdict := "FAIL"
-		
+
 		_, cleanup := newMockDaemonBuilder(t).
 			WithJobs([]storage.ReviewJob{{
 				ID:            42,

@@ -30,8 +30,6 @@ import (
 // Refine Command Tests
 // ============================================================================
 
-
-
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -97,10 +95,6 @@ func setupRefineRepo(t *testing.T) (string, string) {
 
 	return repo.Dir, headSHA
 }
-
-
-
-
 
 func TestEnqueueReviewRefine(t *testing.T) {
 	t.Run("returns job ID on success", func(t *testing.T) {
@@ -268,7 +262,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 
 func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	repoDir, headSHA := setupRefineRepo(t)
-	
+
 	md := NewMockDaemon(t, MockRefineHooks{})
 	defer md.Close()
 
@@ -302,7 +296,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 
 func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	repoDir, headSHA := setupRefineRepo(t)
-	
+
 	md := NewMockDaemon(t, MockRefineHooks{})
 	defer md.Close()
 
@@ -345,7 +339,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 // the refine loop retries in the next iteration without applying any changes.
 func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	repoDir, headSHA := setupRefineRepo(t)
-	
+
 	md := NewMockDaemon(t, MockRefineHooks{})
 	defer md.Close()
 
@@ -453,10 +447,6 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 // ============================================================================
 // Integration Tests for Refine Loop Business Logic
 // ============================================================================
-
-
-
-
 
 func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 	// Test the path where a failed individual review is found
@@ -604,7 +594,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 	t.Run("returns review when job completes successfully", func(t *testing.T) {
 		md := NewMockDaemon(t, MockRefineHooks{})
 		defer md.Close()
-		
+
 		md.State.jobs[42] = &storage.ReviewJob{ID: 42, GitRef: "abc123", Status: storage.JobStatusDone}
 		md.State.reviews["abc123"] = &storage.Review{
 			ID: 1, JobID: 42, Output: "All tests pass. No issues found.", Addressed: false,
@@ -642,8 +632,6 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 		}
 	})
 }
-
-
 
 func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	repoDir, _ := setupRefineRepo(t)

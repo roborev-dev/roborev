@@ -388,7 +388,7 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 		{"No filter, valid selection", 1, nil, 1},
 		{"No filter, no selection", -1, nil, -1},
 		{"Filter active, valid visible selection", 2, []string{"/path/to/repo-a"}, 1}, // index 2 is job ID 3, which is 2nd in filtered list (index 1)
-		{"Filter active, selection hidden", 1, []string{"/path/to/repo-a"}, -1},      // index 1 is job ID 2, not in repo-a
+		{"Filter active, selection hidden", 1, []string{"/path/to/repo-a"}, -1},       // index 1 is job ID 2, not in repo-a
 		{"Filter active, selectedIdx -1", -1, []string{"/path/to/repo-a"}, -1},
 	}
 

@@ -172,17 +172,21 @@ func TestSetConfigValue(t *testing.T) {
 			verify: func(c *Config) bool { return c.AllowUnsafeAgents != nil && *c.AllowUnsafeAgents },
 		},
 		{
-			name:   "set slice",
-			key:    "ci.repos",
-			val:    "org/repo1,org/repo2",
-			verify: func(c *Config) bool { return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2" },
+			name: "set slice",
+			key:  "ci.repos",
+			val:  "org/repo1,org/repo2",
+			verify: func(c *Config) bool {
+				return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2"
+			},
 		},
 		{
-			name:   "set slice from nil",
-			key:    "ci.repos",
-			val:    "org/repo1,org/repo2",
-			init:   func() *Config { return &Config{} },
-			verify: func(c *Config) bool { return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2" },
+			name: "set slice from nil",
+			key:  "ci.repos",
+			val:  "org/repo1,org/repo2",
+			init: func() *Config { return &Config{} },
+			verify: func(c *Config) bool {
+				return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2"
+			},
 		},
 		{
 			name:   "set slice empty",
@@ -772,7 +776,7 @@ func TestFormatMapNaNFloatKeys(t *testing.T) {
 
 func TestCompareKeysNilInterfaces(t *testing.T) {
 	// Direct unit tests for compareKeys nil-interface handling.
-	
+
 	// Two nil interfaces are equal.
 	var i1, i2 any
 	v1 := reflect.ValueOf(&i1).Elem()

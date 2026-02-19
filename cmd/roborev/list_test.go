@@ -29,7 +29,7 @@ func TestListCommand(t *testing.T) {
 		{
 			ID:       2,
 			GitRef:   "def4567890123",
-			RepoName:   "myrepo",
+			RepoName: "myrepo",
 			Agent:    "codex",
 			Status:   storage.JobStatusQueued,
 		},
@@ -136,8 +136,8 @@ func TestListCommand(t *testing.T) {
 				// We want to pass repo.Dir as --repo arg
 				return repo.Dir, repo, []string{"--repo", repo.Dir}
 			},
-			handler:      jobsHandler([]storage.ReviewJob{}, false),
-			wantQuery:    []string{"branch="},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantQuery: []string{"branch="},
 		},
 		{
 			name: "worktree sends main repo path as repo param",

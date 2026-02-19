@@ -22,11 +22,11 @@ func TestReadCompactMetadata(t *testing.T) {
 	setupTestEnv(t)
 
 	tests := []struct {
-		name      string
-		jobID     int64
-		setup     func(jobID int64) error
-		wantIDs   []int64
-		wantErr   bool
+		name    string
+		jobID   int64
+		setup   func(jobID int64) error
+		wantIDs []int64
+		wantErr bool
 	}{
 		{
 			name:  "valid_metadata",

@@ -257,13 +257,13 @@ func TestStreamFormatter_GeminiToolResult_Suppressed(t *testing.T) {
 func TestStreamFormatter_Codex_Scenarios(t *testing.T) {
 	longCmd := "bash -lc " + strings.Repeat("x", 100)
 	tests := []struct {
-		name         string
-		events       []string
-		contains     []string
-		notContains  []string
-		counts       map[string]int
-		empty        bool
-		checkOutput  func(*testing.T, string)
+		name        string
+		events      []string
+		contains    []string
+		notContains []string
+		counts      map[string]int
+		empty       bool
+		checkOutput func(*testing.T, string)
 	}{
 		{
 			name: "Codex Events Lifecycle",

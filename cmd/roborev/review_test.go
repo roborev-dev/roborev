@@ -273,7 +273,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 
 	t.Run("counter resets on known status", func(t *testing.T) {
 		poller := &mockJobPoller{}
-		
+
 		mux := http.NewServeMux()
 		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
@@ -375,7 +375,7 @@ func TestReviewSinceFlag(t *testing.T) {
 		// but setupMockDaemon wrapper handles /api/status.
 		// The original code was returning version on any request.
 		// Let's just pass empty mux, as /api/status is handled by setupMockDaemon wrapper.
-		
+
 		_, cleanup := setupMockDaemon(t, mux)
 		defer cleanup()
 
@@ -668,7 +668,7 @@ func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
 		t.Error("daemon should not be contacted on invalid args")
 		w.WriteHeader(http.StatusOK)
 	})
-	
+
 	_, cleanup := setupMockDaemon(t, mux)
 	defer cleanup()
 

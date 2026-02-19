@@ -214,8 +214,6 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	}
 }
 
-
-
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 	m := newTuiModel("http://localhost")
 

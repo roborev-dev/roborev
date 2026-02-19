@@ -64,7 +64,7 @@ func (g *gitHelper) commitFile(name, content, msg string) {
 func newGitRepo(t *testing.T) *gitHelper {
 	t.Helper()
 	dir := t.TempDir()
-	
+
 	// Resolve symlinks for macOS /var -> /private/var
 	resolvedPath, err := filepath.EvalSymlinks(dir)
 	if err != nil {

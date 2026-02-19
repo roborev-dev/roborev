@@ -241,8 +241,6 @@ func TestCodexParseStreamJSON(t *testing.T) {
 	}
 }
 
-
-
 func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	withUnsafeAgents(t, false)
 

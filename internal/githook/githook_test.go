@@ -500,8 +500,8 @@ func TestInstall(t *testing.T) {
 			expectMissing: []string{"# roborev post-commit hook\n"},
 		},
 		{
-			name:           "upgrade from v2 to v3",
-			hookName:       "post-commit",
+			name:     "upgrade from v2 to v3",
+			hookName: "post-commit",
 			initialContent: "#!/bin/sh\n" +
 				"# roborev post-commit hook v2 - auto-reviews every commit\n" +
 				"ROBOREV=\"/usr/local/bin/roborev\"\n" +

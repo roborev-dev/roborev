@@ -233,8 +233,8 @@ func TestWithModelEmptyPreservesDefault(t *testing.T) {
 		defaultFlag  string
 		defaultModel string
 	}{
-		{"codex", func() Agent { return NewCodexAgent("") }, "-m", ""},                        // No flag expected
-		{"claude", func() Agent { return NewClaudeAgent("") }, "--model", ""},                 // No flag expected
+		{"codex", func() Agent { return NewCodexAgent("") }, "-m", ""},                       // No flag expected
+		{"claude", func() Agent { return NewClaudeAgent("") }, "--model", ""},                // No flag expected
 		{"gemini", func() Agent { return NewGeminiAgent("") }, "-m", "gemini-3-pro-preview"}, // Default flag expected
 		{"copilot", func() Agent { return NewCopilotAgent("") }, "--model", ""},
 		{"opencode", func() Agent { return NewOpenCodeAgent("") }, "--model", ""},

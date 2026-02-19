@@ -188,7 +188,7 @@ func TestExtractChecksum(t *testing.T) {
 			want:      longHash,
 		},
 		{
-			name:      "multiline with target in middle",
+			name: "multiline with target in middle",
 			body: fmt.Sprintf("%s  %s\n%s  %s\n%s  %s",
 				strings.ReplaceAll(longHash, "d", "a"), "roborev_linux_amd64.tar.gz",
 				strings.ReplaceAll(longHash, "d", "b"), "roborev_darwin_arm64.tar.gz",
