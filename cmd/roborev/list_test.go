@@ -62,7 +62,7 @@ func TestListCommand(t *testing.T) {
 		args          []string
 		handler       http.HandlerFunc
 		repoSetup     func(t *testing.T) (string, *TestGitRepo, []string) // returns wd, repo, extraArgs
-		check         func(t *testing.T, output string, query string, repo *TestGitRepo)
+		check         func(t *testing.T, output string, query string, repo *TestGitRepo, wd string)
 		wantOutput    []string
 		notWantOutput []string
 		wantError     string
@@ -79,7 +79,7 @@ func TestListCommand(t *testing.T) {
 			name:    "json output passes through raw response",
 			args:    []string{"--json"},
 			handler: jobsHandler(testJobs, true),
-			check: func(t *testing.T, output string, query string, repo *TestGitRepo) {
+			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
 				var parsed []storage.ReviewJob
 				if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 					t.Fatalf("json output not valid JSON: %v\noutput: %s", err, output)
@@ -150,12 +150,15 @@ func TestListCommand(t *testing.T) {
 				return worktreeDir, repo, nil
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
-			check: func(t *testing.T, output string, query string, repo *TestGitRepo) {
+			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
 				if !strings.Contains(query, url.QueryEscape(repo.Dir)) {
 					t.Errorf("expected main repo path %q in query, got: %s", repo.Dir, query)
 				}
 				if !strings.Contains(query, "branch=wt-branch") {
 					t.Errorf("expected branch=wt-branch in query, got: %s", query)
+				}
+				if strings.Contains(query, url.QueryEscape(wd)) {
+					t.Errorf("expected worktree path %q NOT in query, got: %s", wd, query)
 				}
 			},
 		},
@@ -167,12 +170,15 @@ func TestListCommand(t *testing.T) {
 				worktreeDir := t.TempDir()
 				os.Remove(worktreeDir)
 				repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
-				return repo.Dir, repo, []string{"--repo", worktreeDir}
+				return worktreeDir, repo, []string{"--repo", worktreeDir}
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
-			check: func(t *testing.T, output string, query string, repo *TestGitRepo) {
+			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
 				if !strings.Contains(query, url.QueryEscape(repo.Dir)) {
 					t.Errorf("expected main repo path %q in query, got: %s", repo.Dir, query)
+				}
+				if strings.Contains(query, url.QueryEscape(wd)) {
+					t.Errorf("expected worktree path %q NOT in query, got: %s", wd, query)
 				}
 			},
 		},
@@ -253,7 +259,7 @@ func TestListCommand(t *testing.T) {
 
 			// Custom checks
 			if tt.check != nil {
-				tt.check(t, output, capturedQuery, repo)
+				tt.check(t, output, capturedQuery, repo, wd)
 			}
 		})
 	}
