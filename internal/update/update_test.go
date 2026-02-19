@@ -393,59 +393,71 @@ func TestFindAssets(t *testing.T) {
 	}
 
 	tests := []struct {
-		name             string
-		assets           []Asset
-		assetName        string
-		wantAssetURL     string
-		wantChecksumsURL string
+		name              string
+		assets            []Asset
+		assetName         string
+		wantAssetURL      string
+		wantAssetSize     int64
+		wantChecksumsURL  string
+		wantChecksumsSize int64
 	}{
 		{
-			name:             "find darwin_arm64 (second in list)",
-			assets:           standardAssets,
-			assetName:        "roborev_darwin_arm64.tar.gz",
-			wantAssetURL:     "https://example.com/darwin_arm64",
-			wantChecksumsURL: "https://example.com/checksums",
+			name:              "find darwin_arm64 (second in list)",
+			assets:            standardAssets,
+			assetName:         "roborev_darwin_arm64.tar.gz",
+			wantAssetURL:      "https://example.com/darwin_arm64",
+			wantAssetSize:     2000,
+			wantChecksumsURL:  "https://example.com/checksums",
+			wantChecksumsSize: 500,
 		},
 		{
-			name:             "find linux_amd64 (first in list)",
-			assets:           standardAssets,
-			assetName:        "roborev_linux_amd64.tar.gz",
-			wantAssetURL:     "https://example.com/linux_amd64",
-			wantChecksumsURL: "https://example.com/checksums",
+			name:              "find linux_amd64 (first in list)",
+			assets:            standardAssets,
+			assetName:         "roborev_linux_amd64.tar.gz",
+			wantAssetURL:      "https://example.com/linux_amd64",
+			wantAssetSize:     1000,
+			wantChecksumsURL:  "https://example.com/checksums",
+			wantChecksumsSize: 500,
 		},
 		{
-			name:             "find darwin_amd64 (after checksums)",
-			assets:           standardAssets,
-			assetName:        "roborev_darwin_amd64.tar.gz",
-			wantAssetURL:     "https://example.com/darwin_amd64",
-			wantChecksumsURL: "https://example.com/checksums",
+			name:              "find darwin_amd64 (after checksums)",
+			assets:            standardAssets,
+			assetName:         "roborev_darwin_amd64.tar.gz",
+			wantAssetURL:      "https://example.com/darwin_amd64",
+			wantAssetSize:     3000,
+			wantChecksumsURL:  "https://example.com/checksums",
+			wantChecksumsSize: 500,
 		},
 		{
-			name:             "asset not found",
-			assets:           standardAssets,
-			assetName:        "roborev_freebsd_amd64.tar.gz",
-			wantAssetURL:     "",
-			wantChecksumsURL: "https://example.com/checksums",
+			name:              "asset not found",
+			assets:            standardAssets,
+			assetName:         "roborev_freebsd_amd64.tar.gz",
+			wantAssetURL:      "",
+			wantAssetSize:     0,
+			wantChecksumsURL:  "https://example.com/checksums",
+			wantChecksumsSize: 500,
 		},
 		{
-			name:             "no checksums file",
-			assets:           noChecksumsAssets,
-			assetName:        "roborev_darwin_arm64.tar.gz",
-			wantAssetURL:     "https://example.com/darwin",
-			wantChecksumsURL: "",
+			name:              "no checksums file",
+			assets:            noChecksumsAssets,
+			assetName:         "roborev_darwin_arm64.tar.gz",
+			wantAssetURL:      "https://example.com/darwin",
+			wantAssetSize:     2000,
+			wantChecksumsURL:  "",
+			wantChecksumsSize: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			asset, checksums := findAssets(tt.assets, tt.assetName)
-			checkAsset(t, asset, tt.wantAssetURL)
-			checkAsset(t, checksums, tt.wantChecksumsURL)
+			checkAsset(t, asset, tt.wantAssetURL, tt.wantAssetSize)
+			checkAsset(t, checksums, tt.wantChecksumsURL, tt.wantChecksumsSize)
 		})
 	}
 }
 
-func checkAsset(t *testing.T, got *Asset, wantURL string) {
+func checkAsset(t *testing.T, got *Asset, wantURL string, wantSize int64) {
 	t.Helper()
 	if wantURL == "" {
 		if got != nil {
@@ -458,5 +470,8 @@ func checkAsset(t *testing.T, got *Asset, wantURL string) {
 	}
 	if got.BrowserDownloadURL != wantURL {
 		t.Errorf("got URL %q, want %q", got.BrowserDownloadURL, wantURL)
+	}
+	if got.Size != wantSize {
+		t.Errorf("got Size %d, want %d", got.Size, wantSize)
 	}
 }
