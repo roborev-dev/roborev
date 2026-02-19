@@ -6,18 +6,37 @@ import (
 )
 
 func TestMockExecutableIsolated(t *testing.T) {
-	// Create a mock executable "my-mock-tool"
+	// Find a command that exists before isolation so we can
+	// verify it becomes unreachable afterward. Try several
+	// candidates to handle both Unix and Windows.
+	candidates := []string{"ls", "cat", "echo", "cmd", "whoami"}
+	var baseline string
+	for _, c := range candidates {
+		if _, err := exec.LookPath(c); err == nil {
+			baseline = c
+			break
+		}
+	}
+	if baseline == "" {
+		t.Skip("no baseline command found in PATH; " +
+			"cannot verify isolation")
+	}
+
 	cleanup := MockExecutableIsolated(t, "my-mock-tool", 0)
 	defer cleanup()
 
-	// Verify "my-mock-tool" is found
 	if _, err := exec.LookPath("my-mock-tool"); err != nil {
-		t.Errorf("expected to find my-mock-tool in PATH, got error: %v", err)
+		t.Errorf(
+			"expected to find my-mock-tool in PATH, got: %v",
+			err,
+		)
 	}
 
-	// Verify "ls" (or any common tool) is NOT found
-	// This assumes "ls" is in the original PATH but not in the isolated one.
-	if _, err := exec.LookPath("ls"); err == nil {
-		t.Error("expected NOT to find 'ls' in isolated PATH, but found it")
+	if _, err := exec.LookPath(baseline); err == nil {
+		t.Errorf(
+			"expected %q to be absent from isolated PATH, "+
+				"but it was found",
+			baseline,
+		)
 	}
 }
