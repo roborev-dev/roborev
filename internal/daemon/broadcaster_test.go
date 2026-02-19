@@ -196,9 +196,20 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		{"verdict", "F"},
 	}
 
+	if len(decoded) != len(tests) {
+		t.Errorf("expected %d fields in JSON, got %d", len(tests), len(decoded))
+	}
+
 	for _, tc := range tests {
-		if got := decoded[tc.key]; got != tc.expected {
+		if got, ok := decoded[tc.key]; !ok {
+			t.Errorf("missing expected key: %s", tc.key)
+		} else if got != tc.expected {
 			t.Errorf("expected %s to be %v, got %v", tc.key, tc.expected, got)
 		}
+	}
+
+	// Explicitly check that 'error' is not present
+	if _, ok := decoded["error"]; ok {
+		t.Error("expected 'error' field to be omitted")
 	}
 }
