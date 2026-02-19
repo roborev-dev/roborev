@@ -5,10 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
@@ -179,238 +179,117 @@ func TestLoadRepoConfigMissing(t *testing.T) {
 }
 
 func TestResolveJobTimeout(t *testing.T) {
-	t.Run("default when no config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		timeout := ResolveJobTimeout(tmpDir, nil)
-		if timeout != 30 {
-			t.Errorf("Expected default timeout 30, got %d", timeout)
-		}
-	})
+	tests := []struct {
+		name         string
+		repoConfig   string
+		globalConfig *Config
+		want         int
+	}{
+		{
+			name: "default when no config",
+			want: 30,
+		},
+		{
+			name:         "default when global config has zero",
+			globalConfig: &Config{JobTimeoutMinutes: 0},
+			want:         30,
+		},
+		{
+			name:         "negative global config falls through to default",
+			globalConfig: &Config{JobTimeoutMinutes: -10},
+			want:         30,
+		},
+		{
+			name:         "global config takes precedence over default",
+			globalConfig: &Config{JobTimeoutMinutes: 45},
+			want:         45,
+		},
+		{
+			name:         "repo config takes precedence over global",
+			repoConfig:   `job_timeout_minutes = 15`,
+			globalConfig: &Config{JobTimeoutMinutes: 45},
+			want:         15,
+		},
+		{
+			name:         "repo config zero falls through to global",
+			repoConfig:   `job_timeout_minutes = 0`,
+			globalConfig: &Config{JobTimeoutMinutes: 45},
+			want:         45,
+		},
+		{
+			name:         "repo config negative falls through to global",
+			repoConfig:   `job_timeout_minutes = -5`,
+			globalConfig: &Config{JobTimeoutMinutes: 45},
+			want:         45,
+		},
+		{
+			name:         "repo config without timeout falls through to global",
+			repoConfig:   `agent = "codex"`,
+			globalConfig: &Config{JobTimeoutMinutes: 60},
+			want:         60,
+		},
+		{
+			name:         "malformed repo config falls through to global",
+			repoConfig:   `this is not valid toml {{{`,
+			globalConfig: &Config{JobTimeoutMinutes: 45},
+			want:         45,
+		},
+	}
 
-	t.Run("default when global config has zero", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &Config{JobTimeoutMinutes: 0}
-		timeout := ResolveJobTimeout(tmpDir, cfg)
-		if timeout != 30 {
-			t.Errorf("Expected default timeout 30 when global is 0, got %d", timeout)
-		}
-	})
-
-	t.Run("negative global config falls through to default", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &Config{JobTimeoutMinutes: -10}
-		timeout := ResolveJobTimeout(tmpDir, cfg)
-		if timeout != 30 {
-			t.Errorf("Expected default timeout 30 when global is negative, got %d", timeout)
-		}
-	})
-
-	t.Run("global config takes precedence over default", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &Config{JobTimeoutMinutes: 45}
-		timeout := ResolveJobTimeout(tmpDir, cfg)
-		if timeout != 45 {
-			t.Errorf("Expected timeout 45 from global config, got %d", timeout)
-		}
-	})
-
-	t.Run("repo config takes precedence over global", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `job_timeout_minutes = 15`)
-		cfg := &Config{JobTimeoutMinutes: 45}
-		timeout := ResolveJobTimeout(tmpDir, cfg)
-		if timeout != 15 {
-			t.Errorf("Expected timeout 15 from repo config, got %d", timeout)
-		}
-	})
-
-	t.Run("repo config zero falls through to global", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `job_timeout_minutes = 0`)
-		cfg := &Config{JobTimeoutMinutes: 45}
-		timeout := ResolveJobTimeout(tmpDir, cfg)
-		if timeout != 45 {
-			t.Errorf("Expected timeout 45 from global (repo is 0), got %d", timeout)
-		}
-	})
-
-	t.Run("repo config negative falls through to global", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `job_timeout_minutes = -5`)
-		cfg := &Config{JobTimeoutMinutes: 45}
-		timeout := ResolveJobTimeout(tmpDir, cfg)
-		if timeout != 45 {
-			t.Errorf("Expected timeout 45 from global (repo is negative), got %d", timeout)
-		}
-	})
-
-	t.Run("repo config without timeout falls through to global", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `agent = "codex"`)
-		cfg := &Config{JobTimeoutMinutes: 60}
-		timeout := ResolveJobTimeout(tmpDir, cfg)
-		if timeout != 60 {
-			t.Errorf("Expected timeout 60 from global (repo has no timeout), got %d", timeout)
-		}
-	})
-
-	t.Run("malformed repo config falls through to global", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `this is not valid toml {{{`)
-		cfg := &Config{JobTimeoutMinutes: 45}
-		timeout := ResolveJobTimeout(tmpDir, cfg)
-		if timeout != 45 {
-			t.Errorf("Expected timeout 45 from global (repo config malformed), got %d", timeout)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if tt.repoConfig != "" {
+				writeRepoConfigStr(t, tmpDir, tt.repoConfig)
+			}
+			got := ResolveJobTimeout(tmpDir, tt.globalConfig)
+			if got != tt.want {
+				t.Errorf("ResolveJobTimeout() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
-func TestResolveReviewReasoning(t *testing.T) {
-	t.Run("default when no config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		reasoning, err := ResolveReviewReasoning("", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveReviewReasoning failed: %v", err)
-		}
-		if reasoning != "thorough" {
-			t.Errorf("Expected default 'thorough', got '%s'", reasoning)
-		}
-	})
+func TestResolveReasoning(t *testing.T) {
+	type resolverFunc func(explicit string, dir string) (string, error)
 
-	t.Run("repo config when explicit empty", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `review_reasoning = "standard"`)
-		reasoning, err := ResolveReviewReasoning("", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveReviewReasoning failed: %v", err)
-		}
-		if reasoning != "standard" {
-			t.Errorf("Expected 'standard' from repo config, got '%s'", reasoning)
-		}
-	})
+	runTests := func(t *testing.T, name string, fn resolverFunc, configKey, defaultVal string) {
+		t.Run(name, func(t *testing.T) {
+			tests := []struct {
+				testName   string
+				explicit   string
+				repoConfig string
+				want       string
+				wantErr    bool
+			}{
+				{"default when no config", "", "", defaultVal, false},
+				{"repo config when explicit empty", "", fmt.Sprintf(`%s = "thorough"`, configKey), "thorough", false},
+				{"explicit overrides repo config", "fast", fmt.Sprintf(`%s = "thorough"`, configKey), "fast", false},
+				{"invalid explicit", "unknown", "", "", true},
+				{"invalid repo config", "", fmt.Sprintf(`%s = "invalid"`, configKey), "", true},
+			}
 
-	t.Run("explicit overrides repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `review_reasoning = "standard"`)
-		reasoning, err := ResolveReviewReasoning("FAST", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveReviewReasoning failed: %v", err)
-		}
-		if reasoning != "fast" {
-			t.Errorf("Expected 'fast' from explicit override, got '%s'", reasoning)
-		}
-	})
+			for _, tt := range tests {
+				t.Run(tt.testName, func(t *testing.T) {
+					tmpDir := t.TempDir()
+					if tt.repoConfig != "" {
+						writeRepoConfigStr(t, tmpDir, tt.repoConfig)
+					}
+					got, err := fn(tt.explicit, tmpDir)
+					if (err != nil) != tt.wantErr {
+						t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
+					}
+					if !tt.wantErr && got != tt.want {
+						t.Errorf("got %q, want %q", got, tt.want)
+					}
+				})
+			}
+		})
+	}
 
-	t.Run("invalid explicit", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		_, err := ResolveReviewReasoning("unknown", tmpDir)
-		if err == nil {
-			t.Fatal("Expected error for invalid reasoning")
-		}
-	})
-
-	t.Run("invalid repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `review_reasoning = "invalid"`)
-		_, err := ResolveReviewReasoning("", tmpDir)
-		if err == nil {
-			t.Fatal("Expected error for invalid repo reasoning")
-		}
-	})
-}
-
-func TestResolveRefineReasoning(t *testing.T) {
-	t.Run("default when no config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		reasoning, err := ResolveRefineReasoning("", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveRefineReasoning failed: %v", err)
-		}
-		if reasoning != "standard" {
-			t.Errorf("Expected default 'standard', got '%s'", reasoning)
-		}
-	})
-
-	t.Run("repo config when explicit empty", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `refine_reasoning = "thorough"`)
-		reasoning, err := ResolveRefineReasoning("", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveRefineReasoning failed: %v", err)
-		}
-		if reasoning != "thorough" {
-			t.Errorf("Expected 'thorough' from repo config, got '%s'", reasoning)
-		}
-	})
-
-	t.Run("explicit overrides repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `refine_reasoning = "thorough"`)
-		reasoning, err := ResolveRefineReasoning("standard", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveRefineReasoning failed: %v", err)
-		}
-		if reasoning != "standard" {
-			t.Errorf("Expected 'standard' from explicit override, got '%s'", reasoning)
-		}
-	})
-
-	t.Run("invalid explicit", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		_, err := ResolveRefineReasoning("nope", tmpDir)
-		if err == nil {
-			t.Fatal("Expected error for invalid reasoning")
-		}
-	})
-
-	t.Run("invalid repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `refine_reasoning = "invalid"`)
-		_, err := ResolveRefineReasoning("", tmpDir)
-		if err == nil {
-			t.Fatal("Expected error for invalid repo reasoning")
-		}
-	})
-}
-
-func TestResolveFixReasoning(t *testing.T) {
-	t.Run("default when no config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		reasoning, err := ResolveFixReasoning("", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveFixReasoning failed: %v", err)
-		}
-		if reasoning != "standard" {
-			t.Errorf("Expected default 'standard', got '%s'", reasoning)
-		}
-	})
-
-	t.Run("repo config when explicit empty", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `fix_reasoning = "thorough"`)
-		reasoning, err := ResolveFixReasoning("", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveFixReasoning failed: %v", err)
-		}
-		if reasoning != "thorough" {
-			t.Errorf("Expected 'thorough' from repo config, got '%s'", reasoning)
-		}
-	})
-
-	t.Run("explicit overrides repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `fix_reasoning = "thorough"`)
-		reasoning, err := ResolveFixReasoning("fast", tmpDir)
-		if err != nil {
-			t.Fatalf("ResolveFixReasoning failed: %v", err)
-		}
-		if reasoning != "fast" {
-			t.Errorf("Expected 'fast' from explicit override, got '%s'", reasoning)
-		}
-	})
-
-	t.Run("invalid explicit", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		_, err := ResolveFixReasoning("nope", tmpDir)
-		if err == nil {
-			t.Fatal("Expected error for invalid reasoning")
-		}
-	})
-
-	t.Run("invalid repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `fix_reasoning = "invalid"`)
-		_, err := ResolveFixReasoning("", tmpDir)
-		if err == nil {
-			t.Fatal("Expected error for invalid repo reasoning")
-		}
-	})
+	runTests(t, "Review", ResolveReviewReasoning, "review_reasoning", "thorough")
+	runTests(t, "Refine", ResolveRefineReasoning, "refine_reasoning", "standard")
+	runTests(t, "Fix", ResolveFixReasoning, "fix_reasoning", "standard")
 }
 
 func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
@@ -443,53 +322,81 @@ func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
 }
 
 func TestIsBranchExcluded(t *testing.T) {
-	t.Run("no config file", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		if IsBranchExcluded(tmpDir, "main") {
-			t.Error("Expected branch not excluded when no config file")
-		}
-	})
+	tests := []struct {
+		name       string
+		repoConfig string
+		branch     string
+		want       bool
+	}{
+		{
+			name:   "no config file",
+			branch: "main",
+			want:   false,
+		},
+		{
+			name:       "empty excluded_branches",
+			repoConfig: `agent = "codex"`,
+			branch:     "main",
+			want:       false,
+		},
+		{
+			name:       "branch is excluded (wip)",
+			repoConfig: `excluded_branches = ["wip", "scratch", "test-branch"]`,
+			branch:     "wip",
+			want:       true,
+		},
+		{
+			name:       "branch is excluded (scratch)",
+			repoConfig: `excluded_branches = ["wip", "scratch", "test-branch"]`,
+			branch:     "scratch",
+			want:       true,
+		},
+		{
+			name:       "branch is excluded (test-branch)",
+			repoConfig: `excluded_branches = ["wip", "scratch", "test-branch"]`,
+			branch:     "test-branch",
+			want:       true,
+		},
+		{
+			name:       "branch is not excluded",
+			repoConfig: `excluded_branches = ["wip", "scratch"]`,
+			branch:     "main",
+			want:       false,
+		},
+		{
+			name:       "branch is not excluded (feature/foo)",
+			repoConfig: `excluded_branches = ["wip", "scratch"]`,
+			branch:     "feature/foo",
+			want:       false,
+		},
+		{
+			name:       "exact match required (prefix mismatch)",
+			repoConfig: `excluded_branches = ["wip"]`,
+			branch:     "wip-feature",
+			want:       false,
+		},
+		{
+			name:       "exact match required (suffix mismatch)",
+			repoConfig: `excluded_branches = ["wip"]`,
+			branch:     "my-wip",
+			want:       false,
+		},
+	}
 
-	t.Run("empty excluded_branches", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `agent = "codex"`)
-		if IsBranchExcluded(tmpDir, "main") {
-			t.Error("Expected branch not excluded when excluded_branches not set")
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if tt.repoConfig != "" {
+				writeRepoConfigStr(t, tmpDir, tt.repoConfig)
+			}
+			// For "no config file", we just don't write anything.
 
-	t.Run("branch is excluded", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `excluded_branches = ["wip", "scratch", "test-branch"]`)
-		if !IsBranchExcluded(tmpDir, "wip") {
-			t.Error("Expected 'wip' branch to be excluded")
-		}
-		if !IsBranchExcluded(tmpDir, "scratch") {
-			t.Error("Expected 'scratch' branch to be excluded")
-		}
-		if !IsBranchExcluded(tmpDir, "test-branch") {
-			t.Error("Expected 'test-branch' branch to be excluded")
-		}
-	})
-
-	t.Run("branch is not excluded", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `excluded_branches = ["wip", "scratch"]`)
-		if IsBranchExcluded(tmpDir, "main") {
-			t.Error("Expected 'main' branch not to be excluded")
-		}
-		if IsBranchExcluded(tmpDir, "feature/foo") {
-			t.Error("Expected 'feature/foo' branch not to be excluded")
-		}
-	})
-
-	t.Run("exact match required", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `excluded_branches = ["wip"]`)
-		// Partial matches should not be excluded
-		if IsBranchExcluded(tmpDir, "wip-feature") {
-			t.Error("Expected 'wip-feature' not to be excluded (not exact match)")
-		}
-		if IsBranchExcluded(tmpDir, "my-wip") {
-			t.Error("Expected 'my-wip' not to be excluded (not exact match)")
-		}
-	})
+			got := IsBranchExcluded(tmpDir, tt.branch)
+			if got != tt.want {
+				t.Errorf("IsBranchExcluded(%q) = %v, want %v", tt.branch, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestSyncConfigPostgresURLExpanded(t *testing.T) {
@@ -917,112 +824,96 @@ func TestResolveRepoIdentity(t *testing.T) {
 }
 
 func TestResolveModel(t *testing.T) {
-	t.Run("explicit model takes precedence", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &Config{DefaultModel: "global-model"}
-		model := ResolveModel("explicit-model", tmpDir, cfg)
-		if model != "explicit-model" {
-			t.Errorf("Expected 'explicit-model', got '%s'", model)
-		}
-	})
+	tests := []struct {
+		name         string
+		explicit     string
+		repoConfig   string
+		globalConfig *Config
+		want         string
+	}{
+		{
+			name:         "explicit model takes precedence",
+			explicit:     "explicit-model",
+			globalConfig: &Config{DefaultModel: "global-model"},
+			want:         "explicit-model",
+		},
+		{
+			name:         "explicit with whitespace is trimmed",
+			explicit:     "  explicit-model  ",
+			globalConfig: &Config{DefaultModel: "global-model"},
+			want:         "explicit-model",
+		},
+		{
+			name:         "empty explicit falls back to repo config",
+			explicit:     "",
+			repoConfig:   `model = "repo-model"`,
+			globalConfig: &Config{DefaultModel: "global-model"},
+			want:         "repo-model",
+		},
+		{
+			name:       "repo config with whitespace is trimmed",
+			repoConfig: `model = "  repo-model  "`,
+			want:       "repo-model",
+		},
+		{
+			name:         "no repo config falls back to global config",
+			globalConfig: &Config{DefaultModel: "global-model"},
+			want:         "global-model",
+		},
+		{
+			name:         "global config with whitespace is trimmed",
+			globalConfig: &Config{DefaultModel: "  global-model  "},
+			want:         "global-model",
+		},
+		{
+			name: "no config returns empty",
+			want: "",
+		},
+		{
+			name:         "empty global config returns empty",
+			globalConfig: &Config{DefaultModel: ""},
+			want:         "",
+		},
+		{
+			name:         "whitespace-only explicit falls through to repo config",
+			explicit:     "   ",
+			repoConfig:   `model = "repo-model"`,
+			globalConfig: &Config{DefaultModel: "global-model"},
+			want:         "repo-model",
+		},
+		{
+			name:         "whitespace-only repo config falls through to global",
+			repoConfig:   `model = "   "`,
+			globalConfig: &Config{DefaultModel: "global-model"},
+			want:         "global-model",
+		},
+		{
+			name:         "explicit overrides repo config",
+			explicit:     "explicit-model",
+			repoConfig:   `model = "repo-model"`,
+			globalConfig: &Config{DefaultModel: "global-model"},
+			want:         "explicit-model",
+		},
+		{
+			name:         "malformed repo config falls through to global",
+			repoConfig:   `this is not valid toml {{{`,
+			globalConfig: &Config{DefaultModel: "global-model"},
+			want:         "global-model",
+		},
+	}
 
-	t.Run("explicit with whitespace is trimmed", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &Config{DefaultModel: "global-model"}
-		model := ResolveModel("  explicit-model  ", tmpDir, cfg)
-		if model != "explicit-model" {
-			t.Errorf("Expected 'explicit-model', got '%s'", model)
-		}
-	})
-
-	t.Run("empty explicit falls back to repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `model = "repo-model"`)
-		cfg := &Config{DefaultModel: "global-model"}
-		model := ResolveModel("", tmpDir, cfg)
-		if model != "repo-model" {
-			t.Errorf("Expected 'repo-model' from repo config, got '%s'", model)
-		}
-	})
-
-	t.Run("repo config with whitespace is trimmed", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `model = "  repo-model  "`)
-		cfg := &Config{}
-		model := ResolveModel("", tmpDir, cfg)
-		if model != "repo-model" {
-			t.Errorf("Expected 'repo-model', got '%s'", model)
-		}
-	})
-
-	t.Run("no repo config falls back to global config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &Config{DefaultModel: "global-model"}
-		model := ResolveModel("", tmpDir, cfg)
-		if model != "global-model" {
-			t.Errorf("Expected 'global-model' from global config, got '%s'", model)
-		}
-	})
-
-	t.Run("global config with whitespace is trimmed", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &Config{DefaultModel: "  global-model  "}
-		model := ResolveModel("", tmpDir, cfg)
-		if model != "global-model" {
-			t.Errorf("Expected 'global-model', got '%s'", model)
-		}
-	})
-
-	t.Run("no config returns empty", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		model := ResolveModel("", tmpDir, nil)
-		if model != "" {
-			t.Errorf("Expected empty string when no config, got '%s'", model)
-		}
-	})
-
-	t.Run("empty global config returns empty", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		cfg := &Config{DefaultModel: ""}
-		model := ResolveModel("", tmpDir, cfg)
-		if model != "" {
-			t.Errorf("Expected empty string when global model is empty, got '%s'", model)
-		}
-	})
-
-	t.Run("whitespace-only explicit falls through to repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `model = "repo-model"`)
-		cfg := &Config{DefaultModel: "global-model"}
-		model := ResolveModel("   ", tmpDir, cfg)
-		if model != "repo-model" {
-			t.Errorf("Expected 'repo-model' when explicit is whitespace, got '%s'", model)
-		}
-	})
-
-	t.Run("whitespace-only repo config falls through to global", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `model = "   "`)
-		cfg := &Config{DefaultModel: "global-model"}
-		model := ResolveModel("", tmpDir, cfg)
-		if model != "global-model" {
-			t.Errorf("Expected 'global-model' when repo model is whitespace, got '%s'", model)
-		}
-	})
-
-	t.Run("explicit overrides repo config", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `model = "repo-model"`)
-		cfg := &Config{DefaultModel: "global-model"}
-		model := ResolveModel("explicit-model", tmpDir, cfg)
-		if model != "explicit-model" {
-			t.Errorf("Expected 'explicit-model', got '%s'", model)
-		}
-	})
-
-	t.Run("malformed repo config falls through to global", func(t *testing.T) {
-		tmpDir := newTempRepo(t, `this is not valid toml {{{`)
-		cfg := &Config{DefaultModel: "global-model"}
-		model := ResolveModel("", tmpDir, cfg)
-		if model != "global-model" {
-			t.Errorf("Expected 'global-model' when repo config is malformed, got '%s'", model)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if tt.repoConfig != "" {
+				writeRepoConfigStr(t, tmpDir, tt.repoConfig)
+			}
+			got := ResolveModel(tt.explicit, tmpDir, tt.globalConfig)
+			if got != tt.want {
+				t.Errorf("ResolveModel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestResolveMaxPromptSize(t *testing.T) {
@@ -1094,19 +985,19 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		name     string
 		cli      string
 		repo     map[string]string
-		global   map[string]string
+		global   *Config
 		workflow string
 		level    string
 		expect   string
 	}{
 		// Defaults
 		{"empty config", "", nil, nil, "review", "fast", "codex"},
-		{"global default only", "", nil, M{"default_agent": "claude"}, "review", "fast", "claude"},
+		{"global default only", "", nil, &Config{DefaultAgent: "claude"}, "review", "fast", "claude"},
 
 		// Global specificity ladder
-		{"global workflow > global default", "", nil, M{"default_agent": "codex", "review_agent": "claude"}, "review", "fast", "claude"},
-		{"global level > global workflow", "", nil, M{"review_agent": "codex", "review_agent_fast": "claude"}, "review", "fast", "claude"},
-		{"global level ignored for wrong level", "", nil, M{"review_agent": "codex", "review_agent_fast": "claude"}, "review", "thorough", "codex"},
+		{"global workflow > global default", "", nil, &Config{DefaultAgent: "codex", ReviewAgent: "claude"}, "review", "fast", "claude"},
+		{"global level > global workflow", "", nil, &Config{ReviewAgent: "codex", ReviewAgentFast: "claude"}, "review", "fast", "claude"},
+		{"global level ignored for wrong level", "", nil, &Config{ReviewAgent: "codex", ReviewAgentFast: "claude"}, "review", "thorough", "codex"},
 
 		// Repo specificity ladder
 		{"repo generic only", "", M{"agent": "claude"}, nil, "review", "fast", "claude"},
@@ -1114,18 +1005,18 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		{"repo level > repo workflow", "", M{"review_agent": "codex", "review_agent_fast": "claude"}, nil, "review", "fast", "claude"},
 
 		// Layer beats specificity (Option A)
-		{"repo generic > global level-specific", "", M{"agent": "claude"}, M{"review_agent_fast": "gemini"}, "review", "fast", "claude"},
-		{"repo generic > global workflow-specific", "", M{"agent": "claude"}, M{"review_agent": "gemini"}, "review", "fast", "claude"},
-		{"repo workflow > global level-specific", "", M{"review_agent": "claude"}, M{"review_agent_fast": "gemini"}, "review", "fast", "claude"},
+		{"repo generic > global level-specific", "", M{"agent": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "claude"},
+		{"repo generic > global workflow-specific", "", M{"agent": "claude"}, &Config{ReviewAgent: "gemini"}, "review", "fast", "claude"},
+		{"repo workflow > global level-specific", "", M{"review_agent": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "claude"},
 
 		// CLI wins all
 		{"cli > repo level-specific", "droid", M{"review_agent_fast": "claude"}, nil, "review", "fast", "droid"},
-		{"cli > everything", "droid", M{"review_agent_fast": "claude"}, M{"review_agent_fast": "gemini"}, "review", "fast", "droid"},
+		{"cli > everything", "droid", M{"review_agent_fast": "claude"}, &Config{ReviewAgentFast: "gemini"}, "review", "fast", "droid"},
 
 		// Refine workflow isolation
 		{"refine uses refine_agent not review_agent", "", M{"review_agent": "claude", "refine_agent": "gemini"}, nil, "refine", "fast", "gemini"},
 		{"refine level-specific", "", M{"refine_agent": "codex", "refine_agent_fast": "claude"}, nil, "refine", "fast", "claude"},
-		{"review config ignored for refine", "", M{"review_agent_fast": "claude"}, M{"default_agent": "codex"}, "refine", "fast", "codex"},
+		{"review config ignored for refine", "", M{"review_agent_fast": "claude"}, &Config{DefaultAgent: "codex"}, "refine", "fast", "codex"},
 
 		// Level isolation
 		{"fast config ignored for standard", "", M{"review_agent_fast": "claude", "review_agent": "codex"}, nil, "review", "standard", "codex"},
@@ -1133,36 +1024,35 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		{"thorough config used for thorough", "", M{"review_agent_thorough": "claude"}, nil, "review", "thorough", "claude"},
 
 		// Mixed layers
-		{"repo workflow + global level (repo wins)", "", M{"review_agent": "claude"}, M{"review_agent_fast": "gemini", "review_agent_thorough": "droid"}, "review", "fast", "claude"},
-		{"global fills gaps repo doesn't set", "", M{"agent": "codex"}, M{"review_agent_fast": "claude"}, "review", "standard", "codex"},
+		{"repo workflow + global level (repo wins)", "", M{"review_agent": "claude"}, &Config{ReviewAgentFast: "gemini", ReviewAgentThorough: "droid"}, "review", "fast", "claude"},
+		{"global fills gaps repo doesn't set", "", M{"agent": "codex"}, &Config{ReviewAgentFast: "claude"}, "review", "standard", "codex"},
 
 		// Fix workflow
 		{"fix uses fix_agent", "", M{"fix_agent": "claude"}, nil, "fix", "fast", "claude"},
 		{"fix level-specific", "", M{"fix_agent": "codex", "fix_agent_fast": "claude"}, nil, "fix", "fast", "claude"},
 		{"fix falls back to generic agent", "", M{"agent": "claude"}, nil, "fix", "fast", "claude"},
-		{"fix falls back to global fix_agent", "", nil, M{"fix_agent": "claude"}, "fix", "fast", "claude"},
-		{"fix global level-specific", "", nil, M{"fix_agent": "codex", "fix_agent_fast": "claude"}, "fix", "fast", "claude"},
+		{"fix falls back to global fix_agent", "", nil, &Config{FixAgent: "claude"}, "fix", "fast", "claude"},
+		{"fix global level-specific", "", nil, &Config{FixAgent: "codex", FixAgentFast: "claude"}, "fix", "fast", "claude"},
 		{"fix standard level selects fix_agent_standard", "", M{"fix_agent_standard": "claude", "fix_agent": "codex"}, nil, "fix", "standard", "claude"},
-		{"fix default reasoning (standard) selects level-specific", "", nil, M{"fix_agent_standard": "claude", "fix_agent": "codex"}, "fix", "standard", "claude"},
-		{"fix isolated from review", "", M{"review_agent": "claude"}, M{"default_agent": "codex"}, "fix", "fast", "codex"},
-		{"fix isolated from refine", "", M{"refine_agent": "claude"}, M{"default_agent": "codex"}, "fix", "fast", "codex"},
+		{"fix default reasoning (standard) selects level-specific", "", nil, &Config{FixAgentStandard: "claude", FixAgent: "codex"}, "fix", "standard", "claude"},
+		{"fix isolated from review", "", M{"review_agent": "claude"}, &Config{DefaultAgent: "codex"}, "fix", "fast", "codex"},
+		{"fix isolated from refine", "", M{"refine_agent": "claude"}, &Config{DefaultAgent: "codex"}, "fix", "fast", "codex"},
 
 		// Design workflow
 		{"design uses design_agent", "", M{"design_agent": "claude"}, nil, "design", "fast", "claude"},
 		{"design level-specific", "", M{"design_agent": "codex", "design_agent_fast": "claude"}, nil, "design", "fast", "claude"},
 		{"design falls back to generic agent", "", M{"agent": "claude"}, nil, "design", "fast", "claude"},
-		{"design falls back to global design_agent", "", nil, M{"design_agent": "claude"}, "design", "fast", "claude"},
-		{"design global level-specific", "", nil, M{"design_agent": "codex", "design_agent_thorough": "claude"}, "design", "thorough", "claude"},
-		{"design isolated from review", "", M{"review_agent": "claude"}, M{"default_agent": "codex"}, "design", "fast", "codex"},
-		{"design isolated from security", "", M{"security_agent": "claude"}, M{"default_agent": "codex"}, "design", "fast", "codex"},
+		{"design falls back to global design_agent", "", nil, &Config{DesignAgent: "claude"}, "design", "fast", "claude"},
+		{"design global level-specific", "", nil, &Config{DesignAgent: "codex", DesignAgentThorough: "claude"}, "design", "thorough", "claude"},
+		{"design isolated from review", "", M{"review_agent": "claude"}, &Config{DefaultAgent: "codex"}, "design", "fast", "codex"},
+		{"design isolated from security", "", M{"security_agent": "claude"}, &Config{DefaultAgent: "codex"}, "design", "fast", "codex"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			writeRepoConfig(t, tmpDir, tt.repo)
-			global := buildGlobalConfig(tt.global)
-			got := ResolveAgentForWorkflow(tt.cli, tmpDir, global, tt.workflow, tt.level)
+			got := ResolveAgentForWorkflow(tt.cli, tmpDir, tt.global, tt.workflow, tt.level)
 			if got != tt.expect {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
@@ -1175,18 +1065,18 @@ func TestResolveModelForWorkflow(t *testing.T) {
 		name     string
 		cli      string
 		repo     map[string]string
-		global   map[string]string
+		global   *Config
 		workflow string
 		level    string
 		expect   string
 	}{
 		// Defaults (model defaults to empty, not "codex")
 		{"empty config", "", nil, nil, "review", "fast", ""},
-		{"global default only", "", nil, M{"default_model": "gpt-4"}, "review", "fast", "gpt-4"},
+		{"global default only", "", nil, &Config{DefaultModel: "gpt-4"}, "review", "fast", "gpt-4"},
 
 		// Global specificity ladder
-		{"global workflow > global default", "", nil, M{"default_model": "gpt-4", "review_model": "claude-3"}, "review", "fast", "claude-3"},
-		{"global level > global workflow", "", nil, M{"review_model": "gpt-4", "review_model_fast": "claude-3"}, "review", "fast", "claude-3"},
+		{"global workflow > global default", "", nil, &Config{DefaultModel: "gpt-4", ReviewModel: "claude-3"}, "review", "fast", "claude-3"},
+		{"global level > global workflow", "", nil, &Config{ReviewModel: "gpt-4", ReviewModelFast: "claude-3"}, "review", "fast", "claude-3"},
 
 		// Repo specificity ladder
 		{"repo generic only", "", M{"model": "gpt-4"}, nil, "review", "fast", "gpt-4"},
@@ -1194,10 +1084,10 @@ func TestResolveModelForWorkflow(t *testing.T) {
 		{"repo level > repo workflow", "", M{"review_model": "gpt-4", "review_model_fast": "claude-3"}, nil, "review", "fast", "claude-3"},
 
 		// Layer beats specificity (Option A)
-		{"repo generic > global level-specific", "", M{"model": "gpt-4"}, M{"review_model_fast": "claude-3"}, "review", "fast", "gpt-4"},
+		{"repo generic > global level-specific", "", M{"model": "gpt-4"}, &Config{ReviewModelFast: "claude-3"}, "review", "fast", "gpt-4"},
 
 		// CLI wins all
-		{"cli > everything", "o1", M{"review_model_fast": "gpt-4"}, M{"review_model_fast": "claude-3"}, "review", "fast", "o1"},
+		{"cli > everything", "o1", M{"review_model_fast": "gpt-4"}, &Config{ReviewModelFast: "claude-3"}, "review", "fast", "o1"},
 
 		// Refine workflow isolation
 		{"refine uses refine_model", "", M{"review_model": "gpt-4", "refine_model": "claude-3"}, nil, "refine", "fast", "claude-3"},
@@ -1219,8 +1109,7 @@ func TestResolveModelForWorkflow(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			writeRepoConfig(t, tmpDir, tt.repo)
-			global := buildGlobalConfig(tt.global)
-			got := ResolveModelForWorkflow(tt.cli, tmpDir, global, tt.workflow, tt.level)
+			got := ResolveModelForWorkflow(tt.cli, tmpDir, tt.global, tt.workflow, tt.level)
 			if got != tt.expect {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
@@ -1232,7 +1121,7 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 	tests := []struct {
 		name     string
 		repo     map[string]string
-		global   map[string]string
+		global   *Config
 		workflow string
 		expect   string
 	}{
@@ -1241,14 +1130,14 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 		{"only primary agent configured", M{"review_agent": "claude"}, nil, "review", ""},
 
 		// Global backup agent
-		{"global backup only", nil, M{"review_backup_agent": "test"}, "review", "test"},
-		{"global backup for refine", nil, M{"refine_backup_agent": "claude"}, "refine", "claude"},
-		{"global backup for fix", nil, M{"fix_backup_agent": "codex"}, "fix", "codex"},
-		{"global backup for security", nil, M{"security_backup_agent": "gemini"}, "security", "gemini"},
-		{"global backup for design", nil, M{"design_backup_agent": "droid"}, "design", "droid"},
+		{"global backup only", nil, &Config{ReviewBackupAgent: "test"}, "review", "test"},
+		{"global backup for refine", nil, &Config{RefineBackupAgent: "claude"}, "refine", "claude"},
+		{"global backup for fix", nil, &Config{FixBackupAgent: "codex"}, "fix", "codex"},
+		{"global backup for security", nil, &Config{SecurityBackupAgent: "gemini"}, "security", "gemini"},
+		{"global backup for design", nil, &Config{DesignBackupAgent: "droid"}, "design", "droid"},
 
 		// Repo backup agent overrides global
-		{"repo overrides global", M{"review_backup_agent": "repo-test"}, M{"review_backup_agent": "global-test"}, "review", "repo-test"},
+		{"repo overrides global", M{"review_backup_agent": "repo-test"}, &Config{ReviewBackupAgent: "global-test"}, "review", "repo-test"},
 		{"repo backup only", M{"review_backup_agent": "test"}, nil, "review", "test"},
 
 		// Different workflows resolve independently
@@ -1264,15 +1153,15 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 		{"backup agent doesn't use levels", M{"review_backup_agent": "claude"}, nil, "review", "claude"},
 
 		// Default/generic backup agent fallback
-		{"global default_backup_agent", nil, M{"default_backup_agent": "test"}, "review", "test"},
-		{"global default_backup_agent for any workflow", nil, M{"default_backup_agent": "test"}, "fix", "test"},
-		{"global workflow-specific overrides default", nil, M{"default_backup_agent": "test", "review_backup_agent": "claude"}, "review", "claude"},
-		{"global default used when workflow not set", nil, M{"default_backup_agent": "test", "review_backup_agent": "claude"}, "fix", "test"},
+		{"global default_backup_agent", nil, &Config{DefaultBackupAgent: "test"}, "review", "test"},
+		{"global default_backup_agent for any workflow", nil, &Config{DefaultBackupAgent: "test"}, "fix", "test"},
+		{"global workflow-specific overrides default", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: "claude"}, "review", "claude"},
+		{"global default used when workflow not set", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: "claude"}, "fix", "test"},
 		{"repo backup_agent generic", M{"backup_agent": "repo-fallback"}, nil, "review", "repo-fallback"},
 		{"repo backup_agent generic for any workflow", M{"backup_agent": "repo-fallback"}, nil, "refine", "repo-fallback"},
 		{"repo workflow-specific overrides repo generic", M{"backup_agent": "generic", "review_backup_agent": "specific"}, nil, "review", "specific"},
-		{"repo generic overrides global workflow-specific", M{"backup_agent": "repo"}, M{"review_backup_agent": "global"}, "review", "repo"},
-		{"repo generic overrides global default", M{"backup_agent": "repo"}, M{"default_backup_agent": "global"}, "review", "repo"},
+		{"repo generic overrides global workflow-specific", M{"backup_agent": "repo"}, &Config{ReviewBackupAgent: "global"}, "review", "repo"},
+		{"repo generic overrides global default", M{"backup_agent": "repo"}, &Config{DefaultBackupAgent: "global"}, "review", "repo"},
 	}
 
 	for _, tt := range tests {
@@ -1285,41 +1174,14 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 				writeRepoConfig(t, repoDir, tt.repo)
 			}
 
-			// Create global config if provided
-			var globalCfg *Config
-			if tt.global != nil {
-				globalCfg = &Config{}
-				populateConfigFromMap(globalCfg, tt.global)
-			}
-
 			// Test the function
-			result := ResolveBackupAgentForWorkflow(repoDir, globalCfg, tt.workflow)
+			result := ResolveBackupAgentForWorkflow(repoDir, tt.global, tt.workflow)
 
 			if result != tt.expect {
 				t.Errorf("ResolveBackupAgentForWorkflow(%q, global, %q) = %q, want %q",
 					repoDir, tt.workflow, result, tt.expect)
 			}
 		})
-	}
-}
-
-// populateConfigFromMap is a helper to set config fields from a map
-func populateConfigFromMap(cfg *Config, m map[string]string) {
-	v := reflect.ValueOf(cfg).Elem()
-	t := v.Type()
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		tag := field.Tag.Get("toml")
-		if tag == "" {
-			continue
-		}
-		tagName := strings.Split(tag, ",")[0]
-		if val, ok := m[tagName]; ok {
-			if field.Type.Kind() == reflect.String {
-				v.Field(i).SetString(val)
-			}
-		}
 	}
 }
 
@@ -1347,24 +1209,14 @@ func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
 	if cfg == nil {
 		return
 	}
+	// We use the toml package to properly handle escaping
+	// but first we need a file to write to.
+	// Since writeRepoConfigStr takes content string, we'll encode to a buffer.
 	var sb strings.Builder
-	for k, v := range cfg {
-		sb.WriteString(k + " = \"" + v + "\"\n")
+	if err := toml.NewEncoder(&sb).Encode(cfg); err != nil {
+		t.Fatalf("failed to encode repo config: %v", err)
 	}
 	writeRepoConfigStr(t, dir, sb.String())
-}
-
-func buildGlobalConfig(cfg map[string]string) *Config {
-	if cfg == nil {
-		return nil
-	}
-	c := &Config{}
-	for k, v := range cfg {
-		if err := SetConfigValue(c, k, v); err != nil {
-			panic(fmt.Sprintf("buildGlobalConfig: SetConfigValue(%q, %q): %v", k, v, err))
-		}
-	}
-	return c
 }
 
 func TestResolvedReviewTypes(t *testing.T) {
