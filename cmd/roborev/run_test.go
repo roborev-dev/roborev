@@ -466,10 +466,70 @@ func TestWaitForPromptJob(t *testing.T) {
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
 
 		if err == nil {
-			t.Error("Expected error for max unknown retries")
+			t.Fatal("Expected error for max unknown retries")
 		}
 		if !strings.Contains(err.Error(), "giving up") {
 			t.Errorf("Expected 'giving up' error, got: %v", err)
+		}
+	})
+
+	t.Run("falls back to default interval when pollInterval is zero", func(t *testing.T) {
+		pollCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				pollCount++
+				status := storage.JobStatusRunning
+				if pollCount >= 2 {
+					status = storage.JobStatusDone
+				}
+				writeJSON(w, map[string][]storage.ReviewJob{
+					"jobs": {{ID: 123, Status: status}},
+				})
+			case "/api/review":
+				writeJSON(w, stubReview(123, "test-agent", "Result"))
+			}
+		}))
+		t.Cleanup(server.Close)
+
+		cmd, _ := newTestCmd(t)
+		err := waitForPromptJob(cmd, server.URL, 123, true, 0)
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+		if pollCount < 2 {
+			t.Errorf("Expected at least 2 polls, got: %d", pollCount)
+		}
+	})
+
+	t.Run("falls back to default interval when pollInterval is negative", func(t *testing.T) {
+		pollCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/jobs":
+				pollCount++
+				status := storage.JobStatusRunning
+				if pollCount >= 2 {
+					status = storage.JobStatusDone
+				}
+				writeJSON(w, map[string][]storage.ReviewJob{
+					"jobs": {{ID: 123, Status: status}},
+				})
+			case "/api/review":
+				writeJSON(w, stubReview(123, "test-agent", "Result"))
+			}
+		}))
+		t.Cleanup(server.Close)
+
+		cmd, _ := newTestCmd(t)
+		err := waitForPromptJob(cmd, server.URL, 123, true, -1*time.Millisecond)
+
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+		if pollCount < 2 {
+			t.Errorf("Expected at least 2 polls, got: %d", pollCount)
 		}
 	})
 
