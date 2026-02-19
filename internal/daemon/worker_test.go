@@ -579,6 +579,77 @@ func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
 	}
 }
 
+func TestFailOrRetryInner_RetryExhaustedBackupInCooldown(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	// Configure backup agent
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	tc.Pool = NewWorkerPool(
+		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil,
+	)
+
+	// Enqueue with agent "codex"
+	commit, err := tc.DB.GetOrCreateCommit(
+		tc.Repo.ID, sha, "A", "S", time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit: %v", err)
+	}
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    "codex",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	claimed, err := tc.DB.ClaimJob("test-worker")
+	if err != nil || claimed.ID != job.ID {
+		t.Fatalf("ClaimJob: err=%v, claimed=%v", err, claimed)
+	}
+	job.RepoPath = tc.TmpDir
+
+	// Exhaust retries
+	for i := range maxRetries {
+		tc.Pool.failOrRetryInner(
+			"test-worker", job, "codex",
+			"connection reset", true,
+		)
+		reclaimed, claimErr := tc.DB.ClaimJob("test-worker")
+		if claimErr != nil || reclaimed == nil {
+			t.Fatalf("re-claim after retry %d: %v", i, claimErr)
+		}
+		job = reclaimed
+	}
+
+	// Put the backup agent in cooldown
+	tc.Pool.cooldownAgent(
+		"test", time.Now().Add(30*time.Minute),
+	)
+
+	// Final failure — retries exhausted, backup in cooldown
+	tc.Pool.failOrRetryInner(
+		"test-worker", job, "codex",
+		"connection reset", true,
+	)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	// Should be failed, NOT queued for failover to cooled-down agent
+	if updated.Status != storage.JobStatusFailed {
+		t.Errorf("status=%q, want failed", updated.Status)
+	}
+	// Agent should still be codex (not failed over)
+	if updated.Agent != "codex" {
+		t.Errorf("agent=%q, want codex (no failover)", updated.Agent)
+	}
+}
+
 func TestResolveBackupAgent(t *testing.T) {
 	tests := []struct {
 		name       string

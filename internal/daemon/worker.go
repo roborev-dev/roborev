@@ -493,7 +493,7 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 		// Retries exhausted -- attempt failover to backup agent if this is an agent error
 		if agentError {
 			backupAgent := wp.resolveBackupAgent(job)
-			if backupAgent != "" {
+			if backupAgent != "" && !wp.isAgentCoolingDown(backupAgent) {
 				failedOver, foErr := wp.db.FailoverJob(job.ID, workerID, backupAgent)
 				if foErr != nil {
 					log.Printf("[%s] Error attempting failover for job %d: %v", workerID, job.ID, foErr)
