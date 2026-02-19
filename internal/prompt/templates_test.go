@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -134,9 +135,15 @@ func TestGetSystemPrompt_Exported(t *testing.T) {
 		t.Error("GetSystemPrompt returned empty string for gemini review")
 	}
 
-	// Verify date injection with the real clock
-	today := time.Now().UTC().Format("2006-01-02")
-	if !strings.Contains(got, today) {
-		t.Errorf("GetSystemPrompt missing current date %q. Got:\n%s", today, got)
+	// Verify date injection format without a second clock read
+	// (a second time.Now() could cross midnight and cause flakes)
+	datePat := regexp.MustCompile(
+		`Current date: \d{4}-\d{2}-\d{2} \(UTC\)`,
+	)
+	if !datePat.MatchString(got) {
+		t.Errorf(
+			"GetSystemPrompt missing date line matching %q. Got:\n%s",
+			datePat.String(), got,
+		)
 	}
 }
