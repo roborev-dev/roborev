@@ -5,6 +5,7 @@ package daemon
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/config"
@@ -138,12 +139,12 @@ func TestCompactMetadataPath(t *testing.T) {
 	tmpDir := setupTestEnv(t)
 
 	jobID := int64(123)
-	
+
 	path := compactMetadataPath(jobID)
-	
-	// Verify it contains the tmpDir
-	if len(path) <= len(tmpDir) || path[:len(tmpDir)] != tmpDir {
-		t.Errorf("compactMetadataPath(123) = %q, expected it to start with %q", path, tmpDir)
+
+	expected := filepath.Join(tmpDir, "compact-123.json")
+	if path != expected {
+		t.Errorf("compactMetadataPath(123) = %q, want %q", path, expected)
 	}
 
 	// Verify it uses config.DataDir() correctly
