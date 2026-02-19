@@ -221,11 +221,12 @@ func waitForSyncWorkerConnection(worker *SyncWorker, timeout time.Duration) erro
 	return fmt.Errorf("timeout waiting for sync worker connection")
 }
 
-// startSyncWorkerNoSync starts a SyncWorker and waits for
-// its background goroutine to establish a Postgres connection,
-// without triggering any sync operations. Uses HealthCheck to
-// poll connection status so no data is pushed or pulled during
-// startup. Use this when testing ticker-driven sync behavior.
+// startSyncWorkerNoSync starts a SyncWorker with initial sync
+// disabled and waits for its background goroutine to establish
+// a Postgres connection. Uses HealthCheck to poll connection
+// status. With skipInitialSync set, no data is pushed or pulled
+// until the first ticker tick. Use this when testing
+// ticker-driven sync behavior.
 func startSyncWorkerNoSync(
 	t *testing.T,
 	db *DB,
@@ -243,6 +244,7 @@ func startSyncWorkerNoSync(
 		ConnectTimeout: "5s",
 	}
 	worker := NewSyncWorker(db, cfg)
+	worker.SetSkipInitialSync(true)
 	if err := worker.Start(); err != nil {
 		t.Fatalf(
 			"SyncWorker.Start failed for %s: %v",
@@ -1253,6 +1255,9 @@ func TestIntegration_TickerSync(t *testing.T) {
 	// Start both workers using startSyncWorkerNoSync, which
 	// waits for connection via HealthCheck without calling
 	// SyncNow — no sync operations happen during startup.
+	// skipInitialSync is set, so the only sync path is the
+	// periodic ticker.
+	const tickerInterval = 200 * time.Millisecond
 	startSyncWorkerNoSync(
 		t, dbA, env.pgURL, "ticker-a", "200ms",
 	)
@@ -1261,7 +1266,9 @@ func TestIntegration_TickerSync(t *testing.T) {
 	)
 
 	// Create a review on machine A AFTER both workers are
-	// connected, so it can only propagate via ticker ticks.
+	// connected and initial sync is skipped, so it can only
+	// propagate via ticker ticks.
+	created := time.Now()
 	createCompletedReview(
 		t, dbA, repoA.ID,
 		"tick1111", "Alice", "First ticker commit",
@@ -1280,12 +1287,26 @@ func TestIntegration_TickerSync(t *testing.T) {
 			return len(jobs) >= 1, nil
 		},
 	)
+	propagated := time.Since(created)
+
+	// Propagation requires at least one full ticker interval
+	// (push on A + pull on B), confirming it came from the
+	// periodic ticker and not an initial sync.
+	if propagated < tickerInterval {
+		t.Errorf(
+			"Review propagated in %v, faster than one "+
+				"ticker interval (%v) — initial sync may "+
+				"not be disabled",
+			propagated, tickerInterval,
+		)
+	}
 
 	env.assertPgCount("review_jobs", 1)
 	env.assertPgCount("reviews", 1)
 
-	// Finding 2: verify periodic behavior — create a second
-	// review and confirm it propagates in a later interval.
+	// Verify periodic behavior — create a second review and
+	// confirm it propagates in a later interval.
+	created2 := time.Now()
 	createCompletedReview(
 		t, dbA, repoA.ID,
 		"tick2222", "Alice", "Second ticker commit",
@@ -1303,6 +1324,15 @@ func TestIntegration_TickerSync(t *testing.T) {
 			return len(jobs) >= 2, nil
 		},
 	)
+	propagated2 := time.Since(created2)
+
+	if propagated2 < tickerInterval {
+		t.Errorf(
+			"Second review propagated in %v, faster than "+
+				"one ticker interval (%v)",
+			propagated2, tickerInterval,
+		)
+	}
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)

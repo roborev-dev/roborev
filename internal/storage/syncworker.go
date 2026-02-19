@@ -14,15 +14,16 @@ import (
 
 // SyncWorker handles background synchronization between SQLite and PostgreSQL
 type SyncWorker struct {
-	db        *DB
-	cfg       config.SyncConfig
-	pgPool    *PgPool
-	stopCh    chan struct{}
-	doneCh    chan struct{}
-	mu        sync.Mutex // protects running and pgPool
-	syncMu    sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
-	connectMu sync.Mutex // serializes connect operations
-	running   bool
+	db              *DB
+	cfg             config.SyncConfig
+	pgPool          *PgPool
+	stopCh          chan struct{}
+	doneCh          chan struct{}
+	mu              sync.Mutex // protects running and pgPool
+	syncMu          sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
+	connectMu       sync.Mutex // serializes connect operations
+	running         bool
+	skipInitialSync bool // when true, skip the immediate doSync on connect
 }
 
 // NewSyncWorker creates a new sync worker
@@ -33,6 +34,12 @@ func NewSyncWorker(db *DB, cfg config.SyncConfig) *SyncWorker {
 		stopCh: make(chan struct{}),
 		doneCh: make(chan struct{}),
 	}
+}
+
+// SetSkipInitialSync disables the immediate doSync that normally
+// runs right after connecting. Must be called before Start().
+func (w *SyncWorker) SetSkipInitialSync(skip bool) {
+	w.skipInitialSync = skip
 }
 
 // Start begins the sync worker in a background goroutine.
@@ -346,7 +353,8 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 
 		// Run sync loop until disconnection or stop
 		// Only do initial sync if we made the connection (not if SyncNow connected for us)
-		w.syncLoop(stopCh, interval, newConn)
+		// and skipInitialSync is not set
+		w.syncLoop(stopCh, interval, newConn && !w.skipInitialSync)
 
 		// If we get here, we disconnected - try to reconnect
 		w.mu.Lock()
