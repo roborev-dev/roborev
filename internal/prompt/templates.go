@@ -37,7 +37,11 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 	tmplName := fmt.Sprintf("templates/%s_%s.tmpl", agentName, templateType)
 	content, err := templateFS.ReadFile(tmplName)
 	if err == nil {
-		return appendDateLine(string(content)+noSkillsInstruction, now)
+		base := string(content)
+		if promptType != "run" {
+			base += noSkillsInstruction
+		}
+		return appendDateLine(base, now)
 	}
 
 	// Fallback to default constants

@@ -20,13 +20,14 @@ func TestGetSystemPrompt(t *testing.T) {
 	geminiReviewPrompt := getSystemPrompt("gemini", "review", mockNow)
 
 	type testCase struct {
-		name           string
-		agent          string
-		command        string
-		wantContains   []string
-		wantExact      string // if set, checks for exact match
-		wantNotDefault bool   // if true, ensures it's not SystemPromptSingle (default)
-		wantEmpty      bool
+		name            string
+		agent           string
+		command         string
+		wantContains    []string
+		wantNotContains []string
+		wantExact       string // if set, checks for exact match
+		wantNotDefault  bool   // if true, ensures it's not SystemPromptSingle (default)
+		wantEmpty       bool
 	}
 
 	tests := []testCase{
@@ -87,6 +88,31 @@ func TestGetSystemPrompt(t *testing.T) {
 			command:   "run",
 			wantEmpty: true,
 		},
+		{
+			name:         "Review includes no-skills instruction",
+			agent:        "claude-code",
+			command:      "review",
+			wantContains: []string{"Do NOT use any external skills"},
+		},
+		{
+			name:         "Security includes no-skills instruction",
+			agent:        "claude-code",
+			command:      "security",
+			wantContains: []string{"Do NOT use any external skills"},
+		},
+		{
+			name:         "Address includes no-skills instruction",
+			agent:        "claude-code",
+			command:      "address",
+			wantContains: []string{"Do NOT use any external skills"},
+		},
+		{
+			name:            "Gemini run excludes no-skills instruction",
+			agent:           "gemini",
+			command:         "run",
+			wantContains:    []string{"Do NOT explain your process"},
+			wantNotContains: []string{"Do NOT use any external skills"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -123,6 +149,12 @@ func TestGetSystemPrompt(t *testing.T) {
 						snippet = got[:100] + "..."
 					}
 					t.Errorf("got prompt missing %q. Got start: %s", substr, snippet)
+				}
+			}
+
+			for _, substr := range tc.wantNotContains {
+				if strings.Contains(got, substr) {
+					t.Errorf("prompt should NOT contain %q", substr)
 				}
 			}
 		})
