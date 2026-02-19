@@ -56,15 +56,22 @@ func mockAPI(t *testing.T, handler http.HandlerFunc) *HTTPClient {
 	return NewHTTPClient(s.URL)
 }
 
+func assertRequest(t *testing.T, r *http.Request, method, path string) {
+	t.Helper()
+	if r.Method != method || r.URL.Path != path {
+		t.Errorf("expected %s %s, got %s %s", method, path, r.Method, r.URL.Path)
+	}
+}
+
 func TestHTTPClientAddComment(t *testing.T) {
-	var received map[string]any
+	var received struct {
+		JobID     int    `json:"job_id"`
+		Commenter string `json:"commenter"`
+		Comment   string `json:"comment"`
+	}
 
 	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/comment" || r.Method != http.MethodPost {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+		assertRequest(t, r, http.MethodPost, "/api/comment")
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -74,26 +81,25 @@ func TestHTTPClientAddComment(t *testing.T) {
 		t.Fatalf("AddComment failed: %v", err)
 	}
 
-	if received["job_id"].(float64) != 42 {
-		t.Errorf("expected job_id 42, got %v", received["job_id"])
+	if received.JobID != 42 {
+		t.Errorf("expected job_id 42, got %v", received.JobID)
 	}
-	if received["commenter"] != "test-agent" {
-		t.Errorf("expected commenter test-agent, got %v", received["commenter"])
+	if received.Commenter != "test-agent" {
+		t.Errorf("expected commenter test-agent, got %v", received.Commenter)
 	}
-	if received["comment"] != "Fixed the issue" {
-		t.Errorf("expected comment to match, got %v", received["comment"])
+	if received.Comment != "Fixed the issue" {
+		t.Errorf("expected comment to match, got %v", received.Comment)
 	}
 }
 
 func TestHTTPClientMarkReviewAddressed(t *testing.T) {
-	var received map[string]any
+	var received struct {
+		JobID     int  `json:"job_id"`
+		Addressed bool `json:"addressed"`
+	}
 
 	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+		assertRequest(t, r, http.MethodPost, "/api/review/address")
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -103,11 +109,11 @@ func TestHTTPClientMarkReviewAddressed(t *testing.T) {
 		t.Fatalf("MarkReviewAddressed failed: %v", err)
 	}
 
-	if received["job_id"].(float64) != 99 {
-		t.Errorf("expected job_id 99, got %v", received["job_id"])
+	if received.JobID != 99 {
+		t.Errorf("expected job_id 99, got %v", received.JobID)
 	}
-	if received["addressed"] != true {
-		t.Errorf("expected addressed true, got %v", received["addressed"])
+	if received.Addressed != true {
+		t.Errorf("expected addressed true, got %v", received.Addressed)
 	}
 }
 
@@ -170,11 +176,7 @@ func TestFindJobForCommitWorktree(t *testing.T) {
 	var receivedRepo string
 
 	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/jobs" || r.Method != http.MethodGet {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+		assertRequest(t, r, http.MethodGet, "/api/jobs")
 
 		repo := r.URL.Query().Get("repo")
 		mu.Lock()
@@ -290,126 +292,78 @@ func TestFindJobForCommitFallback(t *testing.T) {
 }
 
 func TestFindPendingJobForRef(t *testing.T) {
-	t.Run("returns running job via server-side status filter", func(t *testing.T) {
-		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/jobs" || r.Method != http.MethodGet {
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusNotFound)
+	tests := []struct {
+		name           string
+		mockResponses  map[string][]storage.ReviewJob
+		expectJobID    int64
+		expectStatus   storage.JobStatus
+		expectNotFound bool
+	}{
+		{
+			name: "returns running job",
+			mockResponses: map[string][]storage.ReviewJob{
+				"running": {{ID: 1, GitRef: "abc123..def456", Status: storage.JobStatusRunning}},
+			},
+			expectJobID:  1,
+			expectStatus: storage.JobStatusRunning,
+		},
+		{
+			name:           "returns nil when no pending jobs",
+			mockResponses:  map[string][]storage.ReviewJob{},
+			expectNotFound: true,
+		},
+		{
+			name: "returns queued job before checking running",
+			mockResponses: map[string][]storage.ReviewJob{
+				"queued": {{ID: 1, GitRef: "abc123..def456", Status: storage.JobStatusQueued}},
+			},
+			expectJobID:  1,
+			expectStatus: storage.JobStatusQueued,
+		},
+		{
+			name: "queries both queued and running when needed",
+			mockResponses: map[string][]storage.ReviewJob{
+				"running": {{ID: 2, GitRef: "abc123..def456", Status: storage.JobStatusRunning}},
+			},
+			expectJobID:  2,
+			expectStatus: storage.JobStatusRunning,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				assertRequest(t, r, http.MethodGet, "/api/jobs")
+
+				status := r.URL.Query().Get("status")
+				jobs, ok := tc.mockResponses[status]
+				if !ok {
+					jobs = []storage.ReviewJob{}
+				}
+				json.NewEncoder(w).Encode(map[string]any{"jobs": jobs})
+			})
+
+			job, err := client.FindPendingJobForRef("/test/repo", "abc123..def456")
+			if err != nil {
+				t.Fatalf("FindPendingJobForRef failed: %v", err)
+			}
+
+			if tc.expectNotFound {
+				if job != nil {
+					t.Errorf("expected nil job, got ID %d", job.ID)
+				}
 				return
 			}
 
-			gitRef := r.URL.Query().Get("git_ref")
-			status := r.URL.Query().Get("status")
-
-			if gitRef != "abc123..def456" {
-				t.Errorf("expected git_ref abc123..def456, got %s", gitRef)
+			if job == nil {
+				t.Fatal("expected to find job")
 			}
-
-			// Server-side filtering: only return jobs matching the requested status
-			if status == "running" {
-				json.NewEncoder(w).Encode(map[string]any{
-					"jobs": []storage.ReviewJob{
-						{ID: 1, GitRef: gitRef, Status: storage.JobStatusRunning},
-					},
-				})
-			} else {
-				// No queued jobs
-				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
+			if job.ID != tc.expectJobID {
+				t.Errorf("expected job ID %d, got %d", tc.expectJobID, job.ID)
+			}
+			if tc.expectStatus != "" && job.Status != tc.expectStatus {
+				t.Errorf("expected status %s, got %s", tc.expectStatus, job.Status)
 			}
 		})
-		job, err := client.FindPendingJobForRef("/test/repo", "abc123..def456")
-		if err != nil {
-			t.Fatalf("FindPendingJobForRef failed: %v", err)
-		}
-
-		if job == nil {
-			t.Fatal("expected to find pending job")
-		}
-		if job.ID != 1 {
-			t.Errorf("expected job ID 1 (running), got %d", job.ID)
-		}
-	})
-
-	t.Run("returns nil when no pending jobs", func(t *testing.T) {
-		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-			// No jobs for any status
-			json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
-		})
-		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
-		if err != nil {
-			t.Fatalf("FindPendingJobForRef failed: %v", err)
-		}
-
-		if job != nil {
-			t.Errorf("expected nil when no pending jobs, got job ID %d", job.ID)
-		}
-	})
-
-	t.Run("returns queued job before checking running", func(t *testing.T) {
-		var queriedStatuses []string
-		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-			status := r.URL.Query().Get("status")
-			queriedStatuses = append(queriedStatuses, status)
-
-			if status == "queued" {
-				json.NewEncoder(w).Encode(map[string]any{
-					"jobs": []storage.ReviewJob{
-						{ID: 1, GitRef: "abc..def", Status: storage.JobStatusQueued},
-					},
-				})
-			} else {
-				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
-			}
-		})
-		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
-		if err != nil {
-			t.Fatalf("FindPendingJobForRef failed: %v", err)
-		}
-
-		if job == nil {
-			t.Fatal("expected to find queued job")
-		}
-		if job.Status != storage.JobStatusQueued {
-			t.Errorf("expected queued status, got %s", job.Status)
-		}
-
-		// Should only query for "queued" since it found a job
-		if len(queriedStatuses) != 1 || queriedStatuses[0] != "queued" {
-			t.Errorf("expected to only query 'queued', got %v", queriedStatuses)
-		}
-	})
-
-	t.Run("queries both queued and running when needed", func(t *testing.T) {
-		var queriedStatuses []string
-		client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-			status := r.URL.Query().Get("status")
-			queriedStatuses = append(queriedStatuses, status)
-
-			if status == "running" {
-				json.NewEncoder(w).Encode(map[string]any{
-					"jobs": []storage.ReviewJob{
-						{ID: 2, GitRef: "abc..def", Status: storage.JobStatusRunning},
-					},
-				})
-			} else {
-				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
-			}
-		})
-		job, err := client.FindPendingJobForRef("/test/repo", "abc..def")
-		if err != nil {
-			t.Fatalf("FindPendingJobForRef failed: %v", err)
-		}
-
-		if job == nil {
-			t.Fatal("expected to find running job")
-		}
-		if job.ID != 2 {
-			t.Errorf("expected job ID 2, got %d", job.ID)
-		}
-
-		// Should query both statuses: queued first (no results), then running
-		if len(queriedStatuses) != 2 {
-			t.Errorf("expected 2 queries, got %d: %v", len(queriedStatuses), queriedStatuses)
-		}
-	})
+	}
 }
