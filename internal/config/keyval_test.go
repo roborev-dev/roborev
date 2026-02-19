@@ -132,6 +132,7 @@ func TestSetConfigValue(t *testing.T) {
 		name   string
 		key    string
 		val    string
+		init   func() *Config
 		verify func(*Config) bool
 	}{
 		{
@@ -177,6 +178,13 @@ func TestSetConfigValue(t *testing.T) {
 			verify: func(c *Config) bool { return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2" },
 		},
 		{
+			name:   "set slice from nil",
+			key:    "ci.repos",
+			val:    "org/repo1,org/repo2",
+			init:   func() *Config { return &Config{} },
+			verify: func(c *Config) bool { return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2" },
+		},
+		{
 			name:   "set slice empty",
 			key:    "ci.repos",
 			val:    "",
@@ -186,10 +194,15 @@ func TestSetConfigValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				CI: CIConfig{
-					Repos: []string{"initial"},
-				},
+			var cfg *Config
+			if tt.init != nil {
+				cfg = tt.init()
+			} else {
+				cfg = &Config{
+					CI: CIConfig{
+						Repos: []string{"initial"},
+					},
+				}
 			}
 			err := SetConfigValue(cfg, tt.key, tt.val)
 			if err != nil {
