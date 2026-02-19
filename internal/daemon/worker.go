@@ -636,12 +636,15 @@ func (wp *WorkerPool) isAgentCoolingDown(name string) bool {
 		wp.agentCooldownsMu.RUnlock()
 		// Upgrade to write lock and delete expired entry
 		wp.agentCooldownsMu.Lock()
-		// Re-check under write lock (may have been updated)
-		if exp, ok := wp.agentCooldowns[name]; ok && time.Now().After(exp) {
+		// Re-check under write lock (may have been refreshed)
+		exp, stillExists := wp.agentCooldowns[name]
+		if stillExists && time.Now().After(exp) {
 			delete(wp.agentCooldowns, name)
+			wp.agentCooldownsMu.Unlock()
+			return false
 		}
 		wp.agentCooldownsMu.Unlock()
-		return false
+		return stillExists
 	}
 	wp.agentCooldownsMu.RUnlock()
 	return true

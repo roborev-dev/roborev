@@ -408,6 +408,50 @@ func TestAgentCooldown(t *testing.T) {
 	}
 }
 
+func TestAgentCooldown_ExpiredEntryDeleted(t *testing.T) {
+	cfg := config.DefaultConfig()
+	pool := NewWorkerPool(
+		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil,
+	)
+
+	// Set an already-expired cooldown
+	pool.cooldownAgent("gemini", time.Now().Add(-1*time.Second))
+
+	// Should return false and clean up the entry
+	if pool.isAgentCoolingDown("gemini") {
+		t.Error("expected expired cooldown to return false")
+	}
+
+	// Entry should be deleted from the map
+	pool.agentCooldownsMu.RLock()
+	_, exists := pool.agentCooldowns["gemini"]
+	pool.agentCooldownsMu.RUnlock()
+	if exists {
+		t.Error("expected expired entry to be deleted from map")
+	}
+}
+
+func TestAgentCooldown_RefreshDuringUpgrade(t *testing.T) {
+	cfg := config.DefaultConfig()
+	pool := NewWorkerPool(
+		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil,
+	)
+
+	// Set an already-expired cooldown
+	pool.cooldownAgent("gemini", time.Now().Add(-1*time.Second))
+
+	// Simulate another goroutine refreshing the cooldown between
+	// RUnlock and Lock by directly writing a fresh expiry.
+	pool.agentCooldownsMu.Lock()
+	pool.agentCooldowns["gemini"] = time.Now().Add(1 * time.Hour)
+	pool.agentCooldownsMu.Unlock()
+
+	// isAgentCoolingDown should return true: the entry was refreshed
+	if !pool.isAgentCoolingDown("gemini") {
+		t.Error("expected refreshed cooldown to return true")
+	}
+}
+
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
