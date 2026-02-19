@@ -626,6 +626,7 @@ func parseQuotaCooldown(errMsg string, fallback time.Duration) time.Duration {
 // cooldownAgent sets or extends the cooldown expiry for an agent.
 // Only extends — never shortens an existing cooldown.
 func (wp *WorkerPool) cooldownAgent(name string, until time.Time) {
+	name = agent.CanonicalName(name)
 	wp.agentCooldownsMu.Lock()
 	defer wp.agentCooldownsMu.Unlock()
 	if existing, ok := wp.agentCooldowns[name]; ok && existing.After(until) {
@@ -637,6 +638,7 @@ func (wp *WorkerPool) cooldownAgent(name string, until time.Time) {
 // isAgentCoolingDown returns true if the agent is currently in a
 // quota cooldown period. Expired entries are cleaned up eagerly.
 func (wp *WorkerPool) isAgentCoolingDown(name string) bool {
+	name = agent.CanonicalName(name)
 	wp.agentCooldownsMu.RLock()
 	expiry, ok := wp.agentCooldowns[name]
 	if !ok {
