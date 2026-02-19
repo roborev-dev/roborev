@@ -8,11 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"context"
-
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 //go:embed schemas/postgres_v1.sql
@@ -107,46 +103,42 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 
 	// Create a repo using the helper
 	repoIdentity := "test-repo-" + time.Now().Format("20060102150405")
-	repoID, err := pool.GetOrCreateRepo(ctx, repoIdentity)
-	if err != nil {
-		t.Fatalf("Failed to create repo: %v", err)
-	}
+	repoID := createTestRepo(t, pool, repoIdentity)
 
 	// Create a commit using the helper
-	commitID, err := pool.GetOrCreateCommit(ctx, repoID, "abc123", "Test Author", "Test Subject", time.Now())
-	if err != nil {
-		t.Fatalf("Failed to create commit: %v", err)
-	}
+	commitID := createTestCommit(t, pool, repoID, "abc123456789")
 
-	// Create two jobs with different UUIDs using correct schema
-	for _, jobUUID := range []string{jobUUID1, jobUUID2} {
-		_, err = pool.pool.Exec(ctx, `
-			INSERT INTO review_jobs (uuid, repo_id, commit_id, git_ref, agent, status, source_machine_id, enqueued_at, created_at, updated_at)
-			VALUES ($1, $2, $3, 'HEAD', 'test', 'done', $4, NOW(), NOW(), NOW())
-		`, jobUUID, repoID, commitID, machineID)
-		if err != nil {
-			t.Fatalf("Failed to create job %s: %v", jobUUID, err)
-		}
-	}
+	// Create two jobs with different UUIDs using explicit timestamps
+	createTestJob(t, pool, TestJobOpts{
+		UUID:            jobUUID1,
+		RepoID:          repoID,
+		CommitID:        commitID,
+		SourceMachineID: machineID,
+	})
+	createTestJob(t, pool, TestJobOpts{
+		UUID:            jobUUID2,
+		RepoID:          repoID,
+		CommitID:        commitID,
+		SourceMachineID: machineID,
+	})
 
-	_, err = pool.pool.Exec(ctx, `
-		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, addressed, created_at, updated_at, updated_by_machine_id)
-		VALUES ($1, $2, 'test', 'prompt1', 'output1', false, NOW(), NOW(), $3)
-	`, reviewUUID1, jobUUID1, otherMachineID)
-	if err != nil {
-		t.Fatalf("Failed to create review1: %v", err)
-	}
+	baseTime := time.Now().Truncate(time.Millisecond)
+	// Create reviews with explicit timestamps to ensure ordering
+	createTestReview(t, pool, TestReviewOpts{
+		UUID:               reviewUUID1,
+		JobUUID:            jobUUID1,
+		UpdatedByMachineID: otherMachineID,
+		CreatedAt:          baseTime,
+		UpdatedAt:          baseTime,
+	})
 
-	// Sleep briefly to ensure different timestamps
-	time.Sleep(10 * time.Millisecond)
-
-	_, err = pool.pool.Exec(ctx, `
-		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, addressed, created_at, updated_at, updated_by_machine_id)
-		VALUES ($1, $2, 'test', 'prompt2', 'output2', false, NOW(), NOW(), $3)
-	`, reviewUUID2, jobUUID2, otherMachineID)
-	if err != nil {
-		t.Fatalf("Failed to create review2: %v", err)
-	}
+	createTestReview(t, pool, TestReviewOpts{
+		UUID:               reviewUUID2,
+		JobUUID:            jobUUID2,
+		UpdatedByMachineID: otherMachineID,
+		CreatedAt:          baseTime.Add(100 * time.Millisecond), // Explicitly later
+		UpdatedAt:          baseTime.Add(100 * time.Millisecond),
+	})
 
 	t.Run("empty knownJobUUIDs returns empty and preserves cursor", func(t *testing.T) {
 		reviews, newCursor, err := pool.PullReviews(ctx, machineID, []string{}, "", 100)
@@ -236,109 +228,6 @@ func openTestPgPool(t *testing.T) *PgPool {
 	return pool
 }
 
-// openRawPgxPool creates a raw pgxpool without AfterConnect (for schema migration test setup).
-func openRawPgxPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	connString := getTestPostgresURL(t)
-	cfg, err := pgxpool.ParseConfig(connString)
-	if err != nil {
-		t.Fatalf("Failed to parse config: %v", err)
-	}
-	p, err := pgxpool.NewWithConfig(t.Context(), cfg)
-	if err != nil {
-		t.Fatalf("Failed to create pool: %v", err)
-	}
-	t.Cleanup(func() { p.Close() })
-	return p
-}
-
-// skipIfTableInSchema skips the test if the given table exists in the given schema.
-func skipIfTableInSchema(t *testing.T, p *pgxpool.Pool, schema, table string) {
-	t.Helper()
-	var exists bool
-	err := p.QueryRow(t.Context(), `
-		SELECT EXISTS(
-			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = $1 AND table_name = $2
-		)
-	`, schema, table).Scan(&exists)
-	if err != nil {
-		t.Fatalf("Failed to check %s.%s: %v", schema, table, err)
-	}
-	if exists {
-		t.Skipf("Skipping: %s.%s already exists", schema, table)
-	}
-}
-
-// assertTableInSchema asserts a table exists in the given schema.
-func assertTableInSchema(t *testing.T, pool *PgPool, schema, table string) {
-	t.Helper()
-	var exists bool
-	err := pool.pool.QueryRow(t.Context(), `
-		SELECT EXISTS(
-			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = $1 AND table_name = $2
-		)
-	`, schema, table).Scan(&exists)
-	if err != nil {
-		t.Fatalf("Failed to check %s.%s: %v", schema, table, err)
-	}
-	if !exists {
-		t.Errorf("Expected %s.%s to exist", schema, table)
-	}
-}
-
-// assertTableNotInSchema asserts a table does NOT exist in the given schema.
-func assertTableNotInSchema(t *testing.T, pool *PgPool, schema, table string) {
-	t.Helper()
-	var exists bool
-	err := pool.pool.QueryRow(t.Context(), `
-		SELECT EXISTS(
-			SELECT 1 FROM information_schema.tables
-			WHERE table_schema = $1 AND table_name = $2
-		)
-	`, schema, table).Scan(&exists)
-	if err != nil {
-		t.Fatalf("Failed to check %s.%s: %v", schema, table, err)
-	}
-	if exists {
-		t.Errorf("Expected %s.%s to NOT exist", schema, table)
-	}
-}
-
-// cleanupSchemaOnFinish registers a cleanup that drops the roborev schema after the test.
-func cleanupSchemaOnFinish(t *testing.T) {
-	t.Helper()
-	connString := getTestPostgresURL(t)
-	t.Cleanup(func() {
-		cfg, _ := pgxpool.ParseConfig(connString)
-		ctx := context.Background()
-		p, _ := pgxpool.NewWithConfig(ctx, cfg)
-		if p != nil {
-			p.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
-			p.Close()
-		}
-	})
-}
-
-// cleanupTablesOnFinish registers a cleanup that drops specific public tables and the roborev schema.
-func cleanupTablesOnFinish(t *testing.T, publicTables ...string) {
-	t.Helper()
-	connString := getTestPostgresURL(t)
-	t.Cleanup(func() {
-		cfg, _ := pgxpool.ParseConfig(connString)
-		ctx := context.Background()
-		p, _ := pgxpool.NewWithConfig(ctx, cfg)
-		if p != nil {
-			for _, table := range publicTables {
-				p.Exec(ctx, "DROP TABLE IF EXISTS public."+pgx.Identifier{table}.Sanitize())
-			}
-			p.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
-			p.Close()
-		}
-	})
-}
-
 func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID string, jobUUIDs []string) {
 	t.Helper()
 	ctx := t.Context()
@@ -410,10 +299,9 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 	ctx := t.Context()
 
 	// First, check if schema exists
-	tempPool := openRawPgxPool(t)
+	env := NewMigrationTestEnv(t)
 	var schemaExists bool
-	tempPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'roborev')`).Scan(&schemaExists)
-	tempPool.Close()
+	env.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'roborev')`).Scan(&schemaExists)
 
 	if schemaExists {
 		// Don't actually drop if it has data - just verify the bootstrap works
@@ -442,7 +330,7 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 			t.Errorf("Expected idx_review_jobs_branch to exist after EnsureSchema")
 		}
 	} else {
-		cleanupSchemaOnFinish(t)
+		env.DropSchema("roborev")
 
 		// Fresh database - NewPgPool should succeed with AfterConnect bootstrap
 		pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
@@ -489,21 +377,15 @@ func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 	// This test verifies that tables in public schema are migrated to roborev
 	ctx := t.Context()
 
-	setupPool := openRawPgxPool(t)
-	skipIfTableInSchema(t, setupPool, "roborev", "schema_version")
-	skipIfTableInSchema(t, setupPool, "public", "schema_version")
+	env := NewMigrationTestEnv(t)
+	env.SkipIfTableInSchema("roborev", "schema_version")
+	env.SkipIfTableInSchema("public", "schema_version")
 
 	// Create legacy table in public schema
-	_, err := setupPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
-	if err != nil {
-		t.Fatalf("Failed to create legacy table: %v", err)
-	}
-	_, err = setupPool.Exec(ctx, `INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
-	if err != nil {
-		t.Fatalf("Failed to insert legacy data: %v", err)
-	}
+	env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
+	env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
 
-	cleanupSchemaOnFinish(t)
+	env.DropSchema("roborev")
 
 	// Now connect with the normal pool and run EnsureSchema
 	connString := getTestPostgresURL(t)
@@ -518,7 +400,16 @@ func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 	}
 
 	// Verify legacy table was migrated (no longer in public)
-	assertTableNotInSchema(t, pool, "public", "schema_version")
+	var publicExists bool
+	pool.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'schema_version'
+		)
+	`).Scan(&publicExists)
+	if publicExists {
+		t.Error("Expected public.schema_version to NOT exist")
+	}
 
 	// Verify data is accessible in roborev schema
 	var version int
@@ -536,42 +427,27 @@ func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing
 	// (some tables already in roborev, some in public)
 	ctx := t.Context()
 
-	setupPool := openRawPgxPool(t)
-	cleanupTablesOnFinish(t, "schema_version", "repos")
-	skipIfTableInSchema(t, setupPool, "roborev", "schema_version")
-	skipIfTableInSchema(t, setupPool, "public", "schema_version")
+	env := NewMigrationTestEnv(t)
+	env.DropTable("public", "schema_version")
+	env.DropTable("public", "repos")
+	env.DropSchema("roborev")
+
+	env.SkipIfTableInSchema("roborev", "schema_version")
+	env.SkipIfTableInSchema("public", "schema_version")
 
 	// Create roborev schema for mixed state test
-	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
-	if err != nil {
-		t.Fatalf("Failed to create roborev schema: %v", err)
-	}
+	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
 
 	// Create legacy tables in public schema (simulating old installation)
-	_, err = setupPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
-	if err != nil {
-		t.Fatalf("Failed to create legacy schema_version: %v", err)
-	}
-	_, err = setupPool.Exec(ctx, `INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
-	if err != nil {
-		t.Fatalf("Failed to insert legacy version: %v", err)
-	}
+	env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
+	env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
 
 	// Create repos table in public (second legacy table)
-	_, err = setupPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	if err != nil {
-		t.Fatalf("Failed to create legacy repos: %v", err)
-	}
-	_, err = setupPool.Exec(ctx, `INSERT INTO public.repos (identity) VALUES ('test-repo-legacy') ON CONFLICT DO NOTHING`)
-	if err != nil {
-		t.Fatalf("Failed to insert legacy repo: %v", err)
-	}
+	env.Exec(`CREATE TABLE IF NOT EXISTS public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+	env.Exec(`INSERT INTO public.repos (identity) VALUES ('test-repo-legacy') ON CONFLICT DO NOTHING`)
 
 	// Create machines table directly in roborev (simulating partial migration)
-	_, err = setupPool.Exec(ctx, `CREATE TABLE IF NOT EXISTS roborev.machines (id SERIAL PRIMARY KEY, machine_id UUID UNIQUE NOT NULL, name TEXT)`)
-	if err != nil {
-		t.Fatalf("Failed to create machines in roborev: %v", err)
-	}
+	env.Exec(`CREATE TABLE IF NOT EXISTS roborev.machines (id SERIAL PRIMARY KEY, machine_id UUID UNIQUE NOT NULL, name TEXT)`)
 
 	// Now connect with the normal pool and run EnsureSchema
 	connString := getTestPostgresURL(t)
@@ -585,9 +461,22 @@ func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing
 		t.Fatalf("EnsureSchema failed: %v", err)
 	}
 
-	assertTableNotInSchema(t, pool, "public", "schema_version")
-	assertTableNotInSchema(t, pool, "public", "repos")
-	assertTableInSchema(t, pool, "roborev", "machines")
+	// Verify public tables gone
+	var exists bool
+	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='schema_version')`).Scan(&exists)
+	if exists {
+		t.Error("Expected public.schema_version to be gone")
+	}
+	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists)
+	if exists {
+		t.Error("Expected public.repos to be gone")
+	}
+
+	// Verify roborev.machines exists
+	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='roborev' AND table_name='machines')`).Scan(&exists)
+	if !exists {
+		t.Error("Expected roborev.machines to exist")
+	}
 
 	// Verify data is accessible
 	var version int
@@ -614,36 +503,21 @@ func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
 	// causes an error requiring manual reconciliation.
 	ctx := t.Context()
 
-	setupPool := openRawPgxPool(t)
-	cleanupTablesOnFinish(t, "repos", "schema_version")
-	skipIfTableInSchema(t, setupPool, "roborev", "repos")
-	skipIfTableInSchema(t, setupPool, "public", "repos")
+	env := NewMigrationTestEnv(t)
+	env.DropTable("public", "repos")
+	env.DropTable("public", "schema_version")
+	env.DropSchema("roborev")
 
 	// Create roborev schema with repos table
-	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
-	if err != nil {
-		t.Fatalf("Failed to create roborev schema: %v", err)
-	}
-	_, err = setupPool.Exec(ctx, `CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	if err != nil {
-		t.Fatalf("Failed to create roborev.repos: %v", err)
-	}
+	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
+	env.Exec(`CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 
 	// Create public.schema_version so migrateLegacyTables detects the legacy schema
-	_, err = setupPool.Exec(ctx, `CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
-	if err != nil {
-		t.Fatalf("Failed to create public.schema_version: %v", err)
-	}
+	env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
 
 	// Create public.repos table with data
-	_, err = setupPool.Exec(ctx, `CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	if err != nil {
-		t.Fatalf("Failed to create public.repos: %v", err)
-	}
-	_, err = setupPool.Exec(ctx, `INSERT INTO public.repos (identity) VALUES ('legacy-repo')`)
-	if err != nil {
-		t.Fatalf("Failed to insert into public.repos: %v", err)
-	}
+	env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+	env.Exec(`INSERT INTO public.repos (identity) VALUES ('legacy-repo')`)
 
 	// Now connect and try EnsureSchema - should fail
 	connString := getTestPostgresURL(t)
@@ -667,36 +541,21 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	// table exists in roborev schema.
 	ctx := t.Context()
 
-	setupPool := openRawPgxPool(t)
-	cleanupTablesOnFinish(t, "repos", "schema_version")
-	skipIfTableInSchema(t, setupPool, "roborev", "repos")
-	skipIfTableInSchema(t, setupPool, "public", "repos")
+	env := NewMigrationTestEnv(t)
+	env.DropTable("public", "repos")
+	env.DropTable("public", "schema_version")
+	env.DropSchema("roborev")
 
 	// Create roborev schema with repos table containing data
-	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
-	if err != nil {
-		t.Fatalf("Failed to create roborev schema: %v", err)
-	}
-	_, err = setupPool.Exec(ctx, `CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	if err != nil {
-		t.Fatalf("Failed to create roborev.repos: %v", err)
-	}
-	_, err = setupPool.Exec(ctx, `INSERT INTO roborev.repos (identity) VALUES ('new-repo')`)
-	if err != nil {
-		t.Fatalf("Failed to insert into roborev.repos: %v", err)
-	}
+	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
+	env.Exec(`CREATE TABLE roborev.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+	env.Exec(`INSERT INTO roborev.repos (identity) VALUES ('new-repo')`)
 
 	// Create public.schema_version so migrateLegacyTables detects the legacy schema
-	_, err = setupPool.Exec(ctx, `CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
-	if err != nil {
-		t.Fatalf("Failed to create public.schema_version: %v", err)
-	}
+	env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
 
 	// Create empty public.repos table
-	_, err = setupPool.Exec(ctx, `CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	if err != nil {
-		t.Fatalf("Failed to create public.repos: %v", err)
-	}
+	env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
 	// Note: no data inserted - empty table
 
 	// Now connect and run EnsureSchema - should succeed and drop empty public.repos
@@ -712,7 +571,11 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 		t.Fatalf("EnsureSchema failed: %v", err)
 	}
 
-	assertTableNotInSchema(t, pool, "public", "repos")
+	var exists bool
+	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists)
+	if exists {
+		t.Error("Expected public.repos to be gone")
+	}
 
 	// Verify roborev.repos still exists with data
 	var repoIdentity string
@@ -731,32 +594,20 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	// This is the normal migration path and also what the 42P01 fallback uses.
 	ctx := t.Context()
 
-	setupPool := openRawPgxPool(t)
-	cleanupTablesOnFinish(t, "repos", "schema_version")
-	skipIfTableInSchema(t, setupPool, "roborev", "repos")
-	skipIfTableInSchema(t, setupPool, "public", "repos")
+	env := NewMigrationTestEnv(t)
+	env.DropTable("public", "repos")
+	env.DropTable("public", "schema_version")
+	env.DropSchema("roborev")
 
 	// Create roborev schema but NOT the repos table
-	_, err := setupPool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS roborev`)
-	if err != nil {
-		t.Fatalf("Failed to create roborev schema: %v", err)
-	}
+	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
 
 	// Create public.schema_version so migrateLegacyTables detects the legacy schema
-	_, err = setupPool.Exec(ctx, `CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
-	if err != nil {
-		t.Fatalf("Failed to create public.schema_version: %v", err)
-	}
+	env.Exec(`CREATE TABLE public.schema_version (version INTEGER PRIMARY KEY)`)
 
 	// Create public.repos table with data
-	_, err = setupPool.Exec(ctx, `CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
-	if err != nil {
-		t.Fatalf("Failed to create public.repos: %v", err)
-	}
-	_, err = setupPool.Exec(ctx, `INSERT INTO public.repos (identity) VALUES ('migrated-repo-1'), ('migrated-repo-2')`)
-	if err != nil {
-		t.Fatalf("Failed to insert into public.repos: %v", err)
-	}
+	env.Exec(`CREATE TABLE public.repos (id SERIAL PRIMARY KEY, identity TEXT UNIQUE NOT NULL)`)
+	env.Exec(`INSERT INTO public.repos (identity) VALUES ('migrated-repo-1'), ('migrated-repo-2')`)
 
 	// Now connect and run EnsureSchema - should migrate public.repos to roborev.repos
 	connString := getTestPostgresURL(t)
@@ -771,7 +622,11 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 		t.Fatalf("EnsureSchema failed: %v", err)
 	}
 
-	assertTableNotInSchema(t, pool, "public", "repos")
+	var exists bool
+	pool.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='repos')`).Scan(&exists)
+	if exists {
+		t.Error("Expected public.repos to be gone")
+	}
 
 	// Verify data is accessible in roborev.repos
 	var count int
@@ -919,162 +774,58 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	}
 }
 
-func TestIntegration_BatchOperations(t *testing.T) {
+func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
 	// Create a test repo
-	repoID, err := pool.GetOrCreateRepo(ctx, "https://github.com/test/batch-test.git")
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
+	repoID := createTestRepo(t, pool, "https://github.com/test/batch-jobs-test.git")
+
+	// Create multiple jobs with prepared IDs
+	var jobs []JobWithPgIDs
+	for i := range 5 {
+		commitID := createTestCommit(t, pool, repoID, fmt.Sprintf("batch-jobs-sha-%d", i))
+		jobs = append(jobs, JobWithPgIDs{
+			Job: SyncableJob{
+				UUID:            uuid.NewString(),
+				RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
+				CommitSHA:       fmt.Sprintf("batch-jobs-sha-%d", i),
+				GitRef:          "test-ref",
+				Agent:           "test",
+				Status:          "done",
+				SourceMachineID: "11111111-1111-1111-1111-111111111111",
+				EnqueuedAt:      time.Now(),
+			},
+			PgRepoID:   repoID,
+			PgCommitID: &commitID,
+		})
 	}
 
-	t.Run("BatchUpsertJobs", func(t *testing.T) {
-		// Create multiple jobs with prepared IDs
-		var jobs []JobWithPgIDs
-		for i := range 5 {
-			commitID, err := pool.GetOrCreateCommit(ctx, repoID, fmt.Sprintf("batch-test-sha-%d", i), "Author", "Subject", time.Now())
-			if err != nil {
-				t.Fatalf("GetOrCreateCommit failed: %v", err)
-			}
-			jobs = append(jobs, JobWithPgIDs{
-				Job: SyncableJob{
-					UUID:            uuid.NewString(),
-					RepoIdentity:    "https://github.com/test/batch-test.git",
-					CommitSHA:       fmt.Sprintf("batch-test-sha-%d", i),
-					GitRef:          "test-ref",
-					Agent:           "test",
-					Status:          "done",
-					SourceMachineID: "11111111-1111-1111-1111-111111111111",
-					EnqueuedAt:      time.Now(),
-				},
-				PgRepoID:   repoID,
-				PgCommitID: &commitID,
-			})
+	success, err := pool.BatchUpsertJobs(ctx, jobs)
+	if err != nil {
+		t.Fatalf("BatchUpsertJobs failed: %v", err)
+	}
+	successCount := 0
+	for _, ok := range success {
+		if ok {
+			successCount++
 		}
+	}
+	if successCount != 5 {
+		t.Errorf("Expected 5 jobs upserted, got %d", successCount)
+	}
 
-		success, err := pool.BatchUpsertJobs(ctx, jobs)
-		if err != nil {
-			t.Fatalf("BatchUpsertJobs failed: %v", err)
-		}
-		successCount := 0
-		for _, ok := range success {
-			if ok {
-				successCount++
-			}
-		}
-		if successCount != 5 {
-			t.Errorf("Expected 5 jobs upserted, got %d", successCount)
-		}
+	// Verify jobs exist
+	var jobCount int
+	err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM review_jobs WHERE source_machine_id = '11111111-1111-1111-1111-111111111111'`).Scan(&jobCount)
+	if err != nil {
+		t.Fatalf("Count query failed: %v", err)
+	}
+	if jobCount < 5 {
+		t.Errorf("Expected at least 5 jobs in database, got %d", jobCount)
+	}
 
-		// Verify jobs exist
-		var jobCount int
-		err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM review_jobs WHERE source_machine_id = '11111111-1111-1111-1111-111111111111'`).Scan(&jobCount)
-		if err != nil {
-			t.Fatalf("Count query failed: %v", err)
-		}
-		if jobCount < 5 {
-			t.Errorf("Expected at least 5 jobs in database, got %d", jobCount)
-		}
-	})
-
-	t.Run("BatchUpsertReviews", func(t *testing.T) {
-		// Get a job UUID to reference
-		var jobUUID string
-		err := pool.pool.QueryRow(ctx, `SELECT uuid FROM review_jobs WHERE source_machine_id = '11111111-1111-1111-1111-111111111111' LIMIT 1`).Scan(&jobUUID)
-		if err != nil {
-			t.Fatalf("Failed to get job UUID: %v", err)
-		}
-
-		reviews := []SyncableReview{
-			{
-				UUID:               uuid.NewString(),
-				JobUUID:            jobUUID,
-				Agent:              "test",
-				Prompt:             "test prompt 1",
-				Output:             "test output 1",
-				Addressed:          false,
-				UpdatedByMachineID: "11111111-1111-1111-1111-111111111111",
-				CreatedAt:          time.Now(),
-			},
-			{
-				UUID:               uuid.NewString(),
-				JobUUID:            jobUUID,
-				Agent:              "test",
-				Prompt:             "test prompt 2",
-				Output:             "test output 2",
-				Addressed:          true,
-				UpdatedByMachineID: "11111111-1111-1111-1111-111111111111",
-				CreatedAt:          time.Now(),
-			},
-		}
-
-		success, err := pool.BatchUpsertReviews(ctx, reviews)
-		if err != nil {
-			t.Fatalf("BatchUpsertReviews failed: %v", err)
-		}
-		successCount := 0
-		for _, ok := range success {
-			if ok {
-				successCount++
-			}
-		}
-		if successCount != 2 {
-			t.Errorf("Expected 2 reviews upserted, got %d", successCount)
-		}
-	})
-
-	t.Run("BatchInsertResponses", func(t *testing.T) {
-		// Get a job UUID to reference
-		var jobUUID string
-		err := pool.pool.QueryRow(ctx, `SELECT uuid FROM review_jobs WHERE source_machine_id = '11111111-1111-1111-1111-111111111111' LIMIT 1`).Scan(&jobUUID)
-		if err != nil {
-			t.Fatalf("Failed to get job UUID: %v", err)
-		}
-
-		responses := []SyncableResponse{
-			{
-				UUID:            uuid.NewString(),
-				JobUUID:         jobUUID,
-				Responder:       "user1",
-				Response:        "response 1",
-				SourceMachineID: "11111111-1111-1111-1111-111111111111",
-				CreatedAt:       time.Now(),
-			},
-			{
-				UUID:            uuid.NewString(),
-				JobUUID:         jobUUID,
-				Responder:       "user2",
-				Response:        "response 2",
-				SourceMachineID: "11111111-1111-1111-1111-111111111111",
-				CreatedAt:       time.Now(),
-			},
-			{
-				UUID:            uuid.NewString(),
-				JobUUID:         jobUUID,
-				Responder:       "agent",
-				Response:        "response 3",
-				SourceMachineID: "11111111-1111-1111-1111-111111111111",
-				CreatedAt:       time.Now(),
-			},
-		}
-
-		success, err := pool.BatchInsertResponses(ctx, responses)
-		if err != nil {
-			t.Fatalf("BatchInsertResponses failed: %v", err)
-		}
-		successCount := 0
-		for _, ok := range success {
-			if ok {
-				successCount++
-			}
-		}
-		if successCount != 3 {
-			t.Errorf("Expected 3 responses inserted, got %d", successCount)
-		}
-	})
-
-	t.Run("empty batches are no-op", func(t *testing.T) {
+	t.Run("empty batch is no-op", func(t *testing.T) {
 		success, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{})
 		if err != nil {
 			t.Errorf("BatchUpsertJobs with empty slice failed: %v", err)
@@ -1082,42 +833,77 @@ func TestIntegration_BatchOperations(t *testing.T) {
 		if success != nil {
 			t.Errorf("Expected nil for empty batch, got %v", success)
 		}
+	})
+}
 
-		success, err = pool.BatchUpsertReviews(ctx, []SyncableReview{})
+func TestIntegration_BatchUpsertReviews(t *testing.T) {
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+
+	repoID := createTestRepo(t, pool, "https://github.com/test/batch-reviews-test.git")
+	commitID := createTestCommit(t, pool, repoID, "batch-reviews-sha")
+	jobUUID := uuid.NewString()
+
+	createTestJob(t, pool, TestJobOpts{
+		UUID:            jobUUID,
+		RepoID:          repoID,
+		CommitID:        commitID,
+		SourceMachineID: "11111111-1111-1111-1111-111111111111",
+	})
+
+	reviews := []SyncableReview{
+		{
+			UUID:               uuid.NewString(),
+			JobUUID:            jobUUID,
+			Agent:              "test",
+			Prompt:             "test prompt 1",
+			Output:             "test output 1",
+			Addressed:          false,
+			UpdatedByMachineID: "11111111-1111-1111-1111-111111111111",
+			CreatedAt:          time.Now(),
+		},
+		{
+			UUID:               uuid.NewString(),
+			JobUUID:            jobUUID,
+			Agent:              "test",
+			Prompt:             "test prompt 2",
+			Output:             "test output 2",
+			Addressed:          true,
+			UpdatedByMachineID: "11111111-1111-1111-1111-111111111111",
+			CreatedAt:          time.Now(),
+		},
+	}
+
+	success, err := pool.BatchUpsertReviews(ctx, reviews)
+	if err != nil {
+		t.Fatalf("BatchUpsertReviews failed: %v", err)
+	}
+	successCount := 0
+	for _, ok := range success {
+		if ok {
+			successCount++
+		}
+	}
+	if successCount != 2 {
+		t.Errorf("Expected 2 reviews upserted, got %d", successCount)
+	}
+
+	t.Run("empty batch is no-op", func(t *testing.T) {
+		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{})
 		if err != nil {
 			t.Errorf("BatchUpsertReviews with empty slice failed: %v", err)
 		}
 		if success != nil {
 			t.Errorf("Expected nil for empty batch, got %v", success)
 		}
-
-		success, err = pool.BatchInsertResponses(ctx, []SyncableResponse{})
-		if err != nil {
-			t.Errorf("BatchInsertResponses with empty slice failed: %v", err)
-		}
-		if success != nil {
-			t.Errorf("Expected nil for empty batch, got %v", success)
-		}
 	})
 
-	t.Run("BatchUpsertReviews partial failure with invalid FK", func(t *testing.T) {
-		// Get a valid job UUID
-		var validJobUUID string
-		err := pool.pool.QueryRow(ctx, `SELECT uuid FROM review_jobs WHERE source_machine_id = '11111111-1111-1111-1111-111111111111' LIMIT 1`).Scan(&validJobUUID)
-		if err != nil {
-			t.Fatalf("Failed to get job UUID: %v", err)
-		}
-
-		// Create a batch with one valid and one invalid review (bad FK)
-		// Note: PostgreSQL transactions are atomic - if any statement fails due to FK violation,
-		// the entire batch transaction is rolled back. The success slice indicates which
-		// individual statements executed without error, but actual persistence depends on
-		// the entire batch succeeding.
+	t.Run("partial failure with invalid FK", func(t *testing.T) {
 		validReviewUUID := uuid.NewString()
 		reviews := []SyncableReview{
 			{
 				UUID:               validReviewUUID,
-				JobUUID:            validJobUUID, // Valid FK
+				JobUUID:            jobUUID, // Valid FK
 				Agent:              "test",
 				Prompt:             "valid review",
 				Output:             "output",
@@ -1137,18 +923,12 @@ func TestIntegration_BatchOperations(t *testing.T) {
 
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 
-		// Should return an error (from the failed row)
 		if err == nil {
 			t.Error("Expected error from batch with invalid FK, got nil")
 		}
-
-		// Should have correct success flags - note these are informational only
-		// and don't guarantee persistence due to transaction rollback
 		if len(success) != 2 {
 			t.Fatalf("Expected success slice length 2, got %d", len(success))
 		}
-
-		// First statement executes without error, second fails
 		if !success[0] {
 			t.Error("Expected success[0]=true (valid FK)")
 		}
@@ -1156,31 +936,88 @@ func TestIntegration_BatchOperations(t *testing.T) {
 			t.Error("Expected success[1]=false (invalid FK)")
 		}
 
-		// Verify DB state: due to PostgreSQL transaction semantics, the FK violation
-		// causes the entire batch to be rolled back, so no reviews should be persisted
 		var count int
 		err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE uuid = $1`, validReviewUUID).Scan(&count)
 		if err != nil {
 			t.Fatalf("Failed to query review: %v", err)
 		}
-		// The valid review was rolled back along with the failed one
 		if count != 0 {
 			t.Errorf("Expected 0 reviews (batch rolled back due to FK failure), got %d", count)
 		}
 	})
+}
 
-	t.Run("BatchInsertResponses partial failure with invalid FK", func(t *testing.T) {
-		// Get a valid job UUID
-		var validJobUUID string
-		err := pool.pool.QueryRow(ctx, `SELECT uuid FROM review_jobs WHERE source_machine_id = '11111111-1111-1111-1111-111111111111' LIMIT 1`).Scan(&validJobUUID)
-		if err != nil {
-			t.Fatalf("Failed to get job UUID: %v", err)
+func TestIntegration_BatchInsertResponses(t *testing.T) {
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+
+	repoID := createTestRepo(t, pool, "https://github.com/test/batch-responses-test.git")
+	commitID := createTestCommit(t, pool, repoID, "batch-responses-sha")
+	jobUUID := uuid.NewString()
+
+	createTestJob(t, pool, TestJobOpts{
+		UUID:            jobUUID,
+		RepoID:          repoID,
+		CommitID:        commitID,
+		SourceMachineID: "11111111-1111-1111-1111-111111111111",
+	})
+
+	responses := []SyncableResponse{
+		{
+			UUID:            uuid.NewString(),
+			JobUUID:         jobUUID,
+			Responder:       "user1",
+			Response:        "response 1",
+			SourceMachineID: "11111111-1111-1111-1111-111111111111",
+			CreatedAt:       time.Now(),
+		},
+		{
+			UUID:            uuid.NewString(),
+			JobUUID:         jobUUID,
+			Responder:       "user2",
+			Response:        "response 2",
+			SourceMachineID: "11111111-1111-1111-1111-111111111111",
+			CreatedAt:       time.Now(),
+		},
+		{
+			UUID:            uuid.NewString(),
+			JobUUID:         jobUUID,
+			Responder:       "agent",
+			Response:        "response 3",
+			SourceMachineID: "11111111-1111-1111-1111-111111111111",
+			CreatedAt:       time.Now(),
+		},
+	}
+
+	success, err := pool.BatchInsertResponses(ctx, responses)
+	if err != nil {
+		t.Fatalf("BatchInsertResponses failed: %v", err)
+	}
+	successCount := 0
+	for _, ok := range success {
+		if ok {
+			successCount++
 		}
+	}
+	if successCount != 3 {
+		t.Errorf("Expected 3 responses inserted, got %d", successCount)
+	}
 
+	t.Run("empty batch is no-op", func(t *testing.T) {
+		success, err := pool.BatchInsertResponses(ctx, []SyncableResponse{})
+		if err != nil {
+			t.Errorf("BatchInsertResponses with empty slice failed: %v", err)
+		}
+		if success != nil {
+			t.Errorf("Expected nil for empty batch, got %v", success)
+		}
+	})
+
+	t.Run("partial failure with invalid FK", func(t *testing.T) {
 		responses := []SyncableResponse{
 			{
 				UUID:            uuid.NewString(),
-				JobUUID:         validJobUUID, // Valid FK
+				JobUUID:         jobUUID, // Valid FK
 				Responder:       "user",
 				Response:        "valid response",
 				SourceMachineID: "11111111-1111-1111-1111-111111111111",
@@ -1198,12 +1035,9 @@ func TestIntegration_BatchOperations(t *testing.T) {
 
 		success, err := pool.BatchInsertResponses(ctx, responses)
 
-		// Should return an error
 		if err == nil {
 			t.Error("Expected error from batch with invalid FK, got nil")
 		}
-
-		// Check success flags
 		if len(success) != 2 {
 			t.Fatalf("Expected success slice length 2, got %d", len(success))
 		}
@@ -1220,55 +1054,30 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	// This test verifies that a v1 schema (without model column) gets migrated to v2
 	ctx := t.Context()
 
-	setupPool := openRawPgxPool(t)
-	cleanupSchemaOnFinish(t)
-
+	env := NewMigrationTestEnv(t)
 	// Drop any existing schema to start fresh - this test needs to verify v1→v2 migration
-	_, err := setupPool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
-	if err != nil {
-		t.Fatalf("Failed to drop existing schema: %v", err)
-	}
+	env.DropSchema("roborev")
 
 	// Load and execute v1 schema from embedded SQL file
-	// Use same parsing logic as pgSchemaStatements() to handle comments correctly
-	for stmt := range strings.SplitSeq(postgresV1Schema, ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-		// Skip statements that are only comments
-		hasCode := false
-		for line := range strings.SplitSeq(stmt, "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "--") {
-				hasCode = true
-				break
-			}
-		}
-		if !hasCode {
-			continue
-		}
-		if _, err := setupPool.Exec(ctx, stmt); err != nil {
-			t.Fatalf("Failed to execute v1 schema statement: %v\nStatement: %s", err, stmt)
-		}
+	// Use helper to parse and execute statements
+	for _, stmt := range parseSQLStatements(postgresV1Schema) {
+		env.Exec(stmt)
 	}
 
 	// Insert a test job to verify data survives migration
 	testJobUUID := uuid.NewString()
 	var repoID int64
-	err = setupPool.QueryRow(ctx, `
+	err := env.QueryRow(`
 		INSERT INTO roborev.repos (identity) VALUES ('test-repo-v1-migration') RETURNING id
 	`).Scan(&repoID)
 	if err != nil {
 		t.Fatalf("Failed to insert test repo: %v", err)
 	}
-	_, err = setupPool.Exec(ctx, `
+
+	env.Exec(`
 		INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, agent, status, source_machine_id, enqueued_at)
 		VALUES ($1, $2, 'HEAD', 'test-agent', 'done', '00000000-0000-0000-0000-000000000001', NOW())
 	`, testJobUUID, repoID)
-	if err != nil {
-		t.Fatalf("Failed to insert test job: %v", err)
-	}
 
 	// Now connect with the normal pool and run EnsureSchema - should migrate v1→v2
 	connString := getTestPostgresURL(t)
@@ -1278,8 +1087,7 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	}
 	defer pool.Close()
 
-	err = pool.EnsureSchema(ctx)
-	if err != nil {
+	if err := pool.EnsureSchema(ctx); err != nil {
 		t.Fatalf("EnsureSchema failed: %v", err)
 	}
 
