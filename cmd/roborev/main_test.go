@@ -945,6 +945,70 @@ func TestFilterGitEnv(t *testing.T) {
 	}
 }
 
+func TestIsGoTestBinaryPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/tmp/roborev.test", want: true},
+		{path: "/tmp/roborev.test.exe", want: true},
+		{path: "/tmp/ROBOREV.TEST", want: true},
+		{path: "/tmp/roborev", want: false},
+		{path: "/tmp/roborev.exe", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := isGoTestBinaryPath(tt.path)
+			if got != tt.want {
+				t.Fatalf("isGoTestBinaryPath(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldRefuseAutoStartDaemon(t *testing.T) {
+	t.Run("refuses test binary by default", func(t *testing.T) {
+		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
+		if !shouldRefuseAutoStartDaemon("/tmp/roborev.test") {
+			t.Fatal("expected refusal for test binary without opt-in")
+		}
+	})
+
+	t.Run("allows explicit opt in for test binary", func(t *testing.T) {
+		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "1")
+		if shouldRefuseAutoStartDaemon("/tmp/roborev.test") {
+			t.Fatal("expected no refusal for test binary when opt-in is set")
+		}
+	})
+
+	t.Run("does not refuse normal binary", func(t *testing.T) {
+		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
+		if shouldRefuseAutoStartDaemon("/usr/local/bin/roborev") {
+			t.Fatal("expected no refusal for non-test binary")
+		}
+	})
+}
+
+func TestStartDaemonRefusesFromGoTestBinary(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable failed: %v", err)
+	}
+	if !isGoTestBinaryPath(exe) {
+		t.Skipf("expected go test binary path, got %q", exe)
+	}
+
+	t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
+	err = startDaemon()
+	if err == nil {
+		t.Fatal("expected startDaemon to refuse go test binary auto-start")
+	}
+	if !strings.Contains(err.Error(), "refusing to auto-start daemon from go test binary") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestDaemonStopNotRunning verifies daemon stop reports when no daemon is running
 func TestDaemonStopNotRunning(t *testing.T) {
 	// Use ROBOREV_DATA_DIR to isolate test

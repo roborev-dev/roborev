@@ -285,6 +285,20 @@ func filterGitEnv(env []string) []string {
 	return result
 }
 
+func isGoTestBinaryPath(exePath string) bool {
+	base := strings.ToLower(filepath.Base(exePath))
+	return strings.HasSuffix(base, ".test") ||
+		strings.HasSuffix(base, ".test.exe")
+}
+
+func shouldRefuseAutoStartDaemon(exePath string) bool {
+	if !isGoTestBinaryPath(exePath) {
+		return false
+	}
+	// Allow explicit opt-in for tests that intentionally want to auto-start.
+	return os.Getenv("ROBOREV_TEST_ALLOW_AUTOSTART") != "1"
+}
+
 func startDaemon() error {
 	if verbose {
 		fmt.Println("Starting daemon...")
@@ -294,6 +308,12 @@ func startDaemon() error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to find executable: %w", err)
+	}
+	if shouldRefuseAutoStartDaemon(exe) {
+		return fmt.Errorf(
+			"refusing to auto-start daemon from go test binary (%s)",
+			filepath.Base(exe),
+		)
 	}
 
 	cmd := exec.Command(exe, "daemon", "run")
