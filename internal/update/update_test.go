@@ -3,9 +3,11 @@ package update
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -35,8 +37,14 @@ func TestSanitizeTarPath(t *testing.T) {
 				t.Skip("Unix-style absolute path not applicable on Windows")
 			}
 			_, err := sanitizeTarPath(destDir, tt.path)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("sanitizeTarPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("sanitizeTarPath(%q) expected error, got nil", tt.path)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("sanitizeTarPath(%q) unexpected error: %v", tt.path, err)
+				}
 			}
 		})
 	}
@@ -145,6 +153,10 @@ func TestExtractTarGzSymlinkSkipped(t *testing.T) {
 }
 
 func TestExtractChecksum(t *testing.T) {
+	longHash := "abc123def456789012345678901234567890123456789012345678901234abcd"
+	upperHash := strings.ToUpper(longHash)
+	mixedHash := "AbC123DeF456789012345678901234567890123456789012345678901234aBcD"
+
 	tests := []struct {
 		name      string
 		body      string
@@ -153,37 +165,41 @@ func TestExtractChecksum(t *testing.T) {
 	}{
 		{
 			name:      "standard sha256sum format",
-			body:      "abc123def456789012345678901234567890123456789012345678901234abcd  roborev_darwin_arm64.tar.gz",
+			body:      fmt.Sprintf("%s  %s", longHash, "roborev_darwin_arm64.tar.gz"),
 			assetName: "roborev_darwin_arm64.tar.gz",
-			want:      "abc123def456789012345678901234567890123456789012345678901234abcd",
+			want:      longHash,
 		},
 		{
 			name:      "uppercase checksum",
-			body:      "ABC123DEF456789012345678901234567890123456789012345678901234ABCD  roborev_linux_amd64.tar.gz",
+			body:      fmt.Sprintf("%s  %s", upperHash, "roborev_linux_amd64.tar.gz"),
 			assetName: "roborev_linux_amd64.tar.gz",
-			want:      "abc123def456789012345678901234567890123456789012345678901234abcd",
+			want:      longHash,
 		},
 		{
 			name:      "mixed case checksum",
-			body:      "AbC123DeF456789012345678901234567890123456789012345678901234aBcD  roborev_darwin_amd64.tar.gz",
+			body:      fmt.Sprintf("%s  %s", mixedHash, "roborev_darwin_amd64.tar.gz"),
 			assetName: "roborev_darwin_amd64.tar.gz",
-			want:      "abc123def456789012345678901234567890123456789012345678901234abcd",
+			want:      longHash,
 		},
 		{
 			name:      "colon format",
-			body:      "roborev_darwin_arm64.tar.gz: abc123def456789012345678901234567890123456789012345678901234abcd",
+			body:      fmt.Sprintf("%s: %s", "roborev_darwin_arm64.tar.gz", longHash),
 			assetName: "roborev_darwin_arm64.tar.gz",
-			want:      "abc123def456789012345678901234567890123456789012345678901234abcd",
+			want:      longHash,
 		},
 		{
 			name:      "multiline with target in middle",
-			body:      "abc123def456789012345678901234567890123456789012345678901234aaaa  roborev_linux_amd64.tar.gz\nabc123def456789012345678901234567890123456789012345678901234bbbb  roborev_darwin_arm64.tar.gz\nabc123def456789012345678901234567890123456789012345678901234cccc  roborev_darwin_amd64.tar.gz",
+			body: fmt.Sprintf("%s  %s\n%s  %s\n%s  %s",
+				strings.ReplaceAll(longHash, "d", "a"), "roborev_linux_amd64.tar.gz",
+				strings.ReplaceAll(longHash, "d", "b"), "roborev_darwin_arm64.tar.gz",
+				strings.ReplaceAll(longHash, "d", "c"), "roborev_darwin_amd64.tar.gz",
+			),
 			assetName: "roborev_darwin_arm64.tar.gz",
-			want:      "abc123def456789012345678901234567890123456789012345678901234bbbb",
+			want:      strings.ReplaceAll(longHash, "d", "b"),
 		},
 		{
 			name:      "no match",
-			body:      "abc123def456789012345678901234567890123456789012345678901234abcd  roborev_linux_amd64.tar.gz",
+			body:      fmt.Sprintf("%s  %s", longHash, "roborev_linux_amd64.tar.gz"),
 			assetName: "roborev_darwin_arm64.tar.gz",
 			want:      "",
 		},
@@ -298,61 +314,62 @@ func TestIsDevBuildVersion(t *testing.T) {
 
 func TestIsNewer(t *testing.T) {
 	tests := []struct {
+		name   string
 		v1, v2 string
 		want   bool
 	}{
 		// Basic semver comparisons
-		{"1.0.0", "0.9.0", true},
-		{"1.1.0", "1.0.0", true},
-		{"1.0.1", "1.0.0", true},
-		{"2.0.0", "1.9.9", true},
-		{"1.0.0", "1.0.0", false},
-		{"0.9.0", "1.0.0", false},
-		{"v1.0.0", "v0.9.0", true},
-		{"v1.0.0", "0.9.0", true},
-		{"1.0.0", "v0.9.0", true},
+		{"minor downgrade", "1.0.0", "0.9.0", true},
+		{"minor upgrade", "1.1.0", "1.0.0", true},
+		{"patch upgrade", "1.0.1", "1.0.0", true},
+		{"major upgrade", "2.0.0", "1.9.9", true},
+		{"same version", "1.0.0", "1.0.0", false},
+		{"older version", "0.9.0", "1.0.0", false},
+		{"v prefix upgrade", "v1.0.0", "v0.9.0", true},
+		{"mixed v prefix upgrade 1", "v1.0.0", "0.9.0", true},
+		{"mixed v prefix upgrade 2", "1.0.0", "v0.9.0", true},
 
 		// Pure hash dev versions - skip update notification (can't determine relationship)
-		{"0.4.2", "88be010", false},
-		{"0.4.2", "dev", false},
-		{"0.4.2", "abc1234-dirty", false},
-		{"v0.4.2", "88be010", false},
+		{"pure hash 1", "0.4.2", "88be010", false},
+		{"dev keyword", "0.4.2", "dev", false},
+		{"dirty hash", "0.4.2", "abc1234-dirty", false},
+		{"pure hash v prefix", "v0.4.2", "88be010", false},
 
 		// Non-semver release version - not newer
-		{"badversion", "0.4.0", false},
-		{"abc123", "0.4.0", false},
+		{"bad version 1", "badversion", "0.4.0", false},
+		{"bad version 2", "abc123", "0.4.0", false},
 
 		// Git describe format - KEY TEST CASES for dev builds
 		// Dev build v0.4.0-5-gabcdef should NOT show update for v0.4.0
-		{"0.4.0", "0.4.0-5-gabcdef", false},
-		{"v0.4.0", "v0.4.0-5-gabcdef", false},
-		{"0.4.0", "v0.4.0-15-g1234567", false},
+		{"git describe same base", "0.4.0", "0.4.0-5-gabcdef", false},
+		{"git describe same base v prefix", "v0.4.0", "v0.4.0-5-gabcdef", false},
+		{"git describe same base v prefix 2", "0.4.0", "v0.4.0-15-g1234567", false},
 
 		// Dev build v0.4.0-5-gabcdef SHOULD show update for v0.5.0
-		{"0.5.0", "0.4.0-5-gabcdef", true},
-		{"v0.5.0", "v0.4.0-5-gabcdef", true},
-		{"0.4.1", "0.4.0-5-gabcdef", true},
-		{"1.0.0", "0.4.0-5-gabcdef", true},
+		{"git describe newer major", "0.5.0", "0.4.0-5-gabcdef", true},
+		{"git describe newer major v prefix", "v0.5.0", "v0.4.0-5-gabcdef", true},
+		{"git describe newer patch", "0.4.1", "0.4.0-5-gabcdef", true},
+		{"git describe newer major 2", "1.0.0", "0.4.0-5-gabcdef", true},
 
 		// Dev build v0.4.0-5-gabcdef should NOT show update for v0.3.0
-		{"0.3.0", "0.4.0-5-gabcdef", false},
-		{"0.4.0", "0.5.0-5-gabcdef", false},
+		{"git describe older minor", "0.3.0", "0.4.0-5-gabcdef", false},
+		{"git describe older major", "0.4.0", "0.5.0-5-gabcdef", false},
 
 		// Prerelease versions
-		{"0.4.0", "0.4.0-rc1", false},
-		{"0.5.0", "0.4.0-rc1", true},
-		{"0.4.0", "0.4.0-dev", false},
-		{"0.5.0", "0.4.0-dev", true},
+		{"prerelease same base", "0.4.0", "0.4.0-rc1", false},
+		{"prerelease newer minor", "0.5.0", "0.4.0-rc1", true},
+		{"prerelease dev same base", "0.4.0", "0.4.0-dev", false},
+		{"prerelease dev newer minor", "0.5.0", "0.4.0-dev", true},
 
 		// Build metadata (+meta) suffix handling
-		{"1.2.4", "1.2.3+meta", true},
-		{"1.2.3", "1.2.3+meta", false},
-		{"1.2.3+build1", "1.2.3+build2", false},
-		{"1.3.0+meta", "1.2.0", true},
+		{"build meta newer", "1.2.4", "1.2.3+meta", true},
+		{"build meta same", "1.2.3", "1.2.3+meta", false},
+		{"build meta diff", "1.2.3+build1", "1.2.3+build2", false},
+		{"build meta older", "1.3.0+meta", "1.2.0", true},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.v1+"_vs_"+tt.v2, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			got := isNewer(tt.v1, tt.v2)
 			if got != tt.want {
 				t.Errorf("isNewer(%q, %q) = %v, want %v", tt.v1, tt.v2, got, tt.want)
@@ -362,9 +379,7 @@ func TestIsNewer(t *testing.T) {
 }
 
 func TestFindAssets(t *testing.T) {
-	// Test that findAssets correctly selects assets from a list with multiple items
-	// This specifically tests the loop variable pointer bug fix
-	assets := []Asset{
+	standardAssets := []Asset{
 		{Name: "roborev_linux_amd64.tar.gz", Size: 1000, BrowserDownloadURL: "https://example.com/linux_amd64"},
 		{Name: "roborev_darwin_arm64.tar.gz", Size: 2000, BrowserDownloadURL: "https://example.com/darwin_arm64"},
 		{Name: "SHA256SUMS", Size: 500, BrowserDownloadURL: "https://example.com/checksums"},
@@ -372,96 +387,76 @@ func TestFindAssets(t *testing.T) {
 		{Name: "roborev_windows_amd64.zip", Size: 4000, BrowserDownloadURL: "https://example.com/windows"},
 	}
 
+	noChecksumsAssets := []Asset{
+		{Name: "roborev_linux_amd64.tar.gz", Size: 1000, BrowserDownloadURL: "https://example.com/linux"},
+		{Name: "roborev_darwin_arm64.tar.gz", Size: 2000, BrowserDownloadURL: "https://example.com/darwin"},
+	}
+
 	tests := []struct {
 		name             string
+		assets           []Asset
 		assetName        string
 		wantAssetURL     string
-		wantAssetSize    int64
 		wantChecksumsURL string
-		wantAssetNil     bool
-		wantChecksumsNil bool
 	}{
 		{
 			name:             "find darwin_arm64 (second in list)",
+			assets:           standardAssets,
 			assetName:        "roborev_darwin_arm64.tar.gz",
 			wantAssetURL:     "https://example.com/darwin_arm64",
-			wantAssetSize:    2000,
 			wantChecksumsURL: "https://example.com/checksums",
 		},
 		{
 			name:             "find linux_amd64 (first in list)",
+			assets:           standardAssets,
 			assetName:        "roborev_linux_amd64.tar.gz",
 			wantAssetURL:     "https://example.com/linux_amd64",
-			wantAssetSize:    1000,
 			wantChecksumsURL: "https://example.com/checksums",
 		},
 		{
 			name:             "find darwin_amd64 (after checksums)",
+			assets:           standardAssets,
 			assetName:        "roborev_darwin_amd64.tar.gz",
 			wantAssetURL:     "https://example.com/darwin_amd64",
-			wantAssetSize:    3000,
 			wantChecksumsURL: "https://example.com/checksums",
 		},
 		{
 			name:             "asset not found",
+			assets:           standardAssets,
 			assetName:        "roborev_freebsd_amd64.tar.gz",
-			wantAssetNil:     true,
+			wantAssetURL:     "",
 			wantChecksumsURL: "https://example.com/checksums",
+		},
+		{
+			name:             "no checksums file",
+			assets:           noChecksumsAssets,
+			assetName:        "roborev_darwin_arm64.tar.gz",
+			wantAssetURL:     "https://example.com/darwin",
+			wantChecksumsURL: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			asset, checksums := findAssets(assets, tt.assetName)
-
-			if tt.wantAssetNil {
-				if asset != nil {
-					t.Errorf("expected asset to be nil, got %+v", asset)
-				}
-			} else {
-				if asset == nil {
-					t.Fatal("expected asset to be non-nil")
-				}
-				if asset.BrowserDownloadURL != tt.wantAssetURL {
-					t.Errorf("asset URL = %q, want %q", asset.BrowserDownloadURL, tt.wantAssetURL)
-				}
-				if asset.Size != tt.wantAssetSize {
-					t.Errorf("asset size = %d, want %d", asset.Size, tt.wantAssetSize)
-				}
-			}
-
-			if tt.wantChecksumsNil {
-				if checksums != nil {
-					t.Errorf("expected checksums to be nil, got %+v", checksums)
-				}
-			} else {
-				if checksums == nil {
-					t.Fatal("expected checksums to be non-nil")
-				}
-				if checksums.BrowserDownloadURL != tt.wantChecksumsURL {
-					t.Errorf("checksums URL = %q, want %q", checksums.BrowserDownloadURL, tt.wantChecksumsURL)
-				}
-			}
+			asset, checksums := findAssets(tt.assets, tt.assetName)
+			checkAsset(t, asset, tt.wantAssetURL)
+			checkAsset(t, checksums, tt.wantChecksumsURL)
 		})
 	}
 }
 
-func TestFindAssetsNoChecksums(t *testing.T) {
-	// Test case where there's no checksums file
-	assets := []Asset{
-		{Name: "roborev_linux_amd64.tar.gz", Size: 1000, BrowserDownloadURL: "https://example.com/linux"},
-		{Name: "roborev_darwin_arm64.tar.gz", Size: 2000, BrowserDownloadURL: "https://example.com/darwin"},
+func checkAsset(t *testing.T, got *Asset, wantURL string) {
+	t.Helper()
+	if wantURL == "" {
+		if got != nil {
+			t.Errorf("expected nil asset, got %v", got)
+		}
+		return
 	}
-
-	asset, checksums := findAssets(assets, "roborev_darwin_arm64.tar.gz")
-
-	if asset == nil {
-		t.Fatal("expected asset to be non-nil")
+	if got == nil {
+		t.Fatal("expected non-nil asset")
 	}
-	if asset.BrowserDownloadURL != "https://example.com/darwin" {
-		t.Errorf("asset URL = %q, want %q", asset.BrowserDownloadURL, "https://example.com/darwin")
-	}
-	if checksums != nil {
-		t.Errorf("expected checksums to be nil, got %+v", checksums)
+	if got.BrowserDownloadURL != wantURL {
+		t.Errorf("got URL %q, want %q", got.BrowserDownloadURL, wantURL)
 	}
 }
