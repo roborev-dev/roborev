@@ -238,7 +238,7 @@ func TestFilterEnv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := filterEnv(tt.env, tt.keys...)
 			if len(got) != len(tt.expected) {
-				t.Errorf("expected %d vars, got %d", len(tt.expected), len(got))
+				t.Fatalf("expected %d vars, got %d", len(tt.expected), len(got))
 			}
 			for i := range got {
 				if got[i] != tt.expected[i] {
