@@ -154,12 +154,14 @@ func TestInstallIdempotent(t *testing.T) {
 }
 
 func TestIsInstalled(t *testing.T) {
-	tests := []struct {
+	type testCase struct {
 		name        string
 		agent       Agent
 		setup       func(t *testing.T, home string)
 		shouldExist bool
-	}{
+	}
+
+	tests := []testCase{
 		{
 			name:        "Claude missing dir",
 			agent:       AgentClaude,
@@ -177,12 +179,6 @@ func TestIsInstalled(t *testing.T) {
 			shouldExist: false,
 		},
 		{
-			name:        "Claude with skill",
-			agent:       AgentClaude,
-			setup:       func(t *testing.T, h string) { createMockSkill(t, h, "claude", "roborev-respond") },
-			shouldExist: true,
-		},
-		{
 			name:        "Codex missing dir",
 			agent:       AgentCodex,
 			setup:       func(t *testing.T, h string) {},
@@ -198,12 +194,23 @@ func TestIsInstalled(t *testing.T) {
 			},
 			shouldExist: false,
 		},
-		{
-			name:        "Codex with skill",
-			agent:       AgentCodex,
-			setup:       func(t *testing.T, h string) { createMockSkill(t, h, "codex", "roborev-respond") },
+	}
+
+	for _, skill := range expectedSkills {
+		// Capture variable for closure
+		s := skill
+		tests = append(tests, testCase{
+			name:        "Claude with skill " + s,
+			agent:       AgentClaude,
+			setup:       func(t *testing.T, h string) { createMockSkill(t, h, "claude", s) },
 			shouldExist: true,
-		},
+		})
+		tests = append(tests, testCase{
+			name:        "Codex with skill " + s,
+			agent:       AgentCodex,
+			setup:       func(t *testing.T, h string) { createMockSkill(t, h, "codex", s) },
+			shouldExist: true,
+		})
 	}
 
 	for _, tt := range tests {
