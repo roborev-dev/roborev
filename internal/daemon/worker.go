@@ -41,7 +41,8 @@ type WorkerPool struct {
 	outputBuffers *OutputBuffer
 
 	// Test hooks for deterministic synchronization (nil in production)
-	testHookAfterSecondCheck func() // Called after second runningJobs check, before second DB lookup
+	testHookAfterSecondCheck    func() // Called after second runningJobs check, before second DB lookup
+	testHookCooldownLockUpgrade func() // Called between RUnlock and Lock in isAgentCoolingDown
 }
 
 // NewWorkerPool creates a new worker pool
@@ -634,6 +635,9 @@ func (wp *WorkerPool) isAgentCoolingDown(name string) bool {
 	}
 	if time.Now().After(expiry) {
 		wp.agentCooldownsMu.RUnlock()
+		if wp.testHookCooldownLockUpgrade != nil {
+			wp.testHookCooldownLockUpgrade()
+		}
 		// Upgrade to write lock and delete expired entry
 		wp.agentCooldownsMu.Lock()
 		// Re-check under write lock (may have been refreshed)

@@ -437,16 +437,19 @@ func TestAgentCooldown_RefreshDuringUpgrade(t *testing.T) {
 		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil,
 	)
 
-	// Set an already-expired cooldown
+	// Set an already-expired cooldown so RLock path enters upgrade
 	pool.cooldownAgent("gemini", time.Now().Add(-1*time.Second))
 
-	// Simulate another goroutine refreshing the cooldown between
-	// RUnlock and Lock by directly writing a fresh expiry.
-	pool.agentCooldownsMu.Lock()
-	pool.agentCooldowns["gemini"] = time.Now().Add(1 * time.Hour)
-	pool.agentCooldownsMu.Unlock()
+	// Use the test hook to refresh the cooldown in the window
+	// between RUnlock and Lock, simulating a concurrent goroutine.
+	pool.testHookCooldownLockUpgrade = func() {
+		pool.agentCooldownsMu.Lock()
+		pool.agentCooldowns["gemini"] = time.Now().Add(1 * time.Hour)
+		pool.agentCooldownsMu.Unlock()
+	}
 
-	// isAgentCoolingDown should return true: the entry was refreshed
+	// The read-lock path sees expired, upgrades, recheck sees
+	// refreshed entry — should return true.
 	if !pool.isAgentCoolingDown("gemini") {
 		t.Error("expected refreshed cooldown to return true")
 	}
