@@ -13,9 +13,31 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
-// q wraps a string in platform-appropriate shell quoting (matches shellEscape output).
-func q(s string) string {
+// quote wraps a string in platform-appropriate shell quoting (matches shellEscape output).
+func quote(s string) string {
 	return shellEscape(s)
+}
+
+// setupRunner initializes a HookRunner and Broadcaster for testing.
+func setupRunner(t *testing.T, cfg *config.Config) (*HookRunner, Broadcaster) {
+	t.Helper()
+	b := NewBroadcaster()
+	hr := NewHookRunner(NewStaticConfig(cfg), b)
+	t.Cleanup(hr.Stop)
+	return hr, b
+}
+
+// waitForFile polls for the existence of a file until the timeout expires.
+func waitForFile(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("file %q was not created within %v", path, timeout)
 }
 
 // noopCmd returns a platform-appropriate no-op shell command.
@@ -87,19 +109,19 @@ func TestInterpolate(t *testing.T) {
 	}{
 		{
 			"echo {job_id} {sha}",
-			"echo 42 " + q("abc123def456"),
+			"echo 42 " + quote("abc123def456"),
 		},
 		{
 			"notify --repo {repo_name} --verdict {verdict}",
-			"notify --repo " + q("myrepo") + " --verdict " + q("F"),
+			"notify --repo " + quote("myrepo") + " --verdict " + quote("F"),
 		},
 		{
 			"log {error}",
-			"log " + q("agent timeout"),
+			"log " + quote("agent timeout"),
 		},
 		{
 			"process {findings}",
-			"process " + q("High — missing input validation in handler"),
+			"process " + quote("High — missing input validation in handler"),
 		},
 		{
 			"",
@@ -165,20 +187,20 @@ func TestInterpolateQuotedPlaceholders(t *testing.T) {
 
 	// Unquoted placeholder (recommended) -- clean output
 	got := interpolate("echo {error}", event)
-	if want := "echo " + q("simple error"); got != want {
+	if want := "echo " + quote("simple error"); got != want {
 		t.Errorf("unquoted placeholder: got %q, want %q", got, want)
 	}
 
 	// Double-quoted placeholder -- works but includes literal quotes around the value
 	got = interpolate(`echo "{error}"`, event)
-	if want := `echo "` + q("simple error") + `"`; got != want {
+	if want := `echo "` + quote("simple error") + `"`; got != want {
 		t.Errorf("double-quoted placeholder: got %q, want %q", got, want)
 	}
 
 	// Empty value produces empty quoted string
 	event.Verdict = ""
 	got = interpolate("echo {verdict}", event)
-	if want := "echo " + q(""); got != want {
+	if want := "echo " + quote(""); got != want {
 		t.Errorf("empty value: got %q, want %q", got, want)
 	}
 }
@@ -251,10 +273,10 @@ func TestBeadsCommand(t *testing.T) {
 	if cmd == "" {
 		t.Fatal("expected non-empty command for review.failed")
 	}
-	if !contains(cmd, "bd create") {
+	if !strings.Contains(cmd, "bd create") {
 		t.Errorf("expected bd create in command, got %q", cmd)
 	}
-	if !contains(cmd, "roborev show 7") {
+	if !strings.Contains(cmd, "roborev show 7") {
 		t.Errorf("expected 'roborev show 7' in command, got %q", cmd)
 	}
 
@@ -272,10 +294,10 @@ func TestBeadsCommand(t *testing.T) {
 	if cmd == "" {
 		t.Fatal("expected non-empty command for failing review")
 	}
-	if !contains(cmd, "-p 2") {
+	if !strings.Contains(cmd, "-p 2") {
 		t.Errorf("expected priority 2 for failing review, got %q", cmd)
 	}
-	if !contains(cmd, "roborev fix 7") {
+	if !strings.Contains(cmd, "roborev fix 7") {
 		t.Errorf("expected 'roborev fix' hint in failing review command, got %q", cmd)
 	}
 }
@@ -289,10 +311,10 @@ func TestBeadsCommandShortSHA(t *testing.T) {
 		SHA:      "abcdef1234567890",
 	}
 	cmd := beadsCommand(event)
-	if !contains(cmd, "abcdef12") {
+	if !strings.Contains(cmd, "abcdef12") {
 		t.Errorf("expected truncated SHA in command, got %q", cmd)
 	}
-	if contains(cmd, "abcdef1234567890") {
+	if strings.Contains(cmd, "abcdef1234567890") {
 		t.Errorf("expected SHA to be truncated, got %q", cmd)
 	}
 }
@@ -341,9 +363,7 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 		},
 	}
 
-	broadcaster := NewBroadcaster()
-	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
-	defer hr.Stop()
+	_, broadcaster := setupRunner(t, cfg)
 
 	broadcaster.Broadcast(Event{
 		Type:     "review.completed",
@@ -356,15 +376,7 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 		Verdict:  "P",
 	})
 
-	// Wait for async hook execution
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(markerFile); err == nil {
-			return // success
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatal("hook did not fire within timeout")
+	waitForFile(t, markerFile, 5*time.Second)
 }
 
 func TestHookRunnerWorkingDirectory(t *testing.T) {
@@ -381,9 +393,7 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 		},
 	}
 
-	broadcaster := NewBroadcaster()
-	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
-	defer hr.Stop()
+	_, broadcaster := setupRunner(t, cfg)
 
 	broadcaster.Broadcast(Event{
 		Type:     "review.failed",
@@ -396,33 +406,31 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 		Error:    "fail",
 	})
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(markerFile)
-		if err == nil {
-			got := filepath.Clean(strings.TrimSpace(string(data)))
-			want := filepath.Clean(tmpDir)
-			// On Windows, resolve 8.3 short paths to long paths for comparison
-			if runtime.GOOS == "windows" {
-				if g, err := filepath.EvalSymlinks(got); err == nil {
-					got = g
-				}
-				if w, err := filepath.EvalSymlinks(want); err == nil {
-					want = w
-				}
-			}
-			equal := got == want
-			if runtime.GOOS == "windows" {
-				equal = strings.EqualFold(got, want)
-			}
-			if !equal {
-				t.Errorf("hook ran in %q, want %q", got, want)
-			}
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+	waitForFile(t, markerFile, 5*time.Second)
+
+	data, err := os.ReadFile(markerFile)
+	if err != nil {
+		t.Fatalf("failed to read marker file: %v", err)
 	}
-	t.Fatal("hook did not fire within timeout")
+
+	got := filepath.Clean(strings.TrimSpace(string(data)))
+	want := filepath.Clean(tmpDir)
+	// On Windows, resolve 8.3 short paths to long paths for comparison
+	if runtime.GOOS == "windows" {
+		if g, err := filepath.EvalSymlinks(got); err == nil {
+			got = g
+		}
+		if w, err := filepath.EvalSymlinks(want); err == nil {
+			want = w
+		}
+	}
+	equal := got == want
+	if runtime.GOOS == "windows" {
+		equal = strings.EqualFold(got, want)
+	}
+	if !equal {
+		t.Errorf("hook ran in %q, want %q", got, want)
+	}
 }
 
 func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
@@ -439,9 +447,7 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 		},
 	}
 
-	broadcaster := NewBroadcaster()
-	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
-	defer hr.Stop()
+	_, broadcaster := setupRunner(t, cfg)
 
 	// Send a failed event - hook is only for completed
 	broadcaster.Broadcast(Event{
@@ -480,9 +486,7 @@ event = "review.failed"
 command = "`+touchCmd(markerRepo)+`"
 `)
 
-	broadcaster := NewBroadcaster()
-	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
-	defer hr.Stop()
+	_, broadcaster := setupRunner(t, cfg)
 
 	// Fire event for the repo
 	broadcaster.Broadcast(Event{
@@ -496,7 +500,7 @@ command = "`+touchCmd(markerRepo)+`"
 	})
 
 	// Wait for hooks to run
-	time.Sleep(1 * time.Second)
+	waitForFile(t, markerRepo, 5*time.Second)
 
 	// The global config's Hooks slice must still have exactly 1 element
 	if len(cfg.Hooks) != 1 {
@@ -525,9 +529,7 @@ event = "review.failed"
 command = "`+touchCmd(repoMarker)+`"
 `)
 
-	broadcaster := NewBroadcaster()
-	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
-	defer hr.Stop()
+	_, broadcaster := setupRunner(t, cfg)
 
 	broadcaster.Broadcast(Event{
 		Type:  "review.failed",
@@ -539,26 +541,8 @@ command = "`+touchCmd(repoMarker)+`"
 		Error: "fail",
 	})
 
-	deadline := time.Now().Add(5 * time.Second)
-	globalFired, repoFired := false, false
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(globalMarker); err == nil {
-			globalFired = true
-		}
-		if _, err := os.Stat(repoMarker); err == nil {
-			repoFired = true
-		}
-		if globalFired && repoFired {
-			return // success
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !globalFired {
-		t.Error("global hook did not fire")
-	}
-	if !repoFired {
-		t.Error("repo hook did not fire")
-	}
+	waitForFile(t, globalMarker, 5*time.Second)
+	waitForFile(t, repoMarker, 5*time.Second)
 }
 
 func TestHookRunnerRepoOnlyHooks(t *testing.T) {
@@ -575,9 +559,7 @@ event = "review.completed"
 command = "`+touchCmd(markerFile)+`"
 `)
 
-	broadcaster := NewBroadcaster()
-	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
-	defer hr.Stop()
+	_, broadcaster := setupRunner(t, cfg)
 
 	broadcaster.Broadcast(Event{
 		Type:    "review.completed",
@@ -589,14 +571,7 @@ command = "`+touchCmd(markerFile)+`"
 		Verdict: "P",
 	})
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(markerFile); err == nil {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatal("repo-only hook did not fire")
+	waitForFile(t, markerFile, 5*time.Second)
 }
 
 func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
@@ -615,9 +590,7 @@ event = "review.failed"
 command = "`+touchCmd(markerFile)+`"
 `)
 
-	broadcaster := NewBroadcaster()
-	hr := NewHookRunner(NewStaticConfig(cfg), broadcaster)
-	defer hr.Stop()
+	_, broadcaster := setupRunner(t, cfg)
 
 	// Fire event for repoB -- repoA's hooks should NOT fire
 	broadcaster.Broadcast(Event{
@@ -743,15 +716,4 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
-}
 
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
