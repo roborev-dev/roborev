@@ -4,189 +4,217 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestEnqueuePromptJob(t *testing.T) {
+	tests := []struct {
+		name        string
+		opts        EnqueueOpts
+		wantJob     func(*testing.T, *ReviewJob)
+		checkClaim  bool
+		wantClaimed func(*testing.T, *ReviewJob)
+	}{
+		{
+			name: "creates job with custom prompt",
+			opts: EnqueueOpts{
+				Agent:     "claude-code",
+				Reasoning: "thorough",
+				Prompt:    "Explain the architecture of this codebase",
+			},
+			wantJob: func(t *testing.T, j *ReviewJob) {
+				if j.GitRef != "prompt" {
+					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
+				}
+				if j.Agent != "claude-code" {
+					t.Errorf("got agent %q, want 'claude-code'", j.Agent)
+				}
+				if j.Reasoning != "thorough" {
+					t.Errorf("got reasoning %q, want 'thorough'", j.Reasoning)
+				}
+				if j.Prompt != "Explain the architecture of this codebase" {
+					t.Errorf("got prompt %q, want 'Explain the architecture of this codebase'", j.Prompt)
+				}
+				if j.Status != JobStatusQueued {
+					t.Errorf("got status %q, want 'queued'", j.Status)
+				}
+			},
+		},
+		{
+			name: "defaults reasoning to thorough",
+			opts: EnqueueOpts{
+				Agent:  "codex",
+				Prompt: "test prompt",
+			},
+			wantJob: func(t *testing.T, j *ReviewJob) {
+				if j.Reasoning != "thorough" {
+					t.Errorf("got default reasoning %q, want 'thorough'", j.Reasoning)
+				}
+			},
+		},
+		{
+			name: "claimed job has prompt loaded",
+			opts: EnqueueOpts{
+				Agent:     "claude-code",
+				Reasoning: "standard",
+				Prompt:    "Find security issues in the codebase",
+			},
+			checkClaim: true,
+			wantClaimed: func(t *testing.T, j *ReviewJob) {
+				if j.GitRef != "prompt" {
+					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
+				}
+				if j.Prompt != "Find security issues in the codebase" {
+					t.Errorf("got prompt %q, want 'Find security issues in the codebase'", j.Prompt)
+				}
+			},
+		},
+		{
+			name: "agentic flag persists and is claimed correctly",
+			opts: EnqueueOpts{
+				Agent:   "claude-code",
+				Prompt:  "Test agentic prompt",
+				Agentic: true,
+			},
+			wantJob: func(t *testing.T, j *ReviewJob) {
+				if !j.Agentic {
+					t.Error("Expected Agentic to be true on returned job")
+				}
+			},
+			checkClaim: true,
+			wantClaimed: func(t *testing.T, j *ReviewJob) {
+				if !j.Agentic {
+					t.Error("Expected Agentic to be true on claimed job")
+				}
+			},
+		},
+		{
+			name: "agentic flag defaults to false",
+			opts: EnqueueOpts{
+				Agent:     "codex",
+				Reasoning: "standard",
+				Prompt:    "Non-agentic prompt",
+			},
+			wantJob: func(t *testing.T, j *ReviewJob) {
+				if j.Agentic {
+					t.Error("Expected Agentic to be false")
+				}
+			},
+			checkClaim: true,
+			wantClaimed: func(t *testing.T, j *ReviewJob) {
+				if j.Agentic {
+					t.Error("Expected Agentic to be false on claimed job")
+				}
+			},
+		},
+		{
+			name: "ClaimJob loads output_prefix",
+			opts: EnqueueOpts{
+				Agent:        "test",
+				Prompt:       "compact prompt",
+				OutputPrefix: "## Compact Analysis\n\n---\n\n",
+			},
+			checkClaim: true,
+			wantClaimed: func(t *testing.T, j *ReviewJob) {
+				want := "## Compact Analysis\n\n---\n\n"
+				if j.OutputPrefix != want {
+					t.Errorf("got OutputPrefix %q, want %q", j.OutputPrefix, want)
+				}
+			},
+		},
+		{
+			name: "ClaimJob returns empty OutputPrefix when not set",
+			opts: EnqueueOpts{
+				Agent:  "test",
+				Prompt: "plain prompt",
+			},
+			checkClaim: true,
+			wantClaimed: func(t *testing.T, j *ReviewJob) {
+				if j.OutputPrefix != "" {
+					t.Errorf("got OutputPrefix %q, want empty", j.OutputPrefix)
+				}
+			},
+		},
+		{
+			name: "custom label sets git_ref",
+			opts: EnqueueOpts{
+				Agent:  "test",
+				Prompt: "Test prompt",
+				Label:  "test-fixtures",
+			},
+			wantJob: func(t *testing.T, j *ReviewJob) {
+				if j.GitRef != "test-fixtures" {
+					t.Errorf("got git_ref %q, want 'test-fixtures'", j.GitRef)
+				}
+			},
+			checkClaim: true,
+			wantClaimed: func(t *testing.T, j *ReviewJob) {
+				if j.GitRef != "test-fixtures" {
+					t.Errorf("got git_ref %q, want 'test-fixtures'", j.GitRef)
+				}
+			},
+		},
+		{
+			name: "empty label defaults to prompt",
+			opts: EnqueueOpts{
+				Agent:  "test",
+				Prompt: "Test prompt",
+			},
+			wantJob: func(t *testing.T, j *ReviewJob) {
+				if j.GitRef != "prompt" {
+					t.Errorf("got git_ref %q, want 'prompt'", j.GitRef)
+				}
+			},
+		},
+		{
+			name: "run label",
+			opts: EnqueueOpts{
+				Agent:  "test",
+				Prompt: "Test prompt",
+				Label:  "run",
+			},
+			wantJob: func(t *testing.T, j *ReviewJob) {
+				if j.GitRef != "run" {
+					t.Errorf("got git_ref %q, want 'run'", j.GitRef)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestDB(t)
+			defer db.Close()
+
+			// Use unique repo per test case
+			repoName := "prompt-test-" + strings.ReplaceAll(tt.name, " ", "-")
+			repo := createRepo(t, db, filepath.Join(t.TempDir(), repoName))
+
+			opts := tt.opts
+			opts.RepoID = repo.ID
+			job := mustEnqueuePromptJob(t, db, opts)
+
+			if tt.wantJob != nil {
+				tt.wantJob(t, job)
+			}
+
+			if tt.checkClaim {
+				claimed := claimJob(t, db, "test-worker")
+				if tt.wantClaimed != nil {
+					tt.wantClaimed(t, claimed)
+				}
+			}
+		})
+	}
+}
+
+func TestPromptJobOutputProcessing(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	repo := createRepo(t, db, filepath.Join(t.TempDir(), "prompt-test"))
-
-	t.Run("creates job with custom prompt", func(t *testing.T) {
-		customPrompt := "Explain the architecture of this codebase"
-		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID:    repo.ID,
-			Agent:     "claude-code",
-			Reasoning: "thorough",
-			Prompt:    customPrompt,
-		})
-
-		if job.GitRef != "prompt" {
-			t.Errorf("Expected git_ref 'prompt', got '%s'", job.GitRef)
-		}
-		if job.Agent != "claude-code" {
-			t.Errorf("Expected agent 'claude-code', got '%s'", job.Agent)
-		}
-		if job.Reasoning != "thorough" {
-			t.Errorf("Expected reasoning 'thorough', got '%s'", job.Reasoning)
-		}
-		if job.Prompt != customPrompt {
-			t.Errorf("Expected prompt '%s', got '%s'", customPrompt, job.Prompt)
-		}
-		if job.Status != JobStatusQueued {
-			t.Errorf("Expected status 'queued', got '%s'", job.Status)
-		}
-	})
-
-	t.Run("defaults reasoning to thorough", func(t *testing.T) {
-		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID: repo.ID,
-			Agent:  "codex",
-			Prompt: "test prompt",
-		})
-		if job.Reasoning != "thorough" {
-			t.Errorf("Expected default reasoning 'thorough', got '%s'", job.Reasoning)
-		}
-	})
-
-	t.Run("claimed job has prompt loaded", func(t *testing.T) {
-		// Drain any existing queued jobs first
-		for {
-			job, err := db.ClaimJob("drain-worker")
-			if err != nil {
-				t.Fatalf("ClaimJob failed during drain: %v", err)
-			}
-			if job == nil {
-				break
-			}
-		}
-
-		customPrompt := "Find security issues in the codebase"
-		mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID:    repo.ID,
-			Agent:     "claude-code",
-			Reasoning: "standard",
-			Prompt:    customPrompt,
-		})
-
-		claimed := claimJob(t, db, "test-worker")
-
-		if claimed.GitRef != "prompt" {
-			t.Errorf("Expected git_ref 'prompt', got '%s'", claimed.GitRef)
-		}
-		if claimed.Prompt != customPrompt {
-			t.Errorf("Expected prompt '%s', got '%s'", customPrompt, claimed.Prompt)
-		}
-	})
-
-	t.Run("agentic flag persists and is claimed correctly", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		repo := createRepo(t, db, filepath.Join(t.TempDir(), "agentic-test"))
-
-		// Enqueue with agentic=true
-		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID:  repo.ID,
-			Agent:   "claude-code",
-			Prompt:  "Test agentic prompt",
-			Agentic: true,
-		})
-
-		if !job.Agentic {
-			t.Error("Expected Agentic to be true on returned job")
-		}
-
-		// Verify it's stored in the database
-		var agenticInt int
-		err := db.QueryRow(`SELECT agentic FROM review_jobs WHERE id = ?`, job.ID).Scan(&agenticInt)
-		if err != nil {
-			t.Fatalf("Failed to query agentic: %v", err)
-		}
-		if agenticInt != 1 {
-			t.Errorf("Expected agentic=1 in database, got %d", agenticInt)
-		}
-
-		// Claim the job and verify agentic flag is loaded
-		claimed := claimJob(t, db, "test-worker")
-
-		if !claimed.Agentic {
-			t.Error("Expected Agentic to be true on claimed job")
-		}
-	})
-
-	t.Run("agentic flag defaults to false", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		repo := createRepo(t, db, filepath.Join(t.TempDir(), "agentic-default-test"))
-
-		// Enqueue with agentic=false
-		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID:    repo.ID,
-			Agent:     "codex",
-			Reasoning: "standard",
-			Prompt:    "Non-agentic prompt",
-		})
-
-		if job.Agentic {
-			t.Error("Expected Agentic to be false")
-		}
-
-		// Claim and verify
-		claimed := claimJob(t, db, "test-worker")
-
-		if claimed.Agentic {
-			t.Error("Expected Agentic to be false on claimed job")
-		}
-	})
-
-	t.Run("ClaimJob loads output_prefix", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		repo := createRepo(t, db, filepath.Join(t.TempDir(), "claim-prefix-test"))
-
-		prefix := "## Compact Analysis\n\n---\n\n"
-		mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID:       repo.ID,
-			Agent:        "test",
-			Prompt:       "compact prompt",
-			OutputPrefix: prefix,
-		})
-
-		claimed := claimJob(t, db, "test-worker")
-		if claimed.OutputPrefix != prefix {
-			t.Errorf("ClaimJob OutputPrefix = %q, want %q",
-				claimed.OutputPrefix, prefix)
-		}
-	})
-
-	t.Run("ClaimJob returns empty OutputPrefix when not set", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		repo := createRepo(t, db, filepath.Join(t.TempDir(), "claim-no-prefix-test"))
-
-		mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID: repo.ID,
-			Agent:  "test",
-			Prompt: "plain prompt",
-		})
-
-		claimed := claimJob(t, db, "test-worker")
-		if claimed.OutputPrefix != "" {
-			t.Errorf("ClaimJob OutputPrefix = %q, want empty",
-				claimed.OutputPrefix)
-		}
-	})
-
 	t.Run("output_prefix is prepended to review output", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
 		repo := createRepo(t, db, filepath.Join(t.TempDir(), "output-prefix-test"))
 
 		outputPrefix := "## Test Analysis\n\n**Files:**\n- file1.go\n- file2.go\n\n---\n\n"
@@ -214,14 +242,11 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 		expectedOutput := outputPrefix + agentOutput
 		if review.Output != expectedOutput {
-			t.Errorf("Expected output to have prefix prepended.\nExpected:\n%s\n\nGot:\n%s", expectedOutput, review.Output)
+			t.Errorf("got output:\n%s\nwant:\n%s", review.Output, expectedOutput)
 		}
 	})
 
 	t.Run("empty output_prefix leaves output unchanged", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
 		repo := createRepo(t, db, filepath.Join(t.TempDir(), "empty-prefix-test"))
 
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
@@ -247,77 +272,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		}
 
 		if review.Output != agentOutput {
-			t.Errorf("Expected output unchanged.\nExpected:\n%s\n\nGot:\n%s", agentOutput, review.Output)
-		}
-	})
-
-	t.Run("custom label sets git_ref", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		repo := createRepo(t, db, filepath.Join(t.TempDir(), "label-test"))
-
-		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID: repo.ID,
-			Agent:  "test",
-			Prompt: "Test prompt",
-			Label:  "test-fixtures",
-		})
-
-		if job.GitRef != "test-fixtures" {
-			t.Errorf("Expected git_ref 'test-fixtures', got '%s'", job.GitRef)
-		}
-
-		// Verify it's stored in the database
-		var gitRef string
-		err := db.QueryRow(`SELECT git_ref FROM review_jobs WHERE id = ?`, job.ID).Scan(&gitRef)
-		if err != nil {
-			t.Fatalf("Failed to query git_ref: %v", err)
-		}
-		if gitRef != "test-fixtures" {
-			t.Errorf("Expected git_ref='test-fixtures' in database, got '%s'", gitRef)
-		}
-
-		// Claim and verify label persists
-		claimed := claimJob(t, db, "test-worker")
-		if claimed.GitRef != "test-fixtures" {
-			t.Errorf("Expected git_ref 'test-fixtures' on claimed job, got '%s'", claimed.GitRef)
-		}
-	})
-
-	t.Run("empty label defaults to prompt", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		repo := createRepo(t, db, filepath.Join(t.TempDir(), "empty-label-test"))
-
-		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID: repo.ID,
-			Agent:  "test",
-			Prompt: "Test prompt",
-			// Label not set - should default to "prompt"
-		})
-
-		if job.GitRef != "prompt" {
-			t.Errorf("Expected git_ref 'prompt' when label empty, got '%s'", job.GitRef)
-		}
-	})
-
-	t.Run("run label", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-
-		repo := createRepo(t, db, filepath.Join(t.TempDir(), "run-label-test"))
-
-		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
-			RepoID: repo.ID,
-			Agent:  "test",
-			Prompt: "Test prompt",
-			Label:  "run",
-		})
-
-		if job.GitRef != "run" {
-			t.Errorf("Expected git_ref 'run', got '%s'", job.GitRef)
+			t.Errorf("got output:\n%s\nwant:\n%s", review.Output, agentOutput)
 		}
 	})
 }
