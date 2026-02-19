@@ -124,12 +124,7 @@ func TestLocalReviewFlag(t *testing.T) {
 	// runCmd adds --local, so we check if --local is in help output.
 	// Note: We need to avoid runCmd enforcing --local if we want to test help for --local flag?
 	// Actually, `roborev review --local --help` is valid.
-	
-	h.Cmd.SetArgs([]string{"review", "--help"}) 
-	// The harness wraps `reviewCmd` which IS the review command.
-	// So calling h.Cmd.Execute() with --help works.
-	// But h.runCmd adds flags.
-	
+
 	// Let's just use raw SetArgs for this specific test to ensure we test what we think we are testing.
 	h.Cmd.SetArgs([]string{"--local", "--help"})
 	if err := h.Cmd.Execute(); err != nil {
@@ -165,6 +160,7 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 	// We don't check output for diff content because agent output is mocked.
+	h.assertOutputContains("Commit: dirty")
 }
 
 func TestLocalReviewAgentResolution(t *testing.T) {
