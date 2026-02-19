@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1297,6 +1298,7 @@ func skippedAgentNote(reviews []storage.BatchReviewResult) string {
 	for a := range agents {
 		names = append(names, a)
 	}
+	sort.Strings(names)
 	if len(names) == 1 {
 		return fmt.Sprintf(
 			"\n*Note: %s review skipped (agent quota exhausted)*\n",

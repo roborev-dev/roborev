@@ -568,16 +568,20 @@ const quotaErrorPrefix = "quota: "
 // contain a parseable "reset after" token.
 const defaultCooldown = 30 * time.Minute
 
-// isQuotaError returns true if the error message indicates a quota or
-// rate-limit exhaustion (case-insensitive).
+// isQuotaError returns true if the error message indicates an API quota
+// or rate-limit exhaustion (case-insensitive). Patterns are scoped to
+// provider API errors to avoid false positives (e.g., disk quota).
 func isQuotaError(errMsg string) bool {
 	lower := strings.ToLower(errMsg)
 	patterns := []string{
-		"quota",
+		"resource exhausted",
 		"rate limit",
 		"rate_limit",
+		"quota exceeded",
+		"quota_exceeded",
 		"exhausted your capacity",
 		"too many requests",
+		"429",
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
@@ -601,6 +605,7 @@ func parseQuotaCooldown(errMsg string, fallback time.Duration) time.Duration {
 	if sp := strings.IndexAny(rest, " \t\n,;)"); sp > 0 {
 		token = rest[:sp]
 	}
+	token = strings.TrimRight(token, ".,;:)]}")
 	d, err := time.ParseDuration(token)
 	if err != nil || d <= 0 {
 		return fallback

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -289,14 +290,17 @@ func TestIsQuotaError(t *testing.T) {
 		want   bool
 	}{
 		{"quota exceeded for model", true},
+		{"QUOTA_EXCEEDED: limit reached", true},
 		{"Rate limit reached", true},
 		{"rate_limit_error: too fast", true},
 		{"You have exhausted your capacity", true},
 		{"Too Many Requests (429)", true},
-		{"QUOTA exhausted", true},
+		{"HTTP 429: slow down", true},
+		{"RESOURCE EXHAUSTED: try later", true},
 		{"connection reset by peer", false},
 		{"timeout after 30s", false},
 		{"agent not found", false},
+		{"disk quota full", false},
 		{"", false},
 	}
 	for _, tt := range tests {
@@ -340,6 +344,18 @@ func TestParseQuotaCooldown(t *testing.T) {
 			fallback: 30 * time.Minute,
 			want:     2*time.Hour + 30*time.Minute,
 		},
+		{
+			name:     "trailing punctuation trimmed",
+			errMsg:   "reset after 8h26m13s.",
+			fallback: 30 * time.Minute,
+			want:     8*time.Hour + 26*time.Minute + 13*time.Second,
+		},
+		{
+			name:     "trailing paren trimmed",
+			errMsg:   "reset after 1h30m)",
+			fallback: 30 * time.Minute,
+			want:     1*time.Hour + 30*time.Minute,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -382,6 +398,153 @@ func TestAgentCooldown(t *testing.T) {
 	pool.cooldownAgent("gemini", time.Now().Add(1*time.Minute))
 	if !pool.isAgentCoolingDown("gemini") {
 		t.Error("cooldown should not have been shortened")
+	}
+}
+
+func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, "test-worker")
+
+	// Subscribe to events to verify broadcast
+	_, eventCh := tc.Broadcaster.Subscribe("")
+
+	quotaErr := "resource exhausted: reset after 1h"
+	tc.Pool.failOrRetryInner("test-worker", job, "gemini", quotaErr, true)
+
+	// Job should be failed (not retried) with quota prefix
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if updated.Status != storage.JobStatusFailed {
+		t.Errorf("status=%q, want failed", updated.Status)
+	}
+	if !strings.HasPrefix(updated.Error, quotaErrorPrefix) {
+		t.Errorf("error=%q, want prefix %q", updated.Error, quotaErrorPrefix)
+	}
+
+	// Retry count should be 0 — no retries attempted
+	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobRetryCount: %v", err)
+	}
+	if retryCount != 0 {
+		t.Errorf("retry_count=%d, want 0 (quota should skip retries)", retryCount)
+	}
+
+	// Agent should be in cooldown
+	if !tc.Pool.isAgentCoolingDown("gemini") {
+		t.Error("expected gemini in cooldown after quota error")
+	}
+
+	// Broadcast should have fired
+	select {
+	case ev := <-eventCh:
+		if ev.Type != "review.failed" {
+			t.Errorf("event type=%q, want review.failed", ev.Type)
+		}
+		if !strings.HasPrefix(ev.Error, quotaErrorPrefix) {
+			t.Errorf("event error=%q, want prefix %q", ev.Error, quotaErrorPrefix)
+		}
+	case <-time.After(time.Second):
+		t.Error("no broadcast event received")
+	}
+}
+
+func TestFailOrRetryInner_NonQuotaStillRetries(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, "test-worker")
+
+	// A non-quota agent error should follow the normal retry path
+	tc.Pool.failOrRetryInner("test-worker", job, "gemini", "connection reset", true)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	// Should be queued for retry, not failed
+	if updated.Status != storage.JobStatusQueued {
+		t.Errorf("status=%q, want queued (retry)", updated.Status)
+	}
+
+	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobRetryCount: %v", err)
+	}
+	if retryCount != 1 {
+		t.Errorf("retry_count=%d, want 1", retryCount)
+	}
+
+	// Agent should NOT be in cooldown
+	if tc.Pool.isAgentCoolingDown("gemini") {
+		t.Error("expected gemini NOT in cooldown for non-quota error")
+	}
+}
+
+func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	// Configure backup agent
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil)
+
+	// Enqueue with agent "codex" (backup is "test")
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "A", "S", time.Now())
+	if err != nil {
+		t.Fatalf("GetOrCreateCommit: %v", err)
+	}
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   tc.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   sha,
+		Agent:    "codex",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	claimed, err := tc.DB.ClaimJob("test-worker")
+	if err != nil || claimed.ID != job.ID {
+		t.Fatalf("ClaimJob: err=%v, claimed=%v", err, claimed)
+	}
+	// Fill in RepoPath so resolveBackupAgent can work
+	job.RepoPath = tc.TmpDir
+
+	tc.Pool.failoverOrFail("test-worker", job, "codex", "quota exhausted")
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	// Should be queued for failover, agent changed to "test"
+	if updated.Status != storage.JobStatusQueued {
+		t.Errorf("status=%q, want queued (failover)", updated.Status)
+	}
+	if updated.Agent != "test" {
+		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+	}
+}
+
+func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, "test-worker")
+
+	// No backup configured — should fail with quota prefix
+	tc.Pool.failoverOrFail("test-worker", job, "test", "quota exhausted")
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if updated.Status != storage.JobStatusFailed {
+		t.Errorf("status=%q, want failed", updated.Status)
+	}
+	if !strings.HasPrefix(updated.Error, quotaErrorPrefix) {
+		t.Errorf("error=%q, want prefix %q", updated.Error, quotaErrorPrefix)
 	}
 }
 
