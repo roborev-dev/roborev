@@ -260,8 +260,8 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
-	// Request an unavailable agent (claude), codex should be used as fallback
-	selected, err := selectRefineAgent("claude", agent.ReasoningThorough, "")
+	// Request an unavailable agent, codex should be used as fallback
+	selected, err := selectRefineAgent("nonexistent-agent", agent.ReasoningThorough, "")
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
