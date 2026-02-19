@@ -18,6 +18,7 @@ func TestShowCommandArgParsing(t *testing.T) {
 		setupRepo    func(*TestGitRepo)
 		wantQueryHas []string
 		wantQueryNot []string
+		resolveRef   string
 	}{
 		{
 			name: "numeric ref resolvable in repo treated as SHA not job ID",
@@ -27,6 +28,7 @@ func TestShowCommandArgParsing(t *testing.T) {
 			},
 			wantQueryHas: []string{"sha="},
 			wantQueryNot: []string{"job_id="},
+			resolveRef:   "12345",
 		},
 		{
 			name:         "numeric non-resolvable treated as job ID",
@@ -79,10 +81,10 @@ func TestShowCommandArgParsing(t *testing.T) {
 			}
 
 			// Special check for resolved SHA
-			if strings.Contains(tt.name, "numeric ref resolvable") && !strings.Contains(tt.name, "--job") {
-				tagSHA := repo.Run("rev-parse", "12345")
+			if tt.resolveRef != "" {
+				tagSHA := repo.Run("rev-parse", tt.resolveRef)
 				if !strings.Contains(q, tagSHA[:7]) {
-					t.Errorf("expected query to contain resolved SHA %s, got: %s", tagSHA[:7], q)
+					t.Errorf("expected query to contain resolved SHA %s (from ref %s), got: %s", tagSHA[:7], tt.resolveRef, q)
 				}
 			}
 		})
