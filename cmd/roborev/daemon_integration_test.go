@@ -245,69 +245,63 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 }
 
 func TestDaemonSignalCleanup(t *testing.T) {
-	// Verify that signal.Stop is called even when shutdown is triggered by a signal
+	// Verify that signal.Stop is called when shutdown
+	// is triggered by a signal.
 	var cleanupCalled bool
 	origSetupSignalHandler := setupSignalHandler
 	defer func() { setupSignalHandler = origSetupSignalHandler }()
 
-	dbPath, configPath := setupTestDaemon(t)
+	// Use a buffered channel so the mock can send sigCh
+	// back to the test goroutine without racing.
+	sigReady := make(chan chan os.Signal, 1)
 
-	// Create context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Create the daemon run command
-	cmd := daemonRunCmd()
-	cmd.SetContext(ctx)
-	cmd.SetArgs([]string{
-		"--db", dbPath,
-		"--config", configPath,
-		"--addr", "127.0.0.1:0", // Let it pick a random port
-	})
-
-	// Setup mock signal handler that captures the channel
-	var sigCh chan os.Signal
 	setupSignalHandler = func() (chan os.Signal, func()) {
-		sigCh = make(chan os.Signal, 1)
+		sigCh := make(chan os.Signal, 1)
+		sigReady <- sigCh
 		return sigCh, func() {
 			cleanupCalled = true
 		}
 	}
 
-	// Run daemon in goroutine
+	dbPath, configPath := setupTestDaemon(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cmd := daemonRunCmd()
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{
+		"--db", dbPath,
+		"--config", configPath,
+		"--addr", "127.0.0.1:0",
+	})
+
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- cmd.Execute()
 	}()
 
-	// Wait for daemon to start
-	if !waitFor(t, 5*time.Second, func() bool {
-		_, err := os.Stat(dbPath)
-		return err == nil
-	}) {
-		t.Fatal("timed out waiting for database creation")
-	}
-
-	// Wait for signal handler to be set up (it happens after DB open)
-	// We can't easily poll for this variable being set, but it happens before server start.
-	// DB creation is a good proxy, but let's wait a bit more to be safe.
-	if !waitFor(t, 2*time.Second, func() bool {
-		return sigCh != nil
-	}) {
+	// Wait for the signal handler to be installed (race-free).
+	var sigCh chan os.Signal
+	select {
+	case sigCh = <-sigReady:
+	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for signal handler setup")
 	}
 
-	// Trigger shutdown via signal
+	// Trigger shutdown via signal.
 	sigCh <- os.Interrupt
 
-	// Wait for daemon to exit
 	select {
 	case err := <-errCh:
 		if err != nil {
 			t.Fatalf("daemon exited with error: %v", err)
 		}
 		if !cleanupCalled {
-			t.Error("expected signal.Stop (cleanup) to be called after signal shutdown")
+			t.Error(
+				"expected signal.Stop (cleanup) to be" +
+					" called after signal shutdown",
+			)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("daemon did not exit within timeout")
