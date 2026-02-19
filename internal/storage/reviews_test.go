@@ -300,6 +300,9 @@ func createCompletedJob(t *testing.T, db *DB, repoID int64, gitRef, output strin
 	if err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
 	}
+	if claimed == nil {
+		t.Fatal("ClaimJob returned nil; expected a queued job")
+	}
 	if claimed.ID != job.ID {
 		t.Fatalf("Claimed job ID %d, expected %d", claimed.ID, job.ID)
 	}
