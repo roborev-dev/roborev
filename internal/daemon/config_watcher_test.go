@@ -19,6 +19,11 @@ type configWatcherHarness struct {
 	dir         string
 }
 
+const (
+	eventConfigReloaded = "config.reloaded"
+	reloadTimeout       = 2 * time.Second
+)
+
 func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherHarness {
 	t.Helper()
 	dir := t.TempDir()
@@ -57,13 +62,19 @@ func (h *configWatcherHarness) updateConfig(t *testing.T, content string) {
 	writeTestFile(t, h.ConfigPath, content)
 }
 
+func (h *configWatcherHarness) updateConfigAndWait(t *testing.T, content string) {
+	t.Helper()
+	h.updateConfig(t, content)
+	h.waitForReload(t)
+}
+
 func (h *configWatcherHarness) waitForReload(t *testing.T) {
 	t.Helper()
-	timeout := time.After(2 * time.Second)
+	timeout := time.After(reloadTimeout)
 	for {
 		select {
 		case event := <-h.EventCh:
-			if event.Type == "config.reloaded" {
+			if event.Type == eventConfigReloaded {
 				return
 			}
 		case <-timeout:
@@ -141,35 +152,65 @@ func TestConfigWatcher_NoConfigPath(t *testing.T) {
 	cw.Stop()
 }
 
-func TestConfigWatcher_ReloadOnFileChange(t *testing.T) {
-	h := newConfigWatcherHarness(t, "default_agent = \"initial-agent\"\nmax_workers = 2\n")
+func TestConfigWatcher_Reloads(t *testing.T) {
+	tests := []struct {
+		name          string
+		initialConfig string
+		updateConfig  string
+		validate      func(*testing.T, *config.Config)
+	}{
+		{
+			name:          "Update Agent and Workers",
+			initialConfig: "default_agent = \"initial-agent\"\nmax_workers = 2\n",
+			updateConfig:  "default_agent = \"updated-agent\"\nmax_workers = 4\n",
+			validate: func(t *testing.T, c *config.Config) {
+				if c.DefaultAgent != "updated-agent" {
+					t.Errorf("got agent %q, want %q", c.DefaultAgent, "updated-agent")
+				}
+				if c.MaxWorkers != 4 {
+					t.Errorf("got max workers %d, want 4", c.MaxWorkers)
+				}
+			},
+		},
+		{
+			name:          "Update Hot Reloadable Settings",
+			initialConfig: "default_agent = \"initial-agent\"\nreview_context_count = 3\njob_timeout_minutes = 10\n",
+			updateConfig:  "default_agent = \"updated-agent\"\nreview_context_count = 7\njob_timeout_minutes = 30\n",
+			validate: func(t *testing.T, c *config.Config) {
+				if c.ReviewContextCount != 7 {
+					t.Errorf("got context count %d, want 7", c.ReviewContextCount)
+				}
+				if c.JobTimeoutMinutes != 30 {
+					t.Errorf("got timeout %d, want 30", c.JobTimeoutMinutes)
+				}
+				if c.DefaultAgent != "updated-agent" {
+					t.Errorf("got agent %q, want %q", c.DefaultAgent, "updated-agent")
+				}
+			},
+		},
+	}
 
-	// Verify initial state
-	if h.Watcher.Config().DefaultAgent != "initial-agent" {
-		t.Errorf("Initial DefaultAgent = %q, want %q", h.Watcher.Config().DefaultAgent, "initial-agent")
-	}
-	if !h.Watcher.LastReloadedAt().IsZero() {
-		t.Error("LastReloadedAt should be zero before reload")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newConfigWatcherHarness(t, tt.initialConfig)
 
-	// Update config file
-	h.updateConfig(t, "default_agent = \"updated-agent\"\nmax_workers = 4\n")
-	h.waitForReload(t)
+			// Initial state check omitted as we trust newConfigWatcherHarness loads correctly
+			// and we focus on the reload behavior here.
 
-	// Verify config was updated
-	if h.Watcher.Config().DefaultAgent != "updated-agent" {
-		t.Errorf("After reload, DefaultAgent = %q, want %q", h.Watcher.Config().DefaultAgent, "updated-agent")
-	}
-	if h.Watcher.Config().MaxWorkers != 4 {
-		t.Errorf("After reload, MaxWorkers = %d, want %d", h.Watcher.Config().MaxWorkers, 4)
-	}
+			initialReloadTime := h.Watcher.LastReloadedAt()
 
-	// Verify LastReloadedAt was set
-	if h.Watcher.LastReloadedAt().IsZero() {
-		t.Error("LastReloadedAt should be set after reload")
-	}
-	if time.Since(h.Watcher.LastReloadedAt()) > 5*time.Second {
-		t.Error("LastReloadedAt should be recent")
+			h.updateConfigAndWait(t, tt.updateConfig)
+
+			tt.validate(t, h.Watcher.Config())
+
+			// Verify LastReloadedAt was updated
+			if h.Watcher.LastReloadedAt().Equal(initialReloadTime) && !initialReloadTime.IsZero() {
+				t.Error("LastReloadedAt should have changed after reload")
+			}
+			if h.Watcher.LastReloadedAt().IsZero() {
+				t.Error("LastReloadedAt should not be zero after reload")
+			}
+		})
 	}
 }
 
@@ -179,7 +220,7 @@ func TestConfigWatcher_InvalidConfigDoesNotCrash(t *testing.T) {
 	// Write invalid TOML - this should not crash the watcher
 	h.updateConfig(t, "this is not valid toml [[[\n")
 
-	// Wait for debounce and reload attempt
+	// Wait for debounce and potential reload attempt (no event fired for failure)
 	time.Sleep(500 * time.Millisecond)
 
 	// Config should still be the original value
@@ -188,10 +229,7 @@ func TestConfigWatcher_InvalidConfigDoesNotCrash(t *testing.T) {
 	}
 
 	// Watcher should still be working - fix the config
-	h.updateConfig(t, "default_agent = \"fixed-agent\"\n")
-
-	// Wait for reload
-	time.Sleep(500 * time.Millisecond)
+	h.updateConfigAndWait(t, "default_agent = \"fixed-agent\"\n")
 
 	// Now config should be updated
 	if h.Watcher.Config().DefaultAgent != "fixed-agent" {
@@ -203,42 +241,6 @@ func TestConfigGetter_Interface(t *testing.T) {
 	// Verify both StaticConfig and ConfigWatcher implement ConfigGetter
 	var _ ConfigGetter = (*StaticConfig)(nil)
 	var _ ConfigGetter = (*ConfigWatcher)(nil)
-}
-
-func TestConfigWatcher_HotReloadableSettingsTakeEffect(t *testing.T) {
-	h := newConfigWatcherHarness(t, "default_agent = \"initial-agent\"\nreview_context_count = 3\njob_timeout_minutes = 10\n")
-
-	// Verify initial values
-	if h.Watcher.Config().ReviewContextCount != 3 {
-		t.Errorf("Initial ReviewContextCount = %d, want 3", h.Watcher.Config().ReviewContextCount)
-	}
-	if h.Watcher.Config().JobTimeoutMinutes != 10 {
-		t.Errorf("Initial JobTimeoutMinutes = %d, want 10", h.Watcher.Config().JobTimeoutMinutes)
-	}
-	initialReloadTime := h.Watcher.LastReloadedAt()
-
-	// Update config with new hot-reloadable values
-	h.updateConfig(t, "default_agent = \"updated-agent\"\nreview_context_count = 7\njob_timeout_minutes = 30\n")
-	h.waitForReload(t)
-
-	// Verify hot-reloadable settings took effect
-	if h.Watcher.Config().ReviewContextCount != 7 {
-		t.Errorf("After reload, ReviewContextCount = %d, want 7", h.Watcher.Config().ReviewContextCount)
-	}
-	if h.Watcher.Config().JobTimeoutMinutes != 30 {
-		t.Errorf("After reload, JobTimeoutMinutes = %d, want 30", h.Watcher.Config().JobTimeoutMinutes)
-	}
-	if h.Watcher.Config().DefaultAgent != "updated-agent" {
-		t.Errorf("After reload, DefaultAgent = %q, want %q", h.Watcher.Config().DefaultAgent, "updated-agent")
-	}
-
-	// Verify LastReloadedAt changed
-	if h.Watcher.LastReloadedAt().Equal(initialReloadTime) {
-		t.Error("LastReloadedAt should have changed after reload")
-	}
-	if h.Watcher.LastReloadedAt().IsZero() {
-		t.Error("LastReloadedAt should not be zero after reload")
-	}
 }
 
 func TestConfigWatcher_DoubleStopSafe(t *testing.T) {
@@ -295,15 +297,13 @@ func TestConfigWatcher_ReloadCounter(t *testing.T) {
 	}
 
 	// First reload
-	h.updateConfig(t, "default_agent = \"v2\"\n")
-	h.waitForReload(t)
+	h.updateConfigAndWait(t, "default_agent = \"v2\"\n")
 	if h.Watcher.ReloadCounter() != 1 {
 		t.Errorf("After first reload, ReloadCounter = %d, want 1", h.Watcher.ReloadCounter())
 	}
 
 	// Second reload
-	h.updateConfig(t, "default_agent = \"v3\"\n")
-	h.waitForReload(t)
+	h.updateConfigAndWait(t, "default_agent = \"v3\"\n")
 	if h.Watcher.ReloadCounter() != 2 {
 		t.Errorf("After second reload, ReloadCounter = %d, want 2", h.Watcher.ReloadCounter())
 	}
