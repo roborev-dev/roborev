@@ -2,7 +2,6 @@ package prompt
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,45 +13,25 @@ import (
 // setupTestRepo creates a git repo with multiple commits and returns the repo path and commit SHAs
 func setupTestRepo(t *testing.T) (string, []string) {
 	t.Helper()
-	tmpDir := t.TempDir()
-
-	runGit := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
+	r := newTestRepo(t)
 
 	var commits []string
 
 	// Create 6 commits so we can test with 5 previous commits
 	for i := 1; i <= 6; i++ {
-		filename := filepath.Join(tmpDir, "file.txt")
+		filename := filepath.Join(r.dir, "file.txt")
 		content := strings.Repeat("x", i) // Different content each time
 		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
-		runGit("add", "file.txt")
-		runGit("commit", "-m", "commit "+string(rune('0'+i)))
+		r.git("add", "file.txt")
+		r.git("commit", "-m", "commit "+string(rune('0'+i)))
 
-		sha := runGit("rev-parse", "HEAD")
+		sha := r.git("rev-parse", "HEAD")
 		commits = append(commits, sha)
 	}
 
-	return tmpDir, commits
+	return r.dir, commits
 }
 
 func TestBuildPromptWithoutContext(t *testing.T) {
@@ -66,33 +45,23 @@ func TestBuildPromptWithoutContext(t *testing.T) {
 	}
 
 	// Should contain system prompt
-	if !strings.Contains(prompt, "You are a code reviewer") {
-		t.Error("Prompt should contain system prompt")
-	}
+	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
 
 	// Should contain the 5 review criteria
 	expectedCriteria := []string{"Bugs", "Security", "Testing gaps", "Regressions", "Code quality"}
 	for _, criteria := range expectedCriteria {
-		if !strings.Contains(prompt, criteria) {
-			t.Errorf("Prompt should contain %q", criteria)
-		}
+		assertContains(t, prompt, criteria, "Prompt should contain criteria")
 	}
 
 	// Should contain current commit section
-	if !strings.Contains(prompt, "## Current Commit") {
-		t.Error("Prompt should contain current commit section")
-	}
+	assertContains(t, prompt, "## Current Commit", "Prompt should contain current commit section")
 
 	// Should contain short SHA
 	shortSHA := targetSHA[:7]
-	if !strings.Contains(prompt, shortSHA) {
-		t.Errorf("Prompt should contain short SHA %s", shortSHA)
-	}
+	assertContains(t, prompt, shortSHA, "Prompt should contain short SHA")
 
 	// Should NOT contain previous reviews section (no db)
-	if strings.Contains(prompt, "## Previous Reviews") {
-		t.Error("Prompt should not contain previous reviews section without db")
-	}
+	assertNotContains(t, prompt, "## Previous Reviews", "Prompt should not contain previous reviews section without db")
 }
 
 func TestBuildPromptWithPreviousReviews(t *testing.T) {
@@ -139,26 +108,18 @@ func TestBuildPromptWithPreviousReviews(t *testing.T) {
 	}
 
 	// Should contain previous reviews section
-	if !strings.Contains(prompt, "## Previous Reviews") {
-		t.Error("Prompt should contain previous reviews section")
-	}
+	assertContains(t, prompt, "## Previous Reviews", "Prompt should contain previous reviews section")
 
 	// Should contain the review texts we added
 	for _, reviewText := range reviewTexts {
-		if !strings.Contains(prompt, reviewText) {
-			t.Errorf("Prompt should contain review text: %s", reviewText)
-		}
+		assertContains(t, prompt, reviewText, "Prompt should contain review text")
 	}
 
 	// Should contain "No review available" for commits without reviews
-	if !strings.Contains(prompt, "No review available") {
-		t.Error("Prompt should contain 'No review available' for commits without reviews")
-	}
+	assertContains(t, prompt, "No review available", "Prompt should contain 'No review available' for commits without reviews")
 
 	// Should contain delimiters with short SHAs
-	if !strings.Contains(prompt, "--- Review for commit") {
-		t.Error("Prompt should contain review delimiters")
-	}
+	assertContains(t, prompt, "--- Review for commit", "Prompt should contain review delimiters")
 
 	// Verify chronological order (oldest first)
 	// The oldest parent (commit 1) should appear before the newest parent (commit 5)
@@ -204,89 +165,47 @@ func TestBuildPromptWithPreviousReviewsAndResponses(t *testing.T) {
 	}
 
 	// Should contain previous reviews section
-	if !strings.Contains(prompt, "## Previous Reviews") {
-		t.Error("Prompt should contain previous reviews section")
-	}
+	assertContains(t, prompt, "## Previous Reviews", "Prompt should contain previous reviews section")
 
 	// Should contain the review text
-	if !strings.Contains(prompt, "memory leak in connection pool") {
-		t.Error("Prompt should contain the previous review text")
-	}
+	assertContains(t, prompt, "memory leak in connection pool", "Prompt should contain the previous review text")
 
 	// Should contain comments on the previous review
-	if !strings.Contains(prompt, "Comments on this review:") {
-		t.Error("Prompt should contain comments section for previous review")
-	}
+	assertContains(t, prompt, "Comments on this review:", "Prompt should contain comments section for previous review")
 
-	if !strings.Contains(prompt, "alice") {
-		t.Error("Prompt should contain commenter 'alice'")
-	}
+	assertContains(t, prompt, "alice", "Prompt should contain commenter 'alice'")
+	assertContains(t, prompt, "Known issue, will fix in next sprint", "Prompt should contain alice's comment text")
 
-	if !strings.Contains(prompt, "Known issue, will fix in next sprint") {
-		t.Error("Prompt should contain alice's comment text")
-	}
-
-	if !strings.Contains(prompt, "bob") {
-		t.Error("Prompt should contain commenter 'bob'")
-	}
-
-	if !strings.Contains(prompt, "Added to tech debt backlog") {
-		t.Error("Prompt should contain bob's comment text")
-	}
+	assertContains(t, prompt, "bob", "Prompt should contain commenter 'bob'")
+	assertContains(t, prompt, "Added to tech debt backlog", "Prompt should contain bob's comment text")
 }
 
 func TestBuildPromptWithNoParentCommits(t *testing.T) {
 	// Create a repo with just one commit
-	tmpDir := t.TempDir()
+	r := newTestRepo(t)
 
-	runGit := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	runGit("init")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-
-	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(r.dir, "file.txt"), []byte("content"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "initial commit")
-	sha := runGit("rev-parse", "HEAD")
+	r.git("add", "file.txt")
+	r.git("commit", "-m", "initial commit")
+	sha := r.git("rev-parse", "HEAD")
 
 	db := testutil.OpenTestDB(t)
 
 	// Build prompt - should work even with no parent commits
 	builder := NewBuilder(db)
-	prompt, err := builder.Build(tmpDir, sha, 0, 5, "", "")
+	prompt, err := builder.Build(r.dir, sha, 0, 5, "", "")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
 
 	// Should contain system prompt and current commit
-	if !strings.Contains(prompt, "You are a code reviewer") {
-		t.Error("Prompt should contain system prompt")
-	}
-	if !strings.Contains(prompt, "## Current Commit") {
-		t.Error("Prompt should contain current commit section")
-	}
+	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
+	assertContains(t, prompt, "## Current Commit", "Prompt should contain current commit section")
 
 	// Should NOT contain previous reviews (no parents exist)
-	if strings.Contains(prompt, "## Previous Reviews") {
-		t.Error("Prompt should not contain previous reviews section when no parents exist")
-	}
+	assertNotContains(t, prompt, "## Previous Reviews", "Prompt should not contain previous reviews section when no parents exist")
 }
 
 func TestPromptContainsExpectedFormat(t *testing.T) {
@@ -315,9 +234,7 @@ func TestPromptContainsExpectedFormat(t *testing.T) {
 	}
 
 	for _, section := range sections {
-		if !strings.Contains(prompt, section) {
-			t.Errorf("Prompt missing section: %s", section)
-		}
+		assertContains(t, prompt, section, "Prompt missing section")
 	}
 }
 
@@ -346,20 +263,12 @@ All public APIs must have documentation comments.
 	}
 
 	// Should contain project guidelines section
-	if !strings.Contains(prompt, "## Project Guidelines") {
-		t.Error("Prompt should contain project guidelines section")
-	}
+	assertContains(t, prompt, "## Project Guidelines", "Prompt should contain project guidelines section")
 
 	// Should contain the guidelines text
-	if !strings.Contains(prompt, "database migrations") {
-		t.Error("Prompt should contain guidelines about database migrations")
-	}
-	if !strings.Contains(prompt, "composition over inheritance") {
-		t.Error("Prompt should contain guidelines about composition")
-	}
-	if !strings.Contains(prompt, "documentation comments") {
-		t.Error("Prompt should contain guidelines about documentation")
-	}
+	assertContains(t, prompt, "database migrations", "Prompt should contain guidelines about database migrations")
+	assertContains(t, prompt, "composition over inheritance", "Prompt should contain guidelines about composition")
+	assertContains(t, prompt, "documentation comments", "Prompt should contain guidelines about documentation")
 
 	// Print prompt for inspection
 	t.Logf("Generated prompt with guidelines:\n%s", prompt)
@@ -383,9 +292,7 @@ func TestBuildPromptWithoutProjectGuidelines(t *testing.T) {
 	}
 
 	// Should NOT contain project guidelines section
-	if strings.Contains(prompt, "## Project Guidelines") {
-		t.Error("Prompt should not contain project guidelines section when none configured")
-	}
+	assertNotContains(t, prompt, "## Project Guidelines", "Prompt should not contain project guidelines section when none configured")
 }
 
 func TestBuildPromptNoConfig(t *testing.T) {
@@ -399,17 +306,11 @@ func TestBuildPromptNoConfig(t *testing.T) {
 	}
 
 	// Should NOT contain project guidelines section
-	if strings.Contains(prompt, "## Project Guidelines") {
-		t.Error("Prompt should not contain project guidelines section when no config file")
-	}
+	assertNotContains(t, prompt, "## Project Guidelines", "Prompt should not contain project guidelines section when no config file")
 
 	// Should still contain standard sections
-	if !strings.Contains(prompt, "You are a code reviewer") {
-		t.Error("Prompt should contain system prompt")
-	}
-	if !strings.Contains(prompt, "## Current Commit") {
-		t.Error("Prompt should contain current commit section")
-	}
+	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
+	assertContains(t, prompt, "## Current Commit", "Prompt should contain current commit section")
 }
 
 func TestBuildPromptGuidelinesOrder(t *testing.T) {
@@ -477,24 +378,16 @@ func TestBuildPromptWithPreviousAttempts(t *testing.T) {
 	}
 
 	// Should contain previous review attempts section
-	if !strings.Contains(prompt, "## Previous Review Attempts") {
-		t.Error("Prompt should contain previous review attempts section")
-	}
+	assertContains(t, prompt, "## Previous Review Attempts", "Prompt should contain previous review attempts section")
 
 	// Should contain both review texts
 	for _, reviewText := range reviewTexts {
-		if !strings.Contains(prompt, reviewText) {
-			t.Errorf("Prompt should contain review text: %s", reviewText)
-		}
+		assertContains(t, prompt, reviewText, "Prompt should contain review text")
 	}
 
 	// Should contain attempt numbers
-	if !strings.Contains(prompt, "Review Attempt 1") {
-		t.Error("Prompt should contain 'Review Attempt 1'")
-	}
-	if !strings.Contains(prompt, "Review Attempt 2") {
-		t.Error("Prompt should contain 'Review Attempt 2'")
-	}
+	assertContains(t, prompt, "Review Attempt 1", "Prompt should contain 'Review Attempt 1'")
+	assertContains(t, prompt, "Review Attempt 2", "Prompt should contain 'Review Attempt 2'")
 }
 
 func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
@@ -520,26 +413,16 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 	}
 
 	// Should contain the previous review
-	if !strings.Contains(prompt, "## Previous Review Attempts") {
-		t.Error("Prompt should contain previous review attempts section")
-	}
+	assertContains(t, prompt, "## Previous Review Attempts", "Prompt should contain previous review attempts section")
 
-	if !strings.Contains(prompt, "missing null check") {
-		t.Error("Prompt should contain the previous review text")
-	}
+	assertContains(t, prompt, "missing null check", "Prompt should contain the previous review text")
 
 	// Should contain the comment
-	if !strings.Contains(prompt, "Comments on this review:") {
-		t.Error("Prompt should contain comments section")
-	}
+	assertContains(t, prompt, "Comments on this review:", "Prompt should contain comments section")
 
-	if !strings.Contains(prompt, "This is intentional") {
-		t.Error("Prompt should contain the comment text")
-	}
+	assertContains(t, prompt, "This is intentional", "Prompt should contain the comment text")
 
-	if !strings.Contains(prompt, "developer") {
-		t.Error("Prompt should contain the commenter name")
-	}
+	assertContains(t, prompt, "developer", "Prompt should contain the commenter name")
 }
 
 func TestBuildPromptWithGeminiAgent(t *testing.T) {
@@ -553,17 +436,11 @@ func TestBuildPromptWithGeminiAgent(t *testing.T) {
 	}
 
 	// Should contain Gemini-specific instructions
-	if !strings.Contains(prompt, "extremely concise and professional") {
-		t.Error("Prompt should contain Gemini-specific instruction")
-	}
-	if !strings.Contains(prompt, "Summary") {
-		t.Error("Prompt should contain 'Summary' section")
-	}
+	assertContains(t, prompt, "extremely concise and professional", "Prompt should contain Gemini-specific instruction")
+	assertContains(t, prompt, "Summary", "Prompt should contain 'Summary' section")
 
 	// Should NOT contain default system prompt text
-	if strings.Contains(prompt, "Brief explanation of the problem and suggested fix") {
-		t.Error("Prompt should not contain default system prompt text")
-	}
+	assertNotContains(t, prompt, "Brief explanation of the problem and suggested fix", "Prompt should not contain default system prompt text")
 }
 
 func TestBuildPromptDesignReviewType(t *testing.T) {
@@ -576,12 +453,8 @@ func TestBuildPromptDesignReviewType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
-	if !strings.Contains(prompt, "design reviewer") {
-		t.Error("Expected design-review system prompt for reviewType=design")
-	}
-	if strings.Contains(prompt, "code reviewer") {
-		t.Error("Should not contain standard code review prompt")
-	}
+	assertContains(t, prompt, "design reviewer", "Expected design-review system prompt for reviewType=design")
+	assertNotContains(t, prompt, "code reviewer", "Should not contain standard code review prompt")
 }
 
 func TestBuildDirtyDesignReviewType(t *testing.T) {
@@ -594,12 +467,8 @@ func TestBuildDirtyDesignReviewType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildDirty failed: %v", err)
 	}
-	if !strings.Contains(prompt, "design reviewer") {
-		t.Error("Expected design-review system prompt for dirty reviewType=design")
-	}
-	if strings.Contains(prompt, "code reviewer") {
-		t.Error("Should not contain standard dirty review prompt")
-	}
+	assertContains(t, prompt, "design reviewer", "Expected design-review system prompt for dirty reviewType=design")
+	assertNotContains(t, prompt, "code reviewer", "Should not contain standard dirty review prompt")
 }
 
 func TestBuildDirtyWithReviewAlias(t *testing.T) {
@@ -612,9 +481,7 @@ func TestBuildDirtyWithReviewAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildDirty failed: %v", err)
 	}
-	if !strings.Contains(prompt, "uncommitted changes") {
-		t.Error("Expected dirty system prompt for reviewType=review alias, got wrong prompt type")
-	}
+	assertContains(t, prompt, "uncommitted changes", "Expected dirty system prompt for reviewType=review alias, got wrong prompt type")
 }
 
 func TestBuildRangeWithReviewAlias(t *testing.T) {
@@ -628,9 +495,7 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 		t.Fatalf("Build (range) failed: %v", err)
 	}
 	// Should use the range system prompt, not single-commit
-	if !strings.Contains(prompt, "commit range") {
-		t.Error("Expected range system prompt for reviewType=review alias, got wrong prompt type")
-	}
+	assertContains(t, prompt, "commit range", "Expected range system prompt for reviewType=review alias, got wrong prompt type")
 }
 
 // setupGuidelinesRepo creates a git repo with .roborev.toml on the
@@ -638,58 +503,38 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 // guidelines. Returns (repoPath, defaultBranchSHA, featureBranchSHA).
 func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuidelines string) (string, string, string) {
 	t.Helper()
-	dir := t.TempDir()
-
-	run := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	run("init", "-b", defaultBranch)
-	run("config", "user.email", "test@test.com")
-	run("config", "user.name", "Test")
+	r := newTestRepoWithBranch(t, defaultBranch)
 
 	// Initial commit with base guidelines
 	if baseGuidelines != "" {
 		toml := `review_guidelines = """` + "\n" + baseGuidelines + "\n" + `"""` + "\n"
-		os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(toml), 0644)
+		os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644)
 	} else {
-		os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0644)
+		os.WriteFile(filepath.Join(r.dir, "README.md"), []byte("init"), 0644)
 	}
-	run("add", "-A")
-	run("commit", "-m", "initial")
-	baseSHA := run("rev-parse", "HEAD")
+	r.git("add", "-A")
+	r.git("commit", "-m", "initial")
+	baseSHA := r.git("rev-parse", "HEAD")
 
 	// Set up origin pointing to itself so origin/<branch> exists
-	run("remote", "add", "origin", dir)
-	run("fetch", "origin")
+	r.git("remote", "add", "origin", r.dir)
+	r.git("fetch", "origin")
 	// Set origin/HEAD to point to the default branch
-	run("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
+	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
 
 	// Create feature branch with different guidelines
 	var featureSHA string
 	if branchGuidelines != "" {
-		run("checkout", "-b", "feature-branch")
+		r.git("checkout", "-b", "feature-branch")
 		toml := `review_guidelines = """` + "\n" + branchGuidelines + "\n" + `"""` + "\n"
-		os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(toml), 0644)
-		run("add", ".roborev.toml")
-		run("commit", "-m", "update guidelines on branch")
-		featureSHA = run("rev-parse", "HEAD")
-		run("checkout", defaultBranch)
+		os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644)
+		r.git("add", ".roborev.toml")
+		r.git("commit", "-m", "update guidelines on branch")
+		featureSHA = r.git("rev-parse", "HEAD")
+		r.git("checkout", defaultBranch)
 	}
 
-	return dir, baseSHA, featureSHA
+	return r.dir, baseSHA, featureSHA
 }
 
 func TestLoadGuidelines_NonMainDefaultBranch(t *testing.T) {
@@ -698,9 +543,7 @@ func TestLoadGuidelines_NonMainDefaultBranch(t *testing.T) {
 
 	guidelines := loadGuidelines(dir)
 
-	if !strings.Contains(guidelines, "Base rule from develop.") {
-		t.Error("expected guidelines from develop branch")
-	}
+	assertContains(t, guidelines, "Base rule from develop.", "expected guidelines from develop branch")
 }
 
 func TestLoadGuidelines_BranchGuidelinesIgnored(t *testing.T) {
@@ -711,12 +554,8 @@ func TestLoadGuidelines_BranchGuidelinesIgnored(t *testing.T) {
 
 	guidelines := loadGuidelines(dir)
 
-	if !strings.Contains(guidelines, "Base rule.") {
-		t.Error("expected base guidelines")
-	}
-	if strings.Contains(guidelines, "Injected") {
-		t.Error("branch guidelines should be ignored")
-	}
+	assertContains(t, guidelines, "Base rule.", "expected base guidelines")
+	assertNotContains(t, guidelines, "Injected", "branch guidelines should be ignored")
 }
 
 func TestLoadGuidelines_FallsBackToFilesystem(t *testing.T) {
@@ -729,89 +568,47 @@ func TestLoadGuidelines_FallsBackToFilesystem(t *testing.T) {
 
 	guidelines := loadGuidelines(dir)
 
-	if !strings.Contains(guidelines, "Filesystem rule.") {
-		t.Error("expected filesystem fallback when no config on default branch")
-	}
+	assertContains(t, guidelines, "Filesystem rule.", "expected filesystem fallback when no config on default branch")
 }
 
 func TestLoadGuidelines_ParseErrorBlocksFallback(t *testing.T) {
 	// If the default branch has invalid .roborev.toml (parse error),
 	// should NOT fall back to filesystem config.
-	dir := t.TempDir()
-	run := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	run("init", "-b", "main")
-	run("config", "user.email", "test@test.com")
-	run("config", "user.name", "Test")
+	r := newTestRepoWithBranch(t, "main")
 
 	// Commit invalid TOML on main
-	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+	os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
 		[]byte("review_guidelines = INVALID[[["), 0644)
-	run("add", "-A")
-	run("commit", "-m", "bad toml")
+	r.git("add", "-A")
+	r.git("commit", "-m", "bad toml")
 
-	run("remote", "add", "origin", dir)
-	run("fetch", "origin")
+	r.git("remote", "add", "origin", r.dir)
+	r.git("fetch", "origin")
 
 	// Write valid filesystem config
-	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+	os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
 		[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0644)
 
-	guidelines := loadGuidelines(dir)
+	guidelines := loadGuidelines(r.dir)
 
-	if strings.Contains(guidelines, "Filesystem guideline") {
-		t.Error("parse error on default branch should block filesystem fallback")
-	}
+	assertNotContains(t, guidelines, "Filesystem guideline", "parse error on default branch should block filesystem fallback")
 }
 
 func TestLoadGuidelines_GitErrorFallsBackToFilesystem(t *testing.T) {
 	// When LoadRepoConfigFromRef fails with a non-parse error (e.g.,
 	// corrupt object), loadGuidelines should fall back to filesystem.
-	dir := t.TempDir()
-	run := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	run("init", "-b", "main")
-	run("config", "user.email", "test@test.com")
-	run("config", "user.name", "Test")
+	r := newTestRepoWithBranch(t, "main")
 
 	// Commit .roborev.toml so it exists in the tree.
-	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+	os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
 		[]byte("review_guidelines = \"From main\"\n"), 0644)
-	run("add", "-A")
-	run("commit", "-m", "init")
+	r.git("add", "-A")
+	r.git("commit", "-m", "init")
 
 	// Corrupt the blob object for .roborev.toml so git show fails
 	// with a non-"does not exist" error ("loose object ... is corrupt").
-	blobSHA := run("rev-parse", "HEAD:.roborev.toml")
-	objPath := filepath.Join(dir, ".git", "objects",
+	blobSHA := r.git("rev-parse", "HEAD:.roborev.toml")
+	objPath := filepath.Join(r.dir, ".git", "objects",
 		blobSHA[:2], blobSHA[2:])
 	if err := os.Chmod(objPath, 0644); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -819,14 +616,12 @@ func TestLoadGuidelines_GitErrorFallsBackToFilesystem(t *testing.T) {
 	os.WriteFile(objPath, []byte("corrupt"), 0444)
 
 	// Write valid filesystem config that should be used as fallback.
-	os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+	os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
 		[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0644)
 
-	guidelines := loadGuidelines(dir)
+	guidelines := loadGuidelines(r.dir)
 
-	if !strings.Contains(guidelines, "Filesystem fallback.") {
-		t.Error("non-parse git error should fall back to filesystem")
-	}
+	assertContains(t, guidelines, "Filesystem fallback.", "non-parse git error should fall back to filesystem")
 }
 
 // extractGuidelinesSection returns the text between "## Project Guidelines"
@@ -854,12 +649,8 @@ func TestBuildSinglePrompt_WithGuidelines(t *testing.T) {
 	}
 
 	section := extractGuidelinesSection(prompt)
-	if !strings.Contains(section, "Security: validate all inputs.") {
-		t.Error("expected default branch guidelines in prompt")
-	}
-	if strings.Contains(section, "Branch-only rule.") {
-		t.Error("branch guidelines should not appear in guidelines section")
-	}
+	assertContains(t, section, "Security: validate all inputs.", "expected default branch guidelines in prompt")
+	assertNotContains(t, section, "Branch-only rule.", "branch guidelines should not appear in guidelines section")
 }
 
 func TestBuildRangePrompt_WithGuidelines(t *testing.T) {
@@ -874,10 +665,6 @@ func TestBuildRangePrompt_WithGuidelines(t *testing.T) {
 	}
 
 	section := extractGuidelinesSection(prompt)
-	if !strings.Contains(section, "Base guideline.") {
-		t.Error("expected default branch guidelines in range prompt")
-	}
-	if strings.Contains(section, "Branch-only rule.") {
-		t.Error("branch guidelines should not appear in guidelines section")
-	}
+	assertContains(t, section, "Base guideline.", "expected default branch guidelines in range prompt")
+	assertNotContains(t, section, "Branch-only rule.", "branch guidelines should not appear in guidelines section")
 }
