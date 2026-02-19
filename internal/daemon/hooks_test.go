@@ -30,14 +30,44 @@ func setupRunner(t *testing.T, cfg *config.Config) (*HookRunner, Broadcaster) {
 // waitForFile polls for the existence of a file until the timeout expires.
 func waitForFile(t *testing.T, path string, timeout time.Duration) {
 	t.Helper()
+	waitForFiles(t, timeout, path)
+}
+
+// waitForFiles polls for the existence of multiple files until the timeout expires.
+func waitForFiles(t *testing.T, timeout time.Duration, paths ...string) {
+	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
+		allExist := true
+		for _, path := range paths {
+			if _, err := os.Stat(path); err != nil {
+				allExist = false
+				break
+			}
+		}
+		if allExist {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("file %q was not created within %v", path, timeout)
+	t.Fatalf("files %v were not created within %v", paths, timeout)
+}
+
+// waitForFileContent polls until the file exists and has non-empty content.
+func waitForFileContent(t *testing.T, path string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var content []byte
+	var err error
+	for time.Now().Before(deadline) {
+		content, err = os.ReadFile(path)
+		if err == nil && len(content) > 0 {
+			return string(content)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("file %q did not contain data within %v (last err: %v)", path, timeout, err)
+	return ""
 }
 
 // noopCmd returns a platform-appropriate no-op shell command.
@@ -406,14 +436,9 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 		Error:    "fail",
 	})
 
-	waitForFile(t, markerFile, 5*time.Second)
+	dataStr := waitForFileContent(t, markerFile, 5*time.Second)
 
-	data, err := os.ReadFile(markerFile)
-	if err != nil {
-		t.Fatalf("failed to read marker file: %v", err)
-	}
-
-	got := filepath.Clean(strings.TrimSpace(string(data)))
+	got := filepath.Clean(strings.TrimSpace(dataStr))
 	want := filepath.Clean(tmpDir)
 	// On Windows, resolve 8.3 short paths to long paths for comparison
 	if runtime.GOOS == "windows" {
@@ -541,8 +566,7 @@ command = "`+touchCmd(repoMarker)+`"
 		Error: "fail",
 	})
 
-	waitForFile(t, globalMarker, 5*time.Second)
-	waitForFile(t, repoMarker, 5*time.Second)
+	waitForFiles(t, 5*time.Second, globalMarker, repoMarker)
 }
 
 func TestHookRunnerRepoOnlyHooks(t *testing.T) {
