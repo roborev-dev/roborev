@@ -650,34 +650,8 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 	})
 }
 
-func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
-	// This test creates an old-schema database manually, runs migration,
-	// and verifies that the same SHA can now exist in different repos.
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-
-	// Create database with old schema (sha TEXT UNIQUE NOT NULL)
-	rawDB, err := openRawDB(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open raw database: %v", err)
-	}
-
-	// Create old schema with UNIQUE(sha) constraint
-	_, err = rawDB.Exec(`
-		CREATE TABLE repos (
-			id INTEGER PRIMARY KEY,
-			root_path TEXT UNIQUE NOT NULL,
-			name TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);
-		CREATE TABLE commits (
-			id INTEGER PRIMARY KEY,
-			repo_id INTEGER NOT NULL REFERENCES repos(id),
-			sha TEXT UNIQUE NOT NULL,
-			author TEXT NOT NULL,
-			subject TEXT NOT NULL,
-			timestamp TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);
+func createLegacyCommonTables(t *testing.T, db *sql.DB) {
+	_, err := db.Exec(`
 		CREATE TABLE review_jobs (
 			id INTEGER PRIMARY KEY,
 			repo_id INTEGER NOT NULL REFERENCES repos(id),
@@ -713,12 +687,47 @@ func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
 			response TEXT NOT NULL,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create common legacy schema: %v", err)
+	}
+}
+
+func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
+	// This test creates an old-schema database manually, runs migration,
+	// and verifies that the same SHA can now exist in different repos.
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// Create database with old schema (sha TEXT UNIQUE NOT NULL)
+	rawDB, err := openRawDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open raw database: %v", err)
+	}
+
+	// Create old schema with UNIQUE(sha) constraint
+	_, err = rawDB.Exec(`
+		CREATE TABLE repos (
+			id INTEGER PRIMARY KEY,
+			root_path TEXT UNIQUE NOT NULL,
+			name TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+		CREATE TABLE commits (
+			id INTEGER PRIMARY KEY,
+			repo_id INTEGER NOT NULL REFERENCES repos(id),
+			sha TEXT UNIQUE NOT NULL,
+			author TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
 		CREATE INDEX idx_commits_sha ON commits(sha);
 	`)
 	if err != nil {
 		rawDB.Close()
 		t.Fatalf("Failed to create old schema: %v", err)
 	}
+	createLegacyCommonTables(t, rawDB)
 
 	// Insert two repos
 	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name) VALUES ('/repo1', 'repo1')`)
@@ -813,47 +822,13 @@ func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(repo_id, sha)
 		);
-		CREATE TABLE review_jobs (
-			id INTEGER PRIMARY KEY,
-			repo_id INTEGER NOT NULL REFERENCES repos(id),
-			commit_id INTEGER REFERENCES commits(id),
-			git_ref TEXT NOT NULL,
-			agent TEXT NOT NULL DEFAULT 'codex',
-			reasoning TEXT NOT NULL DEFAULT 'thorough',
-			status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled')) DEFAULT 'queued',
-			enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
-			started_at TEXT,
-			finished_at TEXT,
-			worker_id TEXT,
-			error TEXT,
-			prompt TEXT,
-			retry_count INTEGER NOT NULL DEFAULT 0,
-			diff_content TEXT,
-			agentic INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE reviews (
-			id INTEGER PRIMARY KEY,
-			job_id INTEGER UNIQUE NOT NULL REFERENCES review_jobs(id),
-			agent TEXT NOT NULL,
-			prompt TEXT NOT NULL,
-			output TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			addressed INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE responses (
-			id INTEGER PRIMARY KEY,
-			commit_id INTEGER REFERENCES commits(id),
-			job_id INTEGER REFERENCES review_jobs(id),
-			responder TEXT NOT NULL,
-			response TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);
 		CREATE INDEX idx_commits_sha ON commits(sha);
 	`)
 	if err != nil {
 		rawDB.Close()
 		t.Fatalf("Failed to create schema: %v", err)
 	}
+	createLegacyCommonTables(t, rawDB)
 
 	// Insert two repos with the same identity (e.g., two clones of same remote)
 	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
@@ -917,47 +892,13 @@ func TestUniqueIndexMigration(t *testing.T) {
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(repo_id, sha)
 		);
-		CREATE TABLE review_jobs (
-			id INTEGER PRIMARY KEY,
-			repo_id INTEGER NOT NULL REFERENCES repos(id),
-			commit_id INTEGER REFERENCES commits(id),
-			git_ref TEXT NOT NULL,
-			agent TEXT NOT NULL DEFAULT 'codex',
-			reasoning TEXT NOT NULL DEFAULT 'thorough',
-			status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled')) DEFAULT 'queued',
-			enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
-			started_at TEXT,
-			finished_at TEXT,
-			worker_id TEXT,
-			error TEXT,
-			prompt TEXT,
-			retry_count INTEGER NOT NULL DEFAULT 0,
-			diff_content TEXT,
-			agentic INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE reviews (
-			id INTEGER PRIMARY KEY,
-			job_id INTEGER UNIQUE NOT NULL REFERENCES review_jobs(id),
-			agent TEXT NOT NULL,
-			prompt TEXT NOT NULL,
-			output TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			addressed INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE responses (
-			id INTEGER PRIMARY KEY,
-			commit_id INTEGER REFERENCES commits(id),
-			job_id INTEGER REFERENCES review_jobs(id),
-			responder TEXT NOT NULL,
-			response TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);
 		CREATE INDEX idx_commits_sha ON commits(sha);
 	`)
 	if err != nil {
 		rawDB.Close()
 		t.Fatalf("Failed to create schema: %v", err)
 	}
+	createLegacyCommonTables(t, rawDB)
 
 	// Insert one repo
 	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
@@ -1184,41 +1125,11 @@ func TestParseSQLiteTime(t *testing.T) {
 }
 
 func TestGetJobsToSync_TimestampComparison(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	// Get machine ID for this test
-	machineID, err := db.GetMachineID()
-	if err != nil {
-		t.Fatalf("GetMachineID failed: %v", err)
-	}
-
-	// Create a repo and commit
-	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "sync-test-sha", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-
-	// Create a job and complete it
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "sync-test-sha", Agent: "test", Reasoning: "thorough"})
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	_, err = db.ClaimJob("worker-1")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-	err = db.CompleteJob(job.ID, "test", "prompt", "output")
-	if err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
-	}
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("sync-test-sha")
 
 	t.Run("job with null synced_at is returned", func(t *testing.T) {
-		jobs, err := db.GetJobsToSync(machineID, 10)
+		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetJobsToSync failed: %v", err)
 		}
@@ -1235,12 +1146,12 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 	})
 
 	t.Run("job after MarkJobSynced is not returned", func(t *testing.T) {
-		err := db.MarkJobSynced(job.ID)
+		err := h.db.MarkJobSynced(job.ID)
 		if err != nil {
 			t.Fatalf("MarkJobSynced failed: %v", err)
 		}
 
-		jobs, err := db.GetJobsToSync(machineID, 10)
+		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetJobsToSync failed: %v", err)
 		}
@@ -1254,12 +1165,9 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 	t.Run("job with updated_at after synced_at is returned", func(t *testing.T) {
 		// Update the job's updated_at to be after synced_at
 		futureTime := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-		_, err := db.Exec(`UPDATE review_jobs SET updated_at = ? WHERE id = ?`, futureTime, job.ID)
-		if err != nil {
-			t.Fatalf("Failed to update updated_at: %v", err)
-		}
+		h.setJobTimestamps(job.ID, sql.NullString{String: "", Valid: false}, futureTime)
 
-		jobs, err := db.GetJobsToSync(machineID, 10)
+		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetJobsToSync failed: %v", err)
 		}
@@ -1277,36 +1185,15 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 
 	t.Run("mixed format timestamps compare correctly", func(t *testing.T) {
 		// Create a new job for this subtest
-		commit2, err := db.GetOrCreateCommit(repo.ID, "mixed-format-sha", "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		job2, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "mixed-format-sha", Agent: "test", Reasoning: "thorough"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		_, err = db.ClaimJob("worker-2")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-		err = db.CompleteJob(job2.ID, "test", "prompt", "output")
-		if err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
-		}
+		job2 := h.createCompletedJob("mixed-format-sha")
 
 		// Set synced_at in SQLite datetime format (legacy format) - 10:30 UTC
-		_, err = db.Exec(`UPDATE review_jobs SET synced_at = '2024-06-15 10:30:00' WHERE id = ?`, job2.ID)
-		if err != nil {
-			t.Fatalf("Failed to set synced_at: %v", err)
-		}
-
 		// Set updated_at in RFC3339 with offset: 14:30+02:00 = 12:30 UTC (later than 10:30 UTC)
-		_, err = db.Exec(`UPDATE review_jobs SET updated_at = '2024-06-15T14:30:00+02:00' WHERE id = ?`, job2.ID)
-		if err != nil {
-			t.Fatalf("Failed to set updated_at: %v", err)
-		}
+		h.setJobTimestamps(job2.ID,
+			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
+			"2024-06-15T14:30:00+02:00")
 
-		jobs, err := db.GetJobsToSync(machineID, 10)
+		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetJobsToSync failed: %v", err)
 		}
@@ -1324,12 +1211,11 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 		// Now test the opposite: synced_at is later than updated_at
 		// synced_at: 2024-06-15 20:00:00 (8pm UTC)
 		// updated_at: 2024-06-15T10:30:00Z (10:30am UTC)
-		_, err = db.Exec(`UPDATE review_jobs SET synced_at = '2024-06-15 20:00:00', updated_at = '2024-06-15T10:30:00Z' WHERE id = ?`, job2.ID)
-		if err != nil {
-			t.Fatalf("Failed to update timestamps: %v", err)
-		}
+		h.setJobTimestamps(job2.ID,
+			sql.NullString{String: "2024-06-15 20:00:00", Valid: true},
+			"2024-06-15T10:30:00Z")
 
-		jobs, err = db.GetJobsToSync(machineID, 10)
+		jobs, err = h.db.GetJobsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetJobsToSync failed: %v", err)
 		}
@@ -1345,49 +1231,17 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 		// SQLite/Go uses the non-UTC timezone for localtime operations
 		t.Setenv("TZ", "America/New_York")
 
-		// Open a fresh database after setting TZ so timezone is properly initialized
-		tzDBPath := filepath.Join(t.TempDir(), "tz-test.db")
-		tzDB, err := Open(tzDBPath)
-		if err != nil {
-			t.Fatalf("Failed to open TZ test database: %v", err)
-		}
-		defer tzDB.Close()
-
-		tzMachineID, err := tzDB.GetMachineID()
-		if err != nil {
-			t.Fatalf("GetMachineID failed: %v", err)
-		}
-
-		// Create test data in the new DB
-		tzRepo, err := tzDB.GetOrCreateRepo(t.TempDir())
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo failed: %v", err)
-		}
-		commit3, err := tzDB.GetOrCreateCommit(tzRepo.ID, "tz-test-sha", "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		job3, err := tzDB.EnqueueJob(EnqueueOpts{RepoID: tzRepo.ID, CommitID: commit3.ID, GitRef: "tz-test-sha", Agent: "test", Reasoning: "thorough"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		_, err = tzDB.ClaimJob("worker-3")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-		err = tzDB.CompleteJob(job3.ID, "test", "prompt", "output")
-		if err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
-		}
+		// Create a NEW helper which opens a new DB
+		hTZ := newSyncTestHelper(t)
+		job3 := hTZ.createCompletedJob("tz-test-sha")
 
 		// synced_at: legacy format 10:30 (should be treated as UTC)
 		// updated_at: 12:30 UTC (later than synced_at)
-		_, err = tzDB.Exec(`UPDATE review_jobs SET synced_at = '2024-06-15 10:30:00', updated_at = '2024-06-15T12:30:00Z' WHERE id = ?`, job3.ID)
-		if err != nil {
-			t.Fatalf("Failed to set timestamps: %v", err)
-		}
+		hTZ.setJobTimestamps(job3.ID,
+			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
+			"2024-06-15T12:30:00Z")
 
-		jobs, err := tzDB.GetJobsToSync(tzMachineID, 10)
+		jobs, err := hTZ.db.GetJobsToSync(hTZ.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetJobsToSync failed: %v", err)
 		}
@@ -1404,12 +1258,11 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 
 		// synced_at: legacy format 14:00 (should be treated as UTC)
 		// updated_at: 12:30 UTC (earlier than synced_at)
-		_, err = tzDB.Exec(`UPDATE review_jobs SET synced_at = '2024-06-15 14:00:00', updated_at = '2024-06-15T12:30:00Z' WHERE id = ?`, job3.ID)
-		if err != nil {
-			t.Fatalf("Failed to update timestamps: %v", err)
-		}
+		hTZ.setJobTimestamps(job3.ID,
+			sql.NullString{String: "2024-06-15 14:00:00", Valid: true},
+			"2024-06-15T12:30:00Z")
 
-		jobs, err = tzDB.GetJobsToSync(tzMachineID, 10)
+		jobs, err = hTZ.db.GetJobsToSync(hTZ.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetJobsToSync failed: %v", err)
 		}
@@ -1422,51 +1275,23 @@ func TestGetJobsToSync_TimestampComparison(t *testing.T) {
 }
 
 func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	// Get machine ID for this test
-	machineID, err := db.GetMachineID()
-	if err != nil {
-		t.Fatalf("GetMachineID failed: %v", err)
-	}
-
-	// Create a repo, commit, and job
-	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "review-sync-sha", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "review-sync-sha", Agent: "test", Reasoning: "thorough"})
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	_, err = db.ClaimJob("worker-1")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-	err = db.CompleteJob(job.ID, "test", "prompt", "output")
-	if err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
-	}
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("review-sync-sha")
 
 	// Mark job as synced (required before reviews can sync due to FK ordering)
-	err = db.MarkJobSynced(job.ID)
+	err := h.db.MarkJobSynced(job.ID)
 	if err != nil {
 		t.Fatalf("MarkJobSynced failed: %v", err)
 	}
 
 	// Get the review ID
-	review, err := db.GetReviewByJobID(job.ID)
+	review, err := h.db.GetReviewByJobID(job.ID)
 	if err != nil {
 		t.Fatalf("GetReviewByJobID failed: %v", err)
 	}
 
 	t.Run("review with null synced_at is returned", func(t *testing.T) {
-		reviews, err := db.GetReviewsToSync(machineID, 10)
+		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetReviewsToSync failed: %v", err)
 		}
@@ -1483,12 +1308,12 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 	})
 
 	t.Run("review after MarkReviewSynced is not returned", func(t *testing.T) {
-		err := db.MarkReviewSynced(review.ID)
+		err := h.db.MarkReviewSynced(review.ID)
 		if err != nil {
 			t.Fatalf("MarkReviewSynced failed: %v", err)
 		}
 
-		reviews, err := db.GetReviewsToSync(machineID, 10)
+		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetReviewsToSync failed: %v", err)
 		}
@@ -1502,12 +1327,9 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 	t.Run("review with updated_at after synced_at is returned", func(t *testing.T) {
 		// Update the review's updated_at to be after synced_at
 		futureTime := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-		_, err := db.Exec(`UPDATE reviews SET updated_at = ? WHERE id = ?`, futureTime, review.ID)
-		if err != nil {
-			t.Fatalf("Failed to update updated_at: %v", err)
-		}
+		h.setReviewTimestamps(review.ID, sql.NullString{String: "", Valid: false}, futureTime)
 
-		reviews, err := db.GetReviewsToSync(machineID, 10)
+		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetReviewsToSync failed: %v", err)
 		}
@@ -1525,18 +1347,12 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 
 	t.Run("mixed format timestamps compare correctly", func(t *testing.T) {
 		// Set synced_at in SQLite datetime format (legacy format) - 10:30 UTC
-		_, err := db.Exec(`UPDATE reviews SET synced_at = '2024-06-15 10:30:00' WHERE id = ?`, review.ID)
-		if err != nil {
-			t.Fatalf("Failed to set synced_at: %v", err)
-		}
-
 		// Set updated_at in RFC3339 with offset: 14:30+02:00 = 12:30 UTC (later than 10:30 UTC)
-		_, err = db.Exec(`UPDATE reviews SET updated_at = '2024-06-15T14:30:00+02:00' WHERE id = ?`, review.ID)
-		if err != nil {
-			t.Fatalf("Failed to set updated_at: %v", err)
-		}
+		h.setReviewTimestamps(review.ID,
+			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
+			"2024-06-15T14:30:00+02:00")
 
-		reviews, err := db.GetReviewsToSync(machineID, 10)
+		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetReviewsToSync failed: %v", err)
 		}
@@ -1552,12 +1368,11 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 		}
 
 		// Now test the opposite: synced_at is later than updated_at
-		_, err = db.Exec(`UPDATE reviews SET synced_at = '2024-06-15 20:00:00', updated_at = '2024-06-15T10:30:00Z' WHERE id = ?`, review.ID)
-		if err != nil {
-			t.Fatalf("Failed to update timestamps: %v", err)
-		}
+		h.setReviewTimestamps(review.ID,
+			sql.NullString{String: "2024-06-15 20:00:00", Valid: true},
+			"2024-06-15T10:30:00Z")
 
-		reviews, err = db.GetReviewsToSync(machineID, 10)
+		reviews, err = h.db.GetReviewsToSync(h.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetReviewsToSync failed: %v", err)
 		}
@@ -1573,61 +1388,29 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 		// SQLite/Go uses the non-UTC timezone for localtime operations
 		t.Setenv("TZ", "America/New_York")
 
-		// Open a fresh database after setting TZ so timezone is properly initialized
-		tzDBPath := filepath.Join(t.TempDir(), "tz-review-test.db")
-		tzDB, err := Open(tzDBPath)
-		if err != nil {
-			t.Fatalf("Failed to open TZ test database: %v", err)
-		}
-		defer tzDB.Close()
-
-		tzMachineID, err := tzDB.GetMachineID()
-		if err != nil {
-			t.Fatalf("GetMachineID failed: %v", err)
-		}
-
-		// Create test data in the new DB
-		tzRepo, err := tzDB.GetOrCreateRepo(t.TempDir())
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo failed: %v", err)
-		}
-		tzCommit, err := tzDB.GetOrCreateCommit(tzRepo.ID, "tz-review-sha", "Author", "Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-		tzJob, err := tzDB.EnqueueJob(EnqueueOpts{RepoID: tzRepo.ID, CommitID: tzCommit.ID, GitRef: "tz-review-sha", Agent: "test", Reasoning: "thorough"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		_, err = tzDB.ClaimJob("worker-tz")
-		if err != nil {
-			t.Fatalf("ClaimJob failed: %v", err)
-		}
-		err = tzDB.CompleteJob(tzJob.ID, "test", "prompt", "output")
-		if err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
-		}
+		// Create a NEW helper which opens a new DB
+		hTZ := newSyncTestHelper(t)
+		tzJob := hTZ.createCompletedJob("tz-review-sha")
 
 		// Mark job as synced (required before reviews can sync due to FK ordering)
-		err = tzDB.MarkJobSynced(tzJob.ID)
+		err := hTZ.db.MarkJobSynced(tzJob.ID)
 		if err != nil {
 			t.Fatalf("MarkJobSynced failed: %v", err)
 		}
 
 		// Get the review ID
-		tzReview, err := tzDB.GetReviewByJobID(tzJob.ID)
+		tzReview, err := hTZ.db.GetReviewByJobID(tzJob.ID)
 		if err != nil {
 			t.Fatalf("GetReviewByJobID failed: %v", err)
 		}
 
 		// synced_at: legacy format 10:30 (should be treated as UTC)
 		// updated_at: 12:30 UTC (later than synced_at)
-		_, err = tzDB.Exec(`UPDATE reviews SET synced_at = '2024-06-15 10:30:00', updated_at = '2024-06-15T12:30:00Z' WHERE id = ?`, tzReview.ID)
-		if err != nil {
-			t.Fatalf("Failed to set timestamps: %v", err)
-		}
+		hTZ.setReviewTimestamps(tzReview.ID,
+			sql.NullString{String: "2024-06-15 10:30:00", Valid: true},
+			"2024-06-15T12:30:00Z")
 
-		reviews, err := tzDB.GetReviewsToSync(tzMachineID, 10)
+		reviews, err := hTZ.db.GetReviewsToSync(hTZ.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetReviewsToSync failed: %v", err)
 		}
@@ -1644,12 +1427,11 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 
 		// synced_at: legacy format 14:00 (should be treated as UTC)
 		// updated_at: 12:30 UTC (earlier than synced_at)
-		_, err = tzDB.Exec(`UPDATE reviews SET synced_at = '2024-06-15 14:00:00', updated_at = '2024-06-15T12:30:00Z' WHERE id = ?`, tzReview.ID)
-		if err != nil {
-			t.Fatalf("Failed to update timestamps: %v", err)
-		}
+		hTZ.setReviewTimestamps(tzReview.ID,
+			sql.NullString{String: "2024-06-15 14:00:00", Valid: true},
+			"2024-06-15T12:30:00Z")
 
-		reviews, err = tzDB.GetReviewsToSync(tzMachineID, 10)
+		reviews, err = hTZ.db.GetReviewsToSync(hTZ.machineID, 10)
 		if err != nil {
 			t.Fatalf("GetReviewsToSync failed: %v", err)
 		}
@@ -2095,6 +1877,30 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 		h.t.Fatalf("Failed to complete job: %v", err)
 	}
 	return job
+}
+
+func (h *syncTestHelper) setJobTimestamps(id int64, syncedAt sql.NullString, updatedAt string) {
+	var err error
+	if syncedAt.Valid {
+		_, err = h.db.Exec(`UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt.String, updatedAt, id)
+	} else {
+		_, err = h.db.Exec(`UPDATE review_jobs SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
+	}
+	if err != nil {
+		h.t.Fatalf("Failed to set job timestamps: %v", err)
+	}
+}
+
+func (h *syncTestHelper) setReviewTimestamps(id int64, syncedAt sql.NullString, updatedAt string) {
+	var err error
+	if syncedAt.Valid {
+		_, err = h.db.Exec(`UPDATE reviews SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt.String, updatedAt, id)
+	} else {
+		_, err = h.db.Exec(`UPDATE reviews SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
+	}
+	if err != nil {
+		h.t.Fatalf("Failed to set review timestamps: %v", err)
+	}
 }
 
 // TestGetReviewsToSync_RequiresJobSynced verifies that reviews are only
