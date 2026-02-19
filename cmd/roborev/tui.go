@@ -388,8 +388,9 @@ type tuiFixJobsMsg struct {
 }
 
 type tuiFixTriggerResultMsg struct {
-	job *storage.ReviewJob
-	err error
+	job     *storage.ReviewJob
+	err     error
+	warning string // non-fatal issue (e.g. failed to mark stale job)
 }
 
 type tuiApplyPatchResultMsg struct {
@@ -2094,6 +2095,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashMessage = fmt.Sprintf("Fix failed: %v", msg.err)
 			m.flashExpiresAt = time.Now().Add(3 * time.Second)
 			m.flashView = tuiViewTasks
+		} else if msg.warning != "" {
+			m.flashMessage = msg.warning
+			m.flashExpiresAt = time.Now().Add(5 * time.Second)
+			m.flashView = tuiViewTasks
+			return m, m.fetchFixJobs()
 		} else {
 			m.flashMessage = fmt.Sprintf("Fix job #%d enqueued", msg.job.ID)
 			m.flashExpiresAt = time.Now().Add(3 * time.Second)
@@ -3710,18 +3716,11 @@ func (m tuiModel) fetchFixJobs() tea.Cmd {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
-		err := m.getJSON("/api/jobs", &result)
+		err := m.getJSON("/api/jobs?job_type=fix&limit=200", &result)
 		if err != nil {
 			return tuiFixJobsMsg{err: err}
 		}
-		// Filter to only fix jobs
-		var fixJobs []storage.ReviewJob
-		for _, j := range result.Jobs {
-			if j.IsFixJob() {
-				fixJobs = append(fixJobs, j)
-			}
-		}
-		return tuiFixJobsMsg{jobs: fixJobs}
+		return tuiFixJobsMsg{jobs: result.Jobs}
 	}
 }
 
@@ -3881,16 +3880,15 @@ func patchFiles(patch string) ([]string, error) {
 		return nil, fmt.Errorf("parse patch: %w", err)
 	}
 	seen := map[string]bool{}
-	addFile := func(name string) {
-		name = strings.TrimPrefix(name, "a/")
-		name = strings.TrimPrefix(name, "b/")
+	addFile := func(name, prefix string) {
+		name = strings.TrimPrefix(name, prefix)
 		if name != "" && name != "/dev/null" {
 			seen[name] = true
 		}
 	}
 	for _, fd := range fileDiffs {
-		addFile(fd.OrigName) // old path (stages deletion for renames)
-		addFile(fd.NewName)  // new path (stages addition for renames)
+		addFile(fd.OrigName, "a/") // old path (stages deletion for renames)
+		addFile(fd.NewName, "b/")  // new path (stages addition for renames)
 	}
 	files := make([]string, 0, len(seen))
 	for f := range seen {
@@ -3927,12 +3925,18 @@ func (m tuiModel) triggerRebase(staleJobID int64) tea.Cmd {
 		// Mark the stale job as rebased now that the new job exists.
 		// Non-fatal: the new job is already enqueued; worst case the
 		// stale job stays "done" and the user can retry R.
-		_ = m.postJSON(
+		var warning string
+		if err := m.postJSON(
 			"/api/job/rebased",
 			map[string]any{"job_id": staleJobID},
 			nil,
-		)
-		return tuiFixTriggerResultMsg{job: &newJob}
+		); err != nil {
+			warning = fmt.Sprintf(
+				"rebase job #%d enqueued but failed to mark #%d as rebased: %v",
+				newJob.ID, staleJobID, err,
+			)
+		}
+		return tuiFixTriggerResultMsg{job: &newJob, warning: warning}
 	}
 }
 

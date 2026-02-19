@@ -789,6 +789,9 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if addrStr := r.URL.Query().Get("addressed"); addrStr == "true" || addrStr == "false" {
 		listOpts = append(listOpts, storage.WithAddressed(addrStr == "true"))
 	}
+	if jobType := r.URL.Query().Get("job_type"); jobType != "" {
+		listOpts = append(listOpts, storage.WithJobType(jobType))
+	}
 
 	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset, listOpts...)
 	if err != nil {
