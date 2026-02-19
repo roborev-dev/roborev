@@ -16,6 +16,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 		wantJob     func(*testing.T, *ReviewJob)
 		checkClaim  bool
 		wantClaimed func(*testing.T, *ReviewJob)
+		checkSQL    func(*testing.T, *DB, int64)
 	}{
 		{
 			name: "creates job with custom prompt",
@@ -39,6 +40,16 @@ func TestEnqueuePromptJob(t *testing.T) {
 				}
 				if j.Status != JobStatusQueued {
 					t.Errorf("got status %q, want 'queued'", j.Status)
+				}
+			},
+			checkSQL: func(t *testing.T, db *DB, jobID int64) {
+				var gitRef string
+				err := db.QueryRow("SELECT git_ref FROM review_jobs WHERE id = ?", jobID).Scan(&gitRef)
+				if err != nil {
+					t.Fatalf("Failed to query git_ref: %v", err)
+				}
+				if gitRef != "prompt" {
+					t.Errorf("DB git_ref = %q, want 'prompt'", gitRef)
 				}
 			},
 		},
@@ -89,6 +100,16 @@ func TestEnqueuePromptJob(t *testing.T) {
 					t.Error("Expected Agentic to be true on claimed job")
 				}
 			},
+			checkSQL: func(t *testing.T, db *DB, jobID int64) {
+				var agentic bool
+				err := db.QueryRow("SELECT agentic FROM review_jobs WHERE id = ?", jobID).Scan(&agentic)
+				if err != nil {
+					t.Fatalf("Failed to query agentic: %v", err)
+				}
+				if !agentic {
+					t.Error("DB agentic = false, want true")
+				}
+			},
 		},
 		{
 			name: "agentic flag defaults to false",
@@ -106,6 +127,16 @@ func TestEnqueuePromptJob(t *testing.T) {
 			wantClaimed: func(t *testing.T, j *ReviewJob) {
 				if j.Agentic {
 					t.Error("Expected Agentic to be false on claimed job")
+				}
+			},
+			checkSQL: func(t *testing.T, db *DB, jobID int64) {
+				var agentic bool
+				err := db.QueryRow("SELECT agentic FROM review_jobs WHERE id = ?", jobID).Scan(&agentic)
+				if err != nil {
+					t.Fatalf("Failed to query agentic: %v", err)
+				}
+				if agentic {
+					t.Error("DB agentic = true, want false")
 				}
 			},
 		},
@@ -155,6 +186,16 @@ func TestEnqueuePromptJob(t *testing.T) {
 					t.Errorf("got git_ref %q, want 'test-fixtures'", j.GitRef)
 				}
 			},
+			checkSQL: func(t *testing.T, db *DB, jobID int64) {
+				var gitRef string
+				err := db.QueryRow("SELECT git_ref FROM review_jobs WHERE id = ?", jobID).Scan(&gitRef)
+				if err != nil {
+					t.Fatalf("Failed to query git_ref: %v", err)
+				}
+				if gitRef != "test-fixtures" {
+					t.Errorf("DB git_ref = %q, want 'test-fixtures'", gitRef)
+				}
+			},
 		},
 		{
 			name: "empty label defaults to prompt",
@@ -200,6 +241,10 @@ func TestEnqueuePromptJob(t *testing.T) {
 				tt.wantJob(t, job)
 			}
 
+			if tt.checkSQL != nil {
+				tt.checkSQL(t, db, job.ID)
+			}
+
 			if tt.checkClaim {
 				claimed := claimJob(t, db, "test-worker")
 				if tt.wantClaimed != nil {
@@ -211,10 +256,10 @@ func TestEnqueuePromptJob(t *testing.T) {
 }
 
 func TestPromptJobOutputProcessing(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
 	t.Run("output_prefix is prepended to review output", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
 		repo := createRepo(t, db, filepath.Join(t.TempDir(), "output-prefix-test"))
 
 		outputPrefix := "## Test Analysis\n\n**Files:**\n- file1.go\n- file2.go\n\n---\n\n"
@@ -247,6 +292,9 @@ func TestPromptJobOutputProcessing(t *testing.T) {
 	})
 
 	t.Run("empty output_prefix leaves output unchanged", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
 		repo := createRepo(t, db, filepath.Join(t.TempDir(), "empty-prefix-test"))
 
 		job := mustEnqueuePromptJob(t, db, EnqueueOpts{
