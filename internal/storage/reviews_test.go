@@ -31,13 +31,12 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 			setJobStatus(t, db, job.ID, tc.status)
 
 			// Verify job is in expected state
-			var actualStatus string
-			err := db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, job.ID).Scan(&actualStatus)
+			updatedJob, err := db.GetJobByID(job.ID)
 			if err != nil {
 				t.Fatalf("Failed to verify job status: %v", err)
 			}
-			if JobStatus(actualStatus) != tc.status {
-				t.Fatalf("Expected job status %s, got %s", tc.status, actualStatus)
+			if updatedJob.Status != tc.status {
+				t.Fatalf("Expected job status %s, got %s", tc.status, updatedJob.Status)
 			}
 
 			// Add a comment to the job
@@ -51,12 +50,7 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 			if resp == nil {
 				t.Fatal("Expected non-nil response")
 			}
-			if resp.Responder != "test-user" {
-				t.Errorf("Expected responder 'test-user', got %q", resp.Responder)
-			}
-			if resp.Response != comment {
-				t.Errorf("Expected response %q, got %q", comment, resp.Response)
-			}
+			verifyComment(t, *resp, "test-user", comment)
 			if resp.JobID == nil || *resp.JobID != job.ID {
 				t.Errorf("Expected job ID %d, got %v", job.ID, resp.JobID)
 			}
@@ -69,9 +63,7 @@ func TestAddCommentToJobAllStates(t *testing.T) {
 			if len(comments) != 1 {
 				t.Fatalf("Expected 1 comment, got %d", len(comments))
 			}
-			if comments[0].Response != comment {
-				t.Errorf("Retrieved comment mismatch: expected %q, got %q", comment, comments[0].Response)
-			}
+			verifyComment(t, comments[0], "test-user", comment)
 		})
 	}
 }
@@ -129,12 +121,7 @@ func TestAddCommentToJobMultipleComments(t *testing.T) {
 
 	// Verify comments are in order
 	for i, c := range comments {
-		if retrieved[i].Responder != c.user {
-			t.Errorf("Comment %d: expected responder %q, got %q", i, c.user, retrieved[i].Responder)
-		}
-		if retrieved[i].Response != c.message {
-			t.Errorf("Comment %d: expected message %q, got %q", i, c.message, retrieved[i].Response)
-		}
+		verifyComment(t, retrieved[i], c.user, c.message)
 	}
 }
 
@@ -217,27 +204,15 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/test-repo")
 
 	// Job 1: with review
-	job1 := enqueueJob(t, db, repo.ID, 0, "abc123")
-	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, job1.ID); err != nil {
-		t.Fatalf("failed to update job status: %v", err)
-	}
-	err := db.CompleteJob(job1.ID, "test-agent", "prompt1", "output1")
-	if err != nil {
-		t.Fatalf("CompleteJob failed for job1: %v", err)
-	}
+	job1 := createCompletedJob(t, db, repo.ID, "abc123", "output1")
+
+	// Job 3: with review
+	// Note: We create job3 before job2 so that the queue is empty when we claim/complete job3.
+	// If job2 were created first, ClaimJob would pick it up instead.
+	job3 := createCompletedJob(t, db, repo.ID, "ghi789", "output3")
 
 	// Job 2: no review (still queued)
 	job2 := enqueueJob(t, db, repo.ID, 0, "def456")
-
-	// Job 3: with review
-	job3 := enqueueJob(t, db, repo.ID, 0, "ghi789")
-	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, job3.ID); err != nil {
-		t.Fatalf("failed to update job status: %v", err)
-	}
-	err = db.CompleteJob(job3.ID, "test-agent", "prompt3", "output3")
-	if err != nil {
-		t.Fatalf("CompleteJob failed for job3: %v", err)
-	}
 
 	// Job 4: does not exist
 	nonExistentJobID := int64(9999)
@@ -315,4 +290,35 @@ func TestGetJobsWithReviewsByIDs(t *testing.T) {
 			t.Errorf("Expected 0 results for non-existent IDs, got %d", len(results))
 		}
 	})
+}
+
+// createCompletedJob helper creates a job, claims it, and completes it.
+func createCompletedJob(t *testing.T, db *DB, repoID int64, gitRef, output string) *ReviewJob {
+	t.Helper()
+	job := enqueueJob(t, db, repoID, 0, gitRef)
+	if _, err := db.ClaimJob("test-worker"); err != nil {
+		t.Fatalf("ClaimJob failed: %v", err)
+	}
+
+	if err := db.CompleteJob(job.ID, "test-agent", "prompt", output); err != nil {
+		t.Fatalf("CompleteJob failed: %v", err)
+	}
+
+	// Refresh job to get updated status/fields
+	updatedJob, err := db.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID failed: %v", err)
+	}
+	return updatedJob
+}
+
+// verifyComment helper checks if a comment matches expected values.
+func verifyComment(t *testing.T, actual Response, expectedUser, expectedMsg string) {
+	t.Helper()
+	if actual.Responder != expectedUser {
+		t.Errorf("Expected responder %q, got %q", expectedUser, actual.Responder)
+	}
+	if actual.Response != expectedMsg {
+		t.Errorf("Expected response %q, got %q", expectedMsg, actual.Response)
+	}
 }
