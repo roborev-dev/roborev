@@ -1435,12 +1435,14 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 type MockDaemonBuilder struct {
 	t        *testing.T
 	handlers map[string]http.HandlerFunc
+	reviews  map[int64]storage.Review
 }
 
 func newMockDaemonBuilder(t *testing.T) *MockDaemonBuilder {
 	return &MockDaemonBuilder{
 		t:        t,
 		handlers: make(map[string]http.HandlerFunc),
+		reviews:  make(map[int64]storage.Review),
 	}
 }
 
@@ -1450,12 +1452,11 @@ func (b *MockDaemonBuilder) WithHandler(path string, handler http.HandlerFunc) *
 }
 
 func (b *MockDaemonBuilder) WithReview(jobID int64, output string) *MockDaemonBuilder {
-	return b.WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(storage.Review{
-			JobID:  jobID,
-			Output: output,
-		})
-	})
+	b.reviews[jobID] = storage.Review{
+		JobID:  jobID,
+		Output: output,
+	}
+	return b
 }
 
 func (b *MockDaemonBuilder) WithJobs(jobs []storage.ReviewJob) *MockDaemonBuilder {
@@ -1468,6 +1469,26 @@ func (b *MockDaemonBuilder) WithJobs(jobs []storage.ReviewJob) *MockDaemonBuilde
 }
 
 func (b *MockDaemonBuilder) Build() (*httptest.Server, func()) {
+	// Register default review handler if not already overridden
+	if _, ok := b.handlers["/api/review"]; !ok && len(b.reviews) > 0 {
+		b.handlers["/api/review"] = func(w http.ResponseWriter, r *http.Request) {
+			jobIDStr := r.URL.Query().Get("job_id")
+			var jobID int64
+			fmt.Sscanf(jobIDStr, "%d", &jobID)
+
+			if review, ok := b.reviews[jobID]; ok {
+				json.NewEncoder(w).Encode(review)
+			} else {
+				// Fallback: if there is only one review and no job_id was requested
+				// (or even if it was), some tests might rely on "any review".
+				// But strictly, we should require job_id match.
+				// However, existing tests might be loose.
+				// For now, return 404 if not found to be strict.
+				http.Error(w, fmt.Sprintf("review for job %d not found", jobID), http.StatusNotFound)
+			}
+		}
+	}
+
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h, ok := b.handlers[r.URL.Path]; ok {
 			h(w, r)
