@@ -163,7 +163,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	// Parse stream-json output
-	result, err := a.parseStreamJSON(stdoutPipe, output)
+	result, err := parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if err != nil {
@@ -191,7 +191,7 @@ type claudeStreamMessage struct {
 
 // parseStreamJSON parses Claude's stream-json output and extracts the final result.
 // Uses bufio.Reader.ReadString to read lines without buffer size limits.
-func (a *ClaudeAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
+func parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
 	br := bufio.NewReader(r)
 
 	var lastResult string

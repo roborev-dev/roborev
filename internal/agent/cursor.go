@@ -127,8 +127,7 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	// Reuse Claude's stream-json parser (same format)
-	claude := &ClaudeAgent{}
-	result, err := claude.parseStreamJSON(stdoutPipe, output)
+	result, err := a.parseStreamJSON(stdoutPipe, output)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if err != nil {
@@ -142,6 +141,10 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	return result, nil
+}
+
+func (a *CursorAgent) parseStreamJSON(r io.Reader, output io.Writer) (string, error) {
+	return parseStreamJSON(r, output)
 }
 
 func init() {

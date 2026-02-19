@@ -151,11 +151,9 @@ still not json
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewClaudeAgent("claude")
-
 			if tt.expectOutput {
 				var out bytes.Buffer
-				res, err := a.parseStreamJSON(strings.NewReader(tt.input), &out)
+				res, err := parseStreamJSON(strings.NewReader(tt.input), &out)
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
@@ -168,7 +166,7 @@ still not json
 				return
 			}
 
-			res, err := a.parseStreamJSON(strings.NewReader(tt.input), nil)
+			res, err := parseStreamJSON(strings.NewReader(tt.input), nil)
 
 			if tt.expectedErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.expectedErr) {

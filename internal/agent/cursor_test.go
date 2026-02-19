@@ -2,61 +2,93 @@ package agent
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
 
-func TestCursorBuildArgs(t *testing.T) {
-	a := NewCursorAgent("agent")
+func TestCursorBuildArgs_Table(t *testing.T) {
+	tests := []struct {
+		name        string
+		agentic     bool
+		model       string
+		wantArgs    []string
+		excludeArgs []string
+	}{
+		{
+			name:    "Review Mode (Default)",
+			agentic: false,
+			wantArgs: []string{
+				"-p",
+				"--output-format", "stream-json",
+				"--model", "auto",
+				"--mode", "plan",
+			},
+			excludeArgs: []string{"--force"},
+		},
+		{
+			name:    "Agentic Mode",
+			agentic: true,
+			wantArgs: []string{
+				"--force",
+			},
+			excludeArgs: []string{"--mode", "plan"},
+		},
+		{
+			name:     "Custom Model",
+			agentic:  false,
+			model:    "gpt-5.2-codex-high",
+			wantArgs: []string{"--model", "gpt-5.2-codex-high"},
+		},
+	}
 
-	// Non-agentic mode (review): --mode plan, no --force, default model "auto"
-	args := a.buildArgs(false)
-	assertContainsArg(t, args, "-p")
-	assertContainsArg(t, args, "--output-format")
-	assertContainsArg(t, args, "stream-json")
-	assertContainsArg(t, args, "--model")
-	assertContainsArg(t, args, "auto")
-	assertContainsArg(t, args, "--mode")
-	assertContainsArg(t, args, "plan")
-	assertNotContainsArg(t, args, "--force")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewCursorAgent("agent")
+			if tt.model != "" {
+				a = a.WithModel(tt.model).(*CursorAgent)
+			}
 
-	// Agentic mode: --force, no --mode plan
-	args = a.buildArgs(true)
-	assertContainsArg(t, args, "--force")
-	assertNotContainsArg(t, args, "--mode")
-	assertNotContainsArg(t, args, "plan")
-}
+			args := a.buildArgs(tt.agentic)
 
-func TestCursorBuildArgsWithModel(t *testing.T) {
-	a := NewCursorAgent("agent")
-	a = a.WithModel("gpt-5.2-codex-high").(*CursorAgent)
-
-	args := a.buildArgs(false)
-	assertContainsArg(t, args, "--model")
-	assertContainsArg(t, args, "gpt-5.2-codex-high")
+			for _, want := range tt.wantArgs {
+				assertContainsArg(t, args, want)
+			}
+			for _, exclude := range tt.excludeArgs {
+				assertNotContainsArg(t, args, exclude)
+			}
+		})
+	}
 }
 
 func TestCursorReviewPassesModelFlag(t *testing.T) {
 	skipIfWindows(t)
 
-	// Create a script that echoes args as a stream-json result
-	script := `#!/bin/sh
-printf '{"type":"result","result":"args: %s"}\n' "$*"
-`
-	cmdPath := writeTempCommand(t, script)
-	a := NewCursorAgent(cmdPath)
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureArgs: true,
+		StdoutLines: []string{`{"type":"result","result":"ok"}`},
+	})
+
+	a := NewCursorAgent(mock.CmdPath)
 	a = a.WithModel("test-model").(*CursorAgent)
 
-	result, err := a.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
+	_, err := a.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
 
-	if !strings.Contains(result, "--model") {
-		t.Errorf("expected --model in args, got: %q", result)
+	// Read captured args from file
+	argsBytes, err := os.ReadFile(mock.ArgsFile)
+	if err != nil {
+		t.Fatalf("failed to read args file: %v", err)
 	}
-	if !strings.Contains(result, "test-model") {
-		t.Errorf("expected test-model in args, got: %q", result)
+	args := string(argsBytes)
+
+	if !strings.Contains(args, "--model") {
+		t.Errorf("expected --model in args, got: %q", args)
+	}
+	if !strings.Contains(args, "test-model") {
+		t.Errorf("expected test-model in args, got: %q", args)
 	}
 }
 
@@ -88,8 +120,8 @@ func TestCursorParseStreamJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			claude := &ClaudeAgent{}
-			res, err := claude.parseStreamJSON(strings.NewReader(tt.input), nil)
+			cursor := NewCursorAgent("dummy")
+			res, err := cursor.parseStreamJSON(strings.NewReader(tt.input), nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
