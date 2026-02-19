@@ -7,9 +7,47 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// ansiEscape matches ANSI/VT100 terminal escape sequences.
+var ansiEscape = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[A-Za-z]|[^\[])`)
+
+// stripKiroOutput removes Kiro's UI chrome (logo, tip box, model line, timing footer)
+// and ANSI escape codes, returning only the review text.
+func stripKiroOutput(raw string) string {
+	s := ansiEscape.ReplaceAllString(raw, "")
+
+	// Kiro prepends a splash screen and tip box before the response.
+	// The actual response begins at the first line prefixed with "> ".
+	lines := strings.Split(s, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "> ") || line == ">" {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		return strings.TrimSpace(s)
+	}
+
+	// Strip the "> " chat-prompt prefix from the first content line.
+	lines[start] = strings.TrimPrefix(lines[start], "> ")
+
+	// Drop the timing footer ("▸ Time: Xs") and anything after it.
+	end := len(lines)
+	for i := start; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "▸ Time:") {
+			end = i
+			break
+		}
+	}
+
+	return strings.TrimSpace(strings.Join(lines[start:end], "\n"))
+}
 
 // KiroAgent runs code reviews using the Kiro CLI (kiro-cli)
 type KiroAgent struct {
@@ -78,22 +116,22 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd.Env = os.Environ()
 	cmd.WaitDelay = 5 * time.Second
 
+	// kiro-cli emits ANSI terminal escape codes that are not suitable for streaming
+	// through roborev's output writer. Capture stdout/stderr and return stripped text.
 	var stdout, stderr bytes.Buffer
-	if sw := newSyncWriter(output); sw != nil {
-		cmd.Stdout = io.MultiWriter(&stdout, sw)
-		cmd.Stderr = io.MultiWriter(&stderr, sw)
-	} else {
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-	}
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("kiro failed: %w\nstderr: %s", err, stderr.String())
 	}
 
-	result := stdout.String()
+	result := stripKiroOutput(stdout.String())
 	if len(result) == 0 {
 		return "No review output generated", nil
+	}
+	if sw := newSyncWriter(output); sw != nil {
+		_, _ = sw.Write([]byte(result + "\n"))
 	}
 	return result, nil
 }

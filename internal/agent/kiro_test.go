@@ -7,6 +7,55 @@ import (
 	"testing"
 )
 
+func TestStripKiroOutput(t *testing.T) {
+	// Simulated kiro-cli stdout with ANSI codes, logo, tip box, model line, and timing footer.
+	raw := "\x1b[38;5;141m⠀⠀logo⠀⠀\x1b[0m\n" +
+		"\x1b[38;5;244m╭─── Did you know? ───╮\x1b[0m\n" +
+		"\x1b[38;5;244m│ tip text            │\x1b[0m\n" +
+		"\x1b[38;5;244m╰─────────────────────╯\x1b[0m\n" +
+		"\x1b[38;5;244mModel: auto\x1b[0m\n" +
+		"\n" +
+		"\x1b[38;5;141m> \x1b[0m\x1b[1m## Summary\x1b[0m\n" +
+		"This commit does something.\n" +
+		"\n" +
+		"## Issues Found\n" +
+		"\n" +
+		" \u25b8 Time: 21s\n"
+
+	got := stripKiroOutput(raw)
+
+	if strings.Contains(got, "\x1b[") {
+		t.Error("result still contains ANSI escape codes")
+	}
+	if !strings.Contains(got, "## Summary") {
+		t.Errorf("expected '## Summary' in result, got: %q", got)
+	}
+	if !strings.Contains(got, "## Issues Found") {
+		t.Errorf("expected '## Issues Found' in result, got: %q", got)
+	}
+	if strings.Contains(got, "Did you know") {
+		t.Error("result should not contain tip box text")
+	}
+	if strings.Contains(got, "Model:") {
+		t.Error("result should not contain model line")
+	}
+	if strings.Contains(got, "Time:") {
+		t.Error("result should not contain timing footer")
+	}
+	if strings.HasPrefix(got, "> ") {
+		t.Error("result should not have leading '> ' prefix")
+	}
+}
+
+func TestStripKiroOutputNoMarker(t *testing.T) {
+	// If there's no "> " marker, return ANSI-stripped text as-is.
+	raw := "\x1b[1msome output without marker\x1b[0m\n"
+	got := stripKiroOutput(raw)
+	if got != "some output without marker" {
+		t.Errorf("unexpected result: %q", got)
+	}
+}
+
 func TestKiroBuildArgs(t *testing.T) {
 	a := NewKiroAgent("kiro-cli")
 
