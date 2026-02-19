@@ -11,7 +11,7 @@ import (
 )
 
 // setupTestServer creates a temporary DB and Server, handling cleanup automatically.
-func setupTestServer(t *testing.T) (*Server, *storage.DB) {
+func setupTestServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := storage.Open(dir + "/test.db")
@@ -27,7 +27,7 @@ func setupTestServer(t *testing.T) (*Server, *storage.DB) {
 			server.errorLog.Close()
 		}
 	})
-	return server, db
+	return server
 }
 
 // executeHealthCheck sends a request to the health endpoint and returns the recorder.
@@ -48,80 +48,76 @@ func decodeHealthStatus(t *testing.T, w *httptest.ResponseRecorder) storage.Heal
 	return health
 }
 
-func TestHealthEndpoint(t *testing.T) {
-	server, _ := setupTestServer(t)
+func TestHealth(t *testing.T) {
+	server := setupTestServer(t)
 
-	w := executeHealthCheck(server, "GET")
+	t.Run("Happy Path", func(t *testing.T) {
+		w := executeHealthCheck(server, http.MethodGet)
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d", w.Code)
+		}
 
-	if w.Result().StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Result().StatusCode)
-	}
+		health := decodeHealthStatus(t, w)
+		assertNotEmpty(t, health.Uptime, "Uptime")
+		assertNotEmpty(t, health.Version, "Version")
+		assertComponentExists(t, health.Components, "database")
+		assertComponentExists(t, health.Components, "workers")
 
-	health := decodeHealthStatus(t, w)
+		if !health.Healthy {
+			t.Error("Expected health to be OK")
+		}
+	})
 
-	if health.Uptime == "" {
-		t.Error("Expected uptime to be set")
-	}
-	if health.Version == "" {
-		t.Error("Expected version to be set")
-	}
+	t.Run("With Errors", func(t *testing.T) {
+		// Log specific errors
+		if server.errorLog != nil {
+			server.errorLog.LogError("worker", "test error 1", 123)
+			server.errorLog.LogError("worker", "test error 2", 456)
+		}
 
-	// Check that we have at least database and workers components
-	componentNames := make(map[string]bool)
-	for _, c := range health.Components {
-		componentNames[c.Name] = true
-	}
+		w := executeHealthCheck(server, http.MethodGet)
+		health := decodeHealthStatus(t, w)
 
-	if !componentNames["database"] {
-		t.Error("Expected 'database' component in health check")
-	}
-	if !componentNames["workers"] {
-		t.Error("Expected 'workers' component in health check")
-	}
+		if health.ErrorCount == 0 {
+			t.Error("Expected error count > 0")
+		}
 
-	if !health.Healthy {
-		t.Error("Expected health to be OK")
+		assertErrorExists(t, health.RecentErrors, "worker", 456)
+	})
+
+	t.Run("Method Not Allowed", func(t *testing.T) {
+		w := executeHealthCheck(server, http.MethodPost)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405, got %d", w.Code)
+		}
+	})
+}
+
+// Helpers
+
+func assertNotEmpty(t *testing.T, val, name string) {
+	t.Helper()
+	if val == "" {
+		t.Errorf("Expected %s to be set", name)
 	}
 }
 
-func TestHealthEndpointWithErrors(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	// Log some errors
-	if server.errorLog != nil {
-		server.errorLog.LogError("worker", "test error 1", 123)
-		server.errorLog.LogError("worker", "test error 2", 456)
-	}
-
-	w := executeHealthCheck(server, "GET")
-	health := decodeHealthStatus(t, w)
-
-	if health.ErrorCount == 0 {
-		t.Error("Expected error count > 0")
-	}
-	if len(health.RecentErrors) == 0 {
-		t.Error("Expected recent errors to be returned")
-	}
-
-	// Check error details
-	found := false
-	for _, e := range health.RecentErrors {
-		if e.Component == "worker" && e.JobID == 456 {
-			found = true
-			break
+func assertComponentExists(t *testing.T, components []storage.ComponentHealth, name string) {
+	t.Helper()
+	for _, c := range components {
+		if c.Name == name {
+			return
 		}
 	}
-	if !found {
-		t.Error("Expected to find logged error in recent errors")
-	}
+	t.Errorf("Expected component '%s' in health check", name)
 }
 
-func TestHealthEndpointMethodNotAllowed(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	w := executeHealthCheck(server, "POST")
-
-	if w.Result().StatusCode != http.StatusMethodNotAllowed {
-		t.Errorf("Expected status 405, got %d", w.Result().StatusCode)
+func assertErrorExists(t *testing.T, errors []storage.ErrorEntry, component string, jobID int64) {
+	t.Helper()
+	for _, e := range errors {
+		if e.Component == component && e.JobID == jobID {
+			return
+		}
 	}
+	t.Errorf("Expected error for component '%s' with JobID %d", component, jobID)
 }
