@@ -1286,4 +1286,16 @@ func TestTUIQueueNavigationSequences(t *testing.T) {
 	if m.selectedIdx != 0 {
 		t.Errorf("after 'g', expected selectedIdx 0, got %d", m.selectedIdx)
 	}
+
+	// Sequence: Left (down), Right (up)
+	// We are at index 0
+	m, _ = pressSpecial(m, tea.KeyLeft)
+	if m.selectedIdx != 1 {
+		t.Errorf("after KeyLeft, expected selectedIdx 1, got %d", m.selectedIdx)
+	}
+
+	m, _ = pressSpecial(m, tea.KeyRight)
+	if m.selectedIdx != 0 {
+		t.Errorf("after KeyRight, expected selectedIdx 0, got %d", m.selectedIdx)
+	}
 }
