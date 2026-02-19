@@ -481,7 +481,7 @@ func TestInstall(t *testing.T) {
 				"npx lint-staged\n" +
 				"exit 0\n",
 			expectContent: []string{"_roborev_hook", "exit 0"},
-			orderedChecks: []string{"_roborev_hook", "exit 0"},
+			orderedChecks: []string{"\n_roborev_hook\n", "\nexit 0\n"},
 		},
 		{
 			name:           "skips current version",
@@ -589,15 +589,17 @@ func TestInstall(t *testing.T) {
 						t.Fatal(err)
 					}
 					s := string(content)
-					lastIdx := -1
+					searchFrom := 0
 					for _, check := range tc.orderedChecks {
-						idx := strings.Index(s, check)
+						idx := strings.Index(s[searchFrom:], check)
 						if idx == -1 {
-							t.Errorf("missing %q in hook content", check)
-						} else if idx < lastIdx {
-							t.Errorf("order violation: %q found at %d, previous check found at %d", check, idx, lastIdx)
+							t.Errorf(
+								"missing %q after offset %d in hook",
+								check, searchFrom,
+							)
+						} else {
+							searchFrom += idx + len(check)
 						}
-						lastIdx = idx
 					}
 				}
 			}
