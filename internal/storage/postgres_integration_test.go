@@ -221,6 +221,52 @@ func waitForSyncWorkerConnection(worker *SyncWorker, timeout time.Duration) erro
 	return fmt.Errorf("timeout waiting for sync worker connection")
 }
 
+// startSyncWorkerNoSync starts a SyncWorker and waits for
+// its background goroutine to establish a Postgres connection,
+// without triggering any sync operations. Uses HealthCheck to
+// poll connection status so no data is pushed or pulled during
+// startup. Use this when testing ticker-driven sync behavior.
+func startSyncWorkerNoSync(
+	t *testing.T,
+	db *DB,
+	pgURL, machineName, interval string,
+) *SyncWorker {
+	t.Helper()
+	if interval == "" {
+		interval = "100ms"
+	}
+	cfg := config.SyncConfig{
+		Enabled:        true,
+		PostgresURL:    pgURL,
+		Interval:       interval,
+		MachineName:    machineName,
+		ConnectTimeout: "5s",
+	}
+	worker := NewSyncWorker(db, cfg)
+	if err := worker.Start(); err != nil {
+		t.Fatalf(
+			"SyncWorker.Start failed for %s: %v",
+			machineName, err,
+		)
+	}
+	t.Cleanup(func() { worker.Stop() })
+
+	// Poll HealthCheck until connected (no sync triggered)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		healthy, _ := worker.HealthCheck()
+		if healthy {
+			return worker
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf(
+		"Timeout waiting for %s to connect via HealthCheck",
+		machineName,
+	)
+	return nil
+}
+
 // createBatchReviews creates N completed reviews and returns their UUIDs.
 func createBatchReviews(t *testing.T, db *DB, repoID int64, count int, shaPrefix, author, subjectPrefix string) []string {
 	t.Helper()
@@ -1197,32 +1243,35 @@ func TestIntegration_TickerSync(t *testing.T) {
 		t.Fatalf("Machine A: GetOrCreateRepo failed: %v", err)
 	}
 
-	// Create a review on machine A before starting workers
-	createCompletedReview(
-		t, dbA, repoA.ID,
-		"tick1111", "Alice", "Ticker commit",
-		"prompt", "Ticker review",
-	)
-
-	// Start both workers with a short ticker interval so
-	// background sync fires without explicit SyncNow calls
-	workerA := startSyncWorker(t, dbA, env.pgURL, "ticker-a", "200ms")
-	_ = workerA
-
 	_, err = dbB.GetOrCreateRepo(
 		filepath.Join(env.TmpDir, "repo_b"), identity,
 	)
 	if err != nil {
 		t.Fatalf("Machine B: GetOrCreateRepo failed: %v", err)
 	}
-	workerB := startSyncWorker(t, dbB, env.pgURL, "ticker-b", "200ms")
-	_ = workerB
 
-	// Wait for machine B to pull machine A's review via the ticker
-	// (no explicit SyncNow calls)
+	// Start both workers using startSyncWorkerNoSync, which
+	// waits for connection via HealthCheck without calling
+	// SyncNow — no sync operations happen during startup.
+	startSyncWorkerNoSync(
+		t, dbA, env.pgURL, "ticker-a", "200ms",
+	)
+	startSyncWorkerNoSync(
+		t, dbB, env.pgURL, "ticker-b", "200ms",
+	)
+
+	// Create a review on machine A AFTER both workers are
+	// connected, so it can only propagate via ticker ticks.
+	createCompletedReview(
+		t, dbA, repoA.ID,
+		"tick1111", "Alice", "First ticker commit",
+		"prompt", "First ticker review",
+	)
+
+	// Wait for machine B to pull machine A's review via ticker
 	waitCondition(
 		t, 10*time.Second,
-		"Machine B pulls A's review via ticker",
+		"Machine B pulls A's first review via ticker",
 		func() (bool, error) {
 			jobs, err := dbB.ListJobs("", "", 100, 0)
 			if err != nil {
@@ -1234,4 +1283,27 @@ func TestIntegration_TickerSync(t *testing.T) {
 
 	env.assertPgCount("review_jobs", 1)
 	env.assertPgCount("reviews", 1)
+
+	// Finding 2: verify periodic behavior — create a second
+	// review and confirm it propagates in a later interval.
+	createCompletedReview(
+		t, dbA, repoA.ID,
+		"tick2222", "Alice", "Second ticker commit",
+		"prompt", "Second ticker review",
+	)
+
+	waitCondition(
+		t, 10*time.Second,
+		"Machine B pulls A's second review via ticker",
+		func() (bool, error) {
+			jobs, err := dbB.ListJobs("", "", 100, 0)
+			if err != nil {
+				return false, err
+			}
+			return len(jobs) >= 2, nil
+		},
+	)
+
+	env.assertPgCount("review_jobs", 2)
+	env.assertPgCount("reviews", 2)
 }
