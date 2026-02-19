@@ -194,21 +194,21 @@ func TestConfigWatcher_Reloads(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConfigWatcherHarness(t, tt.initialConfig)
 
-			// Initial state check omitted as we trust newConfigWatcherHarness loads correctly
-			// and we focus on the reload behavior here.
-
-			initialReloadTime := h.Watcher.LastReloadedAt()
+			// Verify initial state
+			if !h.Watcher.LastReloadedAt().IsZero() {
+				t.Errorf("LastReloadedAt should be zero initially, got %v", h.Watcher.LastReloadedAt())
+			}
 
 			h.updateConfigAndWait(t, tt.updateConfig)
 
 			tt.validate(t, h.Watcher.Config())
 
-			// Verify LastReloadedAt was updated
-			if h.Watcher.LastReloadedAt().Equal(initialReloadTime) && !initialReloadTime.IsZero() {
-				t.Error("LastReloadedAt should have changed after reload")
-			}
+			// Verify LastReloadedAt was updated and is recent
 			if h.Watcher.LastReloadedAt().IsZero() {
 				t.Error("LastReloadedAt should not be zero after reload")
+			}
+			if time.Since(h.Watcher.LastReloadedAt()) > 5*time.Second {
+				t.Errorf("LastReloadedAt should be recent (within 5s), got %v", h.Watcher.LastReloadedAt())
 			}
 		})
 	}
