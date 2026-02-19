@@ -253,7 +253,7 @@ func TestResolveJobTimeout(t *testing.T) {
 func TestResolveReasoning(t *testing.T) {
 	type resolverFunc func(explicit string, dir string) (string, error)
 
-	runTests := func(t *testing.T, name string, fn resolverFunc, configKey, defaultVal string) {
+	runTests := func(t *testing.T, name string, fn resolverFunc, configKey, defaultVal, repoVal string) {
 		t.Run(name, func(t *testing.T) {
 			tests := []struct {
 				testName   string
@@ -263,8 +263,9 @@ func TestResolveReasoning(t *testing.T) {
 				wantErr    bool
 			}{
 				{"default when no config", "", "", defaultVal, false},
-				{"repo config when explicit empty", "", fmt.Sprintf(`%s = "thorough"`, configKey), "thorough", false},
-				{"explicit overrides repo config", "fast", fmt.Sprintf(`%s = "thorough"`, configKey), "fast", false},
+				{"repo config when explicit empty", "", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), repoVal, false},
+				{"explicit overrides repo config", "fast", fmt.Sprintf(`%s = "%s"`, configKey, repoVal), "fast", false},
+				{"explicit normalization", "FAST", "", "fast", false},
 				{"invalid explicit", "unknown", "", "", true},
 				{"invalid repo config", "", fmt.Sprintf(`%s = "invalid"`, configKey), "", true},
 			}
@@ -287,9 +288,9 @@ func TestResolveReasoning(t *testing.T) {
 		})
 	}
 
-	runTests(t, "Review", ResolveReviewReasoning, "review_reasoning", "thorough")
-	runTests(t, "Refine", ResolveRefineReasoning, "refine_reasoning", "standard")
-	runTests(t, "Fix", ResolveFixReasoning, "fix_reasoning", "standard")
+	runTests(t, "Review", ResolveReviewReasoning, "review_reasoning", "thorough", "standard")
+	runTests(t, "Refine", ResolveRefineReasoning, "refine_reasoning", "standard", "thorough")
+	runTests(t, "Fix", ResolveFixReasoning, "fix_reasoning", "standard", "thorough")
 }
 
 func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
