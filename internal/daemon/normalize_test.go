@@ -164,47 +164,52 @@ func TestNormalizeGenericOutput(t *testing.T) {
 func TestGetNormalizer(t *testing.T) {
 	cases := []struct {
 		agent    string
-		wantName string
+		input    string
+		wantText string
 	}{
-		{"claude-code", "NormalizeClaudeOutput"},
-		{"opencode", "NormalizeOpenCodeOutput"},
-		{"codex", "NormalizeCodexOutput"},
-		{"gemini", "NormalizeGenericOutput"},
-		{"unknown", "NormalizeGenericOutput"},
+		{
+			agent:    "claude-code",
+			input:    `{"type":"assistant","message":{"content":"hi"}}`,
+			wantText: "hi",
+		},
+		{
+			agent:    "opencode",
+			input:    `{"name":"read","arguments":{}}`,
+			wantText: "[Tool call]",
+		},
+		{
+			agent:    "codex",
+			input:    `{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`,
+			wantText: "hello",
+		},
+		{
+			agent:    "gemini",
+			input:    `{"type":"assistant","message":{"content":"hi"}}`,
+			wantText: `{"type":"assistant","message":{"content":"hi"}}`, // Generic treats JSON as plain text
+		},
+		{
+			agent:    "unknown",
+			input:    "plain text",
+			wantText: "plain text",
+		},
 	}
+
 	for _, tc := range cases {
-		fn := GetNormalizer(tc.agent)
-		if fn == nil {
-			t.Errorf("GetNormalizer(%q) returned nil", tc.agent)
-			continue
-		}
-		// Verify correct normalizer by testing characteristic behavior.
-		// NormalizeClaudeOutput parses Claude JSON; NormalizeOpenCodeOutput
-		// detects tool-call JSON; NormalizeGenericOutput passes through text.
-		switch tc.wantName {
-		case "NormalizeClaudeOutput":
-			result := fn(`{"type":"assistant","message":{"content":"hi"}}`)
-			if result == nil || result.Text != "hi" {
-				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeClaudeOutput", tc.agent)
+		t.Run(tc.agent, func(t *testing.T) {
+			fn := GetNormalizer(tc.agent)
+			if fn == nil {
+				t.Fatalf("GetNormalizer(%q) returned nil", tc.agent)
 			}
-		case "NormalizeOpenCodeOutput":
-			result := fn(`{"name":"read","arguments":{}}`)
-			if result == nil || result.Text != "[Tool call]" {
-				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeOpenCodeOutput", tc.agent)
+
+			result := fn(tc.input)
+			if result == nil {
+				t.Fatalf("Normalizer for %q returned nil for input %q", tc.agent, tc.input)
 			}
-		case "NormalizeCodexOutput":
-			// Codex normalizer parses item.completed agent_message events.
-			result := fn(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`)
-			if result == nil || result.Text != "hello" {
-				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeCodexOutput", tc.agent)
+
+			if result.Text != tc.wantText {
+				t.Errorf("Normalizer for %q: got text %q, want %q", tc.agent, result.Text, tc.wantText)
 			}
-		case "NormalizeGenericOutput":
-			// Generic normalizer treats Claude JSON as plain text, not parsed messages.
-			result := fn(`{"type":"assistant","message":{"content":"hi"}}`)
-			if result == nil || result.Text == "hi" {
-				t.Errorf("GetNormalizer(%q) returned wrong normalizer: expected NormalizeGenericOutput", tc.agent)
-			}
-		}
+		})
 	}
 }
 
