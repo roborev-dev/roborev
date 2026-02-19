@@ -377,6 +377,11 @@ func TestIntegration_FinalPush(t *testing.T) {
 	}
 
 	env.assertPgCount("review_jobs", 150)
+	env.assertPgCountWhere(
+		"review_jobs", "commit_id IS NULL", nil, 150,
+	)
+	env.assertPgCount("commits", 0)
+	env.assertPgCount("reviews", 150)
 }
 
 func TestIntegration_FinalPush_NoCommit(t *testing.T) {
@@ -1175,4 +1180,58 @@ func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
 	t.Logf("Progress abort test passed: pushed %d/%d jobs "+
 		"before abort (1 callback call)",
 		stats.PushedJobs, numJobs)
+}
+
+func TestIntegration_TickerSync(t *testing.T) {
+	env := newIntegrationEnv(t, 30*time.Second)
+
+	dbA := env.openDB("machine_a.db")
+	dbB := env.openDB("machine_b.db")
+
+	identity := "git@github.com:test/ticker-sync.git"
+
+	repoA, err := dbA.GetOrCreateRepo(
+		filepath.Join(env.TmpDir, "repo_a"), identity,
+	)
+	if err != nil {
+		t.Fatalf("Machine A: GetOrCreateRepo failed: %v", err)
+	}
+
+	// Create a review on machine A before starting workers
+	createCompletedReview(
+		t, dbA, repoA.ID,
+		"tick1111", "Alice", "Ticker commit",
+		"prompt", "Ticker review",
+	)
+
+	// Start both workers with a short ticker interval so
+	// background sync fires without explicit SyncNow calls
+	workerA := startSyncWorker(t, dbA, env.pgURL, "ticker-a", "200ms")
+	_ = workerA
+
+	_, err = dbB.GetOrCreateRepo(
+		filepath.Join(env.TmpDir, "repo_b"), identity,
+	)
+	if err != nil {
+		t.Fatalf("Machine B: GetOrCreateRepo failed: %v", err)
+	}
+	workerB := startSyncWorker(t, dbB, env.pgURL, "ticker-b", "200ms")
+	_ = workerB
+
+	// Wait for machine B to pull machine A's review via the ticker
+	// (no explicit SyncNow calls)
+	waitCondition(
+		t, 10*time.Second,
+		"Machine B pulls A's review via ticker",
+		func() (bool, error) {
+			jobs, err := dbB.ListJobs("", "", 100, 0)
+			if err != nil {
+				return false, err
+			}
+			return len(jobs) >= 1, nil
+		},
+	)
+
+	env.assertPgCount("review_jobs", 1)
+	env.assertPgCount("reviews", 1)
 }
