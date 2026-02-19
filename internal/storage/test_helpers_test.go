@@ -57,7 +57,13 @@ func (e *MigrationTestEnv) DropTable(schema, table string) {
 func (e *MigrationTestEnv) CleanupDropSchema(schema string) {
 	e.t.Helper()
 	e.t.Cleanup(func() {
-		_, err := e.pool.Exec(e.ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		// Use background context: t.Context() is canceled by
+		// the time Cleanup runs.
+		ctx, cancel := context.WithTimeout(
+			context.Background(), 5*time.Second,
+		)
+		defer cancel()
+		_, err := e.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		if err != nil {
 			e.t.Errorf("Failed to cleanup schema %s: %v", schema, err)
 		}
@@ -67,7 +73,11 @@ func (e *MigrationTestEnv) CleanupDropSchema(schema string) {
 func (e *MigrationTestEnv) CleanupDropTable(schema, table string) {
 	e.t.Helper()
 	e.t.Cleanup(func() {
-		_, err := e.pool.Exec(e.ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize())
+		ctx, cancel := context.WithTimeout(
+			context.Background(), 5*time.Second,
+		)
+		defer cancel()
+		_, err := e.pool.Exec(ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize())
 		if err != nil {
 			e.t.Errorf("Failed to cleanup table %s.%s: %v", schema, table, err)
 		}
