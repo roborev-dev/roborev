@@ -47,9 +47,15 @@ func newMockHandler(t *testing.T, method, path string, response any, status int)
 	}
 }
 
+// MockStep defines a single expected request/response in a sequence.
+type MockStep struct {
+	Jobs          []storage.ReviewJob
+	ExpectedQuery map[string]string
+}
+
 // mockSequenceHandler returns different responses for sequential calls to /api/jobs.
 // This allows testing fallback logic where multiple calls are made.
-func mockSequenceHandler(t *testing.T, responses ...[]storage.ReviewJob) http.HandlerFunc {
+func mockSequenceHandler(t *testing.T, steps ...MockStep) http.HandlerFunc {
 	t.Helper()
 	call := 0
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -59,15 +65,22 @@ func mockSequenceHandler(t *testing.T, responses ...[]storage.ReviewJob) http.Ha
 			return
 		}
 
-		var jobs []storage.ReviewJob
-		if call < len(responses) {
-			jobs = responses[call]
-			call++
-		} else {
-			// Default to empty if more calls than expected
-			jobs = []storage.ReviewJob{}
+		if call >= len(steps) {
+			t.Fatalf("unexpected extra call to %s (expected %d calls)", r.URL.Path, len(steps))
+			return
 		}
-		writeJSON(w, map[string]any{"jobs": jobs})
+
+		step := steps[call]
+		call++
+
+		query := r.URL.Query()
+		for k, v := range step.ExpectedQuery {
+			if got := query.Get(k); got != v {
+				t.Errorf("call %d: expected query param %s=%s, got %s", call, k, v, got)
+			}
+		}
+
+		writeJSON(w, map[string]any{"jobs": step.Jobs})
 	}
 }
 
@@ -325,11 +338,38 @@ func TestFindJobForCommit(t *testing.T) {
 				}
 			}
 
+			// Normalize repoDir to match client behavior (handles symlinks like /var -> /private/var)
+			if resolved, err := filepath.EvalSymlinks(repoDir); err == nil {
+				repoDir = resolved
+			}
+			if abs, err := filepath.Abs(repoDir); err == nil {
+				repoDir = abs
+			}
+
 			var handler http.HandlerFunc
 			if tt.mockHandler != nil {
 				handler = tt.mockHandler
 			} else {
-				handler = mockSequenceHandler(t, tt.mockResponses...)
+				var steps []MockStep
+				for i, jobs := range tt.mockResponses {
+					step := MockStep{
+						Jobs:          jobs,
+						ExpectedQuery: make(map[string]string),
+					}
+					// Always expect git_ref
+					step.ExpectedQuery["git_ref"] = tt.commitSHA
+
+					if i == 0 {
+						// First call expects repo and limit=1
+						step.ExpectedQuery["repo"] = repoDir
+						step.ExpectedQuery["limit"] = "1"
+					} else {
+						// Fallback calls expect limit=100
+						step.ExpectedQuery["limit"] = "100"
+					}
+					steps = append(steps, step)
+				}
+				handler = mockSequenceHandler(t, steps...)
 			}
 
 			_, cleanup := setupMockDaemon(t, handler)
