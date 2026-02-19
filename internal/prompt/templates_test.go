@@ -15,6 +15,9 @@ func TestGetSystemPrompt(t *testing.T) {
 		return fixedTime
 	}
 
+	// Get the review prompt to verify fallbacks match exactly
+	geminiReviewPrompt := getSystemPrompt("gemini", "review", mockNow)
+
 	type testCase struct {
 		name           string
 		agent          string
@@ -37,14 +40,14 @@ func TestGetSystemPrompt(t *testing.T) {
 			name:           "Gemini Range (Review Fallback)",
 			agent:          "gemini",
 			command:        "range",
-			wantContains:   []string{"Do NOT explain your process"},
+			wantExact:      geminiReviewPrompt,
 			wantNotDefault: true,
 		},
 		{
 			name:           "Gemini Dirty (Review Fallback)",
 			agent:          "gemini",
 			command:        "dirty",
-			wantContains:   []string{"Do NOT explain your process"},
+			wantExact:      geminiReviewPrompt,
 			wantNotDefault: true,
 		},
 		{
@@ -68,6 +71,12 @@ func TestGetSystemPrompt(t *testing.T) {
 		{
 			name:      "Non-Gemini Run (Claude)",
 			agent:     "claude-code",
+			command:   "run",
+			wantEmpty: true,
+		},
+		{
+			name:      "Non-Gemini Run (Claude alias)",
+			agent:     "claude",
 			command:   "run",
 			wantEmpty: true,
 		},
@@ -116,5 +125,18 @@ func TestGetSystemPrompt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGetSystemPrompt_Exported(t *testing.T) {
+	got := GetSystemPrompt("gemini", "review")
+	if got == "" {
+		t.Error("GetSystemPrompt returned empty string for gemini review")
+	}
+
+	// Verify date injection with the real clock
+	today := time.Now().UTC().Format("2006-01-02")
+	if !strings.Contains(got, today) {
+		t.Errorf("GetSystemPrompt missing current date %q. Got:\n%s", today, got)
 	}
 }
