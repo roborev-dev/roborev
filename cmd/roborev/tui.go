@@ -3777,6 +3777,16 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 			return tuiApplyPatchResultMsg{jobID: jobID, err: jErr}
 		}
 
+		// Check for uncommitted changes in files the patch touches
+		patchedFiles, pfErr := patchFiles(patch)
+		if pfErr != nil {
+			return tuiApplyPatchResultMsg{jobID: jobID, err: pfErr}
+		}
+		if dirty := dirtyPatchFiles(jobDetail.RepoPath, patchedFiles); len(dirty) > 0 {
+			return tuiApplyPatchResultMsg{jobID: jobID,
+				err: fmt.Errorf("uncommitted changes in patch files: %s — stash or commit first", strings.Join(dirty, ", "))}
+		}
+
 		// Dry-run check — only trigger rebase on actual merge conflicts
 		if err := worktree.CheckPatch(jobDetail.RepoPath, patch); err != nil {
 			var conflictErr *worktree.PatchConflictError
@@ -3839,6 +3849,29 @@ func commitPatch(repoPath, patch, message string) error {
 		return fmt.Errorf("git commit: %w: %s", err, out)
 	}
 	return nil
+}
+
+// dirtyPatchFiles returns the subset of files that have uncommitted changes.
+func dirtyPatchFiles(repoPath string, files []string) []string {
+	// git diff --name-only shows unstaged changes; --cached shows staged
+	cmd := exec.Command("git", "-C", repoPath, "diff", "--name-only", "HEAD", "--")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	dirty := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			dirty[line] = true
+		}
+	}
+	var overlap []string
+	for _, f := range files {
+		if dirty[f] {
+			overlap = append(overlap, f)
+		}
+	}
+	return overlap
 }
 
 // patchFiles extracts the list of file paths touched by a unified diff.

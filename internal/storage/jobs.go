@@ -1147,7 +1147,7 @@ func (db *DB) MarkJobApplied(jobID int64) error {
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'applied', updated_at = ?
-		WHERE id = ? AND status = 'done'
+		WHERE id = ? AND status = 'done' AND job_type = 'fix'
 	`, now, jobID)
 	if err != nil {
 		return err
@@ -1169,7 +1169,7 @@ func (db *DB) MarkJobRebased(jobID int64) error {
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'rebased', updated_at = ?
-		WHERE id = ? AND status = 'done'
+		WHERE id = ? AND status = 'done' AND job_type = 'fix'
 	`, now, jobID)
 	if err != nil {
 		return err

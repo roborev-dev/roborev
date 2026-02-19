@@ -1229,8 +1229,8 @@ func TestMarkJobApplied(t *testing.T) {
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "applied-test", "A", "S", time.Now())
 
-	t.Run("mark done job as applied", func(t *testing.T) {
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test", Agent: "codex"})
+	t.Run("mark done fix job as applied", func(t *testing.T) {
+		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
@@ -1246,7 +1246,7 @@ func TestMarkJobApplied(t *testing.T) {
 	})
 
 	t.Run("mark non-done job fails", func(t *testing.T) {
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test-q", Agent: "codex"})
+		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test-q", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 
 		err := db.MarkJobApplied(job.ID)
 		if err == nil {
@@ -1255,7 +1255,7 @@ func TestMarkJobApplied(t *testing.T) {
 	})
 
 	t.Run("mark applied job again fails", func(t *testing.T) {
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test-2", Agent: "codex"})
+		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-test-2", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 		db.MarkJobApplied(job.ID)
@@ -1263,6 +1263,17 @@ func TestMarkJobApplied(t *testing.T) {
 		err := db.MarkJobApplied(job.ID)
 		if err == nil {
 			t.Error("MarkJobApplied should fail for already-applied jobs")
+		}
+	})
+
+	t.Run("mark non-fix job fails", func(t *testing.T) {
+		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "applied-review", Agent: "codex"})
+		db.ClaimJob("worker-1")
+		db.CompleteJob(job.ID, "codex", "prompt", "output")
+
+		err := db.MarkJobApplied(job.ID)
+		if err == nil {
+			t.Error("MarkJobApplied should fail for non-fix jobs")
 		}
 	})
 }
@@ -1274,8 +1285,8 @@ func TestMarkJobRebased(t *testing.T) {
 	repo, _ := db.GetOrCreateRepo("/tmp/test-repo")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "rebased-test", "A", "S", time.Now())
 
-	t.Run("mark done job as rebased", func(t *testing.T) {
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rebased-test", Agent: "codex"})
+	t.Run("mark done fix job as rebased", func(t *testing.T) {
+		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rebased-test", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 		db.ClaimJob("worker-1")
 		db.CompleteJob(job.ID, "codex", "prompt", "output")
 
@@ -1291,11 +1302,22 @@ func TestMarkJobRebased(t *testing.T) {
 	})
 
 	t.Run("mark non-done job fails", func(t *testing.T) {
-		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rebased-test-q", Agent: "codex"})
+		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rebased-test-q", Agent: "codex", JobType: JobTypeFix, ParentJobID: 1})
 
 		err := db.MarkJobRebased(job.ID)
 		if err == nil {
 			t.Error("MarkJobRebased should fail for queued jobs")
+		}
+	})
+
+	t.Run("mark non-fix job fails", func(t *testing.T) {
+		job, _ := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rebased-review", Agent: "codex"})
+		db.ClaimJob("worker-1")
+		db.CompleteJob(job.ID, "codex", "prompt", "output")
+
+		err := db.MarkJobRebased(job.ID)
+		if err == nil {
+			t.Error("MarkJobRebased should fail for non-fix jobs")
 		}
 	})
 }
