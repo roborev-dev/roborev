@@ -1,167 +1,211 @@
-package storage
+package storage_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/testutil"
+)
 
 func TestIsTaskJob(t *testing.T) {
-	tests := []struct {
-		name string
-		job  ReviewJob
-		want bool
-	}{
-		{
-			name: "single commit review by job_type",
-			job:  ReviewJob{JobType: JobTypeReview, CommitID: ptr(int64(1)), GitRef: "abc123"},
-			want: false,
-		},
-		{
-			name: "dirty review by job_type",
-			job:  ReviewJob{JobType: JobTypeDirty, GitRef: "dirty"},
-			want: false,
-		},
-		{
-			name: "dirty review by job_type with diff content",
-			job:  ReviewJob{JobType: JobTypeDirty, GitRef: "dirty", DiffContent: ptr("diff")},
-			want: false,
-		},
-		{
-			name: "range review by job_type",
-			job:  ReviewJob{JobType: JobTypeRange, GitRef: "abc123..def456"},
-			want: false,
-		},
-		{
-			name: "task job by job_type",
-			job:  ReviewJob{JobType: JobTypeTask, GitRef: "run:lint"},
-			want: true,
-		},
-		{
-			name: "task job analyze by job_type",
-			job:  ReviewJob{JobType: JobTypeTask, GitRef: "analyze"},
-			want: true,
-		},
-		// Fallback heuristic tests (when JobType is empty)
-		{
-			name: "fallback: single commit review",
-			job:  ReviewJob{CommitID: ptr(int64(1)), GitRef: "abc123"},
-			want: false,
-		},
-		{
-			name: "fallback: dirty review",
-			job:  ReviewJob{GitRef: "dirty"},
-			want: false,
-		},
-		{
-			name: "fallback: dirty review with diff content",
-			job:  ReviewJob{GitRef: "dirty", DiffContent: ptr("diff")},
-			want: false,
-		},
-		{
-			name: "fallback: branch range review",
-			job:  ReviewJob{GitRef: "abc123..def456"},
-			want: false,
-		},
-		{
-			name: "fallback: triple-dot range review",
-			job:  ReviewJob{GitRef: "main...feature"},
-			want: false,
-		},
-		{
-			name: "fallback: task job with label",
-			job:  ReviewJob{GitRef: "run:lint"},
-			want: true,
-		},
-		{
-			name: "fallback: task job analyze",
-			job:  ReviewJob{GitRef: "analyze"},
-			want: true,
-		},
-		{
-			name: "fallback: task job run",
-			job:  ReviewJob{GitRef: "run"},
-			want: true,
-		},
-		{
-			name: "fallback: empty git ref",
-			job:  ReviewJob{GitRef: ""},
-			want: false,
-		},
-	}
+	t.Run("Explicit JobType", func(t *testing.T) {
+		tests := []struct {
+			name string
+			job  storage.ReviewJob
+			want bool
+		}{
+			{
+				name: "single commit review by job_type",
+				job:  storage.ReviewJob{JobType: storage.JobTypeReview, CommitID: testutil.Ptr(int64(1)), GitRef: "abc123"},
+				want: false,
+			},
+			{
+				name: "dirty review by job_type",
+				job:  storage.ReviewJob{JobType: storage.JobTypeDirty, GitRef: "dirty"},
+				want: false,
+			},
+			{
+				name: "dirty review by job_type with diff content",
+				job:  storage.ReviewJob{JobType: storage.JobTypeDirty, GitRef: "dirty", DiffContent: testutil.Ptr("diff")},
+				want: false,
+			},
+			{
+				name: "range review by job_type",
+				job:  storage.ReviewJob{JobType: storage.JobTypeRange, GitRef: "abc123..def456"},
+				want: false,
+			},
+			{
+				name: "task job by job_type",
+				job:  storage.ReviewJob{JobType: storage.JobTypeTask, GitRef: "run:lint"},
+				want: true,
+			},
+			{
+				name: "task job analyze by job_type",
+				job:  storage.ReviewJob{JobType: storage.JobTypeTask, GitRef: "analyze"},
+				want: true,
+			},
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.job.IsTaskJob()
-			if got != tt.want {
-				t.Errorf("IsTaskJob() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.job.IsTaskJob()
+				if got != tt.want {
+					t.Errorf("IsTaskJob() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("Inferred JobType", func(t *testing.T) {
+		tests := []struct {
+			name string
+			job  storage.ReviewJob
+			want bool
+		}{
+			{
+				name: "fallback: single commit review",
+				job:  storage.ReviewJob{CommitID: testutil.Ptr(int64(1)), GitRef: "abc123"},
+				want: false,
+			},
+			{
+				name: "fallback: dirty review",
+				job:  storage.ReviewJob{GitRef: "dirty"},
+				want: false,
+			},
+			{
+				name: "fallback: dirty review with diff content",
+				job:  storage.ReviewJob{GitRef: "dirty", DiffContent: testutil.Ptr("diff")},
+				want: false,
+			},
+			{
+				name: "fallback: branch range review",
+				job:  storage.ReviewJob{GitRef: "abc123..def456"},
+				want: false,
+			},
+			{
+				name: "fallback: triple-dot range review",
+				job:  storage.ReviewJob{GitRef: "main...feature"},
+				want: false,
+			},
+			{
+				name: "fallback: task job with label",
+				job:  storage.ReviewJob{GitRef: "run:lint"},
+				want: true,
+			},
+			{
+				name: "fallback: task job analyze",
+				job:  storage.ReviewJob{GitRef: "analyze"},
+				want: true,
+			},
+			{
+				name: "fallback: task job run",
+				job:  storage.ReviewJob{GitRef: "run"},
+				want: true,
+			},
+			{
+				name: "fallback: empty git ref",
+				job:  storage.ReviewJob{GitRef: ""},
+				want: false,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.job.IsTaskJob()
+				if got != tt.want {
+					t.Errorf("IsTaskJob() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	})
 }
 
 func TestIsDirtyJob(t *testing.T) {
-	tests := []struct {
-		name string
-		job  ReviewJob
-		want bool
-	}{
-		{
-			name: "dirty by job_type",
-			job:  ReviewJob{JobType: JobTypeDirty, GitRef: "dirty"},
-			want: true,
-		},
-		{
-			name: "review by job_type",
-			job:  ReviewJob{JobType: JobTypeReview, GitRef: "abc123"},
-			want: false,
-		},
-		{
-			name: "task by job_type",
-			job:  ReviewJob{JobType: JobTypeTask, GitRef: "run"},
-			want: false,
-		},
-		{
-			name: "fallback: git_ref dirty",
-			job:  ReviewJob{GitRef: "dirty"},
-			want: true,
-		},
-		{
-			name: "fallback: diff content set",
-			job:  ReviewJob{GitRef: "some-ref", DiffContent: ptr("diff")},
-			want: true,
-		},
-		{
-			name: "fallback: normal commit",
-			job:  ReviewJob{GitRef: "abc123", CommitID: ptr(int64(1))},
-			want: false,
-		},
-		{
-			name: "fallback: range",
-			job:  ReviewJob{GitRef: "abc..def"},
-			want: false,
-		},
-	}
+	t.Run("Explicit JobType", func(t *testing.T) {
+		tests := []struct {
+			name string
+			job  storage.ReviewJob
+			want bool
+		}{
+			{
+				name: "dirty by job_type",
+				job:  storage.ReviewJob{JobType: storage.JobTypeDirty, GitRef: "dirty"},
+				want: true,
+			},
+			{
+				name: "review by job_type",
+				job:  storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: "abc123"},
+				want: false,
+			},
+			{
+				name: "task by job_type",
+				job:  storage.ReviewJob{JobType: storage.JobTypeTask, GitRef: "run"},
+				want: false,
+			},
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.job.IsDirtyJob()
-			if got != tt.want {
-				t.Errorf("IsDirtyJob() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.job.IsDirtyJob()
+				if got != tt.want {
+					t.Errorf("IsDirtyJob() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("Inferred JobType", func(t *testing.T) {
+		tests := []struct {
+			name string
+			job  storage.ReviewJob
+			want bool
+		}{
+			{
+				name: "fallback: git_ref dirty",
+				job:  storage.ReviewJob{GitRef: "dirty"},
+				want: true,
+			},
+			{
+				name: "fallback: diff content set",
+				job:  storage.ReviewJob{GitRef: "some-ref", DiffContent: testutil.Ptr("diff")},
+				want: true,
+			},
+			{
+				name: "fallback: normal commit",
+				job:  storage.ReviewJob{GitRef: "abc123", CommitID: testutil.Ptr(int64(1))},
+				want: false,
+			},
+			{
+				name: "fallback: range",
+				job:  storage.ReviewJob{GitRef: "abc..def"},
+				want: false,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.job.IsDirtyJob()
+				if got != tt.want {
+					t.Errorf("IsDirtyJob() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	})
 }
 
 func TestIsPromptJob(t *testing.T) {
 	tests := []struct {
 		name string
-		job  ReviewJob
+		job  storage.ReviewJob
 		want bool
 	}{
-		{name: "task", job: ReviewJob{JobType: JobTypeTask}, want: true},
-		{name: "compact", job: ReviewJob{JobType: JobTypeCompact}, want: true},
-		{name: "review", job: ReviewJob{JobType: JobTypeReview}, want: false},
-		{name: "range", job: ReviewJob{JobType: JobTypeRange}, want: false},
-		{name: "dirty", job: ReviewJob{JobType: JobTypeDirty}, want: false},
-		{name: "empty", job: ReviewJob{JobType: ""}, want: false},
-		{name: "security", job: ReviewJob{JobType: "security"}, want: false},
+		{name: "task", job: storage.ReviewJob{JobType: storage.JobTypeTask}, want: true},
+		{name: "compact", job: storage.ReviewJob{JobType: storage.JobTypeCompact}, want: true},
+		{name: "review", job: storage.ReviewJob{JobType: storage.JobTypeReview}, want: false},
+		{name: "range", job: storage.ReviewJob{JobType: storage.JobTypeRange}, want: false},
+		{name: "dirty", job: storage.ReviewJob{JobType: storage.JobTypeDirty}, want: false},
+		{name: "empty", job: storage.ReviewJob{JobType: ""}, want: false},
+		{name: "security", job: storage.ReviewJob{JobType: "security"}, want: false},
 	}
 
 	for _, tt := range tests {
@@ -172,5 +216,3 @@ func TestIsPromptJob(t *testing.T) {
 		})
 	}
 }
-
-func ptr[T any](v T) *T { return &v }

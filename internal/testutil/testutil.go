@@ -470,3 +470,8 @@ func DecodeJSON(t *testing.T, w *httptest.ResponseRecorder, v any) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 }
+
+// Ptr returns a pointer to the given value.
+func Ptr[T any](v T) *T {
+	return &v
+}
