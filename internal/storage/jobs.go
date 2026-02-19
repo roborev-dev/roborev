@@ -837,7 +837,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		WHERE id = (
 			SELECT id FROM review_jobs
 			WHERE status = 'queued'
-			ORDER BY enqueued_at
+			ORDER BY enqueued_at, id
 			LIMIT 1
 		)
 	`, workerID, nowStr, nowStr)

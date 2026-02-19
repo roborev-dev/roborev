@@ -695,7 +695,7 @@ func TestJobCounts(t *testing.T) {
 		db.FailJob(claimed2.ID, "", "err")
 	}
 
-	queued, _, done, failed, _, err := db.GetJobCounts()
+	queued, running, done, failed, _, err := db.GetJobCounts()
 	if err != nil {
 		t.Fatalf("GetJobCounts failed: %v", err)
 	}
@@ -703,6 +703,9 @@ func TestJobCounts(t *testing.T) {
 	// We expect: 0 queued (all were claimed), 1 done, 1 failed, 3 running
 	if queued != 0 {
 		t.Errorf("Expected 0 queued jobs, got %d", queued)
+	}
+	if running != 3 {
+		t.Errorf("Expected 3 running jobs, got %d", running)
 	}
 	if done != 1 {
 		t.Errorf("Expected 1 done, got %d", done)
