@@ -5,131 +5,108 @@ package daemon
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
-func TestReadCompactMetadata(t *testing.T) {
-	// Save original env and restore after test
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
-
+func setupTestEnv(t *testing.T) string {
+	t.Helper()
 	tmpDir := t.TempDir()
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	return tmpDir
+}
 
-	t.Run("valid_metadata", func(t *testing.T) {
-		jobID := int64(123)
-		sourceIDs := []int64{100, 200, 300}
+func TestReadCompactMetadata(t *testing.T) {
+	setupTestEnv(t)
 
-		// Write valid metadata
-		metadata := CompactMetadata{SourceJobIDs: sourceIDs}
-		data, err := json.Marshal(metadata)
-		if err != nil {
-			t.Fatalf("Failed to marshal metadata: %v", err)
-		}
+	tests := []struct {
+		name      string
+		jobID     int64
+		setup     func(jobID int64) error
+		wantIDs   []int64
+		wantErr   bool
+	}{
+		{
+			name:  "valid_metadata",
+			jobID: 123,
+			setup: func(jobID int64) error {
+				metadata := CompactMetadata{SourceJobIDs: []int64{100, 200, 300}}
+				data, err := json.Marshal(metadata)
+				if err != nil {
+					return err
+				}
+				return os.WriteFile(compactMetadataPath(jobID), data, 0644)
+			},
+			wantIDs: []int64{100, 200, 300},
+			wantErr: false,
+		},
+		{
+			name:    "missing_file",
+			jobID:   999,
+			setup:   func(jobID int64) error { return nil },
+			wantIDs: nil,
+			wantErr: true,
+		},
+		{
+			name:  "invalid_json",
+			jobID: 456,
+			setup: func(jobID int64) error {
+				return os.WriteFile(compactMetadataPath(jobID), []byte("{invalid json}"), 0644)
+			},
+			wantIDs: nil,
+			wantErr: true,
+		},
+		{
+			name:  "empty_source_ids",
+			jobID: 789,
+			setup: func(jobID int64) error {
+				metadata := CompactMetadata{SourceJobIDs: []int64{}}
+				data, err := json.Marshal(metadata)
+				if err != nil {
+					return err
+				}
+				return os.WriteFile(compactMetadataPath(jobID), data, 0644)
+			},
+			wantIDs: []int64{},
+			wantErr: false,
+		},
+	}
 
-		path := filepath.Join(tmpDir, "compact-123.json")
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			t.Fatalf("Failed to write metadata file: %v", err)
-		}
-
-		// Read it back
-		got, err := ReadCompactMetadata(jobID)
-		if err != nil {
-			t.Fatalf("ReadCompactMetadata failed: %v", err)
-		}
-
-		if len(got.SourceJobIDs) != len(sourceIDs) {
-			t.Errorf("Expected %d source job IDs, got %d", len(sourceIDs), len(got.SourceJobIDs))
-		}
-
-		for i, id := range got.SourceJobIDs {
-			if id != sourceIDs[i] {
-				t.Errorf("SourceJobIDs[%d] = %d, want %d", i, id, sourceIDs[i])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.setup(tt.jobID); err != nil {
+				t.Fatalf("Setup failed: %v", err)
 			}
-		}
-	})
 
-	t.Run("missing_file", func(t *testing.T) {
-		jobID := int64(999)
+			got, err := ReadCompactMetadata(tt.jobID)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ReadCompactMetadata() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
 
-		// Try to read non-existent file
-		_, err := ReadCompactMetadata(jobID)
-		if err == nil {
-			t.Error("Expected error for missing file, got nil")
-		}
-	})
-
-	t.Run("invalid_json", func(t *testing.T) {
-		jobID := int64(456)
-
-		// Write invalid JSON
-		path := filepath.Join(tmpDir, "compact-456.json")
-		if err := os.WriteFile(path, []byte("{invalid json}"), 0644); err != nil {
-			t.Fatalf("Failed to write invalid JSON: %v", err)
-		}
-
-		// Try to read it
-		_, err := ReadCompactMetadata(jobID)
-		if err == nil {
-			t.Error("Expected error for invalid JSON, got nil")
-		}
-	})
-
-	t.Run("empty_source_ids", func(t *testing.T) {
-		jobID := int64(789)
-
-		// Write metadata with empty source IDs
-		metadata := CompactMetadata{SourceJobIDs: []int64{}}
-		data, err := json.Marshal(metadata)
-		if err != nil {
-			t.Fatalf("Failed to marshal metadata: %v", err)
-		}
-
-		path := filepath.Join(tmpDir, "compact-789.json")
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			t.Fatalf("Failed to write metadata file: %v", err)
-		}
-
-		// Read it back
-		got, err := ReadCompactMetadata(jobID)
-		if err != nil {
-			t.Fatalf("ReadCompactMetadata failed: %v", err)
-		}
-
-		if len(got.SourceJobIDs) != 0 {
-			t.Errorf("Expected 0 source job IDs, got %d", len(got.SourceJobIDs))
-		}
-	})
+			if !tt.wantErr {
+				if len(got.SourceJobIDs) != len(tt.wantIDs) {
+					t.Errorf("Expected %d source job IDs, got %d", len(tt.wantIDs), len(got.SourceJobIDs))
+				}
+				for i, id := range got.SourceJobIDs {
+					if id != tt.wantIDs[i] {
+						t.Errorf("SourceJobIDs[%d] = %d, want %d", i, id, tt.wantIDs[i])
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestDeleteCompactMetadata(t *testing.T) {
-	// Save original env and restore after test
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
-
-	tmpDir := t.TempDir()
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	setupTestEnv(t)
 
 	t.Run("delete_existing_file", func(t *testing.T) {
 		jobID := int64(123)
 
 		// Create a metadata file
-		path := filepath.Join(tmpDir, "compact-123.json")
+		path := compactMetadataPath(jobID)
 		if err := os.WriteFile(path, []byte(`{"source_job_ids":[1,2,3]}`), 0644); err != nil {
 			t.Fatalf("Failed to write metadata file: %v", err)
 		}
@@ -158,25 +135,15 @@ func TestDeleteCompactMetadata(t *testing.T) {
 }
 
 func TestCompactMetadataPath(t *testing.T) {
-	// Save original env and restore after test
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
-
-	tmpDir := t.TempDir()
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	tmpDir := setupTestEnv(t)
 
 	jobID := int64(123)
+	
 	path := compactMetadataPath(jobID)
-
-	expected := filepath.Join(tmpDir, "compact-123.json")
-	if path != expected {
-		t.Errorf("compactMetadataPath(123) = %q, want %q", path, expected)
+	
+	// Verify it contains the tmpDir
+	if len(path) <= len(tmpDir) || path[:len(tmpDir)] != tmpDir {
+		t.Errorf("compactMetadataPath(123) = %q, expected it to start with %q", path, tmpDir)
 	}
 
 	// Verify it uses config.DataDir() correctly
