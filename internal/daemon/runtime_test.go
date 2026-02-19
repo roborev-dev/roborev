@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,15 +15,36 @@ import (
 	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
-// createRuntimeFile creates a daemon runtime JSON file in dir. If content is
-// empty a valid default is generated from pid.
-func createRuntimeFile(t *testing.T, dir string, pid int, content string) string {
+const (
+	defaultTestPort = 7373
+	defaultTestAddr = "127.0.0.1:7373"
+)
+
+type runtimeData struct {
+	PID     int    `json:"pid"`
+	Addr    string `json:"addr"`
+	Port    int    `json:"port"`
+	Version string `json:"version"`
+}
+
+// createRuntimeFile creates a daemon runtime JSON file in dir. If data is
+// nil a valid default is generated from pid.
+func createRuntimeFile(t *testing.T, dir string, pid int, data *runtimeData) string {
 	t.Helper()
-	if content == "" {
-		content = fmt.Sprintf(`{"pid": %d, "addr": "127.0.0.1:7373", "port": 7373, "version": "test"}`, pid)
+	if data == nil {
+		data = &runtimeData{
+			PID:     pid,
+			Addr:    defaultTestAddr,
+			Port:    defaultTestPort,
+			Version: "test",
+		}
+	}
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("Failed to marshal runtime data: %v", err)
 	}
 	path := filepath.Join(dir, fmt.Sprintf("daemon.%d.json", pid))
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, bytes, 0644); err != nil {
 		t.Fatalf("Failed to write runtime file: %v", err)
 	}
 	return path
@@ -48,7 +70,7 @@ func mockIdentifyProcess(t *testing.T, mock func(int) processIdentity) {
 
 func TestFindAvailablePort(t *testing.T) {
 	// Test finding an available port
-	addr, port, err := FindAvailablePort("127.0.0.1:7373")
+	addr, port, err := FindAvailablePort(defaultTestAddr)
 	if err != nil {
 		t.Fatalf("FindAvailablePort failed: %v", err)
 	}
@@ -56,8 +78,8 @@ func TestFindAvailablePort(t *testing.T) {
 	if addr == "" {
 		t.Error("Expected non-empty address")
 	}
-	if port < 7373 {
-		t.Errorf("Expected port >= 7373, got %d", port)
+	if port < defaultTestPort {
+		t.Errorf("Expected port >= %d, got %d", defaultTestPort, port)
 	}
 }
 
@@ -65,7 +87,7 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 	testenv.SetDataDir(t)
 
 	// Write runtime info
-	err := WriteRuntime("127.0.0.1:7373", 7373, "test-version")
+	err := WriteRuntime(defaultTestAddr, defaultTestPort, "test-version")
 	if err != nil {
 		t.Fatalf("WriteRuntime failed: %v", err)
 	}
@@ -76,11 +98,11 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 		t.Fatalf("ReadRuntime failed: %v", err)
 	}
 
-	if info.Addr != "127.0.0.1:7373" {
-		t.Errorf("Expected addr '127.0.0.1:7373', got '%s'", info.Addr)
+	if info.Addr != defaultTestAddr {
+		t.Errorf("Expected addr '%s', got '%s'", defaultTestAddr, info.Addr)
 	}
-	if info.Port != 7373 {
-		t.Errorf("Expected port 7373, got %d", info.Port)
+	if info.Port != defaultTestPort {
+		t.Errorf("Expected port %d, got %d", defaultTestPort, info.Port)
 	}
 	if info.PID == 0 {
 		t.Error("Expected non-zero PID")
@@ -163,10 +185,13 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 	dataDir := testenv.SetDataDir(t)
 
 	// Create a valid runtime file
-	createRuntimeFile(t, dataDir, 12345, "")
+	createRuntimeFile(t, dataDir, 12345, nil)
 
 	// Create an unreadable runtime file
-	unreadablePath := createRuntimeFile(t, dataDir, 99999, `{"pid": 99999, "addr": "127.0.0.1:7374"}`)
+	unreadablePath := createRuntimeFile(t, dataDir, 99999, &runtimeData{
+		PID:  99999,
+		Addr: "127.0.0.1:7374",
+	})
 	os.Chmod(unreadablePath, 0000)
 	t.Cleanup(func() { os.Chmod(unreadablePath, 0644) })
 
@@ -282,6 +307,12 @@ func TestIsLoopbackAddr(t *testing.T) {
 }
 
 func TestIsDaemonAliveStatusCodes(t *testing.T) {
+	var nextStatus int
+	// Start one server for all cases
+	addr := startMockDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(nextStatus)
+	})
+
 	tests := []struct {
 		name       string
 		statusCode int
@@ -311,10 +342,7 @@ func TestIsDaemonAliveStatusCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			addr := startMockDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(tt.statusCode)
-			})
-
+			nextStatus = tt.statusCode
 			got := IsDaemonAlive(addr)
 			if got != tt.wantAlive {
 				t.Errorf("IsDaemonAlive with %d = %v, want %v", tt.statusCode, got, tt.wantAlive)
@@ -336,7 +364,7 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 
 	// Create a valid runtime file
-	createRuntimeFile(t, dataDir, 12345, "")
+	createRuntimeFile(t, dataDir, 12345, nil)
 
 	// ListAllRuntimes should work despite glob metacharacters in path
 	runtimes, err := ListAllRuntimes()
