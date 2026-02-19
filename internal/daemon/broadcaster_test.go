@@ -1,8 +1,14 @@
 package daemon
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
+)
+
+const (
+	testTimeout    = 100 * time.Millisecond
+	testBufferSize = 10 // Must match channel buffer size in NewBroadcaster
 )
 
 // assertEventReceived waits for an event or fails the test if it times out.
@@ -11,7 +17,7 @@ func assertEventReceived(t *testing.T, ch <-chan Event) Event {
 	select {
 	case e := <-ch:
 		return e
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(testTimeout):
 		t.Fatal("timed out waiting for event")
 		return Event{}
 	}
@@ -23,21 +29,9 @@ func assertNoEventReceived(t *testing.T, ch <-chan Event) {
 	select {
 	case e := <-ch:
 		t.Fatalf("received unexpected event: %v", e)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(testTimeout):
 		// OK
 	}
-}
-
-// getSubscriberCount safely retrieves the current number of subscribers.
-func getSubscriberCount(t *testing.T, b Broadcaster) int {
-	t.Helper()
-	eb, ok := b.(*EventBroadcaster)
-	if !ok {
-		t.Fatal("Broadcaster is not *EventBroadcaster")
-	}
-	eb.mu.RLock()
-	defer eb.mu.RUnlock()
-	return len(eb.subscribers)
 }
 
 // makeTestEvent creates a valid event with the given job ID and repo.
@@ -73,7 +67,7 @@ func TestBroadcaster_Subscribe(t *testing.T) {
 		t.Error("subscriber channels should be different")
 	}
 
-	if count := getSubscriberCount(t, b); count != 2 {
+	if count := b.SubscriberCount(); count != 2 {
 		t.Errorf("expected 2 subscribers, got %d", count)
 	}
 }
@@ -92,7 +86,7 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 		t.Error("expected channel to be closed after unsubscribe")
 	}
 
-	if count := getSubscriberCount(t, b); count != 0 {
+	if count := b.SubscriberCount(); count != 0 {
 		t.Errorf("expected 0 subscribers after unsubscribe, got %d", count)
 	}
 }
@@ -135,8 +129,8 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 
 	_, ch := b.Subscribe("")
 
-	// Fill the channel buffer (capacity is 10)
-	for i := range 10 {
+	// Fill the channel buffer
+	for i := range testBufferSize {
 		b.Broadcast(Event{JobID: int64(i)})
 	}
 
@@ -150,12 +144,12 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 	select {
 	case <-done:
 		// OK - broadcast didn't block
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(testTimeout):
 		t.Error("broadcast blocked when channel was full")
 	}
 
-	// Verify we received the first 10 events (not the dropped one)
-	for i := range 10 {
+	// Verify we received the first testBufferSize events (not the dropped one)
+	for i := range testBufferSize {
 		e := <-ch
 		if e.JobID != int64(i) {
 			t.Errorf("expected JobID %d, got %d", i, e.JobID)
@@ -183,10 +177,28 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		t.Fatalf("MarshalJSON failed: %v", err)
 	}
 
-	expected := `{"type":"review.completed","ts":"2026-01-11T10:00:30Z","job_id":42,"repo":"/path/to/myrepo","repo_name":"myrepo","sha":"abc123","agent":"claude-code","verdict":"F"}`
-	got := string(data)
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Could not unmarshal generated JSON: %v", err)
+	}
 
-	if got != expected {
-		t.Errorf("JSON mismatch\nexpected: %s\ngot:      %s", expected, got)
+	tests := []struct {
+		key      string
+		expected any
+	}{
+		{"type", "review.completed"},
+		{"ts", "2026-01-11T10:00:30Z"},
+		{"job_id", float64(42)}, // JSON numbers are floats in map[string]interface{}
+		{"repo", "/path/to/myrepo"},
+		{"repo_name", "myrepo"},
+		{"sha", "abc123"},
+		{"agent", "claude-code"},
+		{"verdict", "F"},
+	}
+
+	for _, tc := range tests {
+		if got := decoded[tc.key]; got != tc.expected {
+			t.Errorf("expected %s to be %v, got %v", tc.key, tc.expected, got)
+		}
 	}
 }
