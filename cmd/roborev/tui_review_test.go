@@ -331,6 +331,12 @@ func TestTUIReviewNavigation(t *testing.T) {
 				if m2.flashView != tuiViewReview {
 					t.Errorf("flashView: got %d, want %d", m2.flashView, tuiViewReview)
 				}
+				if m2.flashExpiresAt.IsZero() {
+					t.Error("flashExpiresAt should be set")
+				}
+				if !m2.flashExpiresAt.After(time.Now()) {
+					t.Error("flashExpiresAt should be in the future")
+				}
 			}
 
 			if tt.wantCmd && cmd == nil {
@@ -346,6 +352,9 @@ func TestTUIReviewNavigation(t *testing.T) {
 				}
 				if !strings.Contains(m2.currentReview.Output, "something went wrong") {
 					t.Errorf("Expected output to contain error, got '%s'", m2.currentReview.Output)
+				}
+				if m2.currentReview.Agent != "codex" {
+					t.Errorf("Expected agent to be 'codex', got '%s'", m2.currentReview.Agent)
 				}
 			}
 		})
