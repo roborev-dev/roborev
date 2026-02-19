@@ -37,37 +37,38 @@ func TestTruncateStderr(t *testing.T) {
 
 func TestGeminiBuildArgs(t *testing.T) {
 	tests := []struct {
-		name             string
-		agentic          bool
-		wantFlags        []string
-		wantSubstrings   []string
-		wantNoSubstrings []string
+		name         string
+		agentic      bool
+		wantArgs     []string          // Exact tokens expected in args
+		wantArgPairs map[string]string // Expected flag -> value pairs
+		unwantedArgs []string          // Exact tokens expected NOT to be in args
 	}{
 		{
 			name:    "ReviewMode",
 			agentic: false,
-			wantFlags: []string{
+			wantArgs: []string{
 				"--output-format", "stream-json",
-				"--allowed-tools",
+				"--allowed-tools", "Read,Glob,Grep",
 			},
-			wantSubstrings: []string{
-				"Read,Glob,Grep",
+			wantArgPairs: map[string]string{
+				"--output-format": "stream-json",
+				"--allowed-tools": "Read,Glob,Grep",
 			},
-			wantNoSubstrings: []string{
+			unwantedArgs: []string{
 				"--yolo",
-				"Edit", "Write", "Bash", "Shell",
 			},
 		},
 		{
 			name:    "AgenticMode",
 			agentic: true,
-			wantFlags: []string{
+			wantArgs: []string{
 				"--output-format", "stream-json",
 				"--yolo",
-				"--allowed-tools",
+				"--allowed-tools", "Edit,Write,Read,Glob,Grep,Bash,Shell",
 			},
-			wantSubstrings: []string{
-				"Edit,Write,Read,Glob,Grep,Bash,Shell",
+			wantArgPairs: map[string]string{
+				"--output-format": "stream-json",
+				"--allowed-tools": "Edit,Write,Read,Glob,Grep,Bash,Shell",
 			},
 		},
 	}
@@ -76,27 +77,34 @@ func TestGeminiBuildArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a := NewGeminiAgent("gemini")
 			args := a.buildArgs(tc.agentic)
-			argsStr := strings.Join(args, " ")
 
-			// Check for specific output format flag pairing
-			if len(args) < 2 || args[0] != "--output-format" || args[1] != "stream-json" {
-				t.Errorf("expected first args to be --output-format stream-json, got %v", args)
-			}
-
-			for _, want := range tc.wantFlags {
+			// Check exact args presence
+			for _, want := range tc.wantArgs {
 				if !slices.Contains(args, want) {
-					t.Errorf("expected args to contain exact flag %q, got %v", want, args)
+					t.Errorf("expected args to contain exact token %q, got %v", want, args)
 				}
 			}
 
-			for _, want := range tc.wantSubstrings {
-				if !strings.Contains(argsStr, want) {
-					t.Errorf("expected args string to contain %q", want)
+			// Check arg pairs (e.g. --output-format stream-json)
+			for flag, val := range tc.wantArgPairs {
+				idx := slices.Index(args, flag)
+				if idx == -1 {
+					// Error already reported in wantArgs loop, but continue safe
+					continue
+				}
+				if idx+1 >= len(args) {
+					t.Errorf("expected value for flag %q, but it was the last argument", flag)
+					continue
+				}
+				if args[idx+1] != val {
+					t.Errorf("expected flag %q to be followed by %q, got %q", flag, val, args[idx+1])
 				}
 			}
-			for _, wantNo := range tc.wantNoSubstrings {
-				if strings.Contains(argsStr, wantNo) {
-					t.Errorf("expected args string NOT to contain %q", wantNo)
+
+			// Check absence of specific tokens
+			for _, unwanted := range tc.unwantedArgs {
+				if slices.Contains(args, unwanted) {
+					t.Errorf("expected args NOT to contain token %q", unwanted)
 				}
 			}
 		})
