@@ -1203,12 +1203,14 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 		name              string
 		initialErrors     int
 		reconnecting      bool
+		initialErr        error
 		msg               tea.Msg
 		wantErrors        int
 		wantReconnecting  bool
 		wantCmd           bool
 		wantServerAddr    string
 		wantDaemonVersion string
+		wantErrNil        bool
 	}
 
 	tests := []testCase{
@@ -1288,12 +1290,14 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 			name:              "updates server address on successful reconnection",
 			initialErrors:     0,
 			reconnecting:      true,
+			initialErr:        errors.New("connection refused"),
 			msg:               tuiReconnectMsg{newAddr: "http://127.0.0.1:7374", version: "2.0.0"},
 			wantErrors:        0,
 			wantReconnecting:  false,
 			wantCmd:           true,
 			wantServerAddr:    "http://127.0.0.1:7374",
 			wantDaemonVersion: "2.0.0",
+			wantErrNil:        true,
 		},
 		{
 			name:             "handles reconnection to same address",
@@ -1321,6 +1325,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 			m := newTuiModel(testServerAddr)
 			m.consecutiveErrors = tt.initialErrors
 			m.reconnecting = tt.reconnecting
+			m.err = tt.initialErr
 
 			m2, cmd := updateModel(t, m, tt.msg)
 
@@ -1338,6 +1343,9 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 			}
 			if tt.wantDaemonVersion != "" && m2.daemonVersion != tt.wantDaemonVersion {
 				t.Errorf("daemonVersion = %q, want %q", m2.daemonVersion, tt.wantDaemonVersion)
+			}
+			if tt.wantErrNil && m2.err != nil {
+				t.Errorf("expected err to be nil, got %v", m2.err)
 			}
 		})
 	}
