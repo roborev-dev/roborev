@@ -31,6 +31,45 @@ func newTestEvent(jobID int64, opts ...func(*Event)) Event {
 	return e
 }
 
+func assertEventFields(t *testing.T, got Event, expected Event) {
+	t.Helper()
+	if got.JobID != expected.JobID {
+		t.Errorf("JobID: got %d, want %d", got.JobID, expected.JobID)
+	}
+	if got.Repo != expected.Repo {
+		t.Errorf("Repo: got %q, want %q", got.Repo, expected.Repo)
+	}
+	if got.SHA != expected.SHA {
+		t.Errorf("SHA: got %q, want %q", got.SHA, expected.SHA)
+	}
+	if got.Agent != expected.Agent {
+		t.Errorf("Agent: got %q, want %q", got.Agent, expected.Agent)
+	}
+	if got.Verdict != expected.Verdict {
+		t.Errorf("Verdict: got %q, want %q", got.Verdict, expected.Verdict)
+	}
+	if got.Type != expected.Type {
+		t.Errorf("Type: got %q, want %q", got.Type, expected.Type)
+	}
+}
+
+func waitForEventType(t *testing.T, ch <-chan Event, eventType string, timeout time.Duration) Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case e := <-ch:
+			if e.Type == eventType {
+				return e
+			}
+		case <-time.After(10 * time.Millisecond):
+			continue
+		}
+	}
+	t.Fatalf("timed out waiting for event type: %s", eventType)
+	return Event{}
+}
+
 func TestStreamEventsEndToEnd(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
@@ -43,24 +82,7 @@ func TestStreamEventsEndToEnd(t *testing.T) {
 	broadcaster.Broadcast(testEvent)
 
 	received := testutil.ReceiveWithTimeout(t, eventCh, 1*time.Second)
-	if received.Type != "review.completed" {
-		t.Errorf("Expected type 'review.completed', got %s", received.Type)
-	}
-	if received.JobID != 42 {
-		t.Errorf("Expected JobID 42, got %d", received.JobID)
-	}
-	if received.Repo != "/path/to/repo" {
-		t.Errorf("Expected Repo '/path/to/repo', got %s", received.Repo)
-	}
-	if received.SHA != "abc123" {
-		t.Errorf("Expected SHA 'abc123', got %s", received.SHA)
-	}
-	if received.Agent != "test-agent" {
-		t.Errorf("Expected Agent 'test-agent', got %s", received.Agent)
-	}
-	if received.Verdict != "P" {
-		t.Errorf("Expected Verdict 'P', got %s", received.Verdict)
-	}
+	assertEventFields(t, received, testEvent)
 }
 
 func TestStreamEventsWithRepoFilter(t *testing.T) {
@@ -78,9 +100,9 @@ func TestStreamEventsWithRepoFilter(t *testing.T) {
 
 	// Should not receive more events (repo2 event was filtered out)
 	select {
-	case <-eventCh:
-		t.Error("Received unexpected event for filtered repo")
-	case <-time.After(100 * time.Millisecond):
+	case e := <-eventCh:
+		t.Errorf("Received unexpected event for filtered repo: %+v", e)
+	default:
 		// OK - no event received
 	}
 
@@ -141,19 +163,8 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 	}
 
 	// Drain events until we find the review.completed event (bounded to prevent misleading timeout errors)
-	var event Event
-	const maxEvents = 20
-	found := false
-	for i := 0; i < maxEvents; i++ {
-		event = testutil.ReceiveWithTimeout(t, eventCh, 1*time.Second)
-		if event.Type == "review.completed" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("never received review.completed event after draining %d events", maxEvents)
-	}
+	event := waitForEventType(t, eventCh, "review.completed", 2*time.Second)
+
 	if event.JobID != job.ID {
 		t.Errorf("Expected JobID %d, got %d", job.ID, event.JobID)
 	}
@@ -175,7 +186,10 @@ func TestStreamMultipleEvents(t *testing.T) {
 	}
 
 	// Receive all 3 events
-	for i := 0; i < 3; i++ {
-		testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
+	for i := 1; i <= 3; i++ {
+		e := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
+		if e.JobID != int64(i) {
+			t.Errorf("Expected event %d, got JobID %d", i, e.JobID)
+		}
 	}
 }
