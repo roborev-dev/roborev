@@ -63,7 +63,7 @@ func mustCreateLinkedTerminalJob(t *testing.T, db *DB, repoID int64, ghRepo stri
 
 func setBatchCreatedAt(t *testing.T, db *DB, batchID int64, offset time.Duration) {
 	t.Helper()
-	ts := time.Now().Add(offset)
+	ts := time.Now().UTC().Add(offset).Format("2006-01-02 15:04:05")
 	if _, err := db.Exec(`UPDATE ci_pr_batches SET created_at = ? WHERE id = ?`, ts, batchID); err != nil {
 		t.Fatalf("setBatchCreatedAt: %v", err)
 	}
@@ -71,7 +71,7 @@ func setBatchCreatedAt(t *testing.T, db *DB, batchID int64, offset time.Duration
 
 func setBatchClaimedAt(t *testing.T, db *DB, batchID int64, offset time.Duration) {
 	t.Helper()
-	ts := time.Now().Add(offset)
+	ts := time.Now().UTC().Add(offset).Format("2006-01-02 15:04:05")
 	if _, err := db.Exec(`UPDATE ci_pr_batches SET claimed_at = ? WHERE id = ?`, ts, batchID); err != nil {
 		t.Fatalf("setBatchClaimedAt: %v", err)
 	}
