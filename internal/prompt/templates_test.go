@@ -130,20 +130,39 @@ func TestGetSystemPrompt(t *testing.T) {
 }
 
 func TestGetSystemPrompt_Exported(t *testing.T) {
+	before := time.Now().UTC().Truncate(24 * time.Hour)
 	got := GetSystemPrompt("gemini", "review")
+	after := time.Now().UTC().Truncate(24 * time.Hour)
+
 	if got == "" {
 		t.Error("GetSystemPrompt returned empty string for gemini review")
 	}
 
-	// Verify date injection format without a second clock read
-	// (a second time.Now() could cross midnight and cause flakes)
+	// Anchored regex that captures the date for parsing
 	datePat := regexp.MustCompile(
-		`Current date: \d{4}-\d{2}-\d{2} \(UTC\)`,
+		`(?m)^Current date: (\d{4}-\d{2}-\d{2}) \(UTC\)$`,
 	)
-	if !datePat.MatchString(got) {
-		t.Errorf(
+	m := datePat.FindStringSubmatch(got)
+	if m == nil {
+		t.Fatalf(
 			"GetSystemPrompt missing date line matching %q. Got:\n%s",
 			datePat.String(), got,
+		)
+	}
+
+	parsed, err := time.Parse("2006-01-02", m[1])
+	if err != nil {
+		t.Fatalf("date %q is not a valid calendar date: %v", m[1], err)
+	}
+
+	// Allow either the before or after date in case midnight
+	// was crossed between the two clock reads.
+	if parsed.Before(before) || parsed.After(after) {
+		t.Errorf(
+			"date %s not in expected window [%s, %s]",
+			m[1],
+			before.Format("2006-01-02"),
+			after.Format("2006-01-02"),
 		)
 	}
 }
