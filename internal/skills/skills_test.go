@@ -213,6 +213,19 @@ func TestIsInstalled(t *testing.T) {
 		})
 	}
 
+	// Unsupported agent should always return false.
+	tests = append(tests, testCase{
+		name:  "unsupported agent",
+		agent: Agent("unknown"),
+		setup: func(t *testing.T, h string) {
+			// Install skills for both known agents to ensure
+			// the unknown agent still returns false.
+			createMockSkill(t, h, "claude", "roborev-address")
+			createMockSkill(t, h, "codex", "roborev-address")
+		},
+		shouldExist: false,
+	})
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpHome := setupTestEnv(t)
