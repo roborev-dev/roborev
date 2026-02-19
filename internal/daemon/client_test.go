@@ -293,49 +293,69 @@ func TestFindJobForCommitFallback(t *testing.T) {
 
 func TestFindPendingJobForRef(t *testing.T) {
 	tests := []struct {
-		name           string
-		mockResponses  map[string][]storage.ReviewJob
-		expectJobID    int64
-		expectStatus   storage.JobStatus
-		expectNotFound bool
+		name                 string
+		mockResponses        map[string][]storage.ReviewJob
+		expectJobID          int64
+		expectStatus         storage.JobStatus
+		expectNotFound       bool
+		expectedRequestOrder []string
 	}{
 		{
 			name: "returns running job",
 			mockResponses: map[string][]storage.ReviewJob{
 				"running": {{ID: 1, GitRef: "abc123..def456", Status: storage.JobStatusRunning}},
 			},
-			expectJobID:  1,
-			expectStatus: storage.JobStatusRunning,
+			expectJobID:          1,
+			expectStatus:         storage.JobStatusRunning,
+			expectedRequestOrder: []string{"queued", "running"},
 		},
 		{
-			name:           "returns nil when no pending jobs",
-			mockResponses:  map[string][]storage.ReviewJob{},
-			expectNotFound: true,
+			name:                 "returns nil when no pending jobs",
+			mockResponses:        map[string][]storage.ReviewJob{},
+			expectNotFound:       true,
+			expectedRequestOrder: []string{"queued", "running"},
 		},
 		{
 			name: "returns queued job before checking running",
 			mockResponses: map[string][]storage.ReviewJob{
 				"queued": {{ID: 1, GitRef: "abc123..def456", Status: storage.JobStatusQueued}},
 			},
-			expectJobID:  1,
-			expectStatus: storage.JobStatusQueued,
+			expectJobID:          1,
+			expectStatus:         storage.JobStatusQueued,
+			expectedRequestOrder: []string{"queued"},
 		},
 		{
 			name: "queries both queued and running when needed",
 			mockResponses: map[string][]storage.ReviewJob{
 				"running": {{ID: 2, GitRef: "abc123..def456", Status: storage.JobStatusRunning}},
 			},
-			expectJobID:  2,
-			expectStatus: storage.JobStatusRunning,
+			expectJobID:          2,
+			expectStatus:         storage.JobStatusRunning,
+			expectedRequestOrder: []string{"queued", "running"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			var requestedStatuses []string
+			var mu sync.Mutex
+
 			client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 				assertRequest(t, r, http.MethodGet, "/api/jobs")
 
+				if got := r.URL.Query().Get("git_ref"); got != "abc123..def456" {
+					t.Errorf("expected git_ref=abc123..def456, got %q", got)
+				}
+				expectedRepo, _ := filepath.Abs("/test/repo")
+				if got := r.URL.Query().Get("repo"); got != expectedRepo {
+					t.Errorf("expected repo=%q, got %q", expectedRepo, got)
+				}
+
 				status := r.URL.Query().Get("status")
+				mu.Lock()
+				requestedStatuses = append(requestedStatuses, status)
+				mu.Unlock()
+
 				jobs, ok := tc.mockResponses[status]
 				if !ok {
 					jobs = []storage.ReviewJob{}
@@ -352,17 +372,26 @@ func TestFindPendingJobForRef(t *testing.T) {
 				if job != nil {
 					t.Errorf("expected nil job, got ID %d", job.ID)
 				}
-				return
+			} else {
+				if job == nil {
+					t.Fatal("expected to find job")
+				}
+				if job.ID != tc.expectJobID {
+					t.Errorf("expected job ID %d, got %d", tc.expectJobID, job.ID)
+				}
+				if tc.expectStatus != "" && job.Status != tc.expectStatus {
+					t.Errorf("expected status %s, got %s", tc.expectStatus, job.Status)
+				}
 			}
 
-			if job == nil {
-				t.Fatal("expected to find job")
-			}
-			if job.ID != tc.expectJobID {
-				t.Errorf("expected job ID %d, got %d", tc.expectJobID, job.ID)
-			}
-			if tc.expectStatus != "" && job.Status != tc.expectStatus {
-				t.Errorf("expected status %s, got %s", tc.expectStatus, job.Status)
+			if len(requestedStatuses) != len(tc.expectedRequestOrder) {
+				t.Errorf("expected %d requests, got %d: %v", len(tc.expectedRequestOrder), len(requestedStatuses), requestedStatuses)
+			} else {
+				for i, want := range tc.expectedRequestOrder {
+					if requestedStatuses[i] != want {
+						t.Errorf("request %d: expected status %q, got %q", i, want, requestedStatuses[i])
+					}
+				}
 			}
 		})
 	}
