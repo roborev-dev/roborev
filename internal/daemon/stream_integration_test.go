@@ -55,19 +55,34 @@ func assertEventFields(t *testing.T, got Event, expected Event) {
 
 func waitForEventType(t *testing.T, ch <-chan Event, eventType string, timeout time.Duration) Event {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
 		select {
-		case e := <-ch:
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatalf("channel closed waiting for event type: %s", eventType)
+				return Event{}
+			}
 			if e.Type == eventType {
 				return e
 			}
-		case <-time.After(10 * time.Millisecond):
-			continue
+		case <-timer.C:
+			t.Fatalf("timed out waiting for event type: %s", eventType)
+			return Event{}
 		}
 	}
-	t.Fatalf("timed out waiting for event type: %s", eventType)
-	return Event{}
+}
+
+func assertNoEventWithin(t *testing.T, ch <-chan Event, duration time.Duration) {
+	t.Helper()
+	select {
+	case e := <-ch:
+		t.Errorf("Received unexpected event: %+v", e)
+	case <-time.After(duration):
+		// OK
+	}
 }
 
 func TestStreamEventsEndToEnd(t *testing.T) {
@@ -99,12 +114,7 @@ func TestStreamEventsWithRepoFilter(t *testing.T) {
 	e2 := testutil.ReceiveWithTimeout(t, eventCh, 500*time.Millisecond)
 
 	// Should not receive more events (repo2 event was filtered out)
-	select {
-	case e := <-eventCh:
-		t.Errorf("Received unexpected event for filtered repo: %+v", e)
-	default:
-		// OK - no event received
-	}
+	assertNoEventWithin(t, eventCh, 100*time.Millisecond)
 
 	if e1.JobID != 1 {
 		t.Errorf("Expected first event JobID 1, got %d", e1.JobID)
