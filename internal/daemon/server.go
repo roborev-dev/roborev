@@ -1685,6 +1685,23 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "stale job belongs to a different repo")
 			return
 		}
+		// Verify stale job is linked to the same parent
+		if staleJob.ParentJobID == nil || *staleJob.ParentJobID != req.ParentJobID {
+			writeError(w, http.StatusBadRequest, "stale job is not linked to the specified parent")
+			return
+		}
+		// Require terminal status with a usable patch
+		switch staleJob.Status {
+		case storage.JobStatusDone, storage.JobStatusApplied, storage.JobStatusRebased:
+			// OK
+		default:
+			writeError(w, http.StatusBadRequest, "stale job is not in a terminal state")
+			return
+		}
+		if staleJob.Patch == nil || *staleJob.Patch == "" {
+			writeError(w, http.StatusBadRequest, "stale job has no patch to rebase from")
+			return
+		}
 		fixPrompt = buildRebasePrompt(staleJob.Patch)
 	}
 	if fixPrompt == "" {

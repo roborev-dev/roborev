@@ -3781,7 +3781,12 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 		if pfErr != nil {
 			return tuiApplyPatchResultMsg{jobID: jobID, err: pfErr}
 		}
-		if dirty := dirtyPatchFiles(jobDetail.RepoPath, patchedFiles); len(dirty) > 0 {
+		dirty, dirtyErr := dirtyPatchFiles(jobDetail.RepoPath, patchedFiles)
+		if dirtyErr != nil {
+			return tuiApplyPatchResultMsg{jobID: jobID,
+				err: fmt.Errorf("checking dirty files: %w", dirtyErr)}
+		}
+		if len(dirty) > 0 {
 			return tuiApplyPatchResultMsg{jobID: jobID,
 				err: fmt.Errorf("uncommitted changes in patch files: %s — stash or commit first", strings.Join(dirty, ", "))}
 		}
@@ -3840,6 +3845,7 @@ func commitPatch(repoPath, patch, message string) error {
 	}
 	args := append([]string{"-C", repoPath, "add", "--"}, files...)
 	addCmd := exec.Command("git", args...)
+	addCmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, out)
 	}
@@ -3848,6 +3854,7 @@ func commitPatch(repoPath, patch, message string) error {
 		files...,
 	)
 	commitCmd := exec.Command("git", commitArgs...)
+	commitCmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %w: %s", err, out)
 	}
@@ -3855,12 +3862,12 @@ func commitPatch(repoPath, patch, message string) error {
 }
 
 // dirtyPatchFiles returns the subset of files that have uncommitted changes.
-func dirtyPatchFiles(repoPath string, files []string) []string {
+func dirtyPatchFiles(repoPath string, files []string) ([]string, error) {
 	// git diff --name-only shows unstaged changes; --cached shows staged
 	cmd := exec.Command("git", "-C", repoPath, "diff", "--name-only", "HEAD", "--")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("git diff: %w", err)
 	}
 	dirty := map[string]bool{}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
@@ -3874,7 +3881,7 @@ func dirtyPatchFiles(repoPath string, files []string) []string {
 			overlap = append(overlap, f)
 		}
 	}
-	return overlap
+	return overlap, nil
 }
 
 // patchFiles extracts the list of file paths touched by a unified diff.

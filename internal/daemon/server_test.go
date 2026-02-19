@@ -3600,6 +3600,76 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("stale job with wrong parent is rejected", func(t *testing.T) {
+		// Create a second review + fix in the SAME repo, linked to the other review
+		review2, _ := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "fix-val-def",
+			Agent:    "test",
+		})
+		db.ClaimJob("w3")
+		db.CompleteJob(review2.ID, "test", "prompt", "FAIL: other issues")
+
+		wrongParentFix, _ := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:      repo.ID,
+			CommitID:    commit.ID,
+			GitRef:      "fix-val-def",
+			Agent:       "test",
+			JobType:     storage.JobTypeFix,
+			ParentJobID: review2.ID,
+		})
+		// Complete it so it has terminal status + patch
+		db.ClaimJob("w4")
+		db.CompleteJob(wrongParentFix.ID, "test", "prompt", "done")
+		db.SaveJobPatch(wrongParentFix.ID, "--- a/f\n+++ b/f\n")
+
+		body := map[string]any{
+			"parent_job_id": reviewJob.ID,
+			"stale_job_id":  wrongParentFix.ID,
+		}
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix", body,
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400 for wrong-parent stale job, got %d: %s",
+				w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("stale job without patch is rejected", func(t *testing.T) {
+		// Create a fix job linked to reviewJob but with no patch
+		noPatchFix, _ := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:      repo.ID,
+			CommitID:    commit.ID,
+			GitRef:      "fix-val-abc",
+			Agent:       "test",
+			JobType:     storage.JobTypeFix,
+			ParentJobID: reviewJob.ID,
+		})
+		// Complete it (terminal status) but don't set a patch
+		db.ClaimJob("w5")
+		db.CompleteJob(noPatchFix.ID, "test", "prompt", "done but no diff")
+
+		body := map[string]any{
+			"parent_job_id": reviewJob.ID,
+			"stale_job_id":  noPatchFix.ID,
+		}
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix", body,
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400 for patchless stale job, got %d: %s",
+				w.Code, w.Body.String())
+		}
+	})
+
 	t.Run("stale job from different repo is rejected", func(t *testing.T) {
 		// Create a fix job in a different repo
 		repo2Dir := filepath.Join(tmpDir, "repo-fix-val-2")
