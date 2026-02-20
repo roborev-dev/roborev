@@ -197,12 +197,24 @@ func TestGenerate_CopilotAgent(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	if !strings.Contains(out, "GITHUB_TOKEN") {
-		t.Error("expected GITHUB_TOKEN for copilot")
-	}
 	if !strings.Contains(
 		out, "@github/copilot@latest") {
 		t.Error("expected copilot install command")
+	}
+
+	// GH_TOKEN should be present (hardcoded in template)
+	if !strings.Contains(out, "GH_TOKEN:") {
+		t.Error("expected GH_TOKEN in env block")
+	}
+
+	// There should be NO bare GITHUB_TOKEN: entry in the
+	// env block — copilot's token comes from the hardcoded
+	// GH_TOKEN line, not a separate secret.
+	envSection := extractEnvSection(out)
+	if strings.Contains(envSection, "GITHUB_TOKEN:") {
+		t.Error(
+			"env block should not contain bare " +
+				"GITHUB_TOKEN: entry for copilot")
 	}
 }
 
@@ -618,6 +630,33 @@ func TestAgentSecrets(t *testing.T) {
 				len(secrets))
 		}
 	})
+
+	t.Run("copilot alone produces empty list",
+		func(t *testing.T) {
+			secrets := AgentSecrets(
+				[]string{"copilot"})
+			if len(secrets) != 0 {
+				t.Fatalf(
+					"expected 0 secrets for copilot "+
+						"alone, got %d", len(secrets))
+			}
+		})
+
+	t.Run("copilot plus codex only codex secret",
+		func(t *testing.T) {
+			secrets := AgentSecrets(
+				[]string{"copilot", "codex"})
+			if len(secrets) != 1 {
+				t.Fatalf(
+					"expected 1 secret, got %d",
+					len(secrets))
+			}
+			if secrets[0].EnvVar != "OPENAI_API_KEY" {
+				t.Errorf(
+					"expected OPENAI_API_KEY, got %q",
+					secrets[0].EnvVar)
+			}
+		})
 }
 
 // extractEnvSection extracts the env: block from workflow YAML.

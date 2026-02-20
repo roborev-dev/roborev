@@ -599,6 +599,38 @@ func IsDefaultReviewType(rt string) bool {
 	return rt == "" || rt == "default" || rt == "general" || rt == "review"
 }
 
+// ValidateReviewTypes canonicalizes, validates, and deduplicates
+// a list of review type strings. Aliases ("general", "review")
+// are normalized to "default". Returns an error if any type is
+// empty or unrecognized.
+func ValidateReviewTypes(types []string) ([]string, error) {
+	validSpecial := map[string]bool{
+		"security": true,
+		"design":   true,
+	}
+	seen := make(map[string]bool, len(types))
+	canonical := make([]string, 0, len(types))
+	for _, rt := range types {
+		if rt == "" {
+			return nil, fmt.Errorf(
+				"invalid review_type %q "+
+					"(valid: default, security, design)", rt)
+		}
+		if IsDefaultReviewType(rt) {
+			rt = "default"
+		} else if !validSpecial[rt] {
+			return nil, fmt.Errorf(
+				"invalid review_type %q "+
+					"(valid: default, security, design)", rt)
+		}
+		if !seen[rt] {
+			seen[rt] = true
+			canonical = append(canonical, rt)
+		}
+	}
+	return canonical, nil
+}
+
 // NormalizeReasoning validates and normalizes a reasoning level string.
 // Returns the canonical form (thorough, standard, fast) or an error if invalid.
 // Returns empty string (no error) for empty input.

@@ -475,14 +475,17 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate and normalize review_type
-	if config.IsDefaultReviewType(req.ReviewType) {
+	// Validate and normalize review_type (empty means "default")
+	if req.ReviewType == "" {
 		req.ReviewType = "default"
 	}
-	if req.ReviewType != "default" && req.ReviewType != "security" && req.ReviewType != "design" {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid review_type %q (valid: default, security, design)", req.ReviewType))
+	canonical, err := config.ValidateReviewTypes(
+		[]string{req.ReviewType})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	req.ReviewType = canonical[0]
 
 	// Get the working directory root for git commands (may be a worktree)
 	// This is needed to resolve refs like HEAD correctly in the worktree context

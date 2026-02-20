@@ -42,6 +42,30 @@ func TestCIReviewCmd_Help(t *testing.T) {
 	}
 }
 
+func TestCIReviewCmd_InvalidReviewType(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	cmd := ciCmd()
+	cmd.SetArgs([]string{
+		"review",
+		"--ref", "abc123",
+		"--review-types", "bogus",
+	})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid review type")
+	}
+	if !strings.Contains(
+		err.Error(), "invalid review_type") {
+		t.Errorf(
+			"error should mention invalid review_type, "+
+				"got: %v", err)
+	}
+}
+
 func TestCIReviewCmd_RequiresRef(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows")

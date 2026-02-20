@@ -1770,3 +1770,77 @@ func TestLoadRepoConfigFromRef(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateReviewTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []string
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:  "valid types pass through",
+			input: []string{"default", "security", "design"},
+			want:  []string{"default", "security", "design"},
+		},
+		{
+			name:  "alias review canonicalizes",
+			input: []string{"review"},
+			want:  []string{"default"},
+		},
+		{
+			name:  "alias general canonicalizes",
+			input: []string{"general"},
+			want:  []string{"default"},
+		},
+		{
+			name:  "duplicates removed",
+			input: []string{"default", "review", "general"},
+			want:  []string{"default"},
+		},
+		{
+			name:  "mixed valid with dedup",
+			input: []string{"security", "review", "security"},
+			want:  []string{"security", "default"},
+		},
+		{
+			name:    "invalid type returns error",
+			input:   []string{"typo"},
+			wantErr: true,
+		},
+		{
+			name:    "empty string returns error",
+			input:   []string{""},
+			wantErr: true,
+		},
+		{
+			name:    "invalid among valid",
+			input:   []string{"security", "bogus"},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ValidateReviewTypes(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf(
+						"got[%d] = %q, want %q",
+						i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}

@@ -150,11 +150,16 @@ func buildAgentInfos(agents []string) []AgentInfo {
 }
 
 // envEntries deduplicates agent infos by env var so the env
-// block doesn't repeat the same variable.
+// block doesn't repeat the same variable. GITHUB_TOKEN is
+// skipped because the workflow template already provides it
+// via the hardcoded GH_TOKEN line.
 func envEntries(infos []AgentInfo) []AgentInfo {
 	seen := make(map[string]bool)
 	var entries []AgentInfo
 	for _, info := range infos {
+		if info.EnvVar == "GITHUB_TOKEN" {
+			continue
+		}
 		if seen[info.EnvVar] {
 			continue
 		}

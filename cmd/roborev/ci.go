@@ -112,9 +112,19 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 				"run this from inside a git repo")
 	}
 
-	// Load configs
-	globalCfg, _ := config.LoadGlobal()
-	repoCfg, _ := config.LoadRepoConfig(root)
+	// Load configs (warn on error, don't fail)
+	globalCfg, err := config.LoadGlobal()
+	if err != nil {
+		log.Printf(
+			"ci review: load global config: %v "+
+				"(using defaults)", err)
+	}
+	repoCfg, err := config.LoadRepoConfig(root)
+	if err != nil {
+		log.Printf(
+			"ci review: load repo config: %v "+
+				"(using defaults)", err)
+	}
 
 	// Resolve git ref
 	gitRef := opts.ref
@@ -142,6 +152,11 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	if len(reviewTypes) == 0 {
 		return fmt.Errorf("no review types configured " +
 			"(check --review-types flag or config)")
+	}
+	reviewTypes, err = config.ValidateReviewTypes(
+		reviewTypes)
+	if err != nil {
+		return err
 	}
 
 	// Resolve reasoning
