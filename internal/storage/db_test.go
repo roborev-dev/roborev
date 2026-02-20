@@ -1607,11 +1607,18 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 
 	// Verify the table name is quoted in sqlite_master
 	var tableSql string
-	rawDB.QueryRow(
+	if err := rawDB.QueryRow(
 		`SELECT sql FROM sqlite_master WHERE type='table' AND name='review_jobs'`,
-	).Scan(&tableSql)
+	).Scan(&tableSql); err != nil {
+		rawDB.Close()
+		t.Fatalf("Failed to read table schema: %v", err)
+	}
 	if !strings.Contains(tableSql, `"review_jobs"`) {
-		t.Fatalf("Expected quoted table name, got: %s", tableSql[:60])
+		rawDB.Close()
+		t.Fatalf(
+			"Expected quoted table name, got: %s",
+			tableSql[:min(len(tableSql), 80)],
+		)
 	}
 
 	// Insert valid data
@@ -1677,6 +1684,109 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	db.QueryRow(`SELECT count(*) FROM review_jobs WHERE id = 2`).Scan(&count)
 	if count != 1 {
 		t.Errorf("Orphaned row was lost during migration")
+	}
+}
+
+func TestMigrationCleansUpStaleTemp(t *testing.T) {
+	// If a prior migration attempt failed and left review_jobs_new
+	// behind, the next attempt should clean it up and succeed.
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "stale.db")
+
+	rawDB, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("Failed to open raw DB: %v", err)
+	}
+
+	_, err = rawDB.Exec(`
+		CREATE TABLE repos (
+			id INTEGER PRIMARY KEY,
+			root_path TEXT UNIQUE NOT NULL,
+			name TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+		CREATE TABLE commits (
+			id INTEGER PRIMARY KEY,
+			repo_id INTEGER NOT NULL REFERENCES repos(id),
+			sha TEXT NOT NULL,
+			author TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+		CREATE TABLE reviews (
+			id INTEGER PRIMARY KEY,
+			job_id INTEGER UNIQUE NOT NULL,
+			agent TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			output TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			addressed INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE TABLE responses (
+			id INTEGER PRIMARY KEY,
+			commit_id INTEGER REFERENCES commits(id),
+			responder TEXT NOT NULL,
+			response TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+		CREATE TABLE review_jobs_temp (
+			id INTEGER PRIMARY KEY,
+			repo_id INTEGER NOT NULL REFERENCES repos(id),
+			commit_id INTEGER REFERENCES commits(id),
+			git_ref TEXT NOT NULL,
+			branch TEXT,
+			agent TEXT NOT NULL DEFAULT 'codex',
+			model TEXT,
+			reasoning TEXT NOT NULL DEFAULT 'thorough',
+			status TEXT NOT NULL CHECK(status IN ('queued','running','done','failed','canceled')) DEFAULT 'queued',
+			enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
+			started_at TEXT,
+			finished_at TEXT,
+			worker_id TEXT,
+			error TEXT,
+			prompt TEXT,
+			retry_count INTEGER NOT NULL DEFAULT 0,
+			diff_content TEXT,
+			agentic INTEGER NOT NULL DEFAULT 0,
+			uuid TEXT,
+			source_machine_id TEXT,
+			updated_at TEXT,
+			synced_at TEXT,
+			output_prefix TEXT,
+			job_type TEXT NOT NULL DEFAULT 'review',
+			review_type TEXT NOT NULL DEFAULT '',
+			patch_id TEXT
+		);
+		ALTER TABLE review_jobs_temp RENAME TO review_jobs;
+		CREATE INDEX idx_review_jobs_status ON review_jobs(status);
+
+		-- Simulate stale temp table from prior failed migration
+		CREATE TABLE review_jobs_new (id INTEGER PRIMARY KEY);
+
+		INSERT INTO repos (id, root_path, name)
+			VALUES (1, '/tmp/test', 'test');
+		INSERT INTO review_jobs (id, repo_id, git_ref, agent, status)
+			VALUES (1, 1, 'abc', 'codex', 'done');
+	`)
+	if err != nil {
+		rawDB.Close()
+		t.Fatalf("Failed to create schema: %v", err)
+	}
+	rawDB.Close()
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() failed with stale temp table: %v", err)
+	}
+	defer db.Close()
+
+	// Verify applied works
+	_, err = db.Exec(
+		`UPDATE review_jobs SET status = 'applied' WHERE id = 1`,
+	)
+	if err != nil {
+		t.Fatalf("Setting applied status failed: %v", err)
 	}
 }
 
