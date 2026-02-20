@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
@@ -182,13 +183,13 @@ func assertContainsAll(t *testing.T, s string, wantLabel string, subs ...string)
 }
 
 func TestBuildSynthesisPrompt(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
-		{JobID: 2, Agent: "gemini", ReviewType: "review", Output: "Consider error handling in foo.go:42", Status: "done"},
-		{JobID: 3, Agent: "codex", ReviewType: "review", Status: "failed", Error: "timeout"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
+		{Agent: "gemini", ReviewType: "review", Output: "Consider error handling in foo.go:42", Status: "done"},
+		{Agent: "codex", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	prompt := buildSynthesisPrompt(reviews, "")
+	prompt := review.BuildSynthesisPrompt(reviews, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
@@ -203,12 +204,12 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 }
 
 func TestFormatRawBatchComment(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Output: "Finding A", Status: "done"},
-		{JobID: 2, Agent: "gemini", ReviewType: "review", Status: "failed", Error: "timeout"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Output: "Finding A", Status: "done"},
+		{Agent: "gemini", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	comment := formatRawBatchComment(reviews, "abc123def456")
+	comment := review.FormatRawBatchComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Combined Review (`abc123de`)",
@@ -217,18 +218,18 @@ func TestFormatRawBatchComment(t *testing.T) {
 		"Agent: codex | Type: security | Status: done",
 		"Finding A",
 		"Agent: gemini | Type: review | Status: failed",
-		"**Error:** Review failed. Check daemon logs for details.",
+		"**Error:** Review failed. Check CI logs for details.",
 	)
 }
 
 func TestFormatSynthesizedComment(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Status: "done"},
-		{JobID: 2, Agent: "gemini", ReviewType: "review", Status: "done"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Status: "done"},
+		{Agent: "gemini", ReviewType: "review", Status: "done"},
 	}
 
 	output := "All clean. No critical findings."
-	comment := formatSynthesizedComment(output, reviews, "abc123def456")
+	comment := review.FormatSynthesizedComment(output, reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Combined Review (`abc123de`)",
@@ -242,19 +243,19 @@ func TestFormatSynthesizedComment(t *testing.T) {
 }
 
 func TestFormatAllFailedComment(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Status: "failed", Error: "timeout"},
-		{JobID: 2, Agent: "gemini", ReviewType: "review", Status: "failed", Error: "api error"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Status: "failed", Error: "timeout"},
+		{Agent: "gemini", ReviewType: "review", Status: "failed", Error: "api error"},
 	}
 
-	comment := formatAllFailedComment(reviews, "abc123def456")
+	comment := review.FormatAllFailedComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Review Failed (`abc123de`)",
 		"All review jobs in this batch failed",
 		"**codex** (security): failed",
 		"**gemini** (review): failed",
-		"Check daemon logs for error details.",
+		"Check CI logs for error details.",
 	)
 }
 
@@ -380,11 +381,11 @@ func TestGhEnvForRepo_CaseInsensitiveOwner(t *testing.T) {
 }
 
 func TestFormatRawBatchComment_Truncation(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Output: strings.Repeat("x", 20000), Status: "done"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Output: strings.Repeat("x", 20000), Status: "done"},
 	}
 
-	comment := formatRawBatchComment(reviews, "abc123def456")
+	comment := review.FormatRawBatchComment(reviews, "abc123def456")
 	if !strings.Contains(comment, "...(truncated)") {
 		t.Error("expected truncation for large output")
 	}
@@ -1128,11 +1129,11 @@ func TestCIPollerFindLocalRepo_PartialIdentityAmbiguity(t *testing.T) {
 
 func TestBuildSynthesisPrompt_TruncatesLargeOutputs(t *testing.T) {
 	largeOutput := strings.Repeat("x", 20000)
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Output: largeOutput, Status: "done"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Output: largeOutput, Status: "done"},
 	}
 
-	prompt := buildSynthesisPrompt(reviews, "")
+	prompt := review.BuildSynthesisPrompt(reviews, "")
 
 	if len(prompt) > 16500 { // 15k truncated + headers/instructions
 		t.Errorf("synthesis prompt too large (%d chars), expected truncation", len(prompt))
@@ -1182,10 +1183,10 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 }
 
 func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
 	}
-	prompt := buildSynthesisPrompt(reviews, "")
+	prompt := review.BuildSynthesisPrompt(reviews, "")
 	if strings.Contains(prompt, "secret-token-abc123") {
 		t.Error("raw error text should not appear in synthesis prompt")
 	}
@@ -1195,26 +1196,26 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 }
 
 func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
 	}
 
 	t.Run("no filter when empty", func(t *testing.T) {
-		prompt := buildSynthesisPrompt(reviews, "")
+		prompt := review.BuildSynthesisPrompt(reviews, "")
 		if strings.Contains(prompt, "Omit findings below") {
 			t.Error("expected no severity filter instruction when minSeverity is empty")
 		}
 	})
 
 	t.Run("no filter when low", func(t *testing.T) {
-		prompt := buildSynthesisPrompt(reviews, "low")
+		prompt := review.BuildSynthesisPrompt(reviews, "low")
 		if strings.Contains(prompt, "Omit findings below") {
 			t.Error("expected no severity filter instruction when minSeverity is low")
 		}
 	})
 
 	t.Run("filter for medium", func(t *testing.T) {
-		prompt := buildSynthesisPrompt(reviews, "medium")
+		prompt := review.BuildSynthesisPrompt(reviews, "medium")
 		assertContainsAll(t, prompt, "prompt",
 			"Omit findings below medium severity",
 			"Only include Medium, High, and Critical findings.",
@@ -1222,7 +1223,7 @@ func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
 	})
 
 	t.Run("filter for high", func(t *testing.T) {
-		prompt := buildSynthesisPrompt(reviews, "high")
+		prompt := review.BuildSynthesisPrompt(reviews, "high")
 		assertContainsAll(t, prompt, "prompt",
 			"Omit findings below high severity",
 			"Only include High and Critical findings.",
@@ -1230,7 +1231,7 @@ func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
 	})
 
 	t.Run("filter for critical", func(t *testing.T) {
-		prompt := buildSynthesisPrompt(reviews, "critical")
+		prompt := review.BuildSynthesisPrompt(reviews, "critical")
 		assertContainsAll(t, prompt, "prompt",
 			"Omit findings below critical severity",
 			"Only include Critical findings.",
@@ -1556,7 +1557,7 @@ func TestCIPollerPostBatchResults_QuotaSkippedNotFailure(t *testing.T) {
 	// One success, one quota-skipped
 	batch, jobs := h.seedBatchWithJobs(t, 70, "quota-sha",
 		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "No issues found."},
-		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "gemini quota exhausted"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "gemini quota exhausted"},
 	)
 
 	capturedStatuses := h.CaptureCommitStatuses()
@@ -1583,7 +1584,7 @@ func TestCIPollerPostBatchResults_AllQuotaSkippedIsSuccess(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 
 	batch, jobs := h.seedBatchWithJobs(t, 71, "all-quota-sha",
-		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "gemini quota exhausted"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "gemini quota exhausted"},
 	)
 
 	capturedStatuses := h.CaptureCommitStatuses()
@@ -1608,7 +1609,7 @@ func TestCIPollerPostBatchResults_MixedQuotaAndRealFailure(t *testing.T) {
 
 	batch, jobs := h.seedBatchWithJobs(t, 72, "mixed-quota-sha",
 		jobSpec{Agent: "codex", ReviewType: "security", Status: "failed", Error: "timeout"},
-		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "quota exhausted"},
+		jobSpec{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	)
 
 	capturedStatuses := h.CaptureCommitStatuses()
@@ -1628,11 +1629,11 @@ func TestCIPollerPostBatchResults_MixedQuotaAndRealFailure(t *testing.T) {
 }
 
 func TestFormatAllFailedComment_AllQuotaSkipped(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "quota exhausted"},
+	reviews := []review.ReviewResult{
+		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	comment := formatAllFailedComment(reviews, "abc123def456")
+	comment := review.FormatAllFailedComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Review Skipped",
@@ -1645,12 +1646,12 @@ func TestFormatAllFailedComment_AllQuotaSkipped(t *testing.T) {
 }
 
 func TestFormatRawBatchComment_QuotaSkippedNote(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Output: "Finding A", Status: "done"},
-		{JobID: 2, Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "quota exhausted"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Output: "Finding A", Status: "done"},
+		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	comment := formatRawBatchComment(reviews, "abc123def456")
+	comment := review.FormatRawBatchComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
 		"skipped (quota)",
@@ -1659,12 +1660,12 @@ func TestFormatRawBatchComment_QuotaSkippedNote(t *testing.T) {
 }
 
 func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
-	reviews := []storage.BatchReviewResult{
-		{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues.", Status: "done"},
-		{JobID: 2, Agent: "gemini", ReviewType: "security", Status: "failed", Error: quotaErrorPrefix + "quota exhausted"},
+	reviews := []review.ReviewResult{
+		{Agent: "codex", ReviewType: "security", Output: "No issues.", Status: "done"},
+		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	prompt := buildSynthesisPrompt(reviews, "")
+	prompt := review.BuildSynthesisPrompt(reviews, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"[SKIPPED]",

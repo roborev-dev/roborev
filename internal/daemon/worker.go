@@ -12,6 +12,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/prompt"
+	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/worktree"
 )
@@ -604,11 +605,6 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 	})
 }
 
-// quotaErrorPrefix is prepended to error messages when a job is failed
-// due to agent quota exhaustion. CI poller checks for this prefix to
-// distinguish quota failures from real failures.
-const quotaErrorPrefix = "quota: "
-
 // defaultCooldown is the fallback duration when the error message doesn't
 // contain a parseable "reset after" token.
 const defaultCooldown = 30 * time.Minute
@@ -731,7 +727,7 @@ func (wp *WorkerPool) failoverOrFail(
 	}
 
 	// No backup or failover failed — fail with quota prefix
-	quotaMsg := quotaErrorPrefix + errorMsg
+	quotaMsg := review.QuotaErrorPrefix + errorMsg
 	if updated, err := wp.db.FailJob(job.ID, workerID, quotaMsg); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {

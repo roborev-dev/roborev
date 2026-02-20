@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
@@ -555,8 +556,8 @@ func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	if updated.Status != storage.JobStatusFailed {
 		t.Errorf("status=%q, want failed", updated.Status)
 	}
-	if !strings.HasPrefix(updated.Error, quotaErrorPrefix) {
-		t.Errorf("error=%q, want prefix %q", updated.Error, quotaErrorPrefix)
+	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
+		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
 
 	// Retry count should be 0 — no retries attempted
@@ -579,8 +580,8 @@ func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 		if ev.Type != "review.failed" {
 			t.Errorf("event type=%q, want review.failed", ev.Type)
 		}
-		if !strings.HasPrefix(ev.Error, quotaErrorPrefix) {
-			t.Errorf("event error=%q, want prefix %q", ev.Error, quotaErrorPrefix)
+		if !strings.HasPrefix(ev.Error, review.QuotaErrorPrefix) {
+			t.Errorf("event error=%q, want prefix %q", ev.Error, review.QuotaErrorPrefix)
 		}
 	case <-time.After(time.Second):
 		t.Error("no broadcast event received")
@@ -602,8 +603,8 @@ func TestFailOrRetryInner_QuotaExhaustedVariant(t *testing.T) {
 	if updated.Status != storage.JobStatusFailed {
 		t.Errorf("status=%q, want failed", updated.Status)
 	}
-	if !strings.HasPrefix(updated.Error, quotaErrorPrefix) {
-		t.Errorf("error=%q, want prefix %q", updated.Error, quotaErrorPrefix)
+	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
+		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
 	retryCount, _ := tc.DB.GetJobRetryCount(job.ID)
 	if retryCount != 0 {
@@ -702,8 +703,8 @@ func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
 	if updated.Status != storage.JobStatusFailed {
 		t.Errorf("status=%q, want failed", updated.Status)
 	}
-	if !strings.HasPrefix(updated.Error, quotaErrorPrefix) {
-		t.Errorf("error=%q, want prefix %q", updated.Error, quotaErrorPrefix)
+	if !strings.HasPrefix(updated.Error, review.QuotaErrorPrefix) {
+		t.Errorf("error=%q, want prefix %q", updated.Error, review.QuotaErrorPrefix)
 	}
 }
 
