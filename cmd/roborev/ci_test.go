@@ -212,6 +212,26 @@ func TestResolveReviewTypes(t *testing.T) {
 	})
 }
 
+func TestResolveAgentList_EmptyFlag(t *testing.T) {
+	// Comma-only flag should resolve to empty list.
+	agents := resolveAgentList(",", nil, nil)
+	if len(agents) != 0 {
+		t.Errorf(
+			"resolveAgentList(\",\") = %v, want empty",
+			agents)
+	}
+}
+
+func TestResolveReviewTypes_EmptyFlag(t *testing.T) {
+	// Whitespace-comma flag should resolve to empty list.
+	types := resolveReviewTypes(" , ", nil, nil)
+	if len(types) != 0 {
+		t.Errorf(
+			"resolveReviewTypes(\" , \") = %v, want empty",
+			types)
+	}
+}
+
 func TestSplitTrimmed(t *testing.T) {
 	tests := []struct {
 		in   string

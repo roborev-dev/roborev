@@ -310,9 +310,9 @@ func TestGenerate_SupplyChainHardening(t *testing.T) {
 			"should not use --ignore-missing")
 	}
 	if !strings.Contains(
-		out, `grep "${ARCHIVE}" checksums.txt`) {
+		out, `grep -F "  ${ARCHIVE}" checksums.txt`) {
 		t.Error(
-			"expected grep to extract matching checksum")
+			"expected grep -F to extract matching checksum")
 	}
 }
 
@@ -334,6 +334,12 @@ func TestGenerate_InstallPath(t *testing.T) {
 	if !strings.Contains(out, "$GITHUB_PATH") {
 		t.Error(
 			"expected .local/bin added to GITHUB_PATH")
+	}
+	if !strings.Contains(
+		out, `"$HOME/.local/bin/roborev" version`) {
+		t.Error(
+			"expected explicit path for roborev version check " +
+				"(GITHUB_PATH not available in same step)")
 	}
 }
 

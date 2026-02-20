@@ -1678,6 +1678,47 @@ func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
 	}
 }
 
+func TestToReviewResults(t *testing.T) {
+	brs := []storage.BatchReviewResult{
+		{
+			JobID:      1,
+			Agent:      "codex",
+			ReviewType: "security",
+			Output:     "All clear.",
+			Status:     "done",
+			Error:      "",
+		},
+		{
+			JobID:      2,
+			Agent:      "gemini",
+			ReviewType: "review",
+			Output:     "",
+			Status:     "failed",
+			Error:      review.QuotaErrorPrefix + "limit reached",
+		},
+	}
+
+	rrs := toReviewResults(brs)
+	if len(rrs) != 2 {
+		t.Fatalf("len=%d, want 2", len(rrs))
+	}
+
+	// First result
+	if rrs[0].Agent != "codex" || rrs[0].Status != "done" ||
+		rrs[0].Output != "All clear." {
+		t.Errorf("rrs[0] mismatch: %+v", rrs[0])
+	}
+
+	// Second result — quota failure should be detected
+	if !review.IsQuotaFailure(rrs[1]) {
+		t.Error(
+			"expected quota failure for converted result")
+	}
+	if rrs[1].Agent != "gemini" {
+		t.Errorf("rrs[1].Agent=%q, want gemini", rrs[1].Agent)
+	}
+}
+
 func TestCIPollerPostBatchResults_SetsErrorStatusOnCommentPostFailure(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	batch, _ := h.seedBatchWithJobs(t, 63, "post-fail-sha", jobSpec{

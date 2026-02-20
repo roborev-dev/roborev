@@ -131,10 +131,18 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Resolve agents
 	agents := resolveAgentList(
 		opts.agents, repoCfg, globalCfg)
+	if len(agents) == 0 {
+		return fmt.Errorf("no agents configured " +
+			"(check --agent flag or config)")
+	}
 
 	// Resolve review types
 	reviewTypes := resolveReviewTypes(
 		opts.reviewTypes, repoCfg, globalCfg)
+	if len(reviewTypes) == 0 {
+		return fmt.Errorf("no review types configured " +
+			"(check --review-types flag or config)")
+	}
 
 	// Resolve reasoning
 	reasoningLevel := resolveCIReasoning(
