@@ -547,6 +547,8 @@ func initCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "default agent (codex, claude-code, gemini, copilot, opencode, cursor)")
 	cmd.Flags().BoolVar(&noDaemon, "no-daemon", false, "skip auto-starting daemon (useful with systemd/launchd)")
 
+	cmd.AddCommand(ghActionCmd())
+
 	return cmd
 }
 
