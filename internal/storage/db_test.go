@@ -1781,12 +1781,43 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Verify applied works
-	_, err = db.Exec(
+	// Verify stale temp table was cleaned up
+	var tempCount int
+	err = db.QueryRow(
+		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='review_jobs_new'`,
+	).Scan(&tempCount)
+	if err != nil {
+		t.Fatalf("Failed to check for stale temp table: %v", err)
+	}
+	if tempCount != 0 {
+		t.Error("review_jobs_new should not exist after migration")
+	}
+
+	// Verify applied works and row was preserved
+	res, err := db.Exec(
 		`UPDATE review_jobs SET status = 'applied' WHERE id = 1`,
 	)
 	if err != nil {
 		t.Fatalf("Setting applied status failed: %v", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		t.Fatalf("RowsAffected: %v", err)
+	}
+	if affected != 1 {
+		t.Errorf("Expected 1 row affected, got %d", affected)
+	}
+
+	// Confirm status was actually set
+	var status string
+	err = db.QueryRow(
+		`SELECT status FROM review_jobs WHERE id = 1`,
+	).Scan(&status)
+	if err != nil {
+		t.Fatalf("Failed to read back status: %v", err)
+	}
+	if status != "applied" {
+		t.Errorf("Expected status 'applied', got %q", status)
 	}
 }
 
