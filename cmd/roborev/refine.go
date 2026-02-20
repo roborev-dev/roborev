@@ -508,7 +508,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		branchBefore := git.GetCurrentBranch(repoPath)
 
 		// Create temp worktree to isolate agent from user's working tree
-		wt, err := worktree.Create(repoPath)
+		wt, err := worktree.Create(repoPath, "HEAD")
 		if err != nil {
 			return fmt.Errorf("create worktree: %w", err)
 		}

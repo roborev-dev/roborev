@@ -170,7 +170,7 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 	// before the next iteration. Verify the directory is removed each time.
 	var prevPath string
 	for i := range 3 {
-		wt, err := worktree.Create(repo.Root)
+		wt, err := worktree.Create(repo.Root, "HEAD")
 		if err != nil {
 			t.Fatalf("iteration %d: worktree.Create failed: %v", i, err)
 		}
@@ -223,7 +223,7 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 	}
 
 	// worktree.Create should succeed because it suppresses hooks
-	wt, err := worktree.Create(repo.Root)
+	wt, err := worktree.Create(repo.Root, "HEAD")
 	if err != nil {
 		t.Fatalf("worktree.Create should succeed with failing hook: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 	runMainGit("-c", "protocol.file.allow=always", "submodule", "add", submoduleRepo, "deps/sub")
 	runMainGit("commit", "-m", "add submodule")
 
-	wt, err := worktree.Create(mainRepo)
+	wt, err := worktree.Create(mainRepo, "HEAD")
 	if err != nil {
 		t.Fatalf("worktree.Create failed: %v", err)
 	}

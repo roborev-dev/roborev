@@ -27,8 +27,9 @@ func (w *Worktree) Close() {
 	_ = os.RemoveAll(w.Dir)
 }
 
-// Create creates a temporary git worktree detached at HEAD for isolated agent work.
-func Create(repoPath string) (*Worktree, error) {
+// Create creates a temporary git worktree detached at the given ref
+// for isolated agent work. Pass "HEAD" for the current checkout.
+func Create(repoPath, ref string) (*Worktree, error) {
 	worktreeDir, err := os.MkdirTemp("", "roborev-worktree-")
 	if err != nil {
 		return nil, err
@@ -36,7 +37,7 @@ func Create(repoPath string) (*Worktree, error) {
 
 	// Create the worktree (without --recurse-submodules for compatibility with older git).
 	// Suppress hooks via core.hooksPath=<null> — user hooks shouldn't run in internal worktrees.
-	cmd := exec.Command("git", "-C", repoPath, "-c", "core.hooksPath="+os.DevNull, "worktree", "add", "--detach", worktreeDir, "HEAD")
+	cmd := exec.Command("git", "-C", repoPath, "-c", "core.hooksPath="+os.DevNull, "worktree", "add", "--detach", worktreeDir, ref)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.RemoveAll(worktreeDir)
 		return nil, fmt.Errorf("git worktree add: %w: %s", err, out)

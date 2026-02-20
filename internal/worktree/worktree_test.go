@@ -41,7 +41,7 @@ func setupGitRepo(t *testing.T) string {
 func TestCreateAndClose(t *testing.T) {
 	repo := setupGitRepo(t)
 
-	wt, err := Create(repo)
+	wt, err := Create(repo, "HEAD")
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestCreateAndClose(t *testing.T) {
 func TestCapturePatchNoChanges(t *testing.T) {
 	repo := setupGitRepo(t)
 
-	wt, err := Create(repo)
+	wt, err := Create(repo, "HEAD")
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestCapturePatchNoChanges(t *testing.T) {
 func TestCapturePatchWithChanges(t *testing.T) {
 	repo := setupGitRepo(t)
 
-	wt, err := Create(repo)
+	wt, err := Create(repo, "HEAD")
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestCapturePatchWithChanges(t *testing.T) {
 func TestCapturePatchCommittedChanges(t *testing.T) {
 	repo := setupGitRepo(t)
 
-	wt, err := Create(repo)
+	wt, err := Create(repo, "HEAD")
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestApplyPatchEmpty(t *testing.T) {
 func TestApplyPatchRoundTrip(t *testing.T) {
 	repo := setupGitRepo(t)
 
-	wt, err := Create(repo)
+	wt, err := Create(repo, "HEAD")
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestApplyPatchRoundTrip(t *testing.T) {
 func TestCheckPatchClean(t *testing.T) {
 	repo := setupGitRepo(t)
 
-	wt, err := Create(repo)
+	wt, err := Create(repo, "HEAD")
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCheckPatchConflict(t *testing.T) {
 	repo := setupGitRepo(t)
 
 	// Create a patch that modifies hello.txt
-	wt, err := Create(repo)
+	wt, err := Create(repo, "HEAD")
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestCheckPatchConflict(t *testing.T) {
 func TestApplyPatchConflictFails(t *testing.T) {
 	repo := setupGitRepo(t)
 
-	wt, err := Create(repo)
+	wt, err := Create(repo, "HEAD")
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}

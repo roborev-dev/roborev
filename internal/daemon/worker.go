@@ -379,7 +379,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	reviewRepoPath := job.RepoPath
 	var fixWorktree *worktree.Worktree
 	if job.IsFixJob() {
-		wt, wtErr := worktree.Create(job.RepoPath)
+		wt, wtErr := worktree.Create(job.RepoPath, job.GitRef)
 		if wtErr != nil {
 			log.Printf("[%s] Error creating worktree for fix job %d: %v", workerID, job.ID, wtErr)
 			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("create worktree: %v", wtErr))
