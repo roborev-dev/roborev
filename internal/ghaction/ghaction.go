@@ -1,4 +1,5 @@
-// Package ghaction generates GitHub Actions workflow files for roborev CI reviews.
+// Package ghaction generates GitHub Actions workflow files
+// for roborev CI reviews.
 package ghaction
 
 import (
@@ -14,68 +15,62 @@ import (
 
 // Allowed values for validation (prevent injection).
 var (
-	allowedAgents     = []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "droid"}
-	allowedReasoning  = []string{"thorough", "standard", "fast"}
-	allowedTypes      = []string{"security", "design", "default", "review", "general"}
-	safeIdentifierRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	safeVersionRE     = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$`)
-	safeModelStringRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./-]*$`)
+	allowedAgents = []string{
+		"codex", "claude-code", "gemini",
+		"copilot", "opencode", "cursor", "droid",
+	}
+	safeVersionRE = regexp.MustCompile(
+		`^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$`)
 )
 
-// WorkflowConfig holds the parameters for generating a GitHub Actions workflow.
+// WorkflowConfig holds the parameters for generating a GitHub
+// Actions workflow.
 type WorkflowConfig struct {
-	// Agent is the AI agent to use (e.g., "codex", "claude-code", "gemini").
-	Agent string
+	// Agents is the list of AI agents to use (e.g.,
+	// ["codex", "claude-code"]). Review types, reasoning,
+	// and other review parameters come from .roborev.toml
+	// at runtime.
+	Agents []string
 
-	// Model overrides the default model for the agent.
-	Model string
-
-	// ReviewTypes is the list of review types to run (e.g., ["security"]).
-	// Each type produces a separate review invocation.
-	ReviewTypes []string
-
-	// Reasoning is the reasoning level (thorough, standard, fast).
-	Reasoning string
-
-	// SecretName is the GitHub Actions secret name that holds the agent API key.
-	SecretName string
-
-	// RoborevVersion is the roborev release version to install. Empty means "latest".
+	// RoborevVersion is the roborev release version to
+	// install. Empty means "latest".
 	RoborevVersion string
 }
 
 // DefaultConfig returns a WorkflowConfig with sensible defaults.
 func DefaultConfig() WorkflowConfig {
 	return WorkflowConfig{
-		Agent:       "codex",
-		ReviewTypes: []string{"security"},
-		Reasoning:   "thorough",
-		SecretName:  "ROBOREV_API_KEY",
+		Agents: []string{"codex"},
 	}
 }
 
-// Validate checks all config fields against allowlists and safe patterns.
-// Returns an error describing the first invalid field found.
+// AgentInfo holds per-agent data for the workflow template.
+type AgentInfo struct {
+	Name       string // e.g., "codex"
+	EnvVar     string // e.g., "OPENAI_API_KEY"
+	SecretName string // e.g., "OPENAI_API_KEY"
+	InstallCmd string // e.g., "npm install -g @openai/codex@latest"
+}
+
+// Validate checks all config fields against allowlists and safe
+// patterns. Returns an error describing the first invalid field.
 func (c *WorkflowConfig) Validate() error {
-	if !contains(allowedAgents, c.Agent) {
-		return fmt.Errorf("invalid agent %q (valid: %s)", c.Agent, strings.Join(allowedAgents, ", "))
+	if len(c.Agents) == 0 {
+		return fmt.Errorf("at least one agent is required")
 	}
-	if !contains(allowedReasoning, c.Reasoning) {
-		return fmt.Errorf("invalid reasoning %q (valid: %s)", c.Reasoning, strings.Join(allowedReasoning, ", "))
-	}
-	for _, rt := range c.ReviewTypes {
-		if !contains(allowedTypes, rt) {
-			return fmt.Errorf("invalid review type %q (valid: %s)", rt, strings.Join(allowedTypes, ", "))
+	for _, ag := range c.Agents {
+		if !contains(allowedAgents, ag) {
+			return fmt.Errorf(
+				"invalid agent %q (valid: %s)",
+				ag, strings.Join(allowedAgents, ", "))
 		}
 	}
-	if !safeIdentifierRE.MatchString(c.SecretName) {
-		return fmt.Errorf("invalid secret name %q (must match %s)", c.SecretName, safeIdentifierRE.String())
-	}
-	if c.RoborevVersion != "" && !safeVersionRE.MatchString(c.RoborevVersion) {
-		return fmt.Errorf("invalid roborev version %q (expected semver like 0.33.1)", c.RoborevVersion)
-	}
-	if c.Model != "" && !safeModelStringRE.MatchString(c.Model) {
-		return fmt.Errorf("invalid model %q (must match %s)", c.Model, safeModelStringRE.String())
+	if c.RoborevVersion != "" &&
+		!safeVersionRE.MatchString(c.RoborevVersion) {
+		return fmt.Errorf(
+			"invalid roborev version %q "+
+				"(expected semver like 0.33.1)",
+			c.RoborevVersion)
 	}
 	return nil
 }
@@ -84,10 +79,10 @@ func contains(list []string, s string) bool {
 	return slices.Contains(list, s)
 }
 
-// agentEnvVar returns the environment variable name that the agent expects
-// for API authentication.
-func agentEnvVar(agent string) string {
-	switch agent {
+// AgentEnvVar returns the environment variable name that the
+// agent expects for API authentication.
+func AgentEnvVar(agentName string) string {
+	switch agentName {
 	case "claude-code":
 		return "ANTHROPIC_API_KEY"
 	case "gemini":
@@ -99,9 +94,10 @@ func agentEnvVar(agent string) string {
 	}
 }
 
-// agentInstallCmd returns the shell command(s) to install the given agent CLI.
-func agentInstallCmd(agent string) string {
-	switch agent {
+// AgentInstallCmd returns the shell command(s) to install the
+// given agent CLI.
+func AgentInstallCmd(agentName string) string {
+	switch agentName {
 	case "claude-code":
 		return "npm install -g @anthropic-ai/claude-code@latest"
 	case "gemini":
@@ -113,64 +109,82 @@ func agentInstallCmd(agent string) string {
 	case "opencode":
 		return "go install github.com/opencode-ai/opencode@latest"
 	case "cursor":
-		return "echo 'Cursor agent is not available in CI environments; choose a different agent'"
+		return "echo 'Cursor agent is not available in CI" +
+			" environments; choose a different agent'"
 	case "droid":
-		return "pip install droid-cli || echo 'Note: droid agent may require additional setup; see Factory documentation'"
+		return "pip install droid-cli || echo 'Note: droid" +
+			" agent may require additional setup; see" +
+			" Factory documentation'"
 	default:
 		return "echo 'Install your agent CLI manually'"
 	}
 }
 
-// Generate produces a GitHub Actions workflow YAML string from the given config.
+// AgentSecrets returns the deduped list of agent secret
+// requirements (by env var) for display in next-steps output.
+func AgentSecrets(agents []string) []AgentInfo {
+	return envEntries(buildAgentInfos(agents))
+}
+
+// buildAgentInfos deduplicates agents and builds AgentInfo
+// entries. Agents sharing the same env var are deduped so only
+// one secret entry appears in the workflow.
+func buildAgentInfos(agents []string) []AgentInfo {
+	seen := make(map[string]bool)
+	var infos []AgentInfo
+
+	for _, ag := range agents {
+		if seen[ag] {
+			continue
+		}
+		seen[ag] = true
+		envVar := AgentEnvVar(ag)
+		infos = append(infos, AgentInfo{
+			Name:       ag,
+			EnvVar:     envVar,
+			SecretName: envVar,
+			InstallCmd: AgentInstallCmd(ag),
+		})
+	}
+	return infos
+}
+
+// envEntries deduplicates agent infos by env var so the env
+// block doesn't repeat the same variable.
+func envEntries(infos []AgentInfo) []AgentInfo {
+	seen := make(map[string]bool)
+	var entries []AgentInfo
+	for _, info := range infos {
+		if seen[info.EnvVar] {
+			continue
+		}
+		seen[info.EnvVar] = true
+		entries = append(entries, info)
+	}
+	return entries
+}
+
+// Generate produces a GitHub Actions workflow YAML string from
+// the given config.
 func Generate(cfg WorkflowConfig) (string, error) {
-	// Apply defaults for empty fields
-	if cfg.Agent == "" {
-		cfg.Agent = "codex"
-	}
-	if len(cfg.ReviewTypes) == 0 {
-		cfg.ReviewTypes = []string{"security"}
-	}
-	if cfg.Reasoning == "" {
-		cfg.Reasoning = "thorough"
-	}
-	if cfg.SecretName == "" {
-		cfg.SecretName = "ROBOREV_API_KEY"
+	if len(cfg.Agents) == 0 {
+		cfg.Agents = []string{"codex"}
 	}
 
 	if err := cfg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Build review commands: one per review type (--type accepts a single value).
-	// Types "default", "review", and "general" are standard reviews (no --type flag).
-	var reviewCmds []string
-	for _, rt := range cfg.ReviewTypes {
-		cmd := "roborev review"
-		cmd += " --local"
-		cmd += " --agent " + cfg.Agent
-		cmd += " --reasoning " + cfg.Reasoning
-		if cfg.Model != "" {
-			cmd += " --model " + cfg.Model
-		}
-		if rt != "default" && rt != "review" && rt != "general" {
-			cmd += " --type " + rt
-		}
-		cmd += ` "${COMMIT}"`
-		reviewCmds = append(reviewCmds, cmd)
-	}
+	agentInfos := buildAgentInfos(cfg.Agents)
 
 	data := templateData{
-		Agent:           cfg.Agent,
-		Model:           cfg.Model,
-		Reasoning:       cfg.Reasoning,
-		SecretName:      cfg.SecretName,
-		AgentEnvVar:     agentEnvVar(cfg.Agent),
-		AgentInstallCmd: agentInstallCmd(cfg.Agent),
-		RoborevVersion:  cfg.RoborevVersion,
-		ReviewCommands:  reviewCmds,
+		Agents:         agentInfos,
+		EnvEntries:     envEntries(agentInfos),
+		RoborevVersion: cfg.RoborevVersion,
 	}
 
-	tmpl, err := template.New("workflow").Parse(workflowTemplate)
+	tmpl, err := template.New("workflow").Parse(
+		workflowTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
 	}
@@ -183,13 +197,20 @@ func Generate(cfg WorkflowConfig) (string, error) {
 	return buf.String(), nil
 }
 
-// WriteWorkflow generates the workflow and writes it to the given path.
-// Creates parent directories as needed. Returns an error if the file
-// already exists and force is false.
-func WriteWorkflow(cfg WorkflowConfig, outputPath string, force bool) error {
+// WriteWorkflow generates the workflow and writes it to the
+// given path. Creates parent directories as needed. Returns an
+// error if the file already exists and force is false.
+func WriteWorkflow(
+	cfg WorkflowConfig,
+	outputPath string,
+	force bool,
+) error {
 	if !force {
 		if _, err := os.Stat(outputPath); err == nil {
-			return fmt.Errorf("workflow file already exists: %s (use --force to overwrite)", outputPath)
+			return fmt.Errorf(
+				"workflow file already exists: %s "+
+					"(use --force to overwrite)",
+				outputPath)
 		}
 	}
 
@@ -200,10 +221,12 @@ func WriteWorkflow(cfg WorkflowConfig, outputPath string, force bool) error {
 
 	dir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create directory %s: %w", dir, err)
+		return fmt.Errorf(
+			"create directory %s: %w", dir, err)
 	}
 
-	if err := os.WriteFile(outputPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(
+		outputPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write workflow: %w", err)
 	}
 
@@ -211,28 +234,25 @@ func WriteWorkflow(cfg WorkflowConfig, outputPath string, force bool) error {
 }
 
 type templateData struct {
-	Agent           string
-	Model           string
-	Reasoning       string
-	SecretName      string
-	AgentEnvVar     string
-	AgentInstallCmd string
-	RoborevVersion  string
-	ReviewCommands  []string
+	Agents         []AgentInfo
+	EnvEntries     []AgentInfo
+	RoborevVersion string
 }
 
-// Pinned SHA for actions/checkout v4.2.2 — matches the pattern used in the
-// project's own .github/workflows/ci.yml for supply-chain hardening.
+// Pinned SHA for actions/checkout v6.0.2 — matches the pattern
+// used in the project's own .github/workflows/ci.yml for
+// supply-chain hardening.
 var workflowTemplate = `# roborev CI Review
 # Generated by: roborev init gh-action
 # Runs AI-powered code reviews on pull requests.
 #
 # Required setup:
-#   1. Add a repository secret named "{{ .SecretName }}" with your agent API key
-#   2. The secret is passed as {{ .AgentEnvVar }} to the review agent
+{{- range .EnvEntries }}
+#   - Add a repository secret named "{{ .SecretName }}" with your {{ .Name }} API key
+{{- end }}
 #
-# Customize review behavior by editing the flags below or adding a
-# .roborev.toml file to your repository root.
+# Review behavior (types, reasoning, severity) is configured in
+# .roborev.toml under the [ci] section.
 
 name: roborev
 
@@ -274,30 +294,24 @@ jobs:
 
       # TODO: Pin agent CLI versions for supply-chain safety.
       # Replace @latest with a specific version (e.g., @1.2.3).
-      - name: Install agent
-        run: {{ .AgentInstallCmd }}
+      - name: Install agents
+        run: |
+          set -euo pipefail
+          {{- range .Agents }}
+          {{ .InstallCmd }}
+          {{- end }}
 
       - name: Run review
         env:
-          {{ .AgentEnvVar }}: ${{"{{"}} secrets.{{ .SecretName }} {{"}}"}}
+          GH_TOKEN: ${{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
+          {{- range .EnvEntries }}
+          {{ .EnvVar }}: ${{"{{"}} secrets.{{ .SecretName }} {{"}}"}}
+          {{- end }}
         run: |
           set -euo pipefail
-          BASE_SHA=${{"{{"}} github.event.pull_request.base.sha {{"}}"}}
-          HEAD_SHA=${{"{{"}} github.event.pull_request.head.sha {{"}}"}}
-
-          for COMMIT in $(git rev-list --reverse "${BASE_SHA}..${HEAD_SHA}"); do
-            echo "::group::Reviewing ${COMMIT}"
-            {{- range .ReviewCommands }}
-            {{ . }} || true
-            {{- end }}
-            echo "::endgroup::"
-          done
-
-      - name: Post results
-        if: always()
-        env:
-          GH_TOKEN: ${{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
-        run: |
-          # Show review results in the CI log
-          roborev list --json 2>/dev/null || echo "No review results found"
+          roborev ci review \
+            --ref "${{"{{"}} github.event.pull_request.base.sha {{"}}"}}..${{"{{"}} github.event.pull_request.head.sha {{"}}"}}" \
+            --comment \
+            --gh-repo "${{"{{"}} github.repository {{"}}"}}" \
+            --pr "${{"{{"}} github.event.pull_request.number {{"}}"}}"
 `

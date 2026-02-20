@@ -92,6 +92,7 @@ func main() {
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(remapCmd())
 	rootCmd.AddCommand(checkAgentsCmd())
+	rootCmd.AddCommand(ciCmd())
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(versionCmd())

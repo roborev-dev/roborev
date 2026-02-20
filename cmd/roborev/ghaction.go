@@ -14,10 +14,6 @@ import (
 func ghActionCmd() *cobra.Command {
 	var (
 		agentFlag      string
-		modelFlag      string
-		reviewTypes    string
-		reasoning      string
-		secretName     string
 		outputPath     string
 		force          bool
 		roborevVersion string
@@ -26,104 +22,110 @@ func ghActionCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gh-action",
 		Short: "Generate a GitHub Actions workflow for roborev CI reviews",
-		Long: `Generate a GitHub Actions workflow file that runs roborev reviews on pull requests.
+		Long: `Generate a GitHub Actions workflow file that runs ` +
+			`roborev reviews on pull requests.
 
-The workflow installs roborev and the configured agent, then reviews each commit
-in the PR. Results can be posted as PR comments.
+The workflow installs roborev and the configured agents, ` +
+			`then runs 'roborev ci review' which executes the ` +
+			`full review_type x agent matrix, synthesizes ` +
+			`results, and posts a PR comment.
 
-Configuration is inferred from existing roborev config files (.roborev.toml and
-~/.roborev/config.toml) but can be overridden with flags.
+Review types, reasoning level, severity filter, and other ` +
+			`review parameters are configured in .roborev.toml ` +
+			`under [ci] and resolved at runtime.
 
-After generating the workflow, add a repository secret with your agent API key.`,
+After generating the workflow, add repository secrets ` +
+			`for your agent API keys.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := git.GetRepoRoot(".")
 			if err != nil {
-				return fmt.Errorf("not a git repository - run this from inside a git repo")
+				return fmt.Errorf(
+					"not a git repository - " +
+						"run this from inside a git repo")
 			}
 
-			cfg := resolveWorkflowConfig(root, agentFlag, modelFlag, reviewTypes, reasoning, secretName, roborevVersion)
+			cfg := resolveWorkflowConfig(
+				root, agentFlag, roborevVersion)
 
 			if outputPath == "" {
-				outputPath = filepath.Join(root, ".github", "workflows", "roborev.yml")
+				outputPath = filepath.Join(
+					root, ".github", "workflows",
+					"roborev.yml")
 			}
 
-			if err := ghaction.WriteWorkflow(cfg, outputPath, force); err != nil {
+			if err := ghaction.WriteWorkflow(
+				cfg, outputPath, force); err != nil {
 				return err
 			}
 
-			fmt.Printf("Created workflow at %s\n", outputPath)
+			fmt.Printf(
+				"Created workflow at %s\n", outputPath)
 			fmt.Println()
 			fmt.Printf("Next steps:\n")
-			fmt.Printf("  1. Add a repository secret named %q with your %s API key\n", cfg.SecretName, cfg.Agent)
-			fmt.Printf("     gh secret set %s\n", cfg.SecretName)
-			fmt.Printf("  2. Commit and push the workflow file\n")
-			fmt.Printf("  3. Open a pull request to trigger the first review\n")
+
+			// List required secrets per agent
+			infos := ghaction.AgentSecrets(cfg.Agents)
+			for i, info := range infos {
+				fmt.Printf(
+					"  %d. Add a repository secret "+
+						"named %q (%s API key)\n",
+					i+1, info.SecretName, info.Name)
+				fmt.Printf(
+					"     gh secret set %s\n",
+					info.SecretName)
+			}
+			fmt.Printf(
+				"  %d. Commit and push the workflow file\n",
+				len(infos)+1)
+			fmt.Printf(
+				"  %d. Open a pull request to trigger "+
+					"the first review\n",
+				len(infos)+2)
 
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&agentFlag, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode, cursor, droid)")
-	cmd.Flags().StringVar(&modelFlag, "model", "", "model override for the agent")
-	cmd.Flags().StringVar(&reviewTypes, "review-types", "", "review types to run (comma-separated: security,default,design)")
-	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level (thorough, standard, fast)")
-	cmd.Flags().StringVar(&secretName, "secret-name", "", "GitHub Actions secret name for the agent API key")
-	cmd.Flags().StringVar(&outputPath, "output", "", "output path for workflow file (default: .github/workflows/roborev.yml)")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing workflow file")
-	cmd.Flags().StringVar(&roborevVersion, "roborev-version", "", "roborev version to install (default: latest)")
+	cmd.Flags().StringVar(&agentFlag, "agent", "",
+		"agents to use, comma-separated "+
+			"(codex, claude-code, gemini, copilot, "+
+			"opencode, cursor, droid)")
+	cmd.Flags().StringVar(&outputPath, "output", "",
+		"output path for workflow file "+
+			"(default: .github/workflows/roborev.yml)")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"overwrite existing workflow file")
+	cmd.Flags().StringVar(&roborevVersion, "roborev-version", "",
+		"roborev version to install (default: latest)")
 
 	return cmd
 }
 
-// resolveWorkflowConfig builds a WorkflowConfig by merging CLI flags with
-// existing roborev configuration (repo config and global config).
-func resolveWorkflowConfig(repoRoot, agentFlag, modelFlag, reviewTypes, reasoning, secretName, roborevVersion string) ghaction.WorkflowConfig {
+// resolveWorkflowConfig builds a WorkflowConfig by merging
+// CLI flags with existing roborev configuration.
+func resolveWorkflowConfig(
+	repoRoot, agentFlag, roborevVersion string,
+) ghaction.WorkflowConfig {
 	cfg := ghaction.DefaultConfig()
 
-	// Load existing configs for inference
 	globalCfg, _ := config.LoadGlobal()
 	repoCfg, _ := config.LoadRepoConfig(repoRoot)
 
-	// Resolve agent: flag > repo config > global config > default
+	// Resolve agents: flag > repo [ci] agents > repo agent
+	// > global [ci] agents > global default_agent > default
 	if agentFlag != "" {
-		cfg.Agent = agentFlag
+		cfg.Agents = splitTrimmedGhAction(agentFlag)
+	} else if repoCfg != nil &&
+		len(repoCfg.CI.Agents) > 0 {
+		cfg.Agents = repoCfg.CI.Agents
 	} else if repoCfg != nil && repoCfg.Agent != "" {
-		cfg.Agent = repoCfg.Agent
-	} else if globalCfg != nil && globalCfg.DefaultAgent != "" {
-		cfg.Agent = globalCfg.DefaultAgent
-	}
-
-	// Resolve model: flag > repo config > global config
-	if modelFlag != "" {
-		cfg.Model = modelFlag
-	} else if repoCfg != nil && repoCfg.Model != "" {
-		cfg.Model = repoCfg.Model
-	} else if globalCfg != nil && globalCfg.DefaultModel != "" {
-		cfg.Model = globalCfg.DefaultModel
-	}
-
-	// Resolve review types: flag > repo CI config > global CI config > default
-	if reviewTypes != "" {
-		cfg.ReviewTypes = strings.Split(reviewTypes, ",")
-		for i := range cfg.ReviewTypes {
-			cfg.ReviewTypes[i] = strings.TrimSpace(cfg.ReviewTypes[i])
-		}
-	} else if repoCfg != nil && len(repoCfg.CI.ReviewTypes) > 0 {
-		cfg.ReviewTypes = repoCfg.CI.ReviewTypes
-	} else if globalCfg != nil && len(globalCfg.CI.ReviewTypes) > 0 {
-		cfg.ReviewTypes = globalCfg.CI.ReviewTypes
-	}
-
-	// Resolve reasoning: flag > repo CI config > default
-	if reasoning != "" {
-		cfg.Reasoning = reasoning
-	} else if repoCfg != nil && repoCfg.CI.Reasoning != "" {
-		cfg.Reasoning = repoCfg.CI.Reasoning
-	}
-
-	// Secret name: flag > default
-	if secretName != "" {
-		cfg.SecretName = secretName
+		cfg.Agents = []string{repoCfg.Agent}
+	} else if globalCfg != nil &&
+		len(globalCfg.CI.Agents) > 0 {
+		cfg.Agents = globalCfg.CI.Agents
+	} else if globalCfg != nil &&
+		globalCfg.DefaultAgent != "" {
+		cfg.Agents = []string{globalCfg.DefaultAgent}
 	}
 
 	if roborevVersion != "" {
@@ -131,4 +133,15 @@ func resolveWorkflowConfig(repoRoot, agentFlag, modelFlag, reviewTypes, reasonin
 	}
 
 	return cfg
+}
+
+func splitTrimmedGhAction(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
