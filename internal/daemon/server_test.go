@@ -3708,7 +3708,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			storage.JobStatusCanceled,
 		} {
 			t.Run(string(status), func(t *testing.T) {
-				fixJob, _ := db.EnqueueJob(storage.EnqueueOpts{
+				fixJob, err := db.EnqueueJob(storage.EnqueueOpts{
 					RepoID:      repo.ID,
 					CommitID:    commit.ID,
 					GitRef:      "fix-val-abc",
@@ -3716,17 +3716,33 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 					JobType:     storage.JobTypeFix,
 					ParentJobID: reviewJob.ID,
 				})
-				// Move to desired status
-				switch status {
-				case storage.JobStatusRunning:
-					db.ClaimJob("w-term")
-				case storage.JobStatusFailed:
-					db.ClaimJob("w-term")
-					db.FailJob(fixJob.ID, "w-term", "broke")
-				case storage.JobStatusCanceled:
-					db.CancelJob(fixJob.ID)
+				if err != nil {
+					t.Fatalf("EnqueueJob: %v", err)
 				}
-				// queued needs no extra action
+
+				// Set status directly to avoid ClaimJob picking
+				// a different queued job from an earlier iteration.
+				if status != storage.JobStatusQueued {
+					_, err = db.Exec(
+						`UPDATE review_jobs SET status = ? WHERE id = ?`,
+						string(status), fixJob.ID,
+					)
+					if err != nil {
+						t.Fatalf("Set status to %s: %v", status, err)
+					}
+				}
+
+				// Verify the job is in the expected state
+				got, err := db.GetJobByID(fixJob.ID)
+				if err != nil {
+					t.Fatalf("GetJobByID: %v", err)
+				}
+				if got.Status != status {
+					t.Fatalf(
+						"Expected job %d status %s, got %s",
+						fixJob.ID, status, got.Status,
+					)
+				}
 
 				body := map[string]any{
 					"parent_job_id": reviewJob.ID,

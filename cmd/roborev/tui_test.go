@@ -1552,12 +1552,45 @@ func TestPatchFiles(t *testing.T) {
 func TestDirtyPatchFilesError(t *testing.T) {
 	// dirtyPatchFiles should return an error when git diff fails
 	// (e.g., invalid repo path), not silently return nil.
-	_, err := dirtyPatchFiles("/nonexistent/repo/path", []string{"file.go"})
+	missingPath := filepath.Join(t.TempDir(), "missing")
+	_, err := dirtyPatchFiles(missingPath, []string{"file.go"})
 	if err == nil {
 		t.Fatal("expected error from dirtyPatchFiles with invalid repo, got nil")
 	}
 	if !strings.Contains(err.Error(), "git diff") {
 		t.Errorf("expected error to mention 'git diff', got: %v", err)
+	}
+}
+
+func TestHandleFixKeyRejectsFixJob(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.jobs = []storage.ReviewJob{
+		{
+			ID:      10,
+			Status:  storage.JobStatusDone,
+			JobType: storage.JobTypeFix,
+		},
+	}
+	m.selectedIdx = 0
+
+	result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	updated := result.(tuiModel)
+
+	if cmd != nil {
+		t.Error("Expected nil cmd for rejected fix-of-fix")
+	}
+	if updated.flashMessage != "Cannot fix a fix job" {
+		t.Errorf(
+			"Expected flash 'Cannot fix a fix job', got %q",
+			updated.flashMessage,
+		)
+	}
+	if updated.currentView != tuiViewQueue {
+		t.Errorf(
+			"Expected view to stay on queue, got %d",
+			updated.currentView,
+		)
 	}
 }
 
