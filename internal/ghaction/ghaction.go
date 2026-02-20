@@ -98,7 +98,7 @@ func Generate(cfg WorkflowConfig) (string, error) {
 	data := templateData{
 		Agent:           cfg.Agent,
 		Model:           cfg.Model,
-		ReviewTypes:     cfg.ReviewTypes,
+		ReviewTypes:     strings.Join(cfg.ReviewTypes, ","),
 		Reasoning:       cfg.Reasoning,
 		SecretName:      cfg.SecretName,
 		AgentEnvVar:     agentEnvVar(cfg.Agent),
@@ -106,9 +106,7 @@ func Generate(cfg WorkflowConfig) (string, error) {
 		RoborevVersion:  cfg.RoborevVersion,
 	}
 
-	tmpl, err := template.New("workflow").Funcs(template.FuncMap{
-		"join": strings.Join,
-	}).Parse(workflowTemplate)
+	tmpl, err := template.New("workflow").Parse(workflowTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
 	}
@@ -151,7 +149,7 @@ func WriteWorkflow(cfg WorkflowConfig, outputPath string, force bool) error {
 type templateData struct {
 	Agent           string
 	Model           string
-	ReviewTypes     []string
+	ReviewTypes     string
 	Reasoning       string
 	SecretName      string
 	AgentEnvVar     string
@@ -217,7 +215,7 @@ jobs:
               --reasoning {{ .Reasoning }}{{ if .Model }} \
               --model {{ .Model }}{{ end }} \
               --commit "${COMMIT}" \
-              --type {{ join "," .ReviewTypes }} || true
+              --type {{ .ReviewTypes }} || true
           done
 
       - name: Post results
