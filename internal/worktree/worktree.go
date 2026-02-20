@@ -30,6 +30,9 @@ func (w *Worktree) Close() {
 // Create creates a temporary git worktree detached at the given ref
 // for isolated agent work. Pass "HEAD" for the current checkout.
 func Create(repoPath, ref string) (*Worktree, error) {
+	if ref == "" {
+		return nil, fmt.Errorf("ref must not be empty")
+	}
 	worktreeDir, err := os.MkdirTemp("", "roborev-worktree-")
 	if err != nil {
 		return nil, err

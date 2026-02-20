@@ -287,6 +287,61 @@ func TestApplyPatchConflictFails(t *testing.T) {
 	}
 }
 
+func TestCreateEmptyRef(t *testing.T) {
+	repo := setupGitRepo(t)
+	_, err := Create(repo, "")
+	if err == nil {
+		t.Fatal("expected error for empty ref")
+	}
+	if !strings.Contains(err.Error(), "ref must not be empty") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateWithSpecificSHA(t *testing.T) {
+	repo := setupGitRepo(t)
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	// Record the SHA of the initial commit
+	initialSHA := run("rev-parse", "HEAD")
+
+	// Add a second commit that changes hello.txt
+	if err := os.WriteFile(filepath.Join(repo, "hello.txt"), []byte("updated"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "hello.txt")
+	run("commit", "-m", "second commit")
+
+	// HEAD now has "updated", but create worktree at the initial SHA
+	wt, err := Create(repo, initialSHA)
+	if err != nil {
+		t.Fatalf("Create with specific SHA failed: %v", err)
+	}
+	defer wt.Close()
+
+	// Worktree should have the original content, not "updated"
+	content, err := os.ReadFile(filepath.Join(wt.Dir, "hello.txt"))
+	if err != nil {
+		t.Fatalf("read hello.txt: %v", err)
+	}
+	if string(content) != "hello" {
+		t.Errorf("expected 'hello' at initial SHA, got %q", content)
+	}
+}
+
 func TestSubmoduleRequiresFileProtocol(t *testing.T) {
 	tpl := `[submodule "test"]
 	path = test
