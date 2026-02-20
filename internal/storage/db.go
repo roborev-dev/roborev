@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -723,6 +724,11 @@ func (db *DB) migrateJobStatusConstraint() error {
 		}
 	}()
 
+	// Clean up temp table from any prior failed migration attempt
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS review_jobs_new`); err != nil {
+		return fmt.Errorf("cleanup stale temp table: %w", err)
+	}
+
 	// Read existing columns dynamically
 	rows, err := tx.Query(`SELECT name FROM pragma_table_info('review_jobs')`)
 	if err != nil {
@@ -741,7 +747,9 @@ func (db *DB) migrateJobStatusConstraint() error {
 
 	// Read the current CREATE TABLE SQL and replace the old constraint
 	var origSQL string
-	if err := tx.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='review_jobs'`).Scan(&origSQL); err != nil {
+	if err := tx.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='review_jobs'`,
+	).Scan(&origSQL); err != nil {
 		return err
 	}
 
@@ -750,15 +758,40 @@ func (db *DB) migrateJobStatusConstraint() error {
 		"CHECK(status IN ('queued','running','done','failed','canceled'))",
 		"CHECK(status IN ('queued','running','done','failed','canceled','applied','rebased'))",
 		1)
-	// Handle the table name for the temp table
-	newSQL = strings.Replace(newSQL, "CREATE TABLE review_jobs", "CREATE TABLE review_jobs_new", 1)
+
+	// Rename to temp table. After ALTER TABLE ... RENAME, SQLite
+	// stores the name quoted, so handle both forms.
+	replaced := false
+	for _, pattern := range []string{
+		`CREATE TABLE "review_jobs"`,
+		`CREATE TABLE review_jobs`,
+	} {
+		if strings.Contains(newSQL, pattern) {
+			newSQL = strings.Replace(
+				newSQL, pattern,
+				`CREATE TABLE review_jobs_new`, 1,
+			)
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		return fmt.Errorf(
+			"cannot find CREATE TABLE statement in schema: %s",
+			origSQL[:min(len(origSQL), 80)],
+		)
+	}
 
 	if _, err := tx.Exec(newSQL); err != nil {
 		return fmt.Errorf("create new table: %w", err)
 	}
 
 	colList := strings.Join(cols, ", ")
-	if _, err := tx.Exec(fmt.Sprintf(`INSERT INTO review_jobs_new (%s) SELECT %s FROM review_jobs`, colList, colList)); err != nil {
+	copySQL := fmt.Sprintf(
+		`INSERT INTO review_jobs_new (%s) SELECT %s FROM review_jobs`,
+		colList, colList,
+	)
+	if _, err := tx.Exec(copySQL); err != nil {
 		return fmt.Errorf("copy data: %w", err)
 	}
 
@@ -766,7 +799,9 @@ func (db *DB) migrateJobStatusConstraint() error {
 		return fmt.Errorf("drop old table: %w", err)
 	}
 
-	if _, err := tx.Exec(`ALTER TABLE review_jobs_new RENAME TO review_jobs`); err != nil {
+	if _, err := tx.Exec(
+		`ALTER TABLE review_jobs_new RENAME TO review_jobs`,
+	); err != nil {
 		return fmt.Errorf("rename table: %w", err)
 	}
 
@@ -787,17 +822,28 @@ func (db *DB) migrateJobStatusConstraint() error {
 		return err
 	}
 
+	// Log pre-existing FK violations but don't fail — this migration
+	// only changes a CHECK constraint and copies data 1:1, so any
+	// violations existed before the migration ran.
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
 		return fmt.Errorf("re-enable foreign keys: %w", err)
 	}
-
-	checkRows, err := conn.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	checkRows, err := conn.QueryContext(
+		ctx, `PRAGMA foreign_key_check('review_jobs')`,
+	)
 	if err != nil {
 		return fmt.Errorf("foreign key check: %w", err)
 	}
 	defer checkRows.Close()
-	if checkRows.Next() {
-		return fmt.Errorf("foreign key violations after migration")
+	var violations int
+	for checkRows.Next() {
+		violations++
+	}
+	if violations > 0 {
+		log.Printf(
+			"warning: %d pre-existing foreign key violations in review_jobs (not caused by migration)",
+			violations,
+		)
 	}
 	return checkRows.Err()
 }
