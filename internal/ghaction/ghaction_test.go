@@ -23,6 +23,77 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     WorkflowConfig
+		wantErr string
+	}{
+		{
+			name: "valid default",
+			cfg:  DefaultConfig(),
+		},
+		{
+			name:    "invalid agent",
+			cfg:     WorkflowConfig{Agent: "evil; rm -rf /", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY"},
+			wantErr: "invalid agent",
+		},
+		{
+			name:    "invalid reasoning",
+			cfg:     WorkflowConfig{Agent: "codex", Reasoning: "$(whoami)", ReviewTypes: []string{"security"}, SecretName: "KEY"},
+			wantErr: "invalid reasoning",
+		},
+		{
+			name:    "invalid review type",
+			cfg:     WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"'; drop table"}, SecretName: "KEY"},
+			wantErr: "invalid review type",
+		},
+		{
+			name:    "invalid secret name with spaces",
+			cfg:     WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "MY SECRET"},
+			wantErr: "invalid secret name",
+		},
+		{
+			name:    "invalid secret name with injection",
+			cfg:     WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY}} && echo pwned"},
+			wantErr: "invalid secret name",
+		},
+		{
+			name:    "invalid version",
+			cfg:     WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY", RoborevVersion: "$(curl evil.com)"},
+			wantErr: "invalid roborev version",
+		},
+		{
+			name:    "invalid model",
+			cfg:     WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY", Model: "$(whoami)"},
+			wantErr: "invalid model",
+		},
+		{
+			name: "valid version",
+			cfg:  WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY", RoborevVersion: "0.33.1"},
+		},
+		{
+			name: "valid model with slashes",
+			cfg:  WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY", Model: "anthropic/claude-sonnet-4-5-20250929"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestGenerate_DefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	out, err := Generate(cfg)
@@ -30,7 +101,6 @@ func TestGenerate_DefaultConfig(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Verify key elements are present
 	checks := []string{
 		"name: roborev",
 		"pull_request:",
@@ -42,10 +112,27 @@ func TestGenerate_DefaultConfig(t *testing.T) {
 		"OPENAI_API_KEY",
 		"secrets.ROBOREV_API_KEY",
 		"--type security",
+		"--local",
+		"actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+		"sha256sum --check",
+		"set -euo pipefail",
 	}
 	for _, check := range checks {
 		if !strings.Contains(out, check) {
 			t.Errorf("output missing %q", check)
+		}
+	}
+
+	// Verify no old broken patterns
+	broken := []string{
+		"--commit",
+		"--format json",
+		"comment --pr",
+		"actions/checkout@v4",
+	}
+	for _, b := range broken {
+		if strings.Contains(out, b) {
+			t.Errorf("output should not contain %q", b)
 		}
 	}
 }
@@ -53,7 +140,7 @@ func TestGenerate_DefaultConfig(t *testing.T) {
 func TestGenerate_ClaudeAgent(t *testing.T) {
 	cfg := WorkflowConfig{
 		Agent:       "claude-code",
-		ReviewTypes: []string{"security", "default"},
+		ReviewTypes: []string{"security", "design"},
 		Reasoning:   "standard",
 		SecretName:  "MY_CLAUDE_KEY",
 	}
@@ -77,6 +164,13 @@ func TestGenerate_ClaudeAgent(t *testing.T) {
 	if !strings.Contains(out, "npm install -g @anthropic-ai/claude-code") {
 		t.Error("expected claude-code install command")
 	}
+	// Two separate review commands for two types
+	if !strings.Contains(out, "--type security") {
+		t.Error("expected --type security")
+	}
+	if !strings.Contains(out, "--type design") {
+		t.Error("expected --type design")
+	}
 }
 
 func TestGenerate_GeminiAgent(t *testing.T) {
@@ -99,6 +193,9 @@ func TestGenerate_GeminiAgent(t *testing.T) {
 	}
 	if !strings.Contains(out, "--type design") {
 		t.Error("expected --type design")
+	}
+	if !strings.Contains(out, "gemini-cli") {
+		t.Error("expected gemini CLI install note")
 	}
 }
 
@@ -178,7 +275,6 @@ func TestGenerate_LatestVersion(t *testing.T) {
 }
 
 func TestGenerate_EmptyFields(t *testing.T) {
-	// Generate with zero-value config should fill defaults
 	cfg := WorkflowConfig{}
 	out, err := Generate(cfg)
 	if err != nil {
@@ -196,10 +292,10 @@ func TestGenerate_EmptyFields(t *testing.T) {
 	}
 }
 
-func TestGenerate_MultipleReviewTypes(t *testing.T) {
+func TestGenerate_DefaultReviewType_NoTypeFlag(t *testing.T) {
 	cfg := WorkflowConfig{
 		Agent:       "codex",
-		ReviewTypes: []string{"security", "default", "design"},
+		ReviewTypes: []string{"default"},
 		Reasoning:   "thorough",
 		SecretName:  "ROBOREV_API_KEY",
 	}
@@ -208,8 +304,113 @@ func TestGenerate_MultipleReviewTypes(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	if !strings.Contains(out, "--type security,default,design") {
-		t.Error("expected comma-joined review types")
+	// "default" review type should not emit --type flag
+	if strings.Contains(out, "--type") {
+		t.Error("'default' review type should not produce --type flag")
+	}
+}
+
+func TestGenerate_MultipleReviewTypes_SeparateCommands(t *testing.T) {
+	cfg := WorkflowConfig{
+		Agent:       "codex",
+		ReviewTypes: []string{"security", "design"},
+		Reasoning:   "thorough",
+		SecretName:  "ROBOREV_API_KEY",
+	}
+	out, err := Generate(cfg)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Should have separate review commands, not comma-joined
+	if strings.Contains(out, "security,design") {
+		t.Error("review types should not be comma-joined")
+	}
+	if !strings.Contains(out, "--type security") {
+		t.Error("expected --type security as separate command")
+	}
+	if !strings.Contains(out, "--type design") {
+		t.Error("expected --type design as separate command")
+	}
+}
+
+func TestGenerate_UsesLocalMode(t *testing.T) {
+	cfg := DefaultConfig()
+	out, err := Generate(cfg)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if !strings.Contains(out, "--local") {
+		t.Error("expected --local flag for CI (no daemon)")
+	}
+}
+
+func TestGenerate_PostResults_ValidCLI(t *testing.T) {
+	cfg := DefaultConfig()
+	out, err := Generate(cfg)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if strings.Contains(out, "list --format json") {
+		t.Error("should use 'list --json' not 'list --format json'")
+	}
+	if strings.Contains(out, "comment --pr") {
+		t.Error("should not use non-existent 'comment --pr' interface")
+	}
+	if !strings.Contains(out, "list --json") {
+		t.Error("expected 'roborev list --json' in post results")
+	}
+}
+
+func TestGenerate_SupplyChainHardening(t *testing.T) {
+	cfg := DefaultConfig()
+	out, err := Generate(cfg)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if strings.Contains(out, "actions/checkout@v4") {
+		t.Error("checkout should be pinned to SHA, not tag")
+	}
+	if !strings.Contains(out, "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd") {
+		t.Error("checkout should be pinned to SHA")
+	}
+	if !strings.Contains(out, "sha256sum") {
+		t.Error("expected checksum verification for roborev download")
+	}
+}
+
+func TestGenerate_Injection_Rejected(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  WorkflowConfig
+	}{
+		{
+			name: "agent injection",
+			cfg:  WorkflowConfig{Agent: "codex; rm -rf /", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY"},
+		},
+		{
+			name: "secret injection",
+			cfg:  WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY}} && echo pwned"},
+		},
+		{
+			name: "version injection",
+			cfg:  WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY", RoborevVersion: "1.0.0$(curl evil)"},
+		},
+		{
+			name: "model injection",
+			cfg:  WorkflowConfig{Agent: "codex", Reasoning: "thorough", ReviewTypes: []string{"security"}, SecretName: "KEY", Model: "model; rm -rf /"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Generate(tt.cfg)
+			if err == nil {
+				t.Fatal("expected Generate to reject injected config")
+			}
+		})
 	}
 }
 
@@ -248,7 +449,6 @@ func TestWriteWorkflow_ExistingFile_NoForce(t *testing.T) {
 		t.Errorf("expected 'already exists' error, got: %v", err)
 	}
 
-	// Verify original content preserved
 	content, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -290,12 +490,10 @@ func TestAgentEnvVar(t *testing.T) {
 	}{
 		{"codex", "OPENAI_API_KEY"},
 		{"claude-code", "ANTHROPIC_API_KEY"},
-		{"claude", "ANTHROPIC_API_KEY"},
 		{"gemini", "GOOGLE_API_KEY"},
 		{"copilot", "GITHUB_TOKEN"},
 		{"opencode", "OPENAI_API_KEY"},
 		{"droid", "OPENAI_API_KEY"},
-		{"unknown", "OPENAI_API_KEY"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
@@ -316,6 +514,8 @@ func TestAgentInstallCmd(t *testing.T) {
 		{"claude-code", "npm install -g @anthropic-ai/claude-code"},
 		{"copilot", "gh extension install"},
 		{"cursor", "not available in CI"},
+		{"gemini", "gemini-cli"},
+		{"droid", "droid-cli"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {

@@ -77,11 +77,17 @@ func TestGhActionCmd(t *testing.T) {
 		},
 		{
 			name:  "custom review types",
-			flags: []string{"--review-types", "security,default"},
+			flags: []string{"--review-types", "security,design"},
 			checkFile: func(t *testing.T, content string) {
 				t.Helper()
-				if !strings.Contains(content, "--type security,default") {
-					t.Error("expected custom review types")
+				if !strings.Contains(content, "--type security") {
+					t.Error("expected --type security as separate command")
+				}
+				if !strings.Contains(content, "--type design") {
+					t.Error("expected --type design as separate command")
+				}
+				if strings.Contains(content, "security,design") {
+					t.Error("review types should not be comma-joined")
 				}
 			},
 		},
@@ -124,8 +130,11 @@ func TestGhActionCmd(t *testing.T) {
 			repoConfig: "[ci]\nreview_types = [\"security\", \"design\"]\n",
 			checkFile: func(t *testing.T, content string) {
 				t.Helper()
-				if !strings.Contains(content, "--type security,design") {
-					t.Error("expected review types from repo CI config")
+				if !strings.Contains(content, "--type security") {
+					t.Error("expected --type security from repo CI config")
+				}
+				if !strings.Contains(content, "--type design") {
+					t.Error("expected --type design from repo CI config")
 				}
 			},
 		},
