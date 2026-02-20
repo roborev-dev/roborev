@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"text/template"
 )
@@ -80,12 +81,7 @@ func (c *WorkflowConfig) Validate() error {
 }
 
 func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, s)
 }
 
 // agentEnvVar returns the environment variable name that the agent expects
@@ -107,13 +103,13 @@ func agentEnvVar(agent string) string {
 func agentInstallCmd(agent string) string {
 	switch agent {
 	case "claude-code":
-		return "npm install -g @anthropic-ai/claude-code"
+		return "npm install -g @anthropic-ai/claude-code@latest"
 	case "gemini":
-		return "npm install -g @anthropic-ai/gemini-cli || echo 'Note: gemini agent requires the Gemini CLI; see https://github.com/google-gemini/gemini-cli'"
+		return "npm install -g @google/gemini-cli@latest"
 	case "copilot":
-		return "gh extension install github/gh-copilot || true"
+		return "npm install -g @github/copilot@latest"
 	case "codex":
-		return "npm install -g @openai/codex"
+		return "npm install -g @openai/codex@latest"
 	case "opencode":
 		return "go install github.com/opencode-ai/opencode@latest"
 	case "cursor":
@@ -268,11 +264,16 @@ jobs:
           ARCHIVE="roborev_${ROBOREV_VERSION}_linux_amd64.tar.gz"
           curl -sfLO "https://github.com/roborev-dev/roborev/releases/download/v${ROBOREV_VERSION}/${ARCHIVE}"
           curl -sfLO "https://github.com/roborev-dev/roborev/releases/download/v${ROBOREV_VERSION}/checksums.txt"
-          sha256sum --check --ignore-missing checksums.txt
-          tar xzf "${ARCHIVE}" -C /usr/local/bin roborev
-          rm -f "${ARCHIVE}" checksums.txt
+          grep "${ARCHIVE}" checksums.txt > verify.txt
+          sha256sum --check verify.txt
+          mkdir -p "$HOME/.local/bin"
+          tar xzf "${ARCHIVE}" -C "$HOME/.local/bin" roborev
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          rm -f "${ARCHIVE}" checksums.txt verify.txt
           roborev version
 
+      # TODO: Pin agent CLI versions for supply-chain safety.
+      # Replace @latest with a specific version (e.g., @1.2.3).
       - name: Install agent
         run: {{ .AgentInstallCmd }}
 

@@ -161,7 +161,7 @@ func TestGenerate_ClaudeAgent(t *testing.T) {
 	if !strings.Contains(out, "--reasoning standard") {
 		t.Error("expected --reasoning standard")
 	}
-	if !strings.Contains(out, "npm install -g @anthropic-ai/claude-code") {
+	if !strings.Contains(out, "npm install -g @anthropic-ai/claude-code@latest") {
 		t.Error("expected claude-code install command")
 	}
 	// Two separate review commands for two types
@@ -194,8 +194,8 @@ func TestGenerate_GeminiAgent(t *testing.T) {
 	if !strings.Contains(out, "--type design") {
 		t.Error("expected --type design")
 	}
-	if !strings.Contains(out, "gemini-cli") {
-		t.Error("expected gemini CLI install note")
+	if !strings.Contains(out, "@google/gemini-cli@latest") {
+		t.Error("expected @google/gemini-cli install command")
 	}
 }
 
@@ -213,6 +213,9 @@ func TestGenerate_CopilotAgent(t *testing.T) {
 
 	if !strings.Contains(out, "GITHUB_TOKEN") {
 		t.Error("expected GITHUB_TOKEN for copilot agent")
+	}
+	if !strings.Contains(out, "npm install -g @github/copilot@latest") {
+		t.Error("expected npm install for copilot CLI")
 	}
 }
 
@@ -377,8 +380,88 @@ func TestGenerate_SupplyChainHardening(t *testing.T) {
 	if !strings.Contains(out, "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd") {
 		t.Error("checkout should be pinned to SHA")
 	}
-	if !strings.Contains(out, "sha256sum") {
+	if !strings.Contains(out, "sha256sum --check") {
 		t.Error("expected checksum verification for roborev download")
+	}
+	if strings.Contains(out, "--ignore-missing") {
+		t.Error("should not use --ignore-missing (can pass vacuously)")
+	}
+	if !strings.Contains(out, `grep "${ARCHIVE}" checksums.txt`) {
+		t.Error("expected grep to extract matching checksum line")
+	}
+}
+
+func TestGenerate_InstallPath(t *testing.T) {
+	cfg := DefaultConfig()
+	out, err := Generate(cfg)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if strings.Contains(out, "/usr/local/bin") {
+		t.Error("should not install to /usr/local/bin (may lack permissions)")
+	}
+	if !strings.Contains(out, `"$HOME/.local/bin"`) {
+		t.Error("expected install to $HOME/.local/bin")
+	}
+	if !strings.Contains(out, "$GITHUB_PATH") {
+		t.Error("expected $HOME/.local/bin added to GITHUB_PATH")
+	}
+}
+
+func TestGenerate_VersionPinningComment(t *testing.T) {
+	cfg := DefaultConfig()
+	out, err := Generate(cfg)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if !strings.Contains(out, "Pin agent CLI versions") {
+		t.Error("expected version pinning comment in workflow")
+	}
+}
+
+func TestAgentInstallCmd_CorrectPackageNames(t *testing.T) {
+	// Cross-reference install commands with expected package names
+	// to catch typosquatting or incorrect package references.
+	tests := []struct {
+		agent       string
+		wantPkg     string
+		notWantPkgs []string
+	}{
+		{
+			agent:       "gemini",
+			wantPkg:     "@google/gemini-cli",
+			notWantPkgs: []string{"@anthropic-ai/gemini"},
+		},
+		{
+			agent:   "claude-code",
+			wantPkg: "@anthropic-ai/claude-code",
+		},
+		{
+			agent:   "codex",
+			wantPkg: "@openai/codex",
+		},
+		{
+			agent:       "copilot",
+			wantPkg:     "@github/copilot",
+			notWantPkgs: []string{"gh extension install"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.agent, func(t *testing.T) {
+			cmd := agentInstallCmd(tt.agent)
+			if !strings.Contains(cmd, tt.wantPkg) {
+				t.Errorf("agentInstallCmd(%q) = %q, want package %q",
+					tt.agent, cmd, tt.wantPkg)
+			}
+			for _, bad := range tt.notWantPkgs {
+				if strings.Contains(cmd, bad) {
+					t.Errorf("agentInstallCmd(%q) = %q, should NOT contain %q",
+						tt.agent, cmd, bad)
+				}
+			}
+		})
 	}
 }
 
@@ -510,11 +593,11 @@ func TestAgentInstallCmd(t *testing.T) {
 		agent    string
 		contains string
 	}{
-		{"codex", "npm install -g @openai/codex"},
-		{"claude-code", "npm install -g @anthropic-ai/claude-code"},
-		{"copilot", "gh extension install"},
+		{"codex", "npm install -g @openai/codex@latest"},
+		{"claude-code", "npm install -g @anthropic-ai/claude-code@latest"},
+		{"copilot", "npm install -g @github/copilot@latest"},
 		{"cursor", "not available in CI"},
-		{"gemini", "gemini-cli"},
+		{"gemini", "npm install -g @google/gemini-cli@latest"},
 		{"droid", "droid-cli"},
 	}
 	for _, tt := range tests {
