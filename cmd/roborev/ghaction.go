@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/ghaction"
@@ -114,7 +113,7 @@ func resolveWorkflowConfig(
 	// Resolve agents: flag > repo [ci] agents > repo agent
 	// > global [ci] agents > global default_agent > default
 	if agentFlag != "" {
-		cfg.Agents = splitTrimmedGhAction(agentFlag)
+		cfg.Agents = splitTrimmed(agentFlag)
 	} else if repoCfg != nil &&
 		len(repoCfg.CI.Agents) > 0 {
 		cfg.Agents = repoCfg.CI.Agents
@@ -133,15 +132,4 @@ func resolveWorkflowConfig(
 	}
 
 	return cfg
-}
-
-func splitTrimmedGhAction(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if v := strings.TrimSpace(p); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
 }
