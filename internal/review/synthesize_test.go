@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -20,8 +21,9 @@ func TestSynthesize_AllFailed(t *testing.T) {
 		context.Background(), results, SynthesizeOpts{
 			HeadSHA: "abc123456789",
 		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !errors.Is(err, ErrAllFailed) {
+		t.Fatalf(
+			"expected ErrAllFailed, got: %v", err)
 	}
 
 	if !strings.Contains(comment, "Review Failed") {
@@ -47,8 +49,8 @@ func TestSynthesize_SingleSuccess(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(comment, "Review Complete") {
-		t.Error("expected 'Review Complete' in comment")
+	if !strings.Contains(comment, "Review Passed") {
+		t.Error("expected 'Review Passed' in comment")
 	}
 	if !strings.Contains(
 		comment, "No issues found.") {

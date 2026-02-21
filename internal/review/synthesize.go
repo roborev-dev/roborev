@@ -2,12 +2,18 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 )
+
+// ErrAllFailed is returned by Synthesize when every review job
+// in the batch failed (excluding all-quota-skipped batches).
+var ErrAllFailed = errors.New(
+	"all review jobs failed")
 
 // SynthesizeOpts controls synthesis behavior.
 type SynthesizeOpts struct {
@@ -19,6 +25,8 @@ type SynthesizeOpts struct {
 	MinSeverity string
 	// RepoPath is the working directory for the synthesis agent.
 	RepoPath string
+	// GitRef is the reviewed git ref, passed to the synthesis agent.
+	GitRef string
 	// HeadSHA is used for comment formatting headers.
 	HeadSHA string
 }
@@ -44,8 +52,14 @@ func Synthesize(
 
 	// All failed
 	if successCount == 0 {
-		return FormatAllFailedComment(
-			results, opts.HeadSHA), nil
+		comment := FormatAllFailedComment(
+			results, opts.HeadSHA)
+		// All-quota is not an error (nothing actionable).
+		quotaSkips := CountQuotaFailures(results)
+		if len(results) > 0 && quotaSkips == len(results) {
+			return comment, nil
+		}
+		return comment, ErrAllFailed
 	}
 
 	// Single result — return directly, no synthesis needed
@@ -73,7 +87,7 @@ func formatSingleResult(
 	var header string
 	if r.Output == "" || r.Output == "No issues found." {
 		header = fmt.Sprintf(
-			"## roborev: Review Complete (`%s`)\n\n",
+			"## roborev: Review Passed (`%s`)\n\n",
 			ShortSHA(headSHA))
 	} else {
 		header = fmt.Sprintf(
@@ -114,7 +128,7 @@ func runSynthesis(
 	defer cancel()
 
 	output, err := synthAgent.Review(
-		synthCtx, opts.RepoPath, "", synthPrompt, nil)
+		synthCtx, opts.RepoPath, opts.GitRef, synthPrompt, nil)
 	if err != nil {
 		return "", fmt.Errorf("synthesis review: %w", err)
 	}

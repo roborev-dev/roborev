@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -160,12 +161,18 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Resolve reasoning
-	reasoningLevel := resolveCIReasoning(
+	reasoningLevel, err := resolveCIReasoning(
 		opts.reasoning, repoCfg, globalCfg)
+	if err != nil {
+		return err
+	}
 
 	// Resolve min severity
-	minSev := resolveCIMinSeverity(
+	minSev, err := resolveCIMinSeverity(
 		opts.minSeverity, repoCfg, globalCfg)
+	if err != nil {
+		return err
+	}
 
 	// Resolve synthesis agent
 	synthAgent := resolveCISynthesisAgent(
@@ -192,18 +199,20 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	headSHA := extractHeadSHA(gitRef)
 
 	// Synthesize
-	comment, err := review.Synthesize(
+	comment, synthErr := review.Synthesize(
 		ctx, results, review.SynthesizeOpts{
 			Agent:       synthAgent,
 			MinSeverity: minSev,
 			RepoPath:    root,
+			GitRef:      gitRef,
 			HeadSHA:     headSHA,
 		})
-	if err != nil {
-		return fmt.Errorf("synthesize: %w", err)
+	if synthErr != nil &&
+		!errors.Is(synthErr, review.ErrAllFailed) {
+		return fmt.Errorf("synthesize: %w", synthErr)
 	}
 
-	// Output to stdout
+	// Output to stdout (even on all-failed, for CI logs)
 	fmt.Println(comment)
 
 	// Post as PR comment if requested
@@ -240,6 +249,11 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		log.Printf(
 			"ci review: posted comment on %s#%d",
 			ghRepo, prNumber)
+	}
+
+	// Exit non-zero when all review jobs failed
+	if synthErr != nil {
+		return synthErr
 	}
 
 	return nil
@@ -284,46 +298,48 @@ func resolveCIReasoning(
 	flag string,
 	repoCfg *config.RepoConfig,
 	globalCfg *config.Config,
-) string {
+) (string, error) {
 	if flag != "" {
-		if n, err := config.NormalizeReasoning(flag); err == nil {
-			return n
+		n, err := config.NormalizeReasoning(flag)
+		if err != nil {
+			return "", err
 		}
+		return n, nil
 	}
 	if repoCfg != nil && repoCfg.CI.Reasoning != "" {
 		if n, err := config.NormalizeReasoning(
 			repoCfg.CI.Reasoning); err == nil {
-			return n
+			return n, nil
 		}
 	}
-	// Global CI config doesn't have a Reasoning field,
-	// but we check for it in the CI config section.
-	return "thorough"
+	return "thorough", nil
 }
 
 func resolveCIMinSeverity(
 	flag string,
 	repoCfg *config.RepoConfig,
 	globalCfg *config.Config,
-) string {
+) (string, error) {
 	if flag != "" {
-		if n, err := config.NormalizeMinSeverity(flag); err == nil {
-			return n
+		n, err := config.NormalizeMinSeverity(flag)
+		if err != nil {
+			return "", err
 		}
+		return n, nil
 	}
 	if repoCfg != nil && repoCfg.CI.MinSeverity != "" {
 		if n, err := config.NormalizeMinSeverity(
 			repoCfg.CI.MinSeverity); err == nil {
-			return n
+			return n, nil
 		}
 	}
 	if globalCfg != nil && globalCfg.CI.MinSeverity != "" {
 		if n, err := config.NormalizeMinSeverity(
 			globalCfg.CI.MinSeverity); err == nil {
-			return n
+			return n, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func resolveCISynthesisAgent(

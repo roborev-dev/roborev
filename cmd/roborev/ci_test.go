@@ -66,6 +66,56 @@ func TestCIReviewCmd_InvalidReviewType(t *testing.T) {
 	}
 }
 
+func TestCIReviewCmd_InvalidReasoning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	cmd := ciCmd()
+	cmd.SetArgs([]string{
+		"review",
+		"--ref", "abc123",
+		"--reasoning", "bogus",
+	})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal(
+			"expected error for invalid reasoning")
+	}
+	if !strings.Contains(
+		err.Error(), "invalid reasoning") {
+		t.Errorf(
+			"error should mention invalid reasoning, "+
+				"got: %v", err)
+	}
+}
+
+func TestCIReviewCmd_InvalidMinSeverity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	cmd := ciCmd()
+	cmd.SetArgs([]string{
+		"review",
+		"--ref", "abc123",
+		"--min-severity", "bogus",
+	})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal(
+			"expected error for invalid min-severity")
+	}
+	if !strings.Contains(
+		err.Error(), "invalid min_severity") {
+		t.Errorf(
+			"error should mention invalid "+
+				"min_severity, got: %v", err)
+	}
+}
+
 func TestCIReviewCmd_RequiresRef(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows")
