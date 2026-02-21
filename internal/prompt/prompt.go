@@ -151,7 +151,7 @@ func (b *Builder) BuildDirty(repoPath, diff string, repoID int64, contextCount i
 	if !config.IsDefaultReviewType(reviewType) {
 		promptType = reviewType
 	}
-	if promptType == "design" {
+	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
 	sb.WriteString(GetSystemPrompt(agentName, promptType))
@@ -217,7 +217,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	if !config.IsDefaultReviewType(reviewType) {
 		promptType = reviewType
 	}
-	if promptType == "design" {
+	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
 	sb.WriteString(GetSystemPrompt(agentName, promptType))
@@ -299,7 +299,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 	if !config.IsDefaultReviewType(reviewType) {
 		promptType = reviewType
 	}
-	if promptType == "design" {
+	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
 	sb.WriteString(GetSystemPrompt(agentName, promptType))

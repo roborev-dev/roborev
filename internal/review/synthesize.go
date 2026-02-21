@@ -45,7 +45,7 @@ func Synthesize(
 ) (string, error) {
 	successCount := 0
 	for _, r := range results {
-		if r.Status == "done" {
+		if r.Status == ResultDone {
 			successCount++
 		}
 	}

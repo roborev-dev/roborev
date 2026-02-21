@@ -477,7 +477,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	// Validate and normalize review_type (empty means "default")
 	if req.ReviewType == "" {
-		req.ReviewType = "default"
+		req.ReviewType = config.ReviewTypeDefault
 	}
 	canonical, err := config.ValidateReviewTypes(
 		[]string{req.ReviewType})

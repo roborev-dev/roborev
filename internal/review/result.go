@@ -8,9 +8,15 @@ type ReviewResult struct {
 	Agent      string
 	ReviewType string
 	Output     string
-	Status     string // "done" or "failed"
+	Status     string // ResultDone or ResultFailed
 	Error      string
 }
+
+// Result status values for ReviewResult.Status.
+const (
+	ResultDone   = "done"
+	ResultFailed = "failed"
+)
 
 // MaxCommentLen is the maximum length for a GitHub PR comment.
 // GitHub's hard limit is ~65536; we leave headroom.

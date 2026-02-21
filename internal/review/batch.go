@@ -72,7 +72,7 @@ func runSingle(
 	// Resolve agent
 	resolvedAgent, err := agent.GetAvailable(agentName)
 	if err != nil {
-		result.Status = "failed"
+		result.Status = ResultFailed
 		result.Error = fmt.Sprintf(
 			"resolve agent %q: %v", agentName, err)
 		return result
@@ -100,7 +100,7 @@ func runSingle(
 		cfg.RepoPath, cfg.GitRef, 0, cfg.ContextCount,
 		resolvedAgent.Name(), promptReviewType)
 	if err != nil {
-		result.Status = "failed"
+		result.Status = ResultFailed
 		result.Error = fmt.Sprintf(
 			"build prompt: %v", err)
 		return result
@@ -114,13 +114,13 @@ func runSingle(
 	output, err := resolvedAgent.Review(
 		ctx, cfg.RepoPath, cfg.GitRef, reviewPrompt, nil)
 	if err != nil {
-		result.Status = "failed"
+		result.Status = ResultFailed
 		result.Error = fmt.Sprintf(
 			"agent review: %v", err)
 		return result
 	}
 
-	result.Status = "done"
+	result.Status = ResultDone
 	result.Output = output
 	return result
 }

@@ -51,7 +51,7 @@ func BuildSynthesisPrompt(
 			i+1, r.Agent, r.ReviewType)
 		if IsQuotaFailure(r) {
 			b.WriteString(" [SKIPPED]")
-		} else if r.Status == "failed" {
+		} else if r.Status == ResultFailed {
 			b.WriteString(" [FAILED]")
 		}
 		b.WriteString("\n")
@@ -65,7 +65,7 @@ func BuildSynthesisPrompt(
 					"\n\n...(truncated)"
 			}
 			b.WriteString(output)
-		} else if r.Status == "failed" {
+		} else if r.Status == ResultFailed {
 			b.WriteString("(no output — review failed)")
 		}
 		b.WriteString("\n\n")
@@ -140,7 +140,7 @@ func FormatRawBatchComment(
 		if IsQuotaFailure(r) {
 			b.WriteString(
 				"Review skipped — agent quota exhausted.\n")
-		} else if r.Status == "failed" {
+		} else if r.Status == ResultFailed {
 			b.WriteString(
 				"**Error:** Review failed. " +
 					"Check CI logs for details.\n")
@@ -216,7 +216,7 @@ func FormatAllFailedComment(
 // IsQuotaFailure returns true if a review's error indicates a
 // quota skip rather than a real failure.
 func IsQuotaFailure(r ReviewResult) bool {
-	return r.Status == "failed" &&
+	return r.Status == ResultFailed &&
 		strings.HasPrefix(r.Error, QuotaErrorPrefix)
 }
 

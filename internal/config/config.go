@@ -251,7 +251,7 @@ func (c *CIConfig) ResolvedReviewTypes() []string {
 	if len(c.ReviewTypes) > 0 {
 		return c.ReviewTypes
 	}
-	return []string{"security"}
+	return []string{ReviewTypeSecurity}
 }
 
 // ResolvedAgents returns the list of agents to use.
@@ -592,11 +592,19 @@ func GetDisplayName(repoPath string) string {
 	return repoCfg.DisplayName
 }
 
+// Canonical review type names.
+const (
+	ReviewTypeDefault  = "default"
+	ReviewTypeSecurity = "security"
+	ReviewTypeDesign   = "design"
+)
+
 // IsDefaultReviewType returns true if the review type represents the standard
 // (non-specialized) code review. The canonical name is "default"; "general"
 // and "review" are accepted as backward-compatible aliases.
 func IsDefaultReviewType(rt string) bool {
-	return rt == "" || rt == "default" || rt == "general" || rt == "review"
+	return rt == "" || rt == ReviewTypeDefault ||
+		rt == "general" || rt == "review"
 }
 
 // ValidateReviewTypes canonicalizes, validates, and deduplicates
@@ -605,8 +613,8 @@ func IsDefaultReviewType(rt string) bool {
 // empty or unrecognized.
 func ValidateReviewTypes(types []string) ([]string, error) {
 	validSpecial := map[string]bool{
-		"security": true,
-		"design":   true,
+		ReviewTypeSecurity: true,
+		ReviewTypeDesign:   true,
 	}
 	seen := make(map[string]bool, len(types))
 	canonical := make([]string, 0, len(types))
@@ -617,7 +625,7 @@ func ValidateReviewTypes(types []string) ([]string, error) {
 					"(valid: default, security, design)", rt)
 		}
 		if IsDefaultReviewType(rt) {
-			rt = "default"
+			rt = ReviewTypeDefault
 		} else if !validSpecial[rt] {
 			return nil, fmt.Errorf(
 				"invalid review_type %q "+

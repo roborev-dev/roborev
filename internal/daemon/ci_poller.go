@@ -791,7 +791,7 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	var comment string
 	successCount := 0
 	for _, r := range reviews {
-		if r.Status == "done" {
+		if r.Status == reviewpkg.ResultDone {
 			successCount++
 		}
 	}
