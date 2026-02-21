@@ -15,10 +15,16 @@ import (
 type BatchConfig struct {
 	RepoPath     string
 	GitRef       string   // "BASE..HEAD" range
-	Agents       []string // resolved agent names
+	Agents       []string // agent names (resolved per-job)
 	ReviewTypes  []string // resolved review types
 	Reasoning    string
 	ContextCount int
+	// GlobalConfig enables workflow-aware agent/model resolution.
+	// When set, each job resolves its agent and model through
+	// config.ResolveAgentForWorkflow / ResolveModelForWorkflow,
+	// matching the CI poller's behavior. When nil, agents are
+	// used as-is (backward compatible).
+	GlobalConfig *config.Config
 }
 
 // RunBatch executes all review_type x agent combinations in
@@ -69,13 +75,38 @@ func runSingle(
 		ReviewType: reviewType,
 	}
 
-	// Resolve agent
-	resolvedAgent, err := agent.GetAvailable(agentName)
+	// Map review type to workflow name for config
+	// resolution (same mapping as CI poller).
+	workflow := "review"
+	if !config.IsDefaultReviewType(reviewType) {
+		workflow = reviewType
+	}
+
+	// Workflow-aware agent/model resolution when config
+	// is available; otherwise use the agent name as-is.
+	resolvedName := agentName
+	var model string
+	if cfg.GlobalConfig != nil {
+		resolvedName = config.ResolveAgentForWorkflow(
+			agentName, cfg.RepoPath,
+			cfg.GlobalConfig, workflow, cfg.Reasoning)
+		model = config.ResolveModelForWorkflow(
+			"", cfg.RepoPath,
+			cfg.GlobalConfig, workflow, cfg.Reasoning)
+	}
+
+	resolvedAgent, err := agent.GetAvailable(resolvedName)
 	if err != nil {
 		result.Status = ResultFailed
 		result.Error = fmt.Sprintf(
-			"resolve agent %q: %v", agentName, err)
+			"resolve agent %q: %v",
+			resolvedName, err)
 		return result
+	}
+
+	// Apply model override
+	if model != "" {
+		resolvedAgent = resolvedAgent.WithModel(model)
 	}
 
 	// Apply reasoning level

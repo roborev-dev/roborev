@@ -186,11 +186,12 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 
 	// Run batch
 	batchCfg := review.BatchConfig{
-		RepoPath:    root,
-		GitRef:      gitRef,
-		Agents:      agents,
-		ReviewTypes: reviewTypes,
-		Reasoning:   reasoningLevel,
+		RepoPath:     root,
+		GitRef:       gitRef,
+		Agents:       agents,
+		ReviewTypes:  reviewTypes,
+		Reasoning:    reasoningLevel,
+		GlobalConfig: globalCfg,
 	}
 
 	results := review.RunBatch(ctx, batchCfg)
@@ -291,7 +292,7 @@ func resolveReviewTypes(
 	if globalCfg != nil && len(globalCfg.CI.ReviewTypes) > 0 {
 		return globalCfg.CI.ReviewTypes
 	}
-	return []string{"security"}
+	return []string{config.ReviewTypeSecurity}
 }
 
 func resolveCIReasoning(

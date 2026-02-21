@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 // mockAgent implements agent.Agent for testing.
@@ -149,5 +150,55 @@ func TestRunBatch_AgentFailure(t *testing.T) {
 	r := results[0]
 	if r.Status != "failed" {
 		t.Errorf("status = %q, want 'failed'", r.Status)
+	}
+}
+
+func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
+	// Register two distinct agents.
+	agent.Register(&mockAgent{
+		name:   "base-agent",
+		output: "base",
+	})
+	agent.Register(&mockAgent{
+		name:   "security-agent",
+		output: "security",
+	})
+
+	// Configure security_agent override so security reviews
+	// resolve to "security-agent" while default reviews use
+	// the base agent.
+	globalCfg := &config.Config{
+		DefaultAgent:  "base-agent",
+		SecurityAgent: "security-agent",
+	}
+
+	cfg := BatchConfig{
+		RepoPath:     t.TempDir(),
+		GitRef:       "abc..def",
+		Agents:       []string{""},
+		ReviewTypes:  []string{"default", "security"},
+		GlobalConfig: globalCfg,
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// Both will fail at prompt building (no real git repo),
+	// but we can verify the resolved agent names.
+	agentByType := map[string]string{}
+	for _, r := range results {
+		agentByType[r.ReviewType] = r.Agent
+	}
+	if agentByType["default"] != "base-agent" {
+		t.Errorf(
+			"default type resolved to %q, want %q",
+			agentByType["default"], "base-agent")
+	}
+	if agentByType["security"] != "security-agent" {
+		t.Errorf(
+			"security type resolved to %q, want %q",
+			agentByType["security"], "security-agent")
 	}
 }
