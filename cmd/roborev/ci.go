@@ -367,31 +367,44 @@ func splitTrimmed(s string) []string {
 	return out
 }
 
+// ghPREvent represents the pull_request fields from a
+// GitHub Actions event payload.
+type ghPREvent struct {
+	PullRequest struct {
+		Number int `json:"number"`
+		Base   struct {
+			SHA string `json:"sha"`
+		} `json:"base"`
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+	} `json:"pull_request"`
+}
+
+// readPREvent reads and unmarshals the GitHub Actions event
+// file pointed to by GITHUB_EVENT_PATH.
+func readPREvent() (*ghPREvent, error) {
+	eventPath := os.Getenv("GITHUB_EVENT_PATH")
+	if eventPath == "" {
+		return nil, fmt.Errorf("GITHUB_EVENT_PATH not set")
+	}
+	data, err := os.ReadFile(eventPath)
+	if err != nil {
+		return nil, fmt.Errorf("read event file: %w", err)
+	}
+	var event ghPREvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return nil, fmt.Errorf("parse event JSON: %w", err)
+	}
+	return &event, nil
+}
+
 // detectGitRef attempts to auto-detect the git ref range from
 // the GitHub Actions environment.
 func detectGitRef() (string, error) {
-	eventPath := os.Getenv("GITHUB_EVENT_PATH")
-	if eventPath == "" {
-		return "", fmt.Errorf("GITHUB_EVENT_PATH not set")
-	}
-
-	data, err := os.ReadFile(eventPath)
+	event, err := readPREvent()
 	if err != nil {
-		return "", fmt.Errorf("read event file: %w", err)
-	}
-
-	var event struct {
-		PullRequest struct {
-			Base struct {
-				SHA string `json:"sha"`
-			} `json:"base"`
-			Head struct {
-				SHA string `json:"sha"`
-			} `json:"head"`
-		} `json:"pull_request"`
-	}
-	if err := json.Unmarshal(data, &event); err != nil {
-		return "", fmt.Errorf("parse event JSON: %w", err)
+		return "", err
 	}
 
 	base := event.PullRequest.Base.SHA
@@ -410,22 +423,9 @@ func detectGitRef() (string, error) {
 // the GitHub Actions environment.
 func detectPRNumber() (int, error) {
 	// Try event JSON first
-	eventPath := os.Getenv("GITHUB_EVENT_PATH")
-	if eventPath != "" {
-		data, err := os.ReadFile(eventPath)
-		if err == nil {
-			var event struct {
-				PullRequest struct {
-					Number int `json:"number"`
-				} `json:"pull_request"`
-			}
-			if err := json.Unmarshal(
-				data, &event); err == nil {
-				if event.PullRequest.Number > 0 {
-					return event.PullRequest.Number, nil
-				}
-			}
-		}
+	event, err := readPREvent()
+	if err == nil && event.PullRequest.Number > 0 {
+		return event.PullRequest.Number, nil
 	}
 
 	// Try GITHUB_REF (refs/pull/N/merge)
