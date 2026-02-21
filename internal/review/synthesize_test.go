@@ -3,9 +3,39 @@ package review
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/agent"
 )
+
+// capturingAgent records the gitRef passed to Review.
+type capturingAgent struct {
+	capturedGitRef string
+}
+
+func (a *capturingAgent) Name() string { return "capture" }
+func (a *capturingAgent) Review(
+	_ context.Context, _, gitRef, _ string, _ io.Writer,
+) (string, error) {
+	a.capturedGitRef = gitRef
+	return "synthesized output", nil
+}
+func (a *capturingAgent) WithReasoning(
+	_ agent.ReasoningLevel,
+) agent.Agent {
+	return a
+}
+func (a *capturingAgent) WithAgentic(_ bool) agent.Agent {
+	return a
+}
+func (a *capturingAgent) WithModel(_ string) agent.Agent {
+	return a
+}
+func (a *capturingAgent) CommandLine() string {
+	return "capture"
+}
 
 func TestSynthesize_AllFailed(t *testing.T) {
 	results := []ReviewResult{
@@ -157,5 +187,41 @@ func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {
 	if !strings.Contains(
 		comment, "Combined Review") {
 		t.Error("expected combined review header")
+	}
+}
+
+func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
+	cap := &capturingAgent{}
+	agent.Register(cap)
+
+	results := []ReviewResult{
+		{
+			Agent:      "codex",
+			ReviewType: "security",
+			Status:     "done",
+			Output:     "Found issue A",
+		},
+		{
+			Agent:      "codex",
+			ReviewType: "design",
+			Status:     "done",
+			Output:     "Design looks good",
+		},
+	}
+
+	_, err := Synthesize(
+		context.Background(), results, SynthesizeOpts{
+			Agent:   "capture",
+			GitRef:  "aaa111..bbb222",
+			HeadSHA: "bbb222",
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cap.capturedGitRef != "aaa111..bbb222" {
+		t.Errorf(
+			"gitRef = %q, want %q",
+			cap.capturedGitRef, "aaa111..bbb222")
 	}
 }
