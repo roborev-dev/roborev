@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/git"
 )
 
 // ErrAllFailed is returned by Synthesize when every review job
@@ -88,11 +89,11 @@ func formatSingleResult(
 	if r.Output == "" || r.Output == "No issues found." {
 		header = fmt.Sprintf(
 			"## roborev: Review Passed (`%s`)\n\n",
-			ShortSHA(headSHA))
+			git.ShortSHA(headSHA))
 	} else {
 		header = fmt.Sprintf(
 			"## roborev: Review Complete (`%s`)\n\n",
-			ShortSHA(headSHA))
+			git.ShortSHA(headSHA))
 	}
 
 	output := r.Output

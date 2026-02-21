@@ -212,7 +212,7 @@ func TestFormatRawBatchComment(t *testing.T) {
 	comment := review.FormatRawBatchComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
-		"## roborev: Combined Review (`abc123de`)",
+		"## roborev: Combined Review (`abc123d`)",
 		"Synthesis unavailable",
 		"<details>",
 		"Agent: codex | Type: security | Status: done",
@@ -232,7 +232,7 @@ func TestFormatSynthesizedComment(t *testing.T) {
 	comment := review.FormatSynthesizedComment(output, reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
-		"## roborev: Combined Review (`abc123de`)",
+		"## roborev: Combined Review (`abc123d`)",
 		"All clean. No critical findings.",
 		"Synthesized from 2 reviews",
 		"codex",
@@ -251,7 +251,7 @@ func TestFormatAllFailedComment(t *testing.T) {
 	comment := review.FormatAllFailedComment(reviews, "abc123def456")
 
 	assertContainsAll(t, comment, "comment",
-		"## roborev: Review Failed (`abc123de`)",
+		"## roborev: Review Failed (`abc123d`)",
 		"All review jobs in this batch failed",
 		"**codex** (security): failed",
 		"**gemini** (review): failed",
@@ -826,7 +826,7 @@ func TestCIPollerSynthesizeBatchResults_WithTestAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("synthesizeBatchResults: %v", err)
 	}
-	if !strings.Contains(out, "## roborev: Combined Review (`deadbeef`)") {
+	if !strings.Contains(out, "## roborev: Combined Review (`deadbee`)") {
 		t.Fatalf("expected combined review header with SHA, got: %q", out)
 	}
 }

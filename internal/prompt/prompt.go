@@ -241,10 +241,7 @@ func (b *Builder) buildSinglePrompt(repoPath, sha string, repoID int64, contextC
 	b.writePreviousAttemptsForGitRef(&sb, sha)
 
 	// Current commit section
-	shortSHA := sha
-	if len(shortSHA) > 7 {
-		shortSHA = shortSHA[:7]
-	}
+	shortSHA := git.ShortSHA(sha)
 
 	// Get commit info
 	info, err := git.GetCommitInfo(repoPath, sha)
@@ -334,10 +331,7 @@ func (b *Builder) buildRangePrompt(repoPath, rangeRef string, repoID int64, cont
 
 	for _, sha := range commits {
 		info, err := git.GetCommitInfo(repoPath, sha)
-		shortSHA := sha
-		if len(shortSHA) > 7 {
-			shortSHA = shortSHA[:7]
-		}
+		shortSHA := git.ShortSHA(sha)
 		if err == nil {
 			fmt.Fprintf(&sb, "- %s %s\n", shortSHA, info.Subject)
 		} else {
@@ -383,10 +377,7 @@ func (b *Builder) writePreviousReviews(sb *strings.Builder, contexts []ReviewCon
 	// Show in chronological order (oldest first) for narrative flow
 	for i := len(contexts) - 1; i >= 0; i-- {
 		ctx := contexts[i]
-		shortSHA := ctx.SHA
-		if len(shortSHA) > 7 {
-			shortSHA = shortSHA[:7]
-		}
+		shortSHA := git.ShortSHA(ctx.SHA)
 
 		fmt.Fprintf(sb, "--- Review for commit %s ---\n", shortSHA)
 		if ctx.Review != nil {

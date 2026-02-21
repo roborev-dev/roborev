@@ -5,27 +5,6 @@ import (
 	"testing"
 )
 
-func TestShortSHA(t *testing.T) {
-	tests := []struct {
-		sha  string
-		want string
-	}{
-		{"abcdef1234567890", "abcdef12"},
-		{"abcdef", "abcdef"},
-		{"", ""},
-		{"12345678", "12345678"},
-		{"123456789", "12345678"},
-	}
-	for _, tt := range tests {
-		got := ShortSHA(tt.sha)
-		if got != tt.want {
-			t.Errorf(
-				"ShortSHA(%q) = %q, want %q",
-				tt.sha, got, tt.want)
-		}
-	}
-}
-
 func TestIsQuotaFailure(t *testing.T) {
 	tests := []struct {
 		name string
@@ -207,7 +186,7 @@ func TestFormatSynthesizedComment(t *testing.T) {
 		"abc123456789")
 
 	checks := []string{
-		"## roborev: Combined Review (`abc12345`)",
+		"## roborev: Combined Review (`abc1234`)",
 		"Combined findings here",
 		"Synthesized from 2 reviews",
 		"codex",
@@ -241,7 +220,7 @@ func TestFormatRawBatchComment(t *testing.T) {
 		reviews, "def456789012")
 
 	checks := []string{
-		"## roborev: Combined Review (`def45678`)",
+		"## roborev: Combined Review (`def4567`)",
 		"Synthesis unavailable",
 		"<details>",
 		"Found issue X",

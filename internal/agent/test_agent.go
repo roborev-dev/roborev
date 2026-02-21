@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/roborev-dev/roborev/internal/git"
 )
 
 // TestAgent is a mock agent for testing that returns predictable output
@@ -64,10 +66,7 @@ func (a *TestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		return "", fmt.Errorf("test agent configured to fail")
 	}
 
-	shortSHA := commitSHA
-	if len(shortSHA) > 7 {
-		shortSHA = shortSHA[:7]
-	}
+	shortSHA := git.ShortSHA(commitSHA)
 	result := fmt.Sprintf("%s\n\nCommit: %s\nRepo: %s", a.Output, shortSHA, repoPath)
 	if output != nil {
 		if _, err := output.Write([]byte(result)); err != nil {

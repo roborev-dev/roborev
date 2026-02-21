@@ -1151,9 +1151,9 @@ func formatClipboardContent(review *storage.Review) string {
 		if review.Job != nil && review.Job.RepoPath != "" {
 			// Include repo path and git ref when available
 			gitRef := review.Job.GitRef
-			// Truncate SHA to 7 chars if it's a full 40-char hex SHA (not a range or branch name)
+			// Truncate SHA if it's a full 40-char hex SHA (not a range or branch name)
 			if fullSHAPattern.MatchString(gitRef) {
-				gitRef = gitRef[:7]
+				gitRef = git.ShortSHA(gitRef)
 			}
 			header = fmt.Sprintf("Review #%d %s %s\n\n", id, review.Job.RepoPath, gitRef)
 		} else {
@@ -1252,10 +1252,10 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 			for i, sha := range commits {
 				info, err := git.GetCommitInfo(job.RepoPath, sha)
 				if err != nil {
-					fmt.Fprintf(&content, "%d. %s: (error: %v)\n\n", i+1, sha[:7], err)
+					fmt.Fprintf(&content, "%d. %s: (error: %v)\n\n", i+1, git.ShortSHA(sha), err)
 					continue
 				}
-				fmt.Fprintf(&content, "%d. %s %s\n", i+1, info.SHA[:7], info.Subject)
+				fmt.Fprintf(&content, "%d. %s %s\n", i+1, git.ShortSHA(info.SHA), info.Subject)
 				fmt.Fprintf(&content, "   Author: %s | %s\n", info.Author, info.Timestamp.Format("2006-01-02 15:04"))
 				if info.Body != "" {
 					// Indent body
@@ -3153,10 +3153,7 @@ func (m tuiModel) renderTailView() string {
 	for _, job := range m.jobs {
 		if job.ID == m.tailJobID {
 			repoName := m.getDisplayName(job.RepoPath, job.RepoName)
-			shortRef := job.GitRef
-			if len(shortRef) > 7 {
-				shortRef = shortRef[:7]
-			}
+			shortRef := git.ShortSHA(job.GitRef)
 			title = fmt.Sprintf("Tail: %s %s (#%d)", repoName, shortRef, job.ID)
 			break
 		}
@@ -3813,10 +3810,7 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 		// Stage and commit
 		commitMsg := fmt.Sprintf("fix: apply roborev fix job #%d", jobID)
 		if parentJobID > 0 {
-			ref := jobDetail.GitRef
-			if len(ref) > 7 {
-				ref = ref[:7]
-			}
+			ref := git.ShortSHA(jobDetail.GitRef)
 			commitMsg = fmt.Sprintf("fix: apply roborev fix for %s (job #%d)", ref, jobID)
 		}
 		if err := commitPatch(jobDetail.RepoPath, patch, commitMsg); err != nil {

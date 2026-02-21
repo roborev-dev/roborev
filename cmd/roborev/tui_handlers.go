@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
 )
@@ -959,10 +960,7 @@ func (m tuiModel) handleCommentOpenKey() (tea.Model, tea.Cmd) {
 				m.commentText = ""
 			}
 			m.commentJobID = job.ID
-			m.commentCommit = job.GitRef
-			if len(m.commentCommit) > 7 {
-				m.commentCommit = m.commentCommit[:7]
-			}
+			m.commentCommit = git.ShortSHA(job.GitRef)
 			m.commentFromView = tuiViewQueue
 			m.currentView = tuiViewComment
 		}
@@ -974,10 +972,8 @@ func (m tuiModel) handleCommentOpenKey() (tea.Model, tea.Cmd) {
 		m.commentJobID = m.currentReview.JobID
 		m.commentCommit = ""
 		if m.currentReview.Job != nil {
-			m.commentCommit = m.currentReview.Job.GitRef
-			if len(m.commentCommit) > 7 {
-				m.commentCommit = m.commentCommit[:7]
-			}
+			m.commentCommit = git.ShortSHA(
+				m.currentReview.Job.GitRef)
 		}
 		m.commentFromView = tuiViewReview
 		m.currentView = tuiViewComment

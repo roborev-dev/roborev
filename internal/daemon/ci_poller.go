@@ -299,10 +299,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	if canceledIDs, err := p.db.CancelSupersededBatches(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
 		log.Printf("CI poller: error canceling superseded batches for %s#%d: %v", ghRepo, pr.Number, err)
 	} else if len(canceledIDs) > 0 {
-		headShort := pr.HeadRefOid
-		if len(headShort) > 8 {
-			headShort = headShort[:8]
-		}
+		headShort := gitpkg.ShortSHA(pr.HeadRefOid)
 		log.Printf("CI poller: canceled %d superseded jobs for %s#%d (new HEAD=%s)",
 			len(canceledIDs), ghRepo, pr.Number, headShort)
 		// Also kill running worker processes so they stop consuming compute.
@@ -437,10 +434,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 	}
 
-	headShort := pr.HeadRefOid
-	if len(headShort) > 8 {
-		headShort = headShort[:8]
-	}
+	headShort := gitpkg.ShortSHA(pr.HeadRefOid)
 	log.Printf("CI poller: created batch %d for %s#%d (HEAD=%s, %d jobs)",
 		batch.ID, ghRepo, pr.Number, headShort, totalJobs)
 

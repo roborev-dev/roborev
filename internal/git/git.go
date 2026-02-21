@@ -980,3 +980,12 @@ func getAnyRemoteURL(repoPath string) string {
 	}
 	return ""
 }
+
+// ShortSHA returns the first 7 characters of a SHA hash, or
+// the full string if shorter. Matches git's default abbreviation.
+func ShortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}

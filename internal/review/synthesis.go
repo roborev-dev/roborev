@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/roborev-dev/roborev/internal/git"
 )
 
 // severityAbove maps a minimum severity to the instruction
@@ -84,7 +86,7 @@ func FormatSynthesizedComment(
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		"## roborev: Combined Review (`%s`)\n\n",
-		ShortSHA(headSHA))
+		git.ShortSHA(headSHA))
 	b.WriteString(output)
 
 	agentSet := make(map[string]struct{})
@@ -123,7 +125,7 @@ func FormatRawBatchComment(
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		"## roborev: Combined Review (`%s`)\n\n",
-		ShortSHA(headSHA))
+		git.ShortSHA(headSHA))
 	b.WriteString(
 		"> Synthesis unavailable. Showing raw review outputs.\n\n")
 
@@ -178,14 +180,14 @@ func FormatAllFailedComment(
 	if allQuota {
 		fmt.Fprintf(&b,
 			"## roborev: Review Skipped (`%s`)\n\n",
-			ShortSHA(headSHA))
+			git.ShortSHA(headSHA))
 		b.WriteString(
 			"All review agents were skipped " +
 				"due to quota exhaustion.\n\n")
 	} else {
 		fmt.Fprintf(&b,
 			"## roborev: Review Failed (`%s`)\n\n",
-			ShortSHA(headSHA))
+			git.ShortSHA(headSHA))
 		b.WriteString(
 			"All review jobs in this batch failed.\n\n")
 	}
@@ -230,15 +232,6 @@ func CountQuotaFailures(reviews []ReviewResult) int {
 		}
 	}
 	return n
-}
-
-// ShortSHA returns the first 8 characters of a SHA, or the full
-// string if shorter.
-func ShortSHA(sha string) string {
-	if len(sha) > 8 {
-		return sha[:8]
-	}
-	return sha
 }
 
 // SkippedAgentNote returns a markdown note listing agents that

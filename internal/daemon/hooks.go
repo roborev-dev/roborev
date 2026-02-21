@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	gitpkg "github.com/roborev-dev/roborev/internal/git"
 )
 
 // HookRunner listens for broadcaster events and runs configured hooks.
@@ -128,10 +129,7 @@ func beadsCommand(event Event) string {
 		repoName = filepath.Base(event.Repo)
 	}
 
-	shortSHA := event.SHA
-	if len(shortSHA) > 8 {
-		shortSHA = shortSHA[:8]
-	}
+	shortSHA := gitpkg.ShortSHA(event.SHA)
 
 	switch event.Type {
 	case "review.failed":

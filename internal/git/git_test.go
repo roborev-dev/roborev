@@ -1274,3 +1274,27 @@ func TestGetPatchID(t *testing.T) {
 		}
 	})
 }
+
+func TestShortSHA(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"full sha", "abc1234def5678", "abc1234"},
+		{"exactly 7", "abc1234", "abc1234"},
+		{"shorter", "abc", "abc"},
+		{"empty", "", ""},
+		{"8 chars", "abc12345", "abc1234"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ShortSHA(tt.in)
+			if got != tt.want {
+				t.Errorf(
+					"ShortSHA(%q) = %q, want %q",
+					tt.in, got, tt.want)
+			}
+		})
+	}
+}

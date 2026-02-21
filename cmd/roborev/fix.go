@@ -535,7 +535,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 
 		// Format the output with all available information
 		cmd.Printf("Job #%d\n", id)
-		cmd.Printf("  Git Ref:  %s\n", shortSHA(job.GitRef))
+		cmd.Printf("  Git Ref:  %s\n", git.ShortSHA(job.GitRef))
 		if job.Branch != "" {
 			cmd.Printf("  Branch:   %s\n", job.Branch)
 		}
@@ -682,7 +682,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	// Add response and mark as addressed
 	responseText := "Fix applied via `roborev fix` command"
 	if result.CommitCreated {
-		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", shortSHA(result.NewCommitSHA))
+		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", git.ShortSHA(result.NewCommitSHA))
 	}
 
 	if err := addJobResponse(serverAddr, jobID, "roborev-fix", responseText); err != nil {
@@ -858,7 +858,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		// Mark all jobs in this batch as addressed
 		responseText := "Fix applied via `roborev fix --batch`"
 		if result.CommitCreated {
-			responseText = fmt.Sprintf("Fix applied via `roborev fix --batch` (commit: %s)", shortSHA(result.NewCommitSHA))
+			responseText = fmt.Sprintf("Fix applied via `roborev fix --batch` (commit: %s)", git.ShortSHA(result.NewCommitSHA))
 		}
 		for _, e := range batch {
 			if addErr := addJobResponse(serverAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
@@ -886,7 +886,7 @@ const batchPromptFooter = "## Instructions\n\nPlease apply fixes for all the fin
 // batchEntrySize returns the size of a single entry in the batch prompt.
 // The index parameter is the 1-based position in the batch.
 func batchEntrySize(index int, e batchEntry) int {
-	return len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, shortSHA(e.job.GitRef), e.review.Output))
+	return len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, git.ShortSHA(e.job.GitRef), e.review.Output))
 }
 
 // splitIntoBatches groups entries into batches respecting maxSize.
@@ -924,7 +924,7 @@ func buildBatchFixPrompt(entries []batchEntry) string {
 	sb.WriteString(batchPromptHeader)
 
 	for i, e := range entries {
-		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, shortSHA(e.job.GitRef))
+		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, git.ShortSHA(e.job.GitRef))
 		sb.WriteString(e.review.Output)
 		sb.WriteString("\n\n")
 	}

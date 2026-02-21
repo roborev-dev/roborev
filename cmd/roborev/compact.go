@@ -476,7 +476,7 @@ func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot string) string 
 	for i, jr := range jobReviews {
 		fmt.Fprintf(&sb, "--- Review %d (Job %d", i+1, jr.jobID)
 		if jr.job.GitRef != "" {
-			fmt.Fprintf(&sb, " — %s", shortSHA(jr.job.GitRef))
+			fmt.Fprintf(&sb, " — %s", git.ShortSHA(jr.job.GitRef))
 		}
 		sb.WriteString(") ---\n")
 		sb.WriteString(jr.review.Output)

@@ -337,9 +337,9 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 	// Print branch context after successful connection
 	if opts.since != "" {
-		fmt.Printf("Refining commits since %s on branch %q\n", mergeBase[:7], currentBranch)
+		fmt.Printf("Refining commits since %s on branch %q\n", git.ShortSHA(mergeBase), currentBranch)
 	} else {
-		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, mergeBase[:7])
+		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, defaultBranch, git.ShortSHA(mergeBase))
 	}
 
 	// Resolve reasoning level from CLI or config (default: standard for refine)
@@ -562,7 +562,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		if headAfterAgent != headBefore || branchAfterAgent != branchBefore {
 			wt.Close()
 			return fmt.Errorf("HEAD changed during refine (was %s on %s, now %s on %s) - aborting to prevent applying patch to wrong commit",
-				shortSHA(headBefore), branchBefore, shortSHA(headAfterAgent), branchAfterAgent)
+				git.ShortSHA(headBefore), branchBefore, git.ShortSHA(headAfterAgent), branchAfterAgent)
 		}
 
 		if agentErr != nil {
@@ -601,10 +601,10 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		if err != nil {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
-		fmt.Printf("Created commit %s\n", shortSHA(newCommit))
+		fmt.Printf("Created commit %s\n", git.ShortSHA(newCommit))
 
 		// Add response recording what was done
-		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", shortSHA(newCommit), output)
+		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", git.ShortSHA(newCommit), output)
 		if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText); err != nil {
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
@@ -730,7 +730,7 @@ func runRefineList(
 		}
 
 		cmd.Printf("Job #%d\n", job.ID)
-		cmd.Printf("  Git Ref:  %s\n", shortSHA(job.GitRef))
+		cmd.Printf("  Git Ref:  %s\n", git.ShortSHA(job.GitRef))
 		if job.Branch != "" {
 			cmd.Printf("  Branch:   %s\n", job.Branch)
 		}
@@ -908,12 +908,12 @@ func runRefineAllBranches(
 		if err := git.CheckoutBranch(repoPath, originalHEAD); err != nil {
 			return fmt.Errorf(
 				"cannot restore detached HEAD %s: %w",
-				shortSHA(originalHEAD), err,
+				git.ShortSHA(originalHEAD), err,
 			)
 		}
 		fmt.Printf(
 			"\nRestored to detached HEAD at %s\n",
-			shortSHA(originalHEAD),
+			git.ShortSHA(originalHEAD),
 		)
 	}
 
@@ -954,7 +954,7 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 	for _, sha := range commits {
 		review, err := client.GetReviewBySHA(sha)
 		if err != nil {
-			return nil, fmt.Errorf("fetching review for %s: %w", sha[:7], err)
+			return nil, fmt.Errorf("fetching review for %s: %w", git.ShortSHA(sha), err)
 		}
 		if review == nil {
 			continue
@@ -1139,8 +1139,8 @@ func verifyRepoState(
 		currentBranch != expectedBranch {
 		return fmt.Errorf(
 			"HEAD was %s on %s, now %s on %s",
-			shortSHA(expectedHead), expectedBranch,
-			shortSHA(currentHead), currentBranch,
+			git.ShortSHA(expectedHead), expectedBranch,
+			git.ShortSHA(currentHead), currentBranch,
 		)
 	}
 	return nil

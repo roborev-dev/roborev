@@ -1772,7 +1772,7 @@ Examples:
 					}
 				}
 				queryURL = addr + "/api/review?sha=" + sha
-				displayRef = shortSHA(sha)
+				displayRef = git.ShortSHA(sha)
 			} else {
 				arg := args[0]
 				var isJobID bool
@@ -1804,7 +1804,7 @@ Examples:
 						sha = resolvedSHA
 					}
 					queryURL = addr + "/api/review?sha=" + sha
-					displayRef = shortSHA(sha)
+					displayRef = git.ShortSHA(sha)
 				}
 			}
 
@@ -3106,13 +3106,6 @@ func versionCmd() *cobra.Command {
 	}
 }
 
-func shortSHA(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
-	}
-	return sha
-}
-
 func shortRef(ref string) string {
 	// For ranges like "abc123..def456", show as "abc123..def456" (up to 17 chars)
 	// For single SHAs, truncate to 7 chars
@@ -3122,7 +3115,7 @@ func shortRef(ref string) string {
 		}
 		return ref
 	}
-	return shortSHA(ref)
+	return git.ShortSHA(ref)
 }
 
 // shortJobRef returns a display-friendly ref for a job, handling special job types.

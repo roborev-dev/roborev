@@ -341,7 +341,7 @@ func TestBeadsCommandShortSHA(t *testing.T) {
 		SHA:      "abcdef1234567890",
 	}
 	cmd := beadsCommand(event)
-	if !strings.Contains(cmd, "abcdef12") {
+	if !strings.Contains(cmd, "abcdef1") {
 		t.Errorf("expected truncated SHA in command, got %q", cmd)
 	}
 	if strings.Contains(cmd, "abcdef1234567890") {
