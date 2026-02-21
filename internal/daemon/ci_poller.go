@@ -17,7 +17,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
-	"github.com/roborev-dev/roborev/internal/review"
+	reviewpkg "github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -811,14 +811,14 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 		comment = formatPRComment(review, verdict)
 	} else if successCount == 0 {
 		// All jobs failed — post raw error comment
-		comment = review.FormatAllFailedComment(toReviewResults(reviews), batch.HeadSHA)
+		comment = reviewpkg.FormatAllFailedComment(toReviewResults(reviews), batch.HeadSHA)
 	} else {
 		// Multiple jobs — try synthesis
 		cfg := p.cfgGetter.Config()
 		synthesized, err := p.callSynthesize(batch, reviews, cfg)
 		if err != nil {
 			log.Printf("CI poller: synthesis failed for batch %d: %v (falling back to raw)", batch.ID, err)
-			comment = review.FormatRawBatchComment(toReviewResults(reviews), batch.HeadSHA)
+			comment = reviewpkg.FormatRawBatchComment(toReviewResults(reviews), batch.HeadSHA)
 		} else {
 			comment = synthesized
 		}
@@ -840,7 +840,7 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	//   all failures are quota skips → success (with note)
 	//   mixed real failures          → failure
 	//   all failed (real)            → error
-	quotaSkips := review.CountQuotaFailures(toReviewResults(reviews))
+	quotaSkips := reviewpkg.CountQuotaFailures(toReviewResults(reviews))
 	realFailures := batch.FailedJobs - quotaSkips
 	statusState := "success"
 	statusDesc := "Review complete"
@@ -976,7 +976,7 @@ func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []st
 	}
 
 	minSeverity := resolveMinSeverity(cfg.CI.MinSeverity, repoPath, batch.GithubRepo)
-	prompt := review.BuildSynthesisPrompt(toReviewResults(reviews), minSeverity)
+	prompt := reviewpkg.BuildSynthesisPrompt(toReviewResults(reviews), minSeverity)
 
 	// Run synthesis from the repo's checkout directory so agents that
 	// require a git working tree (e.g. codex) don't fail.
@@ -988,7 +988,7 @@ func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []st
 		return "", fmt.Errorf("synthesis review: %w", err)
 	}
 
-	return review.FormatSynthesizedComment(output, toReviewResults(reviews), batch.HeadSHA), nil
+	return reviewpkg.FormatSynthesizedComment(output, toReviewResults(reviews), batch.HeadSHA), nil
 }
 
 func (p *CIPoller) callListOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
@@ -1088,8 +1088,8 @@ func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error
 // review package's ReviewResult type.
 func toReviewResults(
 	brs []storage.BatchReviewResult,
-) []review.ReviewResult {
-	rrs := make([]review.ReviewResult, len(brs))
+) []reviewpkg.ReviewResult {
+	rrs := make([]reviewpkg.ReviewResult, len(brs))
 	for i, br := range brs {
 		rrs[i] = toReviewResult(br)
 	}
@@ -1099,8 +1099,8 @@ func toReviewResults(
 // toReviewResult converts a single storage batch result.
 func toReviewResult(
 	br storage.BatchReviewResult,
-) review.ReviewResult {
-	return review.ReviewResult{
+) reviewpkg.ReviewResult {
+	return reviewpkg.ReviewResult{
 		Agent:      br.Agent,
 		ReviewType: br.ReviewType,
 		Output:     br.Output,
@@ -1126,9 +1126,9 @@ func formatPRComment(review *storage.Review, verdict string) string {
 
 	// Include review output (truncated if very long)
 	output := review.Output
-	const maxLen = 60000 // GitHub comment limit is ~65536
-	if len(output) > maxLen {
-		output = output[:maxLen] + "\n\n...(truncated)"
+	if len(output) > reviewpkg.MaxCommentLen {
+		output = output[:reviewpkg.MaxCommentLen] +
+			"\n\n...(truncated)"
 	}
 
 	if verdict != "P" && output != "" {
@@ -1148,9 +1148,10 @@ func formatPRComment(review *storage.Review, verdict string) string {
 // postPRComment posts a comment on a GitHub PR using the gh CLI.
 // Truncates the body to stay within GitHub's ~65536 character limit.
 func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error {
-	const maxCommentLen = 60000 // leave headroom below GitHub's ~65536 limit
-	if len(body) > maxCommentLen {
-		body = body[:maxCommentLen] + "\n\n...(truncated — comment exceeded size limit)"
+	if len(body) > reviewpkg.MaxCommentLen {
+		body = body[:reviewpkg.MaxCommentLen] +
+			"\n\n...(truncated — comment exceeded " +
+			"size limit)"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

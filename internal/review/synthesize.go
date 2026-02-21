@@ -96,9 +96,9 @@ func formatSingleResult(
 	}
 
 	output := r.Output
-	const maxLen = 60000
-	if len(output) > maxLen {
-		output = output[:maxLen] + "\n\n...(truncated)"
+	if len(output) > MaxCommentLen {
+		output = output[:MaxCommentLen] +
+			"\n\n...(truncated)"
 	}
 
 	return header + output + fmt.Sprintf(

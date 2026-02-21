@@ -460,10 +460,10 @@ func postCIComment(
 	prNumber int,
 	body string,
 ) error {
-	const maxCommentLen = 60000
-	if len(body) > maxCommentLen {
-		body = body[:maxCommentLen] +
-			"\n\n...(truncated — comment exceeded size limit)"
+	if len(body) > review.MaxCommentLen {
+		body = body[:review.MaxCommentLen] +
+			"\n\n...(truncated — comment exceeded " +
+			"size limit)"
 	}
 
 	ghCmd := exec.Command("gh", "pr", "comment",
