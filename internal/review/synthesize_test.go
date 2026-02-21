@@ -10,6 +10,33 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 )
 
+// failingSynthAgent always returns an error from Review,
+// used to force synthesis fallback deterministically.
+type failingSynthAgent struct{}
+
+func (a *failingSynthAgent) Name() string {
+	return "failing-synth"
+}
+func (a *failingSynthAgent) Review(
+	_ context.Context, _, _, _ string, _ io.Writer,
+) (string, error) {
+	return "", errors.New("agent exploded")
+}
+func (a *failingSynthAgent) WithReasoning(
+	_ agent.ReasoningLevel,
+) agent.Agent {
+	return a
+}
+func (a *failingSynthAgent) WithAgentic(_ bool) agent.Agent {
+	return a
+}
+func (a *failingSynthAgent) WithModel(_ string) agent.Agent {
+	return a
+}
+func (a *failingSynthAgent) CommandLine() string {
+	return "failing-synth"
+}
+
 // capturingAgent records the gitRef passed to Review.
 type capturingAgent struct {
 	capturedGitRef string
@@ -92,8 +119,11 @@ func TestSynthesize_SingleSuccess(t *testing.T) {
 }
 
 func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
-	// Without a real agent for synthesis, it should fall back
-	// to raw format.
+	// Register an agent that always fails so the test is
+	// deterministic regardless of what other agents exist
+	// in the global registry.
+	agent.Register(&failingSynthAgent{})
+
 	results := []ReviewResult{
 		{
 			Agent:      "codex",
@@ -111,7 +141,7 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 
 	comment, err := Synthesize(
 		context.Background(), results, SynthesizeOpts{
-			Agent:   "nonexistent-synthesis-agent",
+			Agent:   "failing-synth",
 			HeadSHA: "def456789012",
 		})
 	if err != nil {
