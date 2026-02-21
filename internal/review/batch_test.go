@@ -4,15 +4,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
 // mockAgent implements agent.Agent for testing.
 type mockAgent struct {
 	name   string
+	model  string
 	output string
 	err    error
 }
@@ -21,7 +24,11 @@ func (m *mockAgent) Name() string { return m.name }
 func (m *mockAgent) Review(
 	_ context.Context, _, _, _ string, _ io.Writer,
 ) (string, error) {
-	return m.output, m.err
+	out := m.output
+	if m.model != "" {
+		out += " model=" + m.model
+	}
+	return out, m.err
 }
 func (m *mockAgent) WithReasoning(
 	_ agent.ReasoningLevel,
@@ -31,8 +38,10 @@ func (m *mockAgent) WithReasoning(
 func (m *mockAgent) WithAgentic(_ bool) agent.Agent {
 	return m
 }
-func (m *mockAgent) WithModel(_ string) agent.Agent {
-	return m
+func (m *mockAgent) WithModel(model string) agent.Agent {
+	c := *m
+	c.model = model
+	return &c
 }
 func (m *mockAgent) CommandLine() string {
 	return m.name
@@ -200,5 +209,63 @@ func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
 		t.Errorf(
 			"security type resolved to %q, want %q",
 			agentByType["security"], "security-agent")
+	}
+}
+
+func TestRunBatch_WorkflowModelResolution(t *testing.T) {
+	agent.Register(&mockAgent{
+		name:   "model-test-agent",
+		output: "ok",
+	})
+
+	// Configure a security-specific model override.
+	globalCfg := &config.Config{
+		DefaultAgent:  "model-test-agent",
+		SecurityModel: "sec-model-v2",
+	}
+
+	// Use a real git repo so prompt building succeeds
+	// and Review() is called, making model observable.
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.RevParse("HEAD")
+
+	cfg := BatchConfig{
+		RepoPath:     repo.Root,
+		GitRef:       sha,
+		Agents:       []string{""},
+		ReviewTypes:  []string{"default", "security"},
+		GlobalConfig: globalCfg,
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	for _, r := range results {
+		if r.Status != ResultDone {
+			t.Fatalf(
+				"type %s: status=%q err=%q",
+				r.ReviewType, r.Status, r.Error)
+		}
+	}
+
+	outputByType := map[string]string{}
+	for _, r := range results {
+		outputByType[r.ReviewType] = r.Output
+	}
+
+	// Security review should have the model applied.
+	if !strings.Contains(
+		outputByType["security"], "model=sec-model-v2") {
+		t.Errorf(
+			"security output missing model, got %q",
+			outputByType["security"])
+	}
+	// Default review should have no model override.
+	if strings.Contains(outputByType["default"], "model=") {
+		t.Errorf(
+			"default output should have no model, got %q",
+			outputByType["default"])
 	}
 }
