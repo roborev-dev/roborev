@@ -255,17 +255,25 @@ func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 		outputByType[r.ReviewType] = r.Output
 	}
 
+	secOut, ok := outputByType["security"]
+	if !ok {
+		t.Fatal("missing result for security review type")
+	}
+	defOut, ok := outputByType["default"]
+	if !ok {
+		t.Fatal("missing result for default review type")
+	}
+
 	// Security review should have the model applied.
-	if !strings.Contains(
-		outputByType["security"], "model=sec-model-v2") {
+	if !strings.Contains(secOut, "model=sec-model-v2") {
 		t.Errorf(
 			"security output missing model, got %q",
-			outputByType["security"])
+			secOut)
 	}
 	// Default review should have no model override.
-	if strings.Contains(outputByType["default"], "model=") {
+	if strings.Contains(defOut, "model=") {
 		t.Errorf(
 			"default output should have no model, got %q",
-			outputByType["default"])
+			defOut)
 	}
 }
