@@ -105,6 +105,40 @@ type ciReviewOpts struct {
 }
 
 func runCIReview(ctx context.Context, opts ciReviewOpts) error {
+	// Validate flag-only inputs early (before git/config
+	// checks) so users get clear errors even outside a repo.
+	if opts.reviewTypes != "" {
+		if _, err := config.ValidateReviewTypes(
+			splitTrimmed(opts.reviewTypes)); err != nil {
+			return err
+		}
+	}
+	if opts.reasoning != "" {
+		if _, err := config.NormalizeReasoning(
+			opts.reasoning); err != nil {
+			return err
+		}
+	}
+	if opts.minSeverity != "" {
+		if _, err := config.NormalizeMinSeverity(
+			opts.minSeverity); err != nil {
+			return err
+		}
+	}
+
+	// Resolve git ref (from flag or environment — no repo
+	// needed, so validate before the git repo check).
+	gitRef := opts.ref
+	if gitRef == "" {
+		detected, err := detectGitRef()
+		if err != nil {
+			return fmt.Errorf(
+				"--ref not provided and auto-detection "+
+					"failed: %w", err)
+		}
+		gitRef = detected
+	}
+
 	// Determine repo root
 	root, err := git.GetRepoRoot(".")
 	if err != nil {
@@ -125,18 +159,6 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		log.Printf(
 			"ci review: load repo config: %v "+
 				"(using defaults)", err)
-	}
-
-	// Resolve git ref
-	gitRef := opts.ref
-	if gitRef == "" {
-		detected, err := detectGitRef()
-		if err != nil {
-			return fmt.Errorf(
-				"--ref not provided and auto-detection "+
-					"failed: %w", err)
-		}
-		gitRef = detected
 	}
 
 	// Resolve agents
