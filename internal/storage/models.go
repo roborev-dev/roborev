@@ -158,6 +158,9 @@ type Review struct {
 	UpdatedByMachineID string     `json:"updated_by_machine_id,omitempty"` // Machine that last modified this review
 	SyncedAt           *time.Time `json:"synced_at,omitempty"`             // Last sync time
 
+	// Stored verdict: 1=pass, 0=fail, NULL=legacy (not yet backfilled)
+	VerdictBool *int `json:"verdict_bool,omitempty"`
+
 	// Joined fields
 	Job *ReviewJob `json:"job,omitempty"`
 }

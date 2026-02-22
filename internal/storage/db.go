@@ -639,6 +639,22 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add verdict_bool column to reviews if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'verdict_bool'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check verdict_bool column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE reviews ADD COLUMN verdict_bool INTEGER`)
+		if err != nil {
+			return fmt.Errorf("add verdict_bool column: %w", err)
+		}
+		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reviews_verdict_bool ON reviews(verdict_bool)`)
+		if err != nil {
+			return fmt.Errorf("create idx_reviews_verdict_bool: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err

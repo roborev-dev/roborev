@@ -1509,6 +1509,31 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	}
 }
 
+func TestMigrationAddsVerdictBoolColumn(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Verify verdict_bool column exists
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'verdict_bool'`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to check verdict_bool column: %v", err)
+	}
+	if count != 1 {
+		t.Fatal("verdict_bool column not found in reviews table")
+	}
+
+	// Verify the index exists
+	var indexCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_reviews_verdict_bool'`).Scan(&indexCount)
+	if err != nil {
+		t.Fatalf("Failed to check verdict_bool index: %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatal("idx_reviews_verdict_bool index not found")
+	}
+}
+
 func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	// Regression test: after a prior migration rebuilds review_jobs via
 	// ALTER TABLE ... RENAME, SQLite stores the table name quoted as
