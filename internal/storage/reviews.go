@@ -410,6 +410,11 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 
 		if entry, ok := result[r.JobID]; ok {
 			entry.Review = &r
+			// Populate verdict on the job, matching GetReviewByJobID/GetReviewByCommitSHA
+			if r.Output != "" && entry.Job.Error == "" && !entry.Job.IsTaskJob() {
+				verdict := verdictFromBoolOrParse(verdictBool, r.Output)
+				entry.Job.Verdict = &verdict
+			}
 			result[r.JobID] = entry
 		}
 	}
