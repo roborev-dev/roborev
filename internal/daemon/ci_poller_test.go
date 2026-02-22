@@ -1491,6 +1491,36 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 	})
 }
 
+func TestOwnerRepoFromURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"https", "https://github.com/acme/api.git", "acme/api"},
+		{"https no .git", "https://github.com/acme/api", "acme/api"},
+		{"https mixed case host", "https://GitHub.COM/Acme/API.git", "Acme/API"},
+		{"ssh scp-style", "git@github.com:acme/api.git", "acme/api"},
+		{"ssh scp-style no .git", "git@github.com:acme/api", "acme/api"},
+		{"ssh scp mixed case", "git@GitHub.COM:Acme/API.git", "Acme/API"},
+		{"ssh:// scheme", "ssh://git@github.com/acme/api.git", "acme/api"},
+		{"non-github https", "https://gitlab.com/acme/api.git", ""},
+		{"non-github ssh", "git@gitlab.com:acme/api.git", ""},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ownerRepoFromURL(tt.url)
+			if got != tt.want {
+				t.Errorf(
+					"ownerRepoFromURL(%q) = %q, want %q",
+					tt.url, got, tt.want,
+				)
+			}
+		})
+	}
+}
+
 func TestCIPollerFindOrCloneRepo_CloneFailure(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()

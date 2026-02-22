@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -587,26 +588,39 @@ func isValidGitRepo(path string) bool {
 // at path corresponds to the expected "owner/repo" identifier.
 // Returns false on any error (missing remote, exec failure, etc.).
 func cloneRemoteMatches(path, ghRepo string) bool {
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	cmd := exec.Command(
+		"git", "-C", path, "remote", "get-url", "origin",
+	)
 	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
-	url := strings.TrimSpace(string(out))
-	// Normalize: extract "owner/repo" from HTTPS or SSH URLs.
-	// Examples:
-	//   https://github.com/acme/api.git → acme/api
-	//   git@github.com:acme/api.git     → acme/api
-	url = strings.TrimSuffix(url, ".git")
+	got := ownerRepoFromURL(strings.TrimSpace(string(out)))
+	return strings.EqualFold(got, ghRepo)
+}
+
+// ownerRepoFromURL extracts "owner/repo" from a GitHub remote URL.
+// Handles HTTPS, SSH (scp-style), and ssh:// forms. Returns "" if
+// the URL doesn't point to github.com.
+func ownerRepoFromURL(raw string) string {
+	raw = strings.TrimSuffix(raw, ".git")
+
 	// HTTPS: https://github.com/owner/repo
-	if _, after, ok := strings.Cut(url, "github.com/"); ok {
-		return after == ghRepo
+	if u, err := url.Parse(raw); err == nil &&
+		strings.EqualFold(u.Host, "github.com") &&
+		u.Path != "" {
+		return strings.TrimPrefix(u.Path, "/")
 	}
-	// SSH: git@github.com:owner/repo
-	if _, after, ok := strings.Cut(url, "github.com:"); ok {
-		return after == ghRepo
+
+	// SCP-style SSH: git@github.com:owner/repo
+	if _, hostPath, ok := strings.Cut(raw, "@"); ok {
+		host, path, ok := strings.Cut(hostPath, ":")
+		if ok && strings.EqualFold(host, "github.com") {
+			return path
+		}
 	}
-	return false
+
+	return ""
 }
 
 // ghClone clones a GitHub repo using the gh CLI.
