@@ -11,6 +11,7 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
+	gitpkg "github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -272,8 +273,22 @@ func (wp *WorkerPool) worker(id int) {
 // With maxRetries=3, a job can run up to 4 times total (1 initial + 3 retries).
 const maxRetries = 3
 
+// reviewTypeTag returns a display prefix for non-default review types
+// (e.g. "security "). Returns "" for the default review type to avoid
+// redundant "review review" in log lines.
+func reviewTypeTag(rt string) string {
+	if config.IsDefaultReviewType(rt) {
+		return ""
+	}
+	return rt + " "
+}
+
 func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
-	log.Printf("[%s] Processing job %d for ref %s in %s", workerID, job.ID, job.GitRef, job.RepoName)
+	rtTag := reviewTypeTag(job.ReviewType)
+
+	log.Printf("[%s] Processing job %d %s %sreview/%s ref=%s",
+		workerID, job.ID, job.RepoName,
+		rtTag, job.Agent, gitpkg.ShortRef(job.GitRef))
 
 	// Snapshot config once to ensure consistent settings throughout the job.
 	// This prevents mixed settings if config reloads mid-job.
@@ -393,7 +408,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Run the review
-	log.Printf("[%s] Running %s review...", workerID, agentName)
+	log.Printf("[%s] Running %s %sreview (job %d)...",
+		workerID, agentName, rtTag, job.ID)
 	output, err := a.Review(ctx, reviewRepoPath, job.GitRef, reviewPrompt, outputWriter)
 	if err != nil {
 		// Check if this was a cancellation
@@ -411,7 +427,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			})
 			return // Job already marked as canceled in DB, nothing more to do
 		}
-		log.Printf("[%s] Agent error: %v", workerID, err)
+		log.Printf("[%s] Agent error on job %d: %v",
+			workerID, job.ID, err)
 		wp.failOrRetryAgent(workerID, job, agentName, fmt.Sprintf("agent: %v", err))
 		return
 	}
@@ -476,7 +493,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
-	log.Printf("[%s] Completed job %d", workerID, job.ID)
+	log.Printf("[%s] Completed job %d %s %sreview/%s",
+		workerID, job.ID, job.RepoName, rtTag, agentName)
 
 	// Broadcast completion event
 	verdict := storage.ParseVerdict(output)
@@ -534,7 +552,8 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 
 	if retried {
 		retryCount, _ := wp.db.GetJobRetryCount(job.ID)
-		log.Printf("[%s] Job %d queued for retry (%d/%d)", workerID, job.ID, retryCount, maxRetries)
+		log.Printf("[%s] Job %d %s queued for retry (%d/%d)",
+			workerID, job.ID, job.RepoName, retryCount, maxRetries)
 	} else {
 		// Retries exhausted -- attempt failover to backup agent if this is an agent error
 		if agentError {
@@ -556,7 +575,10 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 		if updated, fErr := wp.db.FailJob(job.ID, workerID, errorMsg); fErr != nil {
 			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
 		} else if updated {
-			log.Printf("[%s] Job %d failed after %d retries", workerID, job.ID, maxRetries)
+			log.Printf("[%s] Job %d %s %sreview/%s failed after %d retries",
+				workerID, job.ID, job.RepoName,
+				reviewTypeTag(job.ReviewType), agentName,
+				maxRetries)
 			wp.broadcastFailed(job, agentName, errorMsg)
 			if wp.errorLog != nil {
 				wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed after %d retries: %s", job.ID, maxRetries, errorMsg), job.ID)

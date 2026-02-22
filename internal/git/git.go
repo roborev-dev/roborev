@@ -981,6 +981,16 @@ func getAnyRemoteURL(repoPath string) string {
 	return ""
 }
 
+// ShortRef abbreviates a git ref for display. Range refs like
+// "abc123...xyz789..." become "abc123d..xyz789d". Single SHAs
+// are shortened via ShortSHA.
+func ShortRef(ref string) string {
+	if before, after, ok := strings.Cut(ref, ".."); ok {
+		return ShortSHA(before) + ".." + ShortSHA(after)
+	}
+	return ShortSHA(ref)
+}
+
 // ShortSHA returns the first 7 characters of a SHA hash, or
 // the full string if shorter. Matches git's default abbreviation.
 func ShortSHA(sha string) string {
