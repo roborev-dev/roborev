@@ -605,9 +605,10 @@ func cloneRemoteMatches(path, ghRepo string) bool {
 func ownerRepoFromURL(raw string) string {
 	raw = strings.TrimSuffix(raw, ".git")
 
-	// HTTPS: https://github.com/owner/repo
+	// HTTPS or ssh://: https://github.com/owner/repo,
+	// ssh://git@github.com/owner/repo
 	if u, err := url.Parse(raw); err == nil &&
-		strings.EqualFold(u.Host, "github.com") &&
+		strings.EqualFold(u.Hostname(), "github.com") &&
 		u.Path != "" {
 		return strings.TrimPrefix(u.Path, "/")
 	}

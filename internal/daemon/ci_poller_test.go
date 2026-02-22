@@ -1504,6 +1504,8 @@ func TestOwnerRepoFromURL(t *testing.T) {
 		{"ssh scp-style no .git", "git@github.com:acme/api", "acme/api"},
 		{"ssh scp mixed case", "git@GitHub.COM:Acme/API.git", "Acme/API"},
 		{"ssh:// scheme", "ssh://git@github.com/acme/api.git", "acme/api"},
+		{"https with port", "https://github.com:443/acme/api.git", "acme/api"},
+		{"ssh:// with port", "ssh://git@github.com:22/acme/api.git", "acme/api"},
 		{"non-github https", "https://gitlab.com/acme/api.git", ""},
 		{"non-github ssh", "git@gitlab.com:acme/api.git", ""},
 		{"empty", "", ""},
