@@ -1427,6 +1427,68 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 			t.Fatal("expected non-nil repo")
 		}
 	})
+
+	t.Run("mismatched origin is re-cloned", func(t *testing.T) {
+		db := testutil.OpenTestDB(t)
+		cfg := config.DefaultConfig()
+		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+		dataDir := t.TempDir()
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+		// Create a valid git repo with a different origin
+		clonePath := filepath.Join(
+			dataDir, "clones", "acme", "mismatch",
+		)
+		cmd := exec.Command("git", "init", "-b", "main", clonePath)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %s: %s", err, out)
+		}
+		cmd = exec.Command(
+			"git", "-C", clonePath, "remote", "add",
+			"origin", "https://github.com/other/repo.git",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add: %s: %s", err, out)
+		}
+
+		cloneCalled := false
+		p.gitCloneFn = func(
+			_ context.Context, _, targetPath string, _ []string,
+		) error {
+			cloneCalled = true
+			cmd := exec.Command(
+				"git", "init", "-b", "main", targetPath,
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("git init: %s: %s", err, out)
+			}
+			cmd = exec.Command(
+				"git", "-C", targetPath, "remote", "add",
+				"origin",
+				"https://github.com/acme/mismatch.git",
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf(
+					"git remote add: %s: %s", err, out,
+				)
+			}
+			return nil
+		}
+
+		repo, err := p.findOrCloneRepo(
+			context.Background(), "acme/mismatch",
+		)
+		if err != nil {
+			t.Fatalf("findOrCloneRepo: %v", err)
+		}
+		if !cloneCalled {
+			t.Fatal("expected re-clone for mismatched origin")
+		}
+		if repo == nil {
+			t.Fatal("expected non-nil repo")
+		}
+	})
 }
 
 func TestCIPollerFindOrCloneRepo_CloneFailure(t *testing.T) {

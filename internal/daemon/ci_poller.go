@@ -528,7 +528,10 @@ func (p *CIPoller) ensureClone(
 	needsClone := false
 	if _, err := os.Stat(clonePath); os.IsNotExist(err) {
 		needsClone = true
-	} else if !isValidGitRepo(clonePath) {
+	} else if err != nil {
+		return nil, fmt.Errorf("stat clone path %s: %w", clonePath, err)
+	} else if !isValidGitRepo(clonePath) ||
+		!cloneRemoteMatches(clonePath, ghRepo) {
 		log.Printf(
 			"CI poller: removing invalid clone at %s", clonePath,
 		)
@@ -578,6 +581,32 @@ func isValidGitRepo(path string) bool {
 	)
 	out, err := cmd.Output()
 	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+// cloneRemoteMatches checks whether the origin remote of a git repo
+// at path corresponds to the expected "owner/repo" identifier.
+// Returns false on any error (missing remote, exec failure, etc.).
+func cloneRemoteMatches(path, ghRepo string) bool {
+	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	url := strings.TrimSpace(string(out))
+	// Normalize: extract "owner/repo" from HTTPS or SSH URLs.
+	// Examples:
+	//   https://github.com/acme/api.git → acme/api
+	//   git@github.com:acme/api.git     → acme/api
+	url = strings.TrimSuffix(url, ".git")
+	// HTTPS: https://github.com/owner/repo
+	if _, after, ok := strings.Cut(url, "github.com/"); ok {
+		return after == ghRepo
+	}
+	// SSH: git@github.com:owner/repo
+	if _, after, ok := strings.Cut(url, "github.com:"); ok {
+		return after == ghRepo
+	}
+	return false
 }
 
 // ghClone clones a GitHub repo using the gh CLI.

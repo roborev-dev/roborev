@@ -1286,7 +1286,11 @@ func TestShortRef(t *testing.T) {
 		{"short single", "abc", "abc"},
 		{"empty", "", ""},
 		{"range with short sides", "abc..def", "abc..def"},
-		{"triple dot splits on first pair", "abc1234def5678...99887766aabbcc", "abc1234...998877"},
+		{"triple dot splits on first pair", "abc1234def5678...99887766aabbcc", "abc1234...99887766aabbcc"},
+		{"task label passthrough", "run", "run"},
+		{"dirty ref passthrough", "dirty", "dirty"},
+		{"branch name passthrough", "feature/very-long-name", "feature/very-long-name"},
+		{"analysis label passthrough", "duplication", "duplication"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
