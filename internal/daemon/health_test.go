@@ -26,6 +26,9 @@ func setupTestServer(t *testing.T) *Server {
 		if server.errorLog != nil {
 			server.errorLog.Close()
 		}
+		if server.activityLog != nil {
+			server.activityLog.Close()
+		}
 	})
 	return server
 }

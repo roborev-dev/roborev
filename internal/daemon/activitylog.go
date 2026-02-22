@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -33,12 +34,20 @@ type ActivityLog struct {
 
 const activityLogCapacity = 500
 
-// NewActivityLog creates a new activity log writer
+// maxActivityLogSize is the threshold at which the log file is
+// truncated on open. 5MB is generous for structured JSONL entries
+// (~200 bytes each) and covers months of typical daemon activity.
+const maxActivityLogSize = 5 * 1024 * 1024
+
+// NewActivityLog creates a new activity log writer.
+// If the existing file exceeds maxActivityLogSize it is truncated.
 func NewActivityLog(path string) (*ActivityLog, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
+
+	truncateIfOversized(path, maxActivityLogSize)
 
 	file, err := os.OpenFile(
 		path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644,
@@ -60,7 +69,8 @@ func DefaultActivityLogPath() string {
 	return filepath.Join(config.DataDir(), "activity.log")
 }
 
-// Log writes an activity entry to both file and in-memory buffer
+// Log writes an activity entry to both file and in-memory buffer.
+// The details map is copied; callers may safely mutate it after calling Log.
 func (a *ActivityLog) Log(
 	event, component, message string,
 	details map[string]string,
@@ -70,7 +80,7 @@ func (a *ActivityLog) Log(
 		Event:     event,
 		Component: component,
 		Message:   message,
-		Details:   details,
+		Details:   copyDetails(details),
 	}
 
 	a.mu.Lock()
@@ -103,7 +113,9 @@ func (a *ActivityLog) Recent() []ActivityEntry {
 	result := make([]ActivityEntry, a.count)
 	readIdx := (a.writeIdx - 1 + a.maxRecent) % a.maxRecent
 	for i := range a.count {
-		result[i] = a.recent[readIdx]
+		e := a.recent[readIdx]
+		e.Details = copyDetails(e.Details)
+		result[i] = e
 		readIdx = (readIdx - 1 + a.maxRecent) % a.maxRecent
 	}
 	return result
@@ -111,6 +123,9 @@ func (a *ActivityLog) Recent() []ActivityEntry {
 
 // RecentN returns up to n most recent entries (newest first)
 func (a *ActivityLog) RecentN(n int) []ActivityEntry {
+	if n <= 0 {
+		return nil
+	}
 	all := a.Recent()
 	if len(all) <= n {
 		return all
@@ -129,4 +144,27 @@ func (a *ActivityLog) Close() error {
 		return err
 	}
 	return nil
+}
+
+// copyDetails returns a shallow copy of a string map.
+// Returns nil for nil input.
+func copyDetails(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	cp := make(map[string]string, len(m))
+	maps.Copy(cp, m)
+	return cp
+}
+
+// truncateIfOversized removes the file at path if it exceeds limit bytes.
+// Errors are silently ignored — the caller will recreate the file.
+func truncateIfOversized(path string, limit int64) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if info.Size() > limit {
+		_ = os.Remove(path)
+	}
 }

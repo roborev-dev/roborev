@@ -182,3 +182,76 @@ func TestActivityLog_Details(t *testing.T) {
 		}
 	}
 }
+
+func TestActivityLog_DetailsCopied(t *testing.T) {
+	al, _ := createTestActivityLog(t)
+
+	details := map[string]string{"key": "original"}
+	al.Log("test", "test", "msg", details)
+
+	// Mutate the caller's map after logging
+	details["key"] = "mutated"
+	details["extra"] = "added"
+
+	recent := al.Recent()
+	if recent[0].Details["key"] != "original" {
+		t.Errorf("stored details mutated: got %q, want %q",
+			recent[0].Details["key"], "original")
+	}
+	if _, ok := recent[0].Details["extra"]; ok {
+		t.Error("stored details gained extra key from caller mutation")
+	}
+
+	// Mutate the returned entry's map
+	recent[0].Details["key"] = "returned-mutated"
+	again := al.Recent()
+	if again[0].Details["key"] != "original" {
+		t.Errorf("ring buffer mutated via returned entry: got %q, want %q",
+			again[0].Details["key"], "original")
+	}
+}
+
+func TestActivityLog_RecentN_Negative(t *testing.T) {
+	al, _ := createTestActivityLog(t)
+	al.Log("test", "test", "msg", nil)
+
+	got := al.RecentN(-1)
+	if got != nil {
+		t.Errorf("RecentN(-1) = %v, want nil", got)
+	}
+
+	got = al.RecentN(0)
+	if got != nil {
+		t.Errorf("RecentN(0) = %v, want nil", got)
+	}
+}
+
+func TestActivityLog_FileTruncation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "activity.log")
+
+	// Create a file exceeding the threshold
+	data := make([]byte, maxActivityLogSize+1)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	al, err := NewActivityLog(path)
+	if err != nil {
+		t.Fatalf("NewActivityLog: %v", err)
+	}
+	defer al.Close()
+
+	// Write an entry and verify the file is small (old content gone)
+	al.Log("test", "test", "after truncation", nil)
+	al.Close()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Size() > 1024 {
+		t.Errorf("file should be small after truncation, got %d bytes",
+			info.Size())
+	}
+}
