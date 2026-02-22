@@ -620,20 +620,22 @@ func isValidGitRepo(path string) bool {
 // Returns (true, nil) on match, (false, nil) on confirmed mismatch
 // (including missing origin), and (false, err) on operational errors
 // (so callers can avoid deleting a valid clone on transient failures).
+//
+// Uses "git config --get" which exits 1 with empty output when the
+// key doesn't exist — locale-independent, unlike "git remote get-url"
+// which produces localized stderr.
 func cloneRemoteMatches(path, ghRepo string) (bool, error) {
 	cmd := exec.Command(
-		"git", "-C", path, "remote", "get-url", "origin",
+		"git", "-C", path, "config", "--get", "remote.origin.url",
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		// "No such remote 'origin'" is a deterministic invalid
-		// state — treat as confirmed mismatch, not transient error.
+		// git config --get exits 1 when the key is missing. This
+		// is a deterministic invalid state (no origin configured),
+		// not a transient failure.
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "No such remote 'origin'") {
-				return false, nil
-			}
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false, nil
 		}
 		return false, fmt.Errorf(
 			"get origin URL for %s: %w", path, err,

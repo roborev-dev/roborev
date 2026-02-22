@@ -1550,6 +1550,84 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 	})
 }
 
+func TestCloneRemoteMatches(t *testing.T) {
+	t.Run("matching origin", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := exec.Command("git", "init", "-b", "main", dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %s: %s", err, out)
+		}
+		cmd = exec.Command(
+			"git", "-C", dir, "remote", "add",
+			"origin", "https://github.com/acme/match.git",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add: %s: %s", err, out)
+		}
+
+		ok, err := cloneRemoteMatches(dir, "acme/match")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Error("expected match")
+		}
+	})
+
+	t.Run("missing origin returns false nil", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := exec.Command("git", "init", "-b", "main", dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %s: %s", err, out)
+		}
+
+		ok, err := cloneRemoteMatches(dir, "acme/any")
+		if err != nil {
+			t.Fatalf("expected nil error for missing origin, got: %v", err)
+		}
+		if ok {
+			t.Error("expected false for missing origin")
+		}
+	})
+
+	t.Run("mismatched origin returns false nil", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := exec.Command("git", "init", "-b", "main", dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %s: %s", err, out)
+		}
+		cmd = exec.Command(
+			"git", "-C", dir, "remote", "add",
+			"origin", "https://github.com/other/repo.git",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add: %s: %s", err, out)
+		}
+
+		ok, err := cloneRemoteMatches(dir, "acme/different")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ok {
+			t.Error("expected false for mismatched origin")
+		}
+	})
+
+	t.Run("not a git repo returns false", func(t *testing.T) {
+		// git config --get exits 1 for both missing key and non-repo,
+		// so this is treated as confirmed mismatch (false, nil).
+		// The caller (cloneNeedsReplace) checks isValidGitRepo first.
+		dir := t.TempDir()
+		ok, err := cloneRemoteMatches(dir, "acme/any")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ok {
+			t.Error("expected false for non-git directory")
+		}
+	})
+}
+
 func TestOwnerRepoFromURL(t *testing.T) {
 	tests := []struct {
 		name string

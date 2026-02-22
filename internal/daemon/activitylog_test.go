@@ -255,3 +255,38 @@ func TestActivityLog_FileTruncation(t *testing.T) {
 			info.Size())
 	}
 }
+
+func TestActivityLog_RuntimeRotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "activity.log")
+
+	al, err := NewActivityLog(path)
+	if err != nil {
+		t.Fatalf("NewActivityLog: %v", err)
+	}
+	defer al.Close()
+
+	// Each entry is ~200 bytes. We need > maxActivityLogSize (5MB)
+	// bytes written before the check at rotateCheckInterval (1000).
+	// 5MB / 1000 = 5KB per entry minimum. Use a ~6KB payload.
+	bigMsg := string(make([]byte, 6*1024))
+	for i := range rotateCheckInterval + 50 {
+		al.Log("test", "test", fmt.Sprintf("entry-%d", i),
+			map[string]string{"big": bigMsg})
+	}
+
+	al.Close()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	// After rotation the file should be well under the cap.
+	// The exact size depends on how many entries were written after
+	// the truncate, but it should be far smaller than the cap.
+	if info.Size() > maxActivityLogSize {
+		t.Errorf(
+			"file should be under cap after rotation, got %d bytes",
+			info.Size(),
+		)
+	}
+}
