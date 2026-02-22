@@ -25,6 +25,7 @@ type WorkerPool struct {
 	promptBuilder *prompt.Builder
 	broadcaster   Broadcaster
 	errorLog      *ErrorLog
+	activityLog   *ActivityLog
 
 	numWorkers    int
 	activeWorkers atomic.Int32
@@ -49,13 +50,14 @@ type WorkerPool struct {
 }
 
 // NewWorkerPool creates a new worker pool
-func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog) *WorkerPool {
+func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog, activityLog *ActivityLog) *WorkerPool {
 	return &WorkerPool{
 		db:             db,
 		cfgGetter:      cfgGetter,
 		promptBuilder:  prompt.NewBuilder(db),
 		broadcaster:    broadcaster,
 		errorLog:       errorLog,
+		activityLog:    activityLog,
 		numWorkers:     numWorkers,
 		stopCh:         make(chan struct{}),
 		runningJobs:    make(map[int64]context.CancelFunc),
@@ -289,6 +291,20 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	log.Printf("[%s] Processing job %d %s %sreview/%s ref=%s",
 		workerID, job.ID, job.RepoName,
 		rtTag, job.Agent, gitpkg.ShortRef(job.GitRef))
+	jobStart := time.Now()
+
+	if wp.activityLog != nil {
+		wp.activityLog.Log(
+			"job.started", "worker",
+			fmt.Sprintf("job %d started by %s", job.ID, workerID),
+			map[string]string{
+				"job_id": fmt.Sprintf("%d", job.ID),
+				"worker": workerID,
+				"agent":  job.Agent,
+				"ref":    job.GitRef,
+			},
+		)
+	}
 
 	// Snapshot config once to ensure consistent settings throughout the job.
 	// This prevents mixed settings if config reloads mid-job.
@@ -496,6 +512,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	log.Printf("[%s] Completed job %d %s %sreview/%s",
 		workerID, job.ID, job.RepoName, rtTag, agentName)
 
+	if wp.activityLog != nil {
+		wp.activityLog.Log(
+			"job.completed", "worker",
+			fmt.Sprintf("job %d completed by %s", job.ID, workerID),
+			map[string]string{
+				"job_id":   fmt.Sprintf("%d", job.ID),
+				"worker":   workerID,
+				"agent":    agentName,
+				"duration": time.Since(jobStart).Round(time.Second).String(),
+			},
+		)
+	}
+
 	// Broadcast completion event
 	verdict := storage.ParseVerdict(output)
 	wp.broadcaster.Broadcast(Event{
@@ -546,6 +575,7 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 			if wp.errorLog != nil {
 				wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
 			}
+			wp.logJobFailed(job.ID, workerID, agentName, errorMsg)
 		}
 		return
 	}
@@ -583,6 +613,7 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 			if wp.errorLog != nil {
 				wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed after %d retries: %s", job.ID, maxRetries, errorMsg), job.ID)
 			}
+			wp.logJobFailed(job.ID, workerID, agentName, errorMsg)
 		}
 	}
 }
@@ -761,7 +792,27 @@ func (wp *WorkerPool) failoverOrFail(
 				fmt.Sprintf("job %d skipped (quota): %s", job.ID, errorMsg),
 				job.ID)
 		}
+		wp.logJobFailed(job.ID, workerID, agentName, quotaMsg)
 	}
+}
+
+// logJobFailed logs a job failure to the activity log
+func (wp *WorkerPool) logJobFailed(
+	jobID int64, workerID, agentName, errorMsg string,
+) {
+	if wp.activityLog == nil {
+		return
+	}
+	wp.activityLog.Log(
+		"job.failed", "worker",
+		fmt.Sprintf("job %d failed", jobID),
+		map[string]string{
+			"job_id": fmt.Sprintf("%d", jobID),
+			"worker": workerID,
+			"agent":  agentName,
+			"error":  errorMsg,
+		},
+	)
 }
 
 // markCompactSourceJobs marks all source jobs as addressed for a completed compact job

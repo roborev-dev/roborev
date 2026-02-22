@@ -161,7 +161,7 @@ func TestBroadcasterIntegrationWithWorker(t *testing.T) {
 	job := testutil.CreateTestJobWithSHA(t, db, repo, sha, "test")
 
 	// Create worker pool with our broadcaster
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
+	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil, nil)
 	pool.Start()
 	defer pool.Stop()
 

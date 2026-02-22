@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ type Server struct {
 	ciPoller      *CIPoller
 	hookRunner    *HookRunner
 	errorLog      *ErrorLog
+	activityLog   *ActivityLog
 	startTime     time.Time
 
 	// Cached machine ID to avoid INSERT on every status request
@@ -52,8 +54,14 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 		log.Printf("Warning: failed to create error log: %v", err)
 	}
 
+	// Initialize activity log
+	activityLog, err := NewActivityLog(DefaultActivityLogPath())
+	if err != nil {
+		log.Printf("Warning: failed to create activity log: %v", err)
+	}
+
 	// Create config watcher for hot-reloading
-	configWatcher := NewConfigWatcher(configPath, cfg, broadcaster)
+	configWatcher := NewConfigWatcher(configPath, cfg, broadcaster, activityLog)
 
 	// Create hook runner to fire hooks on review events
 	hookRunner := NewHookRunner(configWatcher, broadcaster)
@@ -62,9 +70,10 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 		db:            db,
 		configWatcher: configWatcher,
 		broadcaster:   broadcaster,
-		workerPool:    NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog),
+		workerPool:    NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog, activityLog),
 		hookRunner:    hookRunner,
 		errorLog:      errorLog,
+		activityLog:   activityLog,
 		startTime:     time.Now(),
 	}
 
@@ -93,6 +102,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/job/patch", s.handleGetPatch)
 	mux.HandleFunc("/api/job/applied", s.handleMarkJobApplied)
 	mux.HandleFunc("/api/job/rebased", s.handleMarkJobRebased)
+	mux.HandleFunc("/api/activity", s.handleActivity)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
@@ -107,6 +117,13 @@ func (s *Server) Start(ctx context.Context) error {
 	// Clean up any zombie daemons first (there can be only one)
 	if cleaned := CleanupZombieDaemons(); cleaned > 0 {
 		log.Printf("Cleaned up %d zombie daemon(s)", cleaned)
+		if s.activityLog != nil {
+			s.activityLog.Log(
+				"daemon.zombie_cleanup", "server",
+				fmt.Sprintf("cleaned up %d zombie daemon(s)", cleaned),
+				map[string]string{"count": strconv.Itoa(cleaned)},
+			)
+		}
 	}
 
 	// Check if a responsive daemon is still running after cleanup
@@ -137,6 +154,22 @@ func (s *Server) Start(ctx context.Context) error {
 	// Write runtime info so CLI can find us
 	if err := WriteRuntime(addr, port, version.Version); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
+	}
+
+	// Log daemon start
+	if s.activityLog != nil {
+		binary, _ := os.Executable()
+		s.activityLog.Log(
+			"daemon.started", "server",
+			fmt.Sprintf("daemon started on %s", addr),
+			map[string]string{
+				"version": version.Version,
+				"binary":  binary,
+				"addr":    addr,
+				"pid":     strconv.Itoa(os.Getpid()),
+				"workers": strconv.Itoa(cfg.MaxWorkers),
+			},
+		)
 	}
 
 	// Start worker pool
@@ -170,6 +203,16 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the server
 func (s *Server) Stop() error {
+	// Log daemon stop before shutting down components
+	if s.activityLog != nil {
+		uptime := time.Since(s.startTime)
+		s.activityLog.Log(
+			"daemon.stopped", "server",
+			"daemon stopped",
+			map[string]string{"uptime": formatDuration(uptime)},
+		)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -200,6 +243,11 @@ func (s *Server) Stop() error {
 	// Close error log
 	if s.errorLog != nil {
 		s.errorLog.Close()
+	}
+
+	// Close activity log
+	if s.activityLog != nil {
+		s.activityLog.Close()
 	}
 
 	return nil
@@ -702,6 +750,21 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	// Fill in joined fields
 	job.RepoPath = repo.RootPath
 	job.RepoName = repo.Name
+
+	// Log the enqueue activity
+	if s.activityLog != nil {
+		s.activityLog.Log(
+			"job.enqueued", "server",
+			fmt.Sprintf("job %d enqueued for %s", job.ID, job.GitRef),
+			map[string]string{
+				"job_id":      strconv.FormatInt(job.ID, 10),
+				"repo":        repo.Name,
+				"ref":         gitRef,
+				"agent":       agentName,
+				"review_type": req.ReviewType,
+			},
+		)
+	}
 
 	writeCreatedJSON(w, job)
 }
@@ -1848,6 +1911,33 @@ func (s *Server) handleMarkJobRebased(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]string{"status": "rebased"})
+}
+
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if s.activityLog == nil {
+		writeJSON(w, map[string]any{"entries": []ActivityEntry{}})
+		return
+	}
+
+	// Parse optional limit (default 50, max 500)
+	limit := 50
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 {
+		limit = n
+	}
+	if limit > activityLogCapacity {
+		limit = activityLogCapacity
+	}
+
+	entries := s.activityLog.RecentN(limit)
+	if entries == nil {
+		entries = []ActivityEntry{}
+	}
+	writeJSON(w, map[string]any{"entries": entries})
 }
 
 // buildFixPrompt constructs a prompt for fixing review findings.

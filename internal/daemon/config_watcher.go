@@ -52,6 +52,7 @@ type ConfigWatcher struct {
 	cfg            *config.Config
 	cfgMu          sync.RWMutex
 	broadcaster    Broadcaster
+	activityLog    *ActivityLog
 	watcher        *fsnotify.Watcher
 	stopCh         chan struct{}
 	stopOnce       sync.Once
@@ -61,11 +62,12 @@ type ConfigWatcher struct {
 }
 
 // NewConfigWatcher creates a new config watcher
-func NewConfigWatcher(configPath string, cfg *config.Config, broadcaster Broadcaster) *ConfigWatcher {
+func NewConfigWatcher(configPath string, cfg *config.Config, broadcaster Broadcaster, activityLog *ActivityLog) *ConfigWatcher {
 	return &ConfigWatcher{
 		configPath:  configPath,
 		cfg:         cfg,
 		broadcaster: broadcaster,
+		activityLog: activityLog,
 		stopCh:      make(chan struct{}),
 	}
 }
@@ -213,6 +215,14 @@ func (cw *ConfigWatcher) reloadConfig() {
 		Type: "config.reloaded",
 		TS:   time.Now(),
 	})
+
+	if cw.activityLog != nil {
+		cw.activityLog.Log(
+			"config.reloaded", "config",
+			"config reloaded",
+			map[string]string{"path": cw.configPath},
+		)
+	}
 
 	log.Printf("Config reloaded successfully")
 }

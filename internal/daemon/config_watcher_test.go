@@ -38,7 +38,7 @@ func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherH
 
 	bc := NewBroadcaster()
 	_, ch := bc.Subscribe("")
-	cw := NewConfigWatcher(path, cfg, bc)
+	cw := NewConfigWatcher(path, cfg, bc, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -118,7 +118,7 @@ func TestNewConfigWatcher(t *testing.T) {
 	}
 	broadcaster := NewBroadcaster()
 
-	cw := NewConfigWatcher("/path/to/config.toml", cfg, broadcaster)
+	cw := NewConfigWatcher("/path/to/config.toml", cfg, broadcaster, nil)
 
 	if cw.Config() != cfg {
 		t.Error("NewConfigWatcher should store the initial config")
@@ -139,7 +139,7 @@ func TestConfigWatcher_NoConfigPath(t *testing.T) {
 	broadcaster := NewBroadcaster()
 
 	// When configPath is empty, Start should be a no-op
-	cw := NewConfigWatcher("", cfg, broadcaster)
+	cw := NewConfigWatcher("", cfg, broadcaster, nil)
 
 	ctx := t.Context()
 
@@ -247,7 +247,7 @@ func TestConfigWatcher_DoubleStopSafe(t *testing.T) {
 	cfg := &config.Config{DefaultAgent: "test"}
 	broadcaster := NewBroadcaster()
 
-	cw := NewConfigWatcher("", cfg, broadcaster)
+	cw := NewConfigWatcher("", cfg, broadcaster, nil)
 
 	// Multiple Stop() calls should not panic
 	cw.Stop()
@@ -271,7 +271,7 @@ func TestConfigWatcher_StartAfterStopErrors(t *testing.T) {
 
 	cfg, _ := config.LoadGlobalFrom(configPath)
 	broadcaster := NewBroadcaster()
-	cw := NewConfigWatcher(configPath, cfg, broadcaster)
+	cw := NewConfigWatcher(configPath, cfg, broadcaster, nil)
 
 	ctx := context.Background()
 

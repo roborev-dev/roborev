@@ -1,0 +1,184 @@
+package daemon
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func createTestActivityLog(t *testing.T) (*ActivityLog, string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "activity.log")
+	al, err := NewActivityLog(path)
+	if err != nil {
+		t.Fatalf("NewActivityLog failed: %v", err)
+	}
+	t.Cleanup(func() { al.Close() })
+	return al, path
+}
+
+func TestActivityLog_WriteAndRecent(t *testing.T) {
+	al, _ := createTestActivityLog(t)
+
+	tests := []struct {
+		event     string
+		component string
+		message   string
+	}{
+		{"daemon.started", "server", "daemon started on :7373"},
+		{"job.enqueued", "server", "job 1 enqueued"},
+		{"job.started", "worker", "job 1 started"},
+		{"job.completed", "worker", "job 1 completed"},
+	}
+
+	for _, tt := range tests {
+		al.Log(tt.event, tt.component, tt.message, nil)
+	}
+
+	recent := al.Recent()
+	if len(recent) != len(tests) {
+		t.Fatalf("expected %d entries, got %d", len(tests), len(recent))
+	}
+
+	// Newest first
+	for i, tt := range tests {
+		got := recent[len(tests)-1-i]
+		if got.Event != tt.event {
+			t.Errorf("entry %d: event = %q, want %q", i, got.Event, tt.event)
+		}
+		if got.Component != tt.component {
+			t.Errorf("entry %d: component = %q, want %q", i, got.Component, tt.component)
+		}
+		if got.Message != tt.message {
+			t.Errorf("entry %d: message = %q, want %q", i, got.Message, tt.message)
+		}
+	}
+}
+
+func TestActivityLog_RecentN(t *testing.T) {
+	al, _ := createTestActivityLog(t)
+
+	for i := range 10 {
+		al.Log("test", "test", fmt.Sprintf("msg %d", i), nil)
+	}
+
+	got := al.RecentN(3)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(got))
+	}
+	if got[0].Message != "msg 9" {
+		t.Errorf("first entry = %q, want %q", got[0].Message, "msg 9")
+	}
+
+	// When n exceeds count, return all
+	got = al.RecentN(100)
+	if len(got) != 10 {
+		t.Errorf("expected 10 entries, got %d", len(got))
+	}
+}
+
+func TestActivityLog_RingBuffer(t *testing.T) {
+	al, _ := createTestActivityLog(t)
+
+	// Write more than capacity
+	total := activityLogCapacity + 100
+	for i := range total {
+		al.Log("test", "test", fmt.Sprintf("msg %d", i), nil)
+	}
+
+	recent := al.Recent()
+	if len(recent) != activityLogCapacity {
+		t.Fatalf(
+			"expected %d entries (ring buffer cap), got %d",
+			activityLogCapacity, len(recent),
+		)
+	}
+
+	// Newest should be the last written
+	if recent[0].Message != fmt.Sprintf("msg %d", total-1) {
+		t.Errorf(
+			"newest = %q, want %q",
+			recent[0].Message,
+			fmt.Sprintf("msg %d", total-1),
+		)
+	}
+
+	// Oldest should be total - capacity
+	oldest := recent[activityLogCapacity-1]
+	want := fmt.Sprintf("msg %d", total-activityLogCapacity)
+	if oldest.Message != want {
+		t.Errorf("oldest = %q, want %q", oldest.Message, want)
+	}
+}
+
+func TestActivityLog_FileFormat(t *testing.T) {
+	al, path := createTestActivityLog(t)
+
+	al.Log("daemon.started", "server", "started", nil)
+	al.Log(
+		"job.enqueued", "server", "job enqueued",
+		map[string]string{"job_id": "42", "agent": "test"},
+	)
+	al.Close()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(content))
+
+	// First entry
+	var e1 ActivityEntry
+	if err := decoder.Decode(&e1); err != nil {
+		t.Fatalf("decode first entry: %v", err)
+	}
+	if e1.Event != "daemon.started" {
+		t.Errorf("first event = %q, want %q", e1.Event, "daemon.started")
+	}
+	if e1.Details != nil {
+		t.Errorf("first entry details should be nil, got %v", e1.Details)
+	}
+
+	// Second entry
+	var e2 ActivityEntry
+	if err := decoder.Decode(&e2); err != nil {
+		t.Fatalf("decode second entry: %v", err)
+	}
+	if e2.Event != "job.enqueued" {
+		t.Errorf("second event = %q, want %q", e2.Event, "job.enqueued")
+	}
+	if e2.Details["job_id"] != "42" {
+		t.Errorf("details[job_id] = %q, want %q", e2.Details["job_id"], "42")
+	}
+	if e2.Details["agent"] != "test" {
+		t.Errorf("details[agent] = %q, want %q", e2.Details["agent"], "test")
+	}
+}
+
+func TestActivityLog_Details(t *testing.T) {
+	al, _ := createTestActivityLog(t)
+
+	details := map[string]string{
+		"version": "1.0.0",
+		"addr":    "127.0.0.1:7373",
+		"pid":     "1234",
+	}
+	al.Log("daemon.started", "server", "started", details)
+
+	recent := al.Recent()
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(recent))
+	}
+
+	got := recent[0].Details
+	for k, v := range details {
+		if got[k] != v {
+			t.Errorf("details[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}

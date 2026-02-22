@@ -39,7 +39,7 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	}
 
 	b := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), cfg.MaxWorkers, b, nil)
+	pool := NewWorkerPool(db, NewStaticConfig(cfg), cfg.MaxWorkers, b, nil, nil)
 
 	return &workerTestContext{
 		DB:          db,
@@ -175,7 +175,7 @@ func TestWorkerPoolCancelInvalidJob(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	broadcaster := NewBroadcaster()
-	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil)
+	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, broadcaster, nil, nil)
 
 	if pool.CancelJob(99999) {
 		t.Error("CancelJob should return false for non-existent job")
@@ -390,7 +390,7 @@ func TestParseQuotaCooldown(t *testing.T) {
 
 func TestAgentCooldown(t *testing.T) {
 	cfg := config.DefaultConfig()
-	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil)
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 
 	// Not cooling down initially
 	if pool.isAgentCoolingDown("gemini") {
@@ -424,7 +424,7 @@ func TestAgentCooldown(t *testing.T) {
 func TestAgentCooldown_ExpiredEntryDeleted(t *testing.T) {
 	cfg := config.DefaultConfig()
 	pool := NewWorkerPool(
-		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil,
+		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil,
 	)
 
 	// Set an already-expired cooldown
@@ -447,7 +447,7 @@ func TestAgentCooldown_ExpiredEntryDeleted(t *testing.T) {
 func TestAgentCooldown_RefreshDuringUpgrade(t *testing.T) {
 	cfg := config.DefaultConfig()
 	pool := NewWorkerPool(
-		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil,
+		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil,
 	)
 
 	// Set an already-expired cooldown so RLock path enters upgrade
@@ -519,7 +519,7 @@ func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "claude-code"
 	pool := NewWorkerPool(
-		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil,
+		nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil,
 	)
 	job := &storage.ReviewJob{
 		Agent:    "claude",
@@ -650,7 +650,7 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 	// Configure backup agent
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
-	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil)
+	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
 
 	// Enqueue with agent "codex" (backup is "test")
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "A", "S", time.Now())
@@ -716,7 +716,7 @@ func TestFailOrRetryInner_RetryExhaustedBackupInCooldown(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
 	tc.Pool = NewWorkerPool(
-		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil,
+		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
 	)
 
 	// Enqueue with agent "codex"
@@ -787,7 +787,7 @@ func TestFailOrRetryInner_RetryExhaustedFailsOverToBackup(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DefaultBackupAgent = "test"
 	tc.Pool = NewWorkerPool(
-		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil,
+		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
 	)
 
 	// Enqueue with agent "codex"
@@ -929,7 +929,7 @@ func TestResolveBackupAgent(t *testing.T) {
 			cfg.SecurityBackupAgent = tt.config.SecurityBackupAgent
 			cfg.DesignBackupAgent = tt.config.DesignBackupAgent
 
-			pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil)
+			pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 			job := &storage.ReviewJob{
 				Agent:      tt.jobAgent,
 				RepoPath:   t.TempDir(),
