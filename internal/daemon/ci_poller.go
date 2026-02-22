@@ -516,7 +516,8 @@ func (p *CIPoller) ensureClone(
 	ctx context.Context, ghRepo string,
 ) (*storage.Repo, error) {
 	owner, repoName, ok := strings.Cut(ghRepo, "/")
-	if !ok {
+	if !ok || !isValidRepoSegment(owner) ||
+		!isValidRepoSegment(repoName) {
 		return nil, fmt.Errorf(
 			"invalid GitHub repo %q: expected owner/repo", ghRepo,
 		)
@@ -575,6 +576,15 @@ func (p *CIPoller) ensureClone(
 	return repo, nil
 }
 
+// isValidRepoSegment checks that a GitHub owner or repo name segment
+// is non-empty and contains no path separators or traversal components.
+func isValidRepoSegment(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	return !strings.ContainsAny(s, "/\\")
+}
+
 // isValidGitRepo checks whether a path is a usable git working tree.
 func isValidGitRepo(path string) bool {
 	cmd := exec.Command(
@@ -603,7 +613,10 @@ func cloneRemoteMatches(path, ghRepo string) bool {
 // Handles HTTPS, SSH (scp-style), and ssh:// forms. Returns "" if
 // the URL doesn't point to github.com.
 func ownerRepoFromURL(raw string) string {
-	raw = strings.TrimSuffix(raw, ".git")
+	raw = strings.TrimRight(raw, "/")
+	if strings.HasSuffix(strings.ToLower(raw), ".git") {
+		raw = raw[:len(raw)-4]
+	}
 
 	// HTTPS or ssh://: https://github.com/owner/repo,
 	// ssh://git@github.com/owner/repo

@@ -1506,6 +1506,8 @@ func TestOwnerRepoFromURL(t *testing.T) {
 		{"ssh:// scheme", "ssh://git@github.com/acme/api.git", "acme/api"},
 		{"https with port", "https://github.com:443/acme/api.git", "acme/api"},
 		{"ssh:// with port", "ssh://git@github.com:22/acme/api.git", "acme/api"},
+		{"trailing slash", "https://github.com/acme/api/", "acme/api"},
+		{"uppercase .GIT", "https://github.com/acme/api.GIT", "acme/api"},
 		{"non-github https", "https://gitlab.com/acme/api.git", ""},
 		{"non-github ssh", "git@gitlab.com:acme/api.git", ""},
 		{"empty", "", ""},
@@ -1520,6 +1522,31 @@ func TestOwnerRepoFromURL(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestCIPollerEnsureClone_RejectsMalformedRepo(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+
+	bad := []string{
+		"noslash",
+		"acme/",
+		"/repo",
+		"acme/../etc",
+		"./repo",
+		"acme/.",
+		"acme/..",
+	}
+	for _, input := range bad {
+		_, err := p.ensureClone(context.Background(), input)
+		if err == nil {
+			t.Errorf(
+				"ensureClone(%q) should have failed", input,
+			)
+		}
 	}
 }
 
