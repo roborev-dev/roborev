@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -721,13 +722,13 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	// With only a placeholder, should get "no local repo found"
+	// With only a placeholder, should get errLocalRepoNotFound
 	_, err = p.findLocalRepo("acme/api")
 	if err == nil {
 		t.Fatal("expected error when only placeholder exists")
 	}
-	if !strings.Contains(err.Error(), "no local repo found") {
-		t.Fatalf("expected 'no local repo found' error, got: %v", err)
+	if !errors.Is(err, errLocalRepoNotFound) {
+		t.Fatalf("expected errLocalRepoNotFound, got: %v", err)
 	}
 
 	// Add a real local checkout — should find it and skip the placeholder
@@ -1248,6 +1249,184 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 			"repo.RootPath=%q, want %q", repo.RootPath, clonePath,
 		)
 	}
+}
+
+func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
+	t.Run("empty dir is re-cloned", func(t *testing.T) {
+		db := testutil.OpenTestDB(t)
+		cfg := config.DefaultConfig()
+		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+		dataDir := t.TempDir()
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+		// Pre-create an empty directory (not a git repo)
+		clonePath := filepath.Join(
+			dataDir, "clones", "acme", "empty",
+		)
+		if err := os.MkdirAll(clonePath, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+
+		cloneCalled := false
+		p.gitCloneFn = func(
+			_ context.Context, _, targetPath string, _ []string,
+		) error {
+			cloneCalled = true
+			cmd := exec.Command(
+				"git", "init", "-b", "main", targetPath,
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("git init: %s: %s", err, out)
+			}
+			cmd = exec.Command(
+				"git", "-C", targetPath, "remote", "add",
+				"origin", "https://github.com/acme/empty.git",
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf(
+					"git remote add: %s: %s", err, out,
+				)
+			}
+			return nil
+		}
+
+		repo, err := p.findOrCloneRepo(
+			context.Background(), "acme/empty",
+		)
+		if err != nil {
+			t.Fatalf("findOrCloneRepo: %v", err)
+		}
+		if !cloneCalled {
+			t.Fatal("expected re-clone for empty dir")
+		}
+		if repo.RootPath != clonePath {
+			t.Errorf(
+				"RootPath=%q, want %q",
+				repo.RootPath, clonePath,
+			)
+		}
+	})
+
+	t.Run("non-git dir is re-cloned", func(t *testing.T) {
+		db := testutil.OpenTestDB(t)
+		cfg := config.DefaultConfig()
+		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+		dataDir := t.TempDir()
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+		// Create a dir with files but no .git
+		clonePath := filepath.Join(
+			dataDir, "clones", "acme", "notgit",
+		)
+		if err := os.MkdirAll(clonePath, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(
+			filepath.Join(clonePath, "README.md"),
+			[]byte("not a repo"), 0o644,
+		); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		cloneCalled := false
+		p.gitCloneFn = func(
+			_ context.Context, _, targetPath string, _ []string,
+		) error {
+			cloneCalled = true
+			cmd := exec.Command(
+				"git", "init", "-b", "main", targetPath,
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("git init: %s: %s", err, out)
+			}
+			cmd = exec.Command(
+				"git", "-C", targetPath, "remote", "add",
+				"origin",
+				"https://github.com/acme/notgit.git",
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf(
+					"git remote add: %s: %s", err, out,
+				)
+			}
+			return nil
+		}
+
+		repo, err := p.findOrCloneRepo(
+			context.Background(), "acme/notgit",
+		)
+		if err != nil {
+			t.Fatalf("findOrCloneRepo: %v", err)
+		}
+		if !cloneCalled {
+			t.Fatal("expected re-clone for non-git dir")
+		}
+		if repo == nil {
+			t.Fatal("expected non-nil repo")
+		}
+	})
+
+	t.Run("file at clone path is replaced", func(t *testing.T) {
+		db := testutil.OpenTestDB(t)
+		cfg := config.DefaultConfig()
+		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+		dataDir := t.TempDir()
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+		// Create parent dir and a file (not dir) at clone path
+		parentDir := filepath.Join(
+			dataDir, "clones", "acme",
+		)
+		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		clonePath := filepath.Join(parentDir, "filerepo")
+		if err := os.WriteFile(
+			clonePath, []byte("oops"), 0o644,
+		); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		cloneCalled := false
+		p.gitCloneFn = func(
+			_ context.Context, _, targetPath string, _ []string,
+		) error {
+			cloneCalled = true
+			cmd := exec.Command(
+				"git", "init", "-b", "main", targetPath,
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("git init: %s: %s", err, out)
+			}
+			cmd = exec.Command(
+				"git", "-C", targetPath, "remote", "add",
+				"origin",
+				"https://github.com/acme/filerepo.git",
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf(
+					"git remote add: %s: %s", err, out,
+				)
+			}
+			return nil
+		}
+
+		repo, err := p.findOrCloneRepo(
+			context.Background(), "acme/filerepo",
+		)
+		if err != nil {
+			t.Fatalf("findOrCloneRepo: %v", err)
+		}
+		if !cloneCalled {
+			t.Fatal("expected re-clone when file exists at path")
+		}
+		if repo == nil {
+			t.Fatal("expected non-nil repo")
+		}
+	})
 }
 
 func TestCIPollerFindOrCloneRepo_CloneFailure(t *testing.T) {
