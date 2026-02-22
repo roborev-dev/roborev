@@ -1275,6 +1275,35 @@ func TestGetPatchID(t *testing.T) {
 	})
 }
 
+func TestShortRef(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"range ref", "abc1234def5678..99887766aabbcc", "abc1234..9988776"},
+		{"single sha", "abc1234def5678", "abc1234"},
+		{"short single", "abc", "abc"},
+		{"empty", "", ""},
+		{"range with short sides", "abc..def", "abc..def"},
+		{"triple dot splits on first pair", "abc1234def5678...99887766aabbcc", "abc1234...99887766aabbcc"},
+		{"task label passthrough", "run", "run"},
+		{"dirty ref passthrough", "dirty", "dirty"},
+		{"branch name passthrough", "feature/very-long-name", "feature/very-long-name"},
+		{"analysis label passthrough", "duplication", "duplication"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ShortRef(tt.in)
+			if got != tt.want {
+				t.Errorf(
+					"ShortRef(%q) = %q, want %q",
+					tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestShortSHA(t *testing.T) {
 	tests := []struct {
 		name string

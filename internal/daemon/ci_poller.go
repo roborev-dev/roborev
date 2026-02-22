@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +22,10 @@ import (
 	reviewpkg "github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
+
+// errLocalRepoNotFound is returned by findLocalRepo when no registered
+// repo matches the given GitHub "owner/repo" identifier.
+var errLocalRepoNotFound = errors.New("no local repo found")
 
 // ghPR represents a GitHub pull request from `gh pr list --json`
 type ghPR struct {
@@ -43,6 +49,7 @@ type CIPoller struct {
 	listOpenPRsFn     func(context.Context, string) ([]ghPR, error)
 	gitFetchFn        func(context.Context, string) error
 	gitFetchPRHeadFn  func(context.Context, string, int) error
+	gitCloneFn        func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn       func(string, string, string) (string, error)
 	postPRCommentFn   func(string, int, string) error
 	setCommitStatusFn func(ghRepo, sha, state, description string) error
@@ -235,8 +242,8 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return nil
 	}
 
-	// Find local repo matching this GitHub repo
-	repo, err := p.findLocalRepo(ghRepo)
+	// Find local repo matching this GitHub repo (auto-clones if needed)
+	repo, err := p.findOrCloneRepo(ctx, ghRepo)
 	if err != nil {
 		return fmt.Errorf("find local repo for %s: %w", ghRepo, err)
 	}
@@ -445,6 +452,24 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	return nil
 }
 
+// findOrCloneRepo finds the local repo that corresponds to a GitHub
+// "owner/repo" identifier. If no registered repo is found, it auto-clones
+// the repo into {DataDir}/clones/{owner}/{repo} and registers it.
+func (p *CIPoller) findOrCloneRepo(
+	ctx context.Context, ghRepo string,
+) (*storage.Repo, error) {
+	repo, err := p.findLocalRepo(ghRepo)
+	if err == nil {
+		return repo, nil
+	}
+	// Only auto-clone when the repo simply doesn't exist locally.
+	// Propagate ambiguity and other real errors as-is.
+	if !errors.Is(err, errLocalRepoNotFound) {
+		return nil, err
+	}
+	return p.ensureClone(ctx, ghRepo)
+}
+
 // findLocalRepo finds the local repo that corresponds to a GitHub "owner/repo" identifier.
 // It looks for repos whose identity contains the owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
@@ -483,6 +508,187 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 	return p.findRepoByPartialIdentity(ghRepo)
 }
 
+// ensureClone clones a GitHub repo into {DataDir}/clones/{owner}/{repo}
+// (or reuses an existing clone) and registers it in the database.
+// If the clone path exists but is not a valid git working tree, it is
+// removed and re-cloned to avoid a persistent failure loop.
+func (p *CIPoller) ensureClone(
+	ctx context.Context, ghRepo string,
+) (*storage.Repo, error) {
+	owner, repoName, ok := strings.Cut(ghRepo, "/")
+	if !ok || !isValidRepoSegment(owner) ||
+		!isValidRepoSegment(repoName) {
+		return nil, fmt.Errorf(
+			"invalid GitHub repo %q: expected owner/repo", ghRepo,
+		)
+	}
+
+	clonePath := filepath.Join(
+		config.DataDir(), "clones", owner, repoName,
+	)
+
+	needsClone := false
+	if _, err := os.Stat(clonePath); os.IsNotExist(err) {
+		needsClone = true
+	} else if err != nil {
+		return nil, fmt.Errorf("stat clone path %s: %w", clonePath, err)
+	} else {
+		needsClone, err = cloneNeedsReplace(clonePath, ghRepo)
+		if err != nil {
+			return nil, err
+		}
+		if needsClone {
+			log.Printf(
+				"CI poller: removing invalid clone at %s",
+				clonePath,
+			)
+			if err := os.RemoveAll(clonePath); err != nil {
+				return nil, fmt.Errorf(
+					"remove invalid clone at %s: %w",
+					clonePath, err,
+				)
+			}
+		}
+	}
+
+	if needsClone {
+		if err := os.MkdirAll(
+			filepath.Dir(clonePath), 0o755,
+		); err != nil {
+			return nil, fmt.Errorf("create clone parent dir: %w", err)
+		}
+
+		env := p.ghEnvForRepo(ghRepo)
+		if err := p.callGitClone(
+			ctx, ghRepo, clonePath, env,
+		); err != nil {
+			return nil, fmt.Errorf("clone %s: %w", ghRepo, err)
+		}
+
+		log.Printf(
+			"CI poller: auto-cloned %s to %s", ghRepo, clonePath,
+		)
+	}
+
+	// Resolve identity from the cloned repo's remote.
+	identity := config.ResolveRepoIdentity(clonePath, nil)
+
+	repo, err := p.db.GetOrCreateRepo(clonePath, identity)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"register cloned repo %s: %w", ghRepo, err,
+		)
+	}
+	return repo, nil
+}
+
+// isValidRepoSegment checks that a GitHub owner or repo name segment
+// is non-empty and contains no path separators or traversal components.
+func isValidRepoSegment(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	return !strings.ContainsAny(s, "/\\")
+}
+
+// cloneNeedsReplace checks whether an existing path should be deleted
+// and re-cloned. Returns (true, nil) if the path is not a valid git
+// repo or has a confirmed remote mismatch. Returns (false, err) on
+// operational errors to avoid destructive action on transient failures.
+func cloneNeedsReplace(path, ghRepo string) (bool, error) {
+	if !isValidGitRepo(path) {
+		return true, nil
+	}
+	matches, err := cloneRemoteMatches(path, ghRepo)
+	if err != nil {
+		return false, err
+	}
+	return !matches, nil
+}
+
+// isValidGitRepo checks whether a path is a usable git working tree.
+func isValidGitRepo(path string) bool {
+	cmd := exec.Command(
+		"git", "-C", path, "rev-parse", "--is-inside-work-tree",
+	)
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+// cloneRemoteMatches checks whether the origin remote of a git repo
+// at path corresponds to the expected "owner/repo" identifier.
+// Returns (true, nil) on match, (false, nil) on confirmed mismatch,
+// and (false, err) on operational errors (so callers can avoid
+// deleting a valid clone on transient failures).
+func cloneRemoteMatches(path, ghRepo string) (bool, error) {
+	cmd := exec.Command(
+		"git", "-C", path, "remote", "get-url", "origin",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf(
+			"get origin URL for %s: %w", path, err,
+		)
+	}
+	got := ownerRepoFromURL(strings.TrimSpace(string(out)))
+	return strings.EqualFold(got, ghRepo), nil
+}
+
+// ownerRepoFromURL extracts "owner/repo" from a GitHub remote URL.
+// Handles HTTPS, SSH (scp-style), and ssh:// forms. Returns "" if
+// the URL doesn't point to github.com.
+func ownerRepoFromURL(raw string) string {
+	raw = strings.TrimRight(raw, "/")
+	if strings.HasSuffix(strings.ToLower(raw), ".git") {
+		raw = raw[:len(raw)-4]
+	}
+
+	// HTTPS or ssh://: https://github.com/owner/repo,
+	// ssh://git@github.com/owner/repo
+	if u, err := url.Parse(raw); err == nil &&
+		strings.EqualFold(u.Hostname(), "github.com") &&
+		u.Path != "" {
+		return strings.TrimPrefix(u.Path, "/")
+	}
+
+	// SCP-style SSH: git@github.com:owner/repo
+	if _, hostPath, ok := strings.Cut(raw, "@"); ok {
+		host, path, ok := strings.Cut(hostPath, ":")
+		if ok && strings.EqualFold(host, "github.com") {
+			return path
+		}
+	}
+
+	return ""
+}
+
+// ghClone clones a GitHub repo using the gh CLI.
+func ghClone(
+	ctx context.Context, ghRepo, targetPath string, env []string,
+) error {
+	cmd := exec.CommandContext(
+		ctx, "gh", "repo", "clone", ghRepo, targetPath,
+	)
+	if env != nil {
+		cmd.Env = env
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gh repo clone: %s: %s", err, string(out))
+	}
+	return nil
+}
+
+func (p *CIPoller) callGitClone(
+	ctx context.Context,
+	ghRepo, targetPath string,
+	env []string,
+) error {
+	if p.gitCloneFn != nil {
+		return p.gitCloneFn(ctx, ghRepo, targetPath, env)
+	}
+	return ghClone(ctx, ghRepo, targetPath, env)
+}
+
 // findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
 // Returns an ambiguity error if multiple repos match.
@@ -518,7 +724,7 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 
 	switch len(matches) {
 	case 0:
-		return nil, fmt.Errorf("no local repo found matching %q (run 'roborev init' in a local checkout)", ghRepo)
+		return nil, fmt.Errorf("%w matching %q (run 'roborev init' in a local checkout)", errLocalRepoNotFound, ghRepo)
 	case 1:
 		return &matches[0], nil
 	default:

@@ -981,6 +981,38 @@ func getAnyRemoteURL(repoPath string) string {
 	return ""
 }
 
+// ShortRef abbreviates a git ref for display. SHA-like tokens
+// (hex strings longer than 7 chars) are truncated to 7 chars.
+// Range refs like "abc123def..xyz789abc" become "abc123d..xyz789a".
+// Non-hex refs (branch names, task labels) pass through unchanged.
+func ShortRef(ref string) string {
+	if before, after, ok := strings.Cut(ref, ".."); ok {
+		return shortenIfHex(before) + ".." + shortenIfHex(after)
+	}
+	return shortenIfHex(ref)
+}
+
+// shortenIfHex truncates s to 7 characters only if it looks like a
+// hex SHA (all hex digits and longer than 7 chars). Non-hex strings
+// like branch names or task labels are returned unchanged.
+func shortenIfHex(s string) string {
+	if len(s) > 7 && isHex(s) {
+		return s[:7]
+	}
+	return s
+}
+
+func isHex(s string) bool {
+	for _, c := range s {
+		if (c < '0' || c > '9') &&
+			(c < 'a' || c > 'f') &&
+			(c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
 // ShortSHA returns the first 7 characters of a SHA hash, or
 // the full string if shorter. Matches git's default abbreviation.
 func ShortSHA(sha string) string {
