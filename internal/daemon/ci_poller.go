@@ -532,17 +532,23 @@ func (p *CIPoller) ensureClone(
 		needsClone = true
 	} else if err != nil {
 		return nil, fmt.Errorf("stat clone path %s: %w", clonePath, err)
-	} else if !isValidGitRepo(clonePath) ||
-		!cloneRemoteMatches(clonePath, ghRepo) {
-		log.Printf(
-			"CI poller: removing invalid clone at %s", clonePath,
-		)
-		if err := os.RemoveAll(clonePath); err != nil {
-			return nil, fmt.Errorf(
-				"remove invalid clone at %s: %w", clonePath, err,
-			)
+	} else {
+		needsClone, err = cloneNeedsReplace(clonePath, ghRepo)
+		if err != nil {
+			return nil, err
 		}
-		needsClone = true
+		if needsClone {
+			log.Printf(
+				"CI poller: removing invalid clone at %s",
+				clonePath,
+			)
+			if err := os.RemoveAll(clonePath); err != nil {
+				return nil, fmt.Errorf(
+					"remove invalid clone at %s: %w",
+					clonePath, err,
+				)
+			}
+		}
 	}
 
 	if needsClone {
@@ -585,6 +591,21 @@ func isValidRepoSegment(s string) bool {
 	return !strings.ContainsAny(s, "/\\")
 }
 
+// cloneNeedsReplace checks whether an existing path should be deleted
+// and re-cloned. Returns (true, nil) if the path is not a valid git
+// repo or has a confirmed remote mismatch. Returns (false, err) on
+// operational errors to avoid destructive action on transient failures.
+func cloneNeedsReplace(path, ghRepo string) (bool, error) {
+	if !isValidGitRepo(path) {
+		return true, nil
+	}
+	matches, err := cloneRemoteMatches(path, ghRepo)
+	if err != nil {
+		return false, err
+	}
+	return !matches, nil
+}
+
 // isValidGitRepo checks whether a path is a usable git working tree.
 func isValidGitRepo(path string) bool {
 	cmd := exec.Command(
@@ -596,17 +617,21 @@ func isValidGitRepo(path string) bool {
 
 // cloneRemoteMatches checks whether the origin remote of a git repo
 // at path corresponds to the expected "owner/repo" identifier.
-// Returns false on any error (missing remote, exec failure, etc.).
-func cloneRemoteMatches(path, ghRepo string) bool {
+// Returns (true, nil) on match, (false, nil) on confirmed mismatch,
+// and (false, err) on operational errors (so callers can avoid
+// deleting a valid clone on transient failures).
+func cloneRemoteMatches(path, ghRepo string) (bool, error) {
 	cmd := exec.Command(
 		"git", "-C", path, "remote", "get-url", "origin",
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		return false, fmt.Errorf(
+			"get origin URL for %s: %w", path, err,
+		)
 	}
 	got := ownerRepoFromURL(strings.TrimSpace(string(out)))
-	return strings.EqualFold(got, ghRepo)
+	return strings.EqualFold(got, ghRepo), nil
 }
 
 // ownerRepoFromURL extracts "owner/repo" from a GitHub remote URL.
