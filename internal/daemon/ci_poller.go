@@ -621,22 +621,32 @@ func isValidGitRepo(path string) bool {
 // (including missing origin), and (false, err) on operational errors
 // (so callers can avoid deleting a valid clone on transient failures).
 //
-// Uses "git config --get" which exits 1 with empty output when the
-// key doesn't exist — locale-independent, unlike "git remote get-url"
-// which produces localized stderr.
+// Two-step approach: "git config --get" for locale-independent
+// origin-existence check (exit 1 = missing key), then
+// "git remote get-url" for the resolved URL (handles insteadOf).
 func cloneRemoteMatches(path, ghRepo string) (bool, error) {
-	cmd := exec.Command(
-		"git", "-C", path, "config", "--get", "remote.origin.url",
+	// Step 1: check origin existence (locale-independent exit code).
+	cfgCmd := exec.Command(
+		"git", "-C", path,
+		"config", "--get", "remote.origin.url",
 	)
-	out, err := cmd.Output()
-	if err != nil {
-		// git config --get exits 1 when the key is missing. This
-		// is a deterministic invalid state (no origin configured),
-		// not a transient failure.
+	if err := cfgCmd.Run(); err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return false, nil
+		if errors.As(err, &exitErr) &&
+			exitErr.ExitCode() == 1 {
+			return false, nil // no origin configured
 		}
+		return false, fmt.Errorf(
+			"check origin for %s: %w", path, err,
+		)
+	}
+
+	// Step 2: get the resolved URL (expands insteadOf rewrites).
+	urlCmd := exec.Command(
+		"git", "-C", path, "remote", "get-url", "origin",
+	)
+	out, err := urlCmd.Output()
+	if err != nil {
 		return false, fmt.Errorf(
 			"get origin URL for %s: %w", path, err,
 		)
