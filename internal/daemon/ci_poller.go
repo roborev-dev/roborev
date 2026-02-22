@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ type CIPoller struct {
 	listOpenPRsFn     func(context.Context, string) ([]ghPR, error)
 	gitFetchFn        func(context.Context, string) error
 	gitFetchPRHeadFn  func(context.Context, string, int) error
+	gitCloneFn        func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn       func(string, string, string) (string, error)
 	postPRCommentFn   func(string, int, string) error
 	setCommitStatusFn func(ghRepo, sha, state, description string) error
@@ -235,8 +237,8 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return nil
 	}
 
-	// Find local repo matching this GitHub repo
-	repo, err := p.findLocalRepo(ghRepo)
+	// Find local repo matching this GitHub repo (auto-clones if needed)
+	repo, err := p.findOrCloneRepo(ctx, ghRepo)
 	if err != nil {
 		return fmt.Errorf("find local repo for %s: %w", ghRepo, err)
 	}
@@ -445,6 +447,24 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	return nil
 }
 
+// findOrCloneRepo finds the local repo that corresponds to a GitHub
+// "owner/repo" identifier. If no registered repo is found, it auto-clones
+// the repo into {DataDir}/clones/{owner}/{repo} and registers it.
+func (p *CIPoller) findOrCloneRepo(
+	ctx context.Context, ghRepo string,
+) (*storage.Repo, error) {
+	repo, err := p.findLocalRepo(ghRepo)
+	if err == nil {
+		return repo, nil
+	}
+	// Only auto-clone when the repo simply doesn't exist locally.
+	// Propagate ambiguity and other real errors as-is.
+	if !strings.Contains(err.Error(), "no local repo found") {
+		return nil, err
+	}
+	return p.ensureClone(ctx, ghRepo)
+}
+
 // findLocalRepo finds the local repo that corresponds to a GitHub "owner/repo" identifier.
 // It looks for repos whose identity contains the owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
@@ -481,6 +501,81 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 
 	// Fall back: search all repos and check if identity ends with owner/repo
 	return p.findRepoByPartialIdentity(ghRepo)
+}
+
+// ensureClone clones a GitHub repo into {DataDir}/clones/{owner}/{repo}
+// (or reuses an existing clone) and registers it in the database.
+func (p *CIPoller) ensureClone(
+	ctx context.Context, ghRepo string,
+) (*storage.Repo, error) {
+	owner, repoName, ok := strings.Cut(ghRepo, "/")
+	if !ok {
+		return nil, fmt.Errorf(
+			"invalid GitHub repo %q: expected owner/repo", ghRepo,
+		)
+	}
+
+	clonePath := filepath.Join(
+		config.DataDir(), "clones", owner, repoName,
+	)
+
+	// If the directory doesn't exist on disk, clone it.
+	if _, err := os.Stat(clonePath); os.IsNotExist(err) {
+		if err := os.MkdirAll(
+			filepath.Dir(clonePath), 0o755,
+		); err != nil {
+			return nil, fmt.Errorf("create clone parent dir: %w", err)
+		}
+
+		env := p.ghEnvForRepo(ghRepo)
+		if err := p.callGitClone(
+			ctx, ghRepo, clonePath, env,
+		); err != nil {
+			return nil, fmt.Errorf("clone %s: %w", ghRepo, err)
+		}
+
+		log.Printf(
+			"CI poller: auto-cloned %s to %s", ghRepo, clonePath,
+		)
+	}
+
+	// Resolve identity from the cloned repo's remote.
+	identity := config.ResolveRepoIdentity(clonePath, nil)
+
+	repo, err := p.db.GetOrCreateRepo(clonePath, identity)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"register cloned repo %s: %w", ghRepo, err,
+		)
+	}
+	return repo, nil
+}
+
+// ghClone clones a GitHub repo using the gh CLI.
+func ghClone(
+	ctx context.Context, ghRepo, targetPath string, env []string,
+) error {
+	cmd := exec.CommandContext(
+		ctx, "gh", "repo", "clone", ghRepo, targetPath,
+	)
+	if env != nil {
+		cmd.Env = env
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gh repo clone: %s: %s", err, string(out))
+	}
+	return nil
+}
+
+func (p *CIPoller) callGitClone(
+	ctx context.Context,
+	ghRepo, targetPath string,
+	env []string,
+) error {
+	if p.gitCloneFn != nil {
+		return p.gitCloneFn(ctx, ghRepo, targetPath, env)
+	}
+	return ghClone(ctx, ghRepo, targetPath, env)
 }
 
 // findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern.

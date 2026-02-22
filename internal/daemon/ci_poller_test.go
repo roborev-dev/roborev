@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1124,6 +1125,253 @@ func TestCIPollerFindLocalRepo_PartialIdentityAmbiguity(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("expected ambiguity error, got: %v", err)
+	}
+}
+
+func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	// Set up a temp data dir for clones
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	// Stub gitCloneFn to create a bare git repo instead of real cloning
+	cloneCalled := false
+	p.gitCloneFn = func(
+		_ context.Context, ghRepo, targetPath string, _ []string,
+	) error {
+		cloneCalled = true
+		if ghRepo != "acme/newrepo" {
+			t.Errorf("ghRepo=%q, want acme/newrepo", ghRepo)
+		}
+		// Create a minimal git repo at targetPath
+		cmd := exec.Command(
+			"git", "init", "-b", "main", targetPath,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git init: %s: %s", err, out)
+		}
+		// Set remote origin so ResolveRepoIdentity works
+		cmd = exec.Command(
+			"git", "-C", targetPath, "remote", "add",
+			"origin", "https://github.com/acme/newrepo.git",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git remote add: %s: %s", err, out)
+		}
+		return nil
+	}
+
+	repo, err := p.findOrCloneRepo(
+		context.Background(), "acme/newrepo",
+	)
+	if err != nil {
+		t.Fatalf("findOrCloneRepo: %v", err)
+	}
+	if !cloneCalled {
+		t.Fatal("expected gitCloneFn to be called")
+	}
+	if repo == nil {
+		t.Fatal("expected non-nil repo")
+	}
+
+	wantPath := filepath.Join(dataDir, "clones", "acme", "newrepo")
+	if repo.RootPath != wantPath {
+		t.Errorf(
+			"repo.RootPath=%q, want %q", repo.RootPath, wantPath,
+		)
+	}
+
+	// Second call should reuse the clone (no re-clone)
+	cloneCalled = false
+	repo2, err := p.findOrCloneRepo(
+		context.Background(), "acme/newrepo",
+	)
+	if err != nil {
+		t.Fatalf("findOrCloneRepo (reuse): %v", err)
+	}
+	if cloneCalled {
+		t.Error("expected no re-clone on second call")
+	}
+	if repo2.ID != repo.ID {
+		t.Errorf(
+			"expected same repo ID on reuse: got %d, want %d",
+			repo2.ID, repo.ID,
+		)
+	}
+}
+
+func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	// Pre-create the clone directory with a git repo (simulates
+	// leftover from a previous run where DB was wiped).
+	clonePath := filepath.Join(dataDir, "clones", "acme", "leftover")
+	if err := os.MkdirAll(clonePath, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cmd := exec.Command("git", "init", "-b", "main", clonePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s: %s", err, out)
+	}
+	cmd = exec.Command(
+		"git", "-C", clonePath, "remote", "add",
+		"origin", "https://github.com/acme/leftover.git",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %s: %s", err, out)
+	}
+
+	// gitCloneFn should NOT be called since dir already exists
+	p.gitCloneFn = func(
+		_ context.Context, _, _ string, _ []string,
+	) error {
+		t.Fatal("gitCloneFn should not be called for existing dir")
+		return nil
+	}
+
+	repo, err := p.findOrCloneRepo(
+		context.Background(), "acme/leftover",
+	)
+	if err != nil {
+		t.Fatalf("findOrCloneRepo: %v", err)
+	}
+	if repo.RootPath != clonePath {
+		t.Errorf(
+			"repo.RootPath=%q, want %q", repo.RootPath, clonePath,
+		)
+	}
+}
+
+func TestCIPollerFindOrCloneRepo_CloneFailure(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	p.gitCloneFn = func(
+		_ context.Context, _, _ string, _ []string,
+	) error {
+		return fmt.Errorf("auth failed")
+	}
+
+	_, err := p.findOrCloneRepo(
+		context.Background(), "acme/private",
+	)
+	if err == nil {
+		t.Fatal("expected error on clone failure")
+	}
+	if !strings.Contains(err.Error(), "auth failed") {
+		t.Errorf("expected 'auth failed' in error, got: %v", err)
+	}
+}
+
+func TestCIPollerFindOrCloneRepo_PropagatesAmbiguity(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+
+	// Create two repos with the same identity (ambiguous match)
+	for _, path := range []string{"/tmp/c1", "/tmp/c2"} {
+		if _, err := db.Exec(
+			`INSERT INTO repos (root_path, name, identity)
+			 VALUES (?, ?, ?)`,
+			path, "api", "https://github.com/acme/api.git",
+		); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	cfg := config.DefaultConfig()
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	// Should NOT attempt to clone — ambiguity is a real error
+	p.gitCloneFn = func(
+		_ context.Context, _, _ string, _ []string,
+	) error {
+		t.Fatal("should not clone on ambiguous match")
+		return nil
+	}
+
+	_, err := p.findOrCloneRepo(
+		context.Background(), "acme/api",
+	)
+	if err == nil {
+		t.Fatal("expected ambiguity error")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("expected 'ambiguous' in error, got: %v", err)
+	}
+}
+
+func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.ReviewTypes = []string{"security"}
+	cfg.CI.Agents = []string{"codex"}
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	// Stub git operations
+	p.gitFetchFn = func(context.Context, string) error {
+		return nil
+	}
+	p.gitFetchPRHeadFn = func(context.Context, string, int) error {
+		return nil
+	}
+	p.mergeBaseFn = func(_, _, ref2 string) (string, error) {
+		return "base-" + ref2, nil
+	}
+	p.agentResolverFn = func(name string) (string, error) {
+		return name, nil
+	}
+
+	// Stub clone to create a minimal git repo
+	p.gitCloneFn = func(
+		_ context.Context, _, targetPath string, _ []string,
+	) error {
+		cmd := exec.Command(
+			"git", "init", "-b", "main", targetPath,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git init: %s: %s", err, out)
+		}
+		cmd = exec.Command(
+			"git", "-C", targetPath, "remote", "add",
+			"origin", "https://github.com/org/newrepo.git",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git remote add: %s: %s", err, out)
+		}
+		return nil
+	}
+
+	err := p.processPR(context.Background(), "org/newrepo", ghPR{
+		Number:      1,
+		HeadRefOid:  "abc123",
+		BaseRefName: "main",
+	}, cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	// Verify batch was created
+	hasBatch, err := db.HasCIBatch("org/newrepo", 1, "abc123")
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !hasBatch {
+		t.Fatal("expected CI batch to be created via auto-clone")
 	}
 }
 
