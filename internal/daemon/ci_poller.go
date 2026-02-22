@@ -631,7 +631,7 @@ func cloneRemoteMatches(path, ghRepo string) (bool, error) {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "No such remote") {
+			if strings.Contains(stderr, "No such remote 'origin'") {
 				return false, nil
 			}
 		}

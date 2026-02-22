@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"log"
 	"maps"
 	"os"
 	"path/filepath"
@@ -23,13 +24,14 @@ type ActivityEntry struct {
 // ActivityLog manages activity logging to a JSONL file and maintains
 // an in-memory ring buffer. Follows the same pattern as ErrorLog.
 type ActivityLog struct {
-	mu        sync.Mutex
-	file      *os.File
-	path      string
-	recent    []ActivityEntry
-	maxRecent int
-	writeIdx  int
-	count     int
+	mu         sync.Mutex
+	file       *os.File
+	path       string
+	recent     []ActivityEntry
+	maxRecent  int
+	writeIdx   int
+	count      int
+	writeCount int // Writes since last size check
 }
 
 const activityLogCapacity = 500
@@ -47,7 +49,9 @@ func NewActivityLog(path string) (*ActivityLog, error) {
 		return nil, err
 	}
 
-	truncateIfOversized(path, maxActivityLogSize)
+	if err := truncateIfOversized(path, maxActivityLogSize); err != nil {
+		log.Printf("Activity log: failed to truncate %s: %v", path, err)
+	}
 
 	file, err := os.OpenFile(
 		path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644,
@@ -92,6 +96,7 @@ func (a *ActivityLog) Log(
 			_, _ = a.file.Write(data)
 			_, _ = a.file.Write([]byte("\n"))
 		}
+		a.maybeRotate()
 	}
 
 	a.recent[a.writeIdx] = entry
@@ -146,6 +151,41 @@ func (a *ActivityLog) Close() error {
 	return nil
 }
 
+// rotateCheckInterval is how often (in writes) we stat the file to
+// check its size. Each entry is ~200 bytes, so 1000 writes ≈ 200KB.
+const rotateCheckInterval = 1000
+
+// maybeRotate checks the log file size every rotateCheckInterval
+// writes and truncates it if over maxActivityLogSize. Must be called
+// with a.mu held.
+func (a *ActivityLog) maybeRotate() {
+	a.writeCount++
+	if a.writeCount < rotateCheckInterval {
+		return
+	}
+	a.writeCount = 0
+
+	info, err := a.file.Stat()
+	if err != nil || info.Size() <= maxActivityLogSize {
+		return
+	}
+
+	// Close, remove, and reopen
+	_ = a.file.Close()
+	if err := os.Remove(a.path); err != nil {
+		log.Printf("Activity log: rotate remove failed: %v", err)
+	}
+	f, err := os.OpenFile(
+		a.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644,
+	)
+	if err != nil {
+		log.Printf("Activity log: rotate reopen failed: %v", err)
+		a.file = nil
+		return
+	}
+	a.file = f
+}
+
 // copyDetails returns a shallow copy of a string map.
 // Returns nil for nil input.
 func copyDetails(m map[string]string) map[string]string {
@@ -158,13 +198,13 @@ func copyDetails(m map[string]string) map[string]string {
 }
 
 // truncateIfOversized removes the file at path if it exceeds limit bytes.
-// Errors are silently ignored — the caller will recreate the file.
-func truncateIfOversized(path string, limit int64) {
+func truncateIfOversized(path string, limit int64) error {
 	info, err := os.Stat(path)
 	if err != nil {
-		return
+		return nil // File doesn't exist or can't stat — nothing to do.
 	}
 	if info.Size() > limit {
-		_ = os.Remove(path)
+		return os.Remove(path)
 	}
+	return nil
 }

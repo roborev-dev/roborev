@@ -2314,6 +2314,51 @@ func TestRemapJobGitRef_RunningJob(t *testing.T) {
 			got.GitRef,
 		)
 	}
+	if got.Status != JobStatusRunning {
+		t.Errorf("status should remain running, got %s", got.Status)
+	}
+}
+
+func TestRemapJob_RunningJob(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/test-remap-job-running")
+	commit := createCommit(t, db, repo.ID, "rjrun-oldsha")
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "rjrun-oldsha",
+		Agent:    "test",
+		PatchID:  "patchRJRUN",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	setJobStatus(t, db, job.ID, JobStatusRunning)
+
+	n, err := db.RemapJob(
+		repo.ID, "rjrun-oldsha", "rjrun-newsha",
+		"patchRJRUN", "author", "subject", time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("RemapJob: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 rows remapped, got %d", n)
+	}
+
+	got, err := db.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if got.GitRef != "rjrun-oldsha" {
+		t.Errorf("git_ref should be unchanged, got %q", got.GitRef)
+	}
+	if got.Status != JobStatusRunning {
+		t.Errorf("status should remain running, got %s", got.Status)
+	}
 }
 
 func TestRemapTriggersResync(t *testing.T) {
