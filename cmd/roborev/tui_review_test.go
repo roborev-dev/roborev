@@ -2446,6 +2446,161 @@ func TestTUILogOutputUpdatesLinesWhenStreaming(t *testing.T) {
 	}
 }
 
+func TestTUILogOutputErrNoLogShowsJobError(t *testing.T) {
+	// When a failed job has no log file, the flash message should
+	// contain the stored error instead of a generic message.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 42
+	m.logFromView = tuiViewQueue
+	m.logStreaming = false
+	m.height = 30
+	m.jobs = []storage.ReviewJob{
+		makeJob(42,
+			withStatus(storage.JobStatusFailed),
+			withError("agent timeout after 300s"),
+		),
+	}
+
+	msg := tuiLogOutputMsg{err: errNoLog}
+	m2, _ := updateModel(t, m, msg)
+
+	// Should return to previous view.
+	if m2.currentView != tuiViewQueue {
+		t.Errorf("expected queue view, got %d", m2.currentView)
+	}
+	// Flash should contain the stored error.
+	if !strings.Contains(m2.flashMessage, "agent timeout") {
+		t.Errorf("flash should contain job error, got %q",
+			m2.flashMessage)
+	}
+	if !strings.Contains(m2.flashMessage, "42") {
+		t.Errorf("flash should contain job ID, got %q",
+			m2.flashMessage)
+	}
+}
+
+func TestTUILogOutputErrNoLogGenericForNonFailed(t *testing.T) {
+	// For a done (non-failed) job with no log, the flash should
+	// be the generic "No log available" message.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 10
+	m.logFromView = tuiViewQueue
+	m.height = 30
+	m.jobs = []storage.ReviewJob{
+		makeJob(10, withStatus(storage.JobStatusDone)),
+	}
+
+	msg := tuiLogOutputMsg{err: errNoLog}
+	m2, _ := updateModel(t, m, msg)
+
+	if m2.currentView != tuiViewQueue {
+		t.Errorf("expected queue view, got %d", m2.currentView)
+	}
+	if m2.flashMessage != "No log available for this job" {
+		t.Errorf("expected generic flash, got %q", m2.flashMessage)
+	}
+}
+
+func TestTUILogOutputRunningJobKeepsWaiting(t *testing.T) {
+	// Running job with empty first fetch should keep logLines nil
+	// so the UI shows "Waiting for output..." instead of "(no output)".
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
+	m.logLines = nil // first fetch
+	m.height = 30
+
+	// Empty lines, still streaming.
+	msg := tuiLogOutputMsg{
+		lines:   nil,
+		hasMore: true,
+	}
+	m2, _ := updateModel(t, m, msg)
+
+	if m2.logLines != nil {
+		t.Errorf("logLines should stay nil for running empty fetch, got %v",
+			m2.logLines)
+	}
+	if !m2.logStreaming {
+		t.Error("logStreaming should remain true")
+	}
+}
+
+func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
+	// logVisibleLines() should account for the command-line header
+	// when the job has a known agent with a command line.
+	m := newTuiModel("http://localhost")
+	m.height = 30
+	m.logJobID = 1
+
+	// Job without agent (no command line header).
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withAgent("")),
+	}
+	noHeader := m.logVisibleLines()
+
+	// Job with "test" agent (has a command line).
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withAgent("test")),
+	}
+	withHeader := m.logVisibleLines()
+
+	// With command header should have one fewer visible line.
+	if noHeader-withHeader != 1 {
+		t.Errorf("command header should reduce visible lines by 1: "+
+			"noHeader=%d withHeader=%d", noHeader, withHeader)
+	}
+}
+
+func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
+	// pgdown/end/g in log view should use logVisibleLines() for
+	// scroll calculations, correctly accounting for headers.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.height = 20
+	m.logScroll = 0
+	m.logFollow = false
+
+	// Use "test" agent to get command header.
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withAgent("test")),
+	}
+
+	// Create enough lines to need scrolling.
+	for i := range 50 {
+		m.logLines = append(m.logLines,
+			logLine{text: fmt.Sprintf("line %d", i)})
+	}
+
+	visLines := m.logVisibleLines()
+
+	// pgdown should advance by logVisibleLines().
+	m2, _ := pressSpecial(m, tea.KeyPgDown)
+	if m2.logScroll != visLines {
+		t.Errorf("pgdown: expected scroll=%d, got %d",
+			visLines, m2.logScroll)
+	}
+
+	// end should set scroll to max using logVisibleLines().
+	m3, _ := pressSpecial(m, tea.KeyEnd)
+	expectedMax := max(50-visLines, 0)
+	if m3.logScroll != expectedMax {
+		t.Errorf("end: expected scroll=%d, got %d",
+			expectedMax, m3.logScroll)
+	}
+
+	// 'g' from top should jump to bottom using logVisibleLines().
+	m4, _ := pressKeys(m, []rune{'g'})
+	if m4.logScroll != expectedMax {
+		t.Errorf("g from top: expected scroll=%d, got %d",
+			expectedMax, m4.logScroll)
+	}
+}
+
 func TestTUILogOutputIgnoredWhenNotInLogView(t *testing.T) {
 	// Test that log output messages are ignored when not in log view.
 	m := newTuiModel("http://localhost")

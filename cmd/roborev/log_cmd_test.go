@@ -134,6 +134,47 @@ func TestIsBrokenPipe(t *testing.T) {
 	}
 }
 
+func TestRenderJobLog_MixedJSONAndPlainText(t *testing.T) {
+	// Non-JSON lines after JSON events should be preserved (e.g.
+	// agent stderr/diagnostics mixed with JSONL stream output).
+	input := strings.Join([]string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}`,
+		`stderr: warning something`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Done"}]}}`,
+		`exit status 0`,
+	}, "\n")
+
+	var buf bytes.Buffer
+	err := renderJobLog(strings.NewReader(input), &buf, false)
+	if err != nil {
+		t.Fatalf("renderJobLog: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Hello") {
+		t.Errorf("expected first text, got:\n%s", out)
+	}
+	if !strings.Contains(out, "stderr: warning something") {
+		t.Errorf("non-JSON after JSON should be preserved, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Done") {
+		t.Errorf("expected second text, got:\n%s", out)
+	}
+	if !strings.Contains(out, "exit status 0") {
+		t.Errorf("trailing non-JSON should be preserved, got:\n%s", out)
+	}
+
+	// Verify ordering: "Hello" before "stderr", "stderr" before "Done".
+	helloIdx := strings.Index(out, "Hello")
+	stderrIdx := strings.Index(out, "stderr: warning")
+	doneIdx := strings.Index(out, "Done")
+	exitIdx := strings.Index(out, "exit status 0")
+	if helloIdx >= stderrIdx || stderrIdx >= doneIdx || doneIdx >= exitIdx {
+		t.Errorf("output order wrong: Hello@%d stderr@%d Done@%d exit@%d",
+			helloIdx, stderrIdx, doneIdx, exitIdx)
+	}
+}
+
 func TestLooksLikeJSON(t *testing.T) {
 	tests := []struct {
 		input string
