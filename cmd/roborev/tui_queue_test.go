@@ -60,20 +60,20 @@ func TestTUIQueueNavigation(t *testing.T) {
 			wantJobID: 1,
 		},
 		{
-			name:      "left arrow moves down",
+			name:      "left arrow moves up",
 			jobs:      threeJobs,
 			startIdx:  1,
 			key:       tea.KeyLeft,
-			wantIdx:   2,
-			wantJobID: 3,
+			wantIdx:   0,
+			wantJobID: 1,
 		},
 		{
-			name:      "right arrow moves up",
+			name:      "right arrow moves down",
 			jobs:      threeJobs,
 			startIdx:  1,
 			key:       tea.KeyRight,
-			wantIdx:   0,
-			wantJobID: 1,
+			wantIdx:   2,
+			wantJobID: 3,
 		},
 		{
 			name:      "g jumps to top (unfiltered)",
@@ -1285,15 +1285,15 @@ func TestTUIQueueNavigationSequences(t *testing.T) {
 		t.Errorf("after 'g', expected selectedIdx 0, got %d", m.selectedIdx)
 	}
 
-	// Sequence: Left (down), Right (up)
+	// Sequence: Right (down/next), Left (up/prev)
 	// We are at index 0
-	m, _ = pressSpecial(m, tea.KeyLeft)
+	m, _ = pressSpecial(m, tea.KeyRight)
 	if m.selectedIdx != 1 {
-		t.Errorf("after KeyLeft, expected selectedIdx 1, got %d", m.selectedIdx)
+		t.Errorf("after KeyRight, expected selectedIdx 1, got %d", m.selectedIdx)
 	}
 
-	m, _ = pressSpecial(m, tea.KeyRight)
+	m, _ = pressSpecial(m, tea.KeyLeft)
 	if m.selectedIdx != 0 {
-		t.Errorf("after KeyRight, expected selectedIdx 0, got %d", m.selectedIdx)
+		t.Errorf("after KeyLeft, expected selectedIdx 0, got %d", m.selectedIdx)
 	}
 }

@@ -18,8 +18,9 @@ type ProdLogBarrier struct {
 	// Byte offsets at barrier creation time.
 	activitySize int64
 	errorsSize   int64
-	// Whether daemon.<pid>.json already existed before tests.
+	// Snapshot of daemon.<pid>.json at barrier creation time.
 	runtimeExisted bool
+	runtimeSize    int64
 }
 
 // DefaultProdDataDir returns the default production data directory
@@ -49,8 +50,10 @@ func NewProdLogBarrier(realDataDir string) *ProdLogBarrier {
 		realDataDir,
 		fmt.Sprintf("daemon.%d.json", b.pid),
 	)
-	_, err := os.Stat(runtimePath)
-	b.runtimeExisted = err == nil
+	if info, err := os.Stat(runtimePath); err == nil {
+		b.runtimeExisted = true
+		b.runtimeSize = info.Size()
+	}
 	return b
 }
 
@@ -59,17 +62,25 @@ func NewProdLogBarrier(realDataDir string) *ProdLogBarrier {
 func (b *ProdLogBarrier) Check() string {
 	var violations []string
 
-	// 1. Check for daemon runtime file with our PID (only if new).
-	if !b.runtimeExisted {
-		runtimePath := filepath.Join(
-			b.realDataDir,
-			fmt.Sprintf("daemon.%d.json", b.pid),
-		)
-		if _, err := os.Stat(runtimePath); err == nil {
+	// 1. Check for daemon runtime file with our PID.
+	runtimePath := filepath.Join(
+		b.realDataDir,
+		fmt.Sprintf("daemon.%d.json", b.pid),
+	)
+	if info, err := os.Stat(runtimePath); err == nil {
+		if !b.runtimeExisted {
 			violations = append(violations,
 				fmt.Sprintf(
 					"test wrote daemon.%d.json to prod data dir",
 					b.pid,
+				),
+			)
+		} else if info.Size() != b.runtimeSize {
+			violations = append(violations,
+				fmt.Sprintf(
+					"test modified daemon.%d.json in prod data dir"+
+						" (size %d → %d)",
+					b.pid, b.runtimeSize, info.Size(),
 				),
 			)
 		}

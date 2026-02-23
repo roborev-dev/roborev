@@ -227,7 +227,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 			wantCmd:       false,
 		},
 		{
-			name: "Left Arrow acts like J (Next)",
+			name: "Left Arrow acts like K (Prev)",
 			initialJobs: []storage.ReviewJob{
 				makeJob(1),
 				makeJob(2),
@@ -236,12 +236,12 @@ func TestTUIReviewNavigation(t *testing.T) {
 			initialIdx: 1,
 			initialID:  2,
 			key:        tea.KeyLeft,
-			wantIdx:    2,
-			wantJobID:  3,
+			wantIdx:    0,
+			wantJobID:  1,
 			wantCmd:    true,
 		},
 		{
-			name: "Right Arrow acts like K (Prev)",
+			name: "Right Arrow acts like J (Next)",
 			initialJobs: []storage.ReviewJob{
 				makeJob(1),
 				makeJob(2),
@@ -250,8 +250,8 @@ func TestTUIReviewNavigation(t *testing.T) {
 			initialIdx: 1,
 			initialID:  2,
 			key:        tea.KeyRight,
-			wantIdx:    0,
-			wantJobID:  1,
+			wantIdx:    2,
+			wantJobID:  3,
 			wantCmd:    true,
 		},
 		{

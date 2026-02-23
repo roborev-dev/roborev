@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -172,6 +174,64 @@ func TestRenderJobLog_MixedJSONAndPlainText(t *testing.T) {
 	if helloIdx >= stderrIdx || stderrIdx >= doneIdx || doneIdx >= exitIdx {
 		t.Errorf("output order wrong: Hello@%d stderr@%d Done@%d exit@%d",
 			helloIdx, stderrIdx, doneIdx, exitIdx)
+	}
+}
+
+func TestLogCmd_InvalidJobID(t *testing.T) {
+	cmd := logCmd()
+	cmd.SetArgs([]string{"abc"})
+	cmd.SilenceUsage = true
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for non-numeric job ID")
+	}
+	if !strings.Contains(err.Error(), "invalid job ID") {
+		t.Fatalf("expected 'invalid job ID' error, got: %s", err)
+	}
+}
+
+func TestLogCmd_MissingLogFile(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	cmd := logCmd()
+	cmd.SetArgs([]string{"99999"})
+	cmd.SilenceUsage = true
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for missing log file")
+	}
+	if !strings.Contains(err.Error(), "no log for job") {
+		t.Fatalf("expected 'no log for job' error, got: %s", err)
+	}
+}
+
+func TestLogCmd_PathFlag(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	cmd := logCmd()
+	cmd.SetArgs([]string{"--path", "42"})
+	cmd.SilenceUsage = true
+	// --path succeeds even if log file doesn't exist.
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("--path should succeed: %v", err)
+	}
+}
+
+func TestLogCmd_RawFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dir)
+
+	// Create a log file at the expected path.
+	logDir := filepath.Join(dir, "logs", "jobs")
+	os.MkdirAll(logDir, 0755)
+	logPath := filepath.Join(logDir, "42.log")
+	os.WriteFile(logPath, []byte(`{"type":"assistant"}`+"\n"), 0644)
+
+	cmd := logCmd()
+	cmd.SetArgs([]string{"--raw", "42"})
+	cmd.SilenceUsage = true
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("--raw should succeed: %v", err)
 	}
 }
 

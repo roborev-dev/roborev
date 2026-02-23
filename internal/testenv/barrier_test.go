@@ -102,6 +102,28 @@ func TestBarrierIgnoresPreExistingRuntimeFile(t *testing.T) {
 	}
 }
 
+func TestBarrierDetectsPreExistingRuntimeMutation(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a daemon.<our-pid>.json BEFORE the barrier.
+	runtimePath := filepath.Join(dir,
+		fmt.Sprintf("daemon.%d.json", os.Getpid()))
+	os.WriteFile(runtimePath, []byte("{}"), 0644)
+
+	barrier := NewProdLogBarrier(dir)
+
+	// Modify the file after barrier creation.
+	os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0644)
+
+	msg := barrier.Check()
+	if msg == "" {
+		t.Fatal("barrier should detect modified runtime file")
+	}
+	if !strings.Contains(msg, "modified") {
+		t.Fatalf("message should mention modification, got: %s", msg)
+	}
+}
+
 func TestBarrierPassesWhenClean(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "activity.log")

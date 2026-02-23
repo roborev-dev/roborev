@@ -305,14 +305,21 @@ func isGoBuildCacheBinary(exePath string) bool {
 			return true
 		}
 		// go run temp dirs: go-build<digits>
-		if strings.HasPrefix(seg, "go-build") &&
-			len(seg) > len("go-build") &&
-			seg[len("go-build")] >= '0' &&
-			seg[len("go-build")] <= '9' {
+		if after, ok := strings.CutPrefix(seg, "go-build"); ok &&
+			after != "" && isAllDigits(after) {
 			return true
 		}
 	}
 	return false
+}
+
+func isAllDigits(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func shouldRefuseAutoStartDaemon(exePath string) bool {
