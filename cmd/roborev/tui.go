@@ -1704,7 +1704,7 @@ func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 }
 
 // Queue help line constants (used by both queueVisibleRows and renderQueueView).
-const queueHelpLine1 = "x: cancel | r: rerun | t: log | p: prompt | c: comment | y: copy | m: commit msg | F: fix"
+const queueHelpLine1 = "x: cancel | r: rerun | l: log | p: prompt | c: comment | y: copy | m: commit msg | F: fix"
 const queueHelpLine2 = "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | T: tasks | ?: help | q: quit"
 
 // queueHelpLines computes how many terminal lines the queue help
@@ -3286,7 +3286,7 @@ func helpLines() []string {
 				{"PgUp/PgDn", "Page through list"},
 				{"enter", "View review"},
 				{"p", "View prompt"},
-				{"t", "View agent log"},
+				{"l", "View agent log"},
 				{"m", "View commit message"},
 			},
 		},
@@ -3350,7 +3350,7 @@ func helpLines() []string {
 				{"↑/↓", "Navigate fix jobs"},
 				{"A", "Apply patch from completed fix"},
 				{"R", "Re-trigger fix (rebase)"},
-				{"t", "View agent log"},
+				{"l", "View agent log"},
 				{"x", "Cancel running/queued fix job"},
 				{"esc/T", "Back to queue"},
 			},

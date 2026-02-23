@@ -364,7 +364,7 @@ func (m tuiModel) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCancelKey()
 	case "r":
 		return m.handleRerunKey()
-	case "t":
+	case "l", "t":
 		return m.handleTailKey2()
 	case "f":
 		return m.handleFilterOpenKey()
@@ -1511,7 +1511,7 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case "t":
+	case "l", "t":
 		// View agent log for any non-queued job
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
 			job := m.fixJobs[m.fixSelectedIdx]
