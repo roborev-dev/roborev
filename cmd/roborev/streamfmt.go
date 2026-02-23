@@ -29,6 +29,10 @@ var (
 			Foreground(lipgloss.AdaptiveColor{
 			Light: "242", Dark: "240",
 		}) // Dim — subtle visual grouping
+	sfReasoningStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{
+			Light: "242", Dark: "243",
+		}).Italic(true) // Dim italic — thinking indicator
 )
 
 // streamFormatter wraps an io.Writer to transform raw NDJSON stream output
@@ -244,6 +248,14 @@ func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 		return
 	}
 	switch item.Type {
+	case "reasoning":
+		if eventType != "item.completed" {
+			return
+		}
+		text := strings.TrimSpace(sanitizeControl(item.Text))
+		if text != "" {
+			f.writeReasoning(text)
+		}
 	case "agent_message":
 		if eventType != "item.completed" {
 			return
@@ -494,6 +506,16 @@ func (f *streamFormatter) writeText(text string) {
 	for _, line := range lines {
 		f.writef("%s\n", line)
 	}
+}
+
+// writeReasoning writes a dimmed reasoning summary line.
+func (f *streamFormatter) writeReasoning(text string) {
+	if f.lastWasTool && f.hasOutput {
+		f.writef("\n")
+	}
+	f.lastWasTool = false
+	f.hasOutput = true
+	f.writef("%s\n", sfReasoningStyle.Render(text))
 }
 
 // writeTool writes a styled tool-call line with a gutter prefix

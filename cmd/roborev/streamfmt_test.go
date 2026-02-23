@@ -398,6 +398,21 @@ func TestStreamFormatter_Codex_Scenarios(t *testing.T) {
 			counts:   map[string]int{"Bash   bash -lc ls": 2},
 		},
 		{
+			name: "Codex Reasoning Displayed",
+			events: []string{
+				`{"type":"item.completed","item":{"type":"reasoning","text":"**Reviewing error handling changes**"}}`,
+			},
+			contains: []string{"Reviewing error handling changes"},
+		},
+		{
+			name: "Codex Reasoning Suppressed On Non-Completed",
+			events: []string{
+				`{"type":"item.started","item":{"type":"reasoning","text":"draft thinking"}}`,
+				`{"type":"item.updated","item":{"type":"reasoning","text":"still thinking"}}`,
+			},
+			empty: true,
+		},
+		{
 			name: "Codex Multi ID Same Command Deterministic Pairing",
 			events: []string{
 				`{"type":"item.started","item":{"id":"cmd_A","type":"command_execution","command":"bash -lc ls"}}`,
