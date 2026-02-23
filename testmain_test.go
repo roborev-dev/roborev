@@ -1,4 +1,4 @@
-package daemon
+package main
 
 import (
 	"fmt"
@@ -8,21 +8,19 @@ import (
 	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
-// TestMain isolates the entire daemon test package from the production
-// ~/.roborev directory. Without this, NewServer creates activity/error
-// logs at DefaultActivityLogPath() → ~/.roborev/activity.log, polluting
-// the production log with test events and confusing running TUIs.
+// TestMain isolates the root e2e test package from production
+// ~/.roborev. TestE2EEnqueueAndReview creates a daemon.NewServer
+// which opens activity/error logs at config.DataDir().
 func TestMain(m *testing.M) {
 	os.Exit(runTests(m))
 }
 
 func runTests(m *testing.M) int {
-	// Snapshot prod log state BEFORE overriding ROBOREV_DATA_DIR.
 	barrier := testenv.NewProdLogBarrier(
 		testenv.DefaultProdDataDir(),
 	)
 
-	tmpDir, err := os.MkdirTemp("", "roborev-daemon-test-*")
+	tmpDir, err := os.MkdirTemp("", "roborev-e2e-test-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr,
 			"failed to create temp dir: %v\n", err)
@@ -33,7 +31,6 @@ func runTests(m *testing.M) int {
 	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	code := m.Run()
 
-	// Hard barrier: fail if tests polluted production logs.
 	if msg := barrier.Check(); msg != "" {
 		fmt.Fprintln(os.Stderr, msg)
 		return 1
