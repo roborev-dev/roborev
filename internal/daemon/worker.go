@@ -30,6 +30,7 @@ type WorkerPool struct {
 	numWorkers    int
 	activeWorkers atomic.Int32
 	stopCh        chan struct{}
+	readyCh       chan struct{} // closed after wg.Add in Start
 	wg            sync.WaitGroup
 
 	// Track running jobs for cancellation
@@ -60,6 +61,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		activityLog:    activityLog,
 		numWorkers:     numWorkers,
 		stopCh:         make(chan struct{}),
+		readyCh:        make(chan struct{}),
 		runningJobs:    make(map[int64]context.CancelFunc),
 		pendingCancels: make(map[int64]bool),
 		agentCooldowns: make(map[string]time.Time),
@@ -72,6 +74,7 @@ func (wp *WorkerPool) Start() {
 	log.Printf("Starting worker pool with %d workers", wp.numWorkers)
 
 	wp.wg.Add(wp.numWorkers)
+	close(wp.readyCh) // unblock Stop if it races with Start
 	for i := 0; i < wp.numWorkers; i++ {
 		go wp.worker(i)
 	}
@@ -81,7 +84,15 @@ func (wp *WorkerPool) Start() {
 func (wp *WorkerPool) Stop() {
 	log.Println("Stopping worker pool...")
 	close(wp.stopCh)
-	wp.wg.Wait()
+	// Wait for Start to finish wg.Add before calling Wait.
+	// If Start was never called, readyCh stays open but stopCh
+	// is already closed, so workers (if any) will exit immediately.
+	select {
+	case <-wp.readyCh:
+		wp.wg.Wait()
+	default:
+		// Start was never called; nothing to wait for.
+	}
 	log.Println("Worker pool stopped")
 }
 
