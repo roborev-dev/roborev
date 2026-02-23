@@ -3052,7 +3052,7 @@ func (m tuiModel) renderReviewView() string {
 				Border(lipgloss.NormalBorder()).
 				BorderForeground(lipgloss.AdaptiveColor{Light: "125", Dark: "205"}). // magenta/pink (active)
 				Width(innerWidth)
-			for _, line := range strings.Split(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
+			for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
 				b.WriteString(line)
 				b.WriteString("\x1b[K\n")
 			}
@@ -3076,7 +3076,7 @@ func (m tuiModel) renderReviewView() string {
 				BorderForeground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}). // gray (inactive)
 				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
 				Width(innerWidth)
-			for _, line := range strings.Split(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
+			for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
 				b.WriteString(tuiStatusStyle.Render(line))
 				b.WriteString("\x1b[K\n")
 			}
