@@ -3042,7 +3042,7 @@ func (m tuiModel) renderReviewView() string {
 
 			// Input line with cursor — show tail so cursor is always visible
 			inputDisplay := m.fixPromptText
-			maxInputWidth := boxWidth - 6 // "│ > " (4) + "_" (1) + " │" (2) = 7, leaving boxWidth-7 for text... actually: boxWidth-2 inner, minus "> " (2) minus "_" (1) = boxWidth-5
+			maxInputWidth := boxWidth - 7 // "│ > " (4) + "_" (1) + " │" (2) = 7 overhead
 			if runewidth.StringWidth(inputDisplay) > maxInputWidth {
 				runes := []rune(inputDisplay)
 				for runewidth.StringWidth(string(runes)) > maxInputWidth {
@@ -3068,7 +3068,7 @@ func (m tuiModel) renderReviewView() string {
 			if inputDisplay == "" {
 				inputDisplay = "(blank = default)"
 			}
-			maxContentWidth := boxWidth - 4 // "│  " (3) + "  │" (3) = 6, so inner = boxWidth-6... actually "│  " is 3 chars, "  │" is 3 chars
+			maxContentWidth := boxWidth - 6 // "│  " (3) + "  │" (3) = 6 overhead
 			if runewidth.StringWidth(inputDisplay) > maxContentWidth {
 				inputDisplay = runewidth.Truncate(inputDisplay, maxContentWidth, "")
 			}

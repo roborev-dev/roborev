@@ -3290,3 +3290,79 @@ func TestReviewFixPanelPendingConsumedOnLoad(t *testing.T) {
 		t.Error("Expected reviewFixPanelFocused to be true")
 	}
 }
+
+func TestReviewFixPanelEnterSubmitsAndNavigatesToTasks(t *testing.T) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1})
+	})
+	m.currentView = tuiViewReview
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = true
+	m.fixPromptJobID = 1
+	m.fixPromptText = "fix the lint errors"
+
+	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEnter})
+	got := m2.(tuiModel)
+
+	if got.reviewFixPanelOpen {
+		t.Error("Expected panel to close on Enter")
+	}
+	if got.fixPromptText != "" {
+		t.Error("Expected fixPromptText to be cleared on Enter")
+	}
+	if got.fixPromptJobID != 0 {
+		t.Errorf("Expected fixPromptJobID to be cleared, got %d", got.fixPromptJobID)
+	}
+	if got.currentView != tuiViewTasks {
+		t.Errorf("Expected navigation to tuiViewTasks, got %v", got.currentView)
+	}
+}
+
+func TestReviewFixPanelBackspaceDeletesRune(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = true
+	m.fixPromptText = "hello"
+
+	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyBackspace})
+	got := m2.(tuiModel)
+
+	if got.fixPromptText != "hell" {
+		t.Errorf("Expected fixPromptText='hell' after backspace, got %q", got.fixPromptText)
+	}
+}
+
+func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/review" {
+			review := storage.ReviewJob{ID: 42, Status: storage.JobStatusDone}
+			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 42, Job: &review})
+			return
+		}
+		if r.URL.Path == "/api/comments" {
+			json.NewEncoder(w).Encode(map[string]any{"responses": []storage.Response{}})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	done := storage.JobStatusDone
+	job := storage.ReviewJob{ID: 42, Status: done}
+	m.currentView = tuiViewQueue
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx = 0
+	m.selectedJobID = 42
+
+	m2, cmd := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
+	got := m2.(tuiModel)
+
+	if !got.reviewFixPanelPending {
+		t.Error("Expected reviewFixPanelPending to be true after F from queue")
+	}
+	if got.selectedJobID != 42 {
+		t.Errorf("Expected selectedJobID=42, got %d", got.selectedJobID)
+	}
+	if cmd == nil {
+		t.Error("Expected a fetch command to be returned")
+	}
+}
