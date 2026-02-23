@@ -230,7 +230,7 @@ func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 		if eventType != "item.completed" {
 			return
 		}
-		f.writeText(sanitizeControl(item.Text))
+		f.writeText(sanitizeControlKeepNewlines(item.Text))
 	case "command_execution":
 		cmd := strings.TrimSpace(sanitizeControl(item.Command))
 		if !f.shouldRenderCodexCommand(eventType, item, cmd) {
@@ -492,18 +492,34 @@ func writerIsTerminal(w io.Writer) bool {
 }
 
 // sanitizeControl strips ANSI escape sequences and non-printable control
-// characters from s. This prevents terminal injection from untrusted
-// model/subprocess output embedded in codex JSONL fields.
+// characters from s. Newlines are replaced with spaces to produce
+// single-line output (used for command text summaries).
 func sanitizeControl(s string) string {
+	return sanitizeControlChars(s, false)
+}
+
+// sanitizeControlKeepNewlines strips ANSI escape sequences and
+// non-printable control characters but preserves newlines. Used for
+// agent text content that needs to retain paragraph structure.
+func sanitizeControlKeepNewlines(s string) string {
+	return sanitizeControlChars(s, true)
+}
+
+func sanitizeControlChars(s string, keepNewlines bool) string {
 	s = ansiEscapePattern.ReplaceAllString(s, "")
-	// Replace newlines/carriage returns with spaces to avoid collapsing words.
-	s = strings.ReplaceAll(s, "\r\n", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
+	if keepNewlines {
+		// Normalize line endings but preserve them.
+		s = strings.ReplaceAll(s, "\r\n", "\n")
+		s = strings.ReplaceAll(s, "\r", "\n")
+	} else {
+		s = strings.ReplaceAll(s, "\r\n", " ")
+		s = strings.ReplaceAll(s, "\n", " ")
+		s = strings.ReplaceAll(s, "\r", " ")
+	}
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		if r == '\t' || !unicode.IsControl(r) {
+		if r == '\t' || r == '\n' || !unicode.IsControl(r) {
 			b.WriteRune(r)
 		}
 	}
