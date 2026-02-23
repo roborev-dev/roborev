@@ -176,9 +176,16 @@ func (a *ActivityLog) maybeRotate() {
 		a.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644,
 	)
 	if err != nil {
-		log.Printf("Activity log: rotate reopen failed: %v", err)
-		a.file = nil
-		return
+		log.Printf("Activity log: rotate reopen failed, retrying append: %v", err)
+		// Fall back to append mode so logging isn't permanently disabled
+		f, err = os.OpenFile(
+			a.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644,
+		)
+		if err != nil {
+			log.Printf("Activity log: fallback reopen also failed: %v", err)
+			a.file = nil
+			return
+		}
 	}
 	a.file = f
 }
