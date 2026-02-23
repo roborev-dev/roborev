@@ -2369,25 +2369,25 @@ func TestFormatClipboardContent(t *testing.T) {
 	}
 }
 
-func TestTUITailOutputPreservesLinesOnEmptyResponse(t *testing.T) {
+func TestTUILogOutputPreservesLinesOnEmptyResponse(t *testing.T) {
 	// Test that when a job completes and the server returns empty lines
 	// (because the buffer was closed), the TUI preserves the existing lines.
 	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewTail
-	m.tailJobID = 1
-	m.tailStreaming = true
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
 	m.height = 30
 
 	// Set up initial lines as if we had been streaming output
-	m.tailLines = []tailLine{
+	m.logLines = []logLine{
 		{text: "Line 1"},
 		{text: "Line 2"},
 		{text: "Line 3"},
 	}
 
 	// Simulate job completion: server returns empty lines, hasMore=false
-	emptyMsg := tuiTailOutputMsg{
-		lines:   []tailLine{},
+	emptyMsg := tuiLogOutputMsg{
+		lines:   []logLine{},
 		hasMore: false,
 		err:     nil,
 	}
@@ -2395,37 +2395,37 @@ func TestTUITailOutputPreservesLinesOnEmptyResponse(t *testing.T) {
 	m2, _ := updateModel(t, m, emptyMsg)
 
 	// Lines should be preserved (not cleared)
-	if len(m2.tailLines) != 3 {
-		t.Fatalf("Expected 3 lines preserved, got %d", len(m2.tailLines))
+	if len(m2.logLines) != 3 {
+		t.Fatalf("Expected 3 lines preserved, got %d", len(m2.logLines))
 	}
 
 	// Streaming should stop
-	if m2.tailStreaming {
-		t.Error("Expected tailStreaming to be false after job completes")
+	if m2.logStreaming {
+		t.Error("Expected logStreaming to be false after job completes")
 	}
 
 	// Verify the original content is still there
-	if m2.tailLines[0].text != "Line 1" {
-		t.Errorf("Expected 'Line 1', got %q", m2.tailLines[0].text)
+	if m2.logLines[0].text != "Line 1" {
+		t.Errorf("Expected 'Line 1', got %q", m2.logLines[0].text)
 	}
 }
 
-func TestTUITailOutputUpdatesLinesWhenStreaming(t *testing.T) {
+func TestTUILogOutputUpdatesLinesWhenStreaming(t *testing.T) {
 	// Test that when streaming and new lines arrive, they are updated
 	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewTail
-	m.tailJobID = 1
-	m.tailStreaming = true
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
 	m.height = 30
 
 	// Set up initial lines
-	m.tailLines = []tailLine{
+	m.logLines = []logLine{
 		{text: "Old line"},
 	}
 
 	// New lines arrive while still streaming
-	newMsg := tuiTailOutputMsg{
-		lines: []tailLine{
+	newMsg := tuiLogOutputMsg{
+		lines: []logLine{
 			{text: "Old line"},
 			{text: "New line"},
 		},
@@ -2436,30 +2436,30 @@ func TestTUITailOutputUpdatesLinesWhenStreaming(t *testing.T) {
 	m2, _ := updateModel(t, m, newMsg)
 
 	// Lines should be updated
-	if len(m2.tailLines) != 2 {
-		t.Errorf("Expected 2 lines, got %d", len(m2.tailLines))
+	if len(m2.logLines) != 2 {
+		t.Errorf("Expected 2 lines, got %d", len(m2.logLines))
 	}
 
 	// Streaming should continue
-	if !m2.tailStreaming {
-		t.Error("Expected tailStreaming to be true while job is running")
+	if !m2.logStreaming {
+		t.Error("Expected logStreaming to be true while job is running")
 	}
 }
 
-func TestTUITailOutputIgnoredWhenNotInTailView(t *testing.T) {
-	// Test that tail output messages are ignored when not in tail view
+func TestTUILogOutputIgnoredWhenNotInLogView(t *testing.T) {
+	// Test that log output messages are ignored when not in log view.
 	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue // Not in tail view
-	m.tailJobID = 1
+	m.currentView = tuiViewQueue // Not in log view
+	m.logJobID = 1
 
-	// Existing lines from a previous tail session
-	m.tailLines = []tailLine{
+	// Existing lines from a previous log session.
+	m.logLines = []logLine{
 		{text: "Previous session line"},
 	}
 
-	// New lines arrive (stale message from previous tail)
-	msg := tuiTailOutputMsg{
-		lines: []tailLine{
+	// New lines arrive (stale message from previous log session).
+	msg := tuiLogOutputMsg{
+		lines: []logLine{
 			{text: "Should be ignored"},
 		},
 		hasMore: false,
@@ -2468,12 +2468,12 @@ func TestTUITailOutputIgnoredWhenNotInTailView(t *testing.T) {
 
 	m2, _ := updateModel(t, m, msg)
 
-	// Lines should not be updated since we're not in tail view
-	if len(m2.tailLines) != 1 {
-		t.Fatalf("Expected 1 line (unchanged), got %d", len(m2.tailLines))
+	// Lines should not be updated since we're not in log view.
+	if len(m2.logLines) != 1 {
+		t.Fatalf("Expected 1 line (unchanged), got %d", len(m2.logLines))
 	}
-	if m2.tailLines[0].text != "Previous session line" {
-		t.Errorf("Lines should not be updated when not in tail view")
+	if m2.logLines[0].text != "Previous session line" {
+		t.Errorf("Lines should not be updated when not in log view")
 	}
 }
 

@@ -108,7 +108,7 @@ const (
 	tuiViewComment
 	tuiViewCommitMsg
 	tuiViewHelp
-	tuiViewTail
+	tuiViewLog
 	tuiViewTasks     // Background fix tasks view
 	tuiViewFixPrompt // Fix prompt confirmation modal
 	tuiViewPatch     // Patch viewer for fix jobs
@@ -244,13 +244,13 @@ type tuiModel struct {
 	helpFromView tuiView // View to return to after closing help
 	helpScroll   int     // Scroll position in help view
 
-	// Tail view state
-	tailJobID     int64      // Job being tailed
-	tailLines     []tailLine // Buffer of output lines
-	tailScroll    int        // Scroll position
-	tailStreaming bool       // True if job is still running
-	tailFromView  tuiView    // View to return to
-	tailFollow    bool       // True if auto-scrolling to bottom (follow mode)
+	// Log view state
+	logJobID     int64     // Job being viewed
+	logLines     []logLine // Buffer of output lines
+	logScroll    int       // Scroll position
+	logStreaming bool      // True if job is still running
+	logFromView  tuiView   // View to return to
+	logFollow    bool      // True if auto-scrolling to bottom (follow mode)
 
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
@@ -278,21 +278,21 @@ type pendingState struct {
 	seq      uint64
 }
 
-// tailLine represents a single pre-rendered line of agent output in the tail view.
+// logLine represents a single pre-rendered line of agent output in the log view.
 // Text is already styled via streamFormatter (ANSI codes included).
-type tailLine struct {
+type logLine struct {
 	text string
 }
 
-// tuiTailOutputMsg delivers output lines from the daemon
-type tuiTailOutputMsg struct {
-	lines   []tailLine
+// tuiLogOutputMsg delivers output lines from the daemon
+type tuiLogOutputMsg struct {
+	lines   []logLine
 	hasMore bool // true if job is still running
 	err     error
 }
 
-// tuiTailTickMsg triggers a refresh of the tail output
-type tuiTailTickMsg struct{}
+// tuiLogTickMsg triggers a refresh of the log output
+type tuiLogTickMsg struct{}
 
 type tuiTickMsg time.Time
 type tuiJobsMsg struct {
@@ -1095,7 +1095,7 @@ func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
 var errNoLog = errors.New("no log available")
 
 // fetchJobLog fetches raw JSONL from /api/job/log, renders it
-// through streamFormatter, and returns pre-styled tailLines.
+// through streamFormatter, and returns pre-styled logLines.
 // Works for all job states (running, completed, failed).
 func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 	addr := m.serverAddr
@@ -1108,15 +1108,15 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		)
 		resp, err := client.Get(url)
 		if err != nil {
-			return tuiTailOutputMsg{err: err}
+			return tuiLogOutputMsg{err: err}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return tuiTailOutputMsg{err: errNoLog}
+			return tuiLogOutputMsg{err: errNoLog}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiTailOutputMsg{
+			return tuiLogOutputMsg{
 				err: fmt.Errorf("fetch log: %s", resp.Status),
 			}
 		}
@@ -1132,15 +1132,15 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		if err := renderJobLogWith(
 			resp.Body, fmtr, &buf,
 		); err != nil {
-			return tuiTailOutputMsg{err: err}
+			return tuiLogOutputMsg{err: err}
 		}
 
 		// Split rendered output into lines
 		raw := buf.String()
-		var lines []tailLine
+		var lines []logLine
 		if raw != "" {
 			for s := range strings.SplitSeq(raw, "\n") {
-				lines = append(lines, tailLine{text: s})
+				lines = append(lines, logLine{text: s})
 			}
 			// Remove trailing empty line from final newline
 			if len(lines) > 0 && lines[len(lines)-1].text == "" {
@@ -1148,7 +1148,7 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 			}
 		}
 
-		return tuiTailOutputMsg{lines: lines, hasMore: hasMore}
+		return tuiLogOutputMsg{lines: lines, hasMore: hasMore}
 	}
 }
 
@@ -1819,9 +1819,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	case tuiTailTickMsg:
-		if m.currentView == tuiViewTail && m.tailStreaming && m.tailJobID > 0 {
-			return m, m.fetchJobLog(m.tailJobID)
+	case tuiLogTickMsg:
+		if m.currentView == tuiViewLog && m.logStreaming && m.logJobID > 0 {
+			return m, m.fetchJobLog(m.logJobID)
 		}
 
 	case tuiJobsMsg:
@@ -1854,36 +1854,36 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentView = tuiViewPrompt
 		m.promptScroll = 0
 
-	case tuiTailOutputMsg:
+	case tuiLogOutputMsg:
 		m.consecutiveErrors = 0
 		if msg.err != nil {
 			if errors.Is(msg.err, errNoLog) {
 				m.flashMessage = "No log available for this job"
 				m.flashExpiresAt = time.Now().Add(3 * time.Second)
-				m.flashView = m.tailFromView
-				m.currentView = m.tailFromView
-				m.tailStreaming = false
+				m.flashView = m.logFromView
+				m.currentView = m.logFromView
+				m.logStreaming = false
 				return m, nil
 			}
 			m.err = msg.err
 			return m, nil
 		}
-		if m.currentView == tuiViewTail {
+		if m.currentView == tuiViewLog {
 			// Update lines when we have content. Also update when
-			// tailLines is nil (first fetch for a completed job)
+			// logLines is nil (first fetch for a completed job)
 			// to escape "Waiting for output...".
-			if len(msg.lines) > 0 || m.tailLines == nil {
-				m.tailLines = msg.lines
+			if len(msg.lines) > 0 || m.logLines == nil {
+				m.logLines = msg.lines
 			}
-			m.tailStreaming = msg.hasMore
-			if m.tailFollow && len(m.tailLines) > 0 {
+			m.logStreaming = msg.hasMore
+			if m.logFollow && len(m.logLines) > 0 {
 				visibleLines := max(m.height-4, 1)
-				maxScroll := max(len(m.tailLines)-visibleLines, 0)
-				m.tailScroll = maxScroll
+				maxScroll := max(len(m.logLines)-visibleLines, 0)
+				m.logScroll = maxScroll
 			}
-			if m.tailStreaming {
+			if m.logStreaming {
 				return m, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
-					return tuiTailTickMsg{}
+					return tuiLogTickMsg{}
 				})
 			}
 		}
@@ -2203,8 +2203,8 @@ func (m tuiModel) View() string {
 	if m.currentView == tuiViewHelp {
 		return m.renderHelpView()
 	}
-	if m.currentView == tuiViewTail {
-		return m.renderTailView()
+	if m.currentView == tuiViewLog {
+		return m.renderLogView()
 	}
 	if m.currentView == tuiViewTasks {
 		return m.renderTasksView()
@@ -3180,13 +3180,13 @@ func (m tuiModel) renderCommitMsgView() string {
 	return b.String()
 }
 
-func (m tuiModel) renderTailView() string {
+func (m tuiModel) renderLogView() string {
 	var b strings.Builder
 
 	// Title with job info
 	var title string
 	for _, job := range m.jobs {
-		if job.ID == m.tailJobID {
+		if job.ID == m.logJobID {
 			repoName := m.getDisplayName(job.RepoPath, job.RepoName)
 			shortRef := git.ShortSHA(job.GitRef)
 			title = fmt.Sprintf("Log: %s %s (#%d)", repoName, shortRef, job.ID)
@@ -3194,9 +3194,9 @@ func (m tuiModel) renderTailView() string {
 		}
 	}
 	if title == "" {
-		title = fmt.Sprintf("Log: Job #%d", m.tailJobID)
+		title = fmt.Sprintf("Log: Job #%d", m.logJobID)
 	}
-	if m.tailStreaming {
+	if m.logStreaming {
 		title += " " + tuiRunningStyle.Render("● live")
 	} else {
 		title += " " + tuiDoneStyle.Render("● complete")
@@ -3209,8 +3209,8 @@ func (m tuiModel) renderTailView() string {
 	visibleLines := max(m.height-reservedLines, 1)
 
 	// Clamp scroll
-	maxScroll := max(len(m.tailLines)-visibleLines, 0)
-	scroll := max(min(m.tailScroll, maxScroll), 0)
+	maxScroll := max(len(m.logLines)-visibleLines, 0)
+	scroll := max(min(m.logScroll, maxScroll), 0)
 
 	// Separator
 	b.WriteString(strings.Repeat("─", m.width))
@@ -3218,8 +3218,8 @@ func (m tuiModel) renderTailView() string {
 
 	// Render lines (pre-styled by streamFormatter)
 	linesWritten := 0
-	if len(m.tailLines) == 0 {
-		if m.tailStreaming {
+	if len(m.logLines) == 0 {
+		if m.logStreaming {
 			b.WriteString(tuiStatusStyle.Render("Waiting for output..."))
 		} else {
 			b.WriteString(tuiStatusStyle.Render("(no output)"))
@@ -3227,9 +3227,9 @@ func (m tuiModel) renderTailView() string {
 		b.WriteString("\x1b[K\n")
 		linesWritten++
 	} else {
-		end := min(scroll+visibleLines, len(m.tailLines))
+		end := min(scroll+visibleLines, len(m.logLines))
 		for i := scroll; i < end; i++ {
-			b.WriteString(m.tailLines[i].text)
+			b.WriteString(m.logLines[i].text)
 			b.WriteString("\x1b[K\n")
 			linesWritten++
 		}
@@ -3243,14 +3243,14 @@ func (m tuiModel) renderTailView() string {
 
 	// Status line with position and follow mode
 	var status string
-	if len(m.tailLines) > visibleLines {
+	if len(m.logLines) > visibleLines {
 		// Calculate actual displayed range (not including padding)
-		displayEnd := min(scroll+visibleLines, len(m.tailLines))
-		status = fmt.Sprintf("[%d-%d of %d lines]", scroll+1, displayEnd, len(m.tailLines))
+		displayEnd := min(scroll+visibleLines, len(m.logLines))
+		status = fmt.Sprintf("[%d-%d of %d lines]", scroll+1, displayEnd, len(m.logLines))
 	} else {
-		status = fmt.Sprintf("[%d lines]", len(m.tailLines))
+		status = fmt.Sprintf("[%d lines]", len(m.logLines))
 	}
-	if m.tailFollow {
+	if m.logFollow {
 		status += " " + tuiRunningStyle.Render("[following]")
 	} else {
 		status += " " + tuiStatusStyle.Render("[paused - G to follow]")
@@ -3260,7 +3260,7 @@ func (m tuiModel) renderTailView() string {
 
 	// Help (show cancel only for streaming/running jobs)
 	var help string
-	if m.tailStreaming {
+	if m.logStreaming {
 		help = "↑/↓: scroll | g: toggle top/bottom | x: cancel | esc/q: back"
 	} else {
 		help = "↑/↓: scroll | g: toggle top/bottom | esc/q: back"
@@ -3568,7 +3568,7 @@ func (m tuiModel) renderTasksView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Help
-	b.WriteString(tuiHelpStyle.Render("enter: view | p: patch | A: apply | t: tail | x: cancel | r: refresh | ?: help | T/esc: back"))
+	b.WriteString(tuiHelpStyle.Render("enter: view | p: patch | A: apply | l: log | x: cancel | r: refresh | ?: help | T/esc: back"))
 	b.WriteString("\x1b[K\x1b[J")
 
 	return b.String()
@@ -3581,12 +3581,12 @@ func (m tuiModel) renderTasksHelpOverlay(b *strings.Builder) string {
 		"    queued     Waiting for a worker to pick up the job",
 		"    running    Agent is working in an isolated worktree",
 		"    ready      Patch captured and ready to apply to your working tree",
-		"    failed     Agent failed (press enter or t to see error details)",
+		"    failed     Agent failed (press enter or l to see error details)",
 		"    applied    Patch was applied and committed to your working tree",
 		"    canceled   Job was canceled by user",
 		"",
 		"  Keybindings",
-		"    enter/t    View review output (ready) or error (failed) or tail (running)",
+		"    enter/l    View review output (ready) or error (failed) or log (running)",
 		"    p          View the patch diff for a ready job",
 		"    A          Apply patch from a ready job to your working tree",
 		"    R          Re-run fix against current HEAD (when patch is stale)",

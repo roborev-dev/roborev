@@ -74,7 +74,7 @@ func newStreamFormatter(w io.Writer, isTTY bool) *streamFormatter {
 
 // newStreamFormatterWithWidth creates a stream formatter with an
 // explicit width and pre-computed glamour style. Used when rendering
-// into a buffer (e.g. the TUI tail view) where terminal queries
+// into a buffer (e.g. the TUI log view) where terminal queries
 // aren't possible.
 func newStreamFormatterWithWidth(
 	w io.Writer, width int, style gansi.StyleConfig,
