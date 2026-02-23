@@ -26,7 +26,9 @@ func (fix *streamFormatterFixture) writeLine(s string) {
 }
 
 func (fix *streamFormatterFixture) output() string {
-	return fix.buf.String()
+	// Strip ANSI escape sequences so assertions test logical content
+	// regardless of TTY styling.
+	return ansiEscapePattern.ReplaceAllString(fix.buf.String(), "")
 }
 
 func (fix *streamFormatterFixture) assertContains(t *testing.T, substr string) {

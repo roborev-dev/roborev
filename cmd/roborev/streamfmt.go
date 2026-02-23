@@ -7,6 +7,20 @@ import (
 	"io"
 	"strings"
 	"unicode"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+// Styles for TTY-mode stream output.
+var (
+	sfToolStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{
+			Light: "30", Dark: "51",
+		}) // Cyan — matches tuiAddressedStyle
+	sfArgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{
+			Light: "242", Dark: "246",
+		}) // Gray — de-emphasize detail
 )
 
 // streamFormatter wraps an io.Writer to transform raw NDJSON stream output
@@ -189,12 +203,12 @@ func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 		if len(cmd) > 80 {
 			cmd = cmd[:77] + "..."
 		}
-		f.writef("%-6s %s\n", "Bash", cmd)
+		f.writeTool("Bash", cmd)
 	case "file_change":
 		if eventType != "item.completed" {
 			return
 		}
-		f.writef("%-6s\n", "Edit")
+		f.writeTool("Edit", "")
 	}
 }
 
@@ -366,35 +380,35 @@ func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {
 func (f *streamFormatter) formatToolUse(name string, input json.RawMessage) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(input, &fields); err != nil {
-		f.writef("%-6s\n", name)
+		f.writeTool(name, "")
 		return
 	}
 
 	switch name {
 	case "Read":
-		f.writef("%-6s %s\n", name, jsonString(fields["file_path"]))
+		f.writeTool(name, jsonString(fields["file_path"]))
 	case "Edit", "MultiEdit":
-		f.writef("%-6s %s\n", name, jsonString(fields["file_path"]))
+		f.writeTool(name, jsonString(fields["file_path"]))
 	case "Write":
-		f.writef("%-6s %s\n", name, jsonString(fields["file_path"]))
+		f.writeTool(name, jsonString(fields["file_path"]))
 	case "Bash":
 		cmd := jsonString(fields["command"])
 		if len(cmd) > 80 {
 			cmd = cmd[:77] + "..."
 		}
-		f.writef("%-6s %s\n", name, cmd)
+		f.writeTool(name, cmd)
 	case "Grep":
 		pattern := jsonString(fields["pattern"])
 		path := jsonString(fields["path"])
 		if path != "" {
-			f.writef("%-6s %s  %s\n", name, pattern, path)
+			f.writeTool(name, pattern+"  "+path)
 		} else {
-			f.writef("%-6s %s\n", name, pattern)
+			f.writeTool(name, pattern)
 		}
 	case "Glob":
-		f.writef("%-6s %s\n", name, jsonString(fields["pattern"]))
+		f.writeTool(name, jsonString(fields["pattern"]))
 	default:
-		f.writef("%-6s\n", name)
+		f.writeTool(name, "")
 	}
 }
 
@@ -404,6 +418,16 @@ func (f *streamFormatter) writef(format string, args ...any) {
 		return
 	}
 	_, f.writeErr = fmt.Fprintf(f.w, format, args...)
+}
+
+// writeTool writes a styled tool-call line: colored name + dim argument.
+func (f *streamFormatter) writeTool(name, arg string) {
+	styled := fmt.Sprintf(
+		"%s %s",
+		sfToolStyle.Render(fmt.Sprintf("%-6s", name)),
+		sfArgStyle.Render(arg),
+	)
+	f.writef("%s\n", styled)
 }
 
 // writerIsTerminal checks if a writer is backed by a terminal.
