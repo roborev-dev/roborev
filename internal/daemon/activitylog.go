@@ -157,8 +157,8 @@ const rotateCheckInterval = 1000
 
 // maybeRotate checks the log file size every rotateCheckInterval
 // writes and truncates it to zero if over maxActivityLogSize. Must
-// be called with a.mu held. Truncates in-place to avoid
-// close/reopen failure modes.
+// be called with a.mu held. Closes and reopens the file because
+// Windows does not allow Truncate on an O_APPEND handle.
 func (a *ActivityLog) maybeRotate() {
 	a.writeCount++
 	if a.writeCount < rotateCheckInterval {
@@ -171,12 +171,16 @@ func (a *ActivityLog) maybeRotate() {
 		return
 	}
 
-	if err := a.file.Truncate(0); err != nil {
-		log.Printf("Activity log: truncate failed: %v", err)
+	a.file.Close()
+	f, err := os.OpenFile(
+		a.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644,
+	)
+	if err != nil {
+		log.Printf("Activity log: rotate reopen failed: %v", err)
+		a.file = nil
 		return
 	}
-	// Seek to start so subsequent appends don't leave a hole.
-	_, _ = a.file.Seek(0, 0)
+	a.file = f
 }
 
 // copyDetails returns a shallow copy of a string map.
