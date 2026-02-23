@@ -15,10 +15,14 @@ import (
 	"github.com/roborev-dev/roborev/internal/config"
 )
 
+// repoRefreshInterval is the fixed interval between wildcard repo
+// re-discovery calls to the GitHub API.
+const repoRefreshInterval = time.Hour
+
 // RepoResolver expands wildcard patterns in CI repo config into concrete
 // "owner/repo" entries by querying the GitHub API via the gh CLI. Results
-// are cached for the configured refresh interval and automatically
-// invalidated when the config changes.
+// are cached for the refresh interval and automatically invalidated when
+// the config changes.
 type RepoResolver struct {
 	mu       sync.Mutex
 	cached   []string
@@ -41,7 +45,7 @@ type ghEnvFn func(owner string) []string
 // has not changed, otherwise it re-expands wildcard patterns.
 func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, envFn ghEnvFn) ([]string, error) {
 	key := r.buildCacheKey(ci)
-	ttl := ci.ResolvedRepoRefreshInterval()
+	ttl := repoRefreshInterval
 
 	r.mu.Lock()
 	if r.hasCache && r.cacheKey == key && time.Since(r.cachedAt) < ttl {

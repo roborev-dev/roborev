@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -229,10 +228,6 @@ type CIConfig struct {
 	// MaxRepos is a safety cap on the total number of expanded repos. Default: 100.
 	MaxRepos int `toml:"max_repos"`
 
-	// RepoRefreshInterval is how often to re-discover repos via the GitHub API
-	// for wildcard patterns (e.g., "1h", "30m"). Default: 1h, minimum: 1m.
-	RepoRefreshInterval string `toml:"repo_refresh_interval"`
-
 	// ReviewTypes is the list of review types to run for each PR (e.g., ["security", "default"]).
 	// Defaults to ["security"] if empty.
 	ReviewTypes []string `toml:"review_types"`
@@ -284,22 +279,6 @@ func (c *CIConfig) ResolvedMaxRepos() int {
 		return c.MaxRepos
 	}
 	return 100
-}
-
-// ResolvedRepoRefreshInterval returns the parsed repo refresh interval.
-// Defaults to 1h if not set or unparseable. Minimum is 1m.
-func (c *CIConfig) ResolvedRepoRefreshInterval() time.Duration {
-	if c.RepoRefreshInterval == "" {
-		return time.Hour
-	}
-	d, err := time.ParseDuration(c.RepoRefreshInterval)
-	if err != nil || d < time.Minute {
-		if d > 0 && d < time.Minute {
-			return time.Minute
-		}
-		return time.Hour
-	}
-	return d
 }
 
 // SyncConfig holds configuration for PostgreSQL sync

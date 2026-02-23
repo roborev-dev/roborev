@@ -169,8 +169,7 @@ func TestRepoResolver_CacheHit(t *testing.T) {
 	}
 
 	ci := &config.CIConfig{
-		Repos:               []string{"acme/*"},
-		RepoRefreshInterval: "1h",
+		Repos: []string{"acme/*"},
 	}
 
 	ctx := context.Background()
@@ -207,8 +206,7 @@ func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
 	}
 
 	ci1 := &config.CIConfig{
-		Repos:               []string{"acme/*"},
-		RepoRefreshInterval: "1h",
+		Repos: []string{"acme/*"},
 	}
 
 	ctx := context.Background()
@@ -221,8 +219,7 @@ func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
 
 	// Change config — should invalidate cache
 	ci2 := &config.CIConfig{
-		Repos:               []string{"acme/*", "other/repo"},
-		RepoRefreshInterval: "1h",
+		Repos: []string{"acme/*", "other/repo"},
 	}
 	if _, err := r.Resolve(ctx, ci2, nil); err != nil {
 		t.Fatalf("Resolve 2: %v", err)
@@ -242,8 +239,7 @@ func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
 	}
 
 	ci := &config.CIConfig{
-		Repos:               []string{"acme/*"},
-		RepoRefreshInterval: "30s", // below 1m floor, so effective TTL is 1m
+		Repos: []string{"acme/*"},
 	}
 
 	ctx := context.Background()
@@ -251,7 +247,7 @@ func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
 		t.Fatalf("Resolve 1: %v", err)
 	}
 
-	// Second call within TTL (floor is 1m) should hit cache
+	// Second call within TTL (1h) should hit cache
 	if _, err := r.Resolve(ctx, ci, nil); err != nil {
 		t.Fatalf("Resolve 2: %v", err)
 	}

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/roborev-dev/roborev/internal/testenv"
@@ -1281,32 +1280,6 @@ func TestResolvedMaxRepos(t *testing.T) {
 	}
 }
 
-func TestResolvedRepoRefreshInterval(t *testing.T) {
-	tests := []struct {
-		name     string
-		interval string
-		want     time.Duration
-	}{
-		{"default when empty", "", time.Hour},
-		{"valid 30m", "30m", 30 * time.Minute},
-		{"valid 2h", "2h", 2 * time.Hour},
-		{"valid 1m (minimum)", "1m", time.Minute},
-		{"below minimum floors to 1m", "30s", time.Minute},
-		{"invalid string defaults to 1h", "not-a-duration", time.Hour},
-		{"negative defaults to 1h", "-5m", time.Hour},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ci := CIConfig{RepoRefreshInterval: tt.interval}
-			got := ci.ResolvedRepoRefreshInterval()
-			if got != tt.want {
-				t.Errorf("ResolvedRepoRefreshInterval() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCIConfigNewFields(t *testing.T) {
 	t.Run("parses exclude_repos and max_repos", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -1317,7 +1290,6 @@ enabled = true
 repos = ["myorg/*", "other/repo"]
 exclude_repos = ["myorg/archived-*", "myorg/internal-*"]
 max_repos = 50
-repo_refresh_interval = "30m"
 `), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -1336,14 +1308,8 @@ repo_refresh_interval = "30m"
 		if cfg.CI.MaxRepos != 50 {
 			t.Errorf("got max_repos %d, want 50", cfg.CI.MaxRepos)
 		}
-		if cfg.CI.RepoRefreshInterval != "30m" {
-			t.Errorf("got repo_refresh_interval %q, want 30m", cfg.CI.RepoRefreshInterval)
-		}
 		if cfg.CI.ResolvedMaxRepos() != 50 {
 			t.Errorf("ResolvedMaxRepos() = %d, want 50", cfg.CI.ResolvedMaxRepos())
-		}
-		if cfg.CI.ResolvedRepoRefreshInterval() != 30*time.Minute {
-			t.Errorf("ResolvedRepoRefreshInterval() = %v, want 30m", cfg.CI.ResolvedRepoRefreshInterval())
 		}
 	})
 }
