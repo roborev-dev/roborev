@@ -21,6 +21,7 @@ import (
 
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
+	gansi "github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
@@ -152,6 +153,7 @@ type tuiModel struct {
 	serverAddr       string
 	daemonVersion    string
 	client           *http.Client
+	glamourStyle     gansi.StyleConfig // detected once at init
 	jobs             []storage.ReviewJob
 	jobStats         storage.JobStats // aggregate done/addressed/unaddressed from server
 	status           storage.DaemonStatus
@@ -476,6 +478,7 @@ func newTuiModel(serverAddr string) tuiModel {
 		serverAddr:             serverAddr,
 		daemonVersion:          daemonVersion,
 		client:                 &http.Client{Timeout: 10 * time.Second},
+		glamourStyle:           sfGlamourStyle(),
 		jobs:                   []storage.ReviewJob{},
 		currentView:            tuiViewQueue,
 		width:                  80, // sensible defaults until we get WindowSizeMsg
@@ -1097,11 +1100,13 @@ var errNoLog = errors.New("no log available")
 func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 	addr := m.serverAddr
 	width := m.width
+	client := m.client
+	style := m.glamourStyle
 	return func() tea.Msg {
 		url := fmt.Sprintf(
 			"%s/api/job/log?job_id=%d", addr, jobID,
 		)
-		resp, err := http.Get(url)
+		resp, err := client.Get(url)
 		if err != nil {
 			return tuiTailOutputMsg{err: err}
 		}
@@ -1120,11 +1125,10 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		jobStatus := resp.Header.Get("X-Job-Status")
 		hasMore := jobStatus == "running"
 
-		// Render JSONL through streamFormatter
+		// Render JSONL through streamFormatter. Use pre-computed
+		// glamour style to avoid terminal queries from goroutine.
 		var buf bytes.Buffer
-		fmtr := newStreamFormatterWithWidth(
-			&buf, true, width,
-		)
+		fmtr := newStreamFormatterWithWidth(&buf, width, style)
 		if err := renderJobLogWith(
 			resp.Body, fmtr, &buf,
 		); err != nil {
@@ -1865,7 +1869,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.currentView == tuiViewTail {
-			if len(msg.lines) > 0 || msg.hasMore {
+			// Update lines when we have content. Also update when
+			// tailLines is nil (first fetch for a completed job)
+			// to escape "Waiting for output...".
+			if len(msg.lines) > 0 || m.tailLines == nil {
 				m.tailLines = msg.lines
 			}
 			m.tailStreaming = msg.hasMore
@@ -3212,7 +3219,11 @@ func (m tuiModel) renderTailView() string {
 	// Render lines (pre-styled by streamFormatter)
 	linesWritten := 0
 	if len(m.tailLines) == 0 {
-		b.WriteString(tuiStatusStyle.Render("Waiting for output..."))
+		if m.tailStreaming {
+			b.WriteString(tuiStatusStyle.Render("Waiting for output..."))
+		} else {
+			b.WriteString(tuiStatusStyle.Render("(no output)"))
+		}
 		b.WriteString("\x1b[K\n")
 		linesWritten++
 	} else {
