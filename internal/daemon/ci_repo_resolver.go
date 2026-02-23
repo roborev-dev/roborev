@@ -22,8 +22,9 @@ import (
 type RepoResolver struct {
 	mu       sync.Mutex
 	cached   []string
+	hasCache bool // separate from nil check — empty results are valid cache entries
 	cachedAt time.Time
-	cacheKey string // hash of pattern+exclusion lists for invalidation
+	cacheKey string // derived from pattern+exclusion lists+max_repos for invalidation
 
 	// listReposFn is a test seam. When non-nil it replaces the real
 	// gh repo list call. Signature: (ctx, owner, env) → []nameWithOwner.
@@ -43,7 +44,7 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, envFn g
 	ttl := ci.ResolvedRepoRefreshInterval()
 
 	r.mu.Lock()
-	if r.cached != nil && r.cacheKey == key && time.Since(r.cachedAt) < ttl {
+	if r.hasCache && r.cacheKey == key && time.Since(r.cachedAt) < ttl {
 		result := make([]string, len(r.cached))
 		copy(result, r.cached)
 		r.mu.Unlock()
@@ -58,6 +59,7 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, envFn g
 
 	r.mu.Lock()
 	r.cached = repos
+	r.hasCache = true
 	r.cachedAt = time.Now()
 	r.cacheKey = key
 	r.mu.Unlock()
@@ -67,10 +69,12 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, envFn g
 	return result, nil
 }
 
-// buildCacheKey creates a string that changes whenever the repo or
-// exclusion lists change, forcing a cache miss.
+// buildCacheKey creates a string that changes whenever the repo lists,
+// exclusion lists, or max_repos change, forcing a cache miss.
 func (r *RepoResolver) buildCacheKey(ci *config.CIConfig) string {
-	return strings.Join(ci.Repos, "\x00") + "\x01" + strings.Join(ci.ExcludeRepos, "\x00")
+	return strings.Join(ci.Repos, "\x00") + "\x01" +
+		strings.Join(ci.ExcludeRepos, "\x00") + "\x02" +
+		fmt.Sprintf("%d", ci.ResolvedMaxRepos())
 }
 
 // expand separates exact entries from wildcard patterns, calls the
@@ -232,8 +236,8 @@ func isGlobPattern(s string) bool {
 func ExactReposOnly(repos []string) []string {
 	var exact []string
 	for _, entry := range repos {
-		_, repoPattern, ok := strings.Cut(entry, "/")
-		if ok && !isGlobPattern(repoPattern) {
+		owner, repoPattern, ok := strings.Cut(entry, "/")
+		if ok && owner != "" && !isGlobPattern(repoPattern) {
 			exact = append(exact, entry)
 		}
 	}

@@ -243,7 +243,7 @@ func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
 
 	ci := &config.CIConfig{
 		Repos:               []string{"acme/*"},
-		RepoRefreshInterval: "1ms", // very short TTL
+		RepoRefreshInterval: "30s", // below 1m floor, so effective TTL is 1m
 	}
 
 	ctx := context.Background()
@@ -251,22 +251,15 @@ func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
 		t.Fatalf("Resolve 1: %v", err)
 	}
 
-	// Wait for TTL to expire
-	time.Sleep(10 * time.Millisecond)
-
+	// Second call within TTL (floor is 1m) should hit cache
 	if _, err := r.Resolve(ctx, ci, nil); err != nil {
 		t.Fatalf("Resolve 2: %v", err)
 	}
-	// RepoRefreshInterval "1ms" is below the 1m floor, so it becomes 1m.
-	// Cache should still be valid. But let's check calls:
-	// Actually "1ms" parses to 1ms which is < 1min, so ResolvedRepoRefreshInterval returns 1min.
-	// So cache is still valid. Let me adjust the test.
-	// The TTL floor is 1m, so 1ms becomes 1m. Cache will still be valid.
 	if calls != 1 {
-		t.Logf("note: calls=%d (TTL floor is 1m so cache should still be valid)", calls)
+		t.Errorf("expected cache hit within TTL floor (1 call), got %d", calls)
 	}
 
-	// Force cache miss by backdating cachedAt
+	// Force cache miss by backdating cachedAt past the TTL
 	r.mu.Lock()
 	r.cachedAt = time.Now().Add(-2 * time.Hour)
 	r.mu.Unlock()
@@ -276,6 +269,53 @@ func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Errorf("expected cache miss after TTL expiry (2 calls), got %d", calls)
+	}
+}
+
+func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			calls++
+			repos := make([]string, 20)
+			for i := range repos {
+				repos[i] = fmt.Sprintf("acme/repo-%02d", i)
+			}
+			return repos, nil
+		},
+	}
+
+	ci1 := &config.CIConfig{
+		Repos:    []string{"acme/*"},
+		MaxRepos: 5,
+	}
+
+	ctx := context.Background()
+	repos1, err := r.Resolve(ctx, ci1, nil)
+	if err != nil {
+		t.Fatalf("Resolve 1: %v", err)
+	}
+	if len(repos1) != 5 {
+		t.Fatalf("expected 5 repos, got %d", len(repos1))
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 call, got %d", calls)
+	}
+
+	// Change max_repos — should invalidate cache
+	ci2 := &config.CIConfig{
+		Repos:    []string{"acme/*"},
+		MaxRepos: 10,
+	}
+	repos2, err := r.Resolve(ctx, ci2, nil)
+	if err != nil {
+		t.Fatalf("Resolve 2: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("expected cache miss on max_repos change (2 calls), got %d", calls)
+	}
+	if len(repos2) != 10 {
+		t.Errorf("expected 10 repos after max_repos increase, got %d", len(repos2))
 	}
 }
 
@@ -297,6 +337,46 @@ func TestRepoResolver_APIFailureFallback(t *testing.T) {
 	}
 	if len(repos) != 1 || repos[0] != "acme/explicit-repo" {
 		t.Errorf("expected [acme/explicit-repo] on API failure, got %v", repos)
+	}
+}
+
+func TestRepoResolver_EmptyResultsCached(t *testing.T) {
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			calls++
+			return []string{}, nil // no repos match
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos:        []string{"acme/nonexistent-*"},
+		ExcludeRepos: []string{},
+	}
+
+	ctx := context.Background()
+
+	repos1, err := r.Resolve(ctx, ci, nil)
+	if err != nil {
+		t.Fatalf("Resolve 1: %v", err)
+	}
+	if len(repos1) != 0 {
+		t.Fatalf("expected 0 repos, got %d", len(repos1))
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 API call, got %d", calls)
+	}
+
+	// Second call should hit cache even though result is empty
+	repos2, err := r.Resolve(ctx, ci, nil)
+	if err != nil {
+		t.Fatalf("Resolve 2: %v", err)
+	}
+	if len(repos2) != 0 {
+		t.Fatalf("expected 0 repos from cache, got %d", len(repos2))
+	}
+	if calls != 1 {
+		t.Errorf("expected cache hit for empty result (still 1 call), got %d", calls)
 	}
 }
 
