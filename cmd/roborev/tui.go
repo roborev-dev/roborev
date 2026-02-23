@@ -3183,18 +3183,23 @@ func (m tuiModel) renderCommitMsgView() string {
 func (m tuiModel) renderLogView() string {
 	var b strings.Builder
 
-	// Title with job info
+	// Title with job info (matches Prompt view format)
 	var title string
-	for _, job := range m.jobs {
-		if job.ID == m.logJobID {
-			repoName := m.getDisplayName(job.RepoPath, job.RepoName)
-			shortRef := git.ShortSHA(job.GitRef)
-			title = fmt.Sprintf("Log: %s %s (#%d)", repoName, shortRef, job.ID)
+	var job *storage.ReviewJob
+	for i := range m.jobs {
+		if m.jobs[i].ID == m.logJobID {
+			job = &m.jobs[i]
 			break
 		}
 	}
-	if title == "" {
-		title = fmt.Sprintf("Log: Job #%d", m.logJobID)
+	if job != nil {
+		ref := shortJobRef(*job)
+		agentStr := formatAgentLabel(job.Agent, job.Model)
+		title = fmt.Sprintf(
+			"Log #%d %s (%s)", job.ID, ref, agentStr,
+		)
+	} else {
+		title = fmt.Sprintf("Log #%d", m.logJobID)
 	}
 	if m.logStreaming {
 		title += " " + tuiRunningStyle.Render("● live")
@@ -3204,8 +3209,20 @@ func (m tuiModel) renderLogView() string {
 	b.WriteString(tuiTitleStyle.Render(title))
 	b.WriteString("\x1b[K\n")
 
+	// Show command line below title (dimmed, like Prompt view)
+	headerLines := 1
+	if cmdLine := commandLineForJob(job); cmdLine != "" {
+		cmdText := "Command: " + cmdLine
+		if m.width > 0 && runewidth.StringWidth(cmdText) > m.width {
+			cmdText = runewidth.Truncate(cmdText, m.width, "…")
+		}
+		b.WriteString(tuiStatusStyle.Render(cmdText))
+		b.WriteString("\x1b[K\n")
+		headerLines++
+	}
+
 	// Calculate visible area
-	reservedLines := 4 // title + separator + status + help
+	reservedLines := 3 + headerLines // title + cmd(0-1) + sep + status + help
 	visibleLines := max(m.height-reservedLines, 1)
 
 	// Clamp scroll
