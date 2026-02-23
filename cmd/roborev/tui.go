@@ -1704,7 +1704,7 @@ func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 }
 
 // Queue help line constants (used by both queueVisibleRows and renderQueueView).
-const queueHelpLine1 = "x: cancel | r: rerun | t: tail | p: prompt | c: comment | y: copy | m: commit msg | F: fix"
+const queueHelpLine1 = "x: cancel | r: rerun | t: log | p: prompt | c: comment | y: copy | m: commit msg | F: fix"
 const queueHelpLine2 = "↑/↓: navigate | enter: review | a: addressed | f: filter | h: hide | T: tasks | ?: help | q: quit"
 
 // queueHelpLines computes how many terminal lines the queue help
@@ -3189,12 +3189,12 @@ func (m tuiModel) renderTailView() string {
 		if job.ID == m.tailJobID {
 			repoName := m.getDisplayName(job.RepoPath, job.RepoName)
 			shortRef := git.ShortSHA(job.GitRef)
-			title = fmt.Sprintf("Tail: %s %s (#%d)", repoName, shortRef, job.ID)
+			title = fmt.Sprintf("Log: %s %s (#%d)", repoName, shortRef, job.ID)
 			break
 		}
 	}
 	if title == "" {
-		title = fmt.Sprintf("Tail: Job #%d", m.tailJobID)
+		title = fmt.Sprintf("Log: Job #%d", m.tailJobID)
 	}
 	if m.tailStreaming {
 		title += " " + tuiRunningStyle.Render("● live")
@@ -3335,7 +3335,7 @@ func helpLines() []string {
 			},
 		},
 		{
-			group: "Tail View",
+			group: "Log View",
 			keys: []struct{ key, desc string }{
 				{"↑/↓", "Scroll output"},
 				{"PgUp/PgDn", "Page through output"},
