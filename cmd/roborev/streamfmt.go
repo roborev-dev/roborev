@@ -25,6 +25,10 @@ var (
 			Foreground(lipgloss.AdaptiveColor{
 			Light: "242", Dark: "246",
 		}) // Gray — de-emphasize detail
+	sfGutterStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{
+			Light: "242", Dark: "240",
+		}) // Dim — subtle visual grouping
 )
 
 // streamFormatter wraps an io.Writer to transform raw NDJSON stream output
@@ -45,7 +49,9 @@ type streamFormatter struct {
 
 	glamourStyle gansi.StyleConfig // detected once at init
 
-	writeErr error // first write error encountered during formatting
+	writeErr    error // first write error encountered during formatting
+	lastWasTool bool  // tracks tool vs text transitions for spacing
+	hasOutput   bool  // whether any output has been written
 
 	// Tracks codex command_execution items that have already been rendered.
 	codexRenderedCommandIDs map[string]struct{}
@@ -461,6 +467,11 @@ func (f *streamFormatter) writeText(text string) {
 	if text == "" {
 		return
 	}
+	if f.lastWasTool && f.hasOutput {
+		f.writef("\n")
+	}
+	f.lastWasTool = false
+	f.hasOutput = true
 	if f.width <= 0 {
 		f.writef("%s\n", text)
 		return
@@ -473,10 +484,21 @@ func (f *streamFormatter) writeText(text string) {
 	}
 }
 
-// writeTool writes a styled tool-call line: colored name + dim argument.
+// writeTool writes a styled tool-call line with a gutter prefix
+// for visual grouping:
+//
+//	│ Read   internal/daemon/worker.go
+//	│ Edit   internal/daemon/worker.go
 func (f *streamFormatter) writeTool(name, arg string) {
+	if !f.lastWasTool && f.hasOutput {
+		f.writef("\n")
+	}
+	f.lastWasTool = true
+	f.hasOutput = true
+	gutter := sfGutterStyle.Render(" │")
 	styled := fmt.Sprintf(
-		"%s %s",
+		"%s %s %s",
+		gutter,
 		sfToolStyle.Render(fmt.Sprintf("%-6s", name)),
 		sfArgStyle.Render(arg),
 	)
