@@ -3,10 +3,13 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/daemon"
@@ -57,15 +60,22 @@ Examples:
 
 			if rawOutput {
 				_, err := io.Copy(os.Stdout, f)
+				if isBrokenPipe(err) {
+					return nil
+				}
 				if err != nil {
 					return fmt.Errorf("reading log: %w", err)
 				}
 				return nil
 			}
 
-			return renderJobLog(
+			err = renderJobLog(
 				f, os.Stdout, writerIsTerminal(os.Stdout),
 			)
+			if isBrokenPipe(err) {
+				return nil
+			}
+			return err
 		},
 	}
 
@@ -86,49 +96,70 @@ Examples:
 // output. JSONL lines are processed through streamFormatter for
 // compact tool/text rendering. Non-JSON lines are printed as-is.
 func renderJobLog(r io.Reader, w io.Writer, isTTY bool) error {
-	scanner := bufio.NewScanner(r)
-	// Allow up to 1MB per line (agent JSON events can be large)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
+	br := bufio.NewReader(r)
 	fmtr := newStreamFormatter(w, isTTY)
 	hasJSON := false
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if looksLikeJSON(line) {
-			hasJSON = true
-			// Feed through streamFormatter (adds newline internally)
-			if _, err := fmtr.Write([]byte(line + "\n")); err != nil {
-				return err
+	for {
+		line, err := br.ReadString('\n')
+		// ReadString returns data even on error (e.g. EOF
+		// without trailing newline), so process before checking.
+		line = strings.TrimRight(line, "\n\r")
+		if line != "" {
+			if looksLikeJSON(line) {
+				hasJSON = true
+				if _, werr := fmtr.Write(
+					[]byte(line + "\n"),
+				); werr != nil {
+					return werr
+				}
+			} else if !hasJSON {
+				// Pure plain-text log — print lines directly
+				if _, werr := fmt.Fprintln(w, line); werr != nil {
+					return werr
+				}
 			}
-		} else if !hasJSON {
-			// Non-JSON log — print lines directly
-			if _, err := fmt.Fprintln(w, line); err != nil {
-				return err
-			}
+			// After first JSON, non-JSON lines are skipped
+			// (blank separators, stderr noise from agents).
 		}
-		// Once we've seen JSON, skip non-JSON lines (noise/blank)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	fmtr.Flush()
-	return scanner.Err()
+	return nil
 }
 
-// looksLikeJSON does a quick check for a JSON object line.
+// looksLikeJSON returns true if line is a JSON object with a
+// non-empty "type" field, matching the stream event format used
+// by Claude Code, Codex, and Gemini CLI.
 func looksLikeJSON(line string) bool {
 	for _, c := range line {
 		switch c {
 		case ' ', '\t':
 			continue
 		case '{':
-			// Quick validation: try to parse just the "type" field
 			var probe struct{ Type string }
-			return json.Unmarshal([]byte(line), &probe) == nil
+			if json.Unmarshal([]byte(line), &probe) != nil {
+				return false
+			}
+			return probe.Type != ""
 		default:
 			return false
 		}
 	}
 	return false
+}
+
+// isBrokenPipe returns true if err is a broken pipe (EPIPE) error,
+// which happens when output is piped to tools like head that close
+// the read end early.
+func isBrokenPipe(err error) bool {
+	return err != nil && errors.Is(err, syscall.EPIPE)
 }
 
 func logCleanCmd() *cobra.Command {

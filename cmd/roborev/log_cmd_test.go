@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -87,6 +88,20 @@ func TestRenderJobLog_Empty(t *testing.T) {
 	}
 }
 
+func TestRenderJobLog_OversizedLine(t *testing.T) {
+	// Lines larger than 1MB should not cause errors (no Scanner cap).
+	bigPayload := strings.Repeat("x", 2*1024*1024)
+	input := fmt.Sprintf(
+		`{"type":"tool_result","content":"%s"}`, bigPayload,
+	)
+
+	var buf bytes.Buffer
+	err := renderJobLog(strings.NewReader(input), &buf, true)
+	if err != nil {
+		t.Fatalf("renderJobLog should handle large lines: %v", err)
+	}
+}
+
 func TestLooksLikeJSON(t *testing.T) {
 	tests := []struct {
 		input string
@@ -98,6 +113,10 @@ func TestLooksLikeJSON(t *testing.T) {
 		{``, false},
 		{`[1,2,3]`, false},
 		{`{invalid}`, false},
+		// Valid JSON but no "type" field — should NOT match
+		{`{"foo":"bar"}`, false},
+		// Empty type — should NOT match
+		{`{"type":""}`, false},
 	}
 	for _, tt := range tests {
 		got := looksLikeJSON(tt.input)

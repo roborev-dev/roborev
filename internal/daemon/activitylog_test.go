@@ -291,16 +291,13 @@ func TestActivityLog_RuntimeRotation(t *testing.T) {
 	}
 }
 
-func TestActivityLog_RotationFallback(t *testing.T) {
-	// Simulate a rotation where the truncate-reopen fails but the
-	// append-mode fallback succeeds. We do this by making the log
-	// path a directory child of a read-only parent after initial
-	// creation — but that's hard to arrange portably. Instead, we
-	// directly exercise maybeRotate by:
-	// 1. Creating the log normally.
-	// 2. Writing enough to trigger rotation.
-	// 3. Verifying that in-memory logging still works even if the
-	//    file was temporarily unavailable.
+func TestActivityLog_RotationRecovery(t *testing.T) {
+	// Exercises maybeRotate's happy path: trigger rotation via
+	// writeCount + oversized file, then verify the log continues
+	// working after truncate-reopen. The O_TRUNC-failure fallback
+	// branch (line 178 of activitylog.go) is not testable without
+	// injecting a mock opener, because on Unix O_TRUNC on an
+	// existing writable file always succeeds.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "activity.log")
 
