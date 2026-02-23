@@ -632,6 +632,7 @@ func cloneRemoteMatches(path, ghRepo string) (bool, error) {
 		"git", "-C", path,
 		"config", "--local", "--get", "remote.origin.url",
 	)
+	cfgCmd.Env = append(os.Environ(), "LC_ALL=C")
 	cfgOut, err := cfgCmd.CombinedOutput()
 	if err != nil {
 		var exitErr *exec.ExitError

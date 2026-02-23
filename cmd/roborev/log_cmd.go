@@ -45,7 +45,9 @@ Examples:
 				)
 			}
 			defer f.Close()
-			_, _ = io.Copy(os.Stdout, f)
+			if _, err := io.Copy(os.Stdout, f); err != nil {
+				return fmt.Errorf("reading log: %w", err)
+			}
 			return nil
 		},
 	}
@@ -72,8 +74,10 @@ Examples:
   roborev log clean --days 3 # Remove logs older than 3 days`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if maxDays < 0 {
-				return fmt.Errorf("--days must be non-negative")
+			if maxDays < 0 || maxDays > 3650 {
+				return fmt.Errorf(
+					"--days must be between 0 and 3650",
+				)
 			}
 			maxAge := time.Duration(maxDays) * 24 * time.Hour
 			n := daemon.CleanJobLogs(maxAge)
