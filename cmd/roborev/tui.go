@@ -2969,7 +2969,7 @@ func (m tuiModel) renderReviewView() string {
 	}
 
 	// Help text wraps at narrow terminals
-	const helpLine1 = "p: prompt | c: comment | m: commit msg | a: addressed | y: copy"
+	const helpLine1 = "p: prompt | c: comment | m: commit msg | a: addressed | y: copy | F: fix"
 	const helpLine2 = "↑/↓: scroll | ←/→: prev/next | ?: commands | esc: back"
 	helpLines := 2
 	if m.width > 0 {
@@ -3096,9 +3096,15 @@ func (m tuiModel) renderReviewView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear status line
 
-	b.WriteString(tuiHelpStyle.Render(helpLine1))
-	b.WriteString("\x1b[K\n")
-	b.WriteString(tuiHelpStyle.Render(helpLine2))
+	if m.reviewFixPanelOpen && m.reviewFixPanelFocused {
+		b.WriteString(tuiStatusStyle.Render(helpLine1))
+		b.WriteString("\x1b[K\n")
+		b.WriteString(tuiStatusStyle.Render(helpLine2))
+	} else {
+		b.WriteString(tuiHelpStyle.Render(helpLine1))
+		b.WriteString("\x1b[K\n")
+		b.WriteString(tuiHelpStyle.Render(helpLine2))
+	}
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -3607,6 +3613,7 @@ func helpLines() []string {
 				{"c", "Add comment"},
 				{"y", "Copy review to clipboard"},
 				{"m", "View commit message"},
+				{"F", "Trigger fix (opens inline panel)"},
 				{"esc/q", "Back to queue"},
 			},
 		},
