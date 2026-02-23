@@ -120,14 +120,13 @@ func renderJobLogWith(
 				); werr != nil {
 					return werr
 				}
-			} else if !hasJSON {
-				// Pure plain-text log — print lines directly
+			} else {
+				// Non-JSON lines: print directly (plain-text
+				// log before JSON, or stderr/diagnostics after).
 				if _, werr := fmt.Fprintln(plainW, line); werr != nil {
 					return werr
 				}
 			}
-			// After first JSON, non-JSON lines are skipped
-			// (blank separators, stderr noise from agents).
 		} else if err != io.EOF && !hasJSON {
 			// Preserve blank lines in plain-text logs for spacing.
 			if _, werr := fmt.Fprintln(plainW); werr != nil {

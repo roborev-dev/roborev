@@ -3893,6 +3893,34 @@ func TestHandleJobLog(t *testing.T) {
 		}
 	})
 
+	t.Run("running job with no log returns empty 200", func(t *testing.T) {
+		// Claim the existing queued job to move it to "running"
+		claimed, err := db.ClaimJob("worker-test")
+		if err != nil {
+			t.Fatalf("ClaimJob: %v", err)
+		}
+		// Remove any log file to simulate startup race
+		os.Remove(JobLogPath(claimed.ID))
+
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf("/api/job/log?job_id=%d", claimed.ID),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if js := w.Header().Get("X-Job-Status"); js != "running" {
+			t.Errorf("expected X-Job-Status running, got %q", js)
+		}
+		if w.Body.Len() != 0 {
+			t.Errorf("expected empty body, got %q", w.Body.String())
+		}
+	})
+
 	t.Run("POST returns 405", func(t *testing.T) {
 		req := httptest.NewRequest(
 			http.MethodPost,

@@ -295,15 +295,13 @@ func (m tuiModel) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "pgup":
 		m.logFollow = false
-		visibleLines := max(m.height-4, 1)
-		m.logScroll -= visibleLines
+		m.logScroll -= m.logVisibleLines()
 		if m.logScroll < 0 {
 			m.logScroll = 0
 		}
 		return m, tea.ClearScreen
 	case "pgdown":
-		visibleLines := max(m.height-4, 1)
-		m.logScroll += visibleLines
+		m.logScroll += m.logVisibleLines()
 		return m, tea.ClearScreen
 	case "home":
 		m.logFollow = false
@@ -311,13 +309,11 @@ func (m tuiModel) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "end":
 		m.logFollow = true
-		visibleLines := max(m.height-4, 1)
-		maxScroll := max(len(m.logLines)-visibleLines, 0)
+		maxScroll := max(len(m.logLines)-m.logVisibleLines(), 0)
 		m.logScroll = maxScroll
 		return m, nil
 	case "g", "G":
-		visibleLines := max(m.height-4, 1)
-		maxScroll := max(len(m.logLines)-visibleLines, 0)
+		maxScroll := max(len(m.logLines)-m.logVisibleLines(), 0)
 		if m.logScroll == 0 {
 			m.logFollow = true
 			m.logScroll = maxScroll

@@ -1456,6 +1456,24 @@ func (m *tuiModel) findPrevLoggableJob() int {
 	return -1
 }
 
+// logVisibleLines returns the number of content lines visible in the
+// log view, accounting for title, optional command line, separator,
+// status, and help bar.
+func (m *tuiModel) logVisibleLines() int {
+	// title + separator + status + help = 4 reserved lines
+	reserved := 4
+	// Check if command line header is shown
+	for i := range m.jobs {
+		if m.jobs[i].ID == m.logJobID {
+			if commandLineForJob(&m.jobs[i]) != "" {
+				reserved++
+			}
+			break
+		}
+	}
+	return max(m.height-reserved, 1)
+}
+
 // normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current
 // selection is hidden (e.g., marked addressed with hideAddressed filter active).
 // Call this when returning to queue view from review view.
@@ -1884,8 +1902,22 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.consecutiveErrors = 0
 		if msg.err != nil {
 			if errors.Is(msg.err, errNoLog) {
-				m.flashMessage = "No log available for this job"
-				m.flashExpiresAt = time.Now().Add(3 * time.Second)
+				// For failed jobs with stored error, show
+				// that instead of generic "No log available".
+				flash := "No log available for this job"
+				for i := range m.jobs {
+					if m.jobs[i].ID == m.logJobID &&
+						m.jobs[i].Status == storage.JobStatusFailed &&
+						m.jobs[i].Error != "" {
+						flash = fmt.Sprintf(
+							"Job #%d failed: %s",
+							m.logJobID, m.jobs[i].Error,
+						)
+						break
+					}
+				}
+				m.flashMessage = flash
+				m.flashExpiresAt = time.Now().Add(5 * time.Second)
 				m.flashView = m.logFromView
 				m.currentView = m.logFromView
 				m.logStreaming = false
@@ -1896,18 +1928,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.currentView == tuiViewLog {
 			// Update lines when we have content. Also update when
-			// logLines is nil (first fetch for a completed job)
-			// to escape "Waiting for output...".
-			if len(msg.lines) > 0 || m.logLines == nil {
-				if msg.lines != nil {
-					m.logLines = msg.lines
-				} else {
-					m.logLines = []logLine{} // loaded empty
-				}
+			// logLines is nil (first fetch) to escape "Waiting
+			// for output...". For still-streaming jobs with no
+			// lines yet, keep logLines nil so UI shows "Waiting".
+			if len(msg.lines) > 0 {
+				m.logLines = msg.lines
+			} else if m.logLines == nil && !msg.hasMore {
+				// Completed job with empty log — mark loaded.
+				m.logLines = []logLine{}
 			}
 			m.logStreaming = msg.hasMore
 			if m.logFollow && len(m.logLines) > 0 {
-				visibleLines := max(m.height-4, 1)
+				visibleLines := m.logVisibleLines()
 				maxScroll := max(len(m.logLines)-visibleLines, 0)
 				m.logScroll = maxScroll
 			}
@@ -3251,7 +3283,7 @@ func (m tuiModel) renderLogView() string {
 		headerLines++
 	}
 
-	// Calculate visible area
+	// Calculate visible area (must match logVisibleLines())
 	reservedLines := 3 + headerLines // title + cmd(0-1) + sep + status + help
 	visibleLines := max(m.height-reservedLines, 1)
 
