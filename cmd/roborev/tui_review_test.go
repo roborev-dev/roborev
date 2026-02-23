@@ -3152,3 +3152,141 @@ func TestTUILogNavFromTasks(t *testing.T) {
 }
 
 // Branch filter tests
+
+func TestReviewFixPanelOpenFromReview(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	done := storage.JobStatusDone
+	job := storage.ReviewJob{ID: 1, Status: done}
+	m.currentReview = &storage.Review{JobID: 1, Job: &job}
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
+	got := m2.(tuiModel)
+
+	if !got.reviewFixPanelOpen {
+		t.Error("Expected reviewFixPanelOpen to be true")
+	}
+	if !got.reviewFixPanelFocused {
+		t.Error("Expected reviewFixPanelFocused to be true")
+	}
+	if got.fixPromptJobID != 1 {
+		t.Errorf("Expected fixPromptJobID=1, got %d", got.fixPromptJobID)
+	}
+	if got.currentView != tuiViewReview {
+		t.Errorf("Expected to stay in tuiViewReview, got %v", got.currentView)
+	}
+}
+
+func TestReviewFixPanelTabTogglesReviewFocus(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = true
+
+	// Tab shifts focus to review
+	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyTab})
+	got := m2.(tuiModel)
+	if got.reviewFixPanelFocused {
+		t.Error("Expected reviewFixPanelFocused to be false after Tab")
+	}
+
+	// Tab again shifts focus back to fix panel
+	m3, _ := got.handleKeyMsg(tea.KeyMsg{Type: tea.KeyTab})
+	got2 := m3.(tuiModel)
+	if !got2.reviewFixPanelFocused {
+		t.Error("Expected reviewFixPanelFocused to be true after second Tab")
+	}
+}
+
+func TestReviewFixPanelTextInput(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = true
+
+	for _, ch := range "hello" {
+		m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+		m = m2.(tuiModel)
+	}
+
+	if m.fixPromptText != "hello" {
+		t.Errorf("Expected fixPromptText='hello', got %q", m.fixPromptText)
+	}
+}
+
+func TestReviewFixPanelTextNotCapturedWhenUnfocused(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = false // review has focus
+
+	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	got := m2.(tuiModel)
+	if got.fixPromptText != "" {
+		t.Errorf("Expected fixPromptText to remain empty, got %q", got.fixPromptText)
+	}
+}
+
+func TestReviewFixPanelEscWhenFocusedClosesPanel(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = true
+	m.fixPromptText = "some text"
+
+	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
+	got := m2.(tuiModel)
+	if got.reviewFixPanelOpen {
+		t.Error("Expected panel to close on Esc when focused")
+	}
+	if got.fixPromptText != "" {
+		t.Error("Expected fixPromptText to be cleared on Esc")
+	}
+	if got.currentView != tuiViewReview {
+		t.Errorf("Expected to stay in tuiViewReview, got %v", got.currentView)
+	}
+}
+
+func TestReviewFixPanelEscWhenUnfocusedClosesPanel(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	m.reviewFixPanelOpen = true
+	m.reviewFixPanelFocused = false // review has focus
+	done := storage.JobStatusDone
+	m.currentReview = &storage.Review{Job: &storage.ReviewJob{Status: done}}
+	m.reviewFromView = tuiViewQueue
+
+	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
+	got := m2.(tuiModel)
+	if got.reviewFixPanelOpen {
+		t.Error("Expected panel to close on Esc when unfocused")
+	}
+	// Should stay in review view (not navigate back to queue)
+	if got.currentView != tuiViewReview {
+		t.Errorf("Expected to stay in tuiViewReview, got %v", got.currentView)
+	}
+}
+
+func TestReviewFixPanelPendingConsumedOnLoad(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.reviewFixPanelPending = true
+	m.selectedJobID = 5
+
+	review := &storage.Review{ID: 1, JobID: 5}
+	msg := tuiReviewMsg{review: review, jobID: 5}
+	m2, _ := m.Update(msg)
+	got := m2.(tuiModel)
+
+	if got.reviewFixPanelPending {
+		t.Error("Expected reviewFixPanelPending to be cleared")
+	}
+	if !got.reviewFixPanelOpen {
+		t.Error("Expected reviewFixPanelOpen to be true")
+	}
+	if !got.reviewFixPanelFocused {
+		t.Error("Expected reviewFixPanelFocused to be true")
+	}
+}
