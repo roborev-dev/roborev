@@ -31,6 +31,7 @@ type WorkerPool struct {
 	activeWorkers atomic.Int32
 	stopCh        chan struct{}
 	readyCh       chan struct{} // closed after wg.Add in Start
+	startOnce     sync.Once
 	wg            sync.WaitGroup
 
 	// Track running jobs for cancellation
@@ -69,15 +70,20 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 	}
 }
 
-// Start begins the worker pool
+// Start begins the worker pool. Safe to call multiple times;
+// only the first call spawns workers.
 func (wp *WorkerPool) Start() {
-	log.Printf("Starting worker pool with %d workers", wp.numWorkers)
-
-	wp.wg.Add(wp.numWorkers)
-	close(wp.readyCh) // unblock Stop if it races with Start
-	for i := 0; i < wp.numWorkers; i++ {
-		go wp.worker(i)
-	}
+	wp.startOnce.Do(func() {
+		log.Printf(
+			"Starting worker pool with %d workers",
+			wp.numWorkers,
+		)
+		wp.wg.Add(wp.numWorkers)
+		close(wp.readyCh)
+		for i := 0; i < wp.numWorkers; i++ {
+			go wp.worker(i)
+		}
+	})
 }
 
 // Stop gracefully shuts down the worker pool
