@@ -1490,6 +1490,7 @@ func (m tuiModel) handleFixKey() (tea.Model, tea.Cmd) {
 	m.fixPromptText = ""
 	m.reviewFixPanelPending = true
 	m.reviewFromView = tuiViewQueue
+	m.selectedJobID = job.ID
 	return m, m.fetchReview(job.ID)
 }
 
