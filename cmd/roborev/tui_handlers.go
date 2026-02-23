@@ -23,6 +23,8 @@ func (m tuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(msg)
 	case tuiViewLog:
 		return m.handleLogKey(msg)
+	case tuiViewFixGitRef:
+		return m.handleFixGitRefKey(msg)
 	case tuiViewFixPrompt:
 		return m.handleFixPromptKey(msg)
 	case tuiViewTasks:
@@ -1478,11 +1480,19 @@ func (m tuiModel) handleFixKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Open fix prompt modal
+	// Open fix prompt modal. For compact/task jobs with no git ref and no branch,
+	// show the git ref confirmation step first so the user can specify a target.
 	m.fixPromptJobID = job.ID
-	m.fixPromptText = "" // Empty means use default prompt from server
+	m.fixPromptText = ""
 	m.fixPromptFromView = m.currentView
-	m.currentView = tuiViewFixPrompt
+	m.fixPromptGitRef = ""
+	if job.GitRef == "" && job.Branch == "" {
+		// HEAD fallback — ask the user to confirm or correct the target ref.
+		m.fixPromptGitRef = "HEAD"
+		m.currentView = tuiViewFixGitRef
+	} else {
+		m.currentView = tuiViewFixPrompt
+	}
 	return m, nil
 }
 
@@ -1499,6 +1509,40 @@ func (m tuiModel) handleToggleTasksKey() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleFixGitRefKey handles key input in the git ref confirmation modal.
+// This modal is shown when fixing a compact job that has no branch information,
+// so the user can specify (or confirm) the target ref before proceeding.
+func (m tuiModel) handleFixGitRefKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.currentView = m.fixPromptFromView
+		m.fixPromptGitRef = ""
+		m.fixPromptJobID = 0
+		return m, nil
+	case "enter":
+		// Move on to the fix instructions prompt with the ref confirmed.
+		m.currentView = tuiViewFixPrompt
+		return m, nil
+	case "backspace":
+		if len(m.fixPromptGitRef) > 0 {
+			runes := []rune(m.fixPromptGitRef)
+			m.fixPromptGitRef = string(runes[:len(runes)-1])
+		}
+		return m, nil
+	default:
+		if len(msg.Runes) > 0 {
+			for _, r := range msg.Runes {
+				if unicode.IsPrint(r) {
+					m.fixPromptGitRef += string(r)
+				}
+			}
+		}
+		return m, nil
+	}
+}
+
 // handleFixPromptKey handles key input in the fix prompt confirmation modal.
 func (m tuiModel) handleFixPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -1507,15 +1551,18 @@ func (m tuiModel) handleFixPromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.currentView = m.fixPromptFromView
 		m.fixPromptText = ""
+		m.fixPromptGitRef = ""
 		m.fixPromptJobID = 0
 		return m, nil
 	case "enter":
 		jobID := m.fixPromptJobID
 		prompt := m.fixPromptText
+		gitRef := m.fixPromptGitRef
 		m.currentView = tuiViewTasks
 		m.fixPromptText = ""
+		m.fixPromptGitRef = ""
 		m.fixPromptJobID = 0
-		return m, m.triggerFix(jobID, prompt)
+		return m, m.triggerFix(jobID, prompt, gitRef)
 	case "backspace":
 		if len(m.fixPromptText) > 0 {
 			runes := []rune(m.fixPromptText)

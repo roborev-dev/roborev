@@ -3765,6 +3765,45 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("compact parent with empty git_ref uses branch as fallback", func(t *testing.T) {
+		// Compact jobs are stored with an empty git_ref (the label is stored separately).
+		// Fixing a compact job must not pass "" to worktree.Create — it should fall back
+		// to the branch, then "HEAD".
+		compactJob, _ := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:  repo.ID,
+			GitRef:  "", // compact jobs have no real git ref
+			Branch:  "main",
+			Agent:   "test",
+			JobType: storage.JobTypeCompact,
+			Prompt:  "consolidated findings",
+			Label:   "compact-all-20240101-120000",
+		})
+		// Force to running so CompleteJob can transition it to done.
+		db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, compactJob.ID)
+		db.CompleteJob(compactJob.ID, "test", "consolidated findings", "FAIL: issues found")
+
+		body := map[string]any{
+			"parent_job_id": compactJob.ID,
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected 201 for compact parent fix, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+
+		if fixJob.GitRef == "" {
+			t.Errorf("Fix job git_ref must not be empty for compact parent")
+		}
+		if fixJob.GitRef != "main" {
+			t.Errorf("Expected fix job git_ref 'main' (branch fallback), got %q", fixJob.GitRef)
+		}
+	})
+
 	t.Run("stale job from different repo is rejected", func(t *testing.T) {
 		// Create a fix job in a different repo
 		repo2Dir := filepath.Join(tmpDir, "repo-fix-val-2")
