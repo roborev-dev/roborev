@@ -2995,7 +2995,7 @@ func (m tuiModel) renderReviewView() string {
 	}
 	panelReserve := 0
 	if m.reviewFixPanelOpen {
-		panelReserve = 4 // top border + input line + bottom border + help line
+		panelReserve = 5 // label + top border + input line + bottom border + help line
 	}
 	visibleLines := max(m.height-headerHeight-panelReserve, 1)
 
@@ -3026,58 +3026,60 @@ func (m tuiModel) renderReviewView() string {
 
 	// Render inline fix panel when open
 	if m.reviewFixPanelOpen {
-		boxWidth := max(m.width-2, 20)
-		dashes := strings.Repeat("─", boxWidth-2)
+		innerWidth := max(m.width-4, 18) // box inner width; total visual width = innerWidth+2 (borders)
 
 		if m.reviewFixPanelFocused {
-			// Focused: bright border with title prompt
-			title := "Fix: enter instructions (or leave blank for default)"
-			titleWidth := runewidth.StringWidth(title)
-			if titleWidth > boxWidth-4 {
-				title = runewidth.Truncate(title, boxWidth-4, "")
-				titleWidth = runewidth.StringWidth(title)
+			// Label line
+			label := "Fix: enter instructions (or leave blank for default)"
+			if runewidth.StringWidth(label) > m.width-1 {
+				label = runewidth.Truncate(label, m.width-1, "")
 			}
-			extraDashes := max(boxWidth-4-titleWidth, 0)
-			b.WriteString(fmt.Sprintf("┌─ %s %s┐\x1b[K\n", title, strings.Repeat("─", extraDashes)))
+			b.WriteString(label)
+			b.WriteString("\x1b[K\n")
 
-			// Input line with cursor — show tail so cursor is always visible
+			// Input content — show tail so cursor always visible
 			inputDisplay := m.fixPromptText
-			maxInputWidth := boxWidth - 7 // "│ > " (4) + "_" (1) + " │" (2) = 7 overhead
-			if runewidth.StringWidth(inputDisplay) > maxInputWidth {
+			maxInputLen := innerWidth - 3 // " > " (3) + "_" (1) = 4 overhead, but Width handles right padding
+			if runewidth.StringWidth(inputDisplay) > maxInputLen {
 				runes := []rune(inputDisplay)
-				for runewidth.StringWidth(string(runes)) > maxInputWidth {
+				for runewidth.StringWidth(string(runes)) > maxInputLen {
 					runes = runes[1:]
 				}
 				inputDisplay = string(runes)
 			}
-			inputPadding := max(maxInputWidth-runewidth.StringWidth(inputDisplay), 0)
-			b.WriteString(fmt.Sprintf("│ > %s_%s │\x1b[K\n", inputDisplay, strings.Repeat(" ", inputPadding)))
-
-			b.WriteString("└" + dashes + "┘\x1b[K\n")
+			content := fmt.Sprintf(" > %s_", inputDisplay)
+			boxStyle := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.AdaptiveColor{Light: "125", Dark: "205"}). // magenta/pink (active)
+				Width(innerWidth)
+			for _, line := range strings.Split(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
+				b.WriteString(line)
+				b.WriteString("\x1b[K\n")
+			}
 			b.WriteString(tuiHelpStyle.Render("tab: scroll review | enter: submit | esc: cancel"))
 			b.WriteString("\x1b[K\n")
 		} else {
-			// Unfocused: dimmed border with hint
-			title := "Fix (Tab to focus)"
-			titleWidth := runewidth.StringWidth(title)
-			extraDashes := max(boxWidth-4-titleWidth, 0)
-			b.WriteString(tuiStatusStyle.Render(fmt.Sprintf("┌─ %s %s┐", title, strings.Repeat("─", extraDashes))))
+			// Label line (dimmed)
+			b.WriteString(tuiStatusStyle.Render("Fix (Tab to focus)"))
 			b.WriteString("\x1b[K\n")
 
 			inputDisplay := m.fixPromptText
 			if inputDisplay == "" {
 				inputDisplay = "(blank = default)"
 			}
-			maxContentWidth := boxWidth - 6 // "│  " (3) + "  │" (3) = 6 overhead
-			if runewidth.StringWidth(inputDisplay) > maxContentWidth {
-				inputDisplay = runewidth.Truncate(inputDisplay, maxContentWidth, "")
+			if runewidth.StringWidth(inputDisplay) > innerWidth-2 {
+				inputDisplay = runewidth.Truncate(inputDisplay, innerWidth-2, "")
 			}
-			contentPadding := max(maxContentWidth-runewidth.StringWidth(inputDisplay), 0)
-			b.WriteString(tuiStatusStyle.Render(fmt.Sprintf("│  %s%s  │", inputDisplay, strings.Repeat(" ", contentPadding))))
-			b.WriteString("\x1b[K\n")
-
-			b.WriteString(tuiStatusStyle.Render("└" + dashes + "┘"))
-			b.WriteString("\x1b[K\n")
+			content := " " + inputDisplay
+			boxStyle := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}). // gray (inactive)
+				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
+				Width(innerWidth)
+			for _, line := range strings.Split(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
+				b.WriteString(tuiStatusStyle.Render(line))
+				b.WriteString("\x1b[K\n")
+			}
 			b.WriteString(tuiHelpStyle.Render("F: fix | tab: focus fix panel"))
 			b.WriteString("\x1b[K\n")
 		}
