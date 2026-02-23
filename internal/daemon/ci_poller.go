@@ -626,15 +626,21 @@ func isValidGitRepo(path string) bool {
 // "git remote get-url" for the resolved URL (handles insteadOf).
 func cloneRemoteMatches(path, ghRepo string) (bool, error) {
 	// Step 1: check origin existence (locale-independent exit code).
+	// Use --local to avoid matching global/system config that could
+	// define remote.origin.url outside this repo.
 	cfgCmd := exec.Command(
 		"git", "-C", path,
-		"config", "--get", "remote.origin.url",
+		"config", "--local", "--get", "remote.origin.url",
 	)
 	if err := cfgCmd.Run(); err != nil {
+		// Exit 1 = key missing; exit 128 = not a git repo.
+		// Both mean no local origin configured.
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) &&
-			exitErr.ExitCode() == 1 {
-			return false, nil // no origin configured
+		if errors.As(err, &exitErr) {
+			code := exitErr.ExitCode()
+			if code == 1 || code == 128 {
+				return false, nil
+			}
 		}
 		return false, fmt.Errorf(
 			"check origin for %s: %w", path, err,
