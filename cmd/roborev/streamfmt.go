@@ -8,7 +8,11 @@ import (
 	"strings"
 	"unicode"
 
+	gansi "github.com/charmbracelet/glamour/ansi"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+	"golang.org/x/term"
 )
 
 // Styles for TTY-mode stream output.
@@ -37,6 +41,9 @@ type streamFormatter struct {
 	w     io.Writer
 	buf   []byte
 	isTTY bool
+	width int // terminal width; 0 = no wrapping
+
+	glamourStyle gansi.StyleConfig // detected once at init
 
 	writeErr error // first write error encountered during formatting
 
@@ -51,7 +58,38 @@ type streamFormatter struct {
 }
 
 func newStreamFormatter(w io.Writer, isTTY bool) *streamFormatter {
-	return &streamFormatter{w: w, isTTY: isTTY}
+	f := &streamFormatter{w: w, isTTY: isTTY}
+	if isTTY {
+		f.glamourStyle = sfGlamourStyle()
+		f.width = sfTerminalWidth(w)
+	}
+	return f
+}
+
+// sfTerminalWidth returns the terminal width for the given writer,
+// defaulting to 100 if detection fails.
+func sfTerminalWidth(w io.Writer) int {
+	if f, ok := w.(interface{ Fd() uintptr }); ok {
+		if w, _, err := term.GetSize(int(f.Fd())); err == nil && w > 0 {
+			return w
+		}
+	}
+	return 100
+}
+
+// sfGlamourStyle returns a glamour style config with zero margins,
+// matching the TUI's rendering. Detects dark/light background once.
+func sfGlamourStyle() gansi.StyleConfig {
+	style := styles.LightStyleConfig
+	if termenv.HasDarkBackground() {
+		style = styles.DarkStyleConfig
+	}
+	zeroMargin := uint(0)
+	style.Document.Margin = &zeroMargin
+	style.CodeBlock.Margin = &zeroMargin
+	style.Code.Prefix = ""
+	style.Code.Suffix = ""
+	return style
 }
 
 func (f *streamFormatter) Write(p []byte) (int, error) {
@@ -159,8 +197,8 @@ func (f *streamFormatter) processLine(line string) {
 		// Gemini format: assistant text
 		if ev.Role == "assistant" {
 			var text string
-			if json.Unmarshal(ev.Content, &text) == nil && strings.TrimSpace(text) != "" {
-				f.writef("%s\n", strings.TrimSpace(text))
+			if json.Unmarshal(ev.Content, &text) == nil {
+				f.writeText(text)
 			}
 		}
 	case "tool_use":
@@ -192,9 +230,7 @@ func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 		if eventType != "item.completed" {
 			return
 		}
-		if text := strings.TrimSpace(sanitizeControl(item.Text)); text != "" {
-			f.writef("%s\n", text)
-		}
+		f.writeText(sanitizeControl(item.Text))
 	case "command_execution":
 		cmd := strings.TrimSpace(sanitizeControl(item.Command))
 		if !f.shouldRenderCodexCommand(eventType, item, cmd) {
@@ -359,8 +395,8 @@ func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &blocks); err != nil {
 		// Try as plain string (legacy format)
 		var text string
-		if err := json.Unmarshal(raw, &text); err == nil && text != "" {
-			f.writef("%s\n", text)
+		if err := json.Unmarshal(raw, &text); err == nil {
+			f.writeText(text)
 		}
 		return
 	}
@@ -368,9 +404,7 @@ func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
-			if text := strings.TrimSpace(b.Text); text != "" {
-				f.writef("%s\n", text)
-			}
+			f.writeText(b.Text)
 		case "tool_use":
 			f.formatToolUse(b.Name, b.Input)
 		}
@@ -418,6 +452,25 @@ func (f *streamFormatter) writef(format string, args ...any) {
 		return
 	}
 	_, f.writeErr = fmt.Fprintf(f.w, format, args...)
+}
+
+// writeText writes agent text, rendering markdown and wrapping to
+// terminal width when in TTY mode with a known width.
+func (f *streamFormatter) writeText(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if f.width <= 0 {
+		f.writef("%s\n", text)
+		return
+	}
+	lines := renderMarkdownLines(
+		text, f.width, f.width, f.glamourStyle, 2,
+	)
+	for _, line := range lines {
+		f.writef("%s\n", line)
+	}
 }
 
 // writeTool writes a styled tool-call line: colored name + dim argument.
