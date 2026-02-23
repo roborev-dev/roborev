@@ -32,6 +32,7 @@ type WorkerPool struct {
 	stopCh        chan struct{}
 	readyCh       chan struct{} // closed after wg.Add in Start
 	startOnce     sync.Once
+	stopOnce      sync.Once
 	wg            sync.WaitGroup
 
 	// Track running jobs for cancellation
@@ -86,20 +87,22 @@ func (wp *WorkerPool) Start() {
 	})
 }
 
-// Stop gracefully shuts down the worker pool
+// Stop gracefully shuts down the worker pool. Safe to call
+// multiple times; only the first call performs shutdown.
 func (wp *WorkerPool) Stop() {
-	log.Println("Stopping worker pool...")
-	close(wp.stopCh)
-	// Wait for Start to finish wg.Add before calling Wait.
-	// If Start was never called, readyCh stays open but stopCh
-	// is already closed, so workers (if any) will exit immediately.
-	select {
-	case <-wp.readyCh:
-		wp.wg.Wait()
-	default:
-		// Start was never called; nothing to wait for.
-	}
-	log.Println("Worker pool stopped")
+	wp.stopOnce.Do(func() {
+		log.Println("Stopping worker pool...")
+		close(wp.stopCh)
+		// Wait for Start to finish wg.Add before calling Wait.
+		// If Start was never called, readyCh stays open but
+		// stopCh is closed, so any late workers exit immediately.
+		select {
+		case <-wp.readyCh:
+			wp.wg.Wait()
+		default:
+		}
+		log.Println("Worker pool stopped")
+	})
 }
 
 // ActiveWorkers returns the number of currently active workers
