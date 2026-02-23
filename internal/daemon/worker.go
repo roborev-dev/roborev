@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"sync"
@@ -426,6 +427,18 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.outputBuffers.CloseJob(job.ID)
 	}()
 
+	// Tee raw agent output to a per-job log file on disk
+	logFile := openJobLog(job.ID)
+	if logFile != nil {
+		defer logFile.Close()
+	}
+	var agentOutput io.Writer = outputWriter
+	if logFile != nil {
+		agentOutput = io.MultiWriter(
+			outputWriter, &safeWriter{w: logFile},
+		)
+	}
+
 	// For fix jobs, create an isolated worktree to run the agent in.
 	// The agent modifies files in the worktree; afterwards we capture the diff as a patch.
 	reviewRepoPath := job.RepoPath
@@ -446,7 +459,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Run the review
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
-	output, err := a.Review(ctx, reviewRepoPath, job.GitRef, reviewPrompt, outputWriter)
+	output, err := a.Review(ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput)
 	if err != nil {
 		// Check if this was a cancellation
 		if ctx.Err() == context.Canceled {

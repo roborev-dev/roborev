@@ -136,6 +136,11 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Printf("Warning: failed to reset stale jobs: %v", err)
 	}
 
+	// Clean up old job log files (older than 7 days)
+	if n := CleanJobLogs(7 * 24 * time.Hour); n > 0 {
+		log.Printf("Cleaned up %d old job log file(s)", n)
+	}
+
 	// Start config watcher for hot-reloading
 	if err := s.configWatcher.Start(ctx); err != nil {
 		log.Printf("Warning: failed to start config watcher: %v", err)
