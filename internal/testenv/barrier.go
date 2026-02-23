@@ -18,6 +18,8 @@ type ProdLogBarrier struct {
 	// Byte offsets at barrier creation time.
 	activitySize int64
 	errorsSize   int64
+	// Whether daemon.<pid>.json already existed before tests.
+	runtimeExisted bool
 }
 
 // DefaultProdDataDir returns the default production data directory
@@ -43,6 +45,12 @@ func NewProdLogBarrier(realDataDir string) *ProdLogBarrier {
 	b.errorsSize = fileSize(
 		filepath.Join(realDataDir, "errors.log"),
 	)
+	runtimePath := filepath.Join(
+		realDataDir,
+		fmt.Sprintf("daemon.%d.json", b.pid),
+	)
+	_, err := os.Stat(runtimePath)
+	b.runtimeExisted = err == nil
 	return b
 }
 
@@ -51,18 +59,20 @@ func NewProdLogBarrier(realDataDir string) *ProdLogBarrier {
 func (b *ProdLogBarrier) Check() string {
 	var violations []string
 
-	// 1. Check for daemon runtime file with our PID.
-	pattern := filepath.Join(
-		b.realDataDir,
-		fmt.Sprintf("daemon.%d.json", b.pid),
-	)
-	if _, err := os.Stat(pattern); err == nil {
-		violations = append(violations,
-			fmt.Sprintf(
-				"test wrote daemon.%d.json to prod data dir",
-				b.pid,
-			),
+	// 1. Check for daemon runtime file with our PID (only if new).
+	if !b.runtimeExisted {
+		runtimePath := filepath.Join(
+			b.realDataDir,
+			fmt.Sprintf("daemon.%d.json", b.pid),
 		)
+		if _, err := os.Stat(runtimePath); err == nil {
+			violations = append(violations,
+				fmt.Sprintf(
+					"test wrote daemon.%d.json to prod data dir",
+					b.pid,
+				),
+			)
+		}
 	}
 
 	// 2. Scan new lines in activity.log for test markers.
@@ -117,6 +127,8 @@ func (b *ProdLogBarrier) scanNewLines(
 	var markers []string
 	seen := map[string]bool{}
 	scanner := bufio.NewScanner(f)
+	// 1MB buffer to handle large log lines without silent truncation.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		for _, m := range testMarkers(line, pidStr) {
@@ -125,6 +137,10 @@ func (b *ProdLogBarrier) scanNewLines(
 				markers = append(markers, m)
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		markers = append(markers,
+			fmt.Sprintf("scan error (barrier may be incomplete): %v", err))
 	}
 	return markers
 }

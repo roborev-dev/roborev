@@ -772,6 +772,14 @@ func TestShouldRefuseAutoStartDaemon(t *testing.T) {
 			t.Fatal("expected refusal for go-build tmp binary")
 		}
 	})
+
+	t.Run("allows binary under go-builder username", func(t *testing.T) {
+		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
+		path := "/home/go-builder/bin/roborev"
+		if shouldRefuseAutoStartDaemon(path) {
+			t.Fatal("should not refuse binary under go-builder")
+		}
+	})
 }
 
 func TestStartDaemonRefusesFromGoTestBinary(t *testing.T) {

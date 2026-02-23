@@ -297,9 +297,22 @@ func isGoTestBinaryPath(exePath string) bool {
 // build cache directory (produced by "go run"). These ephemeral
 // binaries should not auto-start daemons because they have version
 // "dev" and would kill the production daemon via version-mismatch
-// restart.
+// restart. Uses path-segment matching to avoid false positives on
+// paths like /home/go-builder/bin/roborev.
 func isGoBuildCacheBinary(exePath string) bool {
-	return strings.Contains(exePath, "go-build")
+	for seg := range strings.SplitSeq(exePath, string(filepath.Separator)) {
+		if seg == "go-build" {
+			return true
+		}
+		// go run temp dirs: go-build<digits>
+		if strings.HasPrefix(seg, "go-build") &&
+			len(seg) > len("go-build") &&
+			seg[len("go-build")] >= '0' &&
+			seg[len("go-build")] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldRefuseAutoStartDaemon(exePath string) bool {

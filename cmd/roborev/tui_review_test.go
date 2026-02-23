@@ -2599,6 +2599,57 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 		t.Errorf("g from top: expected scroll=%d, got %d",
 			expectedMax, m4.logScroll)
 	}
+
+	// pgup from mid-scroll should retreat by logVisibleLines().
+	mMid := m
+	mMid.logScroll = 2 * visLines // start 2 pages down
+	m5, _ := pressSpecial(mMid, tea.KeyPgUp)
+	if m5.logScroll != visLines {
+		t.Errorf("pgup: expected scroll=%d, got %d",
+			visLines, m5.logScroll)
+	}
+
+	// pgup at top should clamp to 0.
+	m6, _ := pressSpecial(m, tea.KeyPgUp)
+	if m6.logScroll != 0 {
+		t.Errorf("pgup at top: expected scroll=0, got %d",
+			m6.logScroll)
+	}
+}
+
+func TestTUILogPagingNoHeader(t *testing.T) {
+	// Same paging test but without command header (no agent).
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.height = 20
+	m.logScroll = 0
+	m.logFollow = false
+
+	// No agent → no command header.
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withAgent("")),
+	}
+
+	for i := range 50 {
+		m.logLines = append(m.logLines,
+			logLine{text: fmt.Sprintf("line %d", i)})
+	}
+
+	visLines := m.logVisibleLines()
+	expectedMax := max(50-visLines, 0)
+
+	m2, _ := pressSpecial(m, tea.KeyPgDown)
+	if m2.logScroll != visLines {
+		t.Errorf("pgdown no-header: expected scroll=%d, got %d",
+			visLines, m2.logScroll)
+	}
+
+	m3, _ := pressSpecial(m, tea.KeyEnd)
+	if m3.logScroll != expectedMax {
+		t.Errorf("end no-header: expected scroll=%d, got %d",
+			expectedMax, m3.logScroll)
+	}
 }
 
 func TestTUILogOutputIgnoredWhenNotInLogView(t *testing.T) {

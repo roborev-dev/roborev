@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -61,6 +62,43 @@ func TestBarrierDetectsDaemonRuntimeFile(t *testing.T) {
 	msg := barrier.Check()
 	if msg == "" {
 		t.Fatal("barrier should detect daemon runtime file")
+	}
+}
+
+func TestBarrierDetectsErrorsLogPollution(t *testing.T) {
+	dir := t.TempDir()
+	errPath := filepath.Join(dir, "errors.log")
+	os.WriteFile(errPath, nil, 0644)
+
+	barrier := NewProdLogBarrier(dir)
+
+	f, _ := os.OpenFile(errPath, os.O_APPEND|os.O_WRONLY, 0644)
+	fmt.Fprintln(f, `{"event":"test","component":"test","message":"err"}`)
+	f.Close()
+
+	msg := barrier.Check()
+	if msg == "" {
+		t.Fatal("barrier should detect test pollution in errors.log")
+	}
+	if !strings.Contains(msg, "errors.log") {
+		t.Fatalf("message should mention errors.log, got: %s", msg)
+	}
+}
+
+func TestBarrierIgnoresPreExistingRuntimeFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a daemon.<our-pid>.json BEFORE the barrier.
+	runtimePath := filepath.Join(dir,
+		fmt.Sprintf("daemon.%d.json", os.Getpid()))
+	os.WriteFile(runtimePath, []byte("{}"), 0644)
+
+	barrier := NewProdLogBarrier(dir)
+
+	// File still exists but was there before tests.
+	msg := barrier.Check()
+	if msg != "" {
+		t.Fatalf("barrier should ignore pre-existing runtime file, got: %s", msg)
 	}
 }
 
