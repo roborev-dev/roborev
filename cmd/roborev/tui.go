@@ -1899,7 +1899,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// logLines is nil (first fetch for a completed job)
 			// to escape "Waiting for output...".
 			if len(msg.lines) > 0 || m.logLines == nil {
-				m.logLines = msg.lines
+				if msg.lines != nil {
+					m.logLines = msg.lines
+				} else {
+					m.logLines = []logLine{} // loaded empty
+				}
 			}
 			m.logStreaming = msg.hasMore
 			if m.logFollow && len(m.logLines) > 0 {
@@ -3262,7 +3266,7 @@ func (m tuiModel) renderLogView() string {
 	// Render lines (pre-styled by streamFormatter)
 	linesWritten := 0
 	if len(m.logLines) == 0 {
-		if m.logStreaming {
+		if m.logLines == nil {
 			b.WriteString(tuiStatusStyle.Render("Waiting for output..."))
 		} else {
 			b.WriteString(tuiStatusStyle.Render("(no output)"))
@@ -3381,6 +3385,7 @@ func helpLines() []string {
 			group: "Log View",
 			keys: []struct{ key, desc string }{
 				{"↑/↓", "Scroll output"},
+				{"←/→", "Previous / next log"},
 				{"PgUp/PgDn", "Page through output"},
 				{"g", "Toggle follow mode / jump to top"},
 				{"x", "Cancel job"},

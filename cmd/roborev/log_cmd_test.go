@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -124,6 +125,12 @@ func TestIsBrokenPipe(t *testing.T) {
 	}
 	if isBrokenPipe(fmt.Errorf("other error")) {
 		t.Error("non-EPIPE error should not be broken pipe")
+	}
+	if !isBrokenPipe(syscall.EPIPE) {
+		t.Error("bare EPIPE should be broken pipe")
+	}
+	if !isBrokenPipe(fmt.Errorf("write: %w", syscall.EPIPE)) {
+		t.Error("wrapped EPIPE should be broken pipe")
 	}
 }
 

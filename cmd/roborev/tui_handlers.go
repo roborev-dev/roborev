@@ -326,9 +326,9 @@ func (m tuiModel) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.logScroll = 0
 		}
 		return m, tea.ClearScreen
-	case "left":
-		return m.handlePrevKey()
 	case "right":
+		return m.handlePrevKey()
+	case "left":
 		return m.handleNextKey()
 	case "?":
 		m.helpFromView = m.currentView
