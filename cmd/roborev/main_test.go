@@ -758,6 +758,20 @@ func TestShouldRefuseAutoStartDaemon(t *testing.T) {
 			t.Fatal("expected no refusal for non-test binary")
 		}
 	})
+
+	t.Run("refuses go run binary from build cache", func(t *testing.T) {
+		goRunPath := "/Users/x/Library/Caches/go-build/72/abc-d/roborev"
+		if !shouldRefuseAutoStartDaemon(goRunPath) {
+			t.Fatal("expected refusal for go-build cache binary")
+		}
+	})
+
+	t.Run("refuses go run binary from tmp", func(t *testing.T) {
+		goRunPath := "/var/folders/y4/abc/T/go-build123/b001/exe/roborev"
+		if !shouldRefuseAutoStartDaemon(goRunPath) {
+			t.Fatal("expected refusal for go-build tmp binary")
+		}
+	})
 }
 
 func TestStartDaemonRefusesFromGoTestBinary(t *testing.T) {
@@ -774,7 +788,7 @@ func TestStartDaemonRefusesFromGoTestBinary(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected startDaemon to refuse go test binary auto-start")
 	}
-	if !strings.Contains(err.Error(), "refusing to auto-start daemon from go test binary") {
+	if !strings.Contains(err.Error(), "refusing to auto-start daemon from ephemeral binary") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -293,7 +293,19 @@ func isGoTestBinaryPath(exePath string) bool {
 		strings.HasSuffix(base, ".test.exe")
 }
 
+// isGoBuildCacheBinary returns true if the binary lives in a Go
+// build cache directory (produced by "go run"). These ephemeral
+// binaries should not auto-start daemons because they have version
+// "dev" and would kill the production daemon via version-mismatch
+// restart.
+func isGoBuildCacheBinary(exePath string) bool {
+	return strings.Contains(exePath, "go-build")
+}
+
 func shouldRefuseAutoStartDaemon(exePath string) bool {
+	if isGoBuildCacheBinary(exePath) {
+		return true
+	}
 	if !isGoTestBinaryPath(exePath) {
 		return false
 	}
@@ -313,7 +325,8 @@ func startDaemon() error {
 	}
 	if shouldRefuseAutoStartDaemon(exe) {
 		return fmt.Errorf(
-			"refusing to auto-start daemon from go test binary (%s)",
+			"refusing to auto-start daemon from ephemeral binary (%s); "+
+				"use the installed roborev binary instead",
 			filepath.Base(exe),
 		)
 	}
