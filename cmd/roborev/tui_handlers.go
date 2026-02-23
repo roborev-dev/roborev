@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode"
@@ -937,6 +938,10 @@ func (m tuiModel) openLogView(
 	m.logScroll = 0
 	m.logFromView = fromView
 	m.currentView = tuiViewLog
+	m.logOffset = 0
+	m.logFmtr = newStreamFormatterWithWidth(
+		io.Discard, m.width, m.glamourStyle,
+	)
 
 	if status == storage.JobStatusRunning {
 		m.logStreaming = true

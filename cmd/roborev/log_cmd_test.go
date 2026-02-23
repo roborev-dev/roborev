@@ -259,3 +259,67 @@ func TestLooksLikeJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderJobLog_SanitizesControlChars(t *testing.T) {
+	// Non-JSON lines with ANSI escapes and OSC sequences
+	// should be sanitized to prevent terminal spoofing.
+	input := strings.Join([]string{
+		"\x1b[31mred text\x1b[0m",
+		"\x1b]0;evil title\x07",
+		"clean line",
+	}, "\n")
+
+	var buf bytes.Buffer
+	err := renderJobLog(strings.NewReader(input), &buf, true)
+	if err != nil {
+		t.Fatalf("renderJobLog: %v", err)
+	}
+
+	out := buf.String()
+
+	// ANSI escape sequences should be stripped.
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("ANSI escape not stripped: %q", out)
+	}
+	if strings.Contains(out, "\x1b]") {
+		t.Errorf("OSC escape not stripped: %q", out)
+	}
+	if strings.Contains(out, "\x07") {
+		t.Errorf("BEL char not stripped: %q", out)
+	}
+
+	// Clean content should still be present.
+	if !strings.Contains(out, "red text") {
+		t.Errorf("expected 'red text' in output: %q", out)
+	}
+	if !strings.Contains(out, "clean line") {
+		t.Errorf("expected 'clean line' in output: %q", out)
+	}
+}
+
+func TestRenderJobLog_SanitizeMixedJSONAndControl(t *testing.T) {
+	// JSON lines should NOT be sanitized (they go through
+	// streamFormatter), only non-JSON lines.
+	input := strings.Join([]string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}`,
+		"\x1b[1mbold agent stderr\x1b[0m",
+	}, "\n")
+
+	var buf bytes.Buffer
+	err := renderJobLog(strings.NewReader(input), &buf, true)
+	if err != nil {
+		t.Fatalf("renderJobLog: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "ok") {
+		t.Errorf("JSON text should be rendered: %q", out)
+	}
+	if !strings.Contains(out, "bold agent stderr") {
+		t.Errorf("non-JSON text should be present: %q", out)
+	}
+	// The non-JSON line's ANSI should be stripped.
+	if strings.Contains(out, "\x1b[1m") {
+		t.Errorf("ANSI in non-JSON line not stripped: %q", out)
+	}
+}

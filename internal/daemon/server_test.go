@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -3931,6 +3932,231 @@ func TestHandleJobLog(t *testing.T) {
 		server.handleJobLog(w, req)
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected 405, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleJobLogOffset(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	repo, err := db.GetOrCreateRepo(
+		filepath.Join(tmpDir, "testrepo"),
+	)
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "def456",
+		Agent:  "test",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	// Create log file with two JSONL lines.
+	logDir := JobLogDir()
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	line1 := `{"type":"assistant","message":{"content":[{"type":"text","text":"first"}]}}` + "\n"
+	line2 := `{"type":"assistant","message":{"content":[{"type":"text","text":"second"}]}}` + "\n"
+	logContent := line1 + line2
+	if err := os.WriteFile(
+		JobLogPath(job.ID), []byte(logContent), 0644,
+	); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	t.Run("offset=0 returns full content", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/job/log?job_id=%d&offset=0", job.ID,
+			),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if w.Body.String() != logContent {
+			t.Errorf(
+				"expected full content, got %q",
+				w.Body.String(),
+			)
+		}
+
+		// X-Log-Offset should equal file size.
+		offsetStr := w.Header().Get("X-Log-Offset")
+		offset, err := strconv.ParseInt(offsetStr, 10, 64)
+		if err != nil {
+			t.Fatalf("parse X-Log-Offset %q: %v", offsetStr, err)
+		}
+		if offset != int64(len(logContent)) {
+			t.Errorf(
+				"X-Log-Offset = %d, want %d",
+				offset, len(logContent),
+			)
+		}
+	})
+
+	t.Run("offset returns partial content", func(t *testing.T) {
+		off := len(line1)
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/job/log?job_id=%d&offset=%d",
+				job.ID, off,
+			),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if w.Body.String() != line2 {
+			t.Errorf(
+				"expected second line only, got %q",
+				w.Body.String(),
+			)
+		}
+	})
+
+	t.Run("offset at end returns empty", func(t *testing.T) {
+		off := len(logContent)
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/job/log?job_id=%d&offset=%d",
+				job.ID, off,
+			),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if w.Body.Len() != 0 {
+			t.Errorf(
+				"expected empty body, got %q",
+				w.Body.String(),
+			)
+		}
+	})
+
+	t.Run("negative offset returns 400", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/job/log?job_id=%d&offset=-1", job.ID,
+			),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("offset beyond file resets to 0", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/job/log?job_id=%d&offset=999999",
+				job.ID,
+			),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		// Should return full content since offset was clamped.
+		if w.Body.String() != logContent {
+			t.Errorf(
+				"expected full content after clamp, got %q",
+				w.Body.String(),
+			)
+		}
+	})
+
+	t.Run("running job snaps to newline boundary", func(t *testing.T) {
+		// Claim the existing queued job first so the next
+		// ClaimJob picks up job2.
+		if _, err := db.ClaimJob("worker-drain"); err != nil {
+			t.Fatalf("ClaimJob (drain): %v", err)
+		}
+
+		// Create a new running job with a partial line at end.
+		job2, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID: repo.ID,
+			GitRef: "ghi789",
+			Agent:  "test",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+		if _, err := db.ClaimJob("worker-test2"); err != nil {
+			t.Fatalf("ClaimJob: %v", err)
+		}
+
+		// Write a complete line + partial line.
+		completeLine := `{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}` + "\n"
+		partialLine := `{"type":"assistant","message":{"content":`
+		if err := os.WriteFile(
+			JobLogPath(job2.ID),
+			[]byte(completeLine+partialLine),
+			0644,
+		); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/job/log?job_id=%d", job2.ID,
+			),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+
+		// Should only return up to the newline, not the partial.
+		body := w.Body.String()
+		if body != completeLine {
+			t.Errorf(
+				"expected only complete line, got %q",
+				body,
+			)
+		}
+
+		// X-Log-Offset should point past the newline.
+		offsetStr := w.Header().Get("X-Log-Offset")
+		offset, err := strconv.ParseInt(offsetStr, 10, 64)
+		if err != nil {
+			t.Fatalf("parse X-Log-Offset: %v", err)
+		}
+		if offset != int64(len(completeLine)) {
+			t.Errorf(
+				"X-Log-Offset = %d, want %d",
+				offset, len(completeLine),
+			)
 		}
 	})
 }

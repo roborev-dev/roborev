@@ -1161,7 +1161,17 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 
 // handleJobLog serves the raw JSONL log file for a job.
 // The TUI and CLI use this to render formatted agent output.
-func (s *Server) handleJobLog(w http.ResponseWriter, r *http.Request) {
+//
+// Supports incremental fetching via the "offset" query param
+// (byte offset into the log file). The response includes an
+// X-Log-Offset header with the end position — the client passes
+// this as offset on the next poll to get only new content.
+//
+// For running jobs, the end position is snapped to the last
+// newline boundary to avoid serving partial JSONL lines.
+func (s *Server) handleJobLog(
+	w http.ResponseWriter, r *http.Request,
+) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -1179,6 +1189,15 @@ func (s *Server) handleJobLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var offset int64
+	if v := r.URL.Query().Get("offset"); v != "" {
+		offset, err = strconv.ParseInt(v, 10, 64)
+		if err != nil || offset < 0 {
+			writeError(w, http.StatusBadRequest, "invalid offset")
+			return
+		}
+	}
+
 	job, err := s.db.GetJobByID(jobID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "job not found")
@@ -1189,9 +1208,11 @@ func (s *Server) handleJobLog(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Running job with no log file yet (startup race):
 		// return empty 200 so the TUI keeps polling.
-		if errors.Is(err, os.ErrNotExist) && job.Status == storage.JobStatusRunning {
+		if errors.Is(err, os.ErrNotExist) &&
+			job.Status == storage.JobStatusRunning {
 			w.Header().Set("Content-Type", "application/x-ndjson")
 			w.Header().Set("X-Job-Status", string(job.Status))
+			w.Header().Set("X-Log-Offset", "0")
 			return
 		}
 		writeError(w, http.StatusNotFound, "no log file for this job")
@@ -1199,11 +1220,93 @@ func (s *Server) handleJobLog(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
+	fi, err := f.Stat()
+	if err != nil {
+		writeError(
+			w, http.StatusInternalServerError,
+			"stat log file",
+		)
+		return
+	}
+	fileSize := fi.Size()
+
+	// Clamp offset if beyond file size (truncated/rotated log).
+	if offset > fileSize {
+		offset = 0
+	}
+
+	endPos := fileSize
+	if job.Status == storage.JobStatusRunning {
+		endPos = jobLogSafeEnd(f, fileSize)
+	}
+
+	// Clamp offset to endPos.
+	if offset > endPos {
+		offset = endPos
+	}
+
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		writeError(
+			w, http.StatusInternalServerError,
+			"seek log file",
+		)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("X-Job-Status", string(job.Status))
-	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("handleJobLog: write error for job %d: %v", jobID, err)
+	w.Header().Set(
+		"X-Log-Offset", strconv.FormatInt(endPos, 10),
+	)
+
+	n := endPos - offset
+	if n > 0 {
+		if _, err := io.CopyN(w, f, n); err != nil {
+			log.Printf(
+				"handleJobLog: write error for job %d: %v",
+				jobID, err,
+			)
+		}
 	}
+}
+
+// jobLogSafeEnd returns the byte position of the last complete
+// JSONL line in the file (i.e. up to and including the last '\n').
+// For completed jobs this equals fileSize; for running jobs it
+// avoids serving a partial line being written concurrently.
+func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
+	if fileSize == 0 {
+		return 0
+	}
+
+	// Check if last byte is newline — common case.
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], fileSize-1); err != nil {
+		return fileSize
+	}
+	if last[0] == '\n' {
+		return fileSize
+	}
+
+	// Scan backwards up to 64KB to find last newline.
+	const maxScan = 64 * 1024
+	scanStart := max(fileSize-maxScan, 0)
+	buf := make([]byte, fileSize-scanStart)
+	n, err := f.ReadAt(buf, scanStart)
+	if err != nil && err != io.EOF {
+		return fileSize
+	}
+	buf = buf[:n]
+
+	for i := len(buf) - 1; i >= 0; i-- {
+		if buf[i] == '\n' {
+			return scanStart + int64(i) + 1
+		}
+	}
+
+	// No newline found in scan range — serve nothing to avoid
+	// a partial line.
+	return 0
 }
 
 func writeNDJSON(w http.ResponseWriter, v any) bool {

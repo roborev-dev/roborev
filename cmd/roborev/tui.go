@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -245,12 +246,14 @@ type tuiModel struct {
 	helpScroll   int     // Scroll position in help view
 
 	// Log view state
-	logJobID     int64     // Job being viewed
-	logLines     []logLine // Buffer of output lines
-	logScroll    int       // Scroll position
-	logStreaming bool      // True if job is still running
-	logFromView  tuiView   // View to return to
-	logFollow    bool      // True if auto-scrolling to bottom (follow mode)
+	logJobID     int64            // Job being viewed
+	logLines     []logLine        // Buffer of output lines
+	logScroll    int              // Scroll position
+	logStreaming bool             // True if job is still running
+	logFromView  tuiView          // View to return to
+	logFollow    bool             // True if auto-scrolling to bottom (follow mode)
+	logOffset    int64            // Byte offset for next incremental fetch
+	logFmtr      *streamFormatter // Persistent formatter across polls
 
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
@@ -286,9 +289,11 @@ type logLine struct {
 
 // tuiLogOutputMsg delivers output lines from the daemon
 type tuiLogOutputMsg struct {
-	lines   []logLine
-	hasMore bool // true if job is still running
-	err     error
+	lines     []logLine
+	hasMore   bool // true if job is still running
+	err       error
+	newOffset int64 // byte offset for next fetch
+	append    bool  // true = append lines, false = replace
 }
 
 // tuiLogTickMsg triggers a refresh of the log output
@@ -1096,15 +1101,19 @@ var errNoLog = errors.New("no log available")
 
 // fetchJobLog fetches raw JSONL from /api/job/log, renders it
 // through streamFormatter, and returns pre-styled logLines.
-// Works for all job states (running, completed, failed).
+// Uses incremental fetching: only new bytes since logOffset are
+// downloaded and rendered, reusing the persistent logFmtr state.
 func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 	addr := m.serverAddr
 	width := m.width
 	client := m.client
 	style := m.glamourStyle
+	offset := m.logOffset
+	fmtr := m.logFmtr
 	return func() tea.Msg {
 		url := fmt.Sprintf(
-			"%s/api/job/log?job_id=%d", addr, jobID,
+			"%s/api/job/log?job_id=%d&offset=%d",
+			addr, jobID, offset,
 		)
 		resp, err := client.Get(url)
 		if err != nil {
@@ -1125,12 +1134,43 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		jobStatus := resp.Header.Get("X-Job-Status")
 		hasMore := jobStatus == "running"
 
+		// Parse new offset from response header
+		newOffset := offset
+		if v := resp.Header.Get("X-Log-Offset"); v != "" {
+			if parsed, perr := strconv.ParseInt(
+				v, 10, 64,
+			); perr == nil {
+				newOffset = parsed
+			}
+		}
+
+		// No new data — return early with current state
+		isIncremental := offset > 0 && fmtr != nil
+		if newOffset == offset && isIncremental {
+			return tuiLogOutputMsg{
+				hasMore:   hasMore,
+				newOffset: newOffset,
+				append:    true,
+			}
+		}
+
 		// Render JSONL through streamFormatter. Use pre-computed
 		// glamour style to avoid terminal queries from goroutine.
 		var buf bytes.Buffer
-		fmtr := newStreamFormatterWithWidth(&buf, width, style)
+		var renderFmtr *streamFormatter
+		if isIncremental {
+			// Reuse persistent formatter — redirect its output
+			// to a fresh buffer for this batch only.
+			fmtr.w = &buf
+			renderFmtr = fmtr
+		} else {
+			renderFmtr = newStreamFormatterWithWidth(
+				&buf, width, style,
+			)
+		}
+
 		if err := renderJobLogWith(
-			resp.Body, fmtr, &buf,
+			resp.Body, renderFmtr, &buf,
 		); err != nil {
 			return tuiLogOutputMsg{err: err}
 		}
@@ -1143,12 +1183,18 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 				lines = append(lines, logLine{text: s})
 			}
 			// Remove trailing empty line from final newline
-			if len(lines) > 0 && lines[len(lines)-1].text == "" {
+			if len(lines) > 0 &&
+				lines[len(lines)-1].text == "" {
 				lines = lines[:len(lines)-1]
 			}
 		}
 
-		return tuiLogOutputMsg{lines: lines, hasMore: hasMore}
+		return tuiLogOutputMsg{
+			lines:     lines,
+			hasMore:   hasMore,
+			newOffset: newOffset,
+			append:    isIncremental,
+		}
 	}
 }
 
@@ -1851,6 +1897,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Width change in log view requires full re-render
+		// because streamFormatter is width-aware.
+		if m.currentView == tuiViewLog && m.logLines != nil {
+			m.logOffset = 0
+			m.logLines = nil
+			m.logFmtr = newStreamFormatterWithWidth(
+				io.Discard, msg.Width, m.glamourStyle,
+			)
+			return m, m.fetchJobLog(m.logJobID)
+		}
+
 	case tuiTickMsg:
 		// Skip job refresh while pagination or another refresh is in flight
 		if m.loadingMore || m.loadingJobs {
@@ -1932,11 +1989,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// for output...". For still-streaming jobs with no
 			// lines yet, keep logLines nil so UI shows "Waiting".
 			if len(msg.lines) > 0 {
-				m.logLines = msg.lines
+				if msg.append {
+					m.logLines = append(
+						m.logLines, msg.lines...,
+					)
+				} else {
+					m.logLines = msg.lines
+				}
 			} else if m.logLines == nil && !msg.hasMore {
 				// Completed job with empty log — mark loaded.
 				m.logLines = []logLine{}
 			}
+			m.logOffset = msg.newOffset
 			m.logStreaming = msg.hasMore
 			if m.logFollow && len(m.logLines) > 0 {
 				visibleLines := m.logVisibleLines()

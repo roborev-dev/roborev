@@ -121,8 +121,10 @@ func renderJobLogWith(
 					return werr
 				}
 			} else {
-				// Non-JSON lines: print directly (plain-text
-				// log before JSON, or stderr/diagnostics after).
+				// Non-JSON lines: sanitize ANSI/control sequences
+				// to prevent terminal spoofing from agent stderr,
+				// then print.
+				line = sanitizeControlKeepNewlines(line)
 				if _, werr := fmt.Fprintln(plainW, line); werr != nil {
 					return werr
 				}

@@ -2683,4 +2683,111 @@ func TestTUILogOutputIgnoredWhenNotInLogView(t *testing.T) {
 	}
 }
 
+func TestTUILogOutputAppendMode(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
+	m.height = 30
+
+	// Simulate first fetch (replace mode).
+	m.logLines = []logLine{
+		{text: "Line 1"},
+		{text: "Line 2"},
+	}
+	m.logOffset = 100
+
+	// Incremental append with new lines.
+	msg := tuiLogOutputMsg{
+		lines: []logLine{
+			{text: "Line 3"},
+			{text: "Line 4"},
+		},
+		hasMore:   true,
+		newOffset: 200,
+		append:    true,
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	if len(m2.logLines) != 4 {
+		t.Fatalf("expected 4 lines, got %d", len(m2.logLines))
+	}
+	if m2.logLines[0].text != "Line 1" {
+		t.Errorf("first line should be preserved")
+	}
+	if m2.logLines[2].text != "Line 3" {
+		t.Errorf("appended line should be Line 3, got %q",
+			m2.logLines[2].text)
+	}
+	if m2.logOffset != 200 {
+		t.Errorf("logOffset = %d, want 200", m2.logOffset)
+	}
+}
+
+func TestTUILogOutputAppendNoNewLines(t *testing.T) {
+	// When append=true but no new lines, existing lines
+	// should be preserved unchanged.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
+	m.height = 30
+	m.logOffset = 100
+
+	m.logLines = []logLine{
+		{text: "Existing"},
+	}
+
+	msg := tuiLogOutputMsg{
+		hasMore:   true,
+		newOffset: 100,
+		append:    true,
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	if len(m2.logLines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(m2.logLines))
+	}
+	if m2.logLines[0].text != "Existing" {
+		t.Errorf("existing line should be preserved")
+	}
+}
+
+func TestTUILogOutputReplaceMode(t *testing.T) {
+	// When append=false, lines should be fully replaced.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = false
+	m.height = 30
+
+	m.logLines = []logLine{
+		{text: "Old line 1"},
+		{text: "Old line 2"},
+	}
+
+	msg := tuiLogOutputMsg{
+		lines: []logLine{
+			{text: "New line 1"},
+		},
+		hasMore:   false,
+		newOffset: 50,
+		append:    false,
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	if len(m2.logLines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(m2.logLines))
+	}
+	if m2.logLines[0].text != "New line 1" {
+		t.Errorf("line should be replaced")
+	}
+	if m2.logOffset != 50 {
+		t.Errorf("logOffset = %d, want 50", m2.logOffset)
+	}
+}
+
 // Branch filter tests
