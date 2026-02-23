@@ -72,6 +72,19 @@ func newStreamFormatter(w io.Writer, isTTY bool) *streamFormatter {
 	return f
 }
 
+// newStreamFormatterWithWidth creates a stream formatter with an
+// explicit width instead of detecting from the writer's fd. Used
+// when rendering into a buffer (e.g. the TUI tail view).
+func newStreamFormatterWithWidth(
+	w io.Writer, isTTY bool, width int,
+) *streamFormatter {
+	f := &streamFormatter{w: w, isTTY: isTTY, width: width}
+	if isTTY {
+		f.glamourStyle = sfGlamourStyle()
+	}
+	return f
+}
+
 // sfTerminalWidth returns the terminal width for the given writer,
 // defaulting to 100 if detection fails.
 func sfTerminalWidth(w io.Writer) int {

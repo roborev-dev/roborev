@@ -872,19 +872,10 @@ func (m tuiModel) handleRerunKey() (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) handleTailKey2() (tea.Model, tea.Cmd) {
-	// From prompt view: allow tailing the running job being viewed
+	// From prompt view: view log for the job being viewed
 	if m.currentView == tuiViewPrompt && m.currentReview != nil && m.currentReview.Job != nil {
 		job := m.currentReview.Job
-		if job.Status == storage.JobStatusRunning {
-			m.tailJobID = job.ID
-			m.tailLines = nil
-			m.tailScroll = 0
-			m.tailStreaming = true
-			m.tailFollow = true
-			m.tailFromView = m.reviewFromView
-			m.currentView = tuiViewTail
-			return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
-		}
+		return m.openTailView(job.ID, job.Status, m.reviewFromView)
 	}
 
 	if m.currentView != tuiViewQueue || len(m.jobs) == 0 || m.selectedIdx < 0 || m.selectedIdx >= len(m.jobs) {
@@ -892,21 +883,36 @@ func (m tuiModel) handleTailKey2() (tea.Model, tea.Cmd) {
 	}
 	job := m.jobs[m.selectedIdx]
 	switch job.Status {
-	case storage.JobStatusRunning:
-		m.tailJobID = job.ID
-		m.tailLines = nil
-		m.tailScroll = 0
-		m.tailStreaming = true
-		m.tailFollow = true
-		m.tailFromView = tuiViewQueue
-		m.currentView = tuiViewTail
-		return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
 	case storage.JobStatusQueued:
 		m.flashMessage = "Job is queued - not yet running"
 		m.flashExpiresAt = time.Now().Add(2 * time.Second)
 		m.flashView = tuiViewQueue
+		return m, nil
+	default:
+		return m.openTailView(job.ID, job.Status, tuiViewQueue)
 	}
-	return m, nil
+}
+
+// openTailView opens the tail/log view for a job of any status.
+// Running jobs stream with follow; completed jobs show a static view.
+func (m tuiModel) openTailView(
+	jobID int64, status storage.JobStatus, fromView tuiView,
+) (tea.Model, tea.Cmd) {
+	m.tailJobID = jobID
+	m.tailLines = nil
+	m.tailScroll = 0
+	m.tailFromView = fromView
+	m.currentView = tuiViewTail
+
+	if status == storage.JobStatusRunning {
+		m.tailStreaming = true
+		m.tailFollow = true
+	} else {
+		m.tailStreaming = false
+		m.tailFollow = false
+	}
+
+	return m, tea.Batch(tea.ClearScreen, m.fetchJobLog(jobID))
 }
 
 func (m tuiModel) handleFilterOpenKey() (tea.Model, tea.Cmd) {
@@ -1477,7 +1483,7 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter":
-		// View task: prompt for running, review for done/applied, error for failed
+		// View task: prompt for running, review for done/applied, log for failed
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
 			job := m.fixJobs[m.fixSelectedIdx]
 			switch {
@@ -1494,57 +1500,28 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.promptFromQueue = false
 					return m, nil
 				}
-				// No prompt yet, go straight to tail
-				m.tailJobID = job.ID
-				m.tailLines = nil
-				m.tailScroll = 0
-				m.tailStreaming = true
-				m.tailFollow = true
-				m.tailFromView = tuiViewTasks
-				m.currentView = tuiViewTail
-				return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
+				// No prompt yet, go straight to log view
+				return m.openTailView(job.ID, job.Status, tuiViewTasks)
 			case job.HasViewableOutput():
 				m.selectedJobID = job.ID
 				m.reviewFromView = tuiViewTasks
 				return m, m.fetchReview(job.ID)
 			case job.Status == storage.JobStatusFailed:
-				errMsg := job.Error
-				if errMsg == "" {
-					errMsg = "unknown error"
-				}
-				m.flashMessage = fmt.Sprintf("Job #%d failed: %s", job.ID, errMsg)
-				m.flashExpiresAt = time.Now().Add(5 * time.Second)
-				m.flashView = tuiViewTasks
+				return m.openTailView(job.ID, job.Status, tuiViewTasks)
 			}
 		}
 		return m, nil
 	case "t":
-		// Tail output: live for running jobs, review for done, error for failed
+		// View agent log for any non-queued job
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {
 			job := m.fixJobs[m.fixSelectedIdx]
-			switch {
-			case job.Status == storage.JobStatusRunning:
-				m.tailJobID = job.ID
-				m.tailLines = nil
-				m.tailScroll = 0
-				m.tailStreaming = true
-				m.tailFollow = true
-				m.tailFromView = tuiViewTasks
-				m.currentView = tuiViewTail
-				return m, tea.Batch(tea.ClearScreen, m.fetchTailOutput(job.ID))
-			case job.HasViewableOutput():
-				m.selectedJobID = job.ID
-				m.reviewFromView = tuiViewTasks
-				return m, m.fetchReview(job.ID)
-			case job.Status == storage.JobStatusFailed:
-				errMsg := job.Error
-				if errMsg == "" {
-					errMsg = "unknown error"
-				}
-				m.flashMessage = fmt.Sprintf("Job #%d failed: %s", job.ID, errMsg)
-				m.flashExpiresAt = time.Now().Add(5 * time.Second)
+			if job.Status == storage.JobStatusQueued {
+				m.flashMessage = "Job is queued - not yet running"
+				m.flashExpiresAt = time.Now().Add(2 * time.Second)
 				m.flashView = tuiViewTasks
+				return m, nil
 			}
+			return m.openTailView(job.ID, job.Status, tuiViewTasks)
 		}
 		return m, nil
 	case "A":

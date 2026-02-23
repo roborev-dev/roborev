@@ -96,8 +96,15 @@ Examples:
 // output. JSONL lines are processed through streamFormatter for
 // compact tool/text rendering. Non-JSON lines are printed as-is.
 func renderJobLog(r io.Reader, w io.Writer, isTTY bool) error {
+	return renderJobLogWith(r, newStreamFormatter(w, isTTY), w)
+}
+
+// renderJobLogWith renders a job log using a pre-configured
+// streamFormatter. plainW receives non-JSON lines directly.
+func renderJobLogWith(
+	r io.Reader, fmtr *streamFormatter, plainW io.Writer,
+) error {
 	br := bufio.NewReader(r)
-	fmtr := newStreamFormatter(w, isTTY)
 	hasJSON := false
 
 	for {
@@ -115,7 +122,7 @@ func renderJobLog(r io.Reader, w io.Writer, isTTY bool) error {
 				}
 			} else if !hasJSON {
 				// Pure plain-text log — print lines directly
-				if _, werr := fmt.Fprintln(w, line); werr != nil {
+				if _, werr := fmt.Fprintln(plainW, line); werr != nil {
 					return werr
 				}
 			}

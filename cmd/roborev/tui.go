@@ -276,11 +276,10 @@ type pendingState struct {
 	seq      uint64
 }
 
-// tailLine represents a single line of agent output in the tail view
+// tailLine represents a single pre-rendered line of agent output in the tail view.
+// Text is already styled via streamFormatter (ANSI codes included).
 type tailLine struct {
-	timestamp time.Time
-	text      string
-	lineType  string // "text", "tool", "thinking", "error"
+	text string
 }
 
 // tuiTailOutputMsg delivers output lines from the daemon
@@ -1088,43 +1087,64 @@ func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
 	}
 }
 
-func (m tuiModel) fetchTailOutput(jobID int64) tea.Cmd {
+// errNoLog is a sentinel error returned when the job log API
+// returns 404 (no log file on disk for the requested job).
+var errNoLog = errors.New("no log available")
+
+// fetchJobLog fetches raw JSONL from /api/job/log, renders it
+// through streamFormatter, and returns pre-styled tailLines.
+// Works for all job states (running, completed, failed).
+func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
+	addr := m.serverAddr
+	width := m.width
 	return func() tea.Msg {
-		resp, err := m.client.Get(fmt.Sprintf("%s/api/job/output?job_id=%d", m.serverAddr, jobID))
+		url := fmt.Sprintf(
+			"%s/api/job/log?job_id=%d", addr, jobID,
+		)
+		resp, err := http.Get(url)
 		if err != nil {
 			return tuiTailOutputMsg{err: err}
 		}
 		defer resp.Body.Close()
 
+		if resp.StatusCode == http.StatusNotFound {
+			return tuiTailOutputMsg{err: errNoLog}
+		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiTailOutputMsg{err: fmt.Errorf("fetch output: %s", resp.Status)}
+			return tuiTailOutputMsg{
+				err: fmt.Errorf("fetch log: %s", resp.Status),
+			}
 		}
 
-		var result struct {
-			JobID  int64  `json:"job_id"`
-			Status string `json:"status"`
-			Lines  []struct {
-				TS       string `json:"ts"`
-				Text     string `json:"text"`
-				LineType string `json:"line_type"`
-			} `json:"lines"`
-			HasMore bool `json:"has_more"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		// Determine if job is still running from header
+		jobStatus := resp.Header.Get("X-Job-Status")
+		hasMore := jobStatus == "running"
+
+		// Render JSONL through streamFormatter
+		var buf bytes.Buffer
+		fmtr := newStreamFormatterWithWidth(
+			&buf, true, width,
+		)
+		if err := renderJobLogWith(
+			resp.Body, fmtr, &buf,
+		); err != nil {
 			return tuiTailOutputMsg{err: err}
 		}
 
-		lines := make([]tailLine, len(result.Lines))
-		for i, l := range result.Lines {
-			ts, err := time.Parse(time.RFC3339Nano, l.TS)
-			if err != nil {
-				// Fallback to current time if timestamp is invalid
-				ts = time.Now()
+		// Split rendered output into lines
+		raw := buf.String()
+		var lines []tailLine
+		if raw != "" {
+			for s := range strings.SplitSeq(raw, "\n") {
+				lines = append(lines, tailLine{text: s})
 			}
-			lines[i] = tailLine{timestamp: ts, text: l.Text, lineType: l.LineType}
+			// Remove trailing empty line from final newline
+			if len(lines) > 0 && lines[len(lines)-1].text == "" {
+				lines = lines[:len(lines)-1]
+			}
 		}
 
-		return tuiTailOutputMsg{lines: lines, hasMore: result.HasMore}
+		return tuiTailOutputMsg{lines: lines, hasMore: hasMore}
 	}
 }
 
@@ -1797,7 +1817,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiTailTickMsg:
 		if m.currentView == tuiViewTail && m.tailStreaming && m.tailJobID > 0 {
-			return m, m.fetchTailOutput(m.tailJobID)
+			return m, m.fetchJobLog(m.tailJobID)
 		}
 
 	case tuiJobsMsg:
@@ -1833,6 +1853,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiTailOutputMsg:
 		m.consecutiveErrors = 0
 		if msg.err != nil {
+			if errors.Is(msg.err, errNoLog) {
+				m.flashMessage = "No log available for this job"
+				m.flashExpiresAt = time.Now().Add(3 * time.Second)
+				m.flashView = m.tailFromView
+				m.currentView = m.tailFromView
+				m.tailStreaming = false
+				return m, nil
+			}
 			m.err = msg.err
 			return m, nil
 		}
@@ -3181,7 +3209,7 @@ func (m tuiModel) renderTailView() string {
 	b.WriteString(strings.Repeat("─", m.width))
 	b.WriteString("\x1b[K\n")
 
-	// Render lines
+	// Render lines (pre-styled by streamFormatter)
 	linesWritten := 0
 	if len(m.tailLines) == 0 {
 		b.WriteString(tuiStatusStyle.Render("Waiting for output..."))
@@ -3190,28 +3218,7 @@ func (m tuiModel) renderTailView() string {
 	} else {
 		end := min(scroll+visibleLines, len(m.tailLines))
 		for i := scroll; i < end; i++ {
-			line := m.tailLines[i]
-			// Format with timestamp
-			ts := line.timestamp.Format("15:04:05")
-
-			// Truncate raw text BEFORE styling to avoid cutting ANSI codes
-			// Account for timestamp prefix (8 chars + 1 space = 9)
-			lineText := line.text
-			maxTextWidth := m.width - 9
-			if maxTextWidth > 3 && runewidth.StringWidth(lineText) > maxTextWidth {
-				lineText = runewidth.Truncate(lineText, maxTextWidth-3, "...")
-			}
-
-			var text string
-			switch line.lineType {
-			case "tool":
-				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), tuiQueuedStyle.Render(lineText))
-			case "error":
-				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), tuiFailedStyle.Render(lineText))
-			default:
-				text = fmt.Sprintf("%s %s", tuiStatusStyle.Render(ts), lineText)
-			}
-			b.WriteString(text)
+			b.WriteString(m.tailLines[i].text)
 			b.WriteString("\x1b[K\n")
 			linesWritten++
 		}
@@ -3240,8 +3247,13 @@ func (m tuiModel) renderTailView() string {
 	b.WriteString(tuiStatusStyle.Render(status))
 	b.WriteString("\x1b[K\n")
 
-	// Help
-	help := "↑/↓: scroll | g: toggle top/bottom | x: cancel | esc/q: back"
+	// Help (show cancel only for streaming/running jobs)
+	var help string
+	if m.tailStreaming {
+		help = "↑/↓: scroll | g: toggle top/bottom | x: cancel | esc/q: back"
+	} else {
+		help = "↑/↓: scroll | g: toggle top/bottom | esc/q: back"
+	}
 	b.WriteString(tuiHelpStyle.Render(help))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen
@@ -3263,7 +3275,7 @@ func helpLines() []string {
 				{"PgUp/PgDn", "Page through list"},
 				{"enter", "View review"},
 				{"p", "View prompt"},
-				{"t", "Tail running job output"},
+				{"t", "View agent log"},
 				{"m", "View commit message"},
 			},
 		},
@@ -3327,7 +3339,7 @@ func helpLines() []string {
 				{"↑/↓", "Navigate fix jobs"},
 				{"A", "Apply patch from completed fix"},
 				{"R", "Re-trigger fix (rebase)"},
-				{"t", "Tail running fix job output"},
+				{"t", "View agent log"},
 				{"x", "Cancel running/queued fix job"},
 				{"esc/T", "Back to queue"},
 			},

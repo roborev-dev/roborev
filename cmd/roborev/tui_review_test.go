@@ -2380,9 +2380,9 @@ func TestTUITailOutputPreservesLinesOnEmptyResponse(t *testing.T) {
 
 	// Set up initial lines as if we had been streaming output
 	m.tailLines = []tailLine{
-		{timestamp: time.Now(), text: "Line 1", lineType: "text"},
-		{timestamp: time.Now(), text: "Line 2", lineType: "text"},
-		{timestamp: time.Now(), text: "Line 3", lineType: "text"},
+		{text: "Line 1"},
+		{text: "Line 2"},
+		{text: "Line 3"},
 	}
 
 	// Simulate job completion: server returns empty lines, hasMore=false
@@ -2420,14 +2420,14 @@ func TestTUITailOutputUpdatesLinesWhenStreaming(t *testing.T) {
 
 	// Set up initial lines
 	m.tailLines = []tailLine{
-		{timestamp: time.Now(), text: "Old line", lineType: "text"},
+		{text: "Old line"},
 	}
 
 	// New lines arrive while still streaming
 	newMsg := tuiTailOutputMsg{
 		lines: []tailLine{
-			{timestamp: time.Now(), text: "Old line", lineType: "text"},
-			{timestamp: time.Now(), text: "New line", lineType: "text"},
+			{text: "Old line"},
+			{text: "New line"},
 		},
 		hasMore: true, // Still streaming
 		err:     nil,
@@ -2454,13 +2454,13 @@ func TestTUITailOutputIgnoredWhenNotInTailView(t *testing.T) {
 
 	// Existing lines from a previous tail session
 	m.tailLines = []tailLine{
-		{timestamp: time.Now(), text: "Previous session line", lineType: "text"},
+		{text: "Previous session line"},
 	}
 
 	// New lines arrive (stale message from previous tail)
 	msg := tuiTailOutputMsg{
 		lines: []tailLine{
-			{timestamp: time.Now(), text: "Should be ignored", lineType: "text"},
+			{text: "Should be ignored"},
 		},
 		hasMore: false,
 		err:     nil,

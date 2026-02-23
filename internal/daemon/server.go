@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -83,6 +84,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/jobs", s.handleListJobs)
 	mux.HandleFunc("/api/job/cancel", s.handleCancelJob)
 	mux.HandleFunc("/api/job/output", s.handleJobOutput)
+	mux.HandleFunc("/api/job/log", s.handleJobLog)
 	mux.HandleFunc("/api/job/rerun", s.handleRerunJob)
 	mux.HandleFunc("/api/job/update-branch", s.handleUpdateJobBranch)
 	mux.HandleFunc("/api/repos", s.handleListRepos)
@@ -1159,6 +1161,46 @@ func (s *Server) handleJobOutput(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		}
+	}
+}
+
+// handleJobLog serves the raw JSONL log file for a job.
+// The TUI and CLI use this to render formatted agent output.
+func (s *Server) handleJobLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	jobIDStr := r.URL.Query().Get("job_id")
+	if jobIDStr == "" {
+		writeError(w, http.StatusBadRequest, "job_id required")
+		return
+	}
+
+	jobID, err := strconv.ParseInt(jobIDStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid job_id")
+		return
+	}
+
+	job, err := s.db.GetJobByID(jobID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "job not found")
+		return
+	}
+
+	f, err := os.Open(JobLogPath(jobID))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no log file for this job")
+		return
+	}
+	defer f.Close()
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("X-Job-Status", string(job.Status))
+	if _, err := io.Copy(w, f); err != nil {
+		log.Printf("handleJobLog: write error for job %d: %v", jobID, err)
 	}
 }
 

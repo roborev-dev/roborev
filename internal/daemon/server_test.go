@@ -3806,3 +3806,103 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleJobLog(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	// Create a repo and a job
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "testrepo"))
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "abc123",
+		Agent:  "test",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	t.Run("missing job_id returns 400", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/job/log", nil)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("nonexistent job returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodGet, "/api/job/log?job_id=99999", nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", w.Code)
+		}
+	})
+
+	t.Run("no log file returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("returns log content with headers", func(t *testing.T) {
+		// Create a log file
+		logDir := JobLogDir()
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		logContent := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}` + "\n"
+		if err := os.WriteFile(
+			JobLogPath(job.ID), []byte(logContent), 0644,
+		); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "application/x-ndjson" {
+			t.Errorf("expected Content-Type application/x-ndjson, got %q", ct)
+		}
+		if js := w.Header().Get("X-Job-Status"); js != "queued" {
+			t.Errorf("expected X-Job-Status queued, got %q", js)
+		}
+		if w.Body.String() != logContent {
+			t.Errorf("expected log content %q, got %q", logContent, w.Body.String())
+		}
+	})
+
+	t.Run("POST returns 405", func(t *testing.T) {
+		req := httptest.NewRequest(
+			http.MethodPost,
+			fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
+			nil,
+		)
+		w := httptest.NewRecorder()
+		server.handleJobLog(w, req)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405, got %d", w.Code)
+		}
+	})
+}
