@@ -102,6 +102,31 @@ func TestRenderJobLog_OversizedLine(t *testing.T) {
 	}
 }
 
+func TestRenderJobLog_PlainTextPreservesBlankLines(t *testing.T) {
+	input := "line 1\n\nline 3\n"
+
+	var buf bytes.Buffer
+	err := renderJobLog(strings.NewReader(input), &buf, true)
+	if err != nil {
+		t.Fatalf("renderJobLog: %v", err)
+	}
+
+	out := buf.String()
+	// Blank line should be preserved between line 1 and line 3.
+	if !strings.Contains(out, "line 1\n\nline 3") {
+		t.Errorf("blank line should be preserved, got:\n%q", out)
+	}
+}
+
+func TestIsBrokenPipe(t *testing.T) {
+	if isBrokenPipe(nil) {
+		t.Error("nil should not be broken pipe")
+	}
+	if isBrokenPipe(fmt.Errorf("other error")) {
+		t.Error("non-EPIPE error should not be broken pipe")
+	}
+}
+
 func TestLooksLikeJSON(t *testing.T) {
 	tests := []struct {
 		input string

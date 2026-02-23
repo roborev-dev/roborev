@@ -128,6 +128,11 @@ func renderJobLogWith(
 			}
 			// After first JSON, non-JSON lines are skipped
 			// (blank separators, stderr noise from agents).
+		} else if err != io.EOF && !hasJSON {
+			// Preserve blank lines in plain-text logs for spacing.
+			if _, werr := fmt.Fprintln(plainW); werr != nil {
+				return werr
+			}
 		}
 		if err == io.EOF {
 			break

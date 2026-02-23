@@ -439,6 +439,95 @@ func TestStreamFormatter_Codex_Scenarios(t *testing.T) {
 	}
 }
 
+func TestSanitizeControl(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain", "hello world", "hello world"},
+		{"newlines collapsed", "line1\nline2\r\nline3", "line1 line2 line3"},
+		{"ansi stripped", "\x1b[31mred\x1b[0m text", "red text"},
+		{"control chars removed", "bell\x07here", "bellhere"},
+		{"tabs kept", "col1\tcol2", "col1\tcol2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeControl(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeControl(%q) = %q, want %q",
+					tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeControlKeepNewlines(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain", "hello", "hello"},
+		{"newlines preserved", "line1\nline2", "line1\nline2"},
+		{"crlf normalized", "line1\r\nline2\rline3", "line1\nline2\nline3"},
+		{"ansi stripped", "\x1b[32mgreen\x1b[0m", "green"},
+		{"control chars removed", "bell\x07here", "bellhere"},
+		{"tabs kept", "col1\tcol2", "col1\tcol2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeControlKeepNewlines(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeControlKeepNewlines(%q) = %q, want %q",
+					tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStreamFormatter_TextToToolTransition(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventAssistantText("Reviewing code."))
+	fix.writeLine(eventAssistantToolUse("Read", map[string]any{
+		"file_path": "main.go",
+	}))
+	fix.writeLine(eventAssistantToolUse("Edit", map[string]any{
+		"file_path":  "main.go",
+		"old_string": "old", "new_string": "new",
+	}))
+	fix.writeLine(eventAssistantText("Done fixing."))
+
+	out := fix.output()
+	// Text → tool transition should have blank line separation
+	lines := strings.Split(out, "\n")
+	var emptyCount int
+	for _, l := range lines {
+		if strings.TrimSpace(l) == "" {
+			emptyCount++
+		}
+	}
+	// At least 2 blank lines: text→tool and tool→text transitions
+	if emptyCount < 2 {
+		t.Errorf("expected at least 2 blank lines for transitions, got %d in:\n%s",
+			emptyCount, out)
+	}
+
+	// Tool lines should have gutter prefix
+	for _, l := range lines {
+		if strings.Contains(l, "Read") && strings.Contains(l, "main.go") {
+			if !strings.Contains(l, "|") && !strings.Contains(l, "│") {
+				t.Errorf("tool line should have gutter prefix, got: %q", l)
+			}
+		}
+	}
+
+	// Consecutive tool calls should NOT have blank line between them
+	fix.assertContains(t, "Read   main.go")
+	fix.assertContains(t, "Edit   main.go")
+	fix.assertContains(t, "Done fixing.")
+}
+
 func TestStreamFormatter_PartialWrites(t *testing.T) {
 	fix := newFixture(true)
 
