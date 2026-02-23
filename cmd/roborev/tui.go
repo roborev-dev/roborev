@@ -1430,6 +1430,32 @@ func (m *tuiModel) findPrevPromptableJob() int {
 	return -1
 }
 
+// findNextLoggableJob finds the next job that has a log
+// (running, done, or failed). Respects active filters.
+func (m *tuiModel) findNextLoggableJob() int {
+	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
+		job := m.jobs[i]
+		if job.Status != storage.JobStatusQueued &&
+			m.isJobVisible(job) {
+			return i
+		}
+	}
+	return -1
+}
+
+// findPrevLoggableJob finds the previous job that has a log
+// (running, done, or failed). Respects active filters.
+func (m *tuiModel) findPrevLoggableJob() int {
+	for i := m.selectedIdx - 1; i >= 0; i-- {
+		job := m.jobs[i]
+		if job.Status != storage.JobStatusQueued &&
+			m.isJobVisible(job) {
+			return i
+		}
+	}
+	return -1
+}
+
 // normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current
 // selection is hidden (e.g., marked addressed with hideAddressed filter active).
 // Call this when returning to queue view from review view.
@@ -3278,9 +3304,9 @@ func (m tuiModel) renderLogView() string {
 	// Help (show cancel only for streaming/running jobs)
 	var help string
 	if m.logStreaming {
-		help = "↑/↓: scroll | g: toggle top/bottom | x: cancel | esc/q: back"
+		help = "↑/↓: scroll | ←/→: prev/next | g: toggle top/bottom | x: cancel | esc/q: back"
 	} else {
-		help = "↑/↓: scroll | g: toggle top/bottom | esc/q: back"
+		help = "↑/↓: scroll | ←/→: prev/next | g: toggle top/bottom | esc/q: back"
 	}
 	b.WriteString(tuiHelpStyle.Render(help))
 	b.WriteString("\x1b[K")
