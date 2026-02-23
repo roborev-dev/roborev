@@ -1187,6 +1187,13 @@ func (s *Server) handleJobLog(w http.ResponseWriter, r *http.Request) {
 
 	f, err := os.Open(JobLogPath(jobID))
 	if err != nil {
+		// Running job with no log file yet (startup race):
+		// return empty 200 so the TUI keeps polling.
+		if job.Status == storage.JobStatusRunning {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.Header().Set("X-Job-Status", string(job.Status))
+			return
+		}
 		writeError(w, http.StatusNotFound, "no log file for this job")
 		return
 	}
