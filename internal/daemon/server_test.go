@@ -4215,6 +4215,7 @@ func writeTempFile(t *testing.T, data []byte) *os.File {
 	if err != nil {
 		t.Fatalf("CreateTemp: %v", err)
 	}
+	t.Cleanup(func() { f.Close() })
 	if _, err := f.Write(data); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
