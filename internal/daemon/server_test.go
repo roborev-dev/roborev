@@ -3838,6 +3838,54 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects git_ref starting with dash", func(t *testing.T) {
+		body := map[string]any{
+			"parent_job_id": reviewJob.ID,
+			"git_ref":       "--option-injection",
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("Expected 400 for dash-prefixed git_ref, got %d", w.Code)
+		}
+	})
+
+	t.Run("rejects git_ref with control chars", func(t *testing.T) {
+		body := map[string]any{
+			"parent_job_id": reviewJob.ID,
+			"git_ref":       "main\x00injected",
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("Expected 400 for control-char git_ref, got %d", w.Code)
+		}
+	})
+
+	t.Run("accepts valid git_ref from request", func(t *testing.T) {
+		body := map[string]any{
+			"parent_job_id": reviewJob.ID,
+			"git_ref":       "feature/my-branch",
+		}
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected 201 for valid git_ref, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+		if fixJob.GitRef != "feature/my-branch" {
+			t.Errorf("Expected git_ref 'feature/my-branch', got %q", fixJob.GitRef)
+		}
+	})
+
 	t.Run("stale job from different repo is rejected", func(t *testing.T) {
 		// Create a fix job in a different repo
 		repo2Dir := filepath.Join(tmpDir, "repo-fix-val-2")

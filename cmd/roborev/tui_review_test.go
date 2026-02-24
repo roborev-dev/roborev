@@ -3151,4 +3151,43 @@ func TestTUILogNavFromTasks(t *testing.T) {
 	}
 }
 
+func TestTUIFixGitRefRejectsEmpty(t *testing.T) {
+	// Pressing Enter with an empty git ref should show a flash
+	// message and stay on the git ref modal.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFixGitRef
+	m.fixPromptJobID = 1
+	m.fixPromptGitRef = ""
+	m.fixPromptFromView = tuiViewQueue
+
+	m2, _ := pressSpecial(m, tea.KeyEnter)
+
+	if m2.currentView != tuiViewFixGitRef {
+		t.Errorf(
+			"should stay on git ref view, got %d",
+			m2.currentView,
+		)
+	}
+	if m2.flashMessage == "" {
+		t.Error("expected flash message for empty ref")
+	}
+}
+
+func TestTUIFixGitRefAcceptsNonEmpty(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewFixGitRef
+	m.fixPromptJobID = 1
+	m.fixPromptGitRef = "main"
+	m.fixPromptFromView = tuiViewQueue
+
+	m2, _ := pressSpecial(m, tea.KeyEnter)
+
+	if m2.currentView != tuiViewFixPrompt {
+		t.Errorf(
+			"should transition to fix prompt, got %d",
+			m2.currentView,
+		)
+	}
+}
+
 // Branch filter tests

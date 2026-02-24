@@ -1952,6 +1952,13 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	}
 	model := config.ResolveModelForWorkflow("", parentJob.RepoPath, cfg, "fix", reasoning)
 
+	// Validate user-provided git ref to prevent option injection
+	// (e.g. "--something") when passed to git worktree add.
+	if req.GitRef != "" && !isValidGitRef(req.GitRef) {
+		writeError(w, http.StatusBadRequest, "invalid git_ref")
+		return
+	}
+
 	// Resolve the git ref for the fix worktree.
 	// Range refs (sha..sha) and empty refs (compact jobs) are not valid for
 	// git worktree add, so fall back to branch then "HEAD".
@@ -1988,6 +1995,21 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONWithStatus(w, http.StatusCreated, job)
+}
+
+// isValidGitRef checks that a user-provided git ref is safe to pass
+// to git commands. Rejects empty strings, leading dashes (option
+// injection), and control characters.
+func isValidGitRef(ref string) bool {
+	if ref == "" || ref[0] == '-' {
+		return false
+	}
+	for _, r := range ref {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // handleGetPatch returns the stored patch for a completed fix job.
