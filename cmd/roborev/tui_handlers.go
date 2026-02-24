@@ -1642,6 +1642,15 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case "W":
+		// Create a worktree and apply patch (after user was prompted)
+		if m.pendingWorktreeApplyJobID > 0 {
+			jobID := m.pendingWorktreeApplyJobID
+			m.pendingWorktreeApplyJobID = 0
+			m.flashMessage = ""
+			return m, m.applyFixPatchInWorktree(jobID)
+		}
+		return m, nil
 	case "R":
 		// Manually trigger rebase for a completed or rebased fix job
 		if len(m.fixJobs) > 0 && m.fixSelectedIdx < len(m.fixJobs) {

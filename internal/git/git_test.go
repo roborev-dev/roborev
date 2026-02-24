@@ -1327,3 +1327,79 @@ func TestShortSHA(t *testing.T) {
 		})
 	}
 }
+
+func TestWorktreePathForBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	// evalSymlinks resolves symlinks (e.g. /var -> /private/var on macOS)
+	// so that paths from git output match paths from t.TempDir().
+	evalSymlinks := func(t *testing.T, path string) string {
+		t.Helper()
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			t.Fatalf("EvalSymlinks(%q): %v", path, err)
+		}
+		return resolved
+	}
+
+	t.Run("returns worktree dir for branch checked out in worktree", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("f.txt", "init", "init")
+		wt := repo.AddWorktree("feature-x")
+
+		got, checkedOut := WorktreePathForBranch(repo.Dir, "feature-x")
+		got = evalSymlinks(t, got)
+		want := evalSymlinks(t, wt.Dir)
+		if got != want {
+			t.Errorf("WorktreePathForBranch() path = %q, want %q", got, want)
+		}
+		if !checkedOut {
+			t.Error("WorktreePathForBranch() checkedOut = false, want true")
+		}
+	})
+
+	t.Run("returns repoPath and false when branch has no worktree", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("f.txt", "init", "init")
+		repo.Run("branch", "other-branch")
+
+		got, checkedOut := WorktreePathForBranch(repo.Dir, "other-branch")
+		if got != repo.Dir {
+			t.Errorf("WorktreePathForBranch() path = %q, want %q", got, repo.Dir)
+		}
+		if checkedOut {
+			t.Error("WorktreePathForBranch() checkedOut = true, want false")
+		}
+	})
+
+	t.Run("returns repoPath and true for empty branch", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("f.txt", "init", "init")
+
+		got, checkedOut := WorktreePathForBranch(repo.Dir, "")
+		if got != repo.Dir {
+			t.Errorf("WorktreePathForBranch() path = %q, want %q", got, repo.Dir)
+		}
+		if !checkedOut {
+			t.Error("WorktreePathForBranch() checkedOut = false, want true")
+		}
+	})
+
+	t.Run("returns main repo dir for branch checked out in main worktree", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("f.txt", "init", "init")
+		branch := GetCurrentBranch(repo.Dir)
+
+		got, checkedOut := WorktreePathForBranch(repo.Dir, branch)
+		got = evalSymlinks(t, got)
+		want := evalSymlinks(t, repo.Dir)
+		if got != want {
+			t.Errorf("WorktreePathForBranch() path = %q, want %q", got, want)
+		}
+		if !checkedOut {
+			t.Error("WorktreePathForBranch() checkedOut = false, want true")
+		}
+	})
+}
