@@ -42,109 +42,54 @@ func TestCIReviewCmd_Help(t *testing.T) {
 	}
 }
 
-func TestCIReviewCmd_InvalidReviewType(t *testing.T) {
+func TestCIReviewCmd_Validation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows")
 	}
 
-	cmd := ciCmd()
-	cmd.SetArgs([]string{
-		"review",
-		"--ref", "abc123",
-		"--review-types", "bogus",
-	})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error for invalid review type")
+	tests := []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{"InvalidReviewType", []string{"review", "--ref", "abc", "--review-types", "bogus"}, "invalid review_type"},
+		{"InvalidReasoning", []string{"review", "--ref", "abc", "--reasoning", "bogus"}, "invalid reasoning"},
+		{"InvalidMinSeverity", []string{"review", "--ref", "abc", "--min-severity", "bogus"}, "invalid min_severity"},
+		{"RequiresRef", []string{"review"}, "auto-detection"},
 	}
-	if !strings.Contains(
-		err.Error(), "invalid review_type") {
-		t.Errorf(
-			"error should mention invalid review_type, "+
-				"got: %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "RequiresRef" {
+				t.Setenv("GITHUB_EVENT_PATH", "")
+				t.Setenv("GITHUB_REF", "")
+			}
+			cmd := ciCmd()
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantError) {
+				t.Errorf("expected error containing %q, got: %v", tt.wantError, err)
+			}
+		})
 	}
 }
 
-func TestCIReviewCmd_InvalidReasoning(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on Windows")
+func setupFakeGitHubEvent(t *testing.T, event map[string]any) {
+	t.Helper()
+	eventFile := filepath.Join(t.TempDir(), "event.json")
+	data, _ := json.Marshal(event)
+	if err := os.WriteFile(eventFile, data, 0644); err != nil {
+		t.Fatal(err)
 	}
-
-	cmd := ciCmd()
-	cmd.SetArgs([]string{
-		"review",
-		"--ref", "abc123",
-		"--reasoning", "bogus",
-	})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal(
-			"expected error for invalid reasoning")
-	}
-	if !strings.Contains(
-		err.Error(), "invalid reasoning") {
-		t.Errorf(
-			"error should mention invalid reasoning, "+
-				"got: %v", err)
-	}
-}
-
-func TestCIReviewCmd_InvalidMinSeverity(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on Windows")
-	}
-
-	cmd := ciCmd()
-	cmd.SetArgs([]string{
-		"review",
-		"--ref", "abc123",
-		"--min-severity", "bogus",
-	})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal(
-			"expected error for invalid min-severity")
-	}
-	if !strings.Contains(
-		err.Error(), "invalid min_severity") {
-		t.Errorf(
-			"error should mention invalid "+
-				"min_severity, got: %v", err)
-	}
-}
-
-func TestCIReviewCmd_RequiresRef(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on Windows")
-	}
-
-	// Clear environment so auto-detection fails
-	t.Setenv("GITHUB_EVENT_PATH", "")
-	t.Setenv("GITHUB_REF", "")
-
-	cmd := ciCmd()
-	cmd.SetArgs([]string{"review"})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when --ref not provided")
-	}
-	if !strings.Contains(err.Error(), "auto-detection") {
-		t.Errorf(
-			"error should mention auto-detection, got: %v",
-			err)
-	}
+	t.Setenv("GITHUB_EVENT_PATH", eventFile)
 }
 
 func TestDetectGitRef(t *testing.T) {
-	// Create fake event file
-	eventDir := t.TempDir()
-	eventFile := filepath.Join(eventDir, "event.json")
-
-	event := map[string]any{
+	setupFakeGitHubEvent(t, map[string]any{
 		"pull_request": map[string]any{
 			"base": map[string]string{
 				"sha": "aaa111",
@@ -153,14 +98,7 @@ func TestDetectGitRef(t *testing.T) {
 				"sha": "bbb222",
 			},
 		},
-	}
-	data, _ := json.Marshal(event)
-	if err := os.WriteFile(
-		eventFile, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("GITHUB_EVENT_PATH", eventFile)
+	})
 
 	ref, err := detectGitRef()
 	if err != nil {
@@ -182,21 +120,11 @@ func TestDetectGitRef_NoEnv(t *testing.T) {
 }
 
 func TestDetectPRNumber_EventJSON(t *testing.T) {
-	eventDir := t.TempDir()
-	eventFile := filepath.Join(eventDir, "event.json")
-
-	event := map[string]any{
+	setupFakeGitHubEvent(t, map[string]any{
 		"pull_request": map[string]any{
 			"number": 42,
 		},
-	}
-	data, _ := json.Marshal(event)
-	if err := os.WriteFile(
-		eventFile, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("GITHUB_EVENT_PATH", eventFile)
+	})
 
 	pr, err := detectPRNumber()
 	if err != nil {
