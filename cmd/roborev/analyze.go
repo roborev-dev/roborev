@@ -295,15 +295,15 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 
 	// Per-file mode: create one job per file
 	if opts.perFile {
-		return runPerFileAnalysis(cmd, repoRoot, analysisType, files, opts, maxPromptSize)
+		return runPerFileAnalysis(cmd, serverAddr, repoRoot, analysisType, files, opts, maxPromptSize)
 	}
 
 	// Standard mode: all files in one job
-	return runSingleAnalysis(cmd, repoRoot, analysisType, files, opts, maxPromptSize)
+	return runSingleAnalysis(cmd, serverAddr, repoRoot, analysisType, files, opts, maxPromptSize)
 }
 
 // runSingleAnalysis creates a single analysis job for all files
-func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
+func runSingleAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
 	if !opts.quiet && !opts.jsonOutput {
 		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), analysisType.Name)
 	}
@@ -337,7 +337,7 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 	}
 
 	// Enqueue the job
-	job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
+	job, err := enqueueAnalysisJob(serverAddr, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
 	if err != nil {
 		return err
 	}
@@ -372,7 +372,7 @@ func runSingleAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyz
 }
 
 // runPerFileAnalysis creates one analysis job per file
-func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
+func runPerFileAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
 	// Sort files for deterministic order
 	fileNames := make([]string, 0, len(files))
 	for name := range files {
@@ -408,7 +408,7 @@ func runPerFileAnalysis(cmd *cobra.Command, repoRoot string, analysisType *analy
 			}
 		}
 
-		job, err := enqueueAnalysisJob(repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
+		job, err := enqueueAnalysisJob(serverAddr, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
 		if err != nil {
 			return fmt.Errorf("enqueue job for %s: %w", fileName, err)
 		}
@@ -494,7 +494,7 @@ func buildOutputPrefix(analysisType string, filePaths []string) string {
 }
 
 // enqueueAnalysisJob sends a job to the daemon
-func enqueueAnalysisJob(repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
+func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
 	branch := git.GetCurrentBranch(repoRoot)
 	if opts.branch != "" && opts.branch != "HEAD" {
 		branch = opts.branch

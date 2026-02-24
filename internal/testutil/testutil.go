@@ -503,3 +503,12 @@ func DecodeJSON(t *testing.T, w *httptest.ResponseRecorder, v any) {
 func Ptr[T any](v T) *T {
 	return &v
 }
+
+// MapKeys returns the keys of the map m.
+func MapKeys[K comparable, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
