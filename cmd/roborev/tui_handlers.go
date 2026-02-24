@@ -1531,7 +1531,7 @@ func (m tuiModel) handleReviewFixPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.fixPromptText = ""
 		m.fixPromptJobID = 0
 		m.currentView = tuiViewTasks
-		return m, m.triggerFix(jobID, prompt)
+		return m, m.triggerFix(jobID, prompt, "")
 	case "backspace":
 		if len(m.fixPromptText) > 0 {
 			runes := []rune(m.fixPromptText)
