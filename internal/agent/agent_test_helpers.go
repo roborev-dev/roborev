@@ -57,8 +57,20 @@ func writeTempCommand(t *testing.T, script string) string {
 
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "cmd")
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
 		t.Fatalf("write temp command: %v", err)
+	}
+	if _, err := f.Write([]byte(script)); err != nil {
+		f.Close()
+		t.Fatalf("write temp command: %v", err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		t.Fatalf("write temp command sync: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("write temp command close: %v", err)
 	}
 	return path
 }
