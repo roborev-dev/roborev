@@ -29,11 +29,14 @@ func JobLogPath(jobID int64) string {
 // fatal — the review still runs without disk logging).
 func openJobLog(jobID int64) *os.File {
 	dir := JobLogDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		log.Printf("Warning: cannot create job log dir %s: %v", dir, err)
 		return nil
 	}
-	f, err := os.Create(JobLogPath(jobID))
+	f, err := os.OpenFile(
+		JobLogPath(jobID),
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600,
+	)
 	if err != nil {
 		log.Printf("Warning: cannot create job log file for job %d: %v", jobID, err)
 		return nil

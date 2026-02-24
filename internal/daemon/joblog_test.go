@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -47,6 +48,34 @@ func TestOpenJobLog(t *testing.T) {
 	}
 	if string(data) != "hello\n" {
 		t.Errorf("file contents = %q, want %q", data, "hello\n")
+	}
+
+	// Verify restrictive permissions (skip on Windows where
+	// POSIX file modes don't apply).
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(JobLogPath(99))
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		perm := info.Mode().Perm()
+		if perm&0o077 != 0 {
+			t.Errorf(
+				"log file permissions = %o, want 0600",
+				perm,
+			)
+		}
+
+		dirInfo, err := os.Stat(JobLogDir())
+		if err != nil {
+			t.Fatalf("stat dir: %v", err)
+		}
+		dirPerm := dirInfo.Mode().Perm()
+		if dirPerm&0o077 != 0 {
+			t.Errorf(
+				"log dir permissions = %o, want 0700",
+				dirPerm,
+			)
+		}
 	}
 }
 
