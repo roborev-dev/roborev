@@ -79,6 +79,52 @@ func TestOpenJobLog(t *testing.T) {
 	}
 }
 
+func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions not applicable on Windows")
+	}
+	setupTestEnv(t)
+
+	// Pre-create dir and file with permissive modes, simulating
+	// an install upgraded from a version that used 0755/0644.
+	dir := JobLogDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := JobLogPath(500)
+	if err := os.WriteFile(path, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f := openJobLog(500)
+	if f == nil {
+		t.Fatal("openJobLog returned nil")
+	}
+	f.Close()
+
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if dirInfo.Mode().Perm()&0o077 != 0 {
+		t.Errorf(
+			"dir permissions = %o, want 0700",
+			dirInfo.Mode().Perm(),
+		)
+	}
+
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	if fileInfo.Mode().Perm()&0o077 != 0 {
+		t.Errorf(
+			"file permissions = %o, want 0600",
+			fileInfo.Mode().Perm(),
+		)
+	}
+}
+
 func TestCleanJobLogs(t *testing.T) {
 	setupTestEnv(t)
 

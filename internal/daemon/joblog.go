@@ -33,13 +33,21 @@ func openJobLog(jobID int64) *os.File {
 		log.Printf("Warning: cannot create job log dir %s: %v", dir, err)
 		return nil
 	}
+	// Tighten pre-existing directories from older installs.
+	if err := os.Chmod(dir, 0700); err != nil {
+		log.Printf("Warning: cannot chmod job log dir: %v", err)
+	}
+	path := JobLogPath(jobID)
 	f, err := os.OpenFile(
-		JobLogPath(jobID),
-		os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600,
+		path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600,
 	)
 	if err != nil {
 		log.Printf("Warning: cannot create job log file for job %d: %v", jobID, err)
 		return nil
+	}
+	// Tighten pre-existing files from older installs.
+	if err := f.Chmod(0600); err != nil {
+		log.Printf("Warning: cannot chmod job log file: %v", err)
 	}
 	return f
 }
