@@ -61,10 +61,20 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, envFn g
 		return nil, err
 	}
 
-	// Only cache complete results. Degraded results (API failures during
-	// wildcard expansion) are returned as-is so the caller gets the best
-	// available data, but the next poll will retry the failed API calls.
-	if !degraded {
+	if degraded {
+		// API failure during wildcard expansion — prefer stale cache
+		// (which has the complete set) over the degraded partial result.
+		r.mu.Lock()
+		if r.hasCache && r.cacheKey == key {
+			stale := make([]string, len(r.cached))
+			copy(stale, r.cached)
+			r.mu.Unlock()
+			log.Printf("CI repo resolver: API degraded, using stale cache (%d repos)", len(stale))
+			return stale, nil
+		}
+		r.mu.Unlock()
+		// No stale cache for this key — return partial result.
+	} else {
 		r.mu.Lock()
 		r.cached = repos
 		r.hasCache = true
@@ -126,6 +136,10 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, envFn gh
 	var degraded bool
 	var wildcardResult []string
 	for owner, patterns := range wildcardsByOwner {
+		if ctx.Err() != nil {
+			return nil, false, ctx.Err()
+		}
+
 		var env []string
 		if envFn != nil {
 			env = envFn(owner)
@@ -139,16 +153,18 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, envFn gh
 		}
 
 		for _, repo := range repos {
+			repoLower := strings.ToLower(repo)
 			for _, pattern := range patterns {
-				matched, matchErr := path.Match(pattern, repo)
+				matched, matchErr := path.Match(
+					strings.ToLower(pattern), repoLower,
+				)
 				if matchErr != nil {
 					log.Printf("CI repo resolver: invalid pattern %q: %v", pattern, matchErr)
 					continue
 				}
 				if matched {
-					lower := strings.ToLower(repo)
-					if !seen[lower] {
-						seen[lower] = true
+					if !seen[repoLower] {
+						seen[repoLower] = true
 						wildcardResult = append(wildcardResult, repo)
 					}
 					break // no need to match other patterns for same repo
@@ -236,20 +252,33 @@ func ghListRepos(ctx context.Context, owner string, env []string) ([]string, err
 }
 
 // applyExclusions filters repos matching any of the exclusion patterns.
+// Matching is case-insensitive. Invalid patterns are logged once and skipped.
 func applyExclusions(repos []string, patterns []string) []string {
 	if len(patterns) == 0 {
 		return repos
 	}
+
+	// Pre-validate and lowercase patterns once to avoid repeated
+	// error logging inside the inner loop.
+	valid := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		lower := strings.ToLower(p)
+		if _, err := path.Match(lower, ""); err != nil {
+			log.Printf("CI repo resolver: invalid exclusion pattern %q: %v", p, err)
+			continue
+		}
+		valid = append(valid, lower)
+	}
+	if len(valid) == 0 {
+		return repos
+	}
+
 	filtered := repos[:0]
 	for _, repo := range repos {
+		repoLower := strings.ToLower(repo)
 		excluded := false
-		for _, pattern := range patterns {
-			matched, err := path.Match(pattern, repo)
-			if err != nil {
-				log.Printf("CI repo resolver: invalid exclusion pattern %q: %v", pattern, err)
-				continue
-			}
-			if matched {
+		for _, pattern := range valid {
+			if matched, _ := path.Match(pattern, repoLower); matched {
 				excluded = true
 				break
 			}

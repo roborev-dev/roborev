@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -421,6 +422,121 @@ func TestRepoResolver_Deduplication(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected acme/api to appear once, got %d times in %v", count, repos)
+	}
+}
+
+func TestRepoResolver_CaseInsensitiveWildcard(t *testing.T) {
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			// GitHub API returns canonical casing
+			return []string{"Acme/API", "Acme/Web", "Acme/Docs"}, nil
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*"}, // lowercase config
+	}
+
+	repos, err := r.Resolve(context.Background(), ci, nil)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(repos) != 3 {
+		t.Fatalf("expected 3 repos (case-insensitive match), got %d: %v", len(repos), repos)
+	}
+}
+
+func TestRepoResolver_CaseInsensitiveExclusion(t *testing.T) {
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			return []string{"Acme/API", "Acme/Internal-Tools", "Acme/Web"}, nil
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos:        []string{"acme/*"},
+		ExcludeRepos: []string{"acme/internal-*"}, // lowercase excludes canonical case
+	}
+
+	repos, err := r.Resolve(context.Background(), ci, nil)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 repos after case-insensitive exclusion, got %d: %v", len(repos), repos)
+	}
+	for _, r := range repos {
+		if strings.EqualFold(r, "Acme/Internal-Tools") {
+			t.Errorf("excluded repo should not appear: %v", repos)
+		}
+	}
+}
+
+func TestRepoResolver_CaseInsensitiveDedup(t *testing.T) {
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			return []string{"Acme/Api", "Acme/Web"}, nil
+		},
+	}
+
+	ci := &config.CIConfig{
+		// Explicit entry with different case should dedup with wildcard match
+		Repos: []string{"acme/api", "acme/*"},
+	}
+
+	repos, err := r.Resolve(context.Background(), ci, nil)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	count := 0
+	for _, r := range repos {
+		if strings.EqualFold(r, "acme/api") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected api to appear once (case-insensitive dedup), got %d in %v", count, repos)
+	}
+}
+
+func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
+	callCount := 0
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ []string) ([]string, error) {
+			callCount++
+			if callCount == 1 {
+				return []string{"acme/api", "acme/web"}, nil
+			}
+			return nil, fmt.Errorf("transient API error")
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*"},
+	}
+	ctx := context.Background()
+
+	// First call succeeds and caches
+	repos1, err := r.Resolve(ctx, ci, nil)
+	if err != nil {
+		t.Fatalf("Resolve 1: %v", err)
+	}
+	if len(repos1) != 2 {
+		t.Fatalf("expected 2 repos, got %d", len(repos1))
+	}
+
+	// Force TTL expiry so next call re-expands
+	r.mu.Lock()
+	r.cachedAt = time.Now().Add(-2 * time.Hour)
+	r.mu.Unlock()
+
+	// Second call fails API but should return stale cache
+	repos2, err := r.Resolve(ctx, ci, nil)
+	if err != nil {
+		t.Fatalf("Resolve 2: %v", err)
+	}
+	if len(repos2) != 2 {
+		t.Errorf("expected stale cache (2 repos) on degraded, got %d: %v", len(repos2), repos2)
 	}
 }
 
