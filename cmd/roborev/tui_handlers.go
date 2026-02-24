@@ -28,6 +28,8 @@ func (m tuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(msg)
 	case tuiViewLog:
 		return m.handleLogKey(msg)
+	case tuiViewWorktreeConfirm:
+		return m.handleWorktreeConfirmKey(msg)
 	case tuiViewTasks:
 		return m.handleTasksKey(msg)
 	case tuiViewPatch:
@@ -1573,6 +1575,26 @@ func (m tuiModel) handleToggleTasksKey() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleWorktreeConfirmKey handles key input in the worktree creation confirmation modal.
+func (m tuiModel) handleWorktreeConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "n":
+		m.currentView = tuiViewTasks
+		m.worktreeConfirmJobID = 0
+		m.worktreeConfirmBranch = ""
+		return m, nil
+	case "enter", "y":
+		jobID := m.worktreeConfirmJobID
+		m.currentView = tuiViewTasks
+		m.worktreeConfirmJobID = 0
+		m.worktreeConfirmBranch = ""
+		return m, m.applyFixPatchInWorktree(jobID)
+	}
+	return m, nil
+}
+
 // handleTasksKey handles key input in the tasks view.
 func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -1640,15 +1662,6 @@ func (m tuiModel) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if job.Status == storage.JobStatusDone {
 				return m, m.applyFixPatch(job.ID)
 			}
-		}
-		return m, nil
-	case "W":
-		// Create a worktree and apply patch (after user was prompted)
-		if m.pendingWorktreeApplyJobID > 0 {
-			jobID := m.pendingWorktreeApplyJobID
-			m.pendingWorktreeApplyJobID = 0
-			m.flashMessage = ""
-			return m, m.applyFixPatchInWorktree(jobID)
 		}
 		return m, nil
 	case "R":

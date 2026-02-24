@@ -110,8 +110,9 @@ const (
 	tuiViewCommitMsg
 	tuiViewHelp
 	tuiViewLog
-	tuiViewTasks // Background fix tasks view
-	tuiViewPatch // Patch viewer for fix jobs
+	tuiViewTasks           // Background fix tasks view
+	tuiViewWorktreeConfirm // Confirm creating a worktree to apply patch
+	tuiViewPatch           // Patch viewer for fix jobs
 )
 
 // queuePrefetchBuffer is the number of extra rows to fetch beyond what's visible,
@@ -279,7 +280,8 @@ type tuiModel struct {
 	reviewFixPanelFocused bool // true when keyboard focus is on the fix panel
 	reviewFixPanelPending bool // true when 'F' from queue; panel opens on review load
 
-	pendingWorktreeApplyJobID int64 // Job ID waiting for user to confirm worktree creation
+	worktreeConfirmJobID  int64  // Job ID pending worktree-apply confirmation
+	worktreeConfirmBranch string // Branch name for worktree confirmation prompt
 }
 
 // pendingState tracks a pending addressed toggle with sequence number
@@ -2385,10 +2387,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiApplyPatchResultMsg:
 		if msg.needWorktree {
-			m.pendingWorktreeApplyJobID = msg.jobID
-			m.flashMessage = fmt.Sprintf("Branch %q is not checked out — press W to create a worktree and apply", msg.branch)
-			m.flashExpiresAt = time.Now().Add(10 * time.Second)
-			m.flashView = tuiViewTasks
+			m.worktreeConfirmJobID = msg.jobID
+			m.worktreeConfirmBranch = msg.branch
+			m.currentView = tuiViewWorktreeConfirm
 			return m, nil
 		}
 		if msg.rebase {
@@ -2440,7 +2441,9 @@ func (m tuiModel) View() string {
 	if m.currentView == tuiViewTasks {
 		return m.renderTasksView()
 	}
-
+	if m.currentView == tuiViewWorktreeConfirm {
+		return m.renderWorktreeConfirmView()
+	}
 	if m.currentView == tuiViewPatch {
 		return m.renderPatchView()
 	}
@@ -3662,7 +3665,6 @@ func helpLines() []string {
 			keys: []struct{ key, desc string }{
 				{"↑/↓", "Navigate fix jobs"},
 				{"A", "Apply patch from completed fix"},
-				{"W", "Apply patch via temporary worktree (when branch not checked out)"},
 				{"R", "Re-trigger fix (rebase)"},
 				{"l", "View agent log"},
 				{"x", "Cancel running/queued fix job"},
@@ -3998,6 +4000,23 @@ func (m tuiModel) renderPatchView() string {
 	return b.String()
 }
 
+// renderWorktreeConfirmView renders the worktree creation confirmation modal.
+func (m tuiModel) renderWorktreeConfirmView() string {
+	var b strings.Builder
+
+	b.WriteString(tuiTitleStyle.Render("Create Worktree"))
+	b.WriteString("\x1b[K\n\n")
+
+	fmt.Fprintf(&b, "  Branch %q is not checked out anywhere.\n", m.worktreeConfirmBranch)
+	b.WriteString("  Create a temporary worktree to apply and commit the patch?\n\n")
+	b.WriteString("  The worktree will be removed after the commit.\n")
+	b.WriteString("  The commit will persist on the branch.\n\n")
+
+	b.WriteString(tuiHelpStyle.Render("y/enter: create worktree and apply | esc/n: cancel"))
+	b.WriteString("\x1b[K\x1b[J")
+
+	return b.String()
+}
 // fetchJobByID fetches a single job by ID from the daemon API.
 func (m tuiModel) fetchJobByID(jobID int64) (*storage.ReviewJob, error) {
 	var result struct {
