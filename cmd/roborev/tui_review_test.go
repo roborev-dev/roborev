@@ -2370,12 +2370,14 @@ func TestFormatClipboardContent(t *testing.T) {
 }
 
 func TestTUILogOutputPreservesLinesOnEmptyResponse(t *testing.T) {
-	// Test that when a job completes and the server returns empty lines
-	// (because the buffer was closed), the TUI preserves the existing lines.
+	// When a completed job's incremental poll returns no new data,
+	// the TUI should preserve existing lines. In the incremental
+	// flow, this is an append with no new lines (offset unchanged).
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewLog
 	m.logJobID = 1
 	m.logStreaming = true
+	m.logFetchSeq = 1
 	m.height = 30
 
 	// Set up initial lines as if we had been streaming output
@@ -2385,11 +2387,14 @@ func TestTUILogOutputPreservesLinesOnEmptyResponse(t *testing.T) {
 		{text: "Line 3"},
 	}
 
-	// Simulate job completion: server returns empty lines, hasMore=false
+	// Simulate job completion: incremental poll returns no new
+	// lines (append mode, offset unchanged).
 	emptyMsg := tuiLogOutputMsg{
 		lines:   []logLine{},
 		hasMore: false,
 		err:     nil,
+		append:  true,
+		seq:     1,
 	}
 
 	m2, _ := updateModel(t, m, emptyMsg)
@@ -2889,6 +2894,74 @@ func TestTUILogLoadingGuard(t *testing.T) {
 	}
 	if !m2.logLoading {
 		t.Error("logLoading should remain true")
+	}
+}
+
+func TestTUILogOutputReplaceModeEmptyClearsStale(t *testing.T) {
+	// Replace mode with zero lines should clear stale content
+	// (e.g. after log truncation/reset).
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
+	m.logFetchSeq = 1
+	m.height = 30
+
+	m.logLines = []logLine{
+		{text: "Stale line 1"},
+		{text: "Stale line 2"},
+	}
+
+	msg := tuiLogOutputMsg{
+		lines:     nil,
+		hasMore:   false,
+		newOffset: 0,
+		append:    false,
+		seq:       1,
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	if m2.logLines == nil {
+		t.Fatal("logLines should be empty slice, not nil")
+	}
+	if len(m2.logLines) != 0 {
+		t.Errorf(
+			"expected 0 lines after empty replace, got %d",
+			len(m2.logLines),
+		)
+	}
+}
+
+func TestTUILogOutputPersistsFormatter(t *testing.T) {
+	// The formatter returned in tuiLogOutputMsg should be
+	// persisted into m.logFmtr for incremental reuse.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
+	m.logFetchSeq = 1
+	m.height = 30
+
+	fmtr := newStreamFormatter(nil, true)
+	fmtr.hasOutput = true // simulate accumulated state
+
+	msg := tuiLogOutputMsg{
+		lines:     []logLine{{text: "Line 1"}},
+		hasMore:   true,
+		newOffset: 100,
+		append:    false,
+		seq:       1,
+		fmtr:      fmtr,
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	if m2.logFmtr != fmtr {
+		t.Error("logFmtr should be persisted from msg")
+	}
+	if !m2.logFmtr.hasOutput {
+		t.Error("persisted formatter should retain state")
 	}
 }
 

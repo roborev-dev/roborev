@@ -294,9 +294,10 @@ type tuiLogOutputMsg struct {
 	lines     []logLine
 	hasMore   bool // true if job is still running
 	err       error
-	newOffset int64  // byte offset for next fetch
-	append    bool   // true = append lines, false = replace
-	seq       uint64 // fetch sequence number for stale detection
+	newOffset int64            // byte offset for next fetch
+	append    bool             // true = append lines, false = replace
+	seq       uint64           // fetch sequence number for stale detection
+	fmtr      *streamFormatter // formatter used for rendering (persist for incremental reuse)
 }
 
 // tuiLogTickMsg triggers a refresh of the log output
@@ -1207,6 +1208,7 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 			newOffset: newOffset,
 			append:    isIncremental,
 			seq:       seq,
+			fmtr:      renderFmtr,
 		}
 	}
 }
@@ -2008,22 +2010,38 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.currentView == tuiViewLog {
-			// Update lines when we have content. Also update when
-			// logLines is nil (first fetch) to escape "Waiting
-			// for output...". For still-streaming jobs with no
-			// lines yet, keep logLines nil so UI shows "Waiting".
-			if len(msg.lines) > 0 {
-				if msg.append {
+			// Persist formatter state so incremental polls
+			// reuse accumulated state (lastWasTool, rendered
+			// command IDs, etc.).
+			if msg.fmtr != nil {
+				m.logFmtr = msg.fmtr
+			}
+
+			if msg.append {
+				// Incremental: append new lines if any.
+				if len(msg.lines) > 0 {
 					m.logLines = append(
 						m.logLines, msg.lines...,
 					)
-				} else {
-					m.logLines = msg.lines
 				}
-			} else if m.logLines == nil && !msg.hasMore {
-				// Completed job with empty log — mark loaded.
+			} else if len(msg.lines) > 0 {
+				// Full replace with content.
+				m.logLines = msg.lines
+			} else if m.logLines == nil {
+				if !msg.hasMore {
+					// Completed job with empty log.
+					m.logLines = []logLine{}
+				}
+				// Else: still streaming, no data yet — keep
+				// nil so UI shows "Waiting for output...".
+			} else if msg.newOffset == 0 {
+				// Server reset offset to 0 with no content —
+				// clear stale lines from previous log state.
 				m.logLines = []logLine{}
 			}
+			// Else: replace mode, no lines, but logLines exists
+			// and offset nonzero — preserve existing lines
+			// (e.g. final streaming poll with no new data).
 			m.logOffset = msg.newOffset
 			m.logStreaming = msg.hasMore
 			if m.logFollow && len(m.logLines) > 0 {

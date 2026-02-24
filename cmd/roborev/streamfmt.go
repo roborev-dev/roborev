@@ -487,6 +487,7 @@ func (f *streamFormatter) writef(format string, args ...any) {
 // writeText writes agent text, rendering markdown and wrapping to
 // terminal width when in TTY mode with a known width.
 func (f *streamFormatter) writeText(text string) {
+	text = sanitizeControlKeepNewlines(text)
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
@@ -510,6 +511,7 @@ func (f *streamFormatter) writeText(text string) {
 
 // writeReasoning writes a dimmed reasoning summary line.
 func (f *streamFormatter) writeReasoning(text string) {
+	text = sanitizeControlKeepNewlines(text)
 	if f.lastWasTool && f.hasOutput {
 		f.writef("\n")
 	}

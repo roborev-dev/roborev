@@ -555,3 +555,54 @@ func TestStreamFormatter_PartialWrites(t *testing.T) {
 	_, _ = fix.f.Write([]byte(full[20:]))
 	fix.assertContains(t, "hello")
 }
+
+func TestStreamFormatter_SanitizesAssistantText(t *testing.T) {
+	// ANSI/OSC escape sequences in assistant text (which can
+	// originate from model-reflected untrusted repo content)
+	// must be stripped before rendering. Glamour/lipgloss add
+	// their own styling codes — only injected sequences should
+	// be gone.
+	fix := newFixture(true)
+	text := "\x1b[31mred\x1b[0m normal \x1b]0;evil\x07"
+	fix.writeLine(eventAssistantText(text))
+
+	raw := fix.buf.String()
+	// OSC title-change and BEL must never reach the terminal.
+	if strings.Contains(raw, "\x1b]0;") {
+		t.Errorf("OSC title escape leaked: %q", raw)
+	}
+	if strings.Contains(raw, "\x07") {
+		t.Errorf("BEL char leaked: %q", raw)
+	}
+	// Injected SGR color (\x1b[31m) should be stripped;
+	// only glamour/lipgloss styling should remain.
+	if strings.Contains(raw, "\x1b[31m") {
+		t.Errorf("injected SGR escape leaked: %q", raw)
+	}
+	// The actual text content should survive.
+	fix.assertContains(t, "red")
+	fix.assertContains(t, "normal")
+	// "evil" should not appear (it was inside the OSC payload).
+	fix.assertNotContains(t, "evil")
+}
+
+func TestStreamFormatter_SanitizesGeminiText(t *testing.T) {
+	fix := newFixture(true)
+	ev := toJson(map[string]any{
+		"type":    "message",
+		"role":    "assistant",
+		"content": "\x1b[1mbold\x1b[0m safe \x1b]0;title\x07",
+	})
+	fix.writeLine(ev)
+
+	raw := fix.buf.String()
+	if strings.Contains(raw, "\x1b]0;") {
+		t.Errorf("OSC escape leaked in Gemini text: %q", raw)
+	}
+	if strings.Contains(raw, "\x1b[1m") {
+		t.Errorf("injected bold escape leaked: %q", raw)
+	}
+	fix.assertContains(t, "bold")
+	fix.assertContains(t, "safe")
+	fix.assertNotContains(t, "title")
+}
