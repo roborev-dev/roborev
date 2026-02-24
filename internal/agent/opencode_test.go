@@ -436,6 +436,62 @@ func readFileOrFatal(t *testing.T, path string) []byte {
 	return data
 }
 
+func TestStripTerminalControls(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain text", "hello world", "hello world"},
+		{"ANSI color stripped", "\x1b[31mred\x1b[0m text", "red text"},
+		{"OSC title stripped", "\x1b]0;evil\x07safe", "safe"},
+		{"BEL removed", "bell\x07here", "bellhere"},
+		{"newlines preserved", "line1\nline2", "line1\nline2"},
+		{"CRLF normalized", "a\r\nb\rc", "a\nb\nc"},
+		{"tabs preserved", "col1\tcol2", "col1\tcol2"},
+		{"null byte removed", "a\x00b", "ab"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := stripTerminalControls(tt.input)
+			if got != tt.want {
+				t.Errorf(
+					"stripTerminalControls(%q) = %q, want %q",
+					tt.input, got, tt.want,
+				)
+			}
+		})
+	}
+}
+
+func TestParseOpenCodeJSON_SanitizesControlChars(t *testing.T) {
+	t.Parallel()
+
+	lines := makeOpenCodeEvent("text", map[string]any{
+		"type": "text",
+		"text": "\x1b[31mred\x1b[0m and \x1b]0;evil\x07safe",
+	}) + "\n"
+
+	result, err := parseOpenCodeJSON(
+		strings.NewReader(lines), nil,
+	)
+	if err != nil {
+		t.Fatalf("parseOpenCodeJSON: %v", err)
+	}
+
+	if strings.Contains(result, "\x1b") {
+		t.Errorf("result contains ESC: %q", result)
+	}
+	if strings.Contains(result, "\x07") {
+		t.Errorf("result contains BEL: %q", result)
+	}
+	assertContains(t, result, "red")
+	assertContains(t, result, "safe")
+	assertNotContains(t, result, "evil")
+}
+
 // makeOpenCodeEvent builds an opencode JSONL event line.
 func makeOpenCodeEvent(eventType string, part map[string]any) string {
 	ev := map[string]any{

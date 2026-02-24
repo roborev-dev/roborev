@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"strings"
+	"unicode"
 )
 
 // OpenCodeAgent runs code reviews using the OpenCode CLI
@@ -186,7 +188,10 @@ func parseOpenCodeJSON(
 				var part opencodePart
 				if json.Unmarshal(ev.Part, &part) == nil &&
 					part.Type == "text" && part.Text != "" {
-					textParts = append(textParts, part.Text)
+					textParts = append(
+						textParts,
+						stripTerminalControls(part.Text),
+					)
 				}
 			}
 		}
@@ -197,6 +202,30 @@ func parseOpenCodeJSON(
 	}
 
 	return strings.Join(textParts, ""), nil
+}
+
+// ansiPattern matches ANSI CSI and OSC escape sequences.
+var ansiPattern = regexp.MustCompile(
+	`\x1b\[[0-9;?]*[a-zA-Z]` +
+		`|\x1b\]([^\x07\x1b]|\x1b[^\\])*(\x07|\x1b\\)`,
+)
+
+// stripTerminalControls removes ANSI escape sequences and
+// non-printable control characters from s while preserving
+// newlines and tabs. Used to sanitize agent output at ingestion
+// before it is stored or rendered.
+func stripTerminalControls(s string) string {
+	s = ansiPattern.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\t' || r == '\n' || !unicode.IsControl(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func init() {
