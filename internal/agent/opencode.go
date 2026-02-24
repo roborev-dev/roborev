@@ -102,6 +102,7 @@ func (a *OpenCodeAgent) Review(
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start opencode: %w", err)
 	}
+	defer stdoutPipe.Close()
 
 	result, parseErr := parseOpenCodeJSON(stdoutPipe, output)
 

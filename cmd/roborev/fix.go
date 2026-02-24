@@ -617,7 +617,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	if !opts.quiet {
 		cmd.Printf("Job %d analysis output:\n", jobID)
 		cmd.Println(strings.Repeat("-", 60))
-		cmd.Println(review.Output)
+		printMarkdownOrPlain(cmd.OutOrStdout(), review.Output)
 		cmd.Println(strings.Repeat("-", 60))
 		cmd.Println()
 	}

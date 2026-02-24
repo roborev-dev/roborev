@@ -561,7 +561,7 @@ func (f *streamFormatter) formatToolUse(name string, input json.RawMessage) {
 
 // writef writes formatted output, capturing the first error.
 func (f *streamFormatter) writef(format string, args ...any) {
-	if f.writeErr != nil {
+	if f.writeErr != nil || f.w == nil {
 		return
 	}
 	_, f.writeErr = fmt.Fprintf(f.w, format, args...)
@@ -632,6 +632,21 @@ func writerIsTerminal(w io.Writer) bool {
 		return isTerminal(f.Fd())
 	}
 	return false
+}
+
+// printMarkdownOrPlain renders text as glamour-styled markdown when
+// writing to a TTY, or prints it as-is otherwise.
+func printMarkdownOrPlain(w io.Writer, text string) {
+	if !writerIsTerminal(w) {
+		fmt.Fprintln(w, text)
+		return
+	}
+	width := sfTerminalWidth(w)
+	style := sfGlamourStyle()
+	lines := renderMarkdownLines(text, width, width, style, 2)
+	for _, line := range lines {
+		fmt.Fprintln(w, line)
+	}
 }
 
 // sanitizeControl strips ANSI escape sequences and non-printable control
