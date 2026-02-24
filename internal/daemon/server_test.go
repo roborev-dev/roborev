@@ -3565,6 +3565,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 
 func TestHandleFixJobStaleValidation(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
+	server.configWatcher.Config().FixAgent = "test"
 
 	repoDir := filepath.Join(tmpDir, "repo-fix-val")
 	testutil.InitTestGitRepo(t, repoDir)
