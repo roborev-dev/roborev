@@ -44,8 +44,10 @@ Examples:
 				return fmt.Errorf("invalid job ID: %w", err)
 			}
 
+			out := cmd.OutOrStdout()
+
 			if showPath {
-				fmt.Println(daemon.JobLogPath(jobID))
+				fmt.Fprintln(out, daemon.JobLogPath(jobID))
 				return nil
 			}
 
@@ -59,7 +61,7 @@ Examples:
 			defer f.Close()
 
 			if rawOutput {
-				_, err := io.Copy(os.Stdout, f)
+				_, err := io.Copy(out, f)
 				if isBrokenPipe(err) {
 					return nil
 				}
@@ -70,7 +72,7 @@ Examples:
 			}
 
 			err = renderJobLog(
-				f, os.Stdout, writerIsTerminal(os.Stdout),
+				f, out, writerIsTerminal(out),
 			)
 			if isBrokenPipe(err) {
 				return nil

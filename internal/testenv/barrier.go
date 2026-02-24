@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ProdLogBarrier records the state of production log files before
@@ -21,6 +22,7 @@ type ProdLogBarrier struct {
 	// Snapshot of daemon.<pid>.json at barrier creation time.
 	runtimeExisted bool
 	runtimeSize    int64
+	runtimeMtime   time.Time
 }
 
 // DefaultProdDataDir returns the default production data directory
@@ -53,6 +55,7 @@ func NewProdLogBarrier(realDataDir string) *ProdLogBarrier {
 	if info, err := os.Stat(runtimePath); err == nil {
 		b.runtimeExisted = true
 		b.runtimeSize = info.Size()
+		b.runtimeMtime = info.ModTime()
 	}
 	return b
 }
@@ -75,15 +78,25 @@ func (b *ProdLogBarrier) Check() string {
 					b.pid,
 				),
 			)
-		} else if info.Size() != b.runtimeSize {
+		} else if info.Size() != b.runtimeSize ||
+			!info.ModTime().Equal(b.runtimeMtime) {
 			violations = append(violations,
 				fmt.Sprintf(
 					"test modified daemon.%d.json in prod data dir"+
-						" (size %d → %d)",
+						" (size %d→%d, mtime %s→%s)",
 					b.pid, b.runtimeSize, info.Size(),
+					b.runtimeMtime.Format(time.RFC3339Nano),
+					info.ModTime().Format(time.RFC3339Nano),
 				),
 			)
 		}
+	} else if b.runtimeExisted {
+		violations = append(violations,
+			fmt.Sprintf(
+				"test deleted daemon.%d.json from prod data dir",
+				b.pid,
+			),
+		)
 	}
 
 	// 2. Scan new lines in activity.log for test markers.

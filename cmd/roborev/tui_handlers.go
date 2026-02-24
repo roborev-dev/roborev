@@ -942,6 +942,8 @@ func (m tuiModel) openLogView(
 	m.logFmtr = newStreamFormatterWithWidth(
 		io.Discard, m.width, m.glamourStyle,
 	)
+	m.logFetchSeq++
+	m.logLoading = true
 
 	if status == storage.JobStatusRunning {
 		m.logStreaming = true

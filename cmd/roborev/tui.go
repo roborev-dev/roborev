@@ -254,6 +254,8 @@ type tuiModel struct {
 	logFollow    bool             // True if auto-scrolling to bottom (follow mode)
 	logOffset    int64            // Byte offset for next incremental fetch
 	logFmtr      *streamFormatter // Persistent formatter across polls
+	logLoading   bool             // True while a fetch is in-flight
+	logFetchSeq  uint64           // Monotonic seq to drop stale responses
 
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
@@ -292,8 +294,9 @@ type tuiLogOutputMsg struct {
 	lines     []logLine
 	hasMore   bool // true if job is still running
 	err       error
-	newOffset int64 // byte offset for next fetch
-	append    bool  // true = append lines, false = replace
+	newOffset int64  // byte offset for next fetch
+	append    bool   // true = append lines, false = replace
+	seq       uint64 // fetch sequence number for stale detection
 }
 
 // tuiLogTickMsg triggers a refresh of the log output
@@ -1110,6 +1113,7 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 	style := m.glamourStyle
 	offset := m.logOffset
 	fmtr := m.logFmtr
+	seq := m.logFetchSeq
 	return func() tea.Msg {
 		url := fmt.Sprintf(
 			"%s/api/job/log?job_id=%d&offset=%d",
@@ -1117,16 +1121,17 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		)
 		resp, err := client.Get(url)
 		if err != nil {
-			return tuiLogOutputMsg{err: err}
+			return tuiLogOutputMsg{err: err, seq: seq}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return tuiLogOutputMsg{err: errNoLog}
+			return tuiLogOutputMsg{err: errNoLog, seq: seq}
 		}
 		if resp.StatusCode != http.StatusOK {
 			return tuiLogOutputMsg{
 				err: fmt.Errorf("fetch log: %s", resp.Status),
+				seq: seq,
 			}
 		}
 
@@ -1144,13 +1149,20 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 			}
 		}
 
-		// No new data — return early with current state
+		// Server reset offset (log truncated/rotated) — force
+		// full replace even if we sent a nonzero offset.
 		isIncremental := offset > 0 && fmtr != nil
+		if newOffset < offset {
+			isIncremental = false
+		}
+
+		// No new data — return early with current state
 		if newOffset == offset && isIncremental {
 			return tuiLogOutputMsg{
 				hasMore:   hasMore,
 				newOffset: newOffset,
 				append:    true,
+				seq:       seq,
 			}
 		}
 
@@ -1172,7 +1184,7 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		if err := renderJobLogWith(
 			resp.Body, renderFmtr, &buf,
 		); err != nil {
-			return tuiLogOutputMsg{err: err}
+			return tuiLogOutputMsg{err: err, seq: seq}
 		}
 
 		// Split rendered output into lines
@@ -1194,6 +1206,7 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 			hasMore:   hasMore,
 			newOffset: newOffset,
 			append:    isIncremental,
+			seq:       seq,
 		}
 	}
 }
@@ -1905,6 +1918,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logFmtr = newStreamFormatterWithWidth(
 				io.Discard, msg.Width, m.glamourStyle,
 			)
+			m.logFetchSeq++
+			m.logLoading = true
 			return m, m.fetchJobLog(m.logJobID)
 		}
 
@@ -1921,7 +1936,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case tuiLogTickMsg:
-		if m.currentView == tuiViewLog && m.logStreaming && m.logJobID > 0 {
+		if m.currentView == tuiViewLog && m.logStreaming &&
+			m.logJobID > 0 && !m.logLoading {
+			m.logLoading = true
 			return m, m.fetchJobLog(m.logJobID)
 		}
 
@@ -1956,6 +1973,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promptScroll = 0
 
 	case tuiLogOutputMsg:
+		m.logLoading = false
+		// Drop stale responses from previous log sessions.
+		if msg.seq != m.logFetchSeq {
+			return m, nil
+		}
 		m.consecutiveErrors = 0
 		if msg.err != nil {
 			if errors.Is(msg.err, errNoLog) {

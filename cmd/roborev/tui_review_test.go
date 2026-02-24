@@ -2790,4 +2790,100 @@ func TestTUILogOutputReplaceMode(t *testing.T) {
 	}
 }
 
+func TestTUILogOutputStaleSeqDropped(t *testing.T) {
+	// Messages with a stale seq should be silently dropped.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
+	m.logFetchSeq = 5
+	m.height = 30
+
+	m.logLines = []logLine{{text: "Current"}}
+
+	msg := tuiLogOutputMsg{
+		lines:     []logLine{{text: "Stale data"}},
+		hasMore:   true,
+		newOffset: 999,
+		append:    false,
+		seq:       3, // older than m.logFetchSeq
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	// Lines and offset should be unchanged.
+	if len(m2.logLines) != 1 || m2.logLines[0].text != "Current" {
+		t.Errorf("stale msg should not update lines")
+	}
+	if m2.logOffset != 0 {
+		t.Errorf(
+			"stale msg should not update offset, got %d",
+			m2.logOffset,
+		)
+	}
+}
+
+func TestTUILogOutputOffsetReset(t *testing.T) {
+	// When server resets offset (newOffset < previous offset),
+	// lines should be replaced, not appended.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
+	m.logFetchSeq = 1
+	m.logOffset = 500
+	m.height = 30
+
+	m.logLines = []logLine{
+		{text: "Old line 1"},
+		{text: "Old line 2"},
+	}
+
+	// Server reset: newOffset=100, append=false (reset path).
+	msg := tuiLogOutputMsg{
+		lines: []logLine{
+			{text: "Reset line 1"},
+		},
+		hasMore:   true,
+		newOffset: 100,
+		append:    false,
+		seq:       1,
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	if len(m2.logLines) != 1 {
+		t.Fatalf("expected 1 line after reset, got %d",
+			len(m2.logLines))
+	}
+	if m2.logLines[0].text != "Reset line 1" {
+		t.Errorf("expected reset content, got %q",
+			m2.logLines[0].text)
+	}
+	if m2.logOffset != 100 {
+		t.Errorf("logOffset = %d, want 100", m2.logOffset)
+	}
+}
+
+func TestTUILogLoadingGuard(t *testing.T) {
+	// When logLoading is true, tuiLogTickMsg should not start
+	// another fetch.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 1
+	m.logStreaming = true
+	m.logLoading = true
+	m.height = 30
+
+	m2, cmd := updateModel(t, m, tuiLogTickMsg{})
+
+	// Should not issue a fetch command.
+	if cmd != nil {
+		t.Errorf("expected nil cmd when logLoading, got %T", cmd)
+	}
+	if !m2.logLoading {
+		t.Error("logLoading should remain true")
+	}
+}
+
 // Branch filter tests

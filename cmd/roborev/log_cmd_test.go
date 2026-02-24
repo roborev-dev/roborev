@@ -205,14 +205,24 @@ func TestLogCmd_MissingLogFile(t *testing.T) {
 }
 
 func TestLogCmd_PathFlag(t *testing.T) {
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	dir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dir)
+
+	var buf bytes.Buffer
 	cmd := logCmd()
+	cmd.SetOut(&buf)
 	cmd.SetArgs([]string{"--path", "42"})
 	cmd.SilenceUsage = true
 	// --path succeeds even if log file doesn't exist.
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("--path should succeed: %v", err)
+	}
+
+	out := strings.TrimSpace(buf.String())
+	want := filepath.Join(dir, "logs", "jobs", "42.log")
+	if out != want {
+		t.Errorf("--path output = %q, want %q", out, want)
 	}
 }
 
@@ -224,14 +234,24 @@ func TestLogCmd_RawFlag(t *testing.T) {
 	logDir := filepath.Join(dir, "logs", "jobs")
 	os.MkdirAll(logDir, 0755)
 	logPath := filepath.Join(logDir, "42.log")
-	os.WriteFile(logPath, []byte(`{"type":"assistant"}`+"\n"), 0644)
+	rawContent := `{"type":"assistant"}` + "\n"
+	os.WriteFile(logPath, []byte(rawContent), 0644)
 
+	var buf bytes.Buffer
 	cmd := logCmd()
+	cmd.SetOut(&buf)
 	cmd.SetArgs([]string{"--raw", "42"})
 	cmd.SilenceUsage = true
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("--raw should succeed: %v", err)
+	}
+
+	if buf.String() != rawContent {
+		t.Errorf(
+			"--raw output = %q, want %q",
+			buf.String(), rawContent,
+		)
 	}
 }
 

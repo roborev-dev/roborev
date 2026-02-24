@@ -4160,3 +4160,63 @@ func TestHandleJobLogOffset(t *testing.T) {
 		}
 	})
 }
+
+func TestJobLogSafeEnd(t *testing.T) {
+	t.Run("empty file", func(t *testing.T) {
+		f := writeTempFile(t, []byte{})
+		if got := jobLogSafeEnd(f, 0); got != 0 {
+			t.Errorf("expected 0, got %d", got)
+		}
+	})
+
+	t.Run("ends with newline", func(t *testing.T) {
+		data := []byte("line1\nline2\n")
+		f := writeTempFile(t, data)
+		if got := jobLogSafeEnd(f, int64(len(data))); got != int64(len(data)) {
+			t.Errorf("expected %d, got %d", len(data), got)
+		}
+	})
+
+	t.Run("partial line at end", func(t *testing.T) {
+		data := []byte("line1\npartial")
+		f := writeTempFile(t, data)
+		got := jobLogSafeEnd(f, int64(len(data)))
+		if got != 6 { // "line1\n" is 6 bytes
+			t.Errorf("expected 6, got %d", got)
+		}
+	})
+
+	t.Run("no newlines at all", func(t *testing.T) {
+		data := []byte("no-newlines-here")
+		f := writeTempFile(t, data)
+		if got := jobLogSafeEnd(f, int64(len(data))); got != 0 {
+			t.Errorf("expected 0, got %d", got)
+		}
+	})
+
+	t.Run("large partial beyond 64KB", func(t *testing.T) {
+		// A complete line followed by a partial line > 64KB.
+		// The chunked backward scan should still find the newline.
+		completeLine := "line1\n"
+		partial := strings.Repeat("x", 100*1024) // 100KB
+		data := []byte(completeLine + partial)
+		f := writeTempFile(t, data)
+		got := jobLogSafeEnd(f, int64(len(data)))
+		want := int64(len(completeLine))
+		if got != want {
+			t.Errorf("expected %d, got %d", want, got)
+		}
+	})
+}
+
+func writeTempFile(t *testing.T, data []byte) *os.File {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "logtest-*")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	return f
+}

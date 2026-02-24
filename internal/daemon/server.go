@@ -1288,23 +1288,26 @@ func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
 		return fileSize
 	}
 
-	// Scan backwards up to 64KB to find last newline.
-	const maxScan = 64 * 1024
-	scanStart := max(fileSize-maxScan, 0)
-	buf := make([]byte, fileSize-scanStart)
-	n, err := f.ReadAt(buf, scanStart)
-	if err != nil && err != io.EOF {
-		return fileSize
-	}
-	buf = buf[:n]
-
-	for i := len(buf) - 1; i >= 0; i-- {
-		if buf[i] == '\n' {
-			return scanStart + int64(i) + 1
+	// Scan backwards in 64KB chunks to find last newline.
+	const chunkSize = 64 * 1024
+	buf := make([]byte, chunkSize)
+	pos := fileSize
+	for pos > 0 {
+		readStart := max(pos-chunkSize, 0)
+		readLen := pos - readStart
+		n, err := f.ReadAt(buf[:readLen], readStart)
+		if err != nil && err != io.EOF {
+			return fileSize
 		}
+		for i := n - 1; i >= 0; i-- {
+			if buf[i] == '\n' {
+				return readStart + int64(i) + 1
+			}
+		}
+		pos = readStart
 	}
 
-	// No newline found in scan range — serve nothing to avoid
+	// Entire file has no newline — serve nothing to avoid
 	// a partial line.
 	return 0
 }
