@@ -25,33 +25,43 @@ type jobResponse struct {
 
 const testJobID = 42
 
-func mockJobStatusHandler(responses []jobResponse, callCount *int32) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		idx := int(atomic.AddInt32(callCount, 1)) - 1
-		if idx >= len(responses) {
-			idx = len(responses) - 1
-		}
-		resp := responses[idx]
+type jobMockServer struct {
+	responses []jobResponse
+	pollCount int32
+}
 
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/api/jobs"):
-			if resp.notFound {
-				json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []interface{}{}})
-				return
-			}
-			job := storage.ReviewJob{
-				ID:     testJobID,
-				Status: storage.JobStatus(resp.status),
-				Error:  resp.errMsg,
-			}
-			json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}})
+func (m *jobMockServer) handleJobs(w http.ResponseWriter, r *http.Request) {
+	idx := int(atomic.AddInt32(&m.pollCount, 1)) - 1
+	if idx >= len(m.responses) {
+		idx = len(m.responses) - 1
+	}
+	resp := m.responses[idx]
 
-		case strings.HasPrefix(r.URL.Path, "/api/review"):
-			json.NewEncoder(w).Encode(storage.Review{
-				JobID:  testJobID,
-				Output: resp.review,
-			})
+	if resp.notFound {
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []interface{}{}}); err != nil {
+			http.Error(w, "mock encoding error", http.StatusInternalServerError)
 		}
+		return
+	}
+	job := storage.ReviewJob{
+		ID:     testJobID,
+		Status: storage.JobStatus(resp.status),
+		Error:  resp.errMsg,
+	}
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{"jobs": []storage.ReviewJob{job}}); err != nil {
+		http.Error(w, "mock encoding error", http.StatusInternalServerError)
+	}
+}
+
+func (m *jobMockServer) handleReview(w http.ResponseWriter, r *http.Request) {
+	// Return the final review state without incrementing the poll count
+	resp := m.responses[len(m.responses)-1]
+
+	if err := json.NewEncoder(w).Encode(storage.Review{
+		JobID:  testJobID,
+		Output: resp.review,
+	}); err != nil {
+		http.Error(w, "mock encoding error", http.StatusInternalServerError)
 	}
 }
 
@@ -104,8 +114,11 @@ func TestWaitForAnalysisJob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var callCount int32
-			ts := httptest.NewServer(mockJobStatusHandler(tt.responses, &callCount))
+			mock := &jobMockServer{responses: tt.responses}
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/jobs", mock.handleJobs)
+			mux.HandleFunc("/api/review", mock.handleReview)
+			ts := httptest.NewServer(mux)
 			defer ts.Close()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
