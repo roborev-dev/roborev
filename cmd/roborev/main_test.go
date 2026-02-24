@@ -740,51 +740,58 @@ func TestIsGoTestBinaryPath(t *testing.T) {
 func TestShouldRefuseAutoStartDaemon(t *testing.T) {
 	t.Run("refuses test binary by default", func(t *testing.T) {
 		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
-		if !shouldRefuseAutoStartDaemon("/tmp/roborev.test") {
+		p := filepath.FromSlash("/tmp/roborev.test")
+		if !shouldRefuseAutoStartDaemon(p) {
 			t.Fatal("expected refusal for test binary without opt-in")
 		}
 	})
 
 	t.Run("allows explicit opt in for test binary", func(t *testing.T) {
 		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "1")
-		if shouldRefuseAutoStartDaemon("/tmp/roborev.test") {
+		p := filepath.FromSlash("/tmp/roborev.test")
+		if shouldRefuseAutoStartDaemon(p) {
 			t.Fatal("expected no refusal for test binary when opt-in is set")
 		}
 	})
 
 	t.Run("does not refuse normal binary", func(t *testing.T) {
 		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
-		if shouldRefuseAutoStartDaemon("/usr/local/bin/roborev") {
+		p := filepath.FromSlash("/usr/local/bin/roborev")
+		if shouldRefuseAutoStartDaemon(p) {
 			t.Fatal("expected no refusal for non-test binary")
 		}
 	})
 
 	t.Run("refuses go run binary from build cache", func(t *testing.T) {
-		goRunPath := "/Users/x/Library/Caches/go-build/72/abc-d/roborev"
-		if !shouldRefuseAutoStartDaemon(goRunPath) {
+		p := filepath.FromSlash(
+			"/Users/x/Library/Caches/go-build/72/abc-d/roborev",
+		)
+		if !shouldRefuseAutoStartDaemon(p) {
 			t.Fatal("expected refusal for go-build cache binary")
 		}
 	})
 
 	t.Run("refuses go run binary from tmp", func(t *testing.T) {
-		goRunPath := "/var/folders/y4/abc/T/go-build123/b001/exe/roborev"
-		if !shouldRefuseAutoStartDaemon(goRunPath) {
+		p := filepath.FromSlash(
+			"/var/folders/y4/abc/T/go-build123/b001/exe/roborev",
+		)
+		if !shouldRefuseAutoStartDaemon(p) {
 			t.Fatal("expected refusal for go-build tmp binary")
 		}
 	})
 
 	t.Run("allows binary under go-builder username", func(t *testing.T) {
 		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
-		path := "/home/go-builder/bin/roborev"
-		if shouldRefuseAutoStartDaemon(path) {
+		p := filepath.FromSlash("/home/go-builder/bin/roborev")
+		if shouldRefuseAutoStartDaemon(p) {
 			t.Fatal("should not refuse binary under go-builder")
 		}
 	})
 
 	t.Run("allows binary under go-build1user dir", func(t *testing.T) {
 		t.Setenv("ROBOREV_TEST_ALLOW_AUTOSTART", "")
-		path := "/opt/go-build1user/bin/roborev"
-		if shouldRefuseAutoStartDaemon(path) {
+		p := filepath.FromSlash("/opt/go-build1user/bin/roborev")
+		if shouldRefuseAutoStartDaemon(p) {
 			t.Fatal("should not refuse binary under go-build1user")
 		}
 	})
