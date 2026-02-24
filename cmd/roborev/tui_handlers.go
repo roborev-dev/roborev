@@ -1140,12 +1140,10 @@ func (m tuiModel) handleEscKey() (tea.Model, tea.Cmd) {
 	} else if m.currentView == tuiViewReview {
 		// If fix panel is open (unfocused), esc closes it rather than leaving the review
 		if m.reviewFixPanelOpen {
-			m.reviewFixPanelOpen = false
-			m.reviewFixPanelFocused = false
-			m.fixPromptText = ""
-			m.fixPromptJobID = 0
+			m.closeFixPanel()
 			return m, nil
 		}
+		m.closeFixPanel()
 		returnTo := m.reviewFromView
 		if returnTo == 0 {
 			returnTo = tuiViewQueue

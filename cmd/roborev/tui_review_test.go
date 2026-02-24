@@ -3536,3 +3536,31 @@ func TestFixPanelClosedOnPromptKey(t *testing.T) {
 		t.Errorf("Expected fixPromptJobID=0, got %d", got.fixPromptJobID)
 	}
 }
+
+func TestFixPanelPendingClearedOnEscFromReview(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewReview
+	done := storage.JobStatusDone
+	job := storage.ReviewJob{ID: 1, Status: done}
+	m.currentReview = &storage.Review{JobID: 1, Job: &job}
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Pending fix panel (fetch in flight) but panel not yet open
+	m.reviewFixPanelPending = true
+	m.fixPromptJobID = 1
+
+	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
+	got := m2.(tuiModel)
+
+	if got.currentView == tuiViewReview {
+		t.Error("Expected to leave review view on Esc")
+	}
+	if got.reviewFixPanelPending {
+		t.Error("Expected reviewFixPanelPending to be cleared on Esc exit")
+	}
+	if got.fixPromptJobID != 0 {
+		t.Errorf("Expected fixPromptJobID=0, got %d", got.fixPromptJobID)
+	}
+}
