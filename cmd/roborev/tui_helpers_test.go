@@ -468,3 +468,98 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 		}
 	}
 }
+
+func TestReflowHelpRows(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		items    []string
+		width    int
+		wantRows int
+	}{
+		{
+			name:     "all fit in one row",
+			items:    []string{"a: one", "b: two"},
+			width:    80,
+			wantRows: 1,
+		},
+		{
+			name:     "split into two rows",
+			items:    []string{"a: one", "b: two", "c: three", "d: four"},
+			width:    30,
+			wantRows: 2,
+		},
+		{
+			name:     "width zero returns unchanged",
+			items:    []string{"a: one", "b: two", "c: three"},
+			width:    0,
+			wantRows: 1,
+		},
+		{
+			name:     "single wide item gets own row",
+			items:    []string{"very-long-item-label: description"},
+			width:    20,
+			wantRows: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := reflowHelpRows([][]string{tc.items}, tc.width)
+			if len(rows) != tc.wantRows {
+				t.Errorf("got %d rows, want %d (items=%v, width=%d)",
+					len(rows), tc.wantRows, tc.items, tc.width)
+			}
+		})
+	}
+}
+
+func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
+	t.Parallel()
+
+	// Real help row sets used by the TUI views.
+	helpSets := map[string][][]string{
+		"queue": {
+			{"x: cancel", "r: rerun", "l: log", "p: prompt", "c: comment", "y: copy", "m: commit msg", "F: fix"},
+			{"↑/↓: navigate", "enter: review", "a: addressed", "f: filter", "h: hide", "T: tasks", "?: help", "q: quit"},
+		},
+		"review": {
+			{"p: prompt", "c: comment", "m: commit msg", "a: addressed", "y: copy", "F: fix"},
+			{"↑/↓: scroll", "←/→: prev/next", "?: commands", "esc: back"},
+		},
+		"filter": {
+			{"up/down: navigate", "right/left: expand/collapse", "enter: select", "esc: cancel", "type to search"},
+		},
+		"tasks": {
+			{"enter: view", "p: patch", "A: apply", "l: log", "x: cancel", "r: refresh", "?: help", "T/esc: back"},
+		},
+	}
+
+	widths := []int{50, 80, 100, 120}
+
+	for name, rows := range helpSets {
+		for _, width := range widths {
+			t.Run(fmt.Sprintf("%s/width=%d", name, width), func(t *testing.T) {
+				rendered := renderHelpTable(rows, width)
+				reflowed := reflowHelpRows(rows, width)
+
+				// Rendered line count must match reflowed row count.
+				lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+				if len(lines) != len(reflowed) {
+					t.Errorf("rendered %d lines but reflowed to %d rows",
+						len(lines), len(reflowed))
+				}
+
+				// No rendered line should exceed the target width.
+				for i, line := range lines {
+					visible := testANSIRegex.ReplaceAllString(line, "")
+					if len(visible) > width {
+						t.Errorf("line %d width %d > target %d: %q",
+							i, len(visible), width, visible)
+					}
+				}
+			})
+		}
+	}
+}
