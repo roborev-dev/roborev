@@ -107,8 +107,6 @@ func renderJobLogWith(
 	r io.Reader, fmtr *streamFormatter, plainW io.Writer,
 ) error {
 	br := bufio.NewReader(r)
-	hasJSON := false
-
 	for {
 		line, err := br.ReadString('\n')
 		// ReadString returns data even on error (e.g. EOF
@@ -116,7 +114,6 @@ func renderJobLogWith(
 		line = strings.TrimRight(line, "\n\r")
 		if line != "" {
 			if looksLikeJSON(line) {
-				hasJSON = true
 				if _, werr := fmtr.Write(
 					[]byte(line + "\n"),
 				); werr != nil {
@@ -131,8 +128,8 @@ func renderJobLogWith(
 					return werr
 				}
 			}
-		} else if err != io.EOF && !hasJSON {
-			// Preserve blank lines in plain-text logs for spacing.
+		} else if err != io.EOF {
+			// Preserve blank lines for spacing in rendered output.
 			if _, werr := fmt.Fprintln(plainW); werr != nil {
 				return werr
 			}

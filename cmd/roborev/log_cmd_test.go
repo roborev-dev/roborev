@@ -343,3 +343,36 @@ func TestRenderJobLog_SanitizeMixedJSONAndControl(t *testing.T) {
 		t.Errorf("ANSI in non-JSON line not stripped: %q", out)
 	}
 }
+
+func TestRenderJobLog_PreservesBlankLinesInMixedLog(t *testing.T) {
+	// Blank lines between non-JSON stderr lines should be preserved
+	// even after JSON events have been seen.
+	input := strings.Join([]string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`,
+		"stderr line 1",
+		"",
+		"stderr line 2",
+	}, "\n")
+
+	var buf bytes.Buffer
+	err := renderJobLog(strings.NewReader(input), &buf, true)
+	if err != nil {
+		t.Fatalf("renderJobLog: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "stderr line 1") {
+		t.Errorf("missing stderr line 1: %q", out)
+	}
+	if !strings.Contains(out, "stderr line 2") {
+		t.Errorf("missing stderr line 2: %q", out)
+	}
+	// The blank line between the two stderr lines should be
+	// preserved (two consecutive newlines in the output).
+	if !strings.Contains(out, "stderr line 1\n\n") {
+		t.Errorf(
+			"blank line between stderr lines dropped: %q",
+			out,
+		)
+	}
+}
