@@ -147,6 +147,9 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, envFn gh
 
 		repos, err := r.callListRepos(ctx, owner, env)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, false, ctx.Err()
+			}
 			log.Printf("CI repo resolver: failed to list repos for %q: %v (skipping wildcards for this owner)", owner, err)
 			degraded = true
 			continue

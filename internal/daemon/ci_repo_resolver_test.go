@@ -540,6 +540,29 @@ func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 	}
 }
 
+func TestRepoResolver_CancelledContextReturnsError(t *testing.T) {
+	r := &RepoResolver{
+		listReposFn: func(ctx context.Context, _ string, _ []string) ([]string, error) {
+			return nil, ctx.Err()
+		},
+	}
+
+	ci := &config.CIConfig{
+		Repos: []string{"acme/*"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before calling Resolve
+
+	_, err := r.Resolve(ctx, ci, nil)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if !strings.Contains(err.Error(), "canceled") {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
 func TestRepoResolver_EnvFnCalled(t *testing.T) {
 	var envOwners []string
 	r := &RepoResolver{
