@@ -376,3 +376,78 @@ func TestRenderJobLog_PreservesBlankLinesInMixedLog(t *testing.T) {
 		)
 	}
 }
+
+func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
+	input := strings.Join([]string{
+		toJson(map[string]any{
+			"type": "step_start",
+			"part": map[string]any{"type": "step-start"},
+		}),
+		toJson(map[string]any{
+			"type": "text",
+			"part": map[string]any{
+				"type": "text",
+				"text": "Reviewing the code.",
+			},
+		}),
+		toJson(map[string]any{
+			"type": "tool",
+			"part": map[string]any{
+				"type": "tool",
+				"tool": "Read",
+				"id":   "tc_1",
+				"state": map[string]any{
+					"status": "running",
+					"input": map[string]any{
+						"file_path": "main.go",
+					},
+				},
+			},
+		}),
+		toJson(map[string]any{
+			"type": "text",
+			"part": map[string]any{
+				"type": "text",
+				"text": "Looks good overall.",
+			},
+		}),
+		toJson(map[string]any{
+			"type": "step_finish",
+			"part": map[string]any{
+				"type":   "step-finish",
+				"reason": "stop",
+			},
+		}),
+	}, "\n")
+
+	var buf bytes.Buffer
+	err := renderJobLog(strings.NewReader(input), &buf, true)
+	if err != nil {
+		t.Fatalf("renderJobLog: %v", err)
+	}
+
+	out := ansiEscapePattern.ReplaceAllString(buf.String(), "")
+	if !strings.Contains(out, "Reviewing the code.") {
+		t.Errorf("expected agent text, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Read") {
+		t.Errorf("expected tool name, got:\n%s", out)
+	}
+	if !strings.Contains(out, "main.go") {
+		t.Errorf("expected file path, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Looks good overall.") {
+		t.Errorf("expected second text, got:\n%s", out)
+	}
+	// Lifecycle events should be suppressed
+	if strings.Contains(out, "step_start") {
+		t.Errorf("step_start should be suppressed, got:\n%s", out)
+	}
+	if strings.Contains(out, "step_finish") {
+		t.Errorf("step_finish should be suppressed, got:\n%s", out)
+	}
+	// Raw JSON should not appear
+	if strings.Contains(out, `"type"`) {
+		t.Errorf("raw JSON should not appear, got:\n%s", out)
+	}
+}

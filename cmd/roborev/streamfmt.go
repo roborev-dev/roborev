@@ -57,6 +57,9 @@ type streamFormatter struct {
 	lastWasTool bool  // tracks tool vs text transitions for spacing
 	hasOutput   bool  // whether any output has been written
 
+	// Tracks opencode tool call IDs that have already been rendered.
+	opencodeRenderedToolIDs map[string]struct{}
+
 	// Tracks codex command_execution items that have already been rendered.
 	codexRenderedCommandIDs map[string]struct{}
 	// Track started command text to suppress duplicate completed echoes, including mixed-ID pairs.
@@ -170,6 +173,8 @@ type streamEvent struct {
 	Parameters json.RawMessage `json:"parameters,omitempty"`
 	// Codex: item events
 	Item *codexItem `json:"item,omitempty"`
+	// OpenCode: nested part payload
+	Part json.RawMessage `json:"part,omitempty"`
 }
 
 // codexItem represents the item field in codex JSONL events.
@@ -178,6 +183,17 @@ type codexItem struct {
 	Type    string `json:"type,omitempty"`
 	Text    string `json:"text,omitempty"`
 	Command string `json:"command,omitempty"`
+}
+
+// opencodeToolPart represents the part payload for opencode tool events.
+type opencodeToolPart struct {
+	Type  string `json:"type"`
+	Tool  string `json:"tool"`
+	ID    string `json:"id,omitempty"`
+	State struct {
+		Status string                     `json:"status,omitempty"`
+		Input  map[string]json.RawMessage `json:"input,omitempty"`
+	} `json:"state"`
 }
 
 type contentBlock struct {
@@ -235,6 +251,13 @@ func (f *streamFormatter) processLine(line string) {
 	case "item.started", "item.completed", "item.updated":
 		// Codex format: item events
 		f.processCodexItem(ev.Type, ev.Item)
+	case "text", "reasoning", "tool":
+		// OpenCode format: event body nested under "part"
+		if ev.Part != nil {
+			f.processOpenCodePart(ev.Type, ev.Part)
+		}
+	case "step_start", "step_finish":
+		// OpenCode lifecycle events — suppress
 	case "result", "tool_result", "init",
 		"thread.started", "turn.started", "turn.completed":
 		// Suppress lifecycle events
@@ -413,6 +436,65 @@ func (f *streamFormatter) decrementCodexStartedCommand(cmd string) {
 		return
 	}
 	f.codexStartedCommands[cmd] = count - 1
+}
+
+func (f *streamFormatter) processOpenCodePart(
+	eventType string, raw json.RawMessage,
+) {
+	switch eventType {
+	case "text":
+		var part struct{ Text string }
+		if json.Unmarshal(raw, &part) == nil && part.Text != "" {
+			f.writeText(sanitizeControlKeepNewlines(part.Text))
+		}
+	case "reasoning":
+		var part struct{ Text string }
+		if json.Unmarshal(raw, &part) == nil {
+			text := strings.TrimSpace(sanitizeControl(part.Text))
+			if text != "" {
+				f.writeReasoning(text)
+			}
+		}
+	case "tool":
+		var tp opencodeToolPart
+		if json.Unmarshal(raw, &tp) != nil || tp.Tool == "" {
+			return
+		}
+		// Only render on "running" or "completed" status to
+		// skip the initial "pending" event that has no details.
+		status := tp.State.Status
+		if status != "running" && status != "completed" {
+			return
+		}
+		// Deduplicate by tool call ID.
+		if tp.ID != "" {
+			if f.opencodeRenderedToolIDs == nil {
+				f.opencodeRenderedToolIDs = make(
+					map[string]struct{},
+				)
+			}
+			if _, seen := f.opencodeRenderedToolIDs[tp.ID]; seen {
+				return
+			}
+			f.opencodeRenderedToolIDs[tp.ID] = struct{}{}
+		}
+		f.formatToolUse(tp.Tool, f.opencodeToolInput(tp))
+	}
+}
+
+// opencodeToolInput returns the raw JSON input map from an opencode
+// tool part, suitable for passing to formatToolUse.
+func (f *streamFormatter) opencodeToolInput(
+	tp opencodeToolPart,
+) json.RawMessage {
+	if len(tp.State.Input) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(tp.State.Input)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {

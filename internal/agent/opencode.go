@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -69,61 +70,20 @@ func (a *OpenCodeAgent) CommandName() string {
 	return a.Command
 }
 
-// filterOpencodeToolCallLines removes LLM tool-call JSON lines that may appear in stdout.
-// When LLM providers stream responses, raw tool calls in the standard format
-// {"name":"...","arguments":{...}} (exactly 2 keys) may occasionally leak through
-// to stdout. Normally OpenCode formats these with ANSI codes, but edge cases
-// (streaming glitches, format failures) can expose the raw JSON.
-// We filter lines matching this exact format while preserving legitimate JSON
-// examples which would have additional keys.
-func filterOpencodeToolCallLines(s string) string {
-	var out []string
-	for line := range strings.SplitSeq(s, "\n") {
-		if isOpencodeToolCallLine(line) {
-			continue
-		}
-		out = append(out, line)
-	}
-	// Only trim trailing newlines to preserve leading indentation in code blocks
-	return strings.TrimRight(strings.Join(out, "\n"), "\r\n")
-}
-
-func isOpencodeToolCallLine(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "{") {
-		return false
-	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
-		return false
-	}
-	// Tool calls have exactly "name" and "arguments" keys, nothing else.
-	// This avoids stripping legitimate JSON examples that happen to include these keys.
-	if len(m) != 2 {
-		return false
-	}
-	_, hasName := m["name"]
-	_, hasArgs := m["arguments"]
-	return hasName && hasArgs
-}
-
 func (a *OpenCodeAgent) CommandLine() string {
-	args := []string{"run", "--format", "default"}
+	args := []string{"run", "--format", "json"}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	// OpenCode CLI supports a headless invocation via `opencode run [message..]`.
-	// We run it from the repo root so it can use project context, and pass the full
-	// roborev prompt as the message.
-	//
-	// Helpful reference:
-	//   opencode --help
-	//   opencode run --help
-	args := []string{"run", "--format", "default"}
+func (a *OpenCodeAgent) Review(
+	ctx context.Context,
+	repoPath, commitSHA, prompt string,
+	output io.Writer,
+) (string, error) {
+	args := []string{"run", "--format", "json"}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
@@ -132,30 +92,102 @@ func (a *OpenCodeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt 
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
 
-	var stdout, stderr bytes.Buffer
-	if sw := newSyncWriter(output); sw != nil {
-		cmd.Stdout = io.MultiWriter(&stdout, sw)
-		cmd.Stderr = io.MultiWriter(&stderr, sw)
-	} else {
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
+	var stderr bytes.Buffer
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("create stdout pipe: %w", err)
+	}
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start opencode: %w", err)
 	}
 
-	if err := cmd.Run(); err != nil {
-		// opencode sometimes prints failures/usage to stdout; include both streams.
-		return "", fmt.Errorf(
-			"opencode failed: %w\nstdout: %s\nstderr: %s",
-			err,
-			stdout.String(),
-			stderr.String(),
-		)
+	result, parseErr := parseOpenCodeJSON(stdoutPipe, output)
+
+	if waitErr := cmd.Wait(); waitErr != nil {
+		var detail strings.Builder
+		fmt.Fprintf(&detail, "opencode failed")
+		if parseErr != nil {
+			fmt.Fprintf(&detail, "\nstream: %v", parseErr)
+		}
+		if s := stderr.String(); s != "" {
+			fmt.Fprintf(&detail, "\nstderr: %s", s)
+		}
+		if result != "" {
+			partial := result
+			if len(partial) > 500 {
+				partial = partial[:500] + "..."
+			}
+			fmt.Fprintf(&detail, "\npartial output: %s", partial)
+		}
+		return "", fmt.Errorf("%s: %w", detail.String(), waitErr)
 	}
 
-	result := filterOpencodeToolCallLines(stdout.String())
-	if len(result) == 0 {
+	if parseErr != nil {
+		return "", parseErr
+	}
+
+	if result == "" {
 		return "No review output generated", nil
 	}
 	return result, nil
+}
+
+// opencodeEvent represents a top-level JSONL event from opencode --format json.
+type opencodeEvent struct {
+	Type string          `json:"type"`
+	Part json.RawMessage `json:"part,omitempty"`
+}
+
+// opencodePart represents the nested part payload in opencode events.
+type opencodePart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// parseOpenCodeJSON reads JSONL from opencode --format json, streams
+// raw lines to the output writer (for live rendering + log capture),
+// and extracts the final result text from "text" events.
+func parseOpenCodeJSON(
+	r io.Reader, output io.Writer,
+) (string, error) {
+	br := bufio.NewReader(r)
+	sw := newSyncWriter(output)
+
+	var textParts []string
+
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return strings.Join(textParts, ""), fmt.Errorf(
+				"read stream: %w", err,
+			)
+		}
+
+		line = strings.TrimSpace(line)
+		if line != "" {
+			if sw != nil {
+				_, _ = sw.Write([]byte(line + "\n"))
+			}
+
+			var ev opencodeEvent
+			if json.Unmarshal([]byte(line), &ev) == nil &&
+				ev.Part != nil {
+				var part opencodePart
+				if json.Unmarshal(ev.Part, &part) == nil &&
+					part.Type == "text" && part.Text != "" {
+					textParts = append(textParts, part.Text)
+				}
+			}
+		}
+
+		if err == io.EOF {
+			break
+		}
+	}
+
+	return strings.Join(textParts, ""), nil
 }
 
 func init() {

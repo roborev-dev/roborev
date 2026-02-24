@@ -441,7 +441,8 @@ func TestAgentReviewPassesModelFlag(t *testing.T) {
 		flag       string
 		value      string
 	}{
-		{"opencode", func(p string) Agent { return NewOpenCodeAgent(p).WithModel("anthropic/claude-sonnet-4") }, "--model", "anthropic/claude-sonnet-4"},
+		// opencode uses JSON streaming so verifyAgentPassesFlag (plain text echo)
+		// doesn't work; model flag is verified in TestOpenCodeReviewModelFlag.
 		{"copilot", func(p string) Agent { return NewCopilotAgent(p).WithModel("gpt-4o") }, "--model", "gpt-4o"},
 	}
 

@@ -623,6 +623,129 @@ func TestStreamFormatter_SanitizesToolName(t *testing.T) {
 	fix.assertContains(t, "clean.go")
 }
 
+// Event builder for OpenCode-style JSON.
+
+func eventOpenCode(eventType string, part map[string]any) string {
+	return toJson(map[string]any{
+		"type": eventType,
+		"part": part,
+	})
+}
+
+func TestStreamFormatter_OpenCodeText(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOpenCode("text", map[string]any{
+		"type": "text",
+		"text": "I found a bug in the code.",
+	}))
+	fix.assertContains(t, "I found a bug in the code.")
+}
+
+func TestStreamFormatter_OpenCodeTool(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOpenCode("tool", map[string]any{
+		"type": "tool",
+		"tool": "Read",
+		"id":   "tc_1",
+		"state": map[string]any{
+			"status": "running",
+			"input": map[string]any{
+				"file_path": "internal/server.go",
+			},
+		},
+	}))
+	fix.writeLine(eventOpenCode("tool", map[string]any{
+		"type": "tool",
+		"tool": "Bash",
+		"id":   "tc_2",
+		"state": map[string]any{
+			"status": "running",
+			"input": map[string]any{
+				"command": "go test ./...",
+			},
+		},
+	}))
+	fix.writeLine(eventOpenCode("tool", map[string]any{
+		"type": "tool",
+		"tool": "Grep",
+		"id":   "tc_3",
+		"state": map[string]any{
+			"status": "running",
+			"input": map[string]any{
+				"pattern": "TODO",
+				"path":    "internal/",
+			},
+		},
+	}))
+
+	fix.assertContains(t, "Read   internal/server.go")
+	fix.assertContains(t, "Bash   go test ./...")
+	fix.assertContains(t, "Grep   TODO  internal/")
+}
+
+func TestStreamFormatter_OpenCodeToolDedup(t *testing.T) {
+	fix := newFixture(true)
+	// Same ID, pending then running then completed
+	fix.writeLine(eventOpenCode("tool", map[string]any{
+		"type": "tool", "tool": "Read", "id": "tc_1",
+		"state": map[string]any{"status": "pending"},
+	}))
+	fix.writeLine(eventOpenCode("tool", map[string]any{
+		"type": "tool", "tool": "Read", "id": "tc_1",
+		"state": map[string]any{
+			"status": "running",
+			"input": map[string]any{
+				"file_path": "main.go",
+			},
+		},
+	}))
+	fix.writeLine(eventOpenCode("tool", map[string]any{
+		"type": "tool", "tool": "Read", "id": "tc_1",
+		"state": map[string]any{
+			"status": "completed",
+			"input": map[string]any{
+				"file_path": "main.go",
+			},
+		},
+	}))
+
+	// Should render exactly once (the "running" event)
+	fix.assertCount(t, "Read   main.go", 1)
+}
+
+func TestStreamFormatter_OpenCodeReasoning(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOpenCode("reasoning", map[string]any{
+		"type": "reasoning",
+		"text": "Reviewing error handling changes",
+	}))
+	fix.assertContains(t, "Reviewing error handling changes")
+}
+
+func TestStreamFormatter_OpenCodeSuppressesLifecycle(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOpenCode("step_start", map[string]any{
+		"type": "step-start",
+	}))
+	fix.writeLine(eventOpenCode("step_finish", map[string]any{
+		"type":   "step-finish",
+		"reason": "stop",
+		"cost":   0.01,
+	}))
+	fix.assertEmpty(t)
+}
+
+func TestStreamFormatter_OpenCodePendingToolSuppressed(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventOpenCode("tool", map[string]any{
+		"type":  "tool",
+		"tool":  "Read",
+		"id":    "tc_1",
+		"state": map[string]any{"status": "pending"},
+	}))
+	fix.assertEmpty(t)
+}
+
 func TestStreamFormatter_SanitizesGeminiText(t *testing.T) {
 	fix := newFixture(true)
 	ev := toJson(map[string]any{
