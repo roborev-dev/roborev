@@ -21,6 +21,11 @@ const (
 	ReasoningFast ReasoningLevel = "fast"
 )
 
+// ReasoningLevels returns the canonical reasoning level names.
+func ReasoningLevels() []string {
+	return []string{string(ReasoningFast), string(ReasoningStandard), string(ReasoningThorough)}
+}
+
 // ParseReasoningLevel converts a string to ReasoningLevel, defaulting to standard
 func ParseReasoningLevel(s string) ReasoningLevel {
 	switch s {
