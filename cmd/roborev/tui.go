@@ -114,24 +114,12 @@ func reflowHelpRows(rows [][]string, width int) [][]string {
 // renderHelpTable renders help items as a lipgloss table with internal vertical
 // borders only. Each row is a list of "key: description" strings. If width > 0,
 // rows that exceed it are split across multiple lines to avoid soft-wrapping.
+// Each row is rendered as an independent table to prevent cross-row column
+// width synchronization from inflating the rendered width.
 func renderHelpTable(rows [][]string, width int) string {
 	rows = reflowHelpRows(rows, width)
 	if len(rows) == 0 {
 		return ""
-	}
-
-	// Find max columns across all rows.
-	maxCols := 0
-	for _, row := range rows {
-		if len(row) > maxCols {
-			maxCols = len(row)
-		}
-	}
-	// Pad rows to uniform column count.
-	for i := range rows {
-		for len(rows[i]) < maxCols {
-			rows[i] = append(rows[i], "")
-		}
 	}
 
 	// Border with only internal vertical lines.
@@ -151,23 +139,31 @@ func renderHelpTable(rows [][]string, width int) string {
 		MiddleBottom: "",
 	}
 
-	t := table.New().
-		Border(border).
-		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})).
-		BorderTop(false).
-		BorderBottom(false).
-		BorderLeft(false).
-		BorderRight(false).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			return lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
-				PaddingLeft(1).
-				PaddingRight(1)
-		}).
-		Wrap(false).
-		Rows(rows...)
+	borderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
+	cellStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
+		PaddingLeft(1).
+		PaddingRight(1)
 
-	return t.Render()
+	var parts []string
+	for _, row := range rows {
+		t := table.New().
+			Border(border).
+			BorderStyle(borderStyle).
+			BorderTop(false).
+			BorderBottom(false).
+			BorderLeft(false).
+			BorderRight(false).
+			StyleFunc(func(_, _ int) lipgloss.Style {
+				return cellStyle
+			}).
+			Wrap(false).
+			Rows(row)
+		parts = append(parts, t.Render())
+	}
+
+	return strings.Join(parts, "\n")
 }
 
 // fullSHAPattern matches a 40-character hex git SHA (not ranges or branch names)
