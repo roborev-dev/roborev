@@ -4096,7 +4096,10 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 
 		// Resolve the target directory: if the branch has its own worktree,
 		// apply the patch there instead of the main repo path.
-		targetDir, checkedOut := git.WorktreePathForBranch(jobDetail.RepoPath, jobDetail.Branch)
+		targetDir, checkedOut, wtErr := git.WorktreePathForBranch(jobDetail.RepoPath, jobDetail.Branch)
+		if wtErr != nil {
+			return tuiApplyPatchResultMsg{jobID: jobID, err: wtErr}
+		}
 		if !checkedOut {
 			return tuiApplyPatchResultMsg{
 				jobID:        jobID,

@@ -1349,7 +1349,10 @@ func TestWorktreePathForBranch(t *testing.T) {
 		repo.CommitFile("f.txt", "init", "init")
 		wt := repo.AddWorktree("feature-x")
 
-		got, checkedOut := WorktreePathForBranch(repo.Dir, "feature-x")
+		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "feature-x")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		got = evalSymlinks(t, got)
 		want := evalSymlinks(t, wt.Dir)
 		if got != want {
@@ -1365,7 +1368,10 @@ func TestWorktreePathForBranch(t *testing.T) {
 		repo.CommitFile("f.txt", "init", "init")
 		repo.Run("branch", "other-branch")
 
-		got, checkedOut := WorktreePathForBranch(repo.Dir, "other-branch")
+		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "other-branch")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if got != repo.Dir {
 			t.Errorf("WorktreePathForBranch() path = %q, want %q", got, repo.Dir)
 		}
@@ -1378,7 +1384,10 @@ func TestWorktreePathForBranch(t *testing.T) {
 		repo := NewTestRepo(t)
 		repo.CommitFile("f.txt", "init", "init")
 
-		got, checkedOut := WorktreePathForBranch(repo.Dir, "")
+		got, checkedOut, err := WorktreePathForBranch(repo.Dir, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if got != repo.Dir {
 			t.Errorf("WorktreePathForBranch() path = %q, want %q", got, repo.Dir)
 		}
@@ -1392,7 +1401,10 @@ func TestWorktreePathForBranch(t *testing.T) {
 		repo.CommitFile("f.txt", "init", "init")
 		branch := GetCurrentBranch(repo.Dir)
 
-		got, checkedOut := WorktreePathForBranch(repo.Dir, branch)
+		got, checkedOut, err := WorktreePathForBranch(repo.Dir, branch)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		got = evalSymlinks(t, got)
 		want := evalSymlinks(t, repo.Dir)
 		if got != want {
@@ -1400,6 +1412,13 @@ func TestWorktreePathForBranch(t *testing.T) {
 		}
 		if !checkedOut {
 			t.Error("WorktreePathForBranch() checkedOut = false, want true")
+		}
+	})
+
+	t.Run("returns error for invalid repo path", func(t *testing.T) {
+		_, _, err := WorktreePathForBranch("/nonexistent/repo", "main")
+		if err == nil {
+			t.Error("expected error for invalid repo path, got nil")
 		}
 	})
 }

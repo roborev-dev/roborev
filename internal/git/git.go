@@ -666,10 +666,11 @@ func GetBranchName(repoPath, sha string) string {
 // WorktreePathForBranch returns the worktree directory where branch is checked out.
 // If the branch is checked out in any worktree (including the main repo), returns
 // that path and true. If the branch is not checked out anywhere, returns repoPath
-// and false. An empty branch always returns repoPath and true.
-func WorktreePathForBranch(repoPath, branch string) (path string, checkedOut bool) {
+// and false. Returns a non-nil error if the git command fails.
+// An empty branch always returns repoPath, true, nil.
+func WorktreePathForBranch(repoPath, branch string) (string, bool, error) {
 	if branch == "" {
-		return repoPath, true
+		return repoPath, true, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -677,7 +678,7 @@ func WorktreePathForBranch(repoPath, branch string) (path string, checkedOut boo
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "list", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
-		return repoPath, false
+		return "", false, fmt.Errorf("git worktree list: %w", err)
 	}
 
 	// Parse porcelain output. Each worktree block is separated by blank lines.
@@ -695,11 +696,11 @@ func WorktreePathForBranch(repoPath, branch string) (path string, checkedOut boo
 			// ref is like "refs/heads/feature-x", branch might be "feature-x"
 			wtBranch := strings.TrimPrefix(ref, "refs/heads/")
 			if wtBranch == branch && currentPath != "" {
-				return currentPath, true
+				return currentPath, true, nil
 			}
 		}
 	}
-	return repoPath, false
+	return repoPath, false, nil
 }
 
 // GetHooksPath returns the path to the hooks directory, respecting core.hooksPath
