@@ -1973,11 +1973,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promptScroll = 0
 
 	case tuiLogOutputMsg:
-		m.logLoading = false
 		// Drop stale responses from previous log sessions.
+		// Clear logLoading only for the current seq — stale
+		// responses must not affect the in-flight guard.
 		if msg.seq != m.logFetchSeq {
 			return m, nil
 		}
+		m.logLoading = false
 		m.consecutiveErrors = 0
 		if msg.err != nil {
 			if errors.Is(msg.err, errNoLog) {

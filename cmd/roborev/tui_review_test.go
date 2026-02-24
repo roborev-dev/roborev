@@ -2797,6 +2797,7 @@ func TestTUILogOutputStaleSeqDropped(t *testing.T) {
 	m.logJobID = 1
 	m.logStreaming = true
 	m.logFetchSeq = 5
+	m.logLoading = true // current-seq fetch is in-flight
 	m.height = 30
 
 	m.logLines = []logLine{{text: "Current"}}
@@ -2820,6 +2821,11 @@ func TestTUILogOutputStaleSeqDropped(t *testing.T) {
 			"stale msg should not update offset, got %d",
 			m2.logOffset,
 		)
+	}
+	// logLoading must remain true — stale responses must not
+	// clear the in-flight guard for the current session.
+	if !m2.logLoading {
+		t.Error("stale msg should not clear logLoading")
 	}
 }
 
