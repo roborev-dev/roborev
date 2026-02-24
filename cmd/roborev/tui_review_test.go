@@ -3051,6 +3051,50 @@ func TestTUILogCancelFixJob(t *testing.T) {
 	}
 }
 
+func TestTUILogVisibleLinesFixJob(t *testing.T) {
+	// logVisibleLines must account for the command-line header
+	// when viewing a fix job (from m.fixJobs, not m.jobs).
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 42
+	m.logFromView = tuiViewTasks
+	m.height = 30
+
+	// Fix job with agent "test" produces a non-empty command line.
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 42, Status: storage.JobStatusRunning, Agent: "test"},
+	}
+	// m.jobs is empty — job only exists in fixJobs.
+	m.jobs = nil
+
+	visWithCmd := m.logVisibleLines()
+
+	// Rendered view should also show the Command: header.
+	m.logLines = []logLine{{text: "output"}}
+	m.width = 80
+	view := m.View()
+	hasCmd := strings.Contains(view, "Command:")
+
+	if !hasCmd {
+		t.Error("expected Command: header in rendered view")
+	}
+
+	// Remove the fix job so there's no command line.
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 42, Status: storage.JobStatusRunning},
+	}
+	visWithout := m.logVisibleLines()
+
+	// With the command header, one fewer visible line.
+	if visWithCmd != visWithout-1 {
+		t.Errorf(
+			"logVisibleLines mismatch: with cmd=%d, without=%d "+
+				"(expected difference of 1)",
+			visWithCmd, visWithout,
+		)
+	}
+}
+
 func TestTUILogNavFromTasks(t *testing.T) {
 	// Left/right in log view opened from tasks should navigate
 	// through fixJobs, not m.jobs.

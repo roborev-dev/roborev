@@ -1562,12 +1562,9 @@ func (m *tuiModel) logVisibleLines() int {
 	// title + separator + status + help = 4 reserved lines
 	reserved := 4
 	// Check if command line header is shown
-	for i := range m.jobs {
-		if m.jobs[i].ID == m.logJobID {
-			if commandLineForJob(&m.jobs[i]) != "" {
-				reserved++
-			}
-			break
+	if job := m.logViewLookupJob(); job != nil {
+		if commandLineForJob(job) != "" {
+			reserved++
 		}
 	}
 	return max(m.height-reserved, 1)
