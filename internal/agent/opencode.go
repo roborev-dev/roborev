@@ -92,12 +92,16 @@ func (a *OpenCodeAgent) Review(
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
 
+	// Share a single syncWriter so stdout and stderr writes
+	// to the output writer are serialized by one mutex.
+	sw := newSyncWriter(output)
+
 	var stderrBuf bytes.Buffer
-	var stderrWriter io.Writer = &stderrBuf
-	if output != nil {
-		stderrWriter = io.MultiWriter(&stderrBuf, newSyncWriter(output))
+	if sw != nil {
+		cmd.Stderr = io.MultiWriter(&stderrBuf, sw)
+	} else {
+		cmd.Stderr = &stderrBuf
 	}
-	cmd.Stderr = stderrWriter
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -109,7 +113,7 @@ func (a *OpenCodeAgent) Review(
 	}
 	defer stdoutPipe.Close()
 
-	result, parseErr := parseOpenCodeJSON(stdoutPipe, output)
+	result, parseErr := parseOpenCodeJSON(stdoutPipe, sw)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		var detail strings.Builder
@@ -156,10 +160,9 @@ type opencodePart struct {
 // raw lines to the output writer (for live rendering + log capture),
 // and extracts the final result text from "text" events.
 func parseOpenCodeJSON(
-	r io.Reader, output io.Writer,
+	r io.Reader, sw *syncWriter,
 ) (string, error) {
 	br := bufio.NewReader(r)
-	sw := newSyncWriter(output)
 
 	var textParts []string
 

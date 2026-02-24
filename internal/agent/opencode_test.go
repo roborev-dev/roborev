@@ -252,7 +252,7 @@ func TestParseOpenCodeJSON(t *testing.T) {
 
 	var outputBuf bytes.Buffer
 	result, err := parseOpenCodeJSON(
-		strings.NewReader(lines), &outputBuf,
+		strings.NewReader(lines), newSyncWriter(&outputBuf),
 	)
 	if err != nil {
 		t.Fatalf("parseOpenCodeJSON: %v", err)
@@ -285,6 +285,43 @@ func TestParseOpenCodeJSON_NilOutput(t *testing.T) {
 	if result != "ok" {
 		t.Errorf("result = %q, want %q", result, "ok")
 	}
+}
+
+func TestOpenCodeReviewStderrStreamedToOutput(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	stdoutLines := []string{
+		makeOpenCodeEvent("text", map[string]any{
+			"type": "text", "text": "Review done",
+		}),
+	}
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureStdin: true,
+		StdoutLines:  stdoutLines,
+		StderrLines:  []string{"warning: something"},
+	})
+
+	a := NewOpenCodeAgent(mock.CmdPath)
+
+	var outputBuf bytes.Buffer
+	result, err := a.Review(
+		context.Background(), t.TempDir(),
+		"HEAD", "prompt", &outputBuf,
+	)
+	if err != nil {
+		t.Fatalf("Review failed: %v", err)
+	}
+
+	if result != "Review done" {
+		t.Errorf("result = %q, want %q", result, "Review done")
+	}
+
+	// Both stdout JSONL and stderr should appear in output
+	outStr := outputBuf.String()
+	assertContains(t, outStr, `"type":"text"`)
+	assertContains(t, outStr, "warning: something")
 }
 
 func TestOpenCodeReviewNilOutput(t *testing.T) {
