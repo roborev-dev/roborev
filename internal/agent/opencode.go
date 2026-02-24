@@ -92,12 +92,17 @@ func (a *OpenCodeAgent) Review(
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
 
-	var stderr bytes.Buffer
+	var stderrBuf bytes.Buffer
+	var stderrWriter io.Writer = &stderrBuf
+	if output != nil {
+		stderrWriter = io.MultiWriter(&stderrBuf, newSyncWriter(output))
+	}
+	cmd.Stderr = stderrWriter
+
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("create stdout pipe: %w", err)
 	}
-	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start opencode: %w", err)
@@ -112,7 +117,7 @@ func (a *OpenCodeAgent) Review(
 		if parseErr != nil {
 			fmt.Fprintf(&detail, "\nstream: %v", parseErr)
 		}
-		if s := stderr.String(); s != "" {
+		if s := stderrBuf.String(); s != "" {
 			fmt.Fprintf(&detail, "\nstderr: %s", s)
 		}
 		if result != "" {
@@ -126,7 +131,7 @@ func (a *OpenCodeAgent) Review(
 	}
 
 	if parseErr != nil {
-		return "", parseErr
+		return result, parseErr
 	}
 
 	if result == "" {

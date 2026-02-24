@@ -287,6 +287,36 @@ func TestParseOpenCodeJSON_NilOutput(t *testing.T) {
 	}
 }
 
+func TestOpenCodeReviewNilOutput(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	stdoutLines := []string{
+		makeOpenCodeEvent("text", map[string]any{
+			"type": "text", "text": "Review content",
+		}),
+	}
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureStdin: true,
+		StdoutLines:  stdoutLines,
+	})
+
+	a := NewOpenCodeAgent(mock.CmdPath)
+
+	result, err := a.Review(
+		context.Background(), t.TempDir(),
+		"HEAD", "prompt", nil,
+	)
+	if err != nil {
+		t.Fatalf("Review with nil output: %v", err)
+	}
+
+	if result != "Review content" {
+		t.Errorf("result = %q, want %q", result, "Review content")
+	}
+}
+
 func TestParseOpenCodeJSON_ReadError(t *testing.T) {
 	t.Parallel()
 
