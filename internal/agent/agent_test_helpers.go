@@ -72,6 +72,10 @@ func writeTempCommand(t *testing.T, script string) string {
 	if err := f.Close(); err != nil {
 		t.Fatalf("write temp command close: %v", err)
 	}
+	// Brief yield after closing the write FD to let the kernel fully
+	// release the inode write reference. Without this, exec can race
+	// and hit ETXTBSY on Linux under the -race detector.
+	runtime.Gosched()
 	return path
 }
 
