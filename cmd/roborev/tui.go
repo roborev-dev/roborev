@@ -77,10 +77,45 @@ var (
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
 )
 
+// reflowHelpRows redistributes items across rows so each fits within
+// width. Each cell occupies its content width plus 2 (left+right padding)
+// and inter-cell separators are 1 char each. If width is <= 0, rows are
+// returned unchanged.
+func reflowHelpRows(rows [][]string, width int) [][]string {
+	if width <= 0 {
+		return rows
+	}
+	var result [][]string
+	for _, row := range rows {
+		var current []string
+		currentWidth := 0
+		for _, item := range row {
+			itemW := runewidth.StringWidth(item) + 2 // cell padding
+			sep := 0
+			if len(current) > 0 {
+				sep = 1 // "│" separator
+			}
+			if len(current) > 0 && currentWidth+sep+itemW > width {
+				result = append(result, current)
+				current = []string{item}
+				currentWidth = itemW
+			} else {
+				current = append(current, item)
+				currentWidth += sep + itemW
+			}
+		}
+		if len(current) > 0 {
+			result = append(result, current)
+		}
+	}
+	return result
+}
+
 // renderHelpTable renders help items as a lipgloss table with internal vertical
-// borders only. Each row is a list of "key: description" strings. Columns are
-// auto-sized to fit their content without truncation.
-func renderHelpTable(rows [][]string) string {
+// borders only. Each row is a list of "key: description" strings. If width > 0,
+// rows that exceed it are split across multiple lines to avoid soft-wrapping.
+func renderHelpTable(rows [][]string, width int) string {
+	rows = reflowHelpRows(rows, width)
 	if len(rows) == 0 {
 		return ""
 	}
@@ -1629,8 +1664,9 @@ func (m *tuiModel) logViewLookupJob() *storage.ReviewJob {
 // log view, accounting for title, optional command line, separator,
 // status, and help bar.
 func (m *tuiModel) logVisibleLines() int {
-	// title + separator + status + help = 4 reserved lines
-	reserved := 4
+	// title + separator + status + help(N)
+	helpRows := m.logHelpRows()
+	reserved := 3 + len(reflowHelpRows(helpRows, m.width))
 	// Check if command line header is shown
 	if job := m.logViewLookupJob(); job != nil {
 		if commandLineForJob(job) != "" {
@@ -1638,6 +1674,18 @@ func (m *tuiModel) logVisibleLines() int {
 		}
 	}
 	return max(m.height-reserved, 1)
+}
+
+// logHelpRows returns the help row items for the log view.
+func (m *tuiModel) logHelpRows() [][]string {
+	helpRow := []string{
+		"↑/↓: scroll", "←/→: prev/next", "g: toggle top/bottom",
+	}
+	if m.logStreaming {
+		helpRow = append(helpRow, "x: cancel")
+	}
+	helpRow = append(helpRow, "esc/q: back")
+	return [][]string{helpRow}
 }
 
 // normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current
@@ -1920,9 +1968,9 @@ var queueHelpRows = [][]string{
 }
 
 // queueHelpLines computes how many terminal lines the queue help
-// footer occupies.
+// footer occupies after reflowing items to fit within width.
 func queueHelpLines(width int) int {
-	return len(queueHelpRows)
+	return len(reflowHelpRows(queueHelpRows, width))
 }
 
 // queueVisibleRows returns how many queue rows fit in the current terminal.
@@ -2727,7 +2775,7 @@ func (m tuiModel) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Help
-	b.WriteString(renderHelpTable(queueHelpRows))
+	b.WriteString(renderHelpTable(queueHelpRows, m.width))
 	b.WriteString("\x1b[K") // Clear to end of line (no newline at end)
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -3052,7 +3100,7 @@ func (m tuiModel) renderReviewView() string {
 		{"p: prompt", "c: comment", "m: commit msg", "a: addressed", "y: copy", "F: fix"},
 		{"↑/↓: scroll", "←/→: prev/next", "?: commands", "esc: back"},
 	}
-	helpLines := len(reviewHelpRows)
+	helpLines := len(reflowHelpRows(reviewHelpRows, m.width))
 
 	// Compute location line count (repo path + ref + branch can wrap)
 	locationLines := 0
@@ -3174,7 +3222,7 @@ func (m tuiModel) renderReviewView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear status line
 
-	b.WriteString(renderHelpTable(reviewHelpRows))
+	b.WriteString(renderHelpTable(reviewHelpRows, m.width))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -3219,8 +3267,12 @@ func (m tuiModel) renderPromptView() string {
 		lines = sanitizeLines(wrapText(review.Prompt, wrapWidth))
 	}
 
-	// Reserve: title(1) + command(0-1) + scroll indicator(1) + help(1) + margin(1)
-	visibleLines := max(m.height-3-headerLines, 1)
+	// Reserve: title + command(0-1) + scroll indicator(1) + help(N) + margin(1)
+	promptHelpRows := [][]string{
+		{"↑/↓: scroll", "←/→: prev/next", "p: toggle prompt/review", "?: commands", "esc: back"},
+	}
+	promptHelpLines := len(reflowHelpRows(promptHelpRows, m.width))
+	visibleLines := max(m.height-(2+promptHelpLines)-headerLines, 1)
 
 	// Clamp scroll position to valid range
 	maxScroll := max(len(lines)-visibleLines, 0)
@@ -3254,9 +3306,7 @@ func (m tuiModel) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	b.WriteString(renderHelpTable([][]string{
-		{"↑/↓: scroll", "←/→: prev/next", "p: toggle prompt/review", "?: commands", "esc: back"},
-	}))
+	b.WriteString(renderHelpTable(promptHelpRows, m.width))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -3296,8 +3346,12 @@ func (m tuiModel) renderFilterView() string {
 	flatList := m.filterFlatList
 
 	// Calculate visible rows
-	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(1) = 7
-	reservedLines := 7
+	filterHelpRows := [][]string{
+		{"up/down: navigate", "right/left: expand/collapse", "enter: select", "esc: cancel", "type to search"},
+	}
+	filterHelpLines := len(reflowHelpRows(filterHelpRows, m.width))
+	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(N)
+	reservedLines := 6 + filterHelpLines
 	visibleRows := max(m.height-reservedLines, 0)
 
 	// Determine which rows to show, keeping selected item visible
@@ -3377,9 +3431,7 @@ func (m tuiModel) renderFilterView() string {
 	}
 	b.WriteString("\x1b[K\n")
 
-	b.WriteString(renderHelpTable([][]string{
-		{"up/down: navigate", "right/left: expand/collapse", "enter: select", "esc: cancel", "type to search"},
-	}))
+	b.WriteString(renderHelpTable(filterHelpRows, m.width))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J")
 
@@ -3450,7 +3502,7 @@ func (m tuiModel) renderRespondView() string {
 
 	b.WriteString(renderHelpTable([][]string{
 		{"enter: submit", "esc: cancel"},
-	}))
+	}, m.width))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -3532,7 +3584,7 @@ func (m tuiModel) renderCommitMsgView() string {
 
 	b.WriteString(renderHelpTable([][]string{
 		{"up/down: scroll", "esc/q: back"},
-	}))
+	}, m.width))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
@@ -3575,7 +3627,9 @@ func (m tuiModel) renderLogView() string {
 	}
 
 	// Calculate visible area (must match logVisibleLines())
-	reservedLines := 3 + headerLines // title + cmd(0-1) + sep + status + help
+	logHelp := m.logHelpRows()
+	logHelpLines := len(reflowHelpRows(logHelp, m.width))
+	reservedLines := (2 + logHelpLines) + headerLines // title + cmd(0-1) + sep + status + help(N)
 	visibleLines := max(m.height-reservedLines, 1)
 
 	// Clamp scroll
@@ -3628,13 +3682,7 @@ func (m tuiModel) renderLogView() string {
 	b.WriteString(tuiStatusStyle.Render(status))
 	b.WriteString("\x1b[K\n")
 
-	// Help (show cancel only for streaming/running jobs)
-	helpRow := []string{"↑/↓: scroll", "←/→: prev/next", "g: toggle top/bottom"}
-	if m.logStreaming {
-		helpRow = append(helpRow, "x: cancel")
-	}
-	helpRow = append(helpRow, "esc/q: back")
-	b.WriteString(renderHelpTable([][]string{helpRow}))
+	b.WriteString(renderHelpTable(logHelp, m.width))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen
 
@@ -3796,7 +3844,7 @@ func (m tuiModel) renderHelpView() string {
 
 	b.WriteString(renderHelpTable([][]string{
 		{"↑/↓: scroll", "esc/q/?: close"},
-	}))
+	}, m.width))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen
 
@@ -3850,7 +3898,7 @@ func (m tuiModel) renderTasksView() string {
 		b.WriteString("\n")
 		b.WriteString(renderHelpTable([][]string{
 			{"T: back to queue", "F: fix review", "q: quit"},
-		}))
+		}, m.width))
 		b.WriteString("\x1b[K\x1b[J")
 		return b.String()
 	}
@@ -3874,7 +3922,11 @@ func (m tuiModel) renderTasksView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Render each fix job
-	visibleRows := m.height - 7 // title + header + separator + help + padding
+	tasksHelpRows := [][]string{
+		{"enter: view", "p: patch", "A: apply", "l: log", "x: cancel", "r: refresh", "?: help", "T/esc: back"},
+	}
+	tasksHelpLines := len(reflowHelpRows(tasksHelpRows, m.width))
+	visibleRows := m.height - (6 + tasksHelpLines) // title + header + separator + status + scroll + help(N)
 	visibleRows = max(visibleRows, 1)
 	startIdx := 0
 	if m.fixSelectedIdx >= visibleRows {
@@ -3942,9 +3994,7 @@ func (m tuiModel) renderTasksView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Help
-	b.WriteString(renderHelpTable([][]string{
-		{"enter: view", "p: patch", "A: apply", "l: log", "x: cancel", "r: refresh", "?: help", "T/esc: back"},
-	}))
+	b.WriteString(renderHelpTable(tasksHelpRows, m.width))
 	b.WriteString("\x1b[K\x1b[J")
 
 	return b.String()
@@ -4057,7 +4107,7 @@ func (m tuiModel) renderPatchView() string {
 
 	b.WriteString(renderHelpTable([][]string{
 		{"j/k/up/down: scroll", "esc: back to tasks"},
-	}))
+	}, m.width))
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }

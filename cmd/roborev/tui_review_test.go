@@ -1185,11 +1185,12 @@ func TestTUIVisibleLinesCalculationNarrowTerminal(t *testing.T) {
 
 	output := m.View()
 
-	// With height=10, no verdict, narrow terminal:
-	// visibleLines = 10 - 5 = 5
-	// Non-content: title (1) + location (1) + status line (1) + help (2) = 5
+	// With height=10, no verdict, narrow terminal (width=50):
+	// Help rows reflow to 4 lines at width=50.
+	// Non-content: title (1) + location (1) + status line (1) + help (4) = 7
+	// visibleLines = 10 - 7 = 3
 	// Glamour produces 21 rendered lines.
-	visibleContentLines := 5
+	visibleContentLines := 3
 	totalRenderedLines := 21
 
 	expected := fmt.Sprintf("[1-%d of %d lines]", visibleContentLines, totalRenderedLines)
@@ -1219,11 +1220,12 @@ func TestTUIVisibleLinesCalculationNarrowTerminalWithVerdict(t *testing.T) {
 
 	output := m.View()
 
-	// With height=10, verdict present, narrow terminal:
-	// visibleLines = 10 - 6 = 4
-	// Non-content: title (1) + location (1) + verdict (1) + status line (1) + help (2) = 6
+	// With height=10, verdict present, narrow terminal (width=50):
+	// Help rows reflow to 4 lines at width=50.
+	// Non-content: title (1) + location (1) + verdict (1) + status line (1) + help (4) = 8
+	// visibleLines = 10 - 8 = 2
 	// Glamour produces 21 rendered lines.
-	visibleContentLines := 4
+	visibleContentLines := 2
 	totalRenderedLines := 21
 
 	expected := fmt.Sprintf("[1-%d of %d lines]", visibleContentLines, totalRenderedLines)
@@ -1244,9 +1246,9 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 	// - Location line: "very-long-repository-name-here abc1234567890..de on feature/very-long-branch-name" = 81 chars, ceil(81/50) = 2 lines
 	// - Addressed line: 1 line (since Addressed=true)
 	// - Status line: 1 line
-	// - Help: 2 lines (table layout, no wrapping)
-	// Non-content: 2 + 2 + 1 + 1 + 2 = 8
-	// visibleLines = 12 - 8 = 4
+	// - Help: 4 lines (reflows at width=50)
+	// Non-content: 2 + 2 + 1 + 1 + 4 = 10
+	// visibleLines = 12 - 10 = 2
 	m := newTuiModel("http://localhost")
 	m.width = 50
 	m.height = 12
@@ -1269,9 +1271,9 @@ func TestTUIVisibleLinesCalculationLongTitleWraps(t *testing.T) {
 
 	output := m.View()
 
-	// visibleLines = 12 - 8 = 4
+	// visibleLines = 12 - 10 = 2
 	// Glamour produces 21 rendered lines.
-	visibleContentLines := 4
+	visibleContentLines := 2
 	totalRenderedLines := 21
 
 	expected := fmt.Sprintf("[1-%d of %d lines]", visibleContentLines, totalRenderedLines)

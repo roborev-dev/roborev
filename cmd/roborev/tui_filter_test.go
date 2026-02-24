@@ -748,7 +748,7 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 	m.filterSelectedIdx = 0
 
 	t.Run("tiny terminal shows message", func(t *testing.T) {
-		m.height = 5 // Less than reservedLines (7)
+		m.height = 5 // Less than reservedLines (8 at width=80)
 		output := m.renderFilterView()
 
 		if !strings.Contains(output, "(terminal too small)") {
@@ -761,16 +761,16 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 	})
 
 	t.Run("exactly reservedLines shows no items", func(t *testing.T) {
-		m.height = 7 // Exactly reservedLines, visibleRows = 0
+		m.height = 8 // Exactly reservedLines (help wraps to 2 lines at width=80), visibleRows = 0
 		output := m.renderFilterView()
 
 		if !strings.Contains(output, "(terminal too small)") {
-			t.Errorf("Expected 'terminal too small' message for height=7, got: %s", output)
+			t.Errorf("Expected 'terminal too small' message for height=8, got: %s", output)
 		}
 	})
 
 	t.Run("one row available", func(t *testing.T) {
-		m.height = 8 // reservedLines + 1 = visibleRows of 1
+		m.height = 9 // reservedLines + 1 = visibleRows of 1
 		output := m.renderFilterView()
 
 		if strings.Contains(output, "(terminal too small)") {
@@ -787,7 +787,7 @@ func TestTUIFilterViewSmallTerminal(t *testing.T) {
 	})
 
 	t.Run("fits all items without scroll", func(t *testing.T) {
-		m.height = 15 // reservedLines(7) + 8 = visibleRows of 8, enough for 4 entries
+		m.height = 15 // reservedLines(8) + 7 = visibleRows of 7, enough for 4 entries
 		output := m.renderFilterView()
 
 		// Should show all items
@@ -831,7 +831,7 @@ func TestTUIFilterViewScrollWindow(t *testing.T) {
 		makeNode("repo-5", 1),
 	})
 	// Flat list: All + 5 repos = 6 entries
-	m.height = 10 // visibleRows = 3
+	m.height = 11 // visibleRows = 3 (reservedLines=8 at width=80)
 
 	t.Run("scroll keeps selected item visible at top", func(t *testing.T) {
 		m.filterSelectedIdx = 0
