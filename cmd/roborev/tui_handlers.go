@@ -268,20 +268,17 @@ func (m tuiModel) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "x":
 		if m.logJobID > 0 && m.logStreaming {
-			for i := range m.jobs {
-				if m.jobs[i].ID == m.logJobID {
-					job := &m.jobs[i]
-					if job.Status == storage.JobStatusRunning {
-						oldStatus := job.Status
-						oldFinishedAt := job.FinishedAt
-						job.Status = storage.JobStatusCanceled
-						now := time.Now()
-						job.FinishedAt = &now
-						m.logStreaming = false
-						return m, m.cancelJob(job.ID, oldStatus, oldFinishedAt)
-					}
-					break
-				}
+			if job := m.logViewLookupJob(); job != nil &&
+				job.Status == storage.JobStatusRunning {
+				oldStatus := job.Status
+				oldFinishedAt := job.FinishedAt
+				job.Status = storage.JobStatusCanceled
+				now := time.Now()
+				job.FinishedAt = &now
+				m.logStreaming = false
+				return m, m.cancelJob(
+					job.ID, oldStatus, oldFinishedAt,
+				)
 			}
 		}
 		return m, nil
@@ -536,20 +533,31 @@ func (m tuiModel) handlePrevKey() (tea.Model, tea.Cmd) {
 			m.flashView = tuiViewPrompt
 		}
 	case tuiViewLog:
-		prevIdx := m.findPrevLoggableJob()
-		if prevIdx >= 0 {
-			m.selectedIdx = prevIdx
-			m.updateSelectedJobID()
-			job := m.jobs[prevIdx]
-			m.logStreaming = false
-			return m.openLogView(
-				job.ID, job.Status, m.logFromView,
-			)
+		if m.logFromView == tuiViewTasks {
+			idx := m.findPrevLoggableFixJob()
+			if idx >= 0 {
+				m.fixSelectedIdx = idx
+				job := m.fixJobs[idx]
+				m.logStreaming = false
+				return m.openLogView(
+					job.ID, job.Status, tuiViewTasks,
+				)
+			}
 		} else {
-			m.flashMessage = "No newer log"
-			m.flashExpiresAt = time.Now().Add(2 * time.Second)
-			m.flashView = tuiViewLog
+			prevIdx := m.findPrevLoggableJob()
+			if prevIdx >= 0 {
+				m.selectedIdx = prevIdx
+				m.updateSelectedJobID()
+				job := m.jobs[prevIdx]
+				m.logStreaming = false
+				return m.openLogView(
+					job.ID, job.Status, m.logFromView,
+				)
+			}
 		}
+		m.flashMessage = "No newer log"
+		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashView = tuiViewLog
 	}
 	return m, nil
 }
@@ -651,24 +659,35 @@ func (m tuiModel) handleNextKey() (tea.Model, tea.Cmd) {
 			m.flashView = tuiViewPrompt
 		}
 	case tuiViewLog:
-		nextIdx := m.findNextLoggableJob()
-		if nextIdx >= 0 {
-			m.selectedIdx = nextIdx
-			m.updateSelectedJobID()
-			job := m.jobs[nextIdx]
-			m.logStreaming = false
-			return m.openLogView(
-				job.ID, job.Status, m.logFromView,
-			)
-		} else if m.canPaginate() {
-			m.loadingMore = true
-			m.paginateNav = tuiViewLog
-			return m, m.fetchMoreJobs()
+		if m.logFromView == tuiViewTasks {
+			idx := m.findNextLoggableFixJob()
+			if idx >= 0 {
+				m.fixSelectedIdx = idx
+				job := m.fixJobs[idx]
+				m.logStreaming = false
+				return m.openLogView(
+					job.ID, job.Status, tuiViewTasks,
+				)
+			}
 		} else {
-			m.flashMessage = "No older log"
-			m.flashExpiresAt = time.Now().Add(2 * time.Second)
-			m.flashView = tuiViewLog
+			nextIdx := m.findNextLoggableJob()
+			if nextIdx >= 0 {
+				m.selectedIdx = nextIdx
+				m.updateSelectedJobID()
+				job := m.jobs[nextIdx]
+				m.logStreaming = false
+				return m.openLogView(
+					job.ID, job.Status, m.logFromView,
+				)
+			} else if m.canPaginate() {
+				m.loadingMore = true
+				m.paginateNav = tuiViewLog
+				return m, m.fetchMoreJobs()
+			}
 		}
+		m.flashMessage = "No older log"
+		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashView = tuiViewLog
 	}
 	return m, nil
 }

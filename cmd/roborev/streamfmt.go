@@ -442,6 +442,7 @@ func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {
 }
 
 func (f *streamFormatter) formatToolUse(name string, input json.RawMessage) {
+	name = sanitizeControl(name)
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(input, &fields); err != nil {
 		f.writeTool(name, "")
@@ -526,6 +527,8 @@ func (f *streamFormatter) writeReasoning(text string) {
 //	│ Read   internal/daemon/worker.go
 //	│ Edit   internal/daemon/worker.go
 func (f *streamFormatter) writeTool(name, arg string) {
+	name = sanitizeControl(name)
+	arg = sanitizeControl(arg)
 	if !f.lastWasTool && f.hasOutput {
 		f.writef("\n")
 	}

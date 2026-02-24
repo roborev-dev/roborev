@@ -2965,4 +2965,146 @@ func TestTUILogOutputPersistsFormatter(t *testing.T) {
 	}
 }
 
+func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
+	// A late-arriving error from an in-flight log fetch should
+	// not set m.err when the user has navigated away.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue // user navigated back
+	m.logFetchSeq = 3
+	m.logLoading = true
+
+	msg := tuiLogOutputMsg{
+		err: fmt.Errorf("connection reset"),
+		seq: 3,
+	}
+
+	m2, _ := updateModel(t, m, msg)
+
+	if m2.err != nil {
+		t.Errorf("error leaked into non-log view: %v", m2.err)
+	}
+	if m2.logLoading {
+		t.Error("logLoading should be cleared")
+	}
+}
+
+func TestTUILogViewLookupFixJob(t *testing.T) {
+	// renderLogView should find jobs in fixJobs when opened
+	// from the tasks view.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 42
+	m.logFromView = tuiViewTasks
+	m.logStreaming = true
+	m.height = 30
+	m.width = 80
+
+	m.fixJobs = []storage.ReviewJob{
+		{
+			ID:     42,
+			Status: storage.JobStatusRunning,
+			Agent:  "codex",
+			GitRef: "abc1234",
+		},
+	}
+	m.logLines = []logLine{{text: "output"}}
+
+	view := m.View()
+	if !strings.Contains(view, "#42") {
+		t.Error("log view should show job ID from fixJobs")
+	}
+	if !strings.Contains(view, "codex") {
+		t.Error("log view should show agent from fixJobs")
+	}
+}
+
+func TestTUILogCancelFixJob(t *testing.T) {
+	// Pressing 'x' in log view should cancel fix jobs.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 42
+	m.logFromView = tuiViewTasks
+	m.logStreaming = true
+	m.height = 30
+
+	m.fixJobs = []storage.ReviewJob{
+		{
+			ID:     42,
+			Status: storage.JobStatusRunning,
+			Agent:  "codex",
+		},
+	}
+
+	m2, cmd := pressKey(m, 'x')
+
+	if m2.logStreaming {
+		t.Error("streaming should stop after cancel")
+	}
+	if m2.fixJobs[0].Status != storage.JobStatusCanceled {
+		t.Errorf(
+			"fix job status should be canceled, got %s",
+			m2.fixJobs[0].Status,
+		)
+	}
+	if cmd == nil {
+		t.Error("expected cancel command")
+	}
+}
+
+func TestTUILogNavFromTasks(t *testing.T) {
+	// Left/right in log view opened from tasks should navigate
+	// through fixJobs, not m.jobs.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewLog
+	m.logJobID = 20
+	m.logFromView = tuiViewTasks
+	m.logStreaming = false
+	m.height = 30
+	m.fixSelectedIdx = 1
+
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 10, Status: storage.JobStatusDone},
+		{ID: 20, Status: storage.JobStatusRunning},
+		{ID: 30, Status: storage.JobStatusFailed},
+	}
+
+	// Should NOT navigate into m.jobs
+	m.jobs = []storage.ReviewJob{
+		{ID: 100, Status: storage.JobStatusDone},
+		{ID: 200, Status: storage.JobStatusDone},
+	}
+	m.selectedIdx = 0
+
+	// Right arrow → next fix job (ID 30)
+	m2, cmd := pressSpecial(m, tea.KeyRight)
+	if cmd == nil {
+		t.Fatal("expected command from right arrow nav")
+	}
+	if m2.fixSelectedIdx != 2 {
+		t.Errorf(
+			"fixSelectedIdx should be 2, got %d",
+			m2.fixSelectedIdx,
+		)
+	}
+	// selectedIdx should not have changed
+	if m2.selectedIdx != 0 {
+		t.Errorf(
+			"selectedIdx should remain 0, got %d",
+			m2.selectedIdx,
+		)
+	}
+
+	// Left arrow from index 1 → prev fix job (ID 10)
+	m3, cmd := pressSpecial(m, tea.KeyLeft)
+	if cmd == nil {
+		t.Fatal("expected command from left arrow nav")
+	}
+	if m3.fixSelectedIdx != 0 {
+		t.Errorf(
+			"fixSelectedIdx should be 0, got %d",
+			m3.fixSelectedIdx,
+		)
+	}
+}
+
 // Branch filter tests

@@ -586,6 +586,43 @@ func TestStreamFormatter_SanitizesAssistantText(t *testing.T) {
 	fix.assertNotContains(t, "evil")
 }
 
+func TestStreamFormatter_SanitizesToolArgs(t *testing.T) {
+	// Control sequences in tool arguments (file paths, commands)
+	// must be stripped before rendering.
+	fix := newFixture(true)
+	fix.writeLine(eventAssistantToolUse("Read", map[string]any{
+		"file_path": "/tmp/\x1b]0;evil\x07\x1b[31mred\x1b[0m.go",
+	}))
+
+	raw := fix.buf.String()
+	if strings.Contains(raw, "\x1b]0;") {
+		t.Errorf("OSC escape leaked in tool arg: %q", raw)
+	}
+	if strings.Contains(raw, "\x07") {
+		t.Errorf("BEL char leaked in tool arg: %q", raw)
+	}
+	if strings.Contains(raw, "\x1b[31m") {
+		t.Errorf("injected SGR escape leaked in tool arg: %q", raw)
+	}
+	fix.assertContains(t, "Read")
+	fix.assertContains(t, ".go")
+}
+
+func TestStreamFormatter_SanitizesToolName(t *testing.T) {
+	fix := newFixture(true)
+	fix.writeLine(eventAssistantToolUse(
+		"Read\x1b[31m", map[string]any{
+			"file_path": "clean.go",
+		},
+	))
+
+	raw := fix.buf.String()
+	if strings.Contains(raw, "\x1b[31m") {
+		t.Errorf("injected SGR in tool name leaked: %q", raw)
+	}
+	fix.assertContains(t, "clean.go")
+}
+
 func TestStreamFormatter_SanitizesGeminiText(t *testing.T) {
 	fix := newFixture(true)
 	ev := toJson(map[string]any{

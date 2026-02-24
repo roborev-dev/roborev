@@ -1517,6 +1517,44 @@ func (m *tuiModel) findPrevLoggableJob() int {
 	return -1
 }
 
+// findNextLoggableFixJob finds the next fix job that has a log.
+func (m *tuiModel) findNextLoggableFixJob() int {
+	for i := m.fixSelectedIdx + 1; i < len(m.fixJobs); i++ {
+		if m.fixJobs[i].Status != storage.JobStatusQueued {
+			return i
+		}
+	}
+	return -1
+}
+
+// findPrevLoggableFixJob finds the previous fix job that has a
+// log.
+func (m *tuiModel) findPrevLoggableFixJob() int {
+	for i := m.fixSelectedIdx - 1; i >= 0; i-- {
+		if m.fixJobs[i].Status != storage.JobStatusQueued {
+			return i
+		}
+	}
+	return -1
+}
+
+// logViewLookupJob finds the job being viewed in the log view.
+// Searches m.jobs first, then m.fixJobs for jobs opened from
+// the tasks view.
+func (m *tuiModel) logViewLookupJob() *storage.ReviewJob {
+	for i := range m.jobs {
+		if m.jobs[i].ID == m.logJobID {
+			return &m.jobs[i]
+		}
+	}
+	for i := range m.fixJobs {
+		if m.fixJobs[i].ID == m.logJobID {
+			return &m.fixJobs[i]
+		}
+	}
+	return nil
+}
+
 // logVisibleLines returns the number of content lines visible in the
 // log view, accounting for title, optional command line, separator,
 // status, and help bar.
@@ -1983,21 +2021,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.logLoading = false
 		m.consecutiveErrors = 0
+		// If the user navigated away from the log view while
+		// a fetch was in-flight, drop the result silently.
+		if m.currentView != tuiViewLog {
+			return m, nil
+		}
 		if msg.err != nil {
 			if errors.Is(msg.err, errNoLog) {
 				// For failed jobs with stored error, show
 				// that instead of generic "No log available".
 				flash := "No log available for this job"
-				for i := range m.jobs {
-					if m.jobs[i].ID == m.logJobID &&
-						m.jobs[i].Status == storage.JobStatusFailed &&
-						m.jobs[i].Error != "" {
-						flash = fmt.Sprintf(
-							"Job #%d failed: %s",
-							m.logJobID, m.jobs[i].Error,
-						)
-						break
-					}
+				if job := m.logViewLookupJob(); job != nil &&
+					job.Status == storage.JobStatusFailed &&
+					job.Error != "" {
+					flash = fmt.Sprintf(
+						"Job #%d failed: %s",
+						m.logJobID, job.Error,
+					)
 				}
 				m.flashMessage = flash
 				m.flashExpiresAt = time.Now().Add(5 * time.Second)
@@ -3353,13 +3393,7 @@ func (m tuiModel) renderLogView() string {
 
 	// Title with job info (matches Prompt view format)
 	var title string
-	var job *storage.ReviewJob
-	for i := range m.jobs {
-		if m.jobs[i].ID == m.logJobID {
-			job = &m.jobs[i]
-			break
-		}
-	}
+	job := m.logViewLookupJob()
 	if job != nil {
 		ref := shortJobRef(*job)
 		agentStr := formatAgentLabel(job.Agent, job.Model)
