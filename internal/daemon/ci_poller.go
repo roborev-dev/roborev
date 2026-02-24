@@ -642,13 +642,18 @@ func cloneRemoteMatches(path, ghRepo string) (bool, error) {
 			if code == 1 {
 				return false, nil
 			}
-			// Exit 128 = fatal git error. Only suppress if stderr
-			// indicates "not a git repository" or missing .git/config;
-			// other 128 errors are operational failures.
+			// Exit 128 = fatal git error. Suppress only when the
+			// repo itself is absent/broken, not on operational
+			// failures like corrupted or unreadable config.
 			if code == 128 {
 				msg := strings.ToLower(string(cfgOut))
-				if strings.Contains(msg, "git repository") ||
-					strings.Contains(msg, ".git/config") {
+				notRepo := strings.Contains(
+					msg, "git repository",
+				)
+				configMissing := strings.Contains(
+					msg, ".git/config",
+				) && strings.Contains(msg, "no such file")
+				if notRepo || configMissing {
 					return false, nil
 				}
 			}
