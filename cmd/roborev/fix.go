@@ -806,7 +806,16 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		}
 
 		if !opts.quiet {
-			cmd.Printf("\n=== Batch %d/%d (jobs %s) ===\n", i+1, len(batches), formatJobIDs(batchJobIDs))
+			cmd.Printf("\n=== Batch %d/%d (jobs %s) ===\n\n", i+1, len(batches), formatJobIDs(batchJobIDs))
+			w := cmd.OutOrStdout()
+			for _, e := range batch {
+				cmd.Printf("Job %d findings:\n", e.jobID)
+				cmd.Println(strings.Repeat("-", 60))
+				printMarkdownOrPlain(w, e.review.Output)
+				cmd.Println(strings.Repeat("-", 60))
+				cmd.Println()
+			}
+			cmd.Printf("Running fix agent (%s) to apply changes...\n\n", fixAgent.Name())
 		}
 
 		prompt := buildBatchFixPrompt(batch)
