@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"math"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -26,7 +27,7 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 	})
 
 	info := &RuntimeInfo{
-		PID:  mockPID,
+		PID:  math.MaxInt32,
 		Addr: addr, // Loopback address from test server
 	}
 

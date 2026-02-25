@@ -18,7 +18,6 @@ import (
 const (
 	defaultTestPort = 7373
 	defaultTestAddr = "127.0.0.1:7373"
-	mockPID         = 99999
 )
 
 type runtimeData struct {
@@ -186,8 +185,8 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 	createRuntimeFile(t, dataDir, 12345, nil)
 
 	// Create an unreadable runtime file
-	unreadablePath := createRuntimeFile(t, dataDir, mockPID, &runtimeData{
-		PID:  mockPID,
+	unreadablePath := createRuntimeFile(t, dataDir, math.MaxInt32, &runtimeData{
+		PID:  math.MaxInt32,
 		Addr: "127.0.0.1:7374",
 	})
 	os.Chmod(unreadablePath, 0000)
