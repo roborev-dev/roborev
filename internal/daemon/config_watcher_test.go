@@ -57,6 +57,13 @@ func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherH
 	}
 }
 
+func setupUnstartedWatcher(t *testing.T, configPath string) *ConfigWatcher {
+	t.Helper()
+	cfg := &config.Config{DefaultAgent: "test"}
+	broadcaster := NewBroadcaster()
+	return NewConfigWatcher(configPath, cfg, broadcaster, nil)
+}
+
 func (h *configWatcherHarness) updateConfig(t *testing.T, content string) {
 	t.Helper()
 	writeTestFile(t, h.ConfigPath, content)
@@ -87,6 +94,24 @@ func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write %s: %v", filepath.Base(path), err)
+	}
+}
+
+func requireNever(t *testing.T, condition func() bool, duration, interval time.Duration) {
+	t.Helper()
+	timeout := time.After(duration)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return
+		case <-ticker.C:
+			if condition() {
+				t.Fatalf("condition evaluated to true within %v", duration)
+			}
+		}
 	}
 }
 
@@ -135,11 +160,7 @@ func TestNewConfigWatcher(t *testing.T) {
 }
 
 func TestConfigWatcher_NoConfigPath(t *testing.T) {
-	cfg := &config.Config{DefaultAgent: "test"}
-	broadcaster := NewBroadcaster()
-
-	// When configPath is empty, Start should be a no-op
-	cw := NewConfigWatcher("", cfg, broadcaster, nil)
+	cw := setupUnstartedWatcher(t, "")
 
 	ctx := t.Context()
 
@@ -160,9 +181,15 @@ func TestConfigWatcher_Reloads(t *testing.T) {
 		validate      func(*testing.T, *config.Config)
 	}{
 		{
-			name:          "Update Agent and Workers",
-			initialConfig: "default_agent = \"initial-agent\"\nmax_workers = 2\n",
-			updateConfig:  "default_agent = \"updated-agent\"\nmax_workers = 4\n",
+			name: "Update Agent and Workers",
+			initialConfig: `
+default_agent = "initial-agent"
+max_workers = 2
+`,
+			updateConfig: `
+default_agent = "updated-agent"
+max_workers = 4
+`,
 			validate: func(t *testing.T, c *config.Config) {
 				if c.DefaultAgent != "updated-agent" {
 					t.Errorf("got agent %q, want %q", c.DefaultAgent, "updated-agent")
@@ -173,9 +200,17 @@ func TestConfigWatcher_Reloads(t *testing.T) {
 			},
 		},
 		{
-			name:          "Update Hot Reloadable Settings",
-			initialConfig: "default_agent = \"initial-agent\"\nreview_context_count = 3\njob_timeout_minutes = 10\n",
-			updateConfig:  "default_agent = \"updated-agent\"\nreview_context_count = 7\njob_timeout_minutes = 30\n",
+			name: "Update Hot Reloadable Settings",
+			initialConfig: `
+default_agent = "initial-agent"
+review_context_count = 3
+job_timeout_minutes = 10
+`,
+			updateConfig: `
+default_agent = "updated-agent"
+review_context_count = 7
+job_timeout_minutes = 30
+`,
 			validate: func(t *testing.T, c *config.Config) {
 				if c.ReviewContextCount != 7 {
 					t.Errorf("got context count %d, want 7", c.ReviewContextCount)
@@ -215,13 +250,15 @@ func TestConfigWatcher_Reloads(t *testing.T) {
 }
 
 func TestConfigWatcher_InvalidConfigDoesNotCrash(t *testing.T) {
-	h := newConfigWatcherHarness(t, "default_agent = \"test-agent\"\n")
+	h := newConfigWatcherHarness(t, `default_agent = "test-agent"`)
 
 	// Write invalid TOML - this should not crash the watcher
-	h.updateConfig(t, "this is not valid toml [[[\n")
+	h.updateConfig(t, `this is not valid toml [[[`)
 
 	// Wait for debounce and potential reload attempt (no event fired for failure)
-	time.Sleep(500 * time.Millisecond)
+	requireNever(t, func() bool {
+		return h.Watcher.Config().DefaultAgent != "test-agent"
+	}, 500*time.Millisecond, 50*time.Millisecond)
 
 	// Config should still be the original value
 	if h.Watcher.Config().DefaultAgent != "test-agent" {
@@ -229,7 +266,7 @@ func TestConfigWatcher_InvalidConfigDoesNotCrash(t *testing.T) {
 	}
 
 	// Watcher should still be working - fix the config
-	h.updateConfigAndWait(t, "default_agent = \"fixed-agent\"\n")
+	h.updateConfigAndWait(t, `default_agent = "fixed-agent"`)
 
 	// Now config should be updated
 	if h.Watcher.Config().DefaultAgent != "fixed-agent" {
@@ -244,10 +281,7 @@ func TestConfigGetter_Interface(t *testing.T) {
 }
 
 func TestConfigWatcher_DoubleStopSafe(t *testing.T) {
-	cfg := &config.Config{DefaultAgent: "test"}
-	broadcaster := NewBroadcaster()
-
-	cw := NewConfigWatcher("", cfg, broadcaster, nil)
+	cw := setupUnstartedWatcher(t, "")
 
 	// Multiple Stop() calls should not panic
 	cw.Stop()
@@ -256,7 +290,7 @@ func TestConfigWatcher_DoubleStopSafe(t *testing.T) {
 }
 
 func TestConfigWatcher_StopAfterStart(t *testing.T) {
-	h := newConfigWatcherHarness(t, "default_agent = \"test\"\n")
+	h := newConfigWatcherHarness(t, `default_agent = "test"`)
 
 	// Stop multiple times should not panic (cleanup will also call Stop)
 	h.Watcher.Stop()
@@ -267,7 +301,7 @@ func TestConfigWatcher_StartAfterStopErrors(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 
-	writeTestFile(t, configPath, "default_agent = \"test\"\n")
+	writeTestFile(t, configPath, `default_agent = "test"`)
 
 	cfg, _ := config.LoadGlobalFrom(configPath)
 	broadcaster := NewBroadcaster()
@@ -289,7 +323,7 @@ func TestConfigWatcher_StartAfterStopErrors(t *testing.T) {
 }
 
 func TestConfigWatcher_ReloadCounter(t *testing.T) {
-	h := newConfigWatcherHarness(t, "default_agent = \"v1\"\n")
+	h := newConfigWatcherHarness(t, `default_agent = "v1"`)
 
 	// Initial counter should be 0
 	if h.Watcher.ReloadCounter() != 0 {
@@ -297,24 +331,24 @@ func TestConfigWatcher_ReloadCounter(t *testing.T) {
 	}
 
 	// First reload
-	h.updateConfigAndWait(t, "default_agent = \"v2\"\n")
+	h.updateConfigAndWait(t, `default_agent = "v2"`)
 	if h.Watcher.ReloadCounter() != 1 {
 		t.Errorf("After first reload, ReloadCounter = %d, want 1", h.Watcher.ReloadCounter())
 	}
 
 	// Second reload
-	h.updateConfigAndWait(t, "default_agent = \"v3\"\n")
+	h.updateConfigAndWait(t, `default_agent = "v3"`)
 	if h.Watcher.ReloadCounter() != 2 {
 		t.Errorf("After second reload, ReloadCounter = %d, want 2", h.Watcher.ReloadCounter())
 	}
 }
 
 func TestConfigWatcher_AtomicSaveViaRename(t *testing.T) {
-	h := newConfigWatcherHarness(t, "default_agent = \"original\"\n")
+	h := newConfigWatcherHarness(t, `default_agent = "original"`)
 
 	// Simulate atomic save: write to temp file then rename
 	tmpFile := filepath.Join(h.dir, "config.toml.tmp")
-	writeTestFile(t, tmpFile, "default_agent = \"atomic-saved\"\n")
+	writeTestFile(t, tmpFile, `default_agent = "atomic-saved"`)
 	if err := os.Rename(tmpFile, h.ConfigPath); err != nil {
 		t.Fatalf("Failed to rename: %v", err)
 	}
