@@ -231,7 +231,6 @@ func runListTest(t *testing.T, tc listTestCase) {
 		}
 	})
 	daemonFromHandler(t, wrapperHandler)
-	t.Cleanup(cleanup)
 
 	// Setup repo and cwd
 	var wd string
