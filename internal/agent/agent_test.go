@@ -184,26 +184,28 @@ func TestCodexReasoningEffortMapping(t *testing.T) {
 }
 
 type agentTestDef struct {
-	name         string
-	factory      func(string) Agent
-	modelFlag    string
-	defaultModel string
-	testModel    string
+	name                  string
+	factory               func(string) Agent
+	modelFlag             string
+	defaultModel          string
+	testModel             string
+	supportsSmartReview   bool
+	supportsPlainFlagEcho bool
 }
 
 var agentFixtures = []agentTestDef{
-	{"codex", func(s string) Agent { return NewCodexAgent(s) }, "-m", "", "o3"},
-	{"claude", func(s string) Agent { return NewClaudeAgent(s) }, "--model", "", "opus"},
-	{"gemini", func(s string) Agent { return NewGeminiAgent(s) }, "-m", "gemini-3-pro-preview", "gemini-1.5-pro"},
-	{"copilot", func(s string) Agent { return NewCopilotAgent(s) }, "--model", "", "gpt-4o"},
-	{"opencode", func(s string) Agent { return NewOpenCodeAgent(s) }, "--model", "", "anthropic/claude-sonnet-4"},
-	{"cursor", func(s string) Agent { return NewCursorAgent(s) }, "--model", "auto", "claude-sonnet-4"},
+	{"codex", func(s string) Agent { return NewCodexAgent(s) }, "-m", "", "o3", true, false},
+	{"claude", func(s string) Agent { return NewClaudeAgent(s) }, "--model", "", "opus", true, false},
+	{"gemini", func(s string) Agent { return NewGeminiAgent(s) }, "-m", "gemini-3-pro-preview", "gemini-1.5-pro", true, false},
+	{"copilot", func(s string) Agent { return NewCopilotAgent(s) }, "--model", "", "gpt-4o", false, true},
+	{"opencode", func(s string) Agent { return NewOpenCodeAgent(s) }, "--model", "", "anthropic/claude-sonnet-4", false, false},
+	{"cursor", func(s string) Agent { return NewCursorAgent(s) }, "--model", "auto", "claude-sonnet-4", false, false},
 }
 
 func assertArgsNotContain(t *testing.T, cmdLine, flag string) {
 	t.Helper()
 	for token := range strings.FieldsSeq(cmdLine) {
-		if token == flag {
+		if token == flag || strings.HasPrefix(token, flag+"=") {
 			t.Errorf("command line %q unexpectedly contained flag %q", cmdLine, flag)
 		}
 	}
@@ -309,7 +311,7 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 	skipIfWindows(t)
 
 	for _, tt := range agentFixtures {
-		if tt.name == "copilot" || tt.name == "opencode" || tt.name == "cursor" {
+		if !tt.supportsSmartReview {
 			continue
 		}
 		t.Run(tt.name, func(t *testing.T) {
@@ -348,7 +350,7 @@ func TestAgentReviewPassesModelFlag(t *testing.T) {
 	for _, tt := range agentFixtures {
 		// opencode uses JSON streaming so verifyAgentPassesFlag (plain text echo)
 		// doesn't work; model flag is verified in TestOpenCodeReviewModelFlag.
-		if tt.name != "copilot" {
+		if !tt.supportsPlainFlagEcho {
 			continue
 		}
 		t.Run(tt.name, func(t *testing.T) {
