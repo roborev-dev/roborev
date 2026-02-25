@@ -20,14 +20,16 @@ func expectJSONPost[Req any, Res any](t *testing.T, path string, expected Req, r
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("Failed to decode request body: %v", err)
 		}
-		// NOTE: In tests, comparing req and expected might be needed, but we rely on json mapping.
+		if diff := cmp.Diff(expected, req); diff != "" {
+			t.Fatalf("Request payload mismatch (-want +got):\n%s", diff)
+		}
 		json.NewEncoder(w).Encode(response)
 	}
 }
 """
 
 if "expectJSONPost" not in content:
-    content = content.replace('import (', 'import (\n\t"reflect"\n', 1)
+    content = content.replace('import (', 'import (\n\t"github.com/google/go-cmp/cmp"\n', 1)
     content += "\n" + helper1
 
 s1 = """	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {

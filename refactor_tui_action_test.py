@@ -20,8 +20,8 @@ func expectJSONPost[Req any, Res any](t *testing.T, path string, expected Req, r
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("Failed to decode request body: %v", err)
 		}
-		if !reflect.DeepEqual(req, expected) {
-			t.Errorf("Expected request %v, got %v", expected, req)
+		if diff := cmp.Diff(expected, req); diff != "" {
+			t.Fatalf("Request payload mismatch (-want +got):\n%s", diff)
 		}
 		json.NewEncoder(w).Encode(response)
 	}
@@ -29,7 +29,7 @@ func expectJSONPost[Req any, Res any](t *testing.T, path string, expected Req, r
 """
 
 if "expectJSONPost" not in content:
-    content = content.replace('import (', 'import (\n\t"reflect"\n', 1)
+    content = content.replace('import (', 'import (\n\t"github.com/google/go-cmp/cmp"\n', 1)
     content += "\n" + helper1
 
 # Replace TestTUIAddressReviewSuccess
