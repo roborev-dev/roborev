@@ -152,6 +152,13 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 		state.handleReviewAddress(w, r)
 	})
 
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if hooks.OnUnhandled != nil && hooks.OnUnhandled(w, r, state) {
+			return
+		}
+		http.NotFound(w, r)
+	})
+
 	ts := httptest.NewServer(mux)
 
 	// Setup environment
@@ -189,9 +196,12 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 	return m
 }
 
-// Close cleans up the mock daemon.
+// Close shuts down the mock daemon's HTTP server immediately.
+// Full cleanup of the environment and variables is also handled automatically by t.Cleanup.
 func (m *MockDaemon) Close() {
-	// Cleanup is now handled automatically by t.Cleanup
+	if m.Server != nil {
+		m.Server.Close()
+	}
 }
 
 // functionalMockAgent is a configurable mock agent that accepts behavior as a function.
@@ -223,6 +233,7 @@ type MockRefineHooks struct {
 	OnStatus        func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 	OnComment       func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 	OnReviewAddress func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnUnhandled     func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 }
 
 // mockRefineState tracks state for simulating the full refine loop
@@ -464,6 +475,10 @@ func daemonFromHandler(t *testing.T, handler http.Handler) *MockDaemon {
 			return true
 		},
 		OnReviewAddress: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			handler.ServeHTTP(w, r)
+			return true
+		},
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			handler.ServeHTTP(w, r)
 			return true
 		},
