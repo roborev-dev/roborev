@@ -31,6 +31,10 @@ type jobMockServer struct {
 }
 
 func (m *jobMockServer) handleJobs(w http.ResponseWriter, r *http.Request) {
+	if len(m.responses) == 0 {
+		http.Error(w, "no mock responses configured", http.StatusInternalServerError)
+		return
+	}
 	idx := int(atomic.AddInt32(&m.pollCount, 1)) - 1
 	if idx >= len(m.responses) {
 		idx = len(m.responses) - 1
@@ -54,6 +58,10 @@ func (m *jobMockServer) handleJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *jobMockServer) handleReview(w http.ResponseWriter, r *http.Request) {
+	if len(m.responses) == 0 {
+		http.Error(w, "no mock responses configured", http.StatusInternalServerError)
+		return
+	}
 	// Return the final review state without incrementing the poll count
 	resp := m.responses[len(m.responses)-1]
 
@@ -109,6 +117,12 @@ func TestWaitForAnalysisJob(t *testing.T) {
 			},
 			wantErr:    true,
 			wantErrMsg: "not found",
+		},
+		{
+			name:       "empty responses",
+			responses:  []jobResponse{},
+			wantErr:    true,
+			wantErrMsg: "no mock responses configured",
 		},
 	}
 
