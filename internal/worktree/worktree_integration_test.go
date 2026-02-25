@@ -17,11 +17,7 @@ func TestWorktreeCleanupBetweenIterations(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("init")
-	repo.Config("user.email", "test@test.com")
-	repo.Config("user.name", "Test")
-	repo.CommitFile("base.txt", "base", "base commit")
+	repo := testutil.InitTestRepo(t)
 
 	// Simulate the refine loop pattern: create a worktree, then clean it up
 	// before the next iteration. Verify the directory is removed each time.
@@ -60,11 +56,7 @@ func TestCreateTempWorktreeIgnoresHooks(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("init")
-	repo.Config("user.email", "test@test.com")
-	repo.Config("user.name", "Test")
-	repo.CommitFile("base.txt", "base", "base commit")
+	repo := testutil.InitTestRepo(t)
 
 	repo.WriteNamedHook("post-checkout", "#!/bin/sh\nexit 1\n")
 
@@ -105,15 +97,15 @@ func TestCreateTempWorktreeInitializesSubmodules(t *testing.T) {
 	subRepo := testutil.NewTestRepo(t)
 	subRepo.RunGit("init")
 	subRepo.SymbolicRef("HEAD", "refs/heads/main")
-	subRepo.Config("user.email", "test@test.com")
-	subRepo.Config("user.name", "Test")
+	subRepo.Config("user.email", testutil.GitUserEmail)
+	subRepo.Config("user.name", testutil.GitUserName)
 	subRepo.CommitFile("sub.txt", "sub", "submodule commit")
 
 	mainRepo := testutil.NewTestRepo(t)
 	mainRepo.RunGit("init")
 	mainRepo.SymbolicRef("HEAD", "refs/heads/main")
-	mainRepo.Config("user.email", "test@test.com")
-	mainRepo.Config("user.name", "Test")
+	mainRepo.Config("user.email", testutil.GitUserEmail)
+	mainRepo.Config("user.name", testutil.GitUserName)
 	mainRepo.Config("protocol.file.allow", "always")
 	mainRepo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", subRepo.Root, "deps/sub")
 	mainRepo.RunGit("commit", "-m", "add submodule")

@@ -23,12 +23,8 @@ func TestValidateRefineContext(t *testing.T) {
 	// Helper to create a standard test repo
 	// Returns repo, baseSHA
 	createStandardRepo := func(t *testing.T) (*testutil.TestRepo, string) {
-		repo := testutil.NewTestRepo(t)
-		repo.RunGit("init")
-		repo.SymbolicRef("HEAD", "refs/heads/main")
-		repo.Config("user.email", "test@test.com")
-		repo.Config("user.name", "Test")
-		baseSHA := repo.CommitFile("base.txt", "base", "base commit")
+		repo := testutil.InitTestRepo(t)
+		baseSHA := repo.RevParse("HEAD")
 		return repo, baseSHA
 	}
 

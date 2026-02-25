@@ -233,7 +233,7 @@ func assertContainsAll(t *testing.T, s string, wantLabel string, subs ...string)
 	t.Helper()
 	for _, sub := range subs {
 		if !strings.Contains(s, sub) {
-			t.Errorf("%s missing %q", wantLabel, sub)
+			t.Errorf("%s missing %q\nDocument content:\n%s", wantLabel, sub, s)
 		}
 	}
 }

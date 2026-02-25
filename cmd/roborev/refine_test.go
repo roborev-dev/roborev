@@ -561,23 +561,14 @@ func chdirForTest(t *testing.T, dir string) {
 	t.Cleanup(func() { os.Chdir(orig) })
 }
 
-func setupHookTestRepo(t *testing.T) *testutil.TestRepo {
-	t.Helper()
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("init")
-	repo.SymbolicRef("HEAD", "refs/heads/main")
-	repo.Config("user.email", "test@test.com")
-	repo.Config("user.name", "Test")
-	repo.CommitFile("base.txt", "base", "base commit")
-	return repo
-}
+
 
 func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 
 	// Stay on main branch (don't create feature branch)
 	chdirForTest(t, repo.Root)
@@ -600,7 +591,7 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 	baseSHA := repo.RevParse("HEAD")
 
 	// Add another commit on main
@@ -629,7 +620,7 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 	baseSHA := repo.RevParse("HEAD")
 
 	// Create feature branch with commits
@@ -659,7 +650,7 @@ func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 
 	chdirForTest(t, repo.Root)
 
@@ -678,7 +669,7 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 
 	// Create a commit on a separate branch that diverges from main
 	repo.RunGit("checkout", "-b", "other-branch")
@@ -706,7 +697,7 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 	baseSHA := repo.RevParse("HEAD")
 
 	// Create feature branch
@@ -737,7 +728,7 @@ func TestCommitWithHookRetrySucceeds(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 
 	// Install a pre-commit hook that fails on the first 2 calls and
 	// succeeds on the 3rd+. The hook runs twice before a retry: once
@@ -784,7 +775,7 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 
 	repo.WriteNamedHook("pre-commit",
 		"#!/bin/sh\necho 'always fails' >&2\nexit 1\n")
@@ -809,7 +800,7 @@ func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 
 	// No pre-commit hook installed. Commit with no changes will fail
 	// for a non-hook reason ("nothing to commit").
@@ -833,7 +824,7 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
@@ -869,7 +860,7 @@ func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := setupHookTestRepo(t)
+	repo := testutil.InitTestRepo(t)
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 

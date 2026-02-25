@@ -19,6 +19,11 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+const (
+	GitUserName  = "Test"
+	GitUserEmail = "test@test.com"
+)
+
 // TestRepo encapsulates a temporary git repository for tests.
 type TestRepo struct {
 	Root     string
@@ -58,18 +63,18 @@ func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo.Root
 		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
+			"GIT_AUTHOR_NAME="+GitUserName,
+			"GIT_AUTHOR_EMAIL="+GitUserEmail,
+			"GIT_COMMITTER_NAME="+GitUserName,
+			"GIT_COMMITTER_EMAIL="+GitUserEmail,
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v failed: %v\n%s", args, err, out)
 		}
 	}
 
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
+	runGit("config", "user.email", GitUserEmail)
+	runGit("config", "user.name", GitUserName)
 
 	if err := os.WriteFile(filepath.Join(repo.Root, "main.go"), []byte("package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -78,6 +83,19 @@ func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 	runGit("add", "main.go")
 	runGit("commit", "-m", "initial commit")
 
+	return repo
+}
+
+
+// InitTestRepo creates a standard test repository with an initial commit on the main branch.
+func InitTestRepo(t *testing.T) *TestRepo {
+	t.Helper()
+	repo := NewTestRepo(t)
+	repo.RunGit("init")
+	repo.SymbolicRef("HEAD", "refs/heads/main")
+	repo.Config("user.email", GitUserEmail)
+	repo.Config("user.name", GitUserName)
+	repo.CommitFile("base.txt", "base", "base commit")
 	return repo
 }
 
@@ -367,8 +385,8 @@ func InitTestGitRepo(t *testing.T, dir string) {
 
 	cmds := [][]string{
 		{"git", "-C", dir, "init"},
-		{"git", "-C", dir, "config", "user.email", "test@test.com"},
-		{"git", "-C", dir, "config", "user.name", "Test"},
+		{"git", "-C", dir, "config", "user.email", GitUserEmail},
+		{"git", "-C", dir, "config", "user.name", GitUserName},
 	}
 	for _, args := range cmds {
 		cmd := exec.Command(args[0], args[1:]...)
@@ -456,7 +474,7 @@ func WaitForJobStatus(t *testing.T, db *storage.DB, jobID int64, timeout time.Du
 func CreateCompletedReview(t *testing.T, db *storage.DB, repoID int64, sha, agent, reviewText string) *storage.ReviewJob {
 	t.Helper()
 
-	commit, err := db.GetOrCreateCommit(repoID, sha, "Test", "test commit", time.Now())
+	commit, err := db.GetOrCreateCommit(repoID, sha, GitUserName, "test commit", time.Now())
 	if err != nil {
 		t.Fatalf("Failed to create commit: %v", err)
 	}

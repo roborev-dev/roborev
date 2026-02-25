@@ -200,7 +200,7 @@ func TestIsSourceFile(t *testing.T) {
 func assertContains(t *testing.T, s, substr, msg string) {
 	t.Helper()
 	if !strings.Contains(s, substr) {
-		t.Errorf("%s: expected string to contain %q", msg, substr)
+		t.Errorf("%s: expected string to contain %q\nDocument content:\n%s", msg, substr, s)
 	}
 }
 

@@ -228,7 +228,7 @@ func makeToolCallJSON(name string, args map[string]any) string {
 func assertContains(t *testing.T, s, substr string) {
 	t.Helper()
 	if !strings.Contains(s, substr) {
-		t.Errorf("expected %q to contain %q", s, substr)
+		t.Errorf("expected string to contain %q\nDocument content:\n%s", substr, s)
 	}
 }
 

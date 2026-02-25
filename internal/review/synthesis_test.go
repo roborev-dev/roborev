@@ -9,7 +9,7 @@ func assertContainsAll(t *testing.T, got string, wants []string) {
 	t.Helper()
 	for _, want := range wants {
 		if !strings.Contains(got, want) {
-			t.Errorf("output missing expected substring %q", want)
+			t.Errorf("output missing expected substring %q\nDocument content:\n%s", want, got)
 		}
 	}
 }
