@@ -93,11 +93,9 @@ func TestIsTaskJob(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.job.IsTaskJob(); got != tt.want {
-				t.Errorf("IsTaskJob() = %v, want %v", got, tt.want)
-			}
-		})
+		if tt.job.IsTaskJob() != tt.want {
+			t.Errorf("%q: IsTaskJob() = %v, want %v", tt.name, tt.job.IsTaskJob(), tt.want)
+		}
 	}
 }
 
@@ -147,11 +145,9 @@ func TestIsDirtyJob(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.job.IsDirtyJob(); got != tt.want {
-				t.Errorf("IsDirtyJob() = %v, want %v", got, tt.want)
-			}
-		})
+		if tt.job.IsDirtyJob() != tt.want {
+			t.Errorf("%q: IsDirtyJob() = %v, want %v", tt.name, tt.job.IsDirtyJob(), tt.want)
+		}
 	}
 }
 
