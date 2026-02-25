@@ -30,6 +30,7 @@ func checkUniqueness(t *testing.T, generator func() string, iterations int) {
 		seen[uuid] = struct{}{}
 	}
 }
+
 func TestGenerateUUID_Format(t *testing.T) {
 	for range formatIterations {
 		uuid := GenerateUUID()

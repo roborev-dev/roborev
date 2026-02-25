@@ -653,7 +653,6 @@ func createLegacyCommonTables(t *testing.T, db *sql.DB) {
 	}
 }
 
-
 const legacySchemaV1DDL = `
 		CREATE TABLE repos (
 			id INTEGER PRIMARY KEY,

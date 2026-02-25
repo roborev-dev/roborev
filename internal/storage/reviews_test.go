@@ -171,10 +171,10 @@ func TestGetReviewByJobIDIncludesModel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			job := createCompletedJobWithOptions(t, db, EnqueueOpts{
-				RepoID: repo.ID, 
-				GitRef: tt.gitRef, 
-				Agent: "codex", 
-				Model: tt.model, 
+				RepoID:    repo.ID,
+				GitRef:    tt.gitRef,
+				Agent:     "codex",
+				Model:     tt.model,
 				Reasoning: "thorough",
 			}, "Test review output\n\n## Verdict: PASS")
 
@@ -339,7 +339,6 @@ func TestGetJobsWithReviewsByIDsPopulatesVerdict(t *testing.T) {
 	}
 }
 
-
 func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -349,10 +348,10 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 
 	t.Run("new review uses stored verdict_bool", func(t *testing.T) {
 		job := createCompletedJobWithOptions(t, db, EnqueueOpts{
-			RepoID: repo.ID, 
-			CommitID: commit.ID, 
-			GitRef: "vread123", 
-			Agent: "codex",
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "vread123",
+			Agent:    "codex",
 		}, "No issues found.")
 
 		review, err := db.GetReviewByJobID(job.ID)
@@ -373,10 +372,10 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 	t.Run("legacy review with NULL verdict_bool falls back to ParseVerdict", func(t *testing.T) {
 		commit2 := createCommit(t, db, repo.ID, "vread456")
 		job := createCompletedJobWithOptions(t, db, EnqueueOpts{
-			RepoID: repo.ID, 
-			CommitID: commit2.ID, 
-			GitRef: "vread456", 
-			Agent: "codex",
+			RepoID:   repo.ID,
+			CommitID: commit2.ID,
+			GitRef:   "vread456",
+			Agent:    "codex",
 		}, "No issues found.")
 
 		// Simulate legacy row by setting verdict_bool to NULL
@@ -406,10 +405,10 @@ func TestGetReviewByCommitSHAUsesStoredVerdict(t *testing.T) {
 	commit := createCommit(t, db, repo.ID, "shav123")
 
 	_ = createCompletedJobWithOptions(t, db, EnqueueOpts{
-		RepoID: repo.ID, 
-		CommitID: commit.ID, 
-		GitRef: "shav123", 
-		Agent: "codex",
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "shav123",
+		Agent:    "codex",
 	}, "- High — Bug found")
 
 	review, err := db.GetReviewByCommitSHA("shav123")
@@ -423,7 +422,6 @@ func TestGetReviewByCommitSHAUsesStoredVerdict(t *testing.T) {
 		t.Errorf("expected verdict F, got %v", review.Job.Verdict)
 	}
 }
-
 
 // createCompletedJobWithOptions helper creates a job, claims it, and completes it.
 func createCompletedJobWithOptions(t *testing.T, db *DB, opts EnqueueOpts, output string) *ReviewJob {
