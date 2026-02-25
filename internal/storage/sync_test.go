@@ -99,53 +99,34 @@ func TestGetMachineID(t *testing.T) {
 }
 
 func TestBackfillSourceMachineID(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
+	h := newSyncTestHelper(t)
 
-	// Create test data
-	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-
-	// Create a commit for the job
-	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Test Author", "Test Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test", Reasoning: "thorough"})
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
+	job := h.createPendingJob("abc123")
 
 	// Verify source_machine_id is initially NULL (simulating legacy data)
 	var sourceMachineID *string
-	err = db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&sourceMachineID)
+	err := h.db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&sourceMachineID)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 	// After migration, backfill runs automatically, so it may already have a value
 	// Let's clear it to test the backfill
-	_, err = db.Exec(`UPDATE review_jobs SET source_machine_id = NULL WHERE id = ?`, job.ID)
-	if err != nil {
-		t.Fatalf("Failed to clear source_machine_id: %v", err)
-	}
+	h.clearSourceMachineID(job.ID)
 
 	// Run backfill
-	err = db.BackfillSourceMachineID()
+	err = h.db.BackfillSourceMachineID()
 	if err != nil {
 		t.Fatalf("BackfillSourceMachineID failed: %v", err)
 	}
 
 	// Verify source_machine_id is now set
 	var newSourceMachineID string
-	err = db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&newSourceMachineID)
+	err = h.db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&newSourceMachineID)
 	if err != nil {
 		t.Fatalf("Query after backfill failed: %v", err)
 	}
 
-	machineID, _ := db.GetMachineID()
+	machineID, _ := h.db.GetMachineID()
 	if newSourceMachineID != machineID {
 		t.Errorf("Expected source_machine_id %q, got %q", machineID, newSourceMachineID)
 	}
@@ -168,10 +149,8 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 	}
 
 	// Clear identity to simulate legacy repo
-	_, err = db.Exec(`UPDATE repos SET identity = NULL WHERE id = ?`, repo.ID)
-	if err != nil {
-		t.Fatalf("Failed to clear identity: %v", err)
-	}
+	h := &syncTestHelper{t: t, db: db}
+	h.clearRepoIdentity(repo.ID)
 
 	// Backfill should use local: prefix with repo name (git repo, no remote)
 	count, err := db.BackfillRepoIdentities()
@@ -212,10 +191,8 @@ func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
 	}
 
 	// Clear identity to simulate legacy repo
-	_, err = db.Exec(`UPDATE repos SET identity = NULL WHERE id = ?`, repo.ID)
-	if err != nil {
-		t.Fatalf("Failed to clear identity: %v", err)
-	}
+	h := &syncTestHelper{t: t, db: db}
+	h.clearRepoIdentity(repo.ID)
 
 	// Backfill should set a local:// identity for non-git repos
 	count, err := db.BackfillRepoIdentities()
@@ -592,11 +569,10 @@ func TestGetRepoByIdentity_NotFound(t *testing.T) {
 }
 
 func TestGetKnownJobUUIDs(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
+	h := newSyncTestHelper(t)
 
 	t.Run("returns empty when no jobs exist", func(t *testing.T) {
-		uuids, err := db.GetKnownJobUUIDs()
+		uuids, err := h.db.GetKnownJobUUIDs()
 		if err != nil {
 			t.Fatalf("GetKnownJobUUIDs failed: %v", err)
 		}
@@ -606,27 +582,11 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 	})
 
 	t.Run("returns UUIDs of jobs with UUIDs", func(t *testing.T) {
-		repo, err := db.GetOrCreateRepo(t.TempDir())
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo failed: %v", err)
-		}
-
-		commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Test Author", "Test Subject", time.Now())
-		if err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-
 		// Create two jobs with UUIDs
-		job1, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test", Reasoning: "thorough"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		job2, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "def456", Agent: "test", Reasoning: "quick"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
+		job1 := h.createPendingJob("abc123")
+		job2 := h.createPendingJob("def456")
 
-		uuids, err := db.GetKnownJobUUIDs()
+		uuids, err := h.db.GetKnownJobUUIDs()
 		if err != nil {
 			t.Fatalf("GetKnownJobUUIDs failed: %v", err)
 		}
@@ -693,19 +653,8 @@ func createLegacyCommonTables(t *testing.T, db *sql.DB) {
 	}
 }
 
-func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
-	// This test creates an old-schema database manually, runs migration,
-	// and verifies that the same SHA can now exist in different repos.
-	dbPath := filepath.Join(t.TempDir(), "test.db")
 
-	// Create database with old schema (sha TEXT UNIQUE NOT NULL)
-	rawDB, err := openRawDB(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open raw database: %v", err)
-	}
-
-	// Create old schema with UNIQUE(sha) constraint
-	_, err = rawDB.Exec(`
+const legacySchemaV1DDL = `
 		CREATE TABLE repos (
 			id INTEGER PRIMARY KEY,
 			root_path TEXT UNIQUE NOT NULL,
@@ -722,12 +671,75 @@ func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 		CREATE INDEX idx_commits_sha ON commits(sha);
-	`)
+	`
+
+const legacySchemaV2DDL = `
+		CREATE TABLE repos (
+			id INTEGER PRIMARY KEY,
+			root_path TEXT UNIQUE NOT NULL,
+			name TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			identity TEXT
+		);
+		CREATE TABLE commits (
+			id INTEGER PRIMARY KEY,
+			repo_id INTEGER NOT NULL REFERENCES repos(id),
+			sha TEXT NOT NULL,
+			author TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(repo_id, sha)
+		);
+
+		CREATE INDEX idx_commits_sha ON commits(sha);
+	`
+
+const legacySchemaV3DDL = `
+		CREATE TABLE repos (
+			id INTEGER PRIMARY KEY,
+			root_path TEXT UNIQUE NOT NULL,
+			name TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			identity TEXT
+		);
+		CREATE UNIQUE INDEX idx_repos_identity ON repos(identity) WHERE identity IS NOT NULL;
+		CREATE TABLE commits (
+			id INTEGER PRIMARY KEY,
+			repo_id INTEGER NOT NULL REFERENCES repos(id),
+			sha TEXT NOT NULL,
+			author TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(repo_id, sha)
+		);
+
+		CREATE INDEX idx_commits_sha ON commits(sha);
+	`
+
+func setupLegacySchema(t *testing.T, db *sql.DB, ddl string) {
+	_, err := db.Exec(ddl)
 	if err != nil {
-		rawDB.Close()
+		db.Close()
 		t.Fatalf("Failed to create old schema: %v", err)
 	}
-	createLegacyCommonTables(t, rawDB)
+	createLegacyCommonTables(t, db)
+}
+
+func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
+	// This test creates an old-schema database manually, runs migration,
+	// and verifies that the same SHA can now exist in different repos.
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// Create database with old schema (sha TEXT UNIQUE NOT NULL)
+	rawDB, err := openRawDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open raw database: %v", err)
+	}
+
+	// Create old schema with UNIQUE(sha) constraint
+	setupLegacySchema(t, rawDB, legacySchemaV1DDL)
 
 	// Insert two repos
 	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name) VALUES ('/repo1', 'repo1')`)
@@ -804,32 +816,7 @@ func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {
 	}
 
 	// Create schema with identity column but no index (simulates partial migration)
-	_, err = rawDB.Exec(`
-		CREATE TABLE repos (
-			id INTEGER PRIMARY KEY,
-			root_path TEXT UNIQUE NOT NULL,
-			name TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			identity TEXT
-		);
-		CREATE TABLE commits (
-			id INTEGER PRIMARY KEY,
-			repo_id INTEGER NOT NULL REFERENCES repos(id),
-			sha TEXT NOT NULL,
-			author TEXT NOT NULL,
-			subject TEXT NOT NULL,
-			timestamp TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			UNIQUE(repo_id, sha)
-		);
-
-		CREATE INDEX idx_commits_sha ON commits(sha);
-	`)
-	if err != nil {
-		rawDB.Close()
-		t.Fatalf("Failed to create schema: %v", err)
-	}
-	createLegacyCommonTables(t, rawDB)
+	setupLegacySchema(t, rawDB, legacySchemaV2DDL)
 
 	// Insert two repos with the same identity (e.g., two clones of same remote)
 	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
@@ -874,33 +861,7 @@ func TestUniqueIndexMigration(t *testing.T) {
 	}
 
 	// Create schema with identity column AND the old unique index
-	_, err = rawDB.Exec(`
-		CREATE TABLE repos (
-			id INTEGER PRIMARY KEY,
-			root_path TEXT UNIQUE NOT NULL,
-			name TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			identity TEXT
-		);
-		CREATE UNIQUE INDEX idx_repos_identity ON repos(identity) WHERE identity IS NOT NULL;
-		CREATE TABLE commits (
-			id INTEGER PRIMARY KEY,
-			repo_id INTEGER NOT NULL REFERENCES repos(id),
-			sha TEXT NOT NULL,
-			author TEXT NOT NULL,
-			subject TEXT NOT NULL,
-			timestamp TEXT NOT NULL,
-			created_at TEXT NOT NULL DEFAULT (datetime('now')),
-			UNIQUE(repo_id, sha)
-		);
-
-		CREATE INDEX idx_commits_sha ON commits(sha);
-	`)
-	if err != nil {
-		rawDB.Close()
-		t.Fatalf("Failed to create schema: %v", err)
-	}
-	createLegacyCommonTables(t, rawDB)
+	setupLegacySchema(t, rawDB, legacySchemaV3DDL)
 
 	// Insert one repo
 	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
@@ -1860,6 +1821,32 @@ func newSyncTestHelper(t *testing.T) *syncTestHelper {
 	}
 
 	return &syncTestHelper{t: t, db: db, machineID: machineID, repo: repo}
+}
+
+func (h *syncTestHelper) createPendingJob(sha string) *ReviewJob {
+	commit, err := h.db.GetOrCreateCommit(h.repo.ID, sha, "Author", "Subject", time.Now())
+	if err != nil {
+		h.t.Fatalf("Failed to create commit: %v", err)
+	}
+	job, err := h.db.EnqueueJob(EnqueueOpts{RepoID: h.repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", Reasoning: "thorough"})
+	if err != nil {
+		h.t.Fatalf("Failed to enqueue job: %v", err)
+	}
+	return job
+}
+
+func (h *syncTestHelper) clearSourceMachineID(jobID int64) {
+	_, err := h.db.Exec(`UPDATE review_jobs SET source_machine_id = NULL WHERE id = ?`, jobID)
+	if err != nil {
+		h.t.Fatalf("Failed to clear source_machine_id: %v", err)
+	}
+}
+
+func (h *syncTestHelper) clearRepoIdentity(repoID int64) {
+	_, err := h.db.Exec(`UPDATE repos SET identity = NULL WHERE id = ?`, repoID)
+	if err != nil {
+		h.t.Fatalf("Failed to clear identity: %v", err)
+	}
 }
 
 // createCompletedJob creates a job, marks it done, and creates a review.
