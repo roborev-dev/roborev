@@ -92,7 +92,9 @@ func (cw *ConfigWatcher) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	cw.cfgMu.Lock()
 	cw.watcher = watcher
+	cw.cfgMu.Unlock()
 
 	// Watch the directory containing the config file, not the file itself.
 	// This handles editors that do atomic writes (delete + create).
@@ -101,7 +103,9 @@ func (cw *ConfigWatcher) Start(ctx context.Context) error {
 
 	if err := watcher.Add(configDir); err != nil {
 		watcher.Close()
-		cw.watcher = nil // Prevent double-close if Stop() is called later
+		cw.cfgMu.Lock()
+		cw.watcher = nil
+		cw.cfgMu.Unlock()
 		return err
 	}
 
@@ -114,10 +118,11 @@ func (cw *ConfigWatcher) Stop() {
 	cw.stopOnce.Do(func() {
 		cw.cfgMu.Lock()
 		cw.stopped = true
+		w := cw.watcher
 		cw.cfgMu.Unlock()
 		close(cw.stopCh)
-		if cw.watcher != nil {
-			cw.watcher.Close()
+		if w != nil {
+			w.Close()
 		}
 	})
 }
