@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/google/go-cmp/cmp"
 	"github.com/mattn/go-runewidth"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
@@ -955,8 +955,8 @@ func expectJSONPost[Req any, Res any](t *testing.T, path string, expected Req, r
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("Failed to decode request body: %v", err)
 		}
-		if !reflect.DeepEqual(req, expected) {
-			t.Errorf("Expected request %+v, got %+v", expected, req)
+		if diff := cmp.Diff(expected, req); diff != "" {
+			t.Errorf("Request payload mismatch (-want +got):\n%s", diff)
 		}
 		json.NewEncoder(w).Encode(response)
 	}
