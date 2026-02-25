@@ -13,6 +13,8 @@ import (
 )
 
 // workerTestContext encapsulates the common setup for worker pool tests.
+const testWorkerID = "test-worker"
+
 type workerTestContext struct {
 	DB          *storage.DB
 	TmpDir      string
@@ -50,30 +52,56 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	}
 }
 
-// createJob enqueues a job for the given SHA and returns it.
-func (c *workerTestContext) createJob(t *testing.T, sha string) *storage.ReviewJob {
+// createJobWithAgent enqueues a job for the given SHA and agent and returns it.
+func (c *workerTestContext) createJobWithAgent(t *testing.T, sha, agent string) *storage.ReviewJob {
 	t.Helper()
 	commit, err := c.DB.GetOrCreateCommit(c.Repo.ID, sha, "Author", "Subject", time.Now())
 	if err != nil {
 		t.Fatalf("GetOrCreateCommit failed: %v", err)
 	}
-	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test"})
+	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: agent})
 	if err != nil {
 		t.Fatalf("EnqueueJob failed: %v", err)
 	}
 	return job
 }
 
-// createAndClaimJob enqueues and claims a job, returning both.
-func (c *workerTestContext) createAndClaimJob(t *testing.T, sha, workerID string) *storage.ReviewJob {
+// createAndClaimJobWithAgent enqueues and claims a job with a specific agent.
+func (c *workerTestContext) createAndClaimJobWithAgent(t *testing.T, sha, workerID, agent string) *storage.ReviewJob {
 	t.Helper()
-	job := c.createJob(t, sha)
+	job := c.createJobWithAgent(t, sha, agent)
 	claimed, err := c.DB.ClaimJob(workerID)
 	if err != nil {
 		t.Fatalf("ClaimJob failed: %v", err)
 	}
 	if claimed.ID != job.ID {
 		t.Fatalf("Expected to claim job %d, got %d", job.ID, claimed.ID)
+	}
+	return claimed
+}
+
+// createJob enqueues a job for the given SHA and returns it.
+func (c *workerTestContext) createJob(t *testing.T, sha string) *storage.ReviewJob {
+	t.Helper()
+	return c.createJobWithAgent(t, sha, "test")
+}
+
+// createAndClaimJob enqueues and claims a job, returning both.
+func (c *workerTestContext) createAndClaimJob(t *testing.T, sha, workerID string) *storage.ReviewJob {
+	t.Helper()
+	return c.createAndClaimJobWithAgent(t, sha, workerID, "test")
+}
+
+// exhaustRetries exhausts retries for a job to simulate failure loop
+func (c *workerTestContext) exhaustRetries(t *testing.T, job *storage.ReviewJob, workerID, agent string) *storage.ReviewJob {
+	t.Helper()
+	for i := range maxRetries {
+		c.Pool.failOrRetryInner(workerID, job, agent, "connection reset", true)
+		reclaimed, err := c.DB.ClaimJob(workerID)
+		if err != nil || reclaimed == nil {
+			t.Fatalf("re-claim after retry %d: %v", i, err)
+		}
+		job = reclaimed
 	}
 	return job
 }
@@ -117,7 +145,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 
 func TestWorkerPoolPendingCancellation(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJob(t, "pending-cancel", "test-worker")
+	job := tc.createAndClaimJob(t, "pending-cancel", testWorkerID)
 
 	// Don't start the pool - test pending cancellation manually
 	if !tc.Pool.CancelJob(job.ID) {
@@ -138,7 +166,7 @@ func TestWorkerPoolPendingCancellation(t *testing.T) {
 
 func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJob(t, "api-cancel-race", "test-worker")
+	job := tc.createAndClaimJob(t, "api-cancel-race", testWorkerID)
 
 	// Simulate the API path: db.CancelJob first
 	if err := tc.DB.CancelJob(job.ID); err != nil {
@@ -188,7 +216,7 @@ func TestWorkerPoolCancelInvalidJob(t *testing.T) {
 
 func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJob(t, "finish-window", "test-worker")
+	job := tc.createAndClaimJob(t, "finish-window", testWorkerID)
 
 	if err := tc.DB.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
 		t.Fatalf("CompleteJob failed: %v", err)
@@ -213,7 +241,7 @@ func TestWorkerPoolCancelJobFinishedDuringWindow(t *testing.T) {
 
 func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJob(t, "register-during", "test-worker")
+	job := tc.createAndClaimJob(t, "register-during", testWorkerID)
 
 	canceled := false
 	tc.Pool.registerRunningJob(job.ID, func() { canceled = true })
@@ -231,7 +259,7 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 
 func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJob(t, "concurrent-register", "test-worker")
+	job := tc.createAndClaimJob(t, "concurrent-register", testWorkerID)
 
 	var canceled int32
 	cancelFunc := func() { atomic.AddInt32(&canceled, 1) }
@@ -254,7 +282,7 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJob(t, "deadlock-test", "test-worker")
+	job := tc.createAndClaimJob(t, "deadlock-test", testWorkerID)
 
 	canceled := false
 	cancelFunc := func() {
@@ -473,25 +501,8 @@ func TestProcessJob_CooldownResolvesAlias(t *testing.T) {
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
 	// Enqueue a job with the alias "claude" (canonical: "claude-code")
-	commit, err := tc.DB.GetOrCreateCommit(
-		tc.Repo.ID, sha, "A", "S", time.Now(),
-	)
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit: %v", err)
-	}
-	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID:   tc.Repo.ID,
-		CommitID: commit.ID,
-		GitRef:   sha,
-		Agent:    "claude",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-	claimed, err := tc.DB.ClaimJob("test-worker")
-	if err != nil || claimed.ID != job.ID {
-		t.Fatalf("ClaimJob: err=%v, claimed=%v", err, claimed)
-	}
+	claimed := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "claude")
+	job := claimed
 
 	// Cool down "claude-code" (canonical name)
 	tc.Pool.cooldownAgent(
@@ -499,7 +510,7 @@ func TestProcessJob_CooldownResolvesAlias(t *testing.T) {
 	)
 
 	// processJob should detect cooldown via alias resolution
-	tc.Pool.processJob("test-worker", claimed)
+	tc.Pool.processJob(testWorkerID, claimed)
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
@@ -540,13 +551,13 @@ func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	job := tc.createAndClaimJob(t, sha, "test-worker")
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
 
 	// Subscribe to events to verify broadcast
 	_, eventCh := tc.Broadcaster.Subscribe("")
 
 	quotaErr := "resource exhausted: reset after 1h"
-	tc.Pool.failOrRetryInner("test-worker", job, "gemini", quotaErr, true)
+	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", quotaErr, true)
 
 	// Job should be failed (not retried) with quota prefix
 	updated, err := tc.DB.GetJobByID(job.ID)
@@ -591,10 +602,10 @@ func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 func TestFailOrRetryInner_QuotaExhaustedVariant(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	job := tc.createAndClaimJob(t, sha, "test-worker")
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
 
 	// "quota exhausted" (not "quota exceeded") must also trigger quota-skip
-	tc.Pool.failOrRetryInner("test-worker", job, "gemini", "quota exhausted, reset after 2h", true)
+	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", "quota exhausted, reset after 2h", true)
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
@@ -615,10 +626,10 @@ func TestFailOrRetryInner_QuotaExhaustedVariant(t *testing.T) {
 func TestFailOrRetryInner_NonQuotaStillRetries(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	job := tc.createAndClaimJob(t, sha, "test-worker")
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
 
 	// A non-quota agent error should follow the normal retry path
-	tc.Pool.failOrRetryInner("test-worker", job, "gemini", "connection reset", true)
+	tc.Pool.failOrRetryInner(testWorkerID, job, "gemini", "connection reset", true)
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
@@ -653,27 +664,11 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
 
 	// Enqueue with agent "codex" (backup is "test")
-	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "A", "S", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit: %v", err)
-	}
-	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID:   tc.Repo.ID,
-		CommitID: commit.ID,
-		GitRef:   sha,
-		Agent:    "codex",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-	claimed, err := tc.DB.ClaimJob("test-worker")
-	if err != nil || claimed.ID != job.ID {
-		t.Fatalf("ClaimJob: err=%v, claimed=%v", err, claimed)
-	}
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
 	// Fill in RepoPath so resolveBackupAgent can work
 	job.RepoPath = tc.TmpDir
 
-	tc.Pool.failoverOrFail("test-worker", job, "codex", "quota exhausted")
+	tc.Pool.failoverOrFail(testWorkerID, job, "codex", "quota exhausted")
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
@@ -691,10 +686,10 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	job := tc.createAndClaimJob(t, sha, "test-worker")
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
 
 	// No backup configured — should fail with quota prefix
-	tc.Pool.failoverOrFail("test-worker", job, "test", "quota exhausted")
+	tc.Pool.failoverOrFail(testWorkerID, job, "test", "quota exhausted")
 
 	updated, err := tc.DB.GetJobByID(job.ID)
 	if err != nil {
@@ -720,39 +715,11 @@ func TestFailOrRetryInner_RetryExhaustedBackupInCooldown(t *testing.T) {
 	)
 
 	// Enqueue with agent "codex"
-	commit, err := tc.DB.GetOrCreateCommit(
-		tc.Repo.ID, sha, "A", "S", time.Now(),
-	)
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit: %v", err)
-	}
-	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID:   tc.Repo.ID,
-		CommitID: commit.ID,
-		GitRef:   sha,
-		Agent:    "codex",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-	claimed, err := tc.DB.ClaimJob("test-worker")
-	if err != nil || claimed.ID != job.ID {
-		t.Fatalf("ClaimJob: err=%v, claimed=%v", err, claimed)
-	}
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
 	job.RepoPath = tc.TmpDir
 
 	// Exhaust retries
-	for i := range maxRetries {
-		tc.Pool.failOrRetryInner(
-			"test-worker", job, "codex",
-			"connection reset", true,
-		)
-		reclaimed, claimErr := tc.DB.ClaimJob("test-worker")
-		if claimErr != nil || reclaimed == nil {
-			t.Fatalf("re-claim after retry %d: %v", i, claimErr)
-		}
-		job = reclaimed
-	}
+	job = tc.exhaustRetries(t, job, testWorkerID, "codex")
 
 	// Put the backup agent in cooldown
 	tc.Pool.cooldownAgent(
@@ -761,7 +728,7 @@ func TestFailOrRetryInner_RetryExhaustedBackupInCooldown(t *testing.T) {
 
 	// Final failure — retries exhausted, backup in cooldown
 	tc.Pool.failOrRetryInner(
-		"test-worker", job, "codex",
+		testWorkerID, job, "codex",
 		"connection reset", true,
 	)
 
@@ -791,43 +758,15 @@ func TestFailOrRetryInner_RetryExhaustedFailsOverToBackup(t *testing.T) {
 	)
 
 	// Enqueue with agent "codex"
-	commit, err := tc.DB.GetOrCreateCommit(
-		tc.Repo.ID, sha, "A", "S", time.Now(),
-	)
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit: %v", err)
-	}
-	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID:   tc.Repo.ID,
-		CommitID: commit.ID,
-		GitRef:   sha,
-		Agent:    "codex",
-	})
-	if err != nil {
-		t.Fatalf("EnqueueJob: %v", err)
-	}
-	claimed, err := tc.DB.ClaimJob("test-worker")
-	if err != nil || claimed.ID != job.ID {
-		t.Fatalf("ClaimJob: err=%v, claimed=%v", err, claimed)
-	}
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
 	job.RepoPath = tc.TmpDir
 
 	// Exhaust retries
-	for i := range maxRetries {
-		tc.Pool.failOrRetryInner(
-			"test-worker", job, "codex",
-			"connection reset", true,
-		)
-		reclaimed, claimErr := tc.DB.ClaimJob("test-worker")
-		if claimErr != nil || reclaimed == nil {
-			t.Fatalf("re-claim after retry %d: %v", i, claimErr)
-		}
-		job = reclaimed
-	}
+	job = tc.exhaustRetries(t, job, testWorkerID, "codex")
 
 	// Final failure — retries exhausted, backup available
 	tc.Pool.failOrRetryInner(
-		"test-worker", job, "codex",
+		testWorkerID, job, "codex",
 		"connection reset", true,
 	)
 
