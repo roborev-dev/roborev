@@ -63,6 +63,14 @@ func mockSequenceHandler(t *testing.T, steps ...MockStep) http.HandlerFunc {
 		call int
 	)
 
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !t.Failed() && call != len(steps) {
+			t.Errorf("expected %d calls to sequence handler, got %d", len(steps), call)
+		}
+	})
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
