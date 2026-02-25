@@ -39,80 +39,38 @@ func TestHandleActivity_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestHandleActivity_EmptyLog(t *testing.T) {
-	s := setupTestServer(t)
-	w := requestActivity(s, http.MethodGet, "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
+func TestHandleActivity_Limits(t *testing.T) {
+	tests := []struct {
+		name          string
+		logCount      int
+		query         string
+		expectedCount int
+	}{
+		{"EmptyLog", 0, "", 0},
+		{"DefaultLimit", 60, "", 50},
+		{"CustomLimit", 20, "limit=5", 5},
+		{"LimitClamped", 10, "limit=9999", 10},
+		{"InvalidLimit_Alpha", 60, "limit=abc", 50},
+		{"InvalidLimit_Negative", 60, "limit=-5", 50},
 	}
-	resp := decodeActivityResponse(t, w)
-	if len(resp.Entries) != 0 {
-		t.Errorf("expected 0 entries, got %d", len(resp.Entries))
-	}
-}
 
-func TestHandleActivity_DefaultLimit(t *testing.T) {
-	s := setupTestServer(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestServer(t)
+			for range tt.logCount {
+				s.activityLog.Log("test", "test", "msg", nil)
+			}
 
-	// Log more than the default limit (50)
-	for i := range 60 {
-		s.activityLog.Log("test", "test", "msg", map[string]string{
-			"i": string(rune('A' + i%26)),
+			w := requestActivity(s, http.MethodGet, tt.query)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+
+			resp := decodeActivityResponse(t, w)
+			if len(resp.Entries) != tt.expectedCount {
+				t.Errorf("expected %d entries, got %d", tt.expectedCount, len(resp.Entries))
+			}
 		})
-	}
-
-	w := requestActivity(s, http.MethodGet, "")
-	resp := decodeActivityResponse(t, w)
-	if len(resp.Entries) != 50 {
-		t.Errorf("expected default limit 50, got %d", len(resp.Entries))
-	}
-}
-
-func TestHandleActivity_CustomLimit(t *testing.T) {
-	s := setupTestServer(t)
-	for range 20 {
-		s.activityLog.Log("test", "test", "msg", nil)
-	}
-
-	w := requestActivity(s, http.MethodGet, "limit=5")
-	resp := decodeActivityResponse(t, w)
-	if len(resp.Entries) != 5 {
-		t.Errorf("expected 5 entries, got %d", len(resp.Entries))
-	}
-}
-
-func TestHandleActivity_LimitClamped(t *testing.T) {
-	s := setupTestServer(t)
-	for range 10 {
-		s.activityLog.Log("test", "test", "msg", nil)
-	}
-
-	// Limit exceeding capacity is clamped
-	w := requestActivity(s, http.MethodGet, "limit=9999")
-	resp := decodeActivityResponse(t, w)
-	if len(resp.Entries) != 10 {
-		t.Errorf("expected 10 entries (all logged), got %d", len(resp.Entries))
-	}
-}
-
-func TestHandleActivity_InvalidLimit(t *testing.T) {
-	s := setupTestServer(t)
-	for range 60 {
-		s.activityLog.Log("test", "test", "msg", nil)
-	}
-
-	// Non-numeric limit falls back to default 50
-	w := requestActivity(s, http.MethodGet, "limit=abc")
-	resp := decodeActivityResponse(t, w)
-	if len(resp.Entries) != 50 {
-		t.Errorf("expected default 50 on invalid limit, got %d", len(resp.Entries))
-	}
-
-	// Negative limit falls back to default 50
-	w = requestActivity(s, http.MethodGet, "limit=-5")
-	resp = decodeActivityResponse(t, w)
-	if len(resp.Entries) != 50 {
-		t.Errorf("expected default 50 on negative limit, got %d", len(resp.Entries))
 	}
 }
 
