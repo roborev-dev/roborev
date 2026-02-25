@@ -521,54 +521,46 @@ func TestDeleteEmptyBatches(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	t.Run("SetupAndExecute", func(t *testing.T) {
-		// Create an empty batch and backdate it so it's eligible for cleanup
-		emptyOld := mustCreateCIBatch(t, db, testRepo, 1, "sha-old", 2)
-		setBatchCreatedAt(t, db, emptyOld.ID, -5*time.Minute)
+	// Create an empty batch and backdate it so it's eligible for cleanup
+	emptyOld := mustCreateCIBatch(t, db, testRepo, 1, "sha-old", 2)
+	setBatchCreatedAt(t, db, emptyOld.ID, -5*time.Minute)
 
-		// Create an empty batch that's recent (should NOT be deleted)
-		mustCreateCIBatch(t, db, testRepo, 2, "sha-recent", 1)
+	// Create an empty batch that's recent (should NOT be deleted)
+	mustCreateCIBatch(t, db, testRepo, 2, "sha-recent", 1)
 
-		// Create a non-empty batch that's old (should NOT be deleted)
-		repo, err := db.GetOrCreateRepo(t.TempDir())
-		if err != nil {
-			t.Fatalf("GetOrCreateRepo: %v", err)
-		}
-		nonEmpty, _ := mustCreateLinkedBatchJob(t, db, repo.ID, testRepo, 3, "sha-nonempty", "a..b", testAgent, testReview)
-		setBatchCreatedAt(t, db, nonEmpty.ID, -5*time.Minute)
+	// Create a non-empty batch that's old (should NOT be deleted)
+	repo, err := db.GetOrCreateRepo(t.TempDir())
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+	nonEmpty, _ := mustCreateLinkedBatchJob(t, db, repo.ID, testRepo, 3, "sha-nonempty", "a..b", testAgent, testReview)
+	setBatchCreatedAt(t, db, nonEmpty.ID, -5*time.Minute)
 
-		// Run cleanup
-		n, err := db.DeleteEmptyBatches()
-		if err != nil {
-			t.Fatalf("DeleteEmptyBatches: %v", err)
-		}
-		assertEq(t, "deleted count", n, 1)
-	})
+	// Run cleanup
+	n, err := db.DeleteEmptyBatches()
+	if err != nil {
+		t.Fatalf("DeleteEmptyBatches: %v", err)
+	}
+	assertEq(t, "deleted count", n, 1)
 
-	t.Run("OldEmptyBatch_Deleted", func(t *testing.T) {
-		has, err := db.HasCIBatch(testRepo, 1, "sha-old")
-		if err != nil {
-			t.Fatalf("HasCIBatch (old empty): %v", err)
-		}
-		assertEq(t, "has", has, false)
-	})
+	has, err := db.HasCIBatch(testRepo, 1, "sha-old")
+	if err != nil {
+		t.Fatalf("HasCIBatch (old empty): %v", err)
+	}
+	assertEq(t, "has", has, false)
 
-	t.Run("RecentEmptyBatch_NotDeleted", func(t *testing.T) {
-		var recentCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batches WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
-			testRepo, 2, "sha-recent").Scan(&recentCount); err != nil {
-			t.Fatalf("count recent batch: %v", err)
-		}
-		assertEq(t, "recentCount", recentCount, 1)
-	})
+	var recentCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_batches WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+		testRepo, 2, "sha-recent").Scan(&recentCount); err != nil {
+		t.Fatalf("count recent batch: %v", err)
+	}
+	assertEq(t, "recentCount", recentCount, 1)
 
-	t.Run("NonEmptyBatch_NotDeleted", func(t *testing.T) {
-		has, err := db.HasCIBatch(testRepo, 3, "sha-nonempty")
-		if err != nil {
-			t.Fatalf("HasCIBatch (non-empty): %v", err)
-		}
-		assertEq(t, "has", has, true)
-	})
+	has, err = db.HasCIBatch(testRepo, 3, "sha-nonempty")
+	if err != nil {
+		t.Fatalf("HasCIBatch (non-empty): %v", err)
+	}
+	assertEq(t, "has", has, true)
 }
 
 func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
