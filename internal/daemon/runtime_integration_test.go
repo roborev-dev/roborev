@@ -4,7 +4,6 @@ package daemon
 
 import (
 	"net/http"
-	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -14,19 +13,24 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 	var shutdownCalled atomic.Bool
 	var requestCount atomic.Int32
 
-	addr := startMockDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/shutdown", func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
-		if strings.HasSuffix(r.URL.Path, "/api/shutdown") {
-			shutdownCalled.Store(true)
-			w.WriteHeader(http.StatusOK)
-		} else {
-			// Return 500 for status checks so KillDaemon exits quickly
-			w.WriteHeader(http.StatusInternalServerError)
-		}
+		shutdownCalled.Store(true)
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		// Return 500 for status checks so KillDaemon exits quickly
+		w.WriteHeader(http.StatusInternalServerError)
 	})
 
+	addr := startMockDaemon(t, mux.ServeHTTP)
+
+	const dummyNonExistentPID = 999999
+
 	info := &RuntimeInfo{
-		PID:  999999, // Non-existent PID
+		PID:  dummyNonExistentPID,
 		Addr: addr,   // Loopback address from test server
 	}
 
