@@ -236,7 +236,7 @@ func normalizeTestPath(t *testing.T, path string) string {
 func TestFindJobForCommit(t *testing.T) {
 	tests := []struct {
 		name        string
-		setupTest   func(t *testing.T) (string, []MockStep) // Returns the repo path and mock steps
+		setupTest   func(t *testing.T) (string, []MockStep)                    // Returns the repo path and mock steps
 		mockHandler func(t *testing.T, w http.ResponseWriter, r *http.Request) // Optional custom handler override
 		commitSHA   string
 		expectedID  int64

@@ -1,5 +1,4 @@
 import os
-import re
 
 files_to_update = [
     "internal/worktree/worktree_integration_test.go",
@@ -17,14 +16,17 @@ files_to_update = [
 for file_path in files_to_update:
     if not os.path.exists(file_path):
         continue
-        
+
     with open(file_path, "r") as f:
         content = f.read()
-        
-    # Replace "test@test.com" with testutil.GitUserEmail or just GitUserEmail depending on context
-    # Usually we don't have to replace them if it's too risky, but "extracts git user and email into constants" implies we should use them.
-    # The constants are in testutil package. So testutil.GitUserEmail
-    
-    # In some packages, testutil is not imported or imported as something else.
-    # Let's see if the prompt just meant inside testutil package or everywhere.
-    pass
+
+    has_testutil_import = "testutil" in content
+    has_email = '"test@test.com"' in content
+    has_name = '"Test"' in content
+
+    if has_email or has_name:
+        print(
+            f"{file_path}: "
+            f"email={has_email}, name={has_name}, "
+            f"testutil_imported={has_testutil_import}"
+        )

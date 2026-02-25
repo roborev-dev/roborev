@@ -1832,7 +1832,7 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	reqData := EnqueueRequest{
 		RepoPath: repoDir,
 		GitRef:   "HEAD",
-		Agent:     "test",
+		Agent:    "test",
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
@@ -1867,7 +1867,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath:    repoDir,
 			GitRef:      "dirty",
-			Agent:        "test",
+			Agent:       "test",
 			DiffContent: largeDiff,
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -1892,7 +1892,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath: repoDir,
 			GitRef:   "dirty",
-			Agent:     "test",
+			Agent:    "test",
 			// diff_content intentionally omitted/empty
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -1918,7 +1918,7 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath:    repoDir,
 			GitRef:      "dirty",
-			Agent:        "test",
+			Agent:       "test",
 			DiffContent: validDiff,
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -2059,7 +2059,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath:     repoDir,
 			GitRef:       "prompt",
-			Agent:         "test",
+			Agent:        "test",
 			CustomPrompt: "Explain this codebase",
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -2092,7 +2092,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath: repoDir,
 			GitRef:   "prompt",
-			Agent:     "test",
+			Agent:    "test",
 			// no custom_prompt - should try to resolve "prompt" as a git ref
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -2118,8 +2118,8 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath:     repoDir,
 			GitRef:       "prompt",
-			Agent:         "test",
-			Reasoning:     "fast",
+			Agent:        "test",
+			Reasoning:    "fast",
 			CustomPrompt: "Quick analysis",
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -2143,9 +2143,9 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath:     repoDir,
 			GitRef:       "prompt",
-			Agent:         "test",
+			Agent:        "test",
 			CustomPrompt: "Fix all bugs",
-			Agentic:       true,
+			Agentic:      true,
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -2168,7 +2168,7 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath:     repoDir,
 			GitRef:       "prompt",
-			Agent:         "test",
+			Agent:        "test",
 			CustomPrompt: "Read-only review",
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -2755,7 +2755,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 		reqData := EnqueueRequest{
 			RepoPath: worktreeDir,
 			GitRef:   "HEAD",
-			Agent:     "test",
+			Agent:    "test",
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -2838,7 +2838,7 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 	reqData := EnqueueRequest{
 		RepoPath: repoDir,
 		GitRef:   rangeRef,
-		Agent:     "test",
+		Agent:    "test",
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
@@ -2885,7 +2885,7 @@ func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
 	reqData := EnqueueRequest{
 		RepoPath: repoDir,
 		GitRef:   rangeRef,
-		Agent:     "test",
+		Agent:    "test",
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()

@@ -17,10 +17,10 @@ content = content.replace('"Test"', 'GitUserName').replace('"test@test.com"', 'G
 
 # But we need to be careful not to break strings like "git config user.name Test"
 # Actually, let's use exact replacements for the env vars and config commands
-content = content.replace('GIT_AUTHOR_NAME=Test', 'GIT_AUTHOR_NAME="+GitUserName')
-content = content.replace('GIT_AUTHOR_EMAIL=test@test.com', 'GIT_AUTHOR_EMAIL="+GitUserEmail')
-content = content.replace('GIT_COMMITTER_NAME=Test', 'GIT_COMMITTER_NAME="+GitUserName')
-content = content.replace('GIT_COMMITTER_EMAIL=test@test.com', 'GIT_COMMITTER_EMAIL="+GitUserEmail')
+content = content.replace('"GIT_AUTHOR_NAME=Test",', '"GIT_AUTHOR_NAME="+GitUserName,')
+content = content.replace('"GIT_AUTHOR_EMAIL=test@test.com",', '"GIT_AUTHOR_EMAIL="+GitUserEmail,')
+content = content.replace('"GIT_COMMITTER_NAME=Test",', '"GIT_COMMITTER_NAME="+GitUserName,')
+content = content.replace('"GIT_COMMITTER_EMAIL=test@test.com",', '"GIT_COMMITTER_EMAIL="+GitUserEmail,')
 
 content = content.replace('runGit("config", "user.email", GitUserEmail)', 'runGit("config", "user.email", GitUserEmail)')
 content = content.replace('runGit("config", "user.name", GitUserName)', 'runGit("config", "user.name", GitUserName)')

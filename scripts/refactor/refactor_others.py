@@ -1,6 +1,3 @@
-import sys
-import re
-
 # 1. Update cmd/roborev/refine_test.go
 file_path = "cmd/roborev/refine_test.go"
 with open(file_path, "r") as f:
@@ -52,13 +49,5 @@ content = content.replace(old_func2, new_func2)
 with open(file_path, "w") as f:
     f.write(content)
 
-
-# 3. Update cmd/roborev/hook_test.go
-file_path = "cmd/roborev/hook_test.go"
-with open(file_path, "r") as f:
-    content = f.read()
-
-# hook_test.go has testutil.NewTestRepo(t) everywhere. Let's see if it needs setupHookTestRepo. We already replaced setupHookTestRepo in refine_test.go. hook_test.go might not have it. Let's check if it does.
-# Actually hook_test.go might just have 'repo := testutil.NewTestRepo(t)' without config.
 
 print("Done")
