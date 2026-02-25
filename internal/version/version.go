@@ -26,6 +26,11 @@ func getVersionFromVCS() string {
 		return "dev"
 	}
 
+	// Use module version when installed via `go install pkg@version`
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+
 	var revision string
 	var modified bool
 
