@@ -55,7 +55,9 @@ func TestEnqueueIfNeeded(t *testing.T) {
 				case "/api/jobs":
 					n := jobCheckCalls.Add(1)
 					if len(tt.jobResponses) == 0 {
-						t.Fatalf("jobResponses must not be empty")
+						t.Errorf("jobResponses must not be empty")
+						http.Error(w, "jobResponses empty", http.StatusInternalServerError)
+						return
 					}
 					// Return the response corresponding to the call sequence, or the last one
 					idx := int(n - 1)
