@@ -30,19 +30,20 @@ func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
 		{name: "invalid type rejected", reviewType: "bogus", wantCode: http.StatusBadRequest, wantErrorMsg: "invalid review_type"},
 	}
 
+	sharedTmpDir := t.TempDir()
+	repoDir := filepath.Join(sharedTmpDir, "repo")
+	testutil.InitTestGitRepo(t, repoDir)
+	headSHA := testutil.GetHeadSHA(t, repoDir)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, _, tmpDir := newTestServer(t)
+			server, _, _ := newTestServer(t)
 
-			repoDir := filepath.Join(tmpDir, "repo")
-			testutil.InitTestGitRepo(t, repoDir)
-			headSHA := testutil.GetHeadSHA(t, repoDir)
-
-			reqData := map[string]string{
-				"repo_path":   repoDir,
-				"git_ref":     headSHA,
-				"agent":       "test",
-				"review_type": tt.reviewType,
+			reqData := EnqueueRequest{
+				RepoPath:   repoDir,
+				GitRef:     headSHA,
+				Agent:      "test",
+				ReviewType: tt.reviewType,
 			}
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 			w := httptest.NewRecorder()
