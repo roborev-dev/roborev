@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -327,6 +326,36 @@ func TestFixCmdFlagValidation(t *testing.T) {
 			args:    []string{"--all-branches", "--branch", "main"},
 			wantErr: "--all-branches and --branch are mutually exclusive",
 		},
+		{
+			name:    "--batch with --unaddressed",
+			args:    []string{"--batch", "--unaddressed"},
+			wantErr: "--batch and --unaddressed are mutually exclusive",
+		},
+		{
+			name:    "--batch with explicit IDs and --branch",
+			args:    []string{"--batch", "--branch", "main", "123"},
+			wantErr: "cannot be used with explicit job IDs",
+		},
+		{
+			name:    "--batch with explicit IDs and --all-branches",
+			args:    []string{"--batch", "--all-branches", "123"},
+			wantErr: "cannot be used with explicit job IDs",
+		},
+		{
+			name:    "--batch with explicit IDs and --newest-first",
+			args:    []string{"--batch", "--newest-first", "123"},
+			wantErr: "cannot be used with explicit job IDs",
+		},
+		{
+			name:    "--list with positional args",
+			args:    []string{"--list", "123"},
+			wantErr: "--list cannot be used with positional job IDs",
+		},
+		{
+			name:    "--list with --batch",
+			args:    []string{"--list", "--batch"},
+			wantErr: "--list and --batch are mutually exclusive",
+		},
 	}
 
 	for _, tt := range tests {
@@ -416,20 +445,14 @@ func TestRunFixUnaddressed(t *testing.T) {
 			Build()
 		defer cleanup()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, _ := os.Getwd()
-		_ = os.Chdir(repo.Dir)
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
+		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(output.String(), "No unaddressed jobs found") {
-			t.Errorf("expected 'No unaddressed jobs found' message, got %q", output.String())
+		if !strings.Contains(out, "No unaddressed jobs found") {
+			t.Errorf("expected 'No unaddressed jobs found' message, got %q", out)
 		}
 	})
 
@@ -478,20 +501,14 @@ func TestRunFixUnaddressed(t *testing.T) {
 			Build()
 		defer cleanup()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, _ := os.Getwd()
-		_ = os.Chdir(repo.Dir)
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(output.String(), "Found 2 unaddressed job(s)") {
-			t.Errorf("expected count message, got %q", output.String())
+		if !strings.Contains(out, "Found 2 unaddressed job(s)") {
+			t.Errorf("expected count message, got %q", out)
 		}
 		if rc := reviewCalls.Load(); rc != 2 {
 			t.Errorf("expected 2 review fetches, got %d", rc)
@@ -516,15 +533,9 @@ func TestRunFixUnaddressed(t *testing.T) {
 			Build()
 		defer cleanup()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, _ := os.Getwd()
-		_ = os.Chdir(repo.Dir)
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err := runFixUnaddressed(cmd, "feature-branch", false, fixOptions{agentName: "test"})
+		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixUnaddressed(cmd, "feature-branch", false, fixOptions{agentName: "test"})
+		})
 		if err != nil {
 			t.Fatalf("runFixUnaddressed returned unexpected error: %v", err)
 		}
@@ -542,15 +553,9 @@ func TestRunFixUnaddressed(t *testing.T) {
 			Build()
 		defer cleanup()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, _ := os.Getwd()
-		_ = os.Chdir(repo.Dir)
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
+		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
+		})
 		if err == nil {
 			t.Fatal("expected error on server failure")
 		}
@@ -613,20 +618,14 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		_, cleanup := b.Build()
 		defer cleanup()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, _ := os.Getwd()
-		_ = os.Chdir(repo.Dir)
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(output.String(), "[10 20 30]") {
-			t.Errorf("expected oldest-first order [10 20 30], got %q", output.String())
+		if !strings.Contains(out, "[10 20 30]") {
+			t.Errorf("expected oldest-first order [10 20 30], got %q", out)
 		}
 	})
 
@@ -635,20 +634,14 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		_, cleanup := b.Build()
 		defer cleanup()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, _ := os.Getwd()
-		_ = os.Chdir(repo.Dir)
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err := runFixUnaddressed(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
+		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixUnaddressed(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(output.String(), "[30 20 10]") {
-			t.Errorf("expected newest-first order [30 20 10], got %q", output.String())
+		if !strings.Contains(out, "[30 20 10]") {
+			t.Errorf("expected newest-first order [30 20 10], got %q", out)
 		}
 	})
 }
@@ -711,20 +704,13 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 		Build()
 	defer cleanup()
 
-	var output bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&output)
-
-	oldWd, _ := os.Getwd()
-	_ = os.Chdir(repo.Dir)
-	defer func() { _ = os.Chdir(oldWd) }()
-
-	err := runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	out := output.String()
 	if !strings.Contains(out, "Found 1 unaddressed job(s)") {
 		t.Errorf("expected first batch message, got %q", out)
 	}
@@ -735,21 +721,6 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 		t.Errorf("expected 3 queries, got %d", queryCount.Load())
 	}
 }
-
-// fakeAgent implements agent.Agent for testing fixJobDirect.
-type fakeAgent struct {
-	name     string
-	reviewFn func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
-}
-
-func (a *fakeAgent) Name() string { return a.name }
-func (a *fakeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	return a.reviewFn(ctx, repoPath, commitSHA, prompt, output)
-}
-func (a *fakeAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent { return a }
-func (a *fakeAgent) WithAgentic(agentic bool) agent.Agent                 { return a }
-func (a *fakeAgent) WithModel(model string) agent.Agent                   { return a }
-func (a *fakeAgent) CommandLine() string                                  { return "" }
 
 func TestFixJobDirectUnbornHead(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
@@ -775,9 +746,9 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 			}
 		}
 
-		ag := &fakeAgent{
-			name: "test",
-			reviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		ag := &agent.FakeAgent{
+			NameStr: "test",
+			ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 				// Simulate agent creating the first commit
 				if err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte("fixed"), 0644); err != nil {
 					return "", fmt.Errorf("write file: %w", err)
@@ -822,9 +793,9 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 			t.Fatalf("git init: %v\n%s", err, out)
 		}
 
-		ag := &fakeAgent{
-			name: "test",
-			reviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		ag := &agent.FakeAgent{
+			NameStr: "test",
+			ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 				return "nothing to do", nil
 			},
 		}
@@ -1039,51 +1010,6 @@ func TestFormatJobIDs(t *testing.T) {
 	}
 }
 
-func TestFixCmdBatchFlagValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		args    []string
-		wantErr string
-	}{
-		{
-			name:    "--batch with --unaddressed",
-			args:    []string{"--batch", "--unaddressed"},
-			wantErr: "--batch and --unaddressed are mutually exclusive",
-		},
-		{
-			name:    "--batch with explicit IDs and --branch",
-			args:    []string{"--batch", "--branch", "main", "123"},
-			wantErr: "cannot be used with explicit job IDs",
-		},
-		{
-			name:    "--batch with explicit IDs and --all-branches",
-			args:    []string{"--batch", "--all-branches", "123"},
-			wantErr: "cannot be used with explicit job IDs",
-		},
-		{
-			name:    "--batch with explicit IDs and --newest-first",
-			args:    []string{"--batch", "--newest-first", "123"},
-			wantErr: "cannot be used with explicit job IDs",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := fixCmd()
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
-			cmd.SetArgs(tt.args)
-			err := cmd.Execute()
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 	sha := "abc123def456"
@@ -1138,25 +1064,12 @@ func TestRunFixList(t *testing.T) {
 		defer cleanup()
 		// serverAddr is patched by setupMockDaemon called inside Build()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, err := os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chdir(repo.Dir); err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err = runFixList(cmd, "", false)
+		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixList(cmd, "", false)
+		})
 		if err != nil {
 			t.Fatalf("runFixList: %v", err)
 		}
-
-		out := output.String()
 
 		// Check header
 		if !strings.Contains(out, "Found 1 unaddressed fix(es):") {
@@ -1204,26 +1117,15 @@ func TestRunFixList(t *testing.T) {
 			Build()
 		defer cleanup()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, err := os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chdir(repo.Dir); err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		err = runFixList(cmd, "", false)
+		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixList(cmd, "", false)
+		})
 		if err != nil {
 			t.Fatalf("runFixList: %v", err)
 		}
 
-		if !strings.Contains(output.String(), "No unaddressed jobs found") {
-			t.Errorf("expected no jobs message, got:\n%s", output.String())
+		if !strings.Contains(out, "No unaddressed jobs found") {
+			t.Errorf("expected no jobs message, got:\n%s", out)
 		}
 	})
 
@@ -1260,22 +1162,10 @@ func TestRunFixList(t *testing.T) {
 			Build()
 		defer cleanup()
 
-		var output bytes.Buffer
-		cmd := &cobra.Command{}
-		cmd.SetOut(&output)
-
-		oldWd, err := os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chdir(repo.Dir); err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = os.Chdir(oldWd) }()
-
-		// With newestFirst=true, should process in order: 30, 20, 10
 		gotIDs = nil
-		err = runFixList(cmd, "", true)
+		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+			return runFixList(cmd, "", true)
+		})
 		if err != nil {
 			t.Fatalf("runFixList: %v", err)
 		}
@@ -1317,41 +1207,6 @@ func TestTruncateString(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("truncateString(%q, %d) = %q, want %q", tt.s, tt.maxLen, got, tt.want)
 		}
-	}
-}
-
-func TestFixListFlagValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		args    []string
-		wantErr string
-	}{
-		{
-			name:    "--list with positional args",
-			args:    []string{"--list", "123"},
-			wantErr: "--list cannot be used with positional job IDs",
-		},
-		{
-			name:    "--list with --batch",
-			args:    []string{"--list", "--batch"},
-			wantErr: "--list and --batch are mutually exclusive",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := fixCmd()
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
-			cmd.SetArgs(tt.args)
-			err := cmd.Execute()
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
-			}
-		})
 	}
 }
 
@@ -1449,83 +1304,4 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 			t.Errorf("expected main repo path %q, got %q", repo.Dir, *receivedRepo)
 		}
 	})
-}
-
-// MockDaemonBuilder helps construct a mock daemon with specific behavior
-type MockDaemonBuilder struct {
-	t        *testing.T
-	handlers map[string]http.HandlerFunc
-	reviews  map[int64]storage.Review
-}
-
-func newMockDaemonBuilder(t *testing.T) *MockDaemonBuilder {
-	return &MockDaemonBuilder{
-		t:        t,
-		handlers: make(map[string]http.HandlerFunc),
-		reviews:  make(map[int64]storage.Review),
-	}
-}
-
-func (b *MockDaemonBuilder) WithHandler(path string, handler http.HandlerFunc) *MockDaemonBuilder {
-	b.handlers[path] = handler
-	return b
-}
-
-func (b *MockDaemonBuilder) WithReview(jobID int64, output string) *MockDaemonBuilder {
-	b.reviews[jobID] = storage.Review{
-		JobID:  jobID,
-		Output: output,
-	}
-	return b
-}
-
-func (b *MockDaemonBuilder) WithJobs(jobs []storage.ReviewJob) *MockDaemonBuilder {
-	return b.WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
-			"jobs":     jobs,
-			"has_more": false,
-		})
-	})
-}
-
-func (b *MockDaemonBuilder) Build() (*httptest.Server, func()) {
-	// Register default review handler if not already overridden
-	if _, ok := b.handlers["/api/review"]; !ok && len(b.reviews) > 0 {
-		b.handlers["/api/review"] = func(w http.ResponseWriter, r *http.Request) {
-			jobIDStr := r.URL.Query().Get("job_id")
-			jobID, err := strconv.ParseInt(jobIDStr, 10, 64)
-			if err != nil {
-				http.Error(w, "invalid job_id", http.StatusBadRequest)
-				return
-			}
-
-			if review, ok := b.reviews[jobID]; ok {
-				json.NewEncoder(w).Encode(review)
-			} else {
-				// Fallback: if there is only one review and no job_id was requested
-				// (or even if it was), some tests might rely on "any review".
-				// But strictly, we should require job_id match.
-				// However, existing tests might be loose.
-				// For now, return 404 if not found to be strict.
-				http.Error(w, fmt.Sprintf("review for job %d not found", jobID), http.StatusNotFound)
-			}
-		}
-	}
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if h, ok := b.handlers[r.URL.Path]; ok {
-			h(w, r)
-			return
-		}
-		// Default handlers
-		switch r.URL.Path {
-		case "/api/comment":
-			w.WriteHeader(http.StatusCreated)
-		case "/api/review/address":
-			w.WriteHeader(http.StatusOK)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
-	return setupMockDaemon(b.t, handler)
 }

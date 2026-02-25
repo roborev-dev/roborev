@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/daemon"
@@ -476,4 +479,18 @@ func setupMockDaemon(t *testing.T, handler http.Handler) (*httptest.Server, func
 	}
 
 	return ts, cleanup
+}
+
+// runWithOutput runs a cobra command within a specific directory and returns its output.
+func runWithOutput(t *testing.T, dir string, fn func(cmd *cobra.Command) error) (string, error) {
+	t.Helper()
+	oldWd, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&output)
+	err := fn(cmd)
+	return output.String(), err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -312,3 +313,21 @@ func assertFileNotContains(t *testing.T, path, unexpected string) {
 		t.Errorf("file %s contained leaked string: %q", path, unexpected)
 	}
 }
+
+// FakeAgent implements Agent for testing purposes.
+type FakeAgent struct {
+	NameStr  string
+	ReviewFn func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error)
+}
+
+func (a *FakeAgent) Name() string { return a.NameStr }
+func (a *FakeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if a.ReviewFn != nil {
+		return a.ReviewFn(ctx, repoPath, commitSHA, prompt, output)
+	}
+	return "", nil
+}
+func (a *FakeAgent) WithReasoning(level ReasoningLevel) Agent { return a }
+func (a *FakeAgent) WithAgentic(agentic bool) Agent           { return a }
+func (a *FakeAgent) WithModel(model string) Agent             { return a }
+func (a *FakeAgent) CommandLine() string                      { return "" }
