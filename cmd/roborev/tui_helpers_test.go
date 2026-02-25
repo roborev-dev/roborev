@@ -475,31 +475,31 @@ func TestReflowHelpRows(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		items    []string
+		items    []helpItem
 		width    int
 		wantRows int
 	}{
 		{
 			name:     "all fit in one row",
-			items:    []string{"a: one", "b: two"},
+			items:    []helpItem{{"a", "one"}, {"b", "two"}},
 			width:    80,
 			wantRows: 1,
 		},
 		{
 			name:     "split into two rows",
-			items:    []string{"a: one", "b: two", "c: three", "d: four"},
-			width:    30,
+			items:    []helpItem{{"a", "one"}, {"b", "two"}, {"c", "three"}, {"d", "four"}},
+			width:    28, // 4 cols aligned = 29 chars, won't fit in 28
 			wantRows: 2,
 		},
 		{
 			name:     "width zero returns unchanged",
-			items:    []string{"a: one", "b: two", "c: three"},
+			items:    []helpItem{{"a", "one"}, {"b", "two"}, {"c", "three"}},
 			width:    0,
 			wantRows: 1,
 		},
 		{
 			name:     "single wide item gets own row",
-			items:    []string{"very-long-item-label: description"},
+			items:    []helpItem{{"very-long-item-label", "description"}},
 			width:    20,
 			wantRows: 1,
 		},
@@ -507,7 +507,7 @@ func TestReflowHelpRows(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rows := reflowHelpRows([][]string{tc.items}, tc.width)
+			rows := reflowHelpRows([][]helpItem{tc.items}, tc.width)
 			if len(rows) != tc.wantRows {
 				t.Errorf("got %d rows, want %d (items=%v, width=%d)",
 					len(rows), tc.wantRows, tc.items, tc.width)
@@ -520,20 +520,20 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 	t.Parallel()
 
 	// Real help row sets used by the TUI views.
-	helpSets := map[string][][]string{
+	helpSets := map[string][][]helpItem{
 		"queue": {
-			{"x: cancel", "r: rerun", "l: log", "p: prompt", "c: comment", "y: copy", "m: commit msg", "F: fix"},
-			{"↑/↓: navigate", "enter: review", "a: addressed", "f: filter", "h: hide", "T: tasks", "?: help", "q: quit"},
+			{{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"}, {"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}},
+			{{"↑/↓", "navigate"}, {"enter", "review"}, {"a", "addressed"}, {"f", "filter"}, {"h", "hide"}, {"T", "tasks"}, {"?", "help"}, {"q", "quit"}},
 		},
 		"review": {
-			{"p: prompt", "c: comment", "m: commit msg", "a: addressed", "y: copy", "F: fix"},
-			{"↑/↓: scroll", "←/→: prev/next", "?: commands", "esc: back"},
+			{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "addressed"}, {"y", "copy"}, {"F", "fix"}},
+			{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
 		},
 		"filter": {
-			{"up/down: navigate", "right/left: expand/collapse", "enter: select", "esc: cancel", "type to search"},
+			{{"↑/↓", "navigate"}, {"→/←", "expand/collapse"}, {"↵", "select"}, {"esc", "cancel"}, {"type to search", ""}},
 		},
 		"tasks": {
-			{"enter: view", "p: patch", "A: apply", "l: log", "x: cancel", "r: refresh", "?: help", "T/esc: back"},
+			{{"enter", "view"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}, {"x", "cancel"}, {"r", "refresh"}, {"?", "help"}, {"T/esc", "back"}},
 		},
 	}
 

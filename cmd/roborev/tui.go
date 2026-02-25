@@ -75,95 +75,171 @@ var (
 
 	tuiHelpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
+
+	tuiHelpKeyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray (matches status/scroll text)
+	tuiHelpDescStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "240"}) // Dimmer gray for descriptions
 )
 
-// reflowHelpRows redistributes items across rows so each fits within
-// width. Each cell occupies its content width plus 2 (left+right padding)
-// and inter-cell separators are 1 char each. If width is <= 0, rows are
-// returned unchanged.
-func reflowHelpRows(rows [][]string, width int) [][]string {
+// helpItem is a single help-bar entry with a key label and description.
+type helpItem struct {
+	key  string
+	desc string
+}
+
+// reflowHelpRows redistributes items across rows so that when rendered
+// as an aligned table (columns sized to the widest cell), the result
+// fits within width. Each cell's visible width is key + space + desc,
+// and non-first columns add 2 chars (▕ border + padding). If width is
+// <= 0, rows are returned unchanged.
+func reflowHelpRows(rows [][]helpItem, width int) [][]helpItem {
 	if width <= 0 {
 		return rows
 	}
-	var result [][]string
+
+	// cellWidth returns the visible width of a help item (key + space + desc,
+	// or just key when desc is empty).
+	cellWidth := func(item helpItem) int {
+		w := runewidth.StringWidth(item.key)
+		if item.desc != "" {
+			w += 1 + runewidth.StringWidth(item.desc)
+		}
+		return w
+	}
+
+	// Find the max items in any single input row.
+	maxItemsPerRow := 0
 	for _, row := range rows {
-		var current []string
-		currentWidth := 0
-		for _, item := range row {
-			itemW := runewidth.StringWidth(item) + 2 // cell padding
-			sep := 0
-			if len(current) > 0 {
-				sep = 1 // "│" separator
-			}
-			if len(current) > 0 && currentWidth+sep+itemW > width {
-				result = append(result, current)
-				current = []string{item}
-				currentWidth = itemW
-			} else {
-				current = append(current, item)
-				currentWidth += sep + itemW
+		if len(row) > maxItemsPerRow {
+			maxItemsPerRow = len(row)
+		}
+	}
+
+	// Try ncols from max down to 1. For each candidate, chunk every
+	// input row into sub-rows of at most ncols items, compute aligned
+	// column widths, and check if the total fits within width.
+	for ncols := maxItemsPerRow; ncols >= 1; ncols-- {
+		var candidate [][]helpItem
+		for _, row := range rows {
+			for i := 0; i < len(row); i += ncols {
+				end := min(i+ncols, len(row))
+				candidate = append(candidate, row[i:end])
 			}
 		}
-		if len(current) > 0 {
-			result = append(result, current)
+
+		// Compute max column widths across all candidate rows.
+		colW := make([]int, ncols)
+		for _, crow := range candidate {
+			for c, item := range crow {
+				if w := cellWidth(item); w > colW[c] {
+					colW[c] = w
+				}
+			}
+		}
+
+		// Total rendered width.
+		total := 0
+		for c, w := range colW {
+			total += w
+			if c > 0 {
+				total += 2 // ▕ + padding
+			}
+		}
+
+		if total <= width {
+			return candidate
+		}
+	}
+
+	// Fallback: one item per row.
+	var result [][]helpItem
+	for _, row := range rows {
+		for _, item := range row {
+			result = append(result, []helpItem{item})
 		}
 	}
 	return result
 }
 
-// renderHelpTable renders help items as a lipgloss table with internal vertical
-// borders only. Each row is a list of "key: description" strings. If width > 0,
-// rows that exceed it are split across multiple lines to avoid soft-wrapping.
-// Each row is rendered as an independent table to prevent cross-row column
-// width synchronization from inflating the rendered width.
-func renderHelpTable(rows [][]string, width int) string {
+// renderHelpTable renders helpItem entries as an aligned table.
+// Keys and descriptions are two-tone gray, separated by a thin ▕ border
+// that is hidden for column 0 and trailing empty cells.
+func renderHelpTable(rows [][]helpItem, width int) string {
 	rows = reflowHelpRows(rows, width)
 	if len(rows) == 0 {
 		return ""
 	}
 
-	// Border with only internal vertical lines.
-	border := lipgloss.Border{
-		Left:         "",
-		Right:        "",
-		Top:          "",
-		Bottom:       "",
-		TopLeft:      "",
-		TopRight:     "",
-		BottomLeft:   "",
-		BottomRight:  "",
-		MiddleLeft:   "",
-		MiddleRight:  "",
-		Middle:       "│",
-		MiddleTop:    "",
-		MiddleBottom: "",
-	}
-
-	borderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
-	cellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
+	borderColor := lipgloss.AdaptiveColor{Light: "248", Dark: "242"}
+	cellStyle := lipgloss.NewStyle()
+	// PaddingLeft gaps the ▕ from cell text.
+	cellWithBorder := lipgloss.NewStyle().
 		PaddingLeft(1).
-		PaddingRight(1)
+		Border(lipgloss.Border{Left: "▕"}, false, false, false, true).
+		BorderForeground(borderColor)
 
-	var parts []string
+	// Pad rows to the same number of columns so the table aligns.
+	maxCols := 0
 	for _, row := range rows {
-		t := table.New().
-			Border(border).
-			BorderStyle(borderStyle).
-			BorderTop(false).
-			BorderBottom(false).
-			BorderLeft(false).
-			BorderRight(false).
-			StyleFunc(func(_, _ int) lipgloss.Style {
-				return cellStyle
-			}).
-			Wrap(false).
-			Rows(row)
-		parts = append(parts, t.Render())
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
 	}
 
-	return strings.Join(parts, "\n")
+	// Compute minimum visible width per column.
+	colMinW := make([]int, maxCols)
+	for _, row := range rows {
+		for c, item := range row {
+			w := runewidth.StringWidth(item.key)
+			if item.desc != "" {
+				w += 1 + runewidth.StringWidth(item.desc)
+			}
+			if w > colMinW[c] {
+				colMinW[c] = w
+			}
+		}
+	}
+
+	// Track which cells have content for conditional borders.
+	empty := make([][]bool, len(rows))
+
+	t := table.New().
+		BorderTop(false).
+		BorderBottom(false).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderColumn(false).
+		BorderRow(false).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			minW := 0
+			if col < len(colMinW) {
+				minW = colMinW[col]
+			}
+			if col == 0 || (row < len(empty) && col < len(empty[row]) && empty[row][col]) {
+				return cellStyle.Width(minW)
+			}
+			return cellWithBorder.Width(minW + 2) // +2 for ▕ border + padding
+		}).
+		Wrap(false)
+
+	for ri, row := range rows {
+		styled := make([]string, maxCols)
+		empty[ri] = make([]bool, maxCols)
+		for i, item := range row {
+			if item.desc != "" {
+				styled[i] = tuiHelpKeyStyle.Render(item.key) + " " + tuiHelpDescStyle.Render(item.desc)
+			} else {
+				styled[i] = tuiHelpKeyStyle.Render(item.key)
+			}
+		}
+		for i := len(row); i < maxCols; i++ {
+			empty[ri][i] = true
+		}
+		t = t.Row(styled...)
+	}
+
+	return t.Render()
 }
 
 // fullSHAPattern matches a 40-character hex git SHA (not ranges or branch names)
@@ -1704,15 +1780,15 @@ func (m *tuiModel) logVisibleLines() int {
 }
 
 // logHelpRows returns the help row items for the log view.
-func (m *tuiModel) logHelpRows() [][]string {
-	helpRow := []string{
-		"↑/↓: scroll", "←/→: prev/next", "g: toggle top/bottom",
+func (m *tuiModel) logHelpRows() [][]helpItem {
+	helpRow := []helpItem{
+		{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"g", "toggle top/bottom"},
 	}
 	if m.logStreaming {
-		helpRow = append(helpRow, "x: cancel")
+		helpRow = append(helpRow, helpItem{"x", "cancel"})
 	}
-	helpRow = append(helpRow, "esc/q: back")
-	return [][]string{helpRow}
+	helpRow = append(helpRow, helpItem{"esc/q", "back"})
+	return [][]helpItem{helpRow}
 }
 
 // normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current
@@ -1997,19 +2073,19 @@ func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 
 // queueHelpRows returns queue help table rows, omitting
 // "f: filter" when both repo and branch filters are locked.
-func (m tuiModel) queueHelpRows() [][]string {
-	row1 := []string{
-		"x: cancel", "r: rerun", "l: log", "p: prompt",
-		"c: comment", "y: copy", "m: commit msg", "F: fix",
+func (m tuiModel) queueHelpRows() [][]helpItem {
+	row1 := []helpItem{
+		{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"},
+		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"},
 	}
-	row2 := []string{
-		"↑/↓: navigate", "enter: review", "a: addressed",
+	row2 := []helpItem{
+		{"↑/↓", "navigate"}, {"↵", "review"}, {"a", "addressed"},
 	}
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
-		row2 = append(row2, "f: filter")
+		row2 = append(row2, helpItem{"f", "filter"})
 	}
-	row2 = append(row2, "h: hide", "T: tasks", "?: help", "q: quit")
-	return [][]string{row1, row2}
+	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
+	return [][]helpItem{row1, row2}
 }
 
 // queueHelpLines computes how many terminal lines the queue help
@@ -3141,9 +3217,9 @@ func (m tuiModel) renderReviewView() string {
 	}
 
 	// Help table rows
-	reviewHelpRows := [][]string{
-		{"p: prompt", "c: comment", "m: commit msg", "a: addressed", "y: copy", "F: fix"},
-		{"↑/↓: scroll", "←/→: prev/next", "?: commands", "esc: back"},
+	reviewHelpRows := [][]helpItem{
+		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "addressed"}, {"y", "copy"}, {"F", "fix"}},
+		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
 	}
 	helpLines := len(reflowHelpRows(reviewHelpRows, m.width))
 
@@ -3313,8 +3389,8 @@ func (m tuiModel) renderPromptView() string {
 	}
 
 	// Reserve: title + command(0-1) + scroll indicator(1) + help(N) + margin(1)
-	promptHelpRows := [][]string{
-		{"↑/↓: scroll", "←/→: prev/next", "p: toggle prompt/review", "?: commands", "esc: back"},
+	promptHelpRows := [][]helpItem{
+		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"p", "toggle prompt/review"}, {"?", "commands"}, {"esc", "back"}},
 	}
 	promptHelpLines := len(reflowHelpRows(promptHelpRows, m.width))
 	visibleLines := max(m.height-(2+promptHelpLines)-headerLines, 1)
@@ -3391,8 +3467,8 @@ func (m tuiModel) renderFilterView() string {
 	flatList := m.filterFlatList
 
 	// Calculate visible rows
-	filterHelpRows := [][]string{
-		{"up/down: navigate", "right/left: expand/collapse", "enter: select", "esc: cancel", "type to search"},
+	filterHelpRows := [][]helpItem{
+		{{"↑/↓", "navigate"}, {"→/←", "expand/collapse"}, {"↵", "select"}, {"esc", "cancel"}, {"type to search", ""}},
 	}
 	filterHelpLines := len(reflowHelpRows(filterHelpRows, m.width))
 	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(N)
@@ -3545,8 +3621,8 @@ func (m tuiModel) renderRespondView() string {
 		linesWritten++
 	}
 
-	b.WriteString(renderHelpTable([][]string{
-		{"enter: submit", "esc: cancel"},
+	b.WriteString(renderHelpTable([][]helpItem{
+		{{"↵", "submit"}, {"esc", "cancel"}},
 	}, m.width))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
@@ -3627,8 +3703,8 @@ func (m tuiModel) renderCommitMsgView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	b.WriteString(renderHelpTable([][]string{
-		{"up/down: scroll", "esc/q: back"},
+	b.WriteString(renderHelpTable([][]helpItem{
+		{{"↑/↓", "scroll"}, {"esc/q", "back"}},
 	}, m.width))
 	b.WriteString("\x1b[K") // Clear help line
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
@@ -3887,8 +3963,8 @@ func (m tuiModel) renderHelpView() string {
 		linesWritten++
 	}
 
-	b.WriteString(renderHelpTable([][]string{
-		{"↑/↓: scroll", "esc/q/?: close"},
+	b.WriteString(renderHelpTable([][]helpItem{
+		{{"↑/↓", "scroll"}, {"esc/q/?", "close"}},
 	}, m.width))
 	b.WriteString("\x1b[K")
 	b.WriteString("\x1b[J") // Clear to end of screen
@@ -3988,8 +4064,8 @@ func (m tuiModel) renderTasksView() string {
 	if len(m.fixJobs) == 0 {
 		b.WriteString("\n  No fix tasks. Press F on a review to trigger a background fix.\n")
 		b.WriteString("\n")
-		b.WriteString(renderHelpTable([][]string{
-			{"T: back to queue", "F: fix review", "q: quit"},
+		b.WriteString(renderHelpTable([][]helpItem{
+			{{"T", "back to queue"}, {"F", "fix review"}, {"q", "quit"}},
 		}, m.width))
 		b.WriteString("\x1b[K\x1b[J")
 		return b.String()
@@ -4014,8 +4090,8 @@ func (m tuiModel) renderTasksView() string {
 	b.WriteString("\x1b[K\n")
 
 	// Render each fix job
-	tasksHelpRows := [][]string{
-		{"enter: view", "p: patch", "A: apply", "l: log", "x: cancel", "r: refresh", "?: help", "T/esc: back"},
+	tasksHelpRows := [][]helpItem{
+		{{"↵", "view"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}, {"x", "cancel"}, {"r", "refresh"}, {"?", "help"}, {"T/esc", "back"}},
 	}
 	tasksHelpLines := len(reflowHelpRows(tasksHelpRows, m.width))
 	visibleRows := m.height - (6 + tasksHelpLines) // title + header + separator + status + scroll + help(N)
@@ -4197,8 +4273,8 @@ func (m tuiModel) renderPatchView() string {
 		}
 	}
 
-	b.WriteString(renderHelpTable([][]string{
-		{"j/k/up/down: scroll", "esc: back to tasks"},
+	b.WriteString(renderHelpTable([][]helpItem{
+		{{"j/k/↑/↓", "scroll"}, {"esc", "back to tasks"}},
 	}, m.width))
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
