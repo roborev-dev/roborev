@@ -2,20 +2,24 @@ package main
 
 import (
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func TestRemapStdinParsing(t *testing.T) {
+	readErr := errors.New("read error")
 	tests := []struct {
-		name     string
-		input    string
-		expected [][2]string
+		name        string
+		input       io.Reader
+		expected    [][2]string
+		expectedErr error
 	}{
 		{
 			name:  "HappyPath",
-			input: "abc123 def456\nfoo bar\n\n  baz qux  \n",
+			input: strings.NewReader("abc123 def456\nfoo bar\n\n  baz qux  \n"),
 			expected: [][2]string{
 				{"abc123", "def456"},
 				{"foo", "bar"},
@@ -24,41 +28,35 @@ func TestRemapStdinParsing(t *testing.T) {
 		},
 		{
 			name:  "MalformedLines",
-			input: "abc123 def456\nonlyone\n\n  baz qux  \n",
+			input: strings.NewReader("abc123 def456\nonlyone\n\n  baz qux  \n"),
 			expected: [][2]string{
 				{"abc123", "def456"},
 				{"baz", "qux"},
 			},
 		},
+		{
+			name:        "ScannerError",
+			input:       iotest.ErrReader(readErr),
+			expectedErr: readErr,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseRemapPairs(strings.NewReader(tt.input))
+			got, err := parseRemapPairs(tt.input)
+			if tt.expectedErr != nil {
+				if !errors.Is(err, tt.expectedErr) {
+					t.Errorf("parseRemapPairs() error = %v, want %v", err, tt.expectedErr)
+				}
+				return
+			}
 			if err != nil {
-				t.Fatalf("parseRemapPairs() error = %v", err)
+				t.Fatalf("parseRemapPairs() unexpected error: %v", err)
 			}
 			if !reflect.DeepEqual(got, tt.expected) {
 				t.Errorf("parseRemapPairs() = %v, want %v", got, tt.expected)
 			}
 		})
-	}
-}
-
-type errReader struct{ err error }
-
-func (e *errReader) Read(p []byte) (n int, err error) {
-	return 0, e.err
-}
-
-func TestRemapStdinParsing_ScannerError(t *testing.T) {
-	expectedErr := errors.New("read error")
-	_, err := parseRemapPairs(&errReader{err: expectedErr})
-	if err == nil {
-		t.Fatal("parseRemapPairs() expected error, got nil")
-	}
-	if err != expectedErr {
-		t.Errorf("parseRemapPairs() error = %v, want %v", err, expectedErr)
 	}
 }
 
