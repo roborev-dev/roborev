@@ -10,6 +10,30 @@ import (
 	"testing"
 )
 
+// Helpers
+func executeRenderJobLog(t *testing.T, input string, isJSON bool) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := renderJobLog(strings.NewReader(input), &buf, isJSON); err != nil {
+		t.Fatalf("renderJobLog: %v", err)
+	}
+	return buf.String()
+}
+
+func assertLogContains(t *testing.T, got, want string) {
+	t.Helper()
+	if !strings.Contains(got, want) {
+		t.Errorf("expected output to contain %q, got:\n%s", want, got)
+	}
+}
+
+func assertLogNotContains(t *testing.T, got, want string) {
+	t.Helper()
+	if strings.Contains(got, want) {
+		t.Errorf("expected output to NOT contain %q, got:\n%s", want, got)
+	}
+}
+
 func TestLogCleanCmd_NegativeDays(t *testing.T) {
 	cmd := logCleanCmd()
 	cmd.SetArgs([]string{"--days", "-1"})
@@ -38,86 +62,95 @@ func TestRenderJobLog_JSONL(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Looks good overall."}]}}`,
 	}, "\n")
 
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
-	}
+	out := ansiEscapePattern.ReplaceAllString(executeRenderJobLog(t, input, true), "")
 
-	out := ansiEscapePattern.ReplaceAllString(buf.String(), "")
 	// Should contain the text messages
-	if !strings.Contains(out, "Reviewing the code.") {
-		t.Errorf("output should contain agent text, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Read") {
-		t.Errorf("output should contain tool name, got:\n%s", out)
-	}
-	if !strings.Contains(out, "main.go") {
-		t.Errorf("output should contain file path, got:\n%s", out)
-	}
+	assertLogContains(t, out, "Reviewing the code.")
+	assertLogContains(t, out, "Read")
+	assertLogContains(t, out, "main.go")
 
 	// Should NOT contain raw JSON
-	if strings.Contains(out, `"type"`) {
-		t.Errorf("output should not contain raw JSON, got:\n%s", out)
-	}
+	assertLogNotContains(t, out, `"type"`)
 }
 
-func TestRenderJobLog_PlainText(t *testing.T) {
-	input := "line 1\nline 2\nline 3\n"
-
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
+func TestRenderJobLog_Behaviors(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		isJSON      bool
+		wantContain []string
+		wantExclude []string
+		wantEmpty   bool
+	}{
+		{
+			name:        "PlainText",
+			input:       "line 1\nline 2\nline 3\n",
+			isJSON:      true,
+			wantContain: []string{"line 1", "line 3"},
+		},
+		{
+			name:      "Empty",
+			input:     "",
+			isJSON:    true,
+			wantEmpty: true,
+		},
+		{
+			name:        "OversizedLine",
+			input:       fmt.Sprintf(`{"type":"tool_result","content":"%s"}`, strings.Repeat("x", 2*1024*1024)),
+			isJSON:      true,
+			wantContain: []string{}, // Just checking it doesn't error
+		},
+		{
+			name:        "PlainTextPreservesBlankLines",
+			input:       "line 1\n\nline 3\n",
+			isJSON:      true,
+			wantContain: []string{"line 1\n\nline 3"},
+		},
+		{
+			name:        "SanitizesControlChars",
+			input:       "\x1b[31mred text\x1b[0m\n\x1b]0;evil title\x07\nclean line",
+			isJSON:      true,
+			wantContain: []string{"red text", "clean line"},
+			wantExclude: []string{"\x1b[", "\x1b]", "\x07"},
+		},
+		{
+			name: "SanitizeMixedJSONAndControl",
+			input: strings.Join([]string{
+				`{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}`,
+				"\x1b[1mbold agent stderr\x1b[0m",
+			}, "\n"),
+			isJSON:      true,
+			wantContain: []string{"ok", "bold agent stderr"},
+			wantExclude: []string{"\x1b[1m"},
+		},
+		{
+			name: "PreservesBlankLinesInMixedLog",
+			input: strings.Join([]string{
+				`{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`,
+				"stderr line 1",
+				"",
+				"stderr line 2",
+			}, "\n"),
+			isJSON:      true,
+			wantContain: []string{"stderr line 1\n\n", "stderr line 2"},
+		},
 	}
 
-	out := buf.String()
-	if !strings.Contains(out, "line 1") {
-		t.Errorf("plain text should pass through, got:\n%s", out)
-	}
-	if !strings.Contains(out, "line 3") {
-		t.Errorf("plain text should pass through, got:\n%s", out)
-	}
-}
-
-func TestRenderJobLog_Empty(t *testing.T) {
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(""), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
-	}
-	if buf.Len() != 0 {
-		t.Errorf("expected empty output, got %q", buf.String())
-	}
-}
-
-func TestRenderJobLog_OversizedLine(t *testing.T) {
-	// Lines larger than 1MB should not cause errors (no Scanner cap).
-	bigPayload := strings.Repeat("x", 2*1024*1024)
-	input := fmt.Sprintf(
-		`{"type":"tool_result","content":"%s"}`, bigPayload,
-	)
-
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog should handle large lines: %v", err)
-	}
-}
-
-func TestRenderJobLog_PlainTextPreservesBlankLines(t *testing.T) {
-	input := "line 1\n\nline 3\n"
-
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
-	}
-
-	out := buf.String()
-	// Blank line should be preserved between line 1 and line 3.
-	if !strings.Contains(out, "line 1\n\nline 3") {
-		t.Errorf("blank line should be preserved, got:\n%q", out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := executeRenderJobLog(t, tt.input, tt.isJSON)
+			if tt.wantEmpty {
+				if out != "" {
+					t.Errorf("expected empty output, got %q", out)
+				}
+			}
+			for _, want := range tt.wantContain {
+				assertLogContains(t, out, want)
+			}
+			for _, exclude := range tt.wantExclude {
+				assertLogNotContains(t, out, exclude)
+			}
+		})
 	}
 }
 
@@ -146,25 +179,12 @@ func TestRenderJobLog_MixedJSONAndPlainText(t *testing.T) {
 		`exit status 0`,
 	}, "\n")
 
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, false)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
-	}
+	out := executeRenderJobLog(t, input, false)
 
-	out := buf.String()
-	if !strings.Contains(out, "Hello") {
-		t.Errorf("expected first text, got:\n%s", out)
-	}
-	if !strings.Contains(out, "stderr: warning something") {
-		t.Errorf("non-JSON after JSON should be preserved, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Done") {
-		t.Errorf("expected second text, got:\n%s", out)
-	}
-	if !strings.Contains(out, "exit status 0") {
-		t.Errorf("trailing non-JSON should be preserved, got:\n%s", out)
-	}
+	assertLogContains(t, out, "Hello")
+	assertLogContains(t, out, "stderr: warning something")
+	assertLogContains(t, out, "Done")
+	assertLogContains(t, out, "exit status 0")
 
 	// Verify ordering: "Hello" before "stderr", "stderr" before "Done".
 	helloIdx := strings.Index(out, "Hello")
@@ -280,103 +300,6 @@ func TestLooksLikeJSON(t *testing.T) {
 	}
 }
 
-func TestRenderJobLog_SanitizesControlChars(t *testing.T) {
-	// Non-JSON lines with ANSI escapes and OSC sequences
-	// should be sanitized to prevent terminal spoofing.
-	input := strings.Join([]string{
-		"\x1b[31mred text\x1b[0m",
-		"\x1b]0;evil title\x07",
-		"clean line",
-	}, "\n")
-
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
-	}
-
-	out := buf.String()
-
-	// ANSI escape sequences should be stripped.
-	if strings.Contains(out, "\x1b[") {
-		t.Errorf("ANSI escape not stripped: %q", out)
-	}
-	if strings.Contains(out, "\x1b]") {
-		t.Errorf("OSC escape not stripped: %q", out)
-	}
-	if strings.Contains(out, "\x07") {
-		t.Errorf("BEL char not stripped: %q", out)
-	}
-
-	// Clean content should still be present.
-	if !strings.Contains(out, "red text") {
-		t.Errorf("expected 'red text' in output: %q", out)
-	}
-	if !strings.Contains(out, "clean line") {
-		t.Errorf("expected 'clean line' in output: %q", out)
-	}
-}
-
-func TestRenderJobLog_SanitizeMixedJSONAndControl(t *testing.T) {
-	// JSON lines should NOT be sanitized (they go through
-	// streamFormatter), only non-JSON lines.
-	input := strings.Join([]string{
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}`,
-		"\x1b[1mbold agent stderr\x1b[0m",
-	}, "\n")
-
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
-	}
-
-	out := buf.String()
-	if !strings.Contains(out, "ok") {
-		t.Errorf("JSON text should be rendered: %q", out)
-	}
-	if !strings.Contains(out, "bold agent stderr") {
-		t.Errorf("non-JSON text should be present: %q", out)
-	}
-	// The non-JSON line's ANSI should be stripped.
-	if strings.Contains(out, "\x1b[1m") {
-		t.Errorf("ANSI in non-JSON line not stripped: %q", out)
-	}
-}
-
-func TestRenderJobLog_PreservesBlankLinesInMixedLog(t *testing.T) {
-	// Blank lines between non-JSON stderr lines should be preserved
-	// even after JSON events have been seen.
-	input := strings.Join([]string{
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`,
-		"stderr line 1",
-		"",
-		"stderr line 2",
-	}, "\n")
-
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
-	}
-
-	out := buf.String()
-	if !strings.Contains(out, "stderr line 1") {
-		t.Errorf("missing stderr line 1: %q", out)
-	}
-	if !strings.Contains(out, "stderr line 2") {
-		t.Errorf("missing stderr line 2: %q", out)
-	}
-	// The blank line between the two stderr lines should be
-	// preserved (two consecutive newlines in the output).
-	if !strings.Contains(out, "stderr line 1\n\n") {
-		t.Errorf(
-			"blank line between stderr lines dropped: %q",
-			out,
-		)
-	}
-}
-
 func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
 	input := strings.Join([]string{
 		toJson(map[string]any{
@@ -420,34 +343,16 @@ func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
 		}),
 	}, "\n")
 
-	var buf bytes.Buffer
-	err := renderJobLog(strings.NewReader(input), &buf, true)
-	if err != nil {
-		t.Fatalf("renderJobLog: %v", err)
-	}
+	out := ansiEscapePattern.ReplaceAllString(executeRenderJobLog(t, input, true), "")
 
-	out := ansiEscapePattern.ReplaceAllString(buf.String(), "")
-	if !strings.Contains(out, "Reviewing the code.") {
-		t.Errorf("expected agent text, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Read") {
-		t.Errorf("expected tool name, got:\n%s", out)
-	}
-	if !strings.Contains(out, "main.go") {
-		t.Errorf("expected file path, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Looks good overall.") {
-		t.Errorf("expected second text, got:\n%s", out)
-	}
+	assertLogContains(t, out, "Reviewing the code.")
+	assertLogContains(t, out, "Read")
+	assertLogContains(t, out, "main.go")
+	assertLogContains(t, out, "Looks good overall.")
+
 	// Lifecycle events should be suppressed
-	if strings.Contains(out, "step_start") {
-		t.Errorf("step_start should be suppressed, got:\n%s", out)
-	}
-	if strings.Contains(out, "step_finish") {
-		t.Errorf("step_finish should be suppressed, got:\n%s", out)
-	}
+	assertLogNotContains(t, out, "step_start")
+	assertLogNotContains(t, out, "step_finish")
 	// Raw JSON should not appear
-	if strings.Contains(out, `"type"`) {
-		t.Errorf("raw JSON should not appear, got:\n%s", out)
-	}
+	assertLogNotContains(t, out, `"type"`)
 }
