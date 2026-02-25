@@ -144,11 +144,11 @@ func createTestRepo(t *testing.T, pool *pgxpool.Pool, opts TestRepoOpts) int64 {
 }
 
 type TestCommitOpts struct {
-	RepoID     int64
-	SHA        string
-	Author     string
-	Subject    string
-	AuthorDate time.Time
+	RepoID    int64
+	SHA       string
+	Author    string
+	Subject   string
+	Timestamp time.Time
 }
 
 func (opts *TestCommitOpts) applyDefaults() {
@@ -161,8 +161,8 @@ func (opts *TestCommitOpts) applyDefaults() {
 	if opts.Subject == "" {
 		opts.Subject = "Test Subject"
 	}
-	if opts.AuthorDate.IsZero() {
-		opts.AuthorDate = time.Now()
+	if opts.Timestamp.IsZero() {
+		opts.Timestamp = time.Now()
 	}
 }
 
@@ -172,11 +172,11 @@ func createTestCommit(t *testing.T, pool *pgxpool.Pool, opts TestCommitOpts) int
 
 	var id int64
 	err := pool.QueryRow(t.Context(), `
-		INSERT INTO commits (repo_id, sha, author, subject, author_date)
+		INSERT INTO commits (repo_id, sha, author, subject, timestamp)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (repo_id, sha) DO UPDATE SET author = EXCLUDED.author
 		RETURNING id
-	`, opts.RepoID, opts.SHA, opts.Author, opts.Subject, opts.AuthorDate).Scan(&id)
+	`, opts.RepoID, opts.SHA, opts.Author, opts.Subject, opts.Timestamp).Scan(&id)
 	if err != nil {
 		t.Fatalf("Failed to create commit %s: %v", opts.SHA, err)
 	}
