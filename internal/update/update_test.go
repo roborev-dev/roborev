@@ -15,46 +15,34 @@ func TestSanitizeTarPath(t *testing.T) {
 	destDir := t.TempDir()
 
 	tests := []struct {
-		name      string
-		path      string
-		wantErr   bool
-		skipOnWin bool // Skip on Windows (e.g., Unix-style absolute paths)
+		name     string
+		path     string
+		wantErr  bool
+		targetOS string // "" for all, "windows" for Windows-only, "!windows" for Unix-only
 	}{
-		{"normal file", "roborev", false, false},
-		{"nested file", "bin/roborev", false, false},
-		{"absolute path Unix", "/etc/passwd", true, false}, // Rejected on all platforms (explicit / check)
-		{"path traversal with ..", "../../../etc/passwd", true, false},
-		{"path traversal mid-path", "foo/../../../etc/passwd", true, false},
-		{"hidden traversal", "foo/bar/../../..", true, false},
-		{"dot only", ".", false, false},
-		{"double dot only", "..", true, false},
-		{"empty path", "", false, false},
+		{"normal file", "roborev", false, ""},
+		{"nested file", "bin/roborev", false, ""},
+		{"absolute path Unix", "/etc/passwd", true, ""}, // Rejected on all platforms (explicit / check)
+		{"path traversal with ..", "../../../etc/passwd", true, ""},
+		{"path traversal mid-path", "foo/../../../etc/passwd", true, ""},
+		{"hidden traversal", "foo/bar/../../..", true, ""},
+		{"dot only", ".", false, ""},
+		{"double dot only", "..", true, ""},
+		{"empty path", "", false, ""},
+		{"absolute path Windows", "C:\\Windows\\System32", true, "windows"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.skipOnWin && runtime.GOOS == "windows" {
-				t.Skip("Unix-style absolute path not applicable on Windows")
+			if tt.targetOS == "windows" && runtime.GOOS != "windows" {
+				t.Skip("Windows-only test")
+			}
+			if tt.targetOS == "!windows" && runtime.GOOS == "windows" {
+				t.Skip("Unix-only test")
 			}
 			_, err := sanitizeTarPath(destDir, tt.path)
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("sanitizeTarPath(%q) expected error, got nil", tt.path)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("sanitizeTarPath(%q) unexpected error: %v", tt.path, err)
-				}
-			}
-		})
-	}
-
-	// Windows-specific absolute path test
-	if runtime.GOOS == "windows" {
-		t.Run("absolute path Windows", func(t *testing.T) {
-			_, err := sanitizeTarPath(destDir, "C:\\Windows\\System32")
-			if err == nil {
-				t.Error("sanitizeTarPath(\"C:\\\\Windows\\\\System32\") expected error, got nil")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("sanitizeTarPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
 			}
 		})
 	}
@@ -189,13 +177,11 @@ func TestExtractChecksum(t *testing.T) {
 		},
 		{
 			name: "multiline with target in middle",
-			body: fmt.Sprintf("%s  %s\n%s  %s\n%s  %s",
-				strings.ReplaceAll(longHash, "d", "a"), "roborev_linux_amd64.tar.gz",
-				strings.ReplaceAll(longHash, "d", "b"), "roborev_darwin_arm64.tar.gz",
-				strings.ReplaceAll(longHash, "d", "c"), "roborev_darwin_amd64.tar.gz",
-			),
+			body: `abc123aef456789012345678901234567890123456789012345678901234abca  roborev_linux_amd64.tar.gz
+abc123bef456789012345678901234567890123456789012345678901234abcb  roborev_darwin_arm64.tar.gz
+abc123cef456789012345678901234567890123456789012345678901234abcc  roborev_darwin_amd64.tar.gz`,
 			assetName: "roborev_darwin_arm64.tar.gz",
-			want:      strings.ReplaceAll(longHash, "d", "b"),
+			want:      "abc123bef456789012345678901234567890123456789012345678901234abcb",
 		},
 		{
 			name:      "no match",
@@ -393,73 +379,61 @@ func TestFindAssets(t *testing.T) {
 	}
 
 	tests := []struct {
-		name              string
-		assets            []Asset
-		assetName         string
-		wantAssetURL      string
-		wantAssetSize     int64
-		wantChecksumsURL  string
-		wantChecksumsSize int64
+		name          string
+		assets        []Asset
+		assetName     string
+		wantAsset     *Asset
+		wantChecksums *Asset
 	}{
 		{
-			name:              "find darwin_arm64 (second in list)",
-			assets:            standardAssets,
-			assetName:         "roborev_darwin_arm64.tar.gz",
-			wantAssetURL:      "https://example.com/darwin_arm64",
-			wantAssetSize:     2000,
-			wantChecksumsURL:  "https://example.com/checksums",
-			wantChecksumsSize: 500,
+			name:          "find darwin_arm64 (second in list)",
+			assets:        standardAssets,
+			assetName:     "roborev_darwin_arm64.tar.gz",
+			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin_arm64", Size: 2000},
+			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
 		},
 		{
-			name:              "find linux_amd64 (first in list)",
-			assets:            standardAssets,
-			assetName:         "roborev_linux_amd64.tar.gz",
-			wantAssetURL:      "https://example.com/linux_amd64",
-			wantAssetSize:     1000,
-			wantChecksumsURL:  "https://example.com/checksums",
-			wantChecksumsSize: 500,
+			name:          "find linux_amd64 (first in list)",
+			assets:        standardAssets,
+			assetName:     "roborev_linux_amd64.tar.gz",
+			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/linux_amd64", Size: 1000},
+			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
 		},
 		{
-			name:              "find darwin_amd64 (after checksums)",
-			assets:            standardAssets,
-			assetName:         "roborev_darwin_amd64.tar.gz",
-			wantAssetURL:      "https://example.com/darwin_amd64",
-			wantAssetSize:     3000,
-			wantChecksumsURL:  "https://example.com/checksums",
-			wantChecksumsSize: 500,
+			name:          "find darwin_amd64 (after checksums)",
+			assets:        standardAssets,
+			assetName:     "roborev_darwin_amd64.tar.gz",
+			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin_amd64", Size: 3000},
+			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
 		},
 		{
-			name:              "asset not found",
-			assets:            standardAssets,
-			assetName:         "roborev_freebsd_amd64.tar.gz",
-			wantAssetURL:      "",
-			wantAssetSize:     0,
-			wantChecksumsURL:  "https://example.com/checksums",
-			wantChecksumsSize: 500,
+			name:          "asset not found",
+			assets:        standardAssets,
+			assetName:     "roborev_freebsd_amd64.tar.gz",
+			wantAsset:     nil,
+			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
 		},
 		{
-			name:              "no checksums file",
-			assets:            noChecksumsAssets,
-			assetName:         "roborev_darwin_arm64.tar.gz",
-			wantAssetURL:      "https://example.com/darwin",
-			wantAssetSize:     2000,
-			wantChecksumsURL:  "",
-			wantChecksumsSize: 0,
+			name:          "no checksums file",
+			assets:        noChecksumsAssets,
+			assetName:     "roborev_darwin_arm64.tar.gz",
+			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin", Size: 2000},
+			wantChecksums: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			asset, checksums := findAssets(tt.assets, tt.assetName)
-			checkAsset(t, asset, tt.wantAssetURL, tt.wantAssetSize)
-			checkAsset(t, checksums, tt.wantChecksumsURL, tt.wantChecksumsSize)
+			checkAsset(t, asset, tt.wantAsset)
+			checkAsset(t, checksums, tt.wantChecksums)
 		})
 	}
 }
 
-func checkAsset(t *testing.T, got *Asset, wantURL string, wantSize int64) {
+func checkAsset(t *testing.T, got *Asset, want *Asset) {
 	t.Helper()
-	if wantURL == "" {
+	if want == nil {
 		if got != nil {
 			t.Errorf("expected nil asset, got %v", got)
 		}
@@ -468,10 +442,10 @@ func checkAsset(t *testing.T, got *Asset, wantURL string, wantSize int64) {
 	if got == nil {
 		t.Fatal("expected non-nil asset")
 	}
-	if got.BrowserDownloadURL != wantURL {
-		t.Errorf("got URL %q, want %q", got.BrowserDownloadURL, wantURL)
+	if got.BrowserDownloadURL != want.BrowserDownloadURL {
+		t.Errorf("got URL %q, want %q", got.BrowserDownloadURL, want.BrowserDownloadURL)
 	}
-	if got.Size != wantSize {
-		t.Errorf("got Size %d, want %d", got.Size, wantSize)
+	if got.Size != want.Size {
+		t.Errorf("got Size %d, want %d", got.Size, want.Size)
 	}
 }
