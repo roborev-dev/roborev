@@ -134,6 +134,7 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	}
 }
 
+// backdateJobStart updates a job's started_at time to the specified duration ago.
 func backdateJobStart(t *testing.T, db *DB, jobID int64, d time.Duration) {
 	t.Helper()
 	startTime := time.Now().Add(-d).UTC().Format(time.RFC3339)

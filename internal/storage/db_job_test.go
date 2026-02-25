@@ -1302,5 +1302,3 @@ func TestJobTypeBackfill(t *testing.T) {
 		t.Errorf("got %d rows, want %d", i, len(expected))
 	}
 }
-
-// backdateJobStart updates a job's started_at time to the specified duration ago.
