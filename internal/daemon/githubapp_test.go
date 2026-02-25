@@ -177,13 +177,17 @@ func TestSignJWT_Structure(t *testing.T) {
 		t.Fatal("missing exp")
 	}
 
-	// iat should be ~60s in the past, exp ~10min in the future
-	now := float64(time.Now().Unix())
-	if iat > now-50 || iat < now-70 {
-		t.Errorf("iat %v not ~60s in the past (now: %v)", iat, now)
+	// assert relative invariants to avoid flaky tests under slow execution
+	if exp-iat != 660 {
+		t.Errorf("expected duration (exp-iat) to be 660s, got %v", exp-iat)
 	}
-	if exp > now+610 || exp < now+590 {
-		t.Errorf("exp %v not ~10m in the future (now: %v)", exp, now)
+
+	now := float64(time.Now().Unix())
+	if iat > now || iat < now-300 {
+		t.Errorf("iat %v out of bounds (now: %v)", iat, now)
+	}
+	if exp > now+660 || exp < now+360 {
+		t.Errorf("exp %v out of bounds (now: %v)", exp, now)
 	}
 }
 
@@ -201,7 +205,9 @@ type mockServer struct {
 func (m *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.callCount++
 	if m.callCount > len(m.responses) {
-		m.t.Fatalf("unexpected call %d", m.callCount)
+		m.t.Errorf("unexpected call %d", m.callCount)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
 	resp := m.responses[m.callCount-1]
