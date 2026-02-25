@@ -186,10 +186,17 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 
 	// Ensure cleanup in case of failure
 	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
 
 	t.Cleanup(func() {
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
 		}
 	})
 
@@ -210,9 +217,6 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	}
 
 	// 5. Wait for exit
-	go func() {
-		done <- cmd.Wait()
-	}()
 
 	select {
 	case err := <-done:

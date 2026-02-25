@@ -83,6 +83,25 @@ func TestFindAvailablePort(t *testing.T) {
 	}
 }
 
+func TestFindAvailablePort_Ephemeral(t *testing.T) {
+	// Test finding an available port with ephemeral :0
+	addr, port, err := FindAvailablePort("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("FindAvailablePort failed for ephemeral port: %v", err)
+	}
+
+	if addr == "" {
+		t.Error("Expected non-empty address")
+	}
+	if port == 0 {
+		t.Error("Expected non-zero port assigned by OS")
+	}
+	expectedAddr := fmt.Sprintf("127.0.0.1:%d", port)
+	if addr != expectedAddr {
+		t.Errorf("Expected address %q, got %q", expectedAddr, addr)
+	}
+}
+
 func TestRuntimeInfoReadWrite(t *testing.T) {
 	testenv.SetDataDir(t)
 
