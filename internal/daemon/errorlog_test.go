@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,7 +36,7 @@ func TestNewErrorLog(t *testing.T) {
 	_, path := createTestErrorLog(t)
 
 	// Verify file was created
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		t.Error("Error log file was not created")
 	}
 }
@@ -64,17 +65,15 @@ func TestErrorLogLog(t *testing.T) {
 		t.Errorf("Expected EOF after first entry, got %v", err)
 	}
 
-	if entry.Level != "error" {
-		t.Errorf("Expected level 'error', got %q", entry.Level)
+	entry.Timestamp = time.Time{} // Clear timestamp for comparison
+	expected := ErrorEntry{
+		Level:     "error",
+		Component: "worker",
+		Message:   "test error message",
+		JobID:     123,
 	}
-	if entry.Component != "worker" {
-		t.Errorf("Expected component 'worker', got %q", entry.Component)
-	}
-	if entry.Message != "test error message" {
-		t.Errorf("Expected message 'test error message', got %q", entry.Message)
-	}
-	if entry.JobID != 123 {
-		t.Errorf("Expected job_id 123, got %d", entry.JobID)
+	if entry != expected {
+		t.Errorf("Expected entry %+v, got %+v", expected, entry)
 	}
 }
 
@@ -136,17 +135,18 @@ func TestErrorLogCount24h(t *testing.T) {
 func TestErrorLogRingBuffer(t *testing.T) {
 	el, _ := createTestErrorLog(t)
 
-	seedErrorLog(el, 150)
+	seedCount := MaxErrorLogEntries + 50
+	seedErrorLog(el, seedCount)
 
-	// Should only have the last 100 errors
+	// Should only have the last MaxErrorLogEntries errors
 	recent := el.Recent()
-	if len(recent) != 100 {
-		t.Errorf("Expected 100 recent errors (ring buffer limit), got %d", len(recent))
+	if len(recent) != MaxErrorLogEntries {
+		t.Errorf("Expected %d recent errors (ring buffer limit), got %d", MaxErrorLogEntries, len(recent))
 	}
 
 	// The oldest should be #51 (first 50 were evicted)
-	if recent[99].JobID != 51 {
-		t.Errorf("Expected oldest error to be #51, got #%d", recent[99].JobID)
+	if recent[MaxErrorLogEntries-1].JobID != 51 {
+		t.Errorf("Expected oldest error to be #51, got #%d", recent[MaxErrorLogEntries-1].JobID)
 	}
 }
 
@@ -178,9 +178,9 @@ func TestErrorLogConcurrency(t *testing.T) {
 		t.Fatal("Timeout waiting for concurrent logging to finish")
 	}
 
-	// Should have 100 entries
+	// Should have MaxErrorLogEntries entries
 	recent := el.Recent()
-	if len(recent) != 100 {
-		t.Errorf("Expected 100 entries, got %d", len(recent))
+	if len(recent) != MaxErrorLogEntries {
+		t.Errorf("Expected %d entries, got %d", MaxErrorLogEntries, len(recent))
 	}
 }

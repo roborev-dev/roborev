@@ -19,6 +19,9 @@ type ErrorEntry struct {
 	JobID     int64     `json:"job_id,omitempty"`
 }
 
+// MaxErrorLogEntries is the maximum number of error log entries kept in memory
+const MaxErrorLogEntries = 100
+
 // ErrorLog manages error logging to a file and maintains an in-memory ring buffer
 type ErrorLog struct {
 	mu        sync.Mutex
@@ -47,8 +50,8 @@ func NewErrorLog(path string) (*ErrorLog, error) {
 	return &ErrorLog{
 		file:      file,
 		path:      path,
-		recent:    make([]ErrorEntry, 100), // Ring buffer of 100 entries
-		maxRecent: 100,
+		recent:    make([]ErrorEntry, MaxErrorLogEntries),
+		maxRecent: MaxErrorLogEntries,
 	}, nil
 }
 
