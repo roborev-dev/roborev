@@ -14,6 +14,8 @@ import (
 //go:embed schemas/postgres_v1.sql
 var postgresV1Schema string
 
+const defaultTestMachineID = "11111111-1111-1111-1111-111111111111"
+
 func TestDefaultPgPoolConfig(t *testing.T) {
 	cfg := DefaultPgPoolConfig()
 
@@ -91,7 +93,10 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 	reviewUUID1 := uuid.NewString()
 	reviewUUID2 := uuid.NewString()
 
-	defer cleanupTestData(t, pool, machineID, otherMachineID, []string{jobUUID1, jobUUID2})
+	var repoIDs []int64
+	defer func() {
+		cleanupTestData(t, pool, machineID, otherMachineID, repoIDs, []string{jobUUID1, jobUUID2})
+	}()
 
 	// Register both machines
 	if err := pool.RegisterMachine(ctx, machineID, "test"); err != nil {
@@ -104,6 +109,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 	// Create a repo using the helper
 	repoIdentity := "test-repo-" + time.Now().Format("20060102150405")
 	repoID := createTestRepo(t, pool, repoIdentity)
+	repoIDs = append(repoIDs, repoID)
 
 	// Create a commit using the helper
 	commitID := createTestCommit(t, pool, repoID, "abc123456789")
@@ -228,7 +234,7 @@ func openTestPgPool(t *testing.T) *PgPool {
 	return pool
 }
 
-func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID string, jobUUIDs []string) {
+func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID string, repoIDs []int64, jobUUIDs []string) {
 	t.Helper()
 	ctx := t.Context()
 	// Clean up in reverse dependency order using tracked UUIDs
@@ -238,8 +244,8 @@ func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID strin
 		pool.pool.Exec(ctx, `DELETE FROM reviews WHERE job_uuid = $1`, jobUUID)
 	}
 	pool.pool.Exec(ctx, `DELETE FROM review_jobs WHERE source_machine_id = $1`, machineID)
-	pool.pool.Exec(ctx, `DELETE FROM commits WHERE repo_id IN (SELECT id FROM repos WHERE identity LIKE 'test-repo-%')`)
-	pool.pool.Exec(ctx, `DELETE FROM repos WHERE identity LIKE 'test-repo-%'`)
+	pool.pool.Exec(ctx, `DELETE FROM commits WHERE repo_id = ANY($1)`, repoIDs)
+	pool.pool.Exec(ctx, `DELETE FROM repos WHERE id = ANY($1)`, repoIDs)
 	pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, machineID)
 	pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, otherMachineID)
 }
@@ -376,23 +382,40 @@ func TestIntegration_EnsureSchema_FreshDatabase(t *testing.T) {
 	}
 }
 
+func setupMigrationEnv(t *testing.T) *MigrationTestEnv {
+	env := NewMigrationTestEnv(t)
+	// Clean up after test
+	env.CleanupDropSchema("roborev")
+	env.CleanupDropTable("public", "schema_version")
+	env.CleanupDropTable("public", "repos")
+
+	env.DropTable("public", "repos")
+	env.DropTable("public", "schema_version")
+	env.DropSchema("roborev")
+	return env
+}
+
+func countSuccesses(success []bool) int {
+	count := 0
+	for _, ok := range success {
+		if ok {
+			count++
+		}
+	}
+	return count
+}
+
 func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 	// This test verifies that tables in public schema are migrated to roborev
 	ctx := t.Context()
 
-	env := NewMigrationTestEnv(t)
+	env := setupMigrationEnv(t)
 	env.SkipIfTableInSchema("roborev", "schema_version")
 	env.SkipIfTableInSchema("public", "schema_version")
-
-	// Clean up after test
-	env.CleanupDropSchema("roborev")
-	env.CleanupDropTable("public", "schema_version")
 
 	// Create legacy table in public schema
 	env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
 	env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
-
-	env.DropSchema("roborev")
 
 	// Now connect with the normal pool and run EnsureSchema
 	connString := getTestPostgresURL(t)
@@ -436,15 +459,7 @@ func TestIntegration_EnsureSchema_MigratesMultipleTablesAndMixedState(t *testing
 	// (some tables already in roborev, some in public)
 	ctx := t.Context()
 
-	env := NewMigrationTestEnv(t)
-	// Clean up after test
-	env.CleanupDropSchema("roborev")
-	env.CleanupDropTable("public", "schema_version")
-	env.CleanupDropTable("public", "repos")
-
-	env.DropTable("public", "schema_version")
-	env.DropTable("public", "repos")
-	env.DropSchema("roborev")
+	env := setupMigrationEnv(t)
 
 	env.SkipIfTableInSchema("roborev", "schema_version")
 	env.SkipIfTableInSchema("public", "schema_version")
@@ -523,15 +538,7 @@ func TestIntegration_EnsureSchema_DualSchemaWithDataErrors(t *testing.T) {
 	// causes an error requiring manual reconciliation.
 	ctx := t.Context()
 
-	env := NewMigrationTestEnv(t)
-	// Clean up after test
-	env.CleanupDropSchema("roborev")
-	env.CleanupDropTable("public", "schema_version")
-	env.CleanupDropTable("public", "repos")
-
-	env.DropTable("public", "repos")
-	env.DropTable("public", "schema_version")
-	env.DropSchema("roborev")
+	env := setupMigrationEnv(t)
 
 	// Create roborev schema with repos table
 	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
@@ -566,15 +573,7 @@ func TestIntegration_EnsureSchema_EmptyPublicTableDropped(t *testing.T) {
 	// table exists in roborev schema.
 	ctx := t.Context()
 
-	env := NewMigrationTestEnv(t)
-	// Clean up after test
-	env.CleanupDropSchema("roborev")
-	env.CleanupDropTable("public", "schema_version")
-	env.CleanupDropTable("public", "repos")
-
-	env.DropTable("public", "repos")
-	env.DropTable("public", "schema_version")
-	env.DropSchema("roborev")
+	env := setupMigrationEnv(t)
 
 	// Create roborev schema with repos table containing data
 	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
@@ -626,15 +625,7 @@ func TestIntegration_EnsureSchema_MigratesPublicTableWithData(t *testing.T) {
 	// This is the normal migration path and also what the 42P01 fallback uses.
 	ctx := t.Context()
 
-	env := NewMigrationTestEnv(t)
-	// Clean up after test
-	env.CleanupDropSchema("roborev")
-	env.CleanupDropTable("public", "schema_version")
-	env.CleanupDropTable("public", "repos")
-
-	env.DropTable("public", "repos")
-	env.DropTable("public", "schema_version")
-	env.DropSchema("roborev")
+	env := setupMigrationEnv(t)
 
 	// Create roborev schema but NOT the repos table
 	env.Exec(`CREATE SCHEMA IF NOT EXISTS roborev`)
@@ -832,7 +823,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 				GitRef:          "test-ref",
 				Agent:           "test",
 				Status:          "done",
-				SourceMachineID: "11111111-1111-1111-1111-111111111111",
+				SourceMachineID: defaultTestMachineID,
 				EnqueuedAt:      time.Now(),
 			},
 			PgRepoID:   repoID,
@@ -844,19 +835,13 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BatchUpsertJobs failed: %v", err)
 	}
-	successCount := 0
-	for _, ok := range success {
-		if ok {
-			successCount++
-		}
-	}
-	if successCount != 5 {
-		t.Errorf("Expected 5 jobs upserted, got %d", successCount)
+	if got := countSuccesses(success); got != 5 {
+		t.Errorf("Expected 5 jobs upserted, got %d", got)
 	}
 
 	// Verify jobs exist
 	var jobCount int
-	err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM review_jobs WHERE source_machine_id = '11111111-1111-1111-1111-111111111111'`).Scan(&jobCount)
+	err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM review_jobs WHERE source_machine_id = $1`, defaultTestMachineID).Scan(&jobCount)
 	if err != nil {
 		t.Fatalf("Count query failed: %v", err)
 	}
@@ -887,7 +872,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		UUID:            jobUUID,
 		RepoID:          repoID,
 		CommitID:        commitID,
-		SourceMachineID: "11111111-1111-1111-1111-111111111111",
+		SourceMachineID: defaultTestMachineID,
 	})
 
 	reviews := []SyncableReview{
@@ -898,7 +883,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Prompt:             "test prompt 1",
 			Output:             "test output 1",
 			Addressed:          false,
-			UpdatedByMachineID: "11111111-1111-1111-1111-111111111111",
+			UpdatedByMachineID: defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},
 		{
@@ -908,7 +893,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Prompt:             "test prompt 2",
 			Output:             "test output 2",
 			Addressed:          true,
-			UpdatedByMachineID: "11111111-1111-1111-1111-111111111111",
+			UpdatedByMachineID: defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},
 	}
@@ -917,14 +902,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BatchUpsertReviews failed: %v", err)
 	}
-	successCount := 0
-	for _, ok := range success {
-		if ok {
-			successCount++
-		}
-	}
-	if successCount != 2 {
-		t.Errorf("Expected 2 reviews upserted, got %d", successCount)
+	if got := countSuccesses(success); got != 2 {
+		t.Errorf("Expected 2 reviews upserted, got %d", got)
 	}
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
@@ -946,7 +925,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 				Agent:              "test",
 				Prompt:             "valid review",
 				Output:             "output",
-				UpdatedByMachineID: "11111111-1111-1111-1111-111111111111",
+				UpdatedByMachineID: defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
 			{
@@ -955,7 +934,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 				Agent:              "test",
 				Prompt:             "invalid review",
 				Output:             "output",
-				UpdatedByMachineID: "11111111-1111-1111-1111-111111111111",
+				UpdatedByMachineID: defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
 		}
@@ -998,7 +977,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 		UUID:            jobUUID,
 		RepoID:          repoID,
 		CommitID:        commitID,
-		SourceMachineID: "11111111-1111-1111-1111-111111111111",
+		SourceMachineID: defaultTestMachineID,
 	})
 
 	responses := []SyncableResponse{
@@ -1007,7 +986,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 			JobUUID:         jobUUID,
 			Responder:       "user1",
 			Response:        "response 1",
-			SourceMachineID: "11111111-1111-1111-1111-111111111111",
+			SourceMachineID: defaultTestMachineID,
 			CreatedAt:       time.Now(),
 		},
 		{
@@ -1015,7 +994,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 			JobUUID:         jobUUID,
 			Responder:       "user2",
 			Response:        "response 2",
-			SourceMachineID: "11111111-1111-1111-1111-111111111111",
+			SourceMachineID: defaultTestMachineID,
 			CreatedAt:       time.Now(),
 		},
 		{
@@ -1023,7 +1002,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 			JobUUID:         jobUUID,
 			Responder:       "agent",
 			Response:        "response 3",
-			SourceMachineID: "11111111-1111-1111-1111-111111111111",
+			SourceMachineID: defaultTestMachineID,
 			CreatedAt:       time.Now(),
 		},
 	}
@@ -1032,14 +1011,8 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BatchInsertResponses failed: %v", err)
 	}
-	successCount := 0
-	for _, ok := range success {
-		if ok {
-			successCount++
-		}
-	}
-	if successCount != 3 {
-		t.Errorf("Expected 3 responses inserted, got %d", successCount)
+	if got := countSuccesses(success); got != 3 {
+		t.Errorf("Expected 3 responses inserted, got %d", got)
 	}
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
@@ -1059,7 +1032,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 				JobUUID:         jobUUID, // Valid FK
 				Responder:       "user",
 				Response:        "valid response",
-				SourceMachineID: "11111111-1111-1111-1111-111111111111",
+				SourceMachineID: defaultTestMachineID,
 				CreatedAt:       time.Now(),
 			},
 			{
@@ -1067,7 +1040,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 				JobUUID:         "00000000-0000-0000-0000-000000000000", // Invalid FK
 				Responder:       "user",
 				Response:        "invalid response",
-				SourceMachineID: "11111111-1111-1111-1111-111111111111",
+				SourceMachineID: defaultTestMachineID,
 				CreatedAt:       time.Now(),
 			},
 		}
