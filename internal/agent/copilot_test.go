@@ -24,7 +24,25 @@ func TestCopilotReview(t *testing.T) {
 			},
 			wantErr: false,
 		},
-		// Future cases: empty prompt, error handling, etc.
+		{
+			name:   "CLI failure (exit non-zero)",
+			prompt: "Review this commit",
+			mockOpts: MockCLIOpts{
+				ExitCode:    1,
+				StderrLines: []string{"error: failed to generate review"},
+			},
+			wantErr: true,
+		},
+		{
+			name:   "Empty output from CLI",
+			prompt: "Review this commit",
+			mockOpts: MockCLIOpts{
+				CaptureArgs:  true,
+				CaptureStdin: true,
+				StdoutLines:  []string{}, // empty output
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
