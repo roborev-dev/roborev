@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
@@ -487,13 +488,13 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 	ts, _ := newMockServer(t, MockServerOpts{
 		JobIDStart: 42,
 		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
-			var req map[string]any
+			var req daemon.EnqueueRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 
-			if req["agentic"] != true {
+			if req.Agentic != true {
 				t.Error("agentic should be true for analysis")
 			}
-			if req["custom_prompt"] == nil {
+			if req.CustomPrompt == "" {
 				t.Error("custom_prompt should be set")
 			}
 
@@ -527,9 +528,9 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 		var branch string
 		ts, _ := newMockServer(t, MockServerOpts{
 			OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
-				var req map[string]any
+				var req daemon.EnqueueRequest
 				_ = json.NewDecoder(r.Body).Decode(&req)
-				branch, _ = req["branch"].(string)
+				branch = req.Branch
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1, Agent: "test", Status: storage.JobStatusQueued})
 			},

@@ -517,17 +517,17 @@ func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opt
 		branch = git.GetCurrentBranch(repoRoot)
 	}
 
-	reqBody, err := json.Marshal(map[string]any{
-		"repo_path":     repoRoot,
-		"git_ref":       label,
-		"branch":        branch,
-		"agent":         opts.agentName,
-		"model":         opts.model,
-		"reasoning":     opts.reasoning,
-		"custom_prompt": prompt,
-		"output_prefix": outputPrefix,
-		"agentic":       true,
-		"job_type":      "compact",
+	reqBody, err := json.Marshal(daemon.EnqueueRequest{
+		RepoPath:     repoRoot,
+		GitRef:       label,
+		Branch:       branch,
+		Agent:        opts.agentName,
+		Model:        opts.model,
+		Reasoning:    opts.reasoning,
+		CustomPrompt: prompt,
+		OutputPrefix: outputPrefix,
+		Agentic:      true,
+		JobType:      "compact",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal enqueue request: %w", err)

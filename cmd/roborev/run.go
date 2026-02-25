@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
@@ -143,14 +144,14 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 	if label != "" {
 		gitRef = label
 	}
-	reqBody, _ := json.Marshal(map[string]any{
-		"repo_path":     repoRoot,
-		"git_ref":       gitRef,
-		"agent":         agentName,
-		"model":         modelStr,
-		"reasoning":     reasoningStr,
-		"custom_prompt": fullPrompt,
-		"agentic":       agentic,
+	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
+		RepoPath:     repoRoot,
+		GitRef:       gitRef,
+		Agent:        agentName,
+		Model:        modelStr,
+		Reasoning:    reasoningStr,
+		CustomPrompt: fullPrompt,
+		Agentic:      agentic,
 	})
 
 	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))

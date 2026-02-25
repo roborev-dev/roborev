@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
 )
@@ -62,19 +63,19 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 			}
 		case "/api/enqueue":
 			if r.Method == "POST" {
-				var req map[string]any
+				var req daemon.EnqueueRequest
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
 				if cfg.receivedRef != nil {
-					*cfg.receivedRef = req["git_ref"].(string)
+					*cfg.receivedRef = req.GitRef
 				}
 				w.WriteHeader(http.StatusCreated)
 				writeJSON(w, storage.ReviewJob{
 					ID:     1,
 					Agent:  "test",
-					GitRef: req["git_ref"].(string),
+					GitRef: req.GitRef,
 				})
 			}
 		default:

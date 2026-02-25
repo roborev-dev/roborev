@@ -1042,15 +1042,15 @@ Examples:
 			}
 
 			// Build request body
-			reqFields := map[string]any{
-				"repo_path":    root,
-				"git_ref":      gitRef,
-				"branch":       branchName,
-				"agent":        agent,
-				"model":        model,
-				"reasoning":    reasoning,
-				"review_type":  reviewType,
-				"diff_content": diffContent,
+			reqFields := daemon.EnqueueRequest{
+				RepoPath:    root,
+				GitRef:      gitRef,
+				Branch:      branchName,
+				Agent:       agent,
+				Model:       model,
+				Reasoning:   reasoning,
+				ReviewType:  reviewType,
+				DiffContent: diffContent,
 			}
 
 			reqBody, _ := json.Marshal(reqFields)

@@ -107,10 +107,10 @@ func TestEnqueueReviewRefine(t *testing.T) {
 	t.Run("returns job ID on success", func(t *testing.T) {
 		md := NewMockDaemon(t, MockRefineHooks{
 			OnEnqueue: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-				var req map[string]string
+				var req daemon.EnqueueRequest
 				json.NewDecoder(r.Body).Decode(&req)
 
-				if req["repo_path"] != "/test/repo" || req["git_ref"] != "abc..def" {
+				if req.RepoPath != "/test/repo" || req.GitRef != "abc..def" {
 					t.Errorf("unexpected request body: %+v", req)
 				}
 

@@ -1762,7 +1762,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	}
 
 	t.Run("enqueue on excluded branch returns skipped", func(t *testing.T) {
-		reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
+		reqData := EnqueueRequest{RepoPath: repoDir, GitRef: "HEAD", Agent: "test"}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
@@ -1798,7 +1798,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 			t.Fatalf("git checkout failed: %v\n%s", err, out)
 		}
 
-		reqData := map[string]string{"repo_path": repoDir, "git_ref": "HEAD", "agent": "test"}
+		reqData := EnqueueRequest{RepoPath: repoDir, GitRef: "HEAD", Agent: "test"}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
 
@@ -1829,10 +1829,10 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	}
 
 	// Enqueue with empty branch field
-	reqData := map[string]string{
-		"repo_path": repoDir,
-		"git_ref":   "HEAD",
-		"agent":     "test",
+	reqData := EnqueueRequest{
+		RepoPath: repoDir,
+		GitRef:   "HEAD",
+		Agent:     "test",
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
@@ -1864,11 +1864,11 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 	t.Run("rejects oversized request body", func(t *testing.T) {
 		// Create a request body larger than the default limit (200KB + 50KB overhead)
 		largeDiff := strings.Repeat("a", 300*1024) // 300KB
-		reqData := map[string]string{
-			"repo_path":    repoDir,
-			"git_ref":      "dirty",
-			"agent":        "test",
-			"diff_content": largeDiff,
+		reqData := EnqueueRequest{
+			RepoPath:    repoDir,
+			GitRef:      "dirty",
+			Agent:        "test",
+			DiffContent: largeDiff,
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -1889,10 +1889,10 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 
 	t.Run("rejects dirty review with empty diff_content", func(t *testing.T) {
 		// git_ref="dirty" with empty diff_content should return a clear error
-		reqData := map[string]string{
-			"repo_path": repoDir,
-			"git_ref":   "dirty",
-			"agent":     "test",
+		reqData := EnqueueRequest{
+			RepoPath: repoDir,
+			GitRef:   "dirty",
+			Agent:     "test",
 			// diff_content intentionally omitted/empty
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -1915,11 +1915,11 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 	t.Run("accepts valid size dirty request", func(t *testing.T) {
 		// Create a valid-sized diff (under 200KB)
 		validDiff := strings.Repeat("a", 100*1024) // 100KB
-		reqData := map[string]string{
-			"repo_path":    repoDir,
-			"git_ref":      "dirty",
-			"agent":        "test",
-			"diff_content": validDiff,
+		reqData := EnqueueRequest{
+			RepoPath:    repoDir,
+			GitRef:      "dirty",
+			Agent:        "test",
+			DiffContent: validDiff,
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -2056,11 +2056,11 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
 	t.Run("enqueues prompt job successfully", func(t *testing.T) {
-		reqData := map[string]string{
-			"repo_path":     repoDir,
-			"git_ref":       "prompt",
-			"agent":         "test",
-			"custom_prompt": "Explain this codebase",
+		reqData := EnqueueRequest{
+			RepoPath:     repoDir,
+			GitRef:       "prompt",
+			Agent:         "test",
+			CustomPrompt: "Explain this codebase",
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -2089,10 +2089,10 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 		// With no custom_prompt, git_ref="prompt" is treated as trying to review
 		// a branch/commit named "prompt" (not a prompt job). This allows reviewing
 		// branches literally named "prompt" without collision.
-		reqData := map[string]string{
-			"repo_path": repoDir,
-			"git_ref":   "prompt",
-			"agent":     "test",
+		reqData := EnqueueRequest{
+			RepoPath: repoDir,
+			GitRef:   "prompt",
+			Agent:     "test",
 			// no custom_prompt - should try to resolve "prompt" as a git ref
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -2115,12 +2115,12 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("prompt job with reasoning level", func(t *testing.T) {
-		reqData := map[string]string{
-			"repo_path":     repoDir,
-			"git_ref":       "prompt",
-			"agent":         "test",
-			"reasoning":     "fast",
-			"custom_prompt": "Quick analysis",
+		reqData := EnqueueRequest{
+			RepoPath:     repoDir,
+			GitRef:       "prompt",
+			Agent:         "test",
+			Reasoning:     "fast",
+			CustomPrompt: "Quick analysis",
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -2140,12 +2140,12 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("prompt job with agentic flag", func(t *testing.T) {
-		reqData := map[string]any{
-			"repo_path":     repoDir,
-			"git_ref":       "prompt",
-			"agent":         "test",
-			"custom_prompt": "Fix all bugs",
-			"agentic":       true,
+		reqData := EnqueueRequest{
+			RepoPath:     repoDir,
+			GitRef:       "prompt",
+			Agent:         "test",
+			CustomPrompt: "Fix all bugs",
+			Agentic:       true,
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -2165,11 +2165,11 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 	})
 
 	t.Run("prompt job without agentic defaults to false", func(t *testing.T) {
-		reqData := map[string]string{
-			"repo_path":     repoDir,
-			"git_ref":       "prompt",
-			"agent":         "test",
-			"custom_prompt": "Read-only review",
+		reqData := EnqueueRequest{
+			RepoPath:     repoDir,
+			GitRef:       "prompt",
+			Agent:         "test",
+			CustomPrompt: "Read-only review",
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -2629,12 +2629,12 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			os.Setenv("PATH", mockDir+string(os.PathListSeparator)+gitOnlyDir)
 			t.Cleanup(func() { os.Setenv("PATH", origPath) })
 
-			reqData := map[string]string{
-				"repo_path":  repoDir,
-				"commit_sha": headSHA,
+			reqData := EnqueueRequest{
+				RepoPath:  repoDir,
+				CommitSHA: headSHA,
 			}
 			if tt.requestAgent != "" {
-				reqData["agent"] = tt.requestAgent
+				reqData.Agent = tt.requestAgent
 			}
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 			w := httptest.NewRecorder()
@@ -2752,10 +2752,10 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 	enqueue := func(t *testing.T) storage.ReviewJob {
 		t.Helper()
 		server, _, _ := newTestServer(t)
-		reqData := map[string]string{
-			"repo_path": worktreeDir,
-			"git_ref":   "HEAD",
-			"agent":     "test",
+		reqData := EnqueueRequest{
+			RepoPath: worktreeDir,
+			GitRef:   "HEAD",
+			Agent:     "test",
 		}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 		w := httptest.NewRecorder()
@@ -2835,10 +2835,10 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 	// Send range starting from root commit's parent (rootSHA^..endSHA)
 	// This is what the CLI sends for "roborev review <root> <end>"
 	rangeRef := rootSHA + "^.." + endSHA
-	reqData := map[string]string{
-		"repo_path": repoDir,
-		"git_ref":   rangeRef,
-		"agent":     "test",
+	reqData := EnqueueRequest{
+		RepoPath: repoDir,
+		GitRef:   rangeRef,
+		Agent:     "test",
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
@@ -2882,10 +2882,10 @@ func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
 
 	// A blob^ should not fall back to EmptyTreeSHA — it should return 400
 	rangeRef := blobSHA + "^.." + endSHA
-	reqData := map[string]string{
-		"repo_path": repoDir,
-		"git_ref":   rangeRef,
-		"agent":     "test",
+	reqData := EnqueueRequest{
+		RepoPath: repoDir,
+		GitRef:   rangeRef,
+		Agent:     "test",
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()

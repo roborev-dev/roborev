@@ -15,6 +15,7 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -499,16 +500,16 @@ func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label
 	if opts.branch != "" && opts.branch != "HEAD" {
 		branch = opts.branch
 	}
-	reqBody, _ := json.Marshal(map[string]any{
-		"repo_path":     repoRoot,
-		"git_ref":       label, // Use analysis type name as the TUI label
-		"branch":        branch,
-		"agent":         opts.agentName,
-		"model":         opts.model,
-		"reasoning":     opts.reasoning,
-		"custom_prompt": prompt,
-		"output_prefix": outputPrefix,
-		"agentic":       true, // Agentic mode needed for reading files when prompt exceeds size limit
+	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
+		RepoPath:     repoRoot,
+		GitRef:       label, // Use analysis type name as the TUI label
+		Branch:       branch,
+		Agent:        opts.agentName,
+		Model:        opts.model,
+		Reasoning:    opts.reasoning,
+		CustomPrompt: prompt,
+		OutputPrefix: outputPrefix,
+		Agentic:      true, // Agentic mode needed for reading files when prompt exceeds size limit
 	})
 
 	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
