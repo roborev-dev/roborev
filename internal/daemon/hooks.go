@@ -70,6 +70,7 @@ func (hr *HookRunner) listen(eventCh <-chan Event) {
 			for {
 				select {
 				case <-hr.stopCh:
+					close(req)
 					return
 				case event, ok := <-eventCh:
 					if !ok {
@@ -94,14 +95,19 @@ func (hr *HookRunner) listen(eventCh <-chan Event) {
 	}
 }
 
-// WaitUntilIdle blocks until the event queue is drained and all active hooks have finished.
+// WaitUntilIdle blocks until the currently queued events are drained and
+// all in-flight hooks have finished. It is a point-in-time barrier: events
+// arriving after the drain starts are handled on the next listener iteration.
 func (hr *HookRunner) WaitUntilIdle() {
 	ch := make(chan struct{})
 	select {
 	case hr.idleCh <- ch:
-		<-ch
 	case <-hr.stopCh:
 		return
+	}
+	select {
+	case <-ch:
+	case <-hr.stopCh:
 	}
 }
 

@@ -793,3 +793,29 @@ func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitUntilIdle_StopDoesNotDeadlock(t *testing.T) {
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{
+			{Event: "review.completed", Command: "true"},
+		},
+	}
+	b := NewBroadcaster()
+	hr := NewHookRunner(NewStaticConfig(cfg), b, log.Default())
+
+	done := make(chan struct{})
+	go func() {
+		hr.WaitUntilIdle()
+		close(done)
+	}()
+
+	// Give WaitUntilIdle time to block on idleCh send
+	time.Sleep(10 * time.Millisecond)
+	hr.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitUntilIdle deadlocked after Stop")
+	}
+}
