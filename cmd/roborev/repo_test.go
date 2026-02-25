@@ -71,65 +71,48 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		}
 
 		tests := []struct {
-			name     string
-			baseDir  string // where to chdir. if empty, use root
-			cwd      string // relative to baseDir.
-			input    string
-			want     string // exact match
-			wantRoot bool   // if true, want = root. overrides want.
+			name  string
+			dir   string // directory to execute from
+			input string
+			want  string
 		}{
 			{
-				name:     "dot in subdir",
-				cwd:      "sub/dir",
-				input:    ".",
-				wantRoot: true,
+				name:  "dot in subdir",
+				dir:   filepath.Join(root, "sub", "dir"),
+				input: ".",
+				want:  root,
 			},
 			{
-				name:     "relative path",
-				cwd:      "sub",
-				input:    "./",
-				wantRoot: true,
+				name:  "relative path",
+				dir:   filepath.Join(root, "sub"),
+				input: "./",
+				want:  root,
 			},
 			{
-				name:     "absolute path",
-				input:    subDir, // absolute path input
-				wantRoot: true,
+				name:  "absolute path",
+				dir:   root,
+				input: subDir,
+				want:  root,
 			},
 			{
-				name:     "parent traversal",
-				cwd:      "sub/dir",
-				input:    "..",
-				wantRoot: true,
+				name:  "parent traversal",
+				dir:   filepath.Join(root, "sub", "dir"),
+				input: "..",
+				want:  root,
 			},
 			{
-				name:    "non-git path returns absolute path",
-				baseDir: resolvedNonGit,
-				input:   ".",
-				want:    resolvedNonGit,
+				name:  "non-git path returns absolute path",
+				dir:   resolvedNonGit,
+				input: ".",
+				want:  resolvedNonGit,
 			},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				base := root
-				if tt.baseDir != "" {
-					base = tt.baseDir
-				}
-
-				targetCwd := base
-				if tt.cwd != "" {
-					targetCwd = filepath.Join(base, tt.cwd)
-				}
-
-				chdir(t, targetCwd)
-
+				chdir(t, tt.dir)
 				got := resolveRepoIdentifier(tt.input)
-				want := tt.want
-				if tt.wantRoot {
-					want = root
-				}
-
-				assertPath(t, got, want)
+				assertPath(t, got, tt.want)
 			})
 		}
 	})
