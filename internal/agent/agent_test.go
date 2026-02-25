@@ -196,7 +196,7 @@ type agentTestDef struct {
 var agentFixtures = []agentTestDef{
 	{"codex", func(s string) Agent { return NewCodexAgent(s) }, "-m", "", "o3", true, false},
 	{"claude", func(s string) Agent { return NewClaudeAgent(s) }, "--model", "", "opus", true, false},
-	{"gemini", func(s string) Agent { return NewGeminiAgent(s) }, "-m", "gemini-3-pro-preview", "gemini-1.5-pro", true, false},
+	{"gemini", func(s string) Agent { return NewGeminiAgent(s) }, "-m", "gemini-3.1-pro-preview", "gemini-1.5-pro", true, false},
 	{"copilot", func(s string) Agent { return NewCopilotAgent(s) }, "--model", "", "gpt-4o", false, true},
 	{"opencode", func(s string) Agent { return NewOpenCodeAgent(s) }, "--model", "", "anthropic/claude-sonnet-4", false, false},
 	{"cursor", func(s string) Agent { return NewCursorAgent(s) }, "--model", "auto", "claude-sonnet-4", false, false},

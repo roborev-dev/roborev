@@ -31,7 +31,7 @@ func truncateStderr(stderr string) string {
 // GeminiAgent runs code reviews using the Gemini CLI
 type GeminiAgent struct {
 	Command   string         // The gemini command to run (default: "gemini")
-	Model     string         // Model to use (e.g., "gemini-3-pro-preview")
+	Model     string         // Model to use (e.g., "gemini-3.1-pro-preview")
 	Reasoning ReasoningLevel // Reasoning level (for future support)
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 }
@@ -41,7 +41,7 @@ func NewGeminiAgent(command string) *GeminiAgent {
 	if command == "" {
 		command = "gemini"
 	}
-	return &GeminiAgent{Command: command, Model: "gemini-3-pro-preview", Reasoning: ReasoningStandard}
+	return &GeminiAgent{Command: command, Model: "gemini-3.1-pro-preview", Reasoning: ReasoningStandard}
 }
 
 // WithReasoning returns a copy of the agent with the model preserved (reasoning not yet supported).
