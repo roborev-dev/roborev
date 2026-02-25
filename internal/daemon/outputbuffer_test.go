@@ -12,15 +12,17 @@ func simpleNormalizer(line string) *OutputLine {
 	return &OutputLine{Text: line, Type: "text"}
 }
 
-// assertLines verifies the count and text content of lines for a job.
-func assertLines(t *testing.T, lines []OutputLine, expectedTexts ...string) {
+// assertLines verifies the count and content of lines for a job.
+func assertLines(t *testing.T, lines []OutputLine, expected ...OutputLine) {
 	t.Helper()
-	if len(lines) != len(expectedTexts) {
-		t.Fatalf("expected %d lines, got %d", len(expectedTexts), len(lines))
+	if len(lines) != len(expected) {
+		t.Fatalf("expected %d lines, got %d", len(expected), len(lines))
 	}
-	for i, want := range expectedTexts {
-		if lines[i].Text != want {
-			t.Errorf("line[%d]: expected %q, got %q", i, want, lines[i].Text)
+	for i, want := range expected {
+		actual := lines[i]
+		actual.Timestamp = time.Time{}
+		if actual != want {
+			t.Errorf("line[%d]: expected %+v, got %+v", i, want, actual)
 		}
 	}
 }
@@ -32,11 +34,7 @@ func TestOutputBuffer_Append(t *testing.T) {
 	ob.Append(1, OutputLine{Text: "line 2", Type: "tool"})
 
 	lines := ob.GetLines(1)
-	assertLines(t, lines, "line 1", "line 2")
-
-	if lines[1].Type != "tool" {
-		t.Errorf("expected type 'tool', got %q", lines[1].Type)
-	}
+	assertLines(t, lines, OutputLine{Text: "line 1", Type: "text"}, OutputLine{Text: "line 2", Type: "tool"})
 }
 
 func TestOutputBuffer_GetLinesEmpty(t *testing.T) {
@@ -59,19 +57,22 @@ func TestOutputBuffer_Limits(t *testing.T) {
 		jobLimit    int
 		globalLimit int
 		actions     []action
-		expectLines map[int64][]string
+		expectLines map[int64][]OutputLine
 	}{
 		{
 			name:        "PerJobLimit_Eviction",
 			jobLimit:    50,
 			globalLimit: 1000,
 			actions: []action{
-				{1, "12345678901234567890"}, // 20b
-				{1, "12345678901234567890"}, // 20b
-				{1, "12345678901234567890"}, // 20b - should evict first
+				{1, strings.Repeat("a", 20)}, // 20b
+				{1, strings.Repeat("b", 20)}, // 20b
+				{1, strings.Repeat("c", 20)}, // 20b - should evict first
 			},
-			expectLines: map[int64][]string{
-				1: {"12345678901234567890", "12345678901234567890"},
+			expectLines: map[int64][]OutputLine{
+				1: {
+					{Text: strings.Repeat("b", 20), Type: "text"},
+					{Text: strings.Repeat("c", 20), Type: "text"},
+				},
 			},
 		},
 		{
@@ -79,13 +80,13 @@ func TestOutputBuffer_Limits(t *testing.T) {
 			jobLimit:    30,
 			globalLimit: 50,
 			actions: []action{
-				{1, "12345678901234567890"}, // 20b
-				{2, "12345678901234567890"}, // 20b
-				{3, "12345678901234567890"}, // 20b - would exceed 50, dropped
+				{1, strings.Repeat("a", 20)}, // 20b
+				{2, strings.Repeat("b", 20)}, // 20b
+				{3, strings.Repeat("c", 20)}, // 20b - would exceed 50, dropped
 			},
-			expectLines: map[int64][]string{
-				1: {"12345678901234567890"},
-				2: {"12345678901234567890"},
+			expectLines: map[int64][]OutputLine{
+				1: {{Text: strings.Repeat("a", 20), Type: "text"}},
+				2: {{Text: strings.Repeat("b", 20), Type: "text"}},
 				3: {},
 			},
 		},
@@ -97,8 +98,60 @@ func TestOutputBuffer_Limits(t *testing.T) {
 				{1, "this line is way too long to fit in buffer"}, // 43b > 20b
 				{1, "short"}, // 5b
 			},
-			expectLines: map[int64][]string{
-				1: {"short"},
+			expectLines: map[int64][]OutputLine{
+				1: {{Text: "short", Type: "text"}},
+			},
+		},
+		{
+			name:        "GlobalLimit_PreservesExisting_WhenEvictionBlocked",
+			jobLimit:    50,
+			globalLimit: 80,
+			actions: []action{
+				{1, strings.Repeat("a", 20)}, // job1: 20
+				{1, strings.Repeat("b", 20)}, // job1: 40, total: 40
+				{2, strings.Repeat("c", 30)}, // job2: 30, total: 70
+				// Now try to add 20 bytes to job 1
+				// Per-job: 40+20=60 > 50, evicts 20 bytes
+				// After eviction: job1=40, total=70-20+20=70 <= 80
+				// Succeeds
+				{1, strings.Repeat("d", 20)},
+				// Now try to add 20 more bytes to job 1
+				// Per-job: 40+20=60 > 50, evicts 20 bytes
+				// After eviction: total=70-20+20=70 <= 80
+				// Succeeds
+				{1, strings.Repeat("e", 20)},
+				// Now try to add 15 bytes to job 2
+				// Per-job: 30+15=45 < 50, no eviction
+				// Global: 70+15=85 > 80, REJECTED
+				{2, strings.Repeat("f", 15)},
+			},
+			expectLines: map[int64][]OutputLine{
+				1: {
+					{Text: strings.Repeat("d", 20), Type: "text"},
+					{Text: strings.Repeat("e", 20), Type: "text"},
+				},
+				2: {
+					{Text: strings.Repeat("c", 30), Type: "text"},
+				},
+			},
+		},
+		{
+			name:        "PerJobEviction_BlockedByGlobal",
+			jobLimit:    30,
+			globalLimit: 40,
+			actions: []action{
+				{1, strings.Repeat("a", 20)}, // job1: 20
+				{2, strings.Repeat("b", 20)}, // job2: 20, total: 40
+				// Try to add 25 bytes to job 1
+				// Per-job: 20+25=45 > 30, would evict 20 bytes
+				// After eviction: job1=0, total=40-20=20
+				// Adding new line: 20+25=45 > 40 (Global Limit) - REJECTED.
+				// Existing line preserved
+				{1, strings.Repeat("c", 25)},
+			},
+			expectLines: map[int64][]OutputLine{
+				1: {{Text: strings.Repeat("a", 20), Type: "text"}},
+				2: {{Text: strings.Repeat("b", 20), Type: "text"}},
 			},
 		},
 	}
@@ -115,48 +168,6 @@ func TestOutputBuffer_Limits(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestOutputBuffer_GlobalLimitPreservesExistingLines(t *testing.T) {
-	// Scenario: job has lines, per-job eviction would occur, but global limit rejects.
-	// Existing lines should be preserved (not evicted for nothing).
-	// Per-job: 50 bytes, Global: 80 bytes
-	ob := NewOutputBuffer(50, 80)
-
-	// Job 1: add 40 bytes (two 20-byte lines)
-	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes
-	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes, job1=40, total=40
-
-	// Job 2: add 30 bytes
-	ob.Append(2, OutputLine{Text: "123456789012345678901234567890", Type: "text"}) // 30 bytes, total=70
-
-	// Verify initial state
-	assertLines(t, ob.GetLines(1), "12345678901234567890", "12345678901234567890")
-	assertLines(t, ob.GetLines(2), "123456789012345678901234567890")
-
-	// Now try to add 20 bytes to job 1
-	// Per-job: 40+20=60 > 50, would need to evict 20 bytes (1 line)
-	// After eviction: job1=40, but total would be 70-20+20=70, still under 80
-	// This SHOULD succeed
-	ob.Append(1, OutputLine{Text: "AAAAAAAAAAAAAAAAAAAA", Type: "text"}) // 20 bytes
-
-	assertLines(t, ob.GetLines(1), "12345678901234567890", "AAAAAAAAAAAAAAAAAAAA")
-
-	// Now global is at 70. Try to add 20 more bytes to job 1.
-	// Per-job: 40+20=60 > 50, would evict 20 bytes
-	// After eviction: total would be 70-20+20=70, under 80
-	// This SHOULD succeed
-	ob.Append(1, OutputLine{Text: "BBBBBBBBBBBBBBBBBBBB", Type: "text"}) // 20 bytes
-
-	assertLines(t, ob.GetLines(1), "AAAAAAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBBBBBB")
-
-	// Now try to add 15 bytes to job 2 (total would be 70+15=85 > 80)
-	// Per-job: 30+15=45 < 50, no eviction
-	// Global: 70+15=85 > 80, REJECTED
-	// Job 2 should keep its original line
-	ob.Append(2, OutputLine{Text: "123456789012345", Type: "text"}) // 15 bytes - rejected
-
-	assertLines(t, ob.GetLines(2), "123456789012345678901234567890")
 }
 
 func TestOutputBuffer_CloseJob(t *testing.T) {
@@ -198,7 +209,6 @@ func TestOutputBuffer_Subscribe(t *testing.T) {
 
 	// Add more lines after subscription
 	go func() {
-		time.Sleep(10 * time.Millisecond)
 		ob.Append(1, OutputLine{Text: "new", Type: "text"})
 	}()
 
@@ -256,7 +266,7 @@ func TestOutputWriter_Write(t *testing.T) {
 	w.Write([]byte("hello\n"))
 	w.Write([]byte("world\n"))
 
-	assertLines(t, ob.GetLines(1), "hello", "world")
+	assertLines(t, ob.GetLines(1), OutputLine{Text: "hello", Type: "text"}, OutputLine{Text: "world", Type: "text"})
 }
 
 func TestOutputWriter_WritePartialLines(t *testing.T) {
@@ -268,7 +278,7 @@ func TestOutputWriter_WritePartialLines(t *testing.T) {
 	w.Write([]byte("lo\nwor"))
 	w.Write([]byte("ld\n"))
 
-	assertLines(t, ob.GetLines(1), "hello", "world")
+	assertLines(t, ob.GetLines(1), OutputLine{Text: "hello", Type: "text"}, OutputLine{Text: "world", Type: "text"})
 }
 
 func TestOutputWriter_Flush(t *testing.T) {
@@ -284,7 +294,7 @@ func TestOutputWriter_Flush(t *testing.T) {
 	// Flush should process remaining
 	w.Flush()
 
-	assertLines(t, ob.GetLines(1), "incomplete")
+	assertLines(t, ob.GetLines(1), OutputLine{Text: "incomplete", Type: "text"})
 }
 
 func TestOutputWriter_NormalizeFilters(t *testing.T) {
@@ -395,43 +405,6 @@ func TestOutputWriter_MultiWriteLongLineDiscard(t *testing.T) {
 	// Verify it's truncated
 	if !strings.HasSuffix(lines[0].Text, "...") {
 		t.Errorf("expected truncated line to end with '...', got %q", lines[0].Text)
-	}
-}
-
-func TestOutputBuffer_PerJobEvictionBlockedByGlobal(t *testing.T) {
-	// Test the case where per-job eviction would be needed but global limit
-	// would still be exceeded after eviction - no eviction should occur.
-	//
-	// Per-job: 30 bytes, Global: 40 bytes
-	ob := NewOutputBuffer(30, 40)
-
-	// Job 1: add 20 bytes
-	ob.Append(1, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes
-
-	// Job 2: add 20 bytes
-	ob.Append(2, OutputLine{Text: "12345678901234567890", Type: "text"}) // 20 bytes, total=40
-
-	// Now try to add 25 bytes to job 1
-	// Per-job: 20+25=45 > 30, would evict 20 bytes (the existing line)
-	// After eviction: job1=0, total=40-20=20.
-	// Adding new line: 20+25=45 > 40 (Global Limit) - REJECTED.
-	// Result: Existing line should be preserved rather than evicted for no benefit.
-
-	lines1Before := ob.GetLines(1)
-	if len(lines1Before) != 1 {
-		t.Fatalf("expected 1 line for job 1 before, got %d", len(lines1Before))
-	}
-
-	// Try to add a line that would exceed global limit even after eviction
-	ob.Append(1, OutputLine{Text: "1234567890123456789012345", Type: "text"}) // 25 bytes
-
-	lines1After := ob.GetLines(1)
-	if len(lines1After) != 1 {
-		t.Fatalf("expected 1 line for job 1 (preserved), got %d", len(lines1After))
-	}
-	// Original line should still be there
-	if lines1After[0].Text != "12345678901234567890" {
-		t.Errorf("original line should be preserved, got %q", lines1After[0].Text)
 	}
 }
 
