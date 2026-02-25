@@ -40,14 +40,13 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	defer cancel()
 
 	// Create the daemon run command with custom flags
-	// Use a high base port to avoid conflicts with production (7373).
-	// FindAvailablePort will auto-increment if 17373 is busy.
+	// Use an ephemeral port (0) to avoid conflicts with production.
 	cmd := daemonRunCmd()
 	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{
 		"--db", dbPath,
 		"--config", configPath,
-		"--addr", "127.0.0.1:17373",
+		"--addr", "127.0.0.1:0",
 	})
 
 	// Run daemon in goroutine
@@ -83,18 +82,7 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	// Use longer timeout for race detector which adds significant overhead.
 	myPID := os.Getpid()
 
-	if !waitFor(t, 10*time.Second, func() bool {
-		runtimes, err := daemon.ListAllRuntimes()
-		if err == nil {
-			// Find the runtime for OUR daemon (matching our PID), not a stale one
-			for _, rt := range runtimes {
-				if rt.PID == myPID && daemon.IsDaemonAlive(rt.Addr) {
-					return true
-				}
-			}
-		}
-		return false
-	}) {
+	if !waitForDaemonReady(t, 10*time.Second, myPID) {
 		// Provide more context for debugging CI failures
 		runtimes, _ := daemon.ListAllRuntimes()
 		t.Fatalf("daemon did not create runtime file or is not responding (myPID=%d, found %d runtimes)", myPID, len(runtimes))
@@ -146,13 +134,30 @@ func waitFor(t *testing.T, timeout time.Duration, check func() bool) bool {
 	return false
 }
 
+func waitForDaemonReady(t *testing.T, timeout time.Duration, pid int) bool {
+	t.Helper()
+	return waitFor(t, timeout, func() bool {
+		runtimes, err := daemon.ListAllRuntimes()
+		if err == nil {
+			for _, rt := range runtimes {
+				if rt.PID == pid && daemon.IsDaemonAlive(rt.Addr) {
+					return true
+				}
+			}
+		}
+		return false
+	})
+}
+
 func TestDaemonShutdownBySignal(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping signal test on Windows")
 	}
 
+	dbPath, configPath := setupTestDaemon(t)
+	tmpDir := filepath.Dir(dbPath) // Extract isolated temp dir for binary build
+
 	// 1. Build a test binary
-	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "roborev-test")
 	// Use "." since we are in cmd/roborev package
 	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
@@ -160,19 +165,12 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 		t.Fatalf("failed to build test binary: %v\n%s", err, out)
 	}
 
-	// 2. Setup config/db paths
-	dbPath := filepath.Join(tmpDir, "test.db")
-	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(`max_workers = 1`), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	// 3. Start daemon in subprocess
-	// Use a different port (27373) to avoid conflicts
+	// 2. Start daemon in subprocess
+	// Use an ephemeral port (0) to avoid conflicts
 	cmd := exec.Command(binPath, "daemon", "run",
 		"--db", dbPath,
 		"--config", configPath,
-		"--addr", "127.0.0.1:27373",
+		"--addr", "127.0.0.1:0",
 	)
 	// Important: Set ROBOREV_DATA_DIR so it writes runtime file to our tmpDir
 	cmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+tmpDir)
@@ -187,22 +185,15 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	}
 
 	// Ensure cleanup in case of failure
-	var waitStarted bool
-	var waited bool
 	done := make(chan error, 1)
 
-	defer func() {
-		if !waited && (cmd.ProcessState == nil || !cmd.ProcessState.Exited()) {
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			_ = cmd.Process.Kill()
-			if waitStarted {
-				<-done
-			} else {
-				_ = cmd.Wait()
-			}
 		}
-	}()
+	})
 
-	// 4. Wait for daemon to be ready
+	// 3. Wait for daemon to be ready
 	// The daemon writes daemon.<pid>.json
 	daemonJSON := filepath.Join(tmpDir, fmt.Sprintf("daemon.%d.json", cmd.Process.Pid))
 	if !waitFor(t, 5*time.Second, func() bool {
@@ -213,20 +204,18 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 		t.Fatalf("timed out waiting for daemon to start (%s not found). Output:\n%s", daemonJSON, outputBuffer.String())
 	}
 
-	// 5. Send SIGINT
+	// 4. Send SIGINT
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("failed to send SIGINT: %v", err)
 	}
 
-	// 6. Wait for exit
-	waitStarted = true
+	// 5. Wait for exit
 	go func() {
 		done <- cmd.Wait()
 	}()
 
 	select {
 	case err := <-done:
-		waited = true
 		if err != nil {
 			// Check if it's an exit status error. Ideally exit code 0.
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -235,11 +224,6 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 			t.Fatalf("daemon wait returned error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		// Kill process before reading buffer
-		_ = cmd.Process.Kill()
-		// Wait for the goroutine to finish (it receives the kill signal result)
-		<-done
-		waited = true
 		t.Fatal("timed out waiting for daemon to exit after SIGINT")
 	}
 }

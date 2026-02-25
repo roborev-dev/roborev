@@ -397,8 +397,9 @@ func FindAvailablePort(startAddr string) (string, int, error) {
 		addr := fmt.Sprintf("%s:%d", host, port+i)
 		ln, err := net.Listen("tcp", addr)
 		if err == nil {
+			actualPort := ln.Addr().(*net.TCPAddr).Port
 			ln.Close()
-			return addr, port + i, nil
+			return fmt.Sprintf("%s:%d", host, actualPort), actualPort, nil
 		}
 	}
 
