@@ -134,3 +134,84 @@ func TestBroadcaster_MultiSubscriber(t *testing.T) {
 	// mismatch should NOT receive
 	assertNoEventWithin(t, chRepo2, 100*time.Millisecond)
 }
+
+func TestBroadcaster_Subscribe(t *testing.T) {
+	b := NewBroadcaster()
+
+	// Subscribe without filter
+	id1, ch1 := b.Subscribe("")
+
+	// Subscribe with filter
+	id2, ch2 := b.Subscribe("/path/to/repo")
+
+	// Verify IDs are different
+	if id1 == id2 {
+		t.Errorf("expected distinct subscriber IDs, got %v for both", id1)
+	}
+
+	// Verify channels are different
+	if ch1 == ch2 {
+		t.Error("subscriber channels should be different")
+	}
+
+	if count := b.SubscriberCount(); count != 2 {
+		t.Errorf("expected 2 subscribers, got %d", count)
+	}
+}
+
+func TestBroadcaster_Unsubscribe(t *testing.T) {
+	b := NewBroadcaster()
+
+	id, ch := b.Subscribe("")
+
+	// Unsubscribe
+	b.Unsubscribe(id)
+
+	// Verify channel is closed
+	_, ok := <-ch
+	if ok {
+		t.Error("expected channel to be closed after unsubscribe")
+	}
+
+	if count := b.SubscriberCount(); count != 0 {
+		t.Errorf("expected 0 subscribers after unsubscribe, got %d", count)
+	}
+}
+
+func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
+	b := NewBroadcaster()
+
+	_, ch := b.Subscribe("")
+
+	const testBufferSize = 10 // Must match channel buffer size in NewBroadcaster
+
+	// Fill the channel buffer
+	for i := range testBufferSize {
+		b.Broadcast(Event{JobID: int64(i)})
+	}
+
+	// Broadcast one more event - should not block even though channel is full
+	done := make(chan bool)
+	go func() {
+		b.Broadcast(Event{JobID: 999})
+		done <- true
+	}()
+
+	select {
+	case <-done:
+		// OK - broadcast didn't block
+	case <-time.After(100 * time.Millisecond):
+		t.Error("broadcast blocked when channel was full")
+	}
+
+	// Verify we received the first testBufferSize events (not the dropped one)
+	for i := range testBufferSize {
+		e := <-ch
+		if e.JobID != int64(i) {
+			t.Errorf("expected JobID %d, got %d", i, e.JobID)
+		}
+	}
+
+	// Channel should be empty now
+	assertNoEventWithin(t, ch, 10*time.Millisecond)
+}
