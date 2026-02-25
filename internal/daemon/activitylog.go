@@ -24,14 +24,16 @@ type ActivityEntry struct {
 // ActivityLog manages activity logging to a JSONL file and maintains
 // an in-memory ring buffer. Follows the same pattern as ErrorLog.
 type ActivityLog struct {
-	mu         sync.Mutex
-	file       *os.File
-	path       string
-	recent     []ActivityEntry
-	maxRecent  int
-	writeIdx   int
-	count      int
-	writeCount int // Writes since last size check
+	mu            sync.Mutex
+	file          *os.File
+	path          string
+	recent        []ActivityEntry
+	maxRecent     int
+	writeIdx      int
+	count         int
+	writeCount    int // Writes since last size check
+	maxSize       int64
+	checkInterval int
 }
 
 const activityLogCapacity = 500
@@ -44,12 +46,16 @@ const maxActivityLogSize = 5 * 1024 * 1024
 // NewActivityLog creates a new activity log writer.
 // If the existing file exceeds maxActivityLogSize it is truncated.
 func NewActivityLog(path string) (*ActivityLog, error) {
+	return newActivityLogWithConfig(path, maxActivityLogSize, rotateCheckInterval)
+}
+
+func newActivityLogWithConfig(path string, maxSize int64, checkInterval int) (*ActivityLog, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
 
-	if err := truncateIfOversized(path, maxActivityLogSize); err != nil {
+	if err := truncateIfOversized(path, maxSize); err != nil {
 		log.Printf("Activity log: failed to truncate %s: %v", path, err)
 	}
 
@@ -61,10 +67,12 @@ func NewActivityLog(path string) (*ActivityLog, error) {
 	}
 
 	return &ActivityLog{
-		file:      file,
-		path:      path,
-		recent:    make([]ActivityEntry, activityLogCapacity),
-		maxRecent: activityLogCapacity,
+		file:          file,
+		path:          path,
+		recent:        make([]ActivityEntry, activityLogCapacity),
+		maxRecent:     activityLogCapacity,
+		maxSize:       maxSize,
+		checkInterval: checkInterval,
 	}, nil
 }
 
@@ -155,19 +163,19 @@ func (a *ActivityLog) Close() error {
 // check its size. Each entry is ~200 bytes, so 1000 writes ≈ 200KB.
 const rotateCheckInterval = 1000
 
-// maybeRotate checks the log file size every rotateCheckInterval
-// writes and truncates it to zero if over maxActivityLogSize. Must
+// maybeRotate checks the log file size every checkInterval
+// writes and truncates it to zero if over maxSize. Must
 // be called with a.mu held. Closes and reopens the file because
 // Windows does not allow Truncate on an O_APPEND handle.
 func (a *ActivityLog) maybeRotate() {
 	a.writeCount++
-	if a.writeCount < rotateCheckInterval {
+	if a.writeCount < a.checkInterval {
 		return
 	}
 	a.writeCount = 0
 
 	info, err := a.file.Stat()
-	if err != nil || info.Size() <= maxActivityLogSize {
+	if err != nil || info.Size() <= a.maxSize {
 		return
 	}
 

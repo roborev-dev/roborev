@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -132,31 +133,26 @@ func TestActivityLog_FileFormat(t *testing.T) {
 
 	decoder := json.NewDecoder(bytes.NewReader(content))
 
-	// First entry
-	var e1 ActivityEntry
-	if err := decoder.Decode(&e1); err != nil {
-		t.Fatalf("decode first entry: %v", err)
-	}
-	if e1.Event != "daemon.started" {
-		t.Errorf("first event = %q, want %q", e1.Event, "daemon.started")
-	}
-	if e1.Details != nil {
-		t.Errorf("first entry details should be nil, got %v", e1.Details)
+	want := []ActivityEntry{
+		{Event: "daemon.started", Component: "server", Message: "started"},
+		{Event: "job.enqueued", Component: "server", Message: "job enqueued", Details: map[string]string{"job_id": "42", "agent": "test"}},
 	}
 
-	// Second entry
-	var e2 ActivityEntry
-	if err := decoder.Decode(&e2); err != nil {
-		t.Fatalf("decode second entry: %v", err)
-	}
-	if e2.Event != "job.enqueued" {
-		t.Errorf("second event = %q, want %q", e2.Event, "job.enqueued")
-	}
-	if e2.Details["job_id"] != "42" {
-		t.Errorf("details[job_id] = %q, want %q", e2.Details["job_id"], "42")
-	}
-	if e2.Details["agent"] != "test" {
-		t.Errorf("details[agent] = %q, want %q", e2.Details["agent"], "test")
+	for i, w := range want {
+		var got ActivityEntry
+		if err := decoder.Decode(&got); err != nil {
+			t.Fatalf("decode entry %d: %v", i, err)
+		}
+		if got.Event != w.Event || got.Component != w.Component || got.Message != w.Message {
+			t.Errorf("entry %d = %+v, want %+v", i, got, w)
+		}
+		// If both are empty (nil or len 0), we consider them equal.
+		if len(got.Details) == 0 && len(w.Details) == 0 {
+			continue
+		}
+		if !maps.Equal(got.Details, w.Details) {
+			t.Errorf("entry %d details = %v, want %v", i, got.Details, w.Details)
+		}
 	}
 }
 
@@ -176,10 +172,8 @@ func TestActivityLog_Details(t *testing.T) {
 	}
 
 	got := recent[0].Details
-	for k, v := range details {
-		if got[k] != v {
-			t.Errorf("details[%q] = %q, want %q", k, got[k], v)
-		}
+	if !maps.Equal(got, details) {
+		t.Errorf("details = %v, want %v", got, details)
 	}
 }
 
@@ -260,17 +254,22 @@ func TestActivityLog_RuntimeRotation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "activity.log")
 
-	al, err := NewActivityLog(path)
+	const testMaxSize = 1024
+	const testInterval = 10
+
+	al, err := newActivityLogWithConfig(path, testMaxSize, testInterval)
 	if err != nil {
-		t.Fatalf("NewActivityLog: %v", err)
+		t.Fatalf("newActivityLogWithConfig: %v", err)
 	}
 	defer al.Close()
 
-	// Each entry is ~200 bytes. We need > maxActivityLogSize (5MB)
-	// bytes written before the check at rotateCheckInterval (1000).
-	// 5MB / 1000 = 5KB per entry minimum. Use a ~6KB payload.
-	bigMsg := string(make([]byte, 6*1024))
-	for i := range rotateCheckInterval + 50 {
+	// We need > testMaxSize (1KB) written before the check at testInterval (10).
+	// 1KB / 10 = 102 bytes per entry minimum. Use a 200 byte payload.
+	bigMsg := string(bytes.Repeat([]byte("a"), 200))
+	// Write testInterval + 2 entries. The first testInterval entries will exceed testMaxSize
+	// and trigger truncation on the next maybeRotate check. The remaining 2 entries will be
+	// written to the new file, which will be well under testMaxSize.
+	for i := range testInterval + 2 {
 		al.Log("test", "test", fmt.Sprintf("entry-%d", i),
 			map[string]string{"big": bigMsg})
 	}
@@ -283,7 +282,7 @@ func TestActivityLog_RuntimeRotation(t *testing.T) {
 	// After rotation the file should be well under the cap.
 	// The exact size depends on how many entries were written after
 	// the truncate, but it should be far smaller than the cap.
-	if info.Size() > maxActivityLogSize {
+	if info.Size() > testMaxSize {
 		t.Errorf(
 			"file should be under cap after rotation, got %d bytes",
 			info.Size(),
@@ -301,21 +300,21 @@ func TestActivityLog_RotationRecovery(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "activity.log")
 
-	al, err := NewActivityLog(path)
+	const testMaxSize = 1024
+	const testInterval = 2
+
+	al, err := newActivityLogWithConfig(path, testMaxSize, testInterval)
 	if err != nil {
-		t.Fatalf("NewActivityLog: %v", err)
+		t.Fatalf("newActivityLogWithConfig: %v", err)
 	}
 	defer al.Close()
 
-	// Write just under the rotation threshold, then force a rotation
-	// by manipulating writeCount and file size.
-	al.mu.Lock()
-	al.writeCount = rotateCheckInterval - 1
-	al.mu.Unlock()
+	// First write shouldn't trigger rotation yet (writeCount < testInterval)
+	al.Log("test", "test", "msg1", nil)
 
-	// Write a large entry to exceed maxActivityLogSize. Use a payload
-	// bigger than the cap so stat triggers rotation on next check.
-	bigMsg := string(make([]byte, maxActivityLogSize+1024))
+	// Second write triggers rotation because testInterval is 2
+	// Use a payload bigger than the cap so stat triggers rotation on next check.
+	bigMsg := string(make([]byte, testMaxSize+1024))
 	al.Log("test", "test", bigMsg, nil)
 
 	// After rotation, writing should still work (file was reopened)
