@@ -4,7 +4,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -49,6 +48,23 @@ func readHookContent(t *testing.T, path string) string {
 	return string(content)
 }
 
+const legacyV2HookSnippet = `
+# roborev post-commit hook v2 - auto-reviews every commit
+ROBOREV="/usr/local/bin/roborev"
+if [ ! -x "$ROBOREV" ]; then
+    ROBOREV=$(command -v roborev 2>/dev/null)
+    [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
+fi
+"$ROBOREV" enqueue --quiet 2>/dev/null
+`
+
+func assertNotContains(t *testing.T, content, substr, msg string) {
+	t.Helper()
+	if strings.Contains(content, substr) {
+		t.Errorf("%s. Expected NOT to find %q in:\n%s", msg, substr, content)
+	}
+}
+
 func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 	repo := setupHookTest(t)
 	repo.RemoveHooksDir()
@@ -80,28 +96,15 @@ func TestInitCmdUpgradesOutdatedHook(t *testing.T) {
 	repo := setupHookTest(t)
 
 	// Write a realistic old-style hook (v2 format)
-	oldHook := "#!/bin/sh\n" +
-		"# roborev post-commit hook v2 - auto-reviews every commit\n" +
-		"ROBOREV=\"/usr/local/bin/roborev\"\n" +
-		"if [ ! -x \"$ROBOREV\" ]; then\n" +
-		"    ROBOREV=$(command -v roborev 2>/dev/null)\n" +
-		"    [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ] && exit 0\n" +
-		"fi\n" +
-		"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
+	oldHook := "#!/bin/sh\n" + legacyV2HookSnippet
 	repo.WriteHook(oldHook)
 
 	runInitCmd(t)
 
 	contentStr := readHookContent(t, repo.HookPath)
-	if !strings.Contains(contentStr, githook.PostCommitVersionMarker) {
-		t.Errorf("upgraded hook should contain v3 marker, got:\n%s", contentStr)
-	}
-	if strings.Contains(contentStr, "hook v2") {
-		t.Error("upgraded hook should not contain old v2 marker")
-	}
-	if !strings.Contains(contentStr, "enqueue --quiet") {
-		t.Error("upgraded hook should have enqueue line")
-	}
+	assertContains(t, contentStr, githook.PostCommitVersionMarker, "upgraded hook should contain v3 marker")
+	assertNotContains(t, contentStr, "hook v2", "upgraded hook should not contain old v2 marker")
+	assertContains(t, contentStr, "enqueue --quiet", "upgraded hook should have enqueue line")
 }
 
 func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
@@ -110,28 +113,16 @@ func TestInitCmdPreservesOtherHooksOnUpgrade(t *testing.T) {
 	// Mixed hook: user content + old v2 roborev snippet
 	oldHook := "#!/bin/sh\n" +
 		"echo 'my custom hook'\n" +
-		"# roborev post-commit hook v2 - auto-reviews every commit\n" +
-		"ROBOREV=\"/usr/local/bin/roborev\"\n" +
-		"if [ ! -x \"$ROBOREV\" ]; then\n" +
-		"    ROBOREV=$(command -v roborev 2>/dev/null)\n" +
-		"    [ -z \"$ROBOREV\" ] || [ ! -x \"$ROBOREV\" ] && exit 0\n" +
-		"fi\n" +
-		"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
+		legacyV2HookSnippet
 	repo.WriteHook(oldHook)
 
 	runInitCmd(t)
 
 	contentStr := readHookContent(t, repo.HookPath)
 
-	if !strings.Contains(contentStr, "echo 'my custom hook'") {
-		t.Error("upgrade should preserve non-roborev lines")
-	}
-	if !strings.Contains(contentStr, githook.PostCommitVersionMarker) {
-		t.Errorf("upgrade should contain v3 marker, got:\n%s", contentStr)
-	}
-	if strings.Contains(contentStr, "hook v2") {
-		t.Error("upgrade should remove old v2 marker")
-	}
+	assertContains(t, contentStr, "echo 'my custom hook'", "upgrade should preserve non-roborev lines")
+	assertContains(t, contentStr, githook.PostCommitVersionMarker, "upgrade should contain v3 marker")
+	assertNotContains(t, contentStr, "hook v2", "upgrade should remove old v2 marker")
 }
 
 func TestInitCmdEarlyExitHookStillRunsRoborev(t *testing.T) {
@@ -162,16 +153,10 @@ func TestInitCmdEarlyExitHookStillRunsRoborev(t *testing.T) {
 	}
 
 	// All original content should be preserved
-	if !strings.Contains(contentStr, "husky.sh") {
-		t.Error("husky.sh reference should be preserved")
-	}
-	if !strings.Contains(contentStr, "npx lint-staged") {
-		t.Error("lint-staged command should be preserved")
-	}
+	assertContains(t, contentStr, "husky.sh", "husky.sh reference should be preserved")
+	assertContains(t, contentStr, "npx lint-staged", "lint-staged command should be preserved")
 
 	// Post-rewrite hook should also be installed
-	prContent := readHookContent(t, filepath.Join(repo.HooksDir, "post-rewrite"))
-	if !strings.Contains(prContent, githook.PostRewriteVersionMarker) {
-		t.Error("post-rewrite hook should have version marker")
-	}
+	prContent := readHookContent(t, repo.GetHookPath("post-rewrite"))
+	assertContains(t, prContent, githook.PostRewriteVersionMarker, "post-rewrite hook should have version marker")
 }

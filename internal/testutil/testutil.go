@@ -169,6 +169,12 @@ func (r *TestRepo) WriteNamedHook(name, content string) {
 	}
 }
 
+// GetHookPath returns the path to a specific hook in the test repository.
+func (r *TestRepo) GetHookPath(name string) string {
+	r.t.Helper()
+	return filepath.Join(r.HooksDir, name)
+}
+
 // RemoveHooksDir removes the .git/hooks directory.
 func (r *TestRepo) RemoveHooksDir() {
 	r.t.Helper()
