@@ -18,7 +18,7 @@ func setupFilterTree(m *tuiModel, nodes []treeFilterNode) {
 
 // Helper function to initialize model for filter tests
 func initFilterModel(nodes []treeFilterNode) tuiModel {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	if nodes != nil {
 		setupFilterTree(&m, nodes)
@@ -36,7 +36,7 @@ func makeNode(name string, count int) treeFilterNode {
 }
 
 func TestTUIFilterOpenModal(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a")),
@@ -284,7 +284,7 @@ func TestTUIFilterSelectAll(t *testing.T) {
 }
 
 func TestTUIFilterClearWithEsc(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -312,7 +312,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 	// Test that escape clears filters one layer at a time:
 	// 1. First escape clears project filter (keeps hide-addressed)
 	// 2. Second escape clears hide-addressed
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -345,7 +345,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 
 func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 	// Test that escape clears hide-addressed when no project filter is active
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a")),
@@ -370,7 +370,7 @@ func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 	// Test that escape while loading fires a new fetch immediately and
 	// increments fetchSeq so the stale response is discarded
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -408,7 +408,7 @@ func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 	// Test that escape while pagination is in flight fires a new fetch and
 	// discards stale append response via fetchSeq
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -704,7 +704,7 @@ func TestTUIFilterSearchByDisplayName(t *testing.T) {
 }
 
 func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.height = 20
 	m.daemonVersion = "test"
 
@@ -917,7 +917,7 @@ func TestTUIFilterBackspaceMultiByte(t *testing.T) {
 
 func TestTUIBranchFilterApplied(t *testing.T) {
 	// Test that branch filter correctly filters jobs
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withBranch("main")),
@@ -945,7 +945,7 @@ func TestTUIBranchFilterApplied(t *testing.T) {
 
 func TestTUIBranchFilterNone(t *testing.T) {
 	// Test filtering for jobs with no branch
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withBranch("main")),
@@ -972,7 +972,7 @@ func TestTUIBranchFilterNone(t *testing.T) {
 
 func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
 	// Test that branch and repo filters work together
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a"), withBranch("main")),
@@ -1066,7 +1066,7 @@ func TestTUIFilterStackPopClearsValue(t *testing.T) {
 
 func TestTUIFilterStackEscapeOrder(t *testing.T) {
 	// Test that escape pops filters in stack order (LIFO)
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a"), withBranch("main")),
@@ -1107,7 +1107,7 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 
 func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 	// Test that title bar shows filters in stack order
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("myrepo"), withRepoPath("/path/to/myrepo"), withBranch("feature")),
@@ -1140,7 +1140,7 @@ func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 
 func TestTUIFilterStackReverseOrder(t *testing.T) {
 	// Test title bar with reverse order (repo first, then branch)
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("myrepo"), withRepoPath("/path/to/myrepo"), withBranch("develop")),
@@ -1334,7 +1334,7 @@ func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
 }
 
 func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue // User left filter view
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
@@ -2014,7 +2014,7 @@ func TestTUILateErrorAfterSearchClear(t *testing.T) {
 }
 
 func TestTUIRemoveFilterFromStack(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.filterStack = []string{"repo", "branch", "other"}
 
@@ -2033,7 +2033,7 @@ func TestTUIRemoveFilterFromStack(t *testing.T) {
 func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	// Test that pagination is disabled when branch filter is active
 	// (since branch filtering fetches all jobs upfront)
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up at last job with branch filter active
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -2057,7 +2057,7 @@ func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
 func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	// Test that j/left key pagination is disabled when branch filter is active
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
 	m.selectedIdx = 0
@@ -2080,7 +2080,7 @@ func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
 
 func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	// Test that pgdown pagination is disabled when branch filter is active
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
 	m.selectedIdx = 0
@@ -2106,7 +2106,7 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 	// Test that window resize doesn't trigger pagination when multi-repo filter is active.
 	// Single-repo and branch filters support server-side pagination,
 	// but multi-repo filters are client-side only and disable pagination.
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/repo1"))}
 	m.hasMore = true
@@ -2131,7 +2131,7 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 
 func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 	// Test that selecting a branch in the tree filter triggers a refetch
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{
@@ -2166,7 +2166,7 @@ func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 
 func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
 	// Test that clearing a branch filter triggers a refetch
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.currentView = tuiViewQueue
 	m.activeBranchFilter = "feature"
@@ -2192,7 +2192,7 @@ func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
 
 func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 	// Test that branchBackfillDone is set only when nullsRemaining is 0
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.branchBackfillDone = false
 
 	// Receive message with no backfills needed
@@ -2208,7 +2208,7 @@ func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 	// Test that branchBackfillDone IS set even when nullsRemaining > 0
 	// Backfill is a one-time migration operation - new jobs have branches set at enqueue time
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.branchBackfillDone = false
 
 	// Receive message with some backfills performed
@@ -2223,7 +2223,7 @@ func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 
 func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 	// Test that backfill is a one-time operation - branchBackfillDone stays true once set
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.branchBackfillDone = false
 
 	// First fetch: some backfills performed, backfillDone should be set (one-time operation)
@@ -2249,7 +2249,7 @@ func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 	// Test that branchBackfillDone stays true even if NULLs appear in stats
 	// Backfill is a one-time migration - new jobs should have branches set at enqueue time
 	// Any "(none)" count represents legacy jobs that weren't backfilled, not new work to do
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.branchBackfillDone = true // Previously marked as done
 
 	// Receive message with no backfills (legacy jobs already attempted)
@@ -2263,7 +2263,7 @@ func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 }
 
 func TestTUIQueueNavigationWithFilter(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Jobs from two repos, interleaved
 	m.jobs = []storage.ReviewJob{
@@ -2308,7 +2308,7 @@ func TestTUIQueueNavigationWithFilter(t *testing.T) {
 }
 
 func TestTUIJobsRefreshWithFilter(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Initial state with filter active
 	m.jobs = []storage.ReviewJob{
@@ -2355,7 +2355,7 @@ func TestTUIJobsRefreshWithFilter(t *testing.T) {
 }
 
 func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Start with jobs in repo-a, filter active for repo-b
 	m.jobs = []storage.ReviewJob{
@@ -2382,7 +2382,7 @@ func TestTUIRefreshWithZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Setup: filter active with no matching jobs
 	m.jobs = []storage.ReviewJob{
@@ -2416,7 +2416,7 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 }
 
 func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{
@@ -2446,7 +2446,7 @@ func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
 }
 
 func TestTUIBKeyOpensBranchFilter(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoName("repo-a"))}
 	m.selectedIdx = 0
@@ -2466,7 +2466,7 @@ func TestTUIBKeyOpensBranchFilter(t *testing.T) {
 }
 
 func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.filterBranchMode = true
 	m.cwdRepoRoot = "/path/to/repo-b"
@@ -2493,7 +2493,7 @@ func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
 }
 
 func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
@@ -2524,7 +2524,7 @@ func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
 }
 
 func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.filterBranchMode = true
 	// No active filter, no cwd repo
@@ -2547,7 +2547,7 @@ func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
 }
 
 func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
@@ -2566,7 +2566,7 @@ func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
 }
 
 func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.filterBranchMode = true
 	m.activeRepoFilter = []string{"/path/to/repo-b"}
@@ -2594,7 +2594,7 @@ func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
 }
 
 func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.filterBranchMode = true
 	m.activeRepoFilter = []string{"/path/a", "/path/b"} // Multi-root repo
@@ -2622,7 +2622,7 @@ func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
 }
 
 func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.branchBackfillDone = false
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -2640,7 +2640,7 @@ func TestTUIFilterOpenBatchesBackfill(t *testing.T) {
 }
 
 func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.branchBackfillDone = true
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -2658,7 +2658,7 @@ func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
 }
 
 func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.cwdRepoRoot = "/path/to/repo-b"
 
@@ -2686,7 +2686,7 @@ func TestTUIFilterCwdRepoSortsFirst(t *testing.T) {
 }
 
 func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.cwdRepoRoot = "/path/to/repo-a"
 	m.cwdBranch = "feature"
@@ -2723,7 +2723,7 @@ func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
 }
 
 func TestTUIFilterNoCwdNoReorder(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	// cwdRepoRoot and cwdBranch are empty (not in a git repo)
 
@@ -2749,7 +2749,7 @@ func TestTUIFilterNoCwdNoReorder(t *testing.T) {
 }
 
 func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewReview
 
 	m2, cmd := pressKey(m, 'b')
@@ -2766,7 +2766,7 @@ func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
 }
 
 func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
@@ -2791,7 +2791,7 @@ func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
 // session. Scenario: type "f" → clear → type "m" → old error
 // arrives with stale searchSeq.
 func TestTUIStaleSearchErrorIgnored(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
@@ -2839,7 +2839,7 @@ func TestTUIStaleSearchErrorIgnored(t *testing.T) {
 // search text before repos have loaded, fetchUnloadedBranches is
 // triggered once repos arrive via tuiReposMsg.
 func TestTUISearchBeforeReposLoad(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	// No filterTree yet — repos haven't loaded
 
@@ -2883,7 +2883,7 @@ func TestTUISearchBeforeReposLoad(t *testing.T) {
 // text (non-empty → non-empty) clears fetchFailed so previously
 // failed repos are retried with the new search.
 func TestTUISearchEditClearsFetchFailed(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
@@ -2922,7 +2922,7 @@ func TestTUISearchEditClearsFetchFailed(t *testing.T) {
 // daemon reconnect clears fetchFailed and retriggers branch
 // fetches when search is active.
 func TestTUIReconnectClearsFetchFailed(t *testing.T) {
-	m := newTuiModel("http://localhost:7373")
+	m := newTuiModel("http://localhost:7373", WithExternalIODisabled())
 	m.currentView = tuiViewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
@@ -2948,7 +2948,7 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 
 	// Also verify: reconnect with no active search doesn't
 	// trigger branch fetches
-	m3 := newTuiModel("http://localhost:7373")
+	m3 := newTuiModel("http://localhost:7373", WithExternalIODisabled())
 	m3.currentView = tuiViewFilter
 	setupFilterTree(&m3, []treeFilterNode{
 		{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
@@ -3085,7 +3085,7 @@ func TestTUIPopFilterAllLocked(t *testing.T) {
 
 func TestTUIEscapeWithLockedFilters(t *testing.T) {
 	// Escape in queue view should skip locked filters.
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("r"), withRepoPath("/r"), withBranch("b")),

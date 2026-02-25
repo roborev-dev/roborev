@@ -484,7 +484,7 @@ func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
 }
 
 func TestTUISetJobAddressedHelper(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Test with nil Addressed pointer - should allocate
 	m.jobs = []storage.ReviewJob{
@@ -819,7 +819,7 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 }
 
 func TestTUIRespondBackspaceMultiByte(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewComment
 	m.commentJobID = 1
 
@@ -864,7 +864,7 @@ func containsRune(s string, r rune) bool {
 }
 
 func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewComment
 	m.commentJobID = 1
 	m.width = 30
@@ -910,7 +910,7 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 }
 
 func TestTUIRespondViewTabExpansion(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewComment
 	m.commentJobID = 1
 	m.width = 40
@@ -1027,7 +1027,7 @@ func TestAddressedKeyUpdatesStatsFromReviewView(t *testing.T) {
 }
 
 func setupTestModel(jobs []storage.ReviewJob, opts ...func(*tuiModel)) tuiModel {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.jobs = jobs
 	for _, opt := range opts {
 		opt(&m)

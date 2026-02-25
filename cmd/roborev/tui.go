@@ -39,11 +39,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// skipExternalIO disables daemon/config/git calls in newTuiModel.
-// Set by TestMain to avoid spawning subprocesses (and reading disk)
-// for every test, which exhausts macOS CI runner resources.
-var skipExternalIO bool
-
 // Tick intervals for adaptive polling
 const (
 	tickIntervalActive = 2 * time.Second  // Poll frequently when jobs are running/pending
@@ -627,16 +622,35 @@ func isConnectionError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
-// tuiOptions holds optional overrides for the TUI model, set from CLI flags.
-type tuiOptions struct {
-	repoFilter   string // --repo flag: lock filter to this repo path
-	branchFilter string // --branch flag: lock filter to this branch
+// tuiOption func(*tuiOptions) is a functional option for TUI.
+type tuiOption func(*tuiOptions)
+
+// WithRepoFilter locks the TUI filter to a specific repo.
+func WithRepoFilter(repo string) tuiOption {
+	return func(o *tuiOptions) { o.repoFilter = repo }
 }
 
-func newTuiModel(serverAddr string, opts ...tuiOptions) tuiModel {
+// WithBranchFilter locks the TUI filter to a specific branch.
+func WithBranchFilter(branch string) tuiOption {
+	return func(o *tuiOptions) { o.branchFilter = branch }
+}
+
+// WithExternalIODisabled disables daemon/config/git calls in newTuiModel.
+func WithExternalIODisabled() tuiOption {
+	return func(o *tuiOptions) { o.disableExternalIO = true }
+}
+
+// tuiOptions holds optional overrides for the TUI model, set from CLI flags.
+type tuiOptions struct {
+	repoFilter        string // --repo flag: lock filter to this repo path
+	branchFilter      string // --branch flag: lock filter to this branch
+	disableExternalIO bool   // tests: disable daemon/config/git calls
+}
+
+func newTuiModel(serverAddr string, opts ...tuiOption) tuiModel {
 	var opt tuiOptions
-	if len(opts) > 0 {
-		opt = opts[0]
+	for _, o := range opts {
+		o(&opt)
 	}
 
 	daemonVersion := "?"
@@ -645,7 +659,7 @@ func newTuiModel(serverAddr string, opts ...tuiOptions) tuiModel {
 	tabWidth := 2
 	var cwdRepoRoot, cwdBranch string
 
-	if !skipExternalIO {
+	if !opt.disableExternalIO {
 		// Read daemon version from runtime file
 		if info, err := daemon.GetAnyRunningDaemon(); err == nil && info.Version != "" {
 			daemonVersion = info.Version
@@ -4026,11 +4040,14 @@ to the current branch. Use = syntax for explicit values:
 				branchFilter = resolved
 			}
 
-			opts := tuiOptions{
-				repoFilter:   repoFilter,
-				branchFilter: branchFilter,
+			var tuiOpts []tuiOption
+			if repoFilter != "" {
+				tuiOpts = append(tuiOpts, WithRepoFilter(repoFilter))
 			}
-			p := tea.NewProgram(newTuiModel(addr, opts), tea.WithAltScreen())
+			if branchFilter != "" {
+				tuiOpts = append(tuiOpts, WithBranchFilter(branchFilter))
+			}
+			p := tea.NewProgram(newTuiModel(addr, tuiOpts...), tea.WithAltScreen())
 			if _, err := p.Run(); err != nil {
 				return fmt.Errorf("TUI error: %w", err)
 			}

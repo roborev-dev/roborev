@@ -58,7 +58,7 @@ func mockServerModel(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 	t.Helper()
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
-	return ts, newTuiModel(ts.URL)
+	return ts, newTuiModel(ts.URL, WithExternalIODisabled())
 }
 
 // pressKey simulates pressing a rune key and returns the updated tuiModel.
@@ -216,7 +216,7 @@ func TestTUIHTTPTimeout(t *testing.T) {
 }
 
 func TestTUISelectionMaintainedOnInsert(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Initial state with 3 jobs, select the middle one (ID=2)
 	m.jobs = []storage.ReviewJob{
@@ -242,7 +242,7 @@ func TestTUISelectionMaintainedOnInsert(t *testing.T) {
 }
 
 func TestTUISelectionClampsOnRemoval(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Initial state with 3 jobs, select the last one (ID=1)
 	m.jobs = []storage.ReviewJob{
@@ -268,7 +268,7 @@ func TestTUISelectionClampsOnRemoval(t *testing.T) {
 }
 
 func TestTUISelectionFirstJobOnEmpty(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// No prior selection (empty jobs list, zero selectedJobID)
 	m.jobs = []storage.ReviewJob{}
@@ -292,7 +292,7 @@ func TestTUISelectionFirstJobOnEmpty(t *testing.T) {
 }
 
 func TestTUISelectionEmptyList(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Had jobs, now empty
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -313,7 +313,7 @@ func TestTUISelectionEmptyList(t *testing.T) {
 }
 
 func TestTUISelectionMaintainedOnLargeBatch(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Initial state with 1 job selected
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -339,7 +339,7 @@ func TestTUISelectionMaintainedOnLargeBatch(t *testing.T) {
 }
 
 func TestTUIGetVisibleJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -394,7 +394,7 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newTuiModel(testServerAddr)
+			m := newTuiModel(testServerAddr, WithExternalIODisabled())
 			m.jobs = jobs
 			m.selectedIdx = tt.selectedIdx
 			if tt.filter != nil {
@@ -409,7 +409,7 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 }
 
 func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up with loadingJobs true
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
@@ -464,7 +464,7 @@ func TestTUITickInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newTuiModel("http://localhost")
+			m := newTuiModel("http://localhost", WithExternalIODisabled())
 			m.statusFetchedOnce = tt.statusFetchedOnce
 			m.status.RunningJobs = tt.runningJobs
 			m.status.QueuedJobs = tt.queuedJobs
@@ -478,7 +478,7 @@ func TestTUITickInterval(t *testing.T) {
 }
 
 func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up with loadingJobs true
 	m.loadingJobs = true
@@ -497,7 +497,7 @@ func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
 }
 
 func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up with loadingJobs true (shouldn't normally happen with append, but test the logic)
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -517,9 +517,6 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 }
 
 func TestTUIHideAddressedDefaultFromConfig(t *testing.T) {
-	skipExternalIO = false
-	defer func() { skipExternalIO = true }()
-
 	tmpDir := setupTuiTestEnv(t)
 
 	configPath := filepath.Join(tmpDir, "config.toml")
@@ -534,7 +531,7 @@ func TestTUIHideAddressedDefaultFromConfig(t *testing.T) {
 }
 
 func TestTUIHideAddressedToggle(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 
 	// Initial state: hideAddressed is false (TestMain isolates from real config)
@@ -558,7 +555,7 @@ func TestTUIHideAddressedToggle(t *testing.T) {
 }
 
 func TestTUIHideAddressedFiltersJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
@@ -598,7 +595,7 @@ func TestTUIHideAddressedFiltersJobs(t *testing.T) {
 }
 
 func TestTUIHideAddressedSelectionMovesToVisible(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 
 	m.jobs = []storage.ReviewJob{
@@ -624,7 +621,7 @@ func TestTUIHideAddressedSelectionMovesToVisible(t *testing.T) {
 }
 
 func TestTUIHideAddressedRefreshRevalidatesSelection(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
@@ -655,7 +652,7 @@ func TestTUIHideAddressedRefreshRevalidatesSelection(t *testing.T) {
 }
 
 func TestTUIHideAddressedNavigationSkipsHidden(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 
@@ -680,7 +677,7 @@ func TestTUIHideAddressedNavigationSkipsHidden(t *testing.T) {
 }
 
 func TestTUIHideAddressedWithRepoFilter(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 	m.activeRepoFilter = []string{"/repo/a"}
@@ -704,14 +701,14 @@ func TestTUIHideAddressedWithRepoFilter(t *testing.T) {
 
 func TestTUINewModelLoadingJobsTrue(t *testing.T) {
 	// newTuiModel should initialize loadingJobs to true since Init() calls fetchJobs
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	if !m.loadingJobs {
 		t.Error("loadingJobs should be true in new model")
 	}
 }
 
 func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.loadingJobs = true
 
 	// Simulate job fetch error
@@ -728,7 +725,7 @@ func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
 func TestTUIHideAddressedClearRepoFilterRefetches(t *testing.T) {
 	// Scenario: hide addressed enabled, then filter by repo, then press escape
 	// to clear the repo filter. Should trigger a refetch to show all unaddressed reviews.
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 	m.activeRepoFilter = []string{"/repo/a"}
@@ -776,7 +773,7 @@ func TestTUIHideAddressedClearRepoFilterRefetches(t *testing.T) {
 }
 
 func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = false
 
@@ -801,7 +798,7 @@ func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
 }
 
 func TestTUIHideAddressedDisableRefetches(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true // Already enabled
 
@@ -826,9 +823,6 @@ func TestTUIHideAddressedDisableRefetches(t *testing.T) {
 }
 
 func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
-	skipExternalIO = false
-	defer func() { skipExternalIO = true }()
-
 	tmpDir := setupTuiTestEnv(t)
 
 	// Write malformed TOML that LoadGlobal will fail to parse
@@ -866,9 +860,6 @@ func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 }
 
 func TestTUIHideAddressedValidConfigNotMutated(t *testing.T) {
-	skipExternalIO = false
-	defer func() { skipExternalIO = true }()
-
 	tmpDir := setupTuiTestEnv(t)
 
 	// Write a valid config with the hide-addressed default enabled
@@ -909,7 +900,7 @@ func TestTUIHideAddressedValidConfigNotMutated(t *testing.T) {
 }
 
 func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.hideAddressed = true
 
 	// Job with Addressed=false but pendingAddressed=true should be hidden
@@ -944,7 +935,7 @@ func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
 }
 
 func TestTUIFlashMessageAppearsInQueueView(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.width = 80
 	m.height = 24
@@ -959,7 +950,7 @@ func TestTUIFlashMessageAppearsInQueueView(t *testing.T) {
 }
 
 func TestTUIFlashMessageNotShownInDifferentView(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewReview
 	m.width = 80
 	m.height = 24
@@ -975,7 +966,7 @@ func TestTUIFlashMessageNotShownInDifferentView(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationInQueueView(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.width = 80
 	m.height = 24
@@ -1002,7 +993,7 @@ func TestTUIUpdateNotificationInQueueView(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationDevBuild(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.width = 80
 	m.height = 24
@@ -1019,7 +1010,7 @@ func TestTUIUpdateNotificationDevBuild(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewReview
 	m.width = 80
 	m.height = 24
@@ -1036,7 +1027,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	_ = setupTuiTestEnv(t)
 
 	t.Run("detects version mismatch", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 
 		// Simulate receiving status with different version
 		status := tuiStatusMsg(storage.DaemonStatus{
@@ -1054,7 +1045,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	})
 
 	t.Run("no mismatch when versions match", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 
 		// Simulate receiving status with same version as TUI
 		status := tuiStatusMsg(storage.DaemonStatus{
@@ -1069,7 +1060,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	})
 
 	t.Run("displays error banner in queue view when mismatched", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 		m.width = 100
 		m.height = 30
 		m.currentView = tuiViewQueue
@@ -1087,7 +1078,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 	})
 
 	t.Run("displays error banner in review view when mismatched", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 		m.width = 100
 		m.height = 30
 		m.currentView = tuiViewReview
@@ -1114,7 +1105,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 
 func TestTUIConfigReloadFlash(t *testing.T) {
 	_ = setupTuiTestEnv(t)
-	m := newTuiModel(testServerAddr)
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 
 	t.Run("no flash on first status fetch", func(t *testing.T) {
 		// First status fetch with a ConfigReloadCounter should NOT flash
@@ -1138,7 +1129,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 
 	t.Run("flash on config reload after first fetch", func(t *testing.T) {
 		// Start with a model that has already fetched status once
-		m := newTuiModel(testServerAddr)
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 1
 
@@ -1160,7 +1151,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 
 	t.Run("flash when ConfigReloadCounter changes from zero to non-zero", func(t *testing.T) {
 		// Model has fetched status once but daemon hadn't reloaded yet
-		m := newTuiModel(testServerAddr)
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 0 // No reload had occurred
 
@@ -1178,7 +1169,7 @@ func TestTUIConfigReloadFlash(t *testing.T) {
 	})
 
 	t.Run("no flash when ConfigReloadCounter unchanged", func(t *testing.T) {
-		m := newTuiModel(testServerAddr)
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 		m.statusFetchedOnce = true
 		m.lastConfigReloadCounter = 1
 
@@ -1322,7 +1313,7 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newTuiModel(testServerAddr)
+			m := newTuiModel(testServerAddr, WithExternalIODisabled())
 			m.consecutiveErrors = tt.initialErrors
 			m.reconnecting = tt.reconnecting
 			m.err = tt.initialErr
@@ -1416,7 +1407,7 @@ func TestSanitizeForDisplay(t *testing.T) {
 
 func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 	// Test that the queue view renders status correctly
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.width = 200
 	m.height = 30
 	m.currentView = tuiViewQueue
@@ -1563,7 +1554,7 @@ func TestDirtyPatchFilesError(t *testing.T) {
 }
 
 func TestHandleFixKeyRejectsFixJob(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.jobs = []storage.ReviewJob{
 		{
@@ -1596,7 +1587,7 @@ func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 
 func TestTUIFixTriggerResultMsg(t *testing.T) {
 	t.Run("warning shows flash and triggers refresh", func(t *testing.T) {
-		m := newTuiModel("http://localhost")
+		m := newTuiModel("http://localhost", WithExternalIODisabled())
 		m.currentView = tuiViewTasks
 		m.width = 80
 		m.height = 24
@@ -1621,7 +1612,7 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 	})
 
 	t.Run("success shows enqueued flash and triggers refresh", func(t *testing.T) {
-		m := newTuiModel("http://localhost")
+		m := newTuiModel("http://localhost", WithExternalIODisabled())
 		m.currentView = tuiViewTasks
 		m.width = 80
 		m.height = 24
@@ -1642,7 +1633,7 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 	})
 
 	t.Run("error shows failure flash with no refresh", func(t *testing.T) {
-		m := newTuiModel("http://localhost")
+		m := newTuiModel("http://localhost", WithExternalIODisabled())
 		m.currentView = tuiViewTasks
 		m.width = 80
 		m.height = 24

@@ -9,16 +9,14 @@ import (
 )
 
 // TestMain isolates the entire test package from the real ~/.roborev directory
-// and disables external I/O in newTuiModel (daemon detection, config loading,
-// git subprocess spawning). Without skipExternalIO, the 200+ tests that call
-// newTuiModel each spawn git subprocesses, exhausting macOS CI runner resources.
+// and disables external I/O in tests that call newTuiModel by passing
+// WithExternalIODisabled(). This prevents the 200+ tests from spawning
+// git subprocesses and exhausting macOS CI runner resources.
 func TestMain(m *testing.M) {
 	os.Exit(runTests(m))
 }
 
 func runTests(m *testing.M) int {
-	skipExternalIO = true
-
 	// Snapshot prod log state BEFORE overriding ROBOREV_DATA_DIR.
 	barrier := testenv.NewProdLogBarrier(
 		testenv.DefaultProdDataDir(),
@@ -31,6 +29,14 @@ func runTests(m *testing.M) int {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	origEnv, origSet := os.LookupEnv("ROBOREV_DATA_DIR")
+	defer func() {
+		if origSet {
+			os.Setenv("ROBOREV_DATA_DIR", origEnv)
+		} else {
+			os.Unsetenv("ROBOREV_DATA_DIR")
+		}
+	}()
 	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
 	code := m.Run()
 

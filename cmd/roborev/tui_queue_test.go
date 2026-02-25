@@ -133,7 +133,7 @@ func TestTUIQueueNavigation(t *testing.T) {
 
 func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	// Test flash messages when navigating at queue boundaries
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -187,7 +187,7 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	// Test flash messages at bottom when multi-repo filter is active (prevents auto-load).
 	// Single-repo filters use server-side filtering and support pagination,
 	// but multi-repo filters are client-side only so they disable pagination.
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoPath("/repo1")),
@@ -215,7 +215,7 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 }
 
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up at last job with more available
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -238,7 +238,7 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 }
 
 func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up at last job with filter active
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/path/to/repo"))}
@@ -495,7 +495,7 @@ func TestTUIRenderJobLineReviewTypeTag(t *testing.T) {
 }
 
 func TestTUIPaginationAppendMode(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Start with 50 jobs
 	initialJobs := make([]storage.ReviewJob, 50)
@@ -538,7 +538,7 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 }
 
 func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Simulate user has paginated to 100 jobs
 	jobs := make([]storage.ReviewJob, 100)
@@ -573,7 +573,7 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 }
 
 func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.loadingMore = true
 
 	// Pagination error arrives (only pagination errors clear loadingMore)
@@ -592,7 +592,7 @@ func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
 }
 
 func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.loadingMore = true
 
 	// Generic error arrives (should NOT clear loadingMore)
@@ -611,7 +611,7 @@ func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
 }
 
 func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.loadingJobs = true
 	m.hasMore = true
@@ -635,7 +635,7 @@ func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.loadingJobs = false
 	m.hasMore = true
@@ -659,7 +659,7 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.loadingJobs = true
 	m.hasMore = true
@@ -684,7 +684,7 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIResizeDuringPaginationNoRefetch(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up with jobs loaded and pagination in flight
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
@@ -711,7 +711,7 @@ func TestTUIResizeDuringPaginationNoRefetch(t *testing.T) {
 }
 
 func TestTUIResizeTriggersRefetchWhenNeeded(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up with few jobs loaded, more available, no pagination in flight
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
@@ -740,7 +740,7 @@ func TestTUIResizeTriggersRefetchWhenNeeded(t *testing.T) {
 }
 
 func TestTUIResizeNoRefetchWhenEnoughJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up with enough jobs to fill the terminal
 	jobs := make([]storage.ReviewJob, 100)
@@ -769,7 +769,7 @@ func TestTUIResizeNoRefetchWhenEnoughJobs(t *testing.T) {
 }
 
 func TestTUIResizeRefetchOnLaterResize(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up with few jobs, height already detected from earlier resize
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
@@ -799,7 +799,7 @@ func TestTUIResizeRefetchOnLaterResize(t *testing.T) {
 }
 
 func TestTUIResizeNoRefetchWhileLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 
 	// Set up with few jobs, but loadingJobs is already true (fetch in progress)
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
@@ -823,7 +823,7 @@ func TestTUIResizeNoRefetchWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 	m.height = 29 // queueVisibleRows = 20
@@ -859,7 +859,7 @@ func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
 }
 
 func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.hideAddressed = true
 	m.height = 29 // queueVisibleRows = 21
@@ -896,7 +896,7 @@ func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) 
 
 func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 	// Test that empty queue view pads output to fill terminal height
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{} // Empty queue
@@ -923,7 +923,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 	// Test that empty queue with filter pads output correctly
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
@@ -945,7 +945,7 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 
 func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 	// Test that loading state shows "Loading..." instead of "No jobs" messages
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
@@ -966,7 +966,7 @@ func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 
 func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 	// Test that "Loading..." shows when loadingMore is set on empty queue
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{} // Empty after filter clear
@@ -982,7 +982,7 @@ func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 
 func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 	// Test that queue view with few jobs (no scroll indicator) still maintains height
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.width = 100
 	m.height = 30
 	// Add just 2 jobs - should not need scroll indicator
@@ -1001,7 +1001,7 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 }
 
 func setupQueue(jobs []storage.ReviewJob, selectedIdx int) tuiModel {
-	m := newTuiModel("http://localhost")
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
 	m.jobs = jobs
 	m.selectedIdx = selectedIdx
 	if len(jobs) > 0 && selectedIdx >= 0 && selectedIdx < len(jobs) {
