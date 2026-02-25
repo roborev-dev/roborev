@@ -282,7 +282,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 		commits          []string
 		skip             map[int64]bool
 		wantJobID        int64 // 0 if nil expected
-		wantErr          string
+		wantErrs         []string
 		wantAddressedIDs []int64
 	}{
 		{
@@ -402,7 +402,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 				c.markAddressedErr = fmt.Errorf("daemon connection failed")
 			},
 			commits: []string{"commit1"},
-			wantErr: "marking review (job 100) as addressed",
+			wantErrs: []string{"marking review (job 100) as addressed"},
 		},
 		{
 			name: "get review by sha error",
@@ -410,7 +410,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 				c.getReviewBySHAErr = fmt.Errorf("daemon connection failed")
 			},
 			commits: []string{"commit1", "commit2"},
-			wantErr: "fetching review",
+			wantErrs: []string{"fetching review", "commit1"},
 		},
 	}
 
@@ -421,12 +421,14 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 
 			found, err := findFailedReviewForBranch(client, tt.commits, tt.skip)
 
-			if tt.wantErr != "" {
+			if len(tt.wantErrs) > 0 {
 				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+					t.Fatalf("expected error containing %q, got nil", tt.wantErrs)
 				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf("expected error containing %q, got: %v", tt.wantErr, err)
+				for _, wantErr := range tt.wantErrs {
+					if !strings.Contains(err.Error(), wantErr) {
+						t.Errorf("expected error containing %q, got: %v", wantErr, err)
+					}
 				}
 				if found != nil {
 					t.Errorf("expected nil review when error occurs, got job %d", found.JobID)
