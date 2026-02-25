@@ -346,10 +346,6 @@ type reviewTestOpts struct {
 func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, string, error) {
 	t.Helper()
 
-	if opts.Prompt == "" {
-		opts.Prompt = "prompt"
-	}
-
 	mock := mockAgentCLI(t, opts.MockOpts)
 
 	a := NewOpenCodeAgent(mock.CmdPath)
