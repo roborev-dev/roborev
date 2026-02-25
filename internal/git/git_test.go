@@ -155,10 +155,7 @@ func TestIsUnbornHead(t *testing.T) {
 		// Corrupt the branch ref by writing a bogus SHA.
 		// Read the actual HEAD target to avoid hardcoding main/master.
 		headRef := strings.TrimSpace(repo.Run("symbolic-ref", "HEAD"))
-		refPath := filepath.Join(repo.Dir, ".git", headRef)
-		if err := os.WriteFile(refPath, []byte("0000000000000000000000000000000000000000\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		repo.WriteFile(filepath.Join(".git", headRef), "0000000000000000000000000000000000000000\n")
 
 		if IsUnbornHead(repo.Dir) {
 			t.Error("expected IsUnbornHead=false for corrupt ref (ref exists but object is missing)")
@@ -640,9 +637,7 @@ func TestGetDirtyDiff(t *testing.T) {
 		repo := NewTestRepo(t)
 		repo.CommitFile("file.txt", "initial\n", "initial")
 
-		if err := os.WriteFile(filepath.Join(repo.Dir, "binary.bin"), []byte("hello\x00world"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		repo.WriteFile("binary.bin", "hello\x00world")
 
 		diff, err := GetDirtyDiff(repo.Dir)
 		if err != nil {
@@ -1090,7 +1085,19 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 
 	// Force GPG signing with a non-existent key
 	repo.Run("config", "commit.gpgsign", "true")
-	repo.Run("config", "gpg.program", "false") // Force failure deterministically
+
+	// Create a dummy GPG script that always fails
+	// Windows and Unix need different scripts
+	dummyGPG := filepath.Join(repo.Dir, "fail-gpg")
+	if runtime.GOOS == "windows" {
+		dummyGPG += ".bat"
+		repo.WriteFile("fail-gpg.bat", "@echo off\nexit /b 1\n")
+	} else {
+		repo.WriteFile("fail-gpg", "#!/bin/sh\nexit 1\n")
+		os.Chmod(dummyGPG, 0755)
+	}
+
+	repo.Run("config", "gpg.program", dummyGPG) // Force failure deterministically
 	repo.Run("config", "user.signingkey", "DEADBEEF00000000")
 
 	repo.WriteFile("new.txt", "content")
@@ -1451,11 +1458,7 @@ func TestWorktreePathForBranch(t *testing.T) {
 		repo.Run("branch", "wt-preexist")
 
 		wtDir := t.TempDir() // creates the directory — it already exists
-		cmd := exec.Command("git", "-C", repo.Dir, "worktree", "add", wtDir, "wt-preexist")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git worktree add into pre-existing empty dir failed: %v\n%s", err, out)
-		}
+		repo.Run("worktree", "add", wtDir, "wt-preexist")
 		t.Cleanup(func() {
 			rmCmd := exec.Command("git", "-C", repo.Dir, "worktree", "remove", wtDir)
 			_ = rmCmd.Run()
