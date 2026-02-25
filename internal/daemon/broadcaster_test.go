@@ -191,7 +191,7 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 	}
 
 	// Broadcast one more event - should not block even though channel is full
-	done := make(chan bool)
+	done := make(chan bool, 1)
 	go func() {
 		b.Broadcast(Event{JobID: 999})
 		done <- true
