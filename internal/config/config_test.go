@@ -3,12 +3,10 @@ package config
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/BurntSushi/toml"
 	"github.com/roborev-dev/roborev/internal/testenv"
 )
 
@@ -238,10 +236,7 @@ func TestResolveJobTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			if tt.repoConfig != "" {
-				writeRepoConfigStr(t, tmpDir, tt.repoConfig)
-			}
+			tmpDir := newTempRepo(t, tt.repoConfig)
 			got := ResolveJobTimeout(tmpDir, tt.globalConfig)
 			if got != tt.want {
 				t.Errorf("ResolveJobTimeout() = %v, want %v", got, tt.want)
@@ -272,10 +267,7 @@ func TestResolveReasoning(t *testing.T) {
 
 			for _, tt := range tests {
 				t.Run(tt.testName, func(t *testing.T) {
-					tmpDir := t.TempDir()
-					if tt.repoConfig != "" {
-						writeRepoConfigStr(t, tmpDir, tt.repoConfig)
-					}
+					tmpDir := newTempRepo(t, tt.repoConfig)
 					got, err := fn(tt.explicit, tmpDir)
 					if (err != nil) != tt.wantErr {
 						t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
@@ -386,10 +378,7 @@ func TestIsBranchExcluded(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			if tt.repoConfig != "" {
-				writeRepoConfigStr(t, tmpDir, tt.repoConfig)
-			}
+			tmpDir := newTempRepo(t, tt.repoConfig)
 			// For "no config file", we just don't write anything.
 
 			got := IsBranchExcluded(tmpDir, tt.branch)
@@ -426,7 +415,7 @@ func TestSyncConfigPostgresURLExpanded(t *testing.T) {
 	})
 
 	t.Run("missing env var becomes empty", func(t *testing.T) {
-		os.Unsetenv("NONEXISTENT_VAR")
+		t.Setenv("NONEXISTENT_VAR", "")
 		cfg := SyncConfig{PostgresURL: "postgres://user:${NONEXISTENT_VAR}@localhost:5432/db"}
 		expected := "postgres://user:@localhost:5432/db"
 		if got := cfg.PostgresURLExpanded(); got != expected {
@@ -506,7 +495,7 @@ func TestSyncConfigValidate(t *testing.T) {
 	})
 
 	t.Run("unexpanded env var warns", func(t *testing.T) {
-		os.Unsetenv("MISSING_VAR")
+		t.Setenv("MISSING_VAR", "")
 		cfg := SyncConfig{
 			Enabled:     true,
 			PostgresURL: "postgres://user:${MISSING_VAR}@localhost:5432/db",
@@ -763,17 +752,8 @@ func TestResolveRepoIdentity(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// Initialize a git repo with a remote
-		cmds := [][]string{
-			{"git", "init"},
-			{"git", "remote", "add", "origin", "https://github.com/test/repo.git"},
-		}
-		for _, args := range cmds {
-			cmd := exec.Command(args[0], args[1:]...)
-			cmd.Dir = tmpDir
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("Failed to run %v: %v", args, err)
-			}
-		}
+		execGit(t, tmpDir, "init")
+		execGit(t, tmpDir, "remote", "add", "origin", "https://github.com/test/repo.git")
 
 		// With nil getRemoteURL, should use git.GetRemoteURL and find the remote
 		id := ResolveRepoIdentity(tmpDir, nil)
@@ -905,10 +885,7 @@ func TestResolveModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			if tt.repoConfig != "" {
-				writeRepoConfigStr(t, tmpDir, tt.repoConfig)
-			}
+			tmpDir := newTempRepo(t, tt.repoConfig)
 			got := ResolveModel(tt.explicit, tmpDir, tt.globalConfig)
 			if got != tt.want {
 				t.Errorf("ResolveModel() = %q, want %q", got, tt.want)
@@ -1184,40 +1161,6 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 			}
 		})
 	}
-}
-
-// M is a shorthand type for map[string]string to keep test tables compact
-type M = map[string]string
-
-// newTempRepo creates a temp directory and writes content to .roborev.toml.
-func newTempRepo(t *testing.T, configContent string) string {
-	t.Helper()
-	dir := t.TempDir()
-	writeRepoConfigStr(t, dir, configContent)
-	return dir
-}
-
-// writeRepoConfigStr writes a TOML string to .roborev.toml in the given directory.
-func writeRepoConfigStr(t *testing.T, dir, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
-	t.Helper()
-	if cfg == nil {
-		return
-	}
-	// We use the toml package to properly handle escaping
-	// but first we need a file to write to.
-	// Since writeRepoConfigStr takes content string, we'll encode to a buffer.
-	var sb strings.Builder
-	if err := toml.NewEncoder(&sb).Encode(cfg); err != nil {
-		t.Fatalf("failed to encode repo config: %v", err)
-	}
-	writeRepoConfigStr(t, dir, sb.String())
 }
 
 func TestResolvedReviewTypes(t *testing.T) {
@@ -1738,43 +1681,18 @@ func TestIsDefaultReviewType(t *testing.T) {
 func TestLoadRepoConfigFromRef(t *testing.T) {
 	// Create a real git repo with .roborev.toml at a commit
 	dir := t.TempDir()
-	cmds := [][]string{
-		{"git", "init"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test"},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("git init: %v", err)
-		}
-	}
+	execGit(t, dir, "init")
+	execGit(t, dir, "config", "user.email", "test@test.com")
+	execGit(t, dir, "config", "user.name", "Test")
 
 	// Write .roborev.toml and commit
 	configContent := `review_guidelines = "Use descriptive variable names."` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(configContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-	addCmd := exec.Command("git", "add", ".roborev.toml")
-	addCmd.Dir = dir
-	if err := addCmd.Run(); err != nil {
-		t.Fatalf("git add: %v", err)
-	}
-	commitCmd := exec.Command("git", "commit", "-m", "add config")
-	commitCmd.Dir = dir
-	if err := commitCmd.Run(); err != nil {
-		t.Fatalf("git commit: %v", err)
-	}
+	writeTestFile(t, dir, ".roborev.toml", configContent)
+	execGit(t, dir, "add", ".roborev.toml")
+	execGit(t, dir, "commit", "-m", "add config")
 
 	// Get the commit SHA
-	shaCmd := exec.Command("git", "rev-parse", "HEAD")
-	shaCmd.Dir = dir
-	shaOut, err := shaCmd.Output()
-	if err != nil {
-		t.Fatalf("git rev-parse: %v", err)
-	}
-	sha := strings.TrimSpace(string(shaOut))
+	sha := execGit(t, dir, "rev-parse", "HEAD")
 
 	t.Run("loads config from ref", func(t *testing.T) {
 		cfg, err := LoadRepoConfigFromRef(dir, sha)
@@ -1801,23 +1719,9 @@ func TestLoadRepoConfigFromRef(t *testing.T) {
 
 	t.Run("returns nil when file missing from ref", func(t *testing.T) {
 		// Remove .roborev.toml and commit
-		rmCmd := exec.Command("git", "rm", ".roborev.toml")
-		rmCmd.Dir = dir
-		if err := rmCmd.Run(); err != nil {
-			t.Fatalf("git rm: %v", err)
-		}
-		commitCmd2 := exec.Command("git", "commit", "-m", "remove config")
-		commitCmd2.Dir = dir
-		if err := commitCmd2.Run(); err != nil {
-			t.Fatalf("git commit: %v", err)
-		}
-		headCmd := exec.Command("git", "rev-parse", "HEAD")
-		headCmd.Dir = dir
-		headOut, err := headCmd.Output()
-		if err != nil {
-			t.Fatalf("git rev-parse: %v", err)
-		}
-		headSHA := strings.TrimSpace(string(headOut))
+		execGit(t, dir, "rm", ".roborev.toml")
+		execGit(t, dir, "commit", "-m", "remove config")
+		headSHA := execGit(t, dir, "rev-parse", "HEAD")
 
 		cfg, err := LoadRepoConfigFromRef(dir, headSHA)
 		if err != nil {
