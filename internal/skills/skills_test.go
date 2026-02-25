@@ -31,9 +31,9 @@ func setupTestEnv(t *testing.T) string {
 }
 
 // createMockSkill creates an installed skill file at ~/.<agent>/skills/<skill>/SKILL.md.
-func createMockSkill(t *testing.T, homeDir, agent, skill string) {
+func createMockSkill(t *testing.T, homeDir string, agent Agent, skill string) {
 	t.Helper()
-	dir := filepath.Join(homeDir, "."+agent, "skills", skill)
+	dir := filepath.Join(homeDir, "."+string(agent), "skills", skill)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -202,13 +202,13 @@ func TestIsInstalled(t *testing.T) {
 		tests = append(tests, testCase{
 			name:        "Claude with skill " + s,
 			agent:       AgentClaude,
-			setup:       func(t *testing.T, h string) { createMockSkill(t, h, "claude", s) },
+			setup:       func(t *testing.T, h string) { createMockSkill(t, h, AgentClaude, s) },
 			shouldExist: true,
 		})
 		tests = append(tests, testCase{
 			name:        "Codex with skill " + s,
 			agent:       AgentCodex,
-			setup:       func(t *testing.T, h string) { createMockSkill(t, h, "codex", s) },
+			setup:       func(t *testing.T, h string) { createMockSkill(t, h, AgentCodex, s) },
 			shouldExist: true,
 		})
 	}
@@ -220,12 +220,11 @@ func TestIsInstalled(t *testing.T) {
 		setup: func(t *testing.T, h string) {
 			// Install skills for both known agents to ensure
 			// the unknown agent still returns false.
-			createMockSkill(t, h, "claude", "roborev-address")
-			createMockSkill(t, h, "codex", "roborev-address")
+			createMockSkill(t, h, AgentClaude, "roborev-address")
+			createMockSkill(t, h, AgentCodex, "roborev-address")
 		},
 		shouldExist: false,
 	})
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpHome := setupTestEnv(t)
@@ -240,153 +239,121 @@ func TestIsInstalled(t *testing.T) {
 }
 
 func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
-	t.Run("updates Claude with address skill only", func(t *testing.T) {
-		tmpHome := setupTestEnv(t)
+	tests := []struct {
+		name          string
+		setup         func(t *testing.T, homeDir string)
+		wantResults   int
+		wantAgents    []Agent // Used when expecting multiple results
+		wantUpdated   int
+		wantInstalled int
+	}{
+		{
+			name: "updates Claude with address skill only",
+			setup: func(t *testing.T, homeDir string) {
+				createMockSkill(t, homeDir, AgentClaude, "roborev-address")
+				// Create .codex but NO skills installed
+				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantResults:   1,
+			wantAgents:    []Agent{AgentClaude},
+			wantUpdated:   1,
+			wantInstalled: len(expectedSkills) - 1,
+		},
+		{
+			name: "updates Claude with respond skill only",
+			setup: func(t *testing.T, homeDir string) {
+				createMockSkill(t, homeDir, AgentClaude, "roborev-respond")
+			},
+			wantResults:   1,
+			wantAgents:    []Agent{AgentClaude},
+			wantUpdated:   1,
+			wantInstalled: len(expectedSkills) - 1,
+		},
+		{
+			name: "updates Codex with skills installed",
+			setup: func(t *testing.T, homeDir string) {
+				createMockSkill(t, homeDir, AgentCodex, "roborev-address")
+			},
+			wantResults:   1,
+			wantAgents:    []Agent{AgentCodex},
+			wantUpdated:   1,
+			wantInstalled: len(expectedSkills) - 1,
+		},
+		{
+			name: "updates Codex with respond skill only",
+			setup: func(t *testing.T, homeDir string) {
+				createMockSkill(t, homeDir, AgentCodex, "roborev-respond")
+			},
+			wantResults:   1,
+			wantAgents:    []Agent{AgentCodex},
+			wantUpdated:   1,
+			wantInstalled: len(expectedSkills) - 1,
+		},
+		{
+			name: "updates both agents when both have skills",
+			setup: func(t *testing.T, homeDir string) {
+				createMockSkill(t, homeDir, AgentClaude, "roborev-address")
+				createMockSkill(t, homeDir, AgentCodex, "roborev-respond")
+			},
+			wantResults:   2,
+			wantAgents:    []Agent{AgentClaude, AgentCodex},
+			wantUpdated:   1,
+			wantInstalled: len(expectedSkills) - 1,
+		},
+		{
+			name: "skips both when neither has skills",
+			setup: func(t *testing.T, homeDir string) {
+				if err := os.MkdirAll(filepath.Join(homeDir, ".claude"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantResults:   0,
+			wantAgents:    []Agent{},
+			wantUpdated:   0,
+			wantInstalled: 0,
+		},
+	}
 
-		createMockSkill(t, tmpHome, "claude", "roborev-address")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpHome := setupTestEnv(t)
+			tt.setup(t, tmpHome)
 
-		// Create .codex but NO skills installed
-		if err := os.MkdirAll(filepath.Join(tmpHome, ".codex"), 0755); err != nil {
-			t.Fatal(err)
-		}
-
-		results, err := Update()
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-
-		// Should only have Claude result (Codex not installed)
-		if len(results) != 1 {
-			t.Errorf("expected 1 result (Claude only), got %d", len(results))
-		}
-		if len(results) > 0 && results[0].Agent != AgentClaude {
-			t.Errorf("expected Claude result, got %s", results[0].Agent)
-		}
-	})
-
-	t.Run("updates Claude with respond skill only", func(t *testing.T) {
-		tmpHome := setupTestEnv(t)
-
-		createMockSkill(t, tmpHome, "claude", "roborev-respond")
-
-		results, err := Update()
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-
-		if len(results) != 1 {
-			t.Errorf("expected 1 result, got %d", len(results))
-		}
-		if len(results) > 0 && results[0].Agent != AgentClaude {
-			t.Errorf("expected Claude result, got %s", results[0].Agent)
-		}
-		// Should update respond (existed) and install address+design-review+fix (didn't exist)
-		if len(results) > 0 {
-			if len(results[0].Updated) != 1 {
-				t.Errorf("expected 1 updated (respond), got %d", len(results[0].Updated))
+			results, err := Update()
+			if err != nil {
+				t.Fatalf("Update failed: %v", err)
 			}
-			if len(results[0].Installed) != len(expectedSkills)-1 {
-				t.Errorf("expected %d installed, got %d", len(expectedSkills)-1, len(results[0].Installed))
+
+			if len(results) != tt.wantResults {
+				t.Fatalf("expected %d results, got %d", tt.wantResults, len(results))
 			}
-		}
-	})
 
-	t.Run("updates Codex with skills installed", func(t *testing.T) {
-		tmpHome := setupTestEnv(t)
-
-		createMockSkill(t, tmpHome, "codex", "roborev-address")
-
-		results, err := Update()
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-
-		if len(results) != 1 {
-			t.Errorf("expected 1 result (Codex only), got %d", len(results))
-		}
-		if len(results) > 0 && results[0].Agent != AgentCodex {
-			t.Errorf("expected Codex result, got %s", results[0].Agent)
-		}
-	})
-
-	t.Run("updates Codex with respond skill only", func(t *testing.T) {
-		tmpHome := setupTestEnv(t)
-
-		createMockSkill(t, tmpHome, "codex", "roborev-respond")
-
-		results, err := Update()
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-
-		if len(results) != 1 {
-			t.Errorf("expected 1 result, got %d", len(results))
-		}
-		if len(results) > 0 && results[0].Agent != AgentCodex {
-			t.Errorf("expected Codex result, got %s", results[0].Agent)
-		}
-		// Should update respond (existed) and install the rest (didn't exist)
-		if len(results) > 0 {
-			if len(results[0].Updated) != 1 {
-				t.Errorf("expected 1 updated (respond), got %d", len(results[0].Updated))
+			if tt.wantResults > 0 {
+				// Verify all expected agents are present
+				agentFound := make(map[Agent]bool)
+				for _, want := range tt.wantAgents {
+					agentFound[want] = false
+				}
+				for _, r := range results {
+					agentFound[r.Agent] = true
+					if len(r.Updated) != tt.wantUpdated {
+						t.Errorf("expected %d updated for %s, got %d", tt.wantUpdated, r.Agent, len(r.Updated))
+					}
+					if len(r.Installed) != tt.wantInstalled {
+						t.Errorf("expected %d installed for %s, got %d", tt.wantInstalled, r.Agent, len(r.Installed))
+					}
+				}
+				for want, found := range agentFound {
+					if !found {
+						t.Errorf("expected %s in results", want)
+					}
+				}
 			}
-			if len(results[0].Installed) != len(expectedSkills)-1 {
-				t.Errorf("expected %d installed, got %d", len(expectedSkills)-1, len(results[0].Installed))
-			}
-		}
-	})
-
-	t.Run("updates both agents when both have skills", func(t *testing.T) {
-		tmpHome := setupTestEnv(t)
-
-		createMockSkill(t, tmpHome, "claude", "roborev-address")
-		createMockSkill(t, tmpHome, "codex", "roborev-respond")
-
-		results, err := Update()
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-
-		if len(results) != 2 {
-			t.Errorf("expected 2 results (both agents), got %d", len(results))
-		}
-
-		// Verify both agents are present (not duplicates)
-		var hasClaude, hasCodex bool
-		for _, r := range results {
-			if r.Agent == AgentClaude {
-				hasClaude = true
-			}
-			if r.Agent == AgentCodex {
-				hasCodex = true
-			}
-		}
-		if !hasClaude {
-			t.Error("expected Claude in results")
-		}
-		if !hasCodex {
-			t.Error("expected Codex in results")
-		}
-	})
-
-	t.Run("skips both when neither has skills", func(t *testing.T) {
-		tmpHome := setupTestEnv(t)
-
-		// Create .claude and .codex dirs but no skills
-		if err := os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Join(tmpHome, ".codex"), 0755); err != nil {
-			t.Fatal(err)
-		}
-
-		results, err := Update()
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-
-		if len(results) != 0 {
-			t.Errorf("expected 0 results (no skills installed), got %d", len(results))
-		}
-	})
+		})
+	}
 }
