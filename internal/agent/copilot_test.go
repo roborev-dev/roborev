@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -9,10 +10,12 @@ func TestCopilotReview(t *testing.T) {
 	skipIfWindows(t)
 
 	tests := []struct {
-		name     string
-		prompt   string
-		mockOpts MockCLIOpts
-		wantErr  bool
+		name       string
+		prompt     string
+		mockOpts   MockCLIOpts
+		wantErr    bool
+		wantErrStr string
+		wantResult string
 	}{
 		{
 			name:   "Pipes prompt via stdin",
@@ -22,7 +25,8 @@ func TestCopilotReview(t *testing.T) {
 				CaptureStdin: true,
 				StdoutLines:  []string{"ok"},
 			},
-			wantErr: false,
+			wantErr:    false,
+			wantResult: "ok\n",
 		},
 		{
 			name:   "CLI failure (exit non-zero)",
@@ -31,7 +35,8 @@ func TestCopilotReview(t *testing.T) {
 				ExitCode:    1,
 				StderrLines: []string{"error: failed to generate review"},
 			},
-			wantErr: true,
+			wantErr:    true,
+			wantErrStr: "copilot failed",
 		},
 		{
 			name:   "Empty output from CLI",
@@ -41,7 +46,8 @@ func TestCopilotReview(t *testing.T) {
 				CaptureStdin: true,
 				StdoutLines:  []string{}, // empty output
 			},
-			wantErr: false,
+			wantErr:    false,
+			wantResult: "No review output generated",
 		},
 	}
 
@@ -50,7 +56,7 @@ func TestCopilotReview(t *testing.T) {
 			mock := mockAgentCLI(t, tt.mockOpts)
 			a := NewCopilotAgent(mock.CmdPath)
 
-			_, err := a.Review(
+			res, err := a.Review(
 				context.Background(), t.TempDir(), "HEAD", tt.prompt, nil,
 			)
 
@@ -58,8 +64,14 @@ func TestCopilotReview(t *testing.T) {
 				if err == nil {
 					t.Fatal("Review() expected error, got nil")
 				}
+				if tt.wantErrStr != "" && !strings.Contains(err.Error(), tt.wantErrStr) {
+					t.Errorf("Review() error = %v, want to contain %v", err, tt.wantErrStr)
+				}
 			} else {
 				assertNoError(t, err, "Review failed")
+				if res != tt.wantResult {
+					t.Errorf("Review() result = %q, want %q", res, tt.wantResult)
+				}
 				// Prompt must be in stdin
 				assertFileContent(t, mock.StdinFile, tt.prompt)
 				// Prompt must not be in argv
