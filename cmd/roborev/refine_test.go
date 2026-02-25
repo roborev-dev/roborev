@@ -275,490 +275,299 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	}
 }
 
-func TestFindFailedReviewForBranch_OldestFirst(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Mock reviews: oldest commit passes (output="No issues found."),
-	// middle and newest fail (output contains actual findings).
-	client.
-		WithReview("oldest123", 100, "No issues found.", false).
-		WithReview("middle456", 200, "Found a bug in the code.", false).
-		WithReview("newest789", 300, "Security vulnerability detected.", false)
-
-	// Commits in chronological order (oldest first, as returned by git log --reverse)
-	commits := []string{"oldest123", "middle456", "newest789"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
+func TestFindFailedReviewForBranch(t *testing.T) {
+	tests := []struct {
+		name             string
+		setup            func(*mockDaemonClient)
+		commits          []string
+		skip             map[int64]bool
+		wantJobID        int64 // 0 if nil expected
+		wantErr          string
+		wantAddressedIDs []int64
+	}{
+		{
+			name: "oldest first",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("oldest123", 100, "No issues found.", false).
+					WithReview("middle456", 200, "Found a bug in the code.", false).
+					WithReview("newest789", 300, "Security vulnerability detected.", false)
+			},
+			commits:          []string{"oldest123", "middle456", "newest789"},
+			wantJobID:        200,
+			wantAddressedIDs: []int64{100},
+		},
+		{
+			name: "skips addressed",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "Bug found.", false).
+					WithReview("commit2", 200, "Another bug.", true).
+					WithReview("commit3", 300, "More issues.", false)
+			},
+			commits:   []string{"commit1", "commit2", "commit3"},
+			wantJobID: 100,
+		},
+		{
+			name: "skips given up reviews",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "Bug found.", false).
+					WithReview("commit2", 200, "Another bug.", false).
+					WithReview("commit3", 300, "No issues found.", false)
+			},
+			commits:   []string{"commit1", "commit2", "commit3"},
+			skip:      map[int64]bool{1: true},
+			wantJobID: 200,
+		},
+		{
+			name: "all skipped returns nil",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "Bug found.", false).
+					WithReview("commit2", 200, "Another.", false)
+			},
+			commits:   []string{"commit1", "commit2"},
+			skip:      map[int64]bool{1: true, 2: true},
+			wantJobID: 0,
+		},
+		{
+			name: "all pass",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "No issues found.", false).
+					WithReview("commit2", 200, "No findings.", false)
+			},
+			commits:          []string{"commit1", "commit2"},
+			wantJobID:        0,
+			wantAddressedIDs: []int64{100, 200},
+		},
+		{
+			name:      "no reviews",
+			setup:     func(c *mockDaemonClient) {},
+			commits:   []string{"unreviewed1", "unreviewed2"},
+			wantJobID: 0,
+		},
+		{
+			name: "marks passing as addressed",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "No issues found.", false).
+					WithReview("commit2", 200, "No findings.", false)
+			},
+			commits:          []string{"commit1", "commit2"},
+			wantJobID:        0,
+			wantAddressedIDs: []int64{100, 200},
+		},
+		{
+			name: "marks passing before failure",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "No issues found.", false).
+					WithReview("commit2", 200, "Bug found.", false)
+			},
+			commits:          []string{"commit1", "commit2"},
+			wantJobID:        200,
+			wantAddressedIDs: []int64{100},
+		},
+		{
+			name: "does not mark already addressed",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "No issues found.", true).
+					WithReview("commit2", 200, "Bug found.", false)
+			},
+			commits:   []string{"commit1", "commit2"},
+			wantJobID: 200,
+		},
+		{
+			name: "mixed scenario",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "No issues found.", false).
+					WithReview("commit2", 200, "No issues.", true).
+					WithReview("commit3", 300, "Bug found.", true).
+					WithReview("commit4", 400, "No findings detected.", false).
+					WithReview("commit5", 500, "Critical error.", false)
+			},
+			commits:          []string{"commit1", "commit2", "commit3", "commit4", "commit5"},
+			wantJobID:        500,
+			wantAddressedIDs: []int64{100, 400},
+		},
+		{
+			name: "stops at first failure",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "Bug found.", false).
+					WithReview("commit2", 200, "No issues found.", false).
+					WithReview("commit3", 300, "Another bug.", false)
+			},
+			commits:   []string{"commit1", "commit2", "commit3"},
+			wantJobID: 100,
+		},
+		{
+			name: "mark addressed error",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "No issues found.", false)
+				c.markAddressedErr = fmt.Errorf("daemon connection failed")
+			},
+			commits: []string{"commit1"},
+			wantErr: "marking review (job 100) as addressed",
+		},
+		{
+			name: "get review by sha error",
+			setup: func(c *mockDaemonClient) {
+				c.getReviewBySHAErr = fmt.Errorf("daemon connection failed")
+			},
+			commits: []string{"commit1", "commit2"},
+			wantErr: "fetching review",
+		},
 	}
 
-	if found == nil {
-		t.Fatal("expected to find a failed review")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newMockDaemonClient()
+			tt.setup(client)
 
-	// Should return oldest failure (job 200), not newest (job 300)
-	if found.JobID != 200 {
-		t.Errorf("expected oldest failed review (job 200), got job %d", found.JobID)
-	}
-}
+			found, err := findFailedReviewForBranch(client, tt.commits, tt.skip)
 
-func TestFindFailedReviewForBranch_SkipsAddressed(t *testing.T) {
-	client := newMockDaemonClient()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantErr, err)
+				}
+				if found != nil {
+					t.Errorf("expected nil review when error occurs, got job %d", found.JobID)
+				}
+				return
+			}
 
-	client.
-		WithReview("commit1", 100, "Bug found.", false).
-		WithReview("commit2", 200, "Another bug.", true).
-		WithReview("commit3", 300, "More issues.", false)
+			if err != nil {
+				t.Fatalf("findFailedReviewForBranch failed: %v", err)
+			}
 
-	commits := []string{"commit1", "commit2", "commit3"}
+			if tt.wantJobID == 0 {
+				if found != nil {
+					t.Errorf("expected no failed reviews, got job %d", found.JobID)
+				}
+			} else {
+				if found == nil {
+					t.Fatalf("expected to find a failed review (job %d)", tt.wantJobID)
+				}
+				if found.JobID != tt.wantJobID {
+					t.Errorf("expected job %d, got job %d", tt.wantJobID, found.JobID)
+				}
+			}
 
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	// Should return commit1 (oldest unaddressed failure), skipping addressed commit2
-	if found == nil || found.JobID != 100 {
-		t.Errorf("expected oldest unaddressed failure (job 100), got %v", found)
-	}
-}
-
-func TestFindFailedReviewForBranch_SkipsGivenUpReviews(t *testing.T) {
-	client := newMockDaemonClient()
-
-	client.
-		WithReview("commit1", 100, "Bug found.", false).
-		WithReview("commit2", 200, "Another bug.", false).
-		WithReview("commit3", 300, "No issues found.", false)
-
-	commits := []string{"commit1", "commit2", "commit3"}
-
-	// Skip review ID 1 (simulates "giving up" after 3 failed attempts)
-	skip := map[int64]bool{1: true}
-
-	found, err := findFailedReviewForBranch(client, commits, skip)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	// Should return commit2 (job 200), skipping commit1 which is in the skip set
-	if found == nil || found.JobID != 200 {
-		t.Errorf("expected job 200 (skipping given-up review), got %v", found)
-	}
-}
-
-func TestFindFailedReviewForBranch_AllSkippedReturnsNil(t *testing.T) {
-	client := newMockDaemonClient()
-
-	client.
-		WithReview("commit1", 100, "Bug found.", false).
-		WithReview("commit2", 200, "Another.", false)
-
-	commits := []string{"commit1", "commit2"}
-
-	// Skip both reviews (simulates giving up on all failed reviews)
-	skip := map[int64]bool{1: true, 2: true}
-
-	found, err := findFailedReviewForBranch(client, commits, skip)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	// Should return nil since all failures are in skip set
-	if found != nil {
-		t.Errorf("expected nil (all skipped), got job %d", found.JobID)
-	}
-}
-
-func TestFindFailedReviewForBranch_AllPass(t *testing.T) {
-	client := newMockDaemonClient()
-
-	client.
-		WithReview("commit1", 100, "No issues found.", false).
-		WithReview("commit2", 200, "No findings.", false)
-
-	commits := []string{"commit1", "commit2"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	if found != nil {
-		t.Errorf("expected no failed reviews, got job %d", found.JobID)
-	}
-}
-
-func TestFindFailedReviewForBranch_NoReviews(t *testing.T) {
-	client := newMockDaemonClient()
-	// No reviews set - GetReviewBySHA will return nil for all commits
-
-	commits := []string{"unreviewed1", "unreviewed2"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	if found != nil {
-		t.Errorf("expected nil when no reviews exist, got job %d", found.JobID)
-	}
-}
-
-func TestFindFailedReviewForBranch_MarksPassingAsAddressed(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Two passing reviews that are NOT yet addressed
-	client.
-		WithReview("commit1", 100, "No issues found.", false).
-		WithReview("commit2", 200, "No findings.", false)
-
-	commits := []string{"commit1", "commit2"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	// No failed reviews should be found
-	if found != nil {
-		t.Errorf("expected no failed reviews, got job %d", found.JobID)
-	}
-
-	// Both passing reviews should be marked as addressed (by job ID)
-	if len(client.addressedJobIDs) != 2 {
-		t.Errorf("expected 2 reviews to be marked addressed, got %d", len(client.addressedJobIDs))
-	}
-
-	// Verify the specific job IDs were marked
-	addressed := make(map[int64]bool)
-	for _, id := range client.addressedJobIDs {
-		addressed[id] = true
-	}
-	if !addressed[100] || !addressed[200] {
-		t.Errorf("expected jobs 100 and 200 to be marked addressed, got %v", client.addressedJobIDs)
-	}
-}
-
-func TestFindFailedReviewForBranch_MarksPassingBeforeFailure(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// First commit passes (unaddressed), second fails
-	client.
-		WithReview("commit1", 100, "No issues found.", false).
-		WithReview("commit2", 200, "Bug found.", false)
-
-	commits := []string{"commit1", "commit2"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	// Should return the failing review
-	if found == nil || found.JobID != 200 {
-		t.Errorf("expected failed review (job 200), got %v", found)
-	}
-
-	// Passing review before the failure should be marked addressed (by job ID)
-	if len(client.addressedJobIDs) != 1 {
-		t.Errorf("expected 1 review to be marked addressed, got %d", len(client.addressedJobIDs))
-	}
-	if len(client.addressedJobIDs) > 0 && client.addressedJobIDs[0] != 100 {
-		t.Errorf("expected job 100 to be marked addressed, got %v", client.addressedJobIDs)
-	}
-}
-
-func TestFindFailedReviewForBranch_DoesNotMarkAlreadyAddressed(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Passing review already addressed - should not be marked again
-	client.
-		WithReview("commit1", 100, "No issues found.", true).
-		WithReview("commit2", 200, "Bug found.", false)
-
-	commits := []string{"commit1", "commit2"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	if found == nil || found.JobID != 200 {
-		t.Errorf("expected failed review (job 200), got %v", found)
-	}
-
-	// Already-addressed review should NOT be marked again
-	if len(client.addressedJobIDs) != 0 {
-		t.Errorf("expected no reviews to be marked addressed (already addressed), got %v", client.addressedJobIDs)
+			if len(tt.wantAddressedIDs) > 0 {
+				if len(client.addressedJobIDs) != len(tt.wantAddressedIDs) {
+					t.Errorf("expected %d reviews to be marked addressed, got %d", len(tt.wantAddressedIDs), len(client.addressedJobIDs))
+				}
+				addressed := make(map[int64]bool)
+				for _, id := range client.addressedJobIDs {
+					addressed[id] = true
+				}
+				for _, id := range tt.wantAddressedIDs {
+					if !addressed[id] {
+						t.Errorf("expected job %d to be marked addressed, got %v", id, client.addressedJobIDs)
+					}
+				}
+			} else if len(client.addressedJobIDs) > 0 {
+				t.Errorf("expected no reviews to be marked addressed, got %v", client.addressedJobIDs)
+			}
+		})
 	}
 }
 
-func TestFindFailedReviewForBranch_MixedScenario(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Complex scenario:
-	// commit1: pass (unaddressed) - should be marked
-	// commit2: pass (already addressed) - should NOT be marked
-	// commit3: fail (addressed) - should be skipped
-	// commit4: pass (unaddressed) - should be marked
-	// commit5: fail (unaddressed) - should be returned
-	client.
-		WithReview("commit1", 100, "No issues found.", false).
-		WithReview("commit2", 200, "No issues.", true).
-		WithReview("commit3", 300, "Bug found.", true).
-		WithReview("commit4", 400, "No findings detected.", false).
-		WithReview("commit5", 500, "Critical error.", false)
-
-	commits := []string{"commit1", "commit2", "commit3", "commit4", "commit5"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
+func TestFindPendingJobForBranch(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(*mockDaemonClient)
+		commits   []string
+		wantJobID int64 // 0 if nil expected
+	}{
+		{
+			name: "finds running job",
+			setup: func(c *mockDaemonClient) {
+				c.WithJob(100, "commit1", storage.JobStatusDone).
+					WithJob(200, "commit2", storage.JobStatusRunning)
+			},
+			commits:   []string{"commit1", "commit2"},
+			wantJobID: 200,
+		},
+		{
+			name: "finds queued job",
+			setup: func(c *mockDaemonClient) {
+				c.WithJob(100, "commit1", storage.JobStatusQueued)
+			},
+			commits:   []string{"commit1"},
+			wantJobID: 100,
+		},
+		{
+			name: "no pending jobs",
+			setup: func(c *mockDaemonClient) {
+				c.WithJob(100, "commit1", storage.JobStatusDone).
+					WithJob(200, "commit2", storage.JobStatusDone)
+			},
+			commits:   []string{"commit1", "commit2"},
+			wantJobID: 0,
+		},
+		{
+			name:      "no jobs for commits",
+			setup:     func(c *mockDaemonClient) {},
+			commits:   []string{"unreviewed1", "unreviewed2"},
+			wantJobID: 0,
+		},
+		{
+			name: "oldest first",
+			setup: func(c *mockDaemonClient) {
+				c.WithJob(100, "commit1", storage.JobStatusRunning).
+					WithJob(200, "commit2", storage.JobStatusRunning)
+			},
+			commits:   []string{"commit1", "commit2"},
+			wantJobID: 100,
+		},
 	}
 
-	// Should return the first unaddressed failure (commit5)
-	if found == nil || found.JobID != 500 {
-		t.Errorf("expected failed review (job 500), got %v", found)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newMockDaemonClient()
+			tt.setup(client)
 
-	// commit1 and commit4 should be marked as addressed (unaddressed passing reviews)
-	if len(client.addressedJobIDs) != 2 {
-		t.Errorf("expected 2 reviews to be marked addressed, got %d: %v", len(client.addressedJobIDs), client.addressedJobIDs)
-	}
+			pending, err := findPendingJobForBranch(client, "/repo", tt.commits)
+			if err != nil {
+				t.Fatalf("findPendingJobForBranch failed: %v", err)
+			}
 
-	addressed := make(map[int64]bool)
-	for _, id := range client.addressedJobIDs {
-		addressed[id] = true
-	}
-	if !addressed[100] || !addressed[400] {
-		t.Errorf("expected jobs 100 and 400 to be marked addressed, got %v", client.addressedJobIDs)
-	}
-}
-
-func TestFindFailedReviewForBranch_StopsAtFirstFailure(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Multiple failures - should stop at the first (oldest) one
-	// and not process subsequent commits
-	client.
-		WithReview("commit1", 100, "Bug found.", false).
-		WithReview("commit2", 200, "No issues found.", false).
-		WithReview("commit3", 300, "Another bug.", false)
-
-	commits := []string{"commit1", "commit2", "commit3"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-	if err != nil {
-		t.Fatalf("findFailedReviewForBranch failed: %v", err)
-	}
-
-	// Should return the first failure
-	if found == nil || found.JobID != 100 {
-		t.Errorf("expected first failed review (job 100), got %v", found)
-	}
-
-	// No reviews should be marked as addressed (we stopped at first failure)
-	if len(client.addressedJobIDs) != 0 {
-		t.Errorf("expected no reviews to be marked addressed, got %v", client.addressedJobIDs)
-	}
-}
-
-func TestFindFailedReviewForBranch_MarkAddressedError(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// A passing review that will trigger MarkReviewAddressed
-	client.WithReview("commit1", 100, "No issues found.", false)
-
-	// Configure the mock to return an error when marking as addressed
-	client.markAddressedErr = fmt.Errorf("daemon connection failed")
-
-	commits := []string{"commit1"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-
-	// Should return an error and not continue processing
-	if err == nil {
-		t.Fatal("expected error when MarkReviewAddressed fails, got nil")
-	}
-	if found != nil {
-		t.Errorf("expected nil review when error occurs, got job %d", found.JobID)
-	}
-
-	// Error message should indicate which job failed
-	expectedMsg := "marking review (job 100) as addressed"
-	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("error should mention job ID, got: %v", err)
+			if tt.wantJobID == 0 {
+				if pending != nil {
+					t.Errorf("expected no pending jobs, got job %d", pending.ID)
+				}
+			} else {
+				if pending == nil {
+					t.Fatalf("expected to find a pending job (job %d)", tt.wantJobID)
+				}
+				if pending.ID != tt.wantJobID {
+					t.Errorf("expected job %d, got job %d", tt.wantJobID, pending.ID)
+				}
+			}
+		})
 	}
 }
 
-func TestFindFailedReviewForBranch_GetReviewBySHAError(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Configure the mock to return an error when fetching reviews
-	client.getReviewBySHAErr = fmt.Errorf("daemon connection failed")
-
-	commits := []string{"commit1", "commit2"}
-
-	found, err := findFailedReviewForBranch(client, commits, nil)
-
-	// Should return an error and not continue processing
-	if err == nil {
-		t.Fatal("expected error when GetReviewBySHA fails, got nil")
-	}
-	if found != nil {
-		t.Errorf("expected nil review when error occurs, got job %d", found.JobID)
-	}
-
-	// Error message should indicate which commit failed
-	if !strings.Contains(err.Error(), "commit1") {
-		t.Errorf("error should mention commit SHA, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "fetching review") {
-		t.Errorf("error should mention 'fetching review', got: %v", err)
-	}
-}
-
-func TestFindPendingJobForBranch_FindsRunningJob(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Jobs: first is done, second is running
-	client.
-		WithJob(100, "commit1", storage.JobStatusDone).
-		WithJob(200, "commit2", storage.JobStatusRunning)
-
-	commits := []string{"commit1", "commit2"}
-
-	pending, err := findPendingJobForBranch(client, "/repo", commits)
-	if err != nil {
-		t.Fatalf("findPendingJobForBranch failed: %v", err)
-	}
-
-	if pending == nil {
-		t.Fatal("expected to find a pending job")
-	}
-	if pending.ID != 200 {
-		t.Errorf("expected running job 200, got %d", pending.ID)
-	}
-}
-
-func TestFindPendingJobForBranch_FindsQueuedJob(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Jobs: first is queued
-	client.WithJob(100, "commit1", storage.JobStatusQueued)
-
-	commits := []string{"commit1"}
-
-	pending, err := findPendingJobForBranch(client, "/repo", commits)
-	if err != nil {
-		t.Fatalf("findPendingJobForBranch failed: %v", err)
-	}
-
-	if pending == nil {
-		t.Fatal("expected to find a pending job")
-	}
-	if pending.ID != 100 {
-		t.Errorf("expected queued job 100, got %d", pending.ID)
-	}
-}
-
-func TestFindPendingJobForBranch_NoPendingJobs(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// All jobs are done
-	client.
-		WithJob(100, "commit1", storage.JobStatusDone).
-		WithJob(200, "commit2", storage.JobStatusDone)
-
-	commits := []string{"commit1", "commit2"}
-
-	pending, err := findPendingJobForBranch(client, "/repo", commits)
-	if err != nil {
-		t.Fatalf("findPendingJobForBranch failed: %v", err)
-	}
-
-	if pending != nil {
-		t.Errorf("expected no pending jobs, got job %d", pending.ID)
-	}
-}
-
-func TestFindPendingJobForBranch_NoJobsForCommits(t *testing.T) {
-	client := newMockDaemonClient()
-	// No jobs in the map
-
-	commits := []string{"unreviewed1", "unreviewed2"}
-
-	pending, err := findPendingJobForBranch(client, "/repo", commits)
-	if err != nil {
-		t.Fatalf("findPendingJobForBranch failed: %v", err)
-	}
-
-	if pending != nil {
-		t.Errorf("expected nil when no jobs exist, got job %d", pending.ID)
-	}
-}
-
-func TestFindPendingJobForBranch_OldestFirst(t *testing.T) {
-	client := newMockDaemonClient()
-
-	// Two running jobs - should return oldest (commit1)
-	client.
-		WithJob(100, "commit1", storage.JobStatusRunning).
-		WithJob(200, "commit2", storage.JobStatusRunning)
-
-	commits := []string{"commit1", "commit2"}
-
-	pending, err := findPendingJobForBranch(client, "/repo", commits)
-	if err != nil {
-		t.Fatalf("findPendingJobForBranch failed: %v", err)
-	}
-
-	if pending == nil {
-		t.Fatal("expected to find a pending job")
-	}
-	// Should return oldest pending job (commit1 is first in list)
-	if pending.ID != 100 {
-		t.Errorf("expected oldest pending job 100, got %d", pending.ID)
-	}
-}
-
-func gitCommitFile(t *testing.T, repoDir string, runGit func(...string) string, filename, content, msg string) string {
+func chdirForTest(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(repoDir, filename), []byte(content), 0644); err != nil {
+	orig, err := os.Getwd()
+	if err != nil {
 		t.Fatal(err)
 	}
-	runGit("add", filename)
-	runGit("commit", "-m", msg)
-	return runGit("rev-parse", "HEAD")
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
 }
 
-// setupTestGitRepo creates a git repo for testing branch/--since behavior.
-// Returns the repo directory, base commit SHA, and a helper to run git commands.
-func setupTestGitRepo(t *testing.T) (repoDir string, baseSHA string, runGit func(args ...string) string) {
+func setupHookTestRepo(t *testing.T) *testutil.TestRepo {
 	t.Helper()
-
-	repoDir = t.TempDir()
-	runGit = func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repoDir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	// Use git init + symbolic-ref for compatibility with Git < 2.28 (which lacks -b flag)
-	runGit("init")
-	runGit("symbolic-ref", "HEAD", "refs/heads/main")
-	runGit("config", "user.email", "test@test.com")
-	runGit("config", "user.name", "Test")
-
-	baseSHA = gitCommitFile(t, repoDir, runGit, "base.txt", "base", "base commit")
-
-	return repoDir, baseSHA, runGit
+	repo := testutil.NewTestRepo(t)
+	repo.RunGit("init")
+	repo.SymbolicRef("HEAD", "refs/heads/main")
+	repo.Config("user.email", "test@test.com")
+	repo.Config("user.name", "Test")
+	repo.CommitFile("base.txt", "base", "base commit")
+	return repo
 }
 
 func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
@@ -766,20 +575,13 @@ func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, _ := setupTestGitRepo(t)
+	repo := setupHookTestRepo(t)
 
 	// Stay on main branch (don't create feature branch)
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
+	chdirForTest(t, repo.Root)
 
 	// Validating without --since on main should fail
-	_, _, _, _, err = validateRefineContext("", "", "")
+	_, _, _, _, err := validateRefineContext("", "", "")
 	if err == nil {
 		t.Fatal("expected error when validating on main without --since")
 	}
@@ -796,19 +598,13 @@ func TestValidateRefineContext_AllowsMainBranchWithSince(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, baseSHA, runGit := setupTestGitRepo(t)
+	repo := setupHookTestRepo(t)
+	baseSHA := repo.RevParse("HEAD")
 
 	// Add another commit on main
-	gitCommitFile(t, repoDir, runGit, "second.txt", "second", "second commit")
+	repo.CommitFile("second.txt", "second", "second commit")
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
+	chdirForTest(t, repo.Root)
 
 	// Validating with --since on main should pass
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
@@ -831,20 +627,14 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, baseSHA, runGit := setupTestGitRepo(t)
+	repo := setupHookTestRepo(t)
+	baseSHA := repo.RevParse("HEAD")
 
 	// Create feature branch with commits
-	runGit("checkout", "-b", "feature")
-	gitCommitFile(t, repoDir, runGit, "feature.txt", "feature", "feature commit")
+	repo.RunGit("checkout", "-b", "feature")
+	repo.CommitFile("feature.txt", "feature", "feature commit")
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
+	chdirForTest(t, repo.Root)
 
 	// --since should work on feature branch
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", baseSHA, "")
@@ -867,19 +657,12 @@ func TestValidateRefineContext_InvalidSinceRef(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, _ := setupTestGitRepo(t)
+	repo := setupHookTestRepo(t)
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
+	chdirForTest(t, repo.Root)
 
 	// Invalid --since ref should fail with clear error
-	_, _, _, _, err = validateRefineContext("", "nonexistent-ref-abc123", "")
+	_, _, _, _, err := validateRefineContext("", "nonexistent-ref-abc123", "")
 	if err == nil {
 		t.Fatal("expected error for invalid --since ref")
 	}
@@ -893,27 +676,21 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repoDir, _, runGit := setupTestGitRepo(t)
+	repo := setupHookTestRepo(t)
 
 	// Create a commit on a separate branch that diverges from main
-	runGit("checkout", "-b", "other-branch")
-	otherBranchSHA := gitCommitFile(t, repoDir, runGit, "other.txt", "other", "commit on other branch")
+	repo.RunGit("checkout", "-b", "other-branch")
+	repo.CommitFile("other.txt", "other", "commit on other branch")
+	otherBranchSHA := repo.RevParse("HEAD")
 
 	// Go back to main and create a different commit
-	runGit("checkout", "main")
-	gitCommitFile(t, repoDir, runGit, "main2.txt", "main2", "second commit on main")
+	repo.RunGit("checkout", "main")
+	repo.CommitFile("main2.txt", "main2", "second commit on main")
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
+	chdirForTest(t, repo.Root)
 
 	// Using --since with a commit from a different branch (not ancestor of HEAD) should fail
-	_, _, _, _, err = validateRefineContext("", otherBranchSHA, "")
+	_, _, _, _, err := validateRefineContext("", otherBranchSHA, "")
 	if err == nil {
 		t.Fatal("expected error when --since is not an ancestor of HEAD")
 	}
@@ -927,20 +704,14 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 		t.Skip("git not available")
 	}
 
-	repoDir, baseSHA, runGit := setupTestGitRepo(t)
+	repo := setupHookTestRepo(t)
+	baseSHA := repo.RevParse("HEAD")
 
 	// Create feature branch
-	runGit("checkout", "-b", "feature")
-	gitCommitFile(t, repoDir, runGit, "feature.txt", "feature", "feature commit")
+	repo.RunGit("checkout", "-b", "feature")
+	repo.CommitFile("feature.txt", "feature", "feature commit")
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repoDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origDir)
+	chdirForTest(t, repo.Root)
 
 	// Feature branch without --since should pass validation (uses merge-base)
 	repoPath, currentBranch, _, mergeBase, err := validateRefineContext("", "", "")
@@ -964,12 +735,7 @@ func TestCommitWithHookRetrySucceeds(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("init")
-	repo.SymbolicRef("HEAD", "refs/heads/main")
-	repo.Config("user.email", "test@test.com")
-	repo.Config("user.name", "Test")
-	repo.CommitFile("base.txt", "base", "base commit")
+	repo := setupHookTestRepo(t)
 
 	// Install a pre-commit hook that fails on the first 2 calls and
 	// succeeds on the 3rd+. The hook runs twice before a retry: once
@@ -1016,12 +782,7 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("init")
-	repo.SymbolicRef("HEAD", "refs/heads/main")
-	repo.Config("user.email", "test@test.com")
-	repo.Config("user.name", "Test")
-	repo.CommitFile("base.txt", "base", "base commit")
+	repo := setupHookTestRepo(t)
 
 	repo.WriteNamedHook("pre-commit",
 		"#!/bin/sh\necho 'always fails' >&2\nexit 1\n")
@@ -1046,12 +807,7 @@ func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("init")
-	repo.SymbolicRef("HEAD", "refs/heads/main")
-	repo.Config("user.email", "test@test.com")
-	repo.Config("user.name", "Test")
-	repo.CommitFile("base.txt", "base", "base commit")
+	repo := setupHookTestRepo(t)
 
 	// No pre-commit hook installed. Commit with no changes will fail
 	// for a non-hook reason ("nothing to commit").
@@ -1075,12 +831,7 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("init")
-	repo.SymbolicRef("HEAD", "refs/heads/main")
-	repo.Config("user.email", "test@test.com")
-	repo.Config("user.name", "Test")
-	repo.CommitFile("base.txt", "base", "base commit")
+	repo := setupHookTestRepo(t)
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
@@ -1116,12 +867,7 @@ func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("init")
-	repo.SymbolicRef("HEAD", "refs/heads/main")
-	repo.Config("user.email", "test@test.com")
-	repo.Config("user.name", "Test")
-	repo.CommitFile("base.txt", "base", "base commit")
+	repo := setupHookTestRepo(t)
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
