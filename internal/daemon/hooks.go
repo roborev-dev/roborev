@@ -65,6 +65,20 @@ func (hr *HookRunner) listen(eventCh <-chan Event) {
 		case <-hr.stopCh:
 			return
 		case req := <-hr.idleCh:
+			// Drain any currently queued events before acknowledging idle
+		drainLoop:
+			for {
+				select {
+				case event, ok := <-eventCh:
+					if !ok {
+						close(req)
+						return
+					}
+					hr.handleEvent(event)
+				default:
+					break drainLoop
+				}
+			}
 			close(req)
 		case event, ok := <-eventCh:
 			if !ok {

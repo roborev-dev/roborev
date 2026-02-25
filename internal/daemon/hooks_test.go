@@ -2,11 +2,13 @@ package daemon
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -719,5 +721,57 @@ func TestHandleEventNoLogWhenNoHooksMatch(t *testing.T) {
 
 	if strings.Contains(buf.String(), "fired") {
 		t.Errorf("expected no log output when no hooks match, got %q", buf.String())
+	}
+}
+
+func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
+	// A dedicated stress test proving WaitUntilIdle waits past the event-processing boundary
+	// under timing races and concurrent broadcasts.
+
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{
+			// We use a command that touches a file to verify execution.
+			// It incorporates {job_id} to ensure we can verify each individual event fired.
+			{Event: "review.completed", Command: touchCmd(filepath.Join(tmpDir, "job-{job_id}"))},
+		},
+	}
+
+	for i := range 50 {
+		hr, broadcaster := setupRunner(t, cfg)
+
+		var wg sync.WaitGroup
+		numEvents := 10
+
+		for j := range numEvents {
+			wg.Add(1)
+			go func(jobID int64) {
+				defer wg.Done()
+				broadcaster.Broadcast(Event{
+					Type:     "review.completed",
+					TS:       time.Now(),
+					JobID:    jobID,
+					Repo:     tmpDir,
+					RepoName: "test",
+					SHA:      "abc",
+					Agent:    "test",
+				})
+			}(int64(i*100 + j))
+		}
+
+		// Wait for all broadcasts to be enqueued
+		wg.Wait()
+
+		// WaitUntilIdle must wait until all hooks for queued events have finished
+		hr.WaitUntilIdle()
+
+		// Verify all hook marker files were created
+		for j := range numEvents {
+			markerFile := filepath.Join(tmpDir, fmt.Sprintf("job-%d", i*100+j))
+			if _, err := os.Stat(markerFile); os.IsNotExist(err) {
+				t.Fatalf("iteration %d: marker file for job %d was not created before WaitUntilIdle returned", i, i*100+j)
+			}
+		}
 	}
 }
