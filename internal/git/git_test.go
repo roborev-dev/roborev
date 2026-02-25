@@ -154,7 +154,7 @@ func TestIsUnbornHead(t *testing.T) {
 
 		// Corrupt the branch ref by writing a bogus SHA.
 		// Read the actual HEAD target to avoid hardcoding main/master.
-		headRef := repo.Run("symbolic-ref", "HEAD")
+		headRef := strings.TrimSpace(repo.Run("symbolic-ref", "HEAD"))
 		refPath := filepath.Join(repo.Dir, ".git", headRef)
 		if err := os.WriteFile(refPath, []byte("0000000000000000000000000000000000000000\n"), 0644); err != nil {
 			t.Fatal(err)
@@ -326,7 +326,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 		}
 
 		// Get the actual gitdir for the worktree to simulate rebase
-		worktreeGitDir := wt.Run("rev-parse", "--git-dir")
+		worktreeGitDir := strings.TrimSpace(wt.Run("rev-parse", "--git-dir"))
 		if !filepath.IsAbs(worktreeGitDir) {
 			worktreeGitDir = filepath.Join(wt.Dir, worktreeGitDir)
 		}
