@@ -100,8 +100,14 @@ func setJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.JobS
 	default:
 		t.Fatalf("unsupported status in helper: %v", status)
 	}
-	if _, err := db.Exec(query, jobID); err != nil {
+	res, err := db.Exec(query, jobID)
+	if err != nil {
 		t.Fatalf("failed to set job status: %v", err)
+	}
+	if rows, err := res.RowsAffected(); err != nil {
+		t.Fatalf("failed to get rows affected: %v", err)
+	} else if rows != 1 {
+		t.Fatalf("expected 1 row affected when setting job status, got %d", rows)
 	}
 }
 
