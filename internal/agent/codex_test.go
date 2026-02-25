@@ -4,9 +4,20 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func setupMockCodex(t *testing.T, unsafe bool, opts MockCLIOpts) (*CodexAgent, *MockCLIResult) {
+	withUnsafeAgents(t, unsafe)
+	mock := mockAgentCLI(t, opts)
+	return NewCodexAgent(mock.CmdPath), mock
+}
+
+func buildStream(events ...string) string {
+	return strings.Join(events, "\n") + "\n"
+}
 
 func TestCodex_buildArgs(t *testing.T) {
 	a := NewCodexAgent("codex")
@@ -39,13 +50,13 @@ func TestCodex_buildArgs(t *testing.T) {
 			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove)
 
 			for _, flag := range tt.wantFlags {
-				if !containsString(args, flag) {
+				if !slices.Contains(args, flag) {
 					t.Errorf("buildArgs() missing expected flag %q, args: %v", flag, args)
 				}
 			}
 
 			for _, flag := range tt.wantMissingFlags {
-				if containsString(args, flag) {
+				if slices.Contains(args, flag) {
 					t.Errorf("buildArgs() contains unexpected flag %q, args: %v", flag, args)
 				}
 			}
@@ -71,11 +82,9 @@ func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 }
 
 func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
-	withUnsafeAgents(t, true)
-
-	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage\"; exit 0; fi\nexit 0\n")
-
-	a := NewCodexAgent(cmdPath)
+	a, _ := setupMockCodex(t, true, MockCLIOpts{
+		HelpOutput: "usage",
+	})
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -86,9 +95,7 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 }
 
 func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
-	withUnsafeAgents(t, false)
-
-	mock := mockAgentCLI(t, MockCLIOpts{
+	a, mock := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput:  "usage " + codexAutoApproveFlag,
 		CaptureArgs: true,
 		StdoutLines: []string{
@@ -96,7 +103,6 @@ func TestCodexReviewAlwaysAddsAutoApprove(t *testing.T) {
 		},
 	})
 
-	a := NewCodexAgent(mock.CmdPath)
 	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -120,85 +126,77 @@ func TestCodexParseStreamJSON(t *testing.T) {
 	)
 
 	tests := []struct {
-		name        string
-		input       string
-		want        string
-		wantErr     error
-		checkWriter bool
-		extraCheck  func(*testing.T, error)
+		name              string
+		input             string
+		want              string
+		wantErr           error
+		notWantErr        error
+		wantWriterContent string
 	}{
 		{
 			name: "AggregatesAgentMessages",
-			input: strings.Join([]string{
+			input: buildStream(
 				jsonThreadStarted,
 				jsonTurnStarted,
 				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"First message"}}`,
 				`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Final review result"}}`,
 				jsonTurnCompleted,
-			}, "\n") + "\n",
+			),
 			want: "First message\nFinal review result",
 		},
 		{
 			name: "AggregatesByItemID",
-			input: strings.Join([]string{
+			input: buildStream(
 				`{"type":"item.updated","item":{"id":"item_1","type":"agent_message","text":"Draft"}}`,
 				`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Second message"}}`,
 				`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Final first message"}}`,
-			}, "\n") + "\n",
+			),
 			want: "Final first message\nSecond message",
 		},
 		{
 			name:  "EmptyStreamReturnsEmpty",
-			input: strings.Join([]string{jsonThreadStarted, jsonTurnStarted, `{"type":"turn.completed","usage":{}}`}, "\n") + "\n",
+			input: buildStream(jsonThreadStarted, jsonTurnStarted, `{"type":"turn.completed","usage":{}}`),
 			want:  "",
 		},
 		{
-			name:    "TurnFailedReturnsError",
-			input:   `{"type":"turn.failed","error":{"message":"something broke"}}` + "\n",
-			wantErr: errCodexStreamFailed,
-			extraCheck: func(t *testing.T, err error) {
-				if errors.Is(err, errNoCodexJSON) {
-					t.Errorf("got errNoCodexJSON, want only stream failure")
-				}
-			},
+			name:       "TurnFailedReturnsError",
+			input:      buildStream(`{"type":"turn.failed","error":{"message":"something broke"}}`),
+			wantErr:    errCodexStreamFailed,
+			notWantErr: errNoCodexJSON,
 		},
 		{
-			name:    "ErrorEventReturnsError",
-			input:   `{"type":"error","message":"stream error"}` + "\n",
-			wantErr: errCodexStreamFailed,
-			extraCheck: func(t *testing.T, err error) {
-				if errors.Is(err, errNoCodexJSON) {
-					t.Errorf("got errNoCodexJSON, want only stream failure")
-				}
-			},
+			name:       "ErrorEventReturnsError",
+			input:      buildStream(`{"type":"error","message":"stream error"}`),
+			wantErr:    errCodexStreamFailed,
+			notWantErr: errNoCodexJSON,
 		},
 		{
 			name: "IgnoresNonMessageItems",
-			input: strings.Join([]string{
+			input: buildStream(
 				`{"type":"item.started","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls"}}`,
 				`{"type":"item.completed","item":{"id":"cmd1","type":"command_execution","command":"bash -lc ls","exit_code":0}}`,
 				`{"type":"item.completed","item":{"id":"msg1","type":"agent_message","text":"Done reviewing."}}`,
-			}, "\n") + "\n",
+			),
 			want: "Done reviewing.",
 		},
 		{
-			name:        "StreamsToWriter",
-			input:       `{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}` + "\n",
-			want:        "hello",
-			checkWriter: true,
+			name:              "StreamsToWriter",
+			input:             buildStream(`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`),
+			want:              "hello",
+			wantWriterContent: "agent_message",
 		},
 		{
 			name:    "NoValidJSONReturnsError",
-			input:   "plain text output\nanother plain text line\n",
+			input:   buildStream("plain text output", "another plain text line"),
 			wantErr: errNoCodexJSON,
 		},
 		{
 			name: "JSONWithoutCodexEventTypeReturnsError",
-			input: strings.Join([]string{
+			input: buildStream(
 				`{"foo":"bar"}`,
 				`{"type":""}`,
 				`{"type":"foo.bar"}`,
-			}, "\n") + "\n",
+			),
 			wantErr: errNoCodexJSON,
 		},
 	}
@@ -206,10 +204,7 @@ func TestCodexParseStreamJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
-			var w *syncWriter
-			if tt.checkWriter {
-				w = newSyncWriter(&buf)
-			}
+			w := newSyncWriter(&buf) // Always initialize
 
 			result, err := a.parseStreamJSON(strings.NewReader(tt.input), w)
 			if tt.wantErr != nil {
@@ -219,32 +214,27 @@ func TestCodexParseStreamJSON(t *testing.T) {
 				if result != "" {
 					t.Errorf("parseStreamJSON() result = %q, want empty string on error", result)
 				}
-				if tt.extraCheck != nil {
-					tt.extraCheck(t, err)
-				}
-				return
-			}
-			if err != nil {
+			} else if err != nil {
 				t.Fatalf("parseStreamJSON() unexpected error: %v", err)
 			}
 
-			if result != tt.want {
+			if tt.notWantErr != nil && errors.Is(err, tt.notWantErr) {
+				t.Errorf("got unwanted error: %v", err)
+			}
+
+			if err == nil && result != tt.want {
 				t.Errorf("parseStreamJSON() = %q, want %q", result, tt.want)
 			}
 
-			if tt.checkWriter {
-				if !strings.Contains(buf.String(), "agent_message") {
-					t.Errorf("writer output = %q, expected to contain 'agent_message'", buf.String())
-				}
+			if tt.wantWriterContent != "" && !strings.Contains(buf.String(), tt.wantWriterContent) {
+				t.Errorf("writer output = %q, expected to contain %q", buf.String(), tt.wantWriterContent)
 			}
 		})
 	}
 }
 
 func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
-	withUnsafeAgents(t, false)
-
-	mock := mockAgentCLI(t, MockCLIOpts{
+	a, mock := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput:   "usage " + codexAutoApproveFlag,
 		CaptureStdin: true,
 		StdoutLines: []string{
@@ -252,7 +242,6 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 		},
 	})
 
-	a := NewCodexAgent(mock.CmdPath)
 	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
 	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -268,11 +257,11 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 }
 
 func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
-	withUnsafeAgents(t, false)
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput:  "usage " + codexAutoApproveFlag,
+		StdoutLines: []string{"plain text output"},
+	})
 
-	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage "+codexAutoApproveFlag+"\"; exit 0; fi\necho \"plain text output\"\nexit 0\n")
-
-	a := NewCodexAgent(cmdPath)
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
