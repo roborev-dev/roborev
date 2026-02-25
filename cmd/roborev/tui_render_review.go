@@ -1,0 +1,469 @@
+package main
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	xansi "github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
+	"github.com/roborev-dev/roborev/internal/version"
+)
+
+func (m tuiModel) renderReviewView() string {
+	var b strings.Builder
+
+	review := m.currentReview
+
+	// Build title string and compute its length for line calculation
+	var title string
+	var titleLen int
+	var locationLineLen int
+	if review.Job != nil {
+		ref := shortJobRef(*review.Job)
+		idStr := fmt.Sprintf("#%d ", review.Job.ID)
+		// Use cached display name, falling back to RepoName, then basename of RepoPath
+		defaultName := review.Job.RepoName
+		if defaultName == "" && review.Job.RepoPath != "" {
+			defaultName = filepath.Base(review.Job.RepoPath)
+		}
+		repoStr := m.getDisplayName(review.Job.RepoPath, defaultName)
+
+		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
+
+		title = fmt.Sprintf("Review %s%s (%s)", idStr, repoStr, agentStr)
+		titleLen = runewidth.StringWidth(title)
+
+		b.WriteString(tuiTitleStyle.Render(title))
+		b.WriteString("\x1b[K") // Clear to end of line
+
+		// Show location line: repo path (or identity/name), git ref, and branch
+		b.WriteString("\n")
+		locationLine := review.Job.RepoPath
+		if locationLine == "" {
+			// No local path - use repo name/identity as fallback
+			locationLine = review.Job.RepoName
+		}
+		if locationLine != "" {
+			locationLine += " " + ref
+		} else {
+			locationLine = ref
+		}
+		if m.currentBranch != "" {
+			locationLine += " on " + m.currentBranch
+		}
+		locationLineLen = runewidth.StringWidth(locationLine)
+		b.WriteString(tuiStatusStyle.Render(locationLine))
+		b.WriteString("\x1b[K") // Clear to end of line
+
+		// Show verdict and addressed status on next line (skip verdict for fix jobs)
+		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
+		if hasVerdict || review.Addressed {
+			b.WriteString("\n")
+			if hasVerdict {
+				v := *review.Job.Verdict
+				if v == "P" {
+					b.WriteString(tuiPassStyle.Render("Verdict: Pass"))
+				} else {
+					b.WriteString(tuiFailStyle.Render("Verdict: Fail"))
+				}
+			}
+			// Show [ADDRESSED] with distinct color (after verdict if present)
+			if review.Addressed {
+				if hasVerdict {
+					b.WriteString(" ")
+				}
+				b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
+			}
+			b.WriteString("\x1b[K") // Clear to end of line
+		}
+		b.WriteString("\n")
+	} else {
+		title = "Review"
+		titleLen = len(title)
+		b.WriteString(tuiTitleStyle.Render(title))
+		b.WriteString("\x1b[K\n") // Clear to end of line
+	}
+
+	// Build content: review output + responses
+	var content strings.Builder
+	content.WriteString(review.Output)
+
+	// Append responses if any
+	if len(m.currentResponses) > 0 {
+		content.WriteString("\n\n--- Comments ---\n")
+		for _, r := range m.currentResponses {
+			timestamp := r.CreatedAt.Format("Jan 02 15:04")
+			fmt.Fprintf(&content, "\n[%s] %s:\n", timestamp, r.Responder)
+			content.WriteString(r.Response)
+			content.WriteString("\n")
+		}
+	}
+
+	// Render markdown content with glamour (cached), falling back to plain text wrapping.
+	// wrapWidth caps at 100 for readability; maxWidth uses actual terminal width for truncation.
+	maxWidth := max(20, m.width-4)
+	wrapWidth := min(maxWidth, 100)
+	contentStr := content.String()
+	var lines []string
+	if m.mdCache != nil {
+		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, maxWidth, review.ID)
+	} else {
+		lines = sanitizeLines(wrapText(contentStr, wrapWidth))
+	}
+
+	// Compute title line count based on actual title length
+	titleLines := 1
+	if m.width > 0 && titleLen > m.width {
+		titleLines = (titleLen + m.width - 1) / m.width
+	}
+
+	// Help table rows
+	reviewHelpRows := [][]helpItem{
+		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "addressed"}, {"y", "copy"}, {"F", "fix"}},
+		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
+	}
+	helpLines := len(reflowHelpRows(reviewHelpRows, m.width))
+
+	// Compute location line count (repo path + ref + branch can wrap)
+	locationLines := 0
+	if review.Job != nil {
+		locationLines = 1
+		if m.width > 0 && locationLineLen > m.width {
+			locationLines = (locationLineLen + m.width - 1) / m.width
+		}
+	}
+
+	// headerHeight = title + location line + status line (1) + help + verdict/addressed (0|1)
+	headerHeight := titleLines + locationLines + 1 + helpLines
+	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
+	if hasVerdict || review.Addressed {
+		headerHeight++ // Add 1 for verdict/addressed line
+	}
+	panelReserve := 0
+	if m.reviewFixPanelOpen {
+		panelReserve = 5 // label + top border + input line + bottom border + help line
+	}
+	visibleLines := max(m.height-headerHeight-panelReserve, 1)
+
+	// Clamp scroll position to valid range
+	maxScroll := max(len(lines)-visibleLines, 0)
+	if m.mdCache != nil {
+		m.mdCache.lastReviewMaxScroll = maxScroll
+	}
+	start := max(min(m.reviewScroll, maxScroll), 0)
+	end := min(start+visibleLines, len(lines))
+
+	linesWritten := 0
+	for i := start; i < end; i++ {
+		line := lines[i]
+		if m.width > 0 {
+			line = xansi.Truncate(line, m.width, "")
+		}
+		b.WriteString(line)
+		b.WriteString("\x1b[K\n") // Clear to end of line before newline
+		linesWritten++
+	}
+
+	// Pad with clear-to-end-of-line sequences to prevent ghost text
+	for linesWritten < visibleLines {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
+	}
+
+	// Render inline fix panel when open
+	if m.reviewFixPanelOpen {
+		innerWidth := max(m.width-4, 18) // box inner width; total visual width = innerWidth+2 (borders)
+
+		if m.reviewFixPanelFocused {
+			// Label line
+			label := "Fix: enter instructions (or leave blank for default)"
+			if runewidth.StringWidth(label) > m.width-1 {
+				label = runewidth.Truncate(label, m.width-1, "")
+			}
+			b.WriteString(label)
+			b.WriteString("\x1b[K\n")
+
+			// Input content — show tail so cursor always visible
+			inputDisplay := m.fixPromptText
+			maxInputLen := innerWidth - 3 // " > " (3) + "_" (1) = 4 overhead, but Width handles right padding
+			if runewidth.StringWidth(inputDisplay) > maxInputLen {
+				runes := []rune(inputDisplay)
+				for runewidth.StringWidth(string(runes)) > maxInputLen {
+					runes = runes[1:]
+				}
+				inputDisplay = string(runes)
+			}
+			content := fmt.Sprintf(" > %s_", inputDisplay)
+			boxStyle := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.AdaptiveColor{Light: "125", Dark: "205"}). // magenta/pink (active)
+				Width(innerWidth)
+			for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
+				b.WriteString(line)
+				b.WriteString("\x1b[K\n")
+			}
+			b.WriteString(tuiHelpStyle.Render("tab: scroll review | enter: submit | esc: cancel"))
+			b.WriteString("\x1b[K\n")
+		} else {
+			// Label line (dimmed)
+			b.WriteString(tuiStatusStyle.Render("Fix (Tab to focus)"))
+			b.WriteString("\x1b[K\n")
+
+			inputDisplay := m.fixPromptText
+			if inputDisplay == "" {
+				inputDisplay = "(blank = default)"
+			}
+			if runewidth.StringWidth(inputDisplay) > innerWidth-2 {
+				inputDisplay = runewidth.Truncate(inputDisplay, innerWidth-2, "")
+			}
+			content := " " + inputDisplay
+			boxStyle := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}). // gray (inactive)
+				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
+				Width(innerWidth)
+			for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
+				b.WriteString(tuiStatusStyle.Render(line))
+				b.WriteString("\x1b[K\n")
+			}
+			b.WriteString(tuiHelpStyle.Render("F: fix | tab: focus fix panel"))
+			b.WriteString("\x1b[K\n")
+		}
+	}
+
+	// Status line: version mismatch (persistent) takes priority, then flash message, then scroll indicator
+	if m.versionMismatch {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
+		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
+	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewReview {
+		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
+		b.WriteString(flashStyle.Render(m.flashMessage))
+	} else if len(lines) > visibleLines {
+		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
+	b.WriteString("\x1b[K\n") // Clear status line
+
+	b.WriteString(renderHelpTable(reviewHelpRows, m.width))
+	b.WriteString("\x1b[K")
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
+
+	return b.String()
+}
+func (m tuiModel) renderPromptView() string {
+	var b strings.Builder
+
+	review := m.currentReview
+	if review.Job != nil {
+		ref := shortJobRef(*review.Job)
+		idStr := fmt.Sprintf("#%d ", review.Job.ID)
+		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
+		title := fmt.Sprintf("Prompt %s%s (%s)", idStr, ref, agentStr)
+		b.WriteString(tuiTitleStyle.Render(title))
+	} else {
+		b.WriteString(tuiTitleStyle.Render("Prompt"))
+	}
+	b.WriteString("\x1b[K\n") // Clear to end of line
+
+	// Show command line (computed from job params, dimmed, below title, truncated to fit)
+	headerLines := 1
+	if cmdLine := commandLineForJob(review.Job); cmdLine != "" {
+		cmdText := "Command: " + cmdLine
+		if m.width > 0 && runewidth.StringWidth(cmdText) > m.width {
+			cmdText = runewidth.Truncate(cmdText, m.width, "…")
+		}
+		b.WriteString(tuiStatusStyle.Render(cmdText))
+		b.WriteString("\x1b[K\n")
+		headerLines++
+	}
+
+	// Render markdown content with glamour (cached), falling back to plain text wrapping.
+	// wrapWidth caps at 100 for readability; maxWidth uses actual terminal width for truncation.
+	maxWidth := max(20, m.width-4)
+	wrapWidth := min(maxWidth, 100)
+	var lines []string
+	if m.mdCache != nil {
+		lines = m.mdCache.getPromptLines(review.Prompt, wrapWidth, maxWidth, review.ID)
+	} else {
+		lines = sanitizeLines(wrapText(review.Prompt, wrapWidth))
+	}
+
+	// Reserve: title + command(0-1) + scroll indicator(1) + help(N) + margin(1)
+	promptHelpRows := [][]helpItem{
+		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"p", "toggle prompt/review"}, {"?", "commands"}, {"esc", "back"}},
+	}
+	promptHelpLines := len(reflowHelpRows(promptHelpRows, m.width))
+	visibleLines := max(m.height-(2+promptHelpLines)-headerLines, 1)
+
+	// Clamp scroll position to valid range
+	maxScroll := max(len(lines)-visibleLines, 0)
+	if m.mdCache != nil {
+		m.mdCache.lastPromptMaxScroll = maxScroll
+	}
+	start := max(min(m.promptScroll, maxScroll), 0)
+	end := min(start+visibleLines, len(lines))
+
+	linesWritten := 0
+	for i := start; i < end; i++ {
+		line := lines[i]
+		if m.width > 0 {
+			line = xansi.Truncate(line, m.width, "")
+		}
+		b.WriteString(line)
+		b.WriteString("\x1b[K\n") // Clear to end of line before newline
+		linesWritten++
+	}
+
+	// Pad with clear-to-end-of-line sequences to prevent ghost text
+	for linesWritten < visibleLines {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
+	}
+
+	// Scroll indicator
+	if len(lines) > visibleLines {
+		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
+	b.WriteString("\x1b[K\n") // Clear scroll indicator line
+
+	b.WriteString(renderHelpTable(promptHelpRows, m.width))
+	b.WriteString("\x1b[K") // Clear help line
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
+
+	return b.String()
+}
+func (m tuiModel) renderRespondView() string {
+	var b strings.Builder
+
+	title := "Add Comment"
+	if m.commentCommit != "" {
+		title = fmt.Sprintf("Add Comment (%s)", m.commentCommit)
+	}
+	b.WriteString(tuiTitleStyle.Render(title))
+	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
+
+	b.WriteString(tuiStatusStyle.Render("Enter your comment (e.g., \"This is a known issue, can be ignored\")"))
+	b.WriteString("\x1b[K\n\x1b[K\n")
+
+	// Simple text box with border
+	boxWidth := max(m.width-4, 20)
+
+	b.WriteString("+-" + strings.Repeat("-", boxWidth-2) + "-+\n")
+
+	// Wrap text display to box width
+	textLinesWritten := 0
+	maxTextLines := max(
+		// Reserve space for chrome
+		m.height-10, 3)
+
+	if m.commentText == "" {
+		// Show placeholder (styled, but we pad manually to avoid ANSI issues)
+		placeholder := "Type your comment..."
+		padded := placeholder + strings.Repeat(" ", boxWidth-2-len(placeholder))
+		b.WriteString("| " + tuiStatusStyle.Render(padded) + " |\x1b[K\n")
+		textLinesWritten++
+	} else {
+		lines := strings.SplitSeq(m.commentText, "\n")
+		for line := range lines {
+			if textLinesWritten >= maxTextLines {
+				break
+			}
+			// Expand tabs to spaces (4-space tabs) for consistent width calculation
+			line = strings.ReplaceAll(line, "\t", "    ")
+			// Truncate lines that are too long (use visual width for wide characters)
+			line = runewidth.Truncate(line, boxWidth-2, "")
+			// Pad based on visual width, not rune count
+			padding := max(boxWidth-2-runewidth.StringWidth(line), 0)
+			fmt.Fprintf(&b, "| %s%s |\x1b[K\n", line, strings.Repeat(" ", padding))
+			textLinesWritten++
+		}
+	}
+
+	// Pad with empty lines if needed
+	for textLinesWritten < 3 {
+		fmt.Fprintf(&b, "| %-*s |\x1b[K\n", boxWidth-2, "")
+		textLinesWritten++
+	}
+
+	b.WriteString("+-" + strings.Repeat("-", boxWidth-2) + "-+\x1b[K\n")
+
+	// Pad remaining space
+	linesWritten := 6 + textLinesWritten // title, blank, help, blank, top border, bottom border
+	for linesWritten < m.height-1 {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
+	}
+
+	b.WriteString(renderHelpTable([][]helpItem{
+		{{"↵", "submit"}, {"esc", "cancel"}},
+	}, m.width))
+	b.WriteString("\x1b[K")
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
+
+	return b.String()
+}
+func (m tuiModel) renderCommitMsgView() string {
+	var b strings.Builder
+
+	b.WriteString(tuiTitleStyle.Render("Commit Message"))
+	b.WriteString("\x1b[K\n") // Clear to end of line
+
+	if m.commitMsgContent == "" {
+		b.WriteString(tuiStatusStyle.Render("Loading commit message..."))
+		b.WriteString("\x1b[K\n")
+		// Pad to fill terminal
+		linesWritten := 2
+		for linesWritten < m.height-1 {
+			b.WriteString("\x1b[K\n")
+			linesWritten++
+		}
+		b.WriteString(tuiHelpStyle.Render("esc/q: back"))
+		b.WriteString("\x1b[K")
+		b.WriteString("\x1b[J")
+		return b.String()
+	}
+
+	// Wrap text to terminal width minus padding
+	wrapWidth := max(20, min(m.width-4, 100))
+	lines := wrapText(m.commitMsgContent, wrapWidth)
+
+	// Reserve: title(1) + scroll indicator(1) + help(1) + margin(1)
+	visibleLines := max(m.height-4, 1)
+
+	// Clamp scroll position to valid range
+	maxScroll := max(len(lines)-visibleLines, 0)
+	start := max(min(m.commitMsgScroll, maxScroll), 0)
+	end := min(start+visibleLines, len(lines))
+
+	linesWritten := 0
+	for i := start; i < end; i++ {
+		b.WriteString(lines[i])
+		b.WriteString("\x1b[K\n") // Clear to end of line before newline
+		linesWritten++
+	}
+
+	// Pad with clear-to-end-of-line sequences to prevent ghost text
+	for linesWritten < visibleLines {
+		b.WriteString("\x1b[K\n")
+		linesWritten++
+	}
+
+	// Scroll indicator
+	if len(lines) > visibleLines {
+		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
+		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+	}
+	b.WriteString("\x1b[K\n") // Clear scroll indicator line
+
+	b.WriteString(renderHelpTable([][]helpItem{
+		{{"↑/↓", "scroll"}, {"esc/q", "back"}},
+	}, m.width))
+	b.WriteString("\x1b[K") // Clear help line
+	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
+
+	return b.String()
+}
