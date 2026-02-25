@@ -97,6 +97,10 @@ func setJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.JobS
 		query = `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`
 	case storage.JobStatusDone:
 		query = `UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
+	case storage.JobStatusFailed:
+		query = `UPDATE review_jobs SET status = 'failed', started_at = datetime('now'), finished_at = datetime('now'), error = 'test error' WHERE id = ?`
+	case storage.JobStatusCanceled:
+		query = `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`
 	default:
 		t.Fatalf("unsupported status in helper: %v", status)
 	}
@@ -257,21 +261,17 @@ func TestHandleListRepos(t *testing.T) {
 
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response struct {
+			Repos      []struct{ Name string } `json:"repos"`
+			TotalCount int                     `json:"total_count"`
+		}
 		testutil.DecodeJSON(t, w, &response)
 
-		// repos can be nil when empty
-		var reposLen int
-		if repos, ok := response["repos"].([]any); ok && repos != nil {
-			reposLen = len(repos)
+		if len(response.Repos) != 0 {
+			t.Errorf("Expected 0 repos, got %d", len(response.Repos))
 		}
-		totalCount := int(response["total_count"].(float64))
-
-		if reposLen != 0 {
-			t.Errorf("Expected 0 repos, got %d", reposLen)
-		}
-		if totalCount != 0 {
-			t.Errorf("Expected total_count 0, got %d", totalCount)
+		if response.TotalCount != 0 {
+			t.Errorf("Expected total_count 0, got %d", response.TotalCount)
 		}
 	})
 
@@ -285,30 +285,28 @@ func TestHandleListRepos(t *testing.T) {
 
 		server.handleListRepos(w, req)
 
-		if w.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-		}
+		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response struct {
+			Repos []struct {
+				Name  string `json:"name"`
+				Count int    `json:"count"`
+			} `json:"repos"`
+			TotalCount int `json:"total_count"`
+		}
 		testutil.DecodeJSON(t, w, &response)
 
-		repos := response["repos"].([]any)
-		totalCount := int(response["total_count"].(float64))
-
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos, got %d", len(repos))
+		if len(response.Repos) != 2 {
+			t.Errorf("Expected 2 repos, got %d", len(response.Repos))
 		}
-		if totalCount != 5 {
-			t.Errorf("Expected total_count 5, got %d", totalCount)
+		if response.TotalCount != 5 {
+			t.Errorf("Expected total_count 5, got %d", response.TotalCount)
 		}
 
-		// Verify individual repo counts
 		repoMap := make(map[string]int)
-		for _, r := range repos {
-			repoObj := r.(map[string]any)
-			repoMap[repoObj["name"].(string)] = int(repoObj["count"].(float64))
+		for _, r := range response.Repos {
+			repoMap[r.Name] = r.Count
 		}
-
 		if repoMap["repo1"] != 3 {
 			t.Errorf("Expected repo1 count 3, got %d", repoMap["repo1"])
 		}
@@ -343,64 +341,53 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	setJobBranch(t, db, 5, "main")
 	setJobBranch(t, db, 3, "feature")
 
+	type reposResponse struct {
+		Repos      []struct{ Name string } `json:"repos"`
+		TotalCount int                     `json:"total_count"`
+	}
+
 	t.Run("filter by main branch", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=main", nil)
 		w := httptest.NewRecorder()
-
 		server.handleListRepos(w, req)
-
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
-
-		repos := response["repos"].([]any)
-		totalCount := int(response["total_count"].(float64))
-
-		if len(repos) != 2 {
-			t.Errorf("Expected 2 repos with main branch, got %d", len(repos))
+		if len(response.Repos) != 2 {
+			t.Errorf("Expected 2 repos with main branch, got %d", len(response.Repos))
 		}
-		if totalCount != 4 {
-			t.Errorf("Expected total_count 4, got %d", totalCount)
+		if response.TotalCount != 4 {
+			t.Errorf("Expected total_count 4, got %d", response.TotalCount)
 		}
 	})
 
 	t.Run("filter by feature branch", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=feature", nil)
 		w := httptest.NewRecorder()
-
 		server.handleListRepos(w, req)
-
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
-
-		repos := response["repos"].([]any)
-		totalCount := int(response["total_count"].(float64))
-
-		if len(repos) != 1 {
-			t.Errorf("Expected 1 repo with feature branch, got %d", len(repos))
+		if len(response.Repos) != 1 {
+			t.Errorf("Expected 1 repo with feature branch, got %d", len(response.Repos))
 		}
-		if totalCount != 1 {
-			t.Errorf("Expected total_count 1, got %d", totalCount)
+		if response.TotalCount != 1 {
+			t.Errorf("Expected total_count 1, got %d", response.TotalCount)
 		}
 	})
 
 	t.Run("nonexistent branch returns empty", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=nonexistent", nil)
 		w := httptest.NewRecorder()
-
 		server.handleListRepos(w, req)
-
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response reposResponse
 		testutil.DecodeJSON(t, w, &response)
-
-		totalCount := int(response["total_count"].(float64))
-		if totalCount != 0 {
-			t.Errorf("Expected total_count 0 for nonexistent branch, got %d", totalCount)
+		if response.TotalCount != 0 {
+			t.Errorf("Expected total_count 0 for nonexistent branch, got %d", response.TotalCount)
 		}
 	})
 }
@@ -419,29 +406,28 @@ func TestHandleListBranches(t *testing.T) {
 	setJobBranch(t, db, 3, "feature")
 	// job 5 left empty
 
+	type branchesResponse struct {
+		Branches       []json.RawMessage `json:"branches"`
+		TotalCount     int               `json:"total_count"`
+		NullsRemaining int               `json:"nulls_remaining"`
+	}
+
 	t.Run("list all branches", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/branches", nil)
 		w := httptest.NewRecorder()
-
 		server.handleListBranches(w, req)
-
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response branchesResponse
 		testutil.DecodeJSON(t, w, &response)
-
-		branches := response["branches"].([]any)
-		totalCount := int(response["total_count"].(float64))
-		nullsRemaining := int(response["nulls_remaining"].(float64))
-
-		if len(branches) != 3 {
-			t.Errorf("Expected 3 branches, got %d", len(branches))
+		if len(response.Branches) != 3 {
+			t.Errorf("Expected 3 branches, got %d", len(response.Branches))
 		}
-		if totalCount != 5 {
-			t.Errorf("Expected total_count 5, got %d", totalCount)
+		if response.TotalCount != 5 {
+			t.Errorf("Expected total_count 5, got %d", response.TotalCount)
 		}
-		if nullsRemaining != 1 {
-			t.Errorf("Expected nulls_remaining 1, got %d", nullsRemaining)
+		if response.NullsRemaining != 1 {
+			t.Errorf("Expected nulls_remaining 1, got %d", response.NullsRemaining)
 		}
 	})
 
@@ -449,22 +435,16 @@ func TestHandleListBranches(t *testing.T) {
 		repoPath := filepath.Join(tmpDir, "repo1")
 		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repoPath, nil)
 		w := httptest.NewRecorder()
-
 		server.handleListBranches(w, req)
-
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response branchesResponse
 		testutil.DecodeJSON(t, w, &response)
-
-		branches := response["branches"].([]any)
-		totalCount := int(response["total_count"].(float64))
-
-		if len(branches) != 2 {
-			t.Errorf("Expected 2 branches for repo1, got %d", len(branches))
+		if len(response.Branches) != 2 {
+			t.Errorf("Expected 2 branches for repo1, got %d", len(response.Branches))
 		}
-		if totalCount != 3 {
-			t.Errorf("Expected total_count 3 for repo1, got %d", totalCount)
+		if response.TotalCount != 3 {
+			t.Errorf("Expected total_count 3 for repo1, got %d", response.TotalCount)
 		}
 	})
 
@@ -473,46 +453,32 @@ func TestHandleListBranches(t *testing.T) {
 		repo2Path := filepath.Join(tmpDir, "repo2")
 		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repo1Path+"&repo="+repo2Path, nil)
 		w := httptest.NewRecorder()
-
 		server.handleListBranches(w, req)
-
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response branchesResponse
 		testutil.DecodeJSON(t, w, &response)
-
-		branches := response["branches"].([]any)
-		totalCount := int(response["total_count"].(float64))
-
-		if len(branches) != 3 {
-			t.Errorf("Expected 3 branches for both repos, got %d", len(branches))
+		if len(response.Branches) != 3 {
+			t.Errorf("Expected 3 branches for both repos, got %d", len(response.Branches))
 		}
-		if totalCount != 5 {
-			t.Errorf("Expected total_count 5 for both repos, got %d", totalCount)
+		if response.TotalCount != 5 {
+			t.Errorf("Expected total_count 5 for both repos, got %d", response.TotalCount)
 		}
 	})
 
 	t.Run("empty repo param treated as no filter", func(t *testing.T) {
-		// Empty repo param should be ignored, returning all branches
 		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo=", nil)
 		w := httptest.NewRecorder()
-
 		server.handleListBranches(w, req)
-
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 
-		var response map[string]any
+		var response branchesResponse
 		testutil.DecodeJSON(t, w, &response)
-
-		branches := response["branches"].([]any)
-		totalCount := int(response["total_count"].(float64))
-
-		// Should return all 3 branches and 5 jobs, not zero
-		if len(branches) != 3 {
-			t.Errorf("Expected 3 branches (empty repo = no filter), got %d", len(branches))
+		if len(response.Branches) != 3 {
+			t.Errorf("Expected 3 branches (empty repo = no filter), got %d", len(response.Branches))
 		}
-		if totalCount != 5 {
-			t.Errorf("Expected total_count 5 (empty repo = no filter), got %d", totalCount)
+		if response.TotalCount != 5 {
+			t.Errorf("Expected total_count 5 (empty repo = no filter), got %d", response.TotalCount)
 		}
 	})
 
@@ -1772,15 +1738,17 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 			t.Errorf("Expected status 200 for skipped enqueue, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var response map[string]any
+		var response struct {
+			Skipped bool   `json:"skipped"`
+			Reason  string `json:"reason"`
+		}
 		testutil.DecodeJSON(t, w, &response)
 
-		if skipped, ok := response["skipped"].(bool); !ok || !skipped {
-			t.Errorf("Expected skipped=true, got %v", response)
+		if !response.Skipped {
+			t.Error("Expected skipped=true")
 		}
-
-		if reason, ok := response["reason"].(string); !ok || !strings.Contains(reason, "wip-feature") {
-			t.Errorf("Expected reason to mention branch name, got %v", response)
+		if !strings.Contains(response.Reason, "wip-feature") {
+			t.Errorf("Expected reason to mention branch name, got %q", response.Reason)
 		}
 
 		// Verify no job was created
@@ -1879,11 +1847,13 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 			t.Errorf("Expected status 413, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var response map[string]any
+		var response struct {
+			Error string `json:"error"`
+		}
 		testutil.DecodeJSON(t, w, &response)
 
-		if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "too large") {
-			t.Errorf("Expected error about body size, got %v", response)
+		if !strings.Contains(response.Error, "too large") {
+			t.Errorf("Expected error about body size, got %q", response.Error)
 		}
 	})
 
@@ -1904,11 +1874,13 @@ func TestHandleEnqueueBodySizeLimit(t *testing.T) {
 			t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var response map[string]any
+		var response struct {
+			Error string `json:"error"`
+		}
 		testutil.DecodeJSON(t, w, &response)
 
-		if errMsg, ok := response["error"].(string); !ok || !strings.Contains(errMsg, "diff_content required") {
-			t.Errorf("Expected error about diff_content required, got %v", response)
+		if !strings.Contains(response.Error, "diff_content required") {
+			t.Errorf("Expected error about diff_content required, got %q", response.Error)
 		}
 	})
 
@@ -2285,14 +2257,14 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name       string
-		setupQuery string // SQL to set job to specific state
+		name   string
+		status storage.JobStatus // empty string means keep as queued
 	}{
 		{"queued job", ""},
-		{"running job", `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`},
-		{"completed job", `UPDATE review_jobs SET status = 'done', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`},
-		{"failed job", `UPDATE review_jobs SET status = 'failed', started_at = datetime('now'), finished_at = datetime('now'), error = 'test error' WHERE id = ?`},
-		{"canceled job", `UPDATE review_jobs SET status = 'canceled', started_at = datetime('now'), finished_at = datetime('now') WHERE id = ?`},
+		{"running job", storage.JobStatusRunning},
+		{"completed job", storage.JobStatusDone},
+		{"failed job", storage.JobStatusFailed},
+		{"canceled job", storage.JobStatusCanceled},
 	}
 
 	for _, tc := range testCases {
@@ -2304,17 +2276,15 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 			}
 
 			// Set job to desired state
-			if tc.setupQuery != "" {
-				if _, err := db.Exec(tc.setupQuery, job.ID); err != nil {
-					t.Fatalf("Failed to set job state: %v", err)
-				}
+			if tc.status != "" {
+				setJobStatus(t, db, job.ID, tc.status)
 			}
 
 			// Add comment via API
-			reqData := map[string]any{
-				"job_id":    job.ID,
-				"commenter": "test-user",
-				"comment":   "Test comment for " + tc.name,
+			reqData := AddCommentRequest{
+				JobID:     job.ID,
+				Commenter: "test-user",
+				Comment:   "Test comment for " + tc.name,
 			}
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 			w := httptest.NewRecorder()
@@ -2340,10 +2310,10 @@ func TestHandleAddCommentToJobStates(t *testing.T) {
 func TestHandleAddCommentToNonExistentJob(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
-	reqData := map[string]any{
-		"job_id":    99999,
-		"commenter": "test-user",
-		"comment":   "This should fail",
+	reqData := AddCommentRequest{
+		JobID:     99999,
+		Commenter: "test-user",
+		Comment:   "This should fail",
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 	w := httptest.NewRecorder()
@@ -2375,10 +2345,10 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 	}
 
 	// Add comment - should succeed even without a review
-	reqData := map[string]any{
-		"job_id":    job.ID,
-		"commenter": "test-user",
-		"comment":   "Comment on in-progress job without review",
+	reqData := AddCommentRequest{
+		JobID:     job.ID,
+		Commenter: "test-user",
+		Comment:   "Comment on in-progress job without review",
 	}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", reqData)
 	w := httptest.NewRecorder()
@@ -3069,12 +3039,12 @@ func TestHandleRemap(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var result map[string]int
-		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-			t.Fatal(err)
+		var result struct {
+			Remapped int `json:"remapped"`
 		}
-		if result["remapped"] != 1 {
-			t.Errorf("expected remapped=1, got %d", result["remapped"])
+		testutil.DecodeJSON(t, w, &result)
+		if result.Remapped != 1 {
+			t.Errorf("expected remapped=1, got %d", result.Remapped)
 		}
 	})
 
@@ -3426,6 +3396,14 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 	})
 }
 
+// fixJobRequest mirrors the anonymous request struct in handleFixJob.
+type fixJobRequest struct {
+	ParentJobID int64  `json:"parent_job_id"`
+	Prompt      string `json:"prompt,omitempty"`
+	GitRef      string `json:"git_ref,omitempty"`
+	StaleJobID  int64  `json:"stale_job_id,omitempty"`
+}
+
 func TestHandleFixJobStaleValidation(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 	server.configWatcher.Config().FixAgent = "test"
@@ -3460,11 +3438,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		db.ClaimJob("w-fix-parent")
 		db.CompleteJob(fixJob.ID, "test", "prompt", "done")
 
-		body := map[string]any{
-			"parent_job_id": fixJob.ID,
-		}
 		req := testutil.MakeJSONRequest(
-			t, http.MethodPost, "/api/job/fix", body,
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: fixJob.ID},
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
@@ -3479,12 +3455,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 
 	t.Run("stale job that is not a fix job is rejected", func(t *testing.T) {
 		// reviewJob is a review, not a fix job
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"stale_job_id":  reviewJob.ID,
-		}
 		req := testutil.MakeJSONRequest(
-			t, http.MethodPost, "/api/job/fix", body,
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: reviewJob.ID},
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
@@ -3519,12 +3492,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		db.CompleteJob(wrongParentFix.ID, "test", "prompt", "done")
 		db.SaveJobPatch(wrongParentFix.ID, "--- a/f\n+++ b/f\n")
 
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"stale_job_id":  wrongParentFix.ID,
-		}
 		req := testutil.MakeJSONRequest(
-			t, http.MethodPost, "/api/job/fix", body,
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: wrongParentFix.ID},
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
@@ -3549,12 +3519,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		db.ClaimJob("w5")
 		db.CompleteJob(noPatchFix.ID, "test", "prompt", "done but no diff")
 
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"stale_job_id":  noPatchFix.ID,
-		}
 		req := testutil.MakeJSONRequest(
-			t, http.MethodPost, "/api/job/fix", body,
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: noPatchFix.ID},
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
@@ -3609,12 +3576,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 					)
 				}
 
-				body := map[string]any{
-					"parent_job_id": reviewJob.ID,
-					"stale_job_id":  fixJob.ID,
-				}
 				req := testutil.MakeJSONRequest(
-					t, http.MethodPost, "/api/job/fix", body,
+					t, http.MethodPost, "/api/job/fix",
+					fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: fixJob.ID},
 				)
 				w := httptest.NewRecorder()
 				server.handleFixJob(w, req)
@@ -3646,10 +3610,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		setJobStatus(t, db, compactJob.ID, storage.JobStatusRunning)
 		db.CompleteJob(compactJob.ID, "test", "consolidated findings", "FAIL: issues found")
 
-		body := map[string]any{
-			"parent_job_id": compactJob.ID,
-		}
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: compactJob.ID},
+		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
 
@@ -3680,10 +3644,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		setJobStatus(t, db, rangeJob.ID, storage.JobStatusRunning)
 		db.CompleteJob(rangeJob.ID, "test", "prompt", "FAIL: issues found")
 
-		body := map[string]any{
-			"parent_job_id": rangeJob.ID,
-		}
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: rangeJob.ID},
+		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
 
@@ -3703,11 +3667,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 	})
 
 	t.Run("rejects git_ref starting with dash", func(t *testing.T) {
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"git_ref":       "--option-injection",
-		}
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "--option-injection"},
+		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
 
@@ -3717,11 +3680,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 	})
 
 	t.Run("rejects git_ref with control chars", func(t *testing.T) {
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"git_ref":       "main\x00injected",
-		}
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "main\x00injected"},
+		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
 
@@ -3731,11 +3693,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 	})
 
 	t.Run("rejects whitespace-padded dash ref", func(t *testing.T) {
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"git_ref":       " --option-injection",
-		}
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: " --option-injection"},
+		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
 
@@ -3748,11 +3709,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 	})
 
 	t.Run("treats whitespace-only git_ref as empty", func(t *testing.T) {
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"git_ref":       "   ",
-		}
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "   "},
+		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
 
@@ -3768,11 +3728,10 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 	})
 
 	t.Run("accepts valid git_ref from request", func(t *testing.T) {
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"git_ref":       "feature/my-branch",
-		}
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/fix", body)
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, GitRef: "feature/my-branch"},
+		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
 
@@ -3813,12 +3772,9 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 			ParentJobID: otherReview.ID,
 		})
 
-		body := map[string]any{
-			"parent_job_id": reviewJob.ID,
-			"stale_job_id":  otherFix.ID,
-		}
 		req := testutil.MakeJSONRequest(
-			t, http.MethodPost, "/api/job/fix", body,
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{ParentJobID: reviewJob.ID, StaleJobID: otherFix.ID},
 		)
 		w := httptest.NewRecorder()
 		server.handleFixJob(w, req)
