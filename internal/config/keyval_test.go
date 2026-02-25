@@ -74,8 +74,8 @@ func assertDeterministic(t *testing.T, fn func() string) {
 	}
 }
 
-func TestGetConfigValue(t *testing.T) {
-	cfg := &Config{
+func newComplexTestConfig() *Config {
+	return &Config{
 		DefaultAgent:       "codex",
 		MaxWorkers:         4,
 		ReviewContextCount: 3,
@@ -91,6 +91,10 @@ func TestGetConfigValue(t *testing.T) {
 			},
 		},
 	}
+}
+
+func TestGetConfigValue(t *testing.T) {
+	cfg := newComplexTestConfig()
 
 	tests := []struct {
 		key  string
@@ -133,50 +137,76 @@ func TestSetConfigValue(t *testing.T) {
 		key    string
 		val    string
 		init   func() *Config
-		verify func(*Config) bool
+		verify func(*testing.T, *Config)
 	}{
 		{
-			name:   "set string field",
-			key:    "default_agent",
-			val:    "claude-code",
-			verify: func(c *Config) bool { return c.DefaultAgent == "claude-code" },
+			name: "set string field",
+			key:  "default_agent",
+			val:  "claude-code",
+			verify: func(t *testing.T, c *Config) {
+				if c.DefaultAgent != "claude-code" {
+					t.Errorf("DefaultAgent = %q, want claude-code", c.DefaultAgent)
+				}
+			},
 		},
 		{
-			name:   "set int field",
-			key:    "max_workers",
-			val:    "8",
-			verify: func(c *Config) bool { return c.MaxWorkers == 8 },
+			name: "set int field",
+			key:  "max_workers",
+			val:  "8",
+			verify: func(t *testing.T, c *Config) {
+				if c.MaxWorkers != 8 {
+					t.Errorf("MaxWorkers = %d, want 8", c.MaxWorkers)
+				}
+			},
 		},
 		{
-			name:   "set nested bool",
-			key:    "sync.enabled",
-			val:    "true",
-			verify: func(c *Config) bool { return c.Sync.Enabled },
+			name: "set nested bool",
+			key:  "sync.enabled",
+			val:  "true",
+			verify: func(t *testing.T, c *Config) {
+				if !c.Sync.Enabled {
+					t.Errorf("Sync.Enabled = %v, want true", c.Sync.Enabled)
+				}
+			},
 		},
 		{
-			name:   "set embedded github app id",
-			key:    "ci.github_app_id",
-			val:    "98765",
-			verify: func(c *Config) bool { return c.CI.GitHubAppID == 98765 },
+			name: "set embedded github app id",
+			key:  "ci.github_app_id",
+			val:  "98765",
+			verify: func(t *testing.T, c *Config) {
+				if c.CI.GitHubAppID != 98765 {
+					t.Errorf("CI.GitHubAppID = %d, want 98765", c.CI.GitHubAppID)
+				}
+			},
 		},
 		{
-			name:   "set embedded github app private key",
-			key:    "ci.github_app_private_key",
-			val:    "private-key-data",
-			verify: func(c *Config) bool { return c.CI.GitHubAppPrivateKey == "private-key-data" },
+			name: "set embedded github app private key",
+			key:  "ci.github_app_private_key",
+			val:  "private-key-data",
+			verify: func(t *testing.T, c *Config) {
+				if c.CI.GitHubAppPrivateKey != "private-key-data" {
+					t.Errorf("CI.GitHubAppPrivateKey = %q, want private-key-data", c.CI.GitHubAppPrivateKey)
+				}
+			},
 		},
 		{
-			name:   "set bool ptr",
-			key:    "allow_unsafe_agents",
-			val:    "true",
-			verify: func(c *Config) bool { return c.AllowUnsafeAgents != nil && *c.AllowUnsafeAgents },
+			name: "set bool ptr",
+			key:  "allow_unsafe_agents",
+			val:  "true",
+			verify: func(t *testing.T, c *Config) {
+				if c.AllowUnsafeAgents == nil || !*c.AllowUnsafeAgents {
+					t.Errorf("AllowUnsafeAgents = %v, want true", c.AllowUnsafeAgents)
+				}
+			},
 		},
 		{
 			name: "set slice",
 			key:  "ci.repos",
 			val:  "org/repo1,org/repo2",
-			verify: func(c *Config) bool {
-				return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2"
+			verify: func(t *testing.T, c *Config) {
+				if len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2" {
+					t.Errorf("CI.Repos = %v, want [org/repo1 org/repo2]", c.CI.Repos)
+				}
 			},
 		},
 		{
@@ -184,15 +214,21 @@ func TestSetConfigValue(t *testing.T) {
 			key:  "ci.repos",
 			val:  "org/repo1,org/repo2",
 			init: func() *Config { return &Config{} },
-			verify: func(c *Config) bool {
-				return len(c.CI.Repos) == 2 && c.CI.Repos[0] == "org/repo1" && c.CI.Repos[1] == "org/repo2"
+			verify: func(t *testing.T, c *Config) {
+				if len(c.CI.Repos) != 2 || c.CI.Repos[0] != "org/repo1" || c.CI.Repos[1] != "org/repo2" {
+					t.Errorf("CI.Repos = %v, want [org/repo1 org/repo2]", c.CI.Repos)
+				}
 			},
 		},
 		{
-			name:   "set slice empty",
-			key:    "ci.repos",
-			val:    "",
-			verify: func(c *Config) bool { return len(c.CI.Repos) == 0 },
+			name: "set slice empty",
+			key:  "ci.repos",
+			val:  "",
+			verify: func(t *testing.T, c *Config) {
+				if len(c.CI.Repos) != 0 {
+					t.Errorf("CI.Repos = %v, want empty", c.CI.Repos)
+				}
+			},
 		},
 	}
 
@@ -212,9 +248,7 @@ func TestSetConfigValue(t *testing.T) {
 			if err != nil {
 				t.Fatalf("SetConfigValue(%q, %q) error: %v", tt.key, tt.val, err)
 			}
-			if !tt.verify(cfg) {
-				t.Errorf("verification failed for key %q value %q", tt.key, tt.val)
-			}
+			tt.verify(t, cfg)
 		})
 	}
 }
@@ -255,24 +289,17 @@ func TestSetConfigValueInvalidType(t *testing.T) {
 }
 
 func TestListConfigKeys(t *testing.T) {
-	cfg := &Config{
-		DefaultAgent: "codex",
-		MaxWorkers:   4,
-		Sync: SyncConfig{
-			Enabled: true,
-		},
-		CI: CIConfig{
-			GitHubAppConfig: GitHubAppConfig{
-				GitHubAppID:         12345,
-				GitHubAppPrivateKey: "private-key-data",
-			},
-		},
-	}
+	cfg := newComplexTestConfig()
+	// Set the key so it matches what we expect from the old test.
+	cfg.CI.GitHubAppPrivateKey = "private-key-data"
 
 	assertConfigValues(t, ListConfigKeys(cfg), map[string]string{
 		"default_agent":             "codex",
 		"max_workers":               "4",
+		"review_context_count":      "3",
 		"sync.enabled":              "true",
+		"sync.postgres_url":         "postgres://localhost/test",
+		"ci.poll_interval":          "10m",
 		"ci.github_app_id":          "12345",
 		"ci.github_app_private_key": "private-key-data",
 	})
@@ -327,32 +354,132 @@ func TestListConfigKeysIncludesComplexNonZeroFields(t *testing.T) {
 }
 
 func TestMergedConfigWithOrigin(t *testing.T) {
-	global := DefaultConfig()
-	global.DefaultAgent = "gemini"
-
-	repo := &RepoConfig{
-		Agent: "claude-code",
+	tests := []struct {
+		name      string
+		global    *Config
+		repo      *RepoConfig
+		rawGlobal map[string]any
+		rawRepo   map[string]any
+		want      map[string]expectedOrigin
+		verify    func(*testing.T, []KeyValueOrigin)
+	}{
+		{
+			name: "both local and global set",
+			global: func() *Config {
+				g := DefaultConfig()
+				g.DefaultAgent = "gemini"
+				return g
+			}(),
+			repo:      &RepoConfig{Agent: "claude-code"},
+			rawGlobal: map[string]any{"default_agent": "gemini"},
+			rawRepo:   map[string]any{"agent": "claude-code"},
+			want: map[string]expectedOrigin{
+				"default_agent": {Value: "gemini", Origin: "global"},
+				"agent":         {Value: "claude-code", Origin: "local"},
+			},
+			verify: func(t *testing.T, kvos []KeyValueOrigin) {
+				found := toOriginMap(kvos)
+				if kvo, ok := found["max_workers"]; ok {
+					if kvo.Origin != "default" {
+						t.Errorf("max_workers origin = %q, want default", kvo.Origin)
+					}
+				}
+			},
+		},
+		{
+			name: "local overrides global",
+			global: func() *Config {
+				g := DefaultConfig()
+				g.ReviewContextCount = 5
+				return g
+			}(),
+			repo:      &RepoConfig{ReviewContextCount: 10},
+			rawGlobal: map[string]any{"review_context_count": int64(5)},
+			rawRepo:   map[string]any{"review_context_count": int64(10)},
+			want: map[string]expectedOrigin{
+				"review_context_count": {Value: "10", Origin: "local"},
+			},
+		},
+		{
+			name: "shows all origins",
+			global: func() *Config {
+				g := DefaultConfig()
+				g.DefaultAgent = "gemini" // override from default
+				return g
+			}(),
+			rawGlobal: map[string]any{"default_agent": "gemini"},
+			want: map[string]expectedOrigin{
+				"default_agent": {Value: "gemini", Origin: "global"},
+			},
+			verify: func(t *testing.T, kvos []KeyValueOrigin) {
+				found := toOriginMap(kvos)
+				if found["max_workers"].Origin != "default" {
+					t.Errorf("max_workers origin = %q, want default", found["max_workers"].Origin)
+				}
+			},
+		},
+		{
+			name: "includes complex fields",
+			global: func() *Config {
+				g := DefaultConfig()
+				g.Sync.RepoNames = map[string]string{"org/repo": "my-project"}
+				g.CI.GitHubAppInstallations = map[string]int64{"org": 1234}
+				return g
+			}(),
+			rawGlobal: map[string]any{
+				"sync": map[string]any{
+					"repo_names": map[string]any{"org/repo": "my-project"},
+				},
+				"ci": map[string]any{
+					"github_app_installations": map[string]any{"org": int64(1234)},
+				},
+			},
+			want: map[string]expectedOrigin{
+				"sync.repo_names":             {Value: "org/repo:my-project", Origin: "global"},
+				"ci.github_app_installations": {Value: "org:1234", Origin: "global"},
+			},
+		},
+		{
+			name:   "omits unset complex fields",
+			global: DefaultConfig(),
+			verify: func(t *testing.T, kvos []KeyValueOrigin) {
+				found := toOriginMap(kvos)
+				if _, ok := found["hooks"]; ok {
+					t.Error("merged output should not include unset hooks")
+				}
+				if _, ok := found["sync.repo_names"]; ok {
+					t.Error("merged output should not include unset sync.repo_names")
+				}
+				if _, ok := found["ci.github_app_installations"]; ok {
+					t.Error("merged output should not include unset ci.github_app_installations")
+				}
+			},
+		},
+		{
+			name:      "explicit global matching default shows global origin",
+			global:    DefaultConfig(),
+			rawGlobal: map[string]any{"max_workers": int64(4)}, // Explicitly set to default value
+			verify: func(t *testing.T, kvos []KeyValueOrigin) {
+				found := toOriginMap(kvos)
+				if kvo, ok := found["max_workers"]; !ok {
+					t.Error("expected max_workers in output")
+				} else if kvo.Origin != "global" {
+					t.Errorf("max_workers origin = %q, want %q", kvo.Origin, "global")
+				}
+			},
+		},
 	}
 
-	rawGlobal := map[string]any{"default_agent": "gemini"}
-	rawRepo := map[string]any{"agent": "claude-code"}
-
-	kvos := MergedConfigWithOrigin(global, repo, rawGlobal, rawRepo)
-	if len(kvos) == 0 {
-		t.Fatal("expected non-empty list")
-	}
-
-	assertOrigins(t, kvos, map[string]expectedOrigin{
-		"default_agent": {Value: "gemini", Origin: "global"},
-		"agent":         {Value: "claude-code", Origin: "local"},
-	})
-
-	// max_workers is at default value
-	found := toOriginMap(kvos)
-	if kvo, ok := found["max_workers"]; ok {
-		if kvo.Origin != "default" {
-			t.Errorf("max_workers origin = %q, want default", kvo.Origin)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kvos := MergedConfigWithOrigin(tt.global, tt.repo, tt.rawGlobal, tt.rawRepo)
+			if tt.want != nil {
+				assertOrigins(t, kvos, tt.want)
+			}
+			if tt.verify != nil {
+				tt.verify(t, kvos)
+			}
+		})
 	}
 }
 
@@ -373,84 +500,6 @@ func TestIsConfigValueSet(t *testing.T) {
 	}
 	if IsConfigValueSet(cfg, "nonexistent") {
 		t.Error("expected nonexistent to not be set")
-	}
-}
-
-func TestMergedConfigWithOriginLocalOverridesGlobal(t *testing.T) {
-	global := DefaultConfig()
-	global.ReviewContextCount = 5
-
-	repo := &RepoConfig{
-		ReviewContextCount: 10,
-	}
-
-	rawGlobal := map[string]any{"review_context_count": int64(5)}
-	rawRepo := map[string]any{"review_context_count": int64(10)}
-
-	assertOrigins(t, MergedConfigWithOrigin(global, repo, rawGlobal, rawRepo), map[string]expectedOrigin{
-		"review_context_count": {Value: "10", Origin: "local"},
-	})
-}
-
-func TestMergedConfigWithOriginShowsAllOrigins(t *testing.T) {
-	global := DefaultConfig()
-	global.DefaultAgent = "gemini" // override from default
-
-	rawGlobal := map[string]any{"default_agent": "gemini"}
-	assertOrigins(t, MergedConfigWithOrigin(global, nil, rawGlobal, nil), map[string]expectedOrigin{
-		"default_agent": {Value: "gemini", Origin: "global"},
-	})
-
-	// max_workers should be at default
-	kvos := MergedConfigWithOrigin(global, nil, rawGlobal, nil)
-	found := toOriginMap(kvos)
-	if found["max_workers"].Origin != "default" {
-		t.Errorf("max_workers origin = %q, want default", found["max_workers"].Origin)
-	}
-}
-
-func TestMergedConfigWithOriginIncludesComplexFields(t *testing.T) {
-	global := DefaultConfig()
-	global.Sync.RepoNames = map[string]string{
-		"org/repo": "my-project",
-	}
-	global.CI.GitHubAppInstallations = map[string]int64{
-		"org": 1234,
-	}
-
-	rawGlobal := map[string]any{
-		"sync": map[string]any{
-			"repo_names": map[string]any{
-				"org/repo": "my-project",
-			},
-		},
-		"ci": map[string]any{
-			"github_app_installations": map[string]any{
-				"org": int64(1234),
-			},
-		},
-	}
-
-	assertOrigins(t, MergedConfigWithOrigin(global, nil, rawGlobal, nil), map[string]expectedOrigin{
-		"sync.repo_names":             {Value: "org/repo:my-project", Origin: "global"},
-		"ci.github_app_installations": {Value: "org:1234", Origin: "global"},
-	})
-}
-
-func TestMergedConfigWithOriginOmitsUnsetComplexFields(t *testing.T) {
-	// When no hooks or maps are explicitly configured, merged output should
-	// not include them (they are zero-valued composites, not user-set defaults).
-	kvos := MergedConfigWithOrigin(DefaultConfig(), nil, nil, nil)
-	found := toOriginMap(kvos)
-
-	if _, ok := found["hooks"]; ok {
-		t.Error("merged output should not include unset hooks")
-	}
-	if _, ok := found["sync.repo_names"]; ok {
-		t.Error("merged output should not include unset sync.repo_names")
-	}
-	if _, ok := found["ci.github_app_installations"]; ok {
-		t.Error("merged output should not include unset ci.github_app_installations")
 	}
 }
 
@@ -601,94 +650,97 @@ func TestIsGlobalKey(t *testing.T) {
 	}
 }
 
-func TestListExplicitKeysOnlyIncludesRawKeys(t *testing.T) {
-	cfg := DefaultConfig()
-	// default_agent has a non-zero default ("codex" or similar) but if
-	// it's NOT in the raw TOML, it should be excluded.
-	raw := map[string]any{
-		"max_workers": int64(8),
-	}
-	cfg.MaxWorkers = 8
-
-	kvs := ListExplicitKeys(cfg, raw)
-	found := toMap(kvs)
-
-	if _, ok := found["max_workers"]; !ok {
-		t.Error("expected max_workers to be listed (explicitly in TOML)")
-	}
-	if _, ok := found["default_agent"]; ok {
-		t.Error("default_agent should NOT be listed (not in raw TOML)")
-	}
-}
-
-func TestListExplicitKeysIncludesZeroValues(t *testing.T) {
-	cfg := &Config{
-		MaxWorkers: 0,
-		Sync: SyncConfig{
-			Enabled: false,
+func TestListExplicitKeys(t *testing.T) {
+	tests := []struct {
+		name   string
+		cfg    *Config
+		raw    map[string]any
+		verify func(*testing.T, []KeyValue)
+	}{
+		{
+			name: "only includes raw keys",
+			cfg: func() *Config {
+				c := DefaultConfig()
+				c.MaxWorkers = 8
+				return c
+			}(),
+			raw: map[string]any{"max_workers": int64(8)},
+			verify: func(t *testing.T, kvs []KeyValue) {
+				found := toMap(kvs)
+				if _, ok := found["max_workers"]; !ok {
+					t.Error("expected max_workers to be listed (explicitly in TOML)")
+				}
+				if _, ok := found["default_agent"]; ok {
+					t.Error("default_agent should NOT be listed (not in raw TOML)")
+				}
+			},
+		},
+		{
+			name: "includes zero values",
+			cfg: &Config{
+				MaxWorkers: 0,
+				Sync:       SyncConfig{Enabled: false},
+			},
+			raw: map[string]any{
+				"max_workers": int64(0),
+				"sync":        map[string]any{"enabled": false},
+			},
+			verify: func(t *testing.T, kvs []KeyValue) {
+				found := toMap(kvs)
+				if got, ok := found["max_workers"]; !ok {
+					t.Error("expected max_workers to be listed (explicit zero in TOML)")
+				} else if got != "0" {
+					t.Errorf("max_workers = %q, want %q", got, "0")
+				}
+				if got, ok := found["sync.enabled"]; !ok {
+					t.Error("expected sync.enabled to be listed (explicit false in TOML)")
+				} else if got != "false" {
+					t.Errorf("sync.enabled = %q, want %q", got, "false")
+				}
+			},
+		},
+		{
+			name: "includes empty values",
+			cfg: &Config{
+				DefaultModel: "",
+				CI:           CIConfig{Repos: []string{}},
+				Sync:         SyncConfig{RepoNames: map[string]string{}},
+			},
+			raw: map[string]any{
+				"default_model": "",
+				"ci":            map[string]any{"repos": []any{}},
+				"sync":          map[string]any{"repo_names": map[string]any{}},
+			},
+			verify: func(t *testing.T, kvs []KeyValue) {
+				found := toMap(kvs)
+				if _, ok := found["default_model"]; !ok {
+					t.Error("expected default_model to be listed (explicit empty string in TOML)")
+				}
+				if _, ok := found["ci.repos"]; !ok {
+					t.Error("expected ci.repos to be listed (explicit empty slice in TOML)")
+				}
+				if _, ok := found["sync.repo_names"]; !ok {
+					t.Error("expected sync.repo_names to be listed (explicit empty map in TOML)")
+				}
+			},
+		},
+		{
+			name: "nil raw",
+			cfg:  DefaultConfig(),
+			raw:  nil,
+			verify: func(t *testing.T, kvs []KeyValue) {
+				if len(kvs) != 0 {
+					t.Errorf("expected empty result for nil raw, got %d entries", len(kvs))
+				}
+			},
 		},
 	}
-	raw := map[string]any{
-		"max_workers": int64(0),
-		"sync": map[string]any{
-			"enabled": false,
-		},
-	}
 
-	kvs := ListExplicitKeys(cfg, raw)
-	found := toMap(kvs)
-
-	if got, ok := found["max_workers"]; !ok {
-		t.Error("expected max_workers to be listed (explicit zero in TOML)")
-	} else if got != "0" {
-		t.Errorf("max_workers = %q, want %q", got, "0")
-	}
-	if got, ok := found["sync.enabled"]; !ok {
-		t.Error("expected sync.enabled to be listed (explicit false in TOML)")
-	} else if got != "false" {
-		t.Errorf("sync.enabled = %q, want %q", got, "false")
-	}
-}
-
-func TestListExplicitKeysIncludesEmptyValues(t *testing.T) {
-	cfg := &Config{
-		DefaultModel: "", // explicit empty string
-		CI: CIConfig{
-			Repos: []string{}, // explicit empty slice
-		},
-		Sync: SyncConfig{
-			RepoNames: map[string]string{}, // explicit empty map
-		},
-	}
-	raw := map[string]any{
-		"default_model": "",
-		"ci": map[string]any{
-			"repos": []any{},
-		},
-		"sync": map[string]any{
-			"repo_names": map[string]any{},
-		},
-	}
-
-	kvs := ListExplicitKeys(cfg, raw)
-	found := toMap(kvs)
-
-	if _, ok := found["default_model"]; !ok {
-		t.Error("expected default_model to be listed (explicit empty string in TOML)")
-	}
-	if _, ok := found["ci.repos"]; !ok {
-		t.Error("expected ci.repos to be listed (explicit empty slice in TOML)")
-	}
-	if _, ok := found["sync.repo_names"]; !ok {
-		t.Error("expected sync.repo_names to be listed (explicit empty map in TOML)")
-	}
-}
-
-func TestListExplicitKeysNilRaw(t *testing.T) {
-	cfg := DefaultConfig()
-	kvs := ListExplicitKeys(cfg, nil)
-	if len(kvs) != 0 {
-		t.Errorf("expected empty result for nil raw, got %d entries", len(kvs))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kvs := ListExplicitKeys(tt.cfg, tt.raw)
+			tt.verify(t, kvs)
+		})
 	}
 }
 
@@ -704,23 +756,6 @@ func TestDetermineOriginExplicitGlobalMatchingDefault(t *testing.T) {
 	}
 	if origin != "global" {
 		t.Errorf("origin = %q, want %q", origin, "global")
-	}
-}
-
-func TestMergedConfigExplicitGlobalDefaultValueShowsGlobalOrigin(t *testing.T) {
-	global := DefaultConfig()
-	// Explicitly set max_workers to its default value (4)
-	rawGlobal := map[string]any{
-		"max_workers": int64(4),
-	}
-
-	kvos := MergedConfigWithOrigin(global, nil, rawGlobal, nil)
-	found := toOriginMap(kvos)
-
-	if kvo, ok := found["max_workers"]; !ok {
-		t.Error("expected max_workers in output")
-	} else if kvo.Origin != "global" {
-		t.Errorf("max_workers origin = %q, want %q", kvo.Origin, "global")
 	}
 }
 
