@@ -22,24 +22,22 @@ func TestWorkerPoolE2E(t *testing.T) {
 	job := tc.createJob(t, sha)
 
 	tc.Pool.Start()
-	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusDone, storage.JobStatusFailed)
-	tc.Pool.Stop()
+	defer tc.Pool.Stop()
+	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusDone)
 
-	if finalJob.Status != storage.JobStatusDone && finalJob.Status != storage.JobStatusFailed {
-		t.Errorf("Job should be done or failed, got %s", finalJob.Status)
+	if finalJob.Status != storage.JobStatusDone {
+		t.Fatalf("Expected job to complete successfully, got status: %s", finalJob.Status)
 	}
 
-	if finalJob.Status == storage.JobStatusDone {
-		review, err := tc.DB.GetReviewByCommitSHA(sha)
-		if err != nil {
-			t.Fatalf("GetReviewByCommitSHA failed: %v", err)
-		}
-		if review.Agent != "test" {
-			t.Errorf("Expected agent 'test', got '%s'", review.Agent)
-		}
-		if review.Output == "" {
-			t.Error("Review output should not be empty")
-		}
+	review, err := tc.DB.GetReviewByCommitSHA(sha)
+	if err != nil {
+		t.Fatalf("GetReviewByCommitSHA failed: %v", err)
+	}
+	if review.Agent != "test" {
+		t.Errorf("Expected agent 'test', got '%s'", review.Agent)
+	}
+	if review.Output == "" {
+		t.Error("Review output should not be empty")
 	}
 }
 
