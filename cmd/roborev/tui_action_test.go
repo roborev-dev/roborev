@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -954,7 +955,9 @@ func expectJSONPost[Req any, Res any](t *testing.T, path string, expected Req, r
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("Failed to decode request body: %v", err)
 		}
-		// NOTE: In tests, comparing req and expected might be needed, but we rely on json mapping.
+		if !reflect.DeepEqual(req, expected) {
+			t.Errorf("Expected request %+v, got %+v", expected, req)
+		}
 		json.NewEncoder(w).Encode(response)
 	}
 }
@@ -973,9 +976,9 @@ func assertMsgType[T any](t *testing.T, msg tea.Msg) T {
 func assertJobStats(t *testing.T, m tuiModel, addressed, unaddressed int) {
 	t.Helper()
 	if m.jobStats.Addressed != addressed {
-		t.Errorf("expected Addressed=%d, got %d", addressed, m.jobStats.Addressed)
+		t.Fatalf("expected Addressed=%d, got %d", addressed, m.jobStats.Addressed)
 	}
 	if m.jobStats.Unaddressed != unaddressed {
-		t.Errorf("expected Unaddressed=%d, got %d", unaddressed, m.jobStats.Unaddressed)
+		t.Fatalf("expected Unaddressed=%d, got %d", unaddressed, m.jobStats.Unaddressed)
 	}
 }
