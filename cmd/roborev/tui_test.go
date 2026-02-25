@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -1438,4 +1439,83 @@ func TestTUIFlashMessage(t *testing.T) {
 		}
 
 	})
+}
+
+func TestNewTuiModelOptions(t *testing.T) {
+	tests := []struct {
+		name                 string
+		opts                 []tuiOption
+		expectedRepoFilter   []string
+		expectedBranchFilter string
+		expectedFilterStack  []string
+		expectedLockedRepo   bool
+		expectedLockedBranch bool
+		expectedDaemonVer    string
+	}{
+		{
+			name:                 "WithExternalIODisabled only",
+			opts:                 []tuiOption{WithExternalIODisabled()},
+			expectedRepoFilter:   nil,
+			expectedBranchFilter: "",
+			expectedFilterStack:  nil,
+			expectedLockedRepo:   false,
+			expectedLockedBranch: false,
+			expectedDaemonVer:    "?",
+		},
+		{
+			name:                 "With RepoFilter",
+			opts:                 []tuiOption{WithExternalIODisabled(), WithRepoFilter("/path/to/repo")},
+			expectedRepoFilter:   []string{"/path/to/repo"},
+			expectedBranchFilter: "",
+			expectedFilterStack:  []string{filterTypeRepo},
+			expectedLockedRepo:   true,
+			expectedLockedBranch: false,
+			expectedDaemonVer:    "?",
+		},
+		{
+			name:                 "With BranchFilter",
+			opts:                 []tuiOption{WithExternalIODisabled(), WithBranchFilter("feature-branch")},
+			expectedRepoFilter:   nil,
+			expectedBranchFilter: "feature-branch",
+			expectedFilterStack:  []string{filterTypeBranch},
+			expectedLockedRepo:   false,
+			expectedLockedBranch: true,
+			expectedDaemonVer:    "?",
+		},
+		{
+			name:                 "With RepoFilter and BranchFilter",
+			opts:                 []tuiOption{WithExternalIODisabled(), WithRepoFilter("/path/to/repo"), WithBranchFilter("feature-branch")},
+			expectedRepoFilter:   []string{"/path/to/repo"},
+			expectedBranchFilter: "feature-branch",
+			expectedFilterStack:  []string{filterTypeRepo, filterTypeBranch},
+			expectedLockedRepo:   true,
+			expectedLockedBranch: true,
+			expectedDaemonVer:    "?",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTuiModel(testServerAddr, tc.opts...)
+
+			if !reflect.DeepEqual(m.activeRepoFilter, tc.expectedRepoFilter) {
+				t.Errorf("activeRepoFilter mismatch: got %v, want %v", m.activeRepoFilter, tc.expectedRepoFilter)
+			}
+			if m.activeBranchFilter != tc.expectedBranchFilter {
+				t.Errorf("activeBranchFilter mismatch: got %q, want %q", m.activeBranchFilter, tc.expectedBranchFilter)
+			}
+			if !reflect.DeepEqual(m.filterStack, tc.expectedFilterStack) {
+				t.Errorf("filterStack mismatch: got %v, want %v", m.filterStack, tc.expectedFilterStack)
+			}
+			if m.lockedRepoFilter != tc.expectedLockedRepo {
+				t.Errorf("lockedRepoFilter mismatch: got %v, want %v", m.lockedRepoFilter, tc.expectedLockedRepo)
+			}
+			if m.lockedBranchFilter != tc.expectedLockedBranch {
+				t.Errorf("lockedBranchFilter mismatch: got %v, want %v", m.lockedBranchFilter, tc.expectedLockedBranch)
+			}
+			if m.daemonVersion != tc.expectedDaemonVer {
+				t.Errorf("daemonVersion mismatch: got %q, want %q", m.daemonVersion, tc.expectedDaemonVer)
+			}
+		})
+	}
 }
