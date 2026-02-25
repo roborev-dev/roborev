@@ -63,7 +63,10 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 		case "/api/enqueue":
 			if r.Method == "POST" {
 				var req map[string]any
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 				if cfg.receivedRef != nil {
 					*cfg.receivedRef = req["git_ref"].(string)
 				}
@@ -101,20 +104,11 @@ func TestBuildPromptWithContext(t *testing.T) {
 
 		result := buildPromptWithContext(repoPath, userPrompt)
 
-		if !strings.Contains(result, "my-project") {
-			t.Error("Expected result to contain repo name 'my-project'")
-		}
-		if !strings.Contains(result, repoPath) {
-			t.Error("Expected result to contain repo path")
-		}
-		if !strings.Contains(result, "## Context") {
-			t.Error("Expected result to contain '## Context' header")
-		}
-		if !strings.Contains(result, "## Request") {
-			t.Error("Expected result to contain '## Request' header")
-		}
-		if !strings.Contains(result, userPrompt) {
-			t.Error("Expected result to contain user prompt")
+		expectedStrings := []string{"my-project", repoPath, "## Context", "## Request", userPrompt}
+		for _, s := range expectedStrings {
+			if !strings.Contains(result, s) {
+				t.Errorf("Expected result to contain %q", s)
+			}
 		}
 	})
 
@@ -315,6 +309,27 @@ func TestRunLabelFlag(t *testing.T) {
 	}
 }
 
+func newPollingTestServer(t *testing.T, statuses []storage.JobStatus) (*httptest.Server, *int) {
+	t.Helper()
+	pollCount := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/jobs":
+			status := statuses[len(statuses)-1] // Default to last
+			if pollCount < len(statuses) {
+				status = statuses[pollCount]
+			}
+			pollCount++
+
+			writeJSON(w, map[string][]storage.ReviewJob{"jobs": {{ID: 123, Status: status}}})
+		case "/api/review":
+			writeJSON(w, stubReview(123, "test-agent", "Final result"))
+		}
+	}))
+	t.Cleanup(s.Close)
+	return s, &pollCount
+}
+
 func TestWaitForPromptJob(t *testing.T) {
 	review := stubReview(123, "test-agent", "Result")
 
@@ -390,23 +405,11 @@ func TestWaitForPromptJob(t *testing.T) {
 	}
 
 	t.Run("polls while job is running", func(t *testing.T) {
-		pollCount := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
-				pollCount++
-				status := storage.JobStatusRunning
-				if pollCount >= 3 {
-					status = storage.JobStatusDone
-				}
-				writeJSON(w, map[string][]storage.ReviewJob{
-					"jobs": {{ID: 123, Status: status}},
-				})
-			case "/api/review":
-				writeJSON(w, stubReview(123, "test-agent", "Final result"))
-			}
-		}))
-		t.Cleanup(server.Close)
+		server, pollCount := newPollingTestServer(t, []storage.JobStatus{
+			storage.JobStatusRunning,
+			storage.JobStatusRunning,
+			storage.JobStatusDone,
+		})
 
 		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
@@ -415,29 +418,17 @@ func TestWaitForPromptJob(t *testing.T) {
 			t.Errorf("Expected no error, got: %v", err)
 		}
 
-		if pollCount < 3 {
-			t.Errorf("Expected at least 3 polls, got: %d", pollCount)
+		if *pollCount < 3 {
+			t.Errorf("Expected at least 3 polls, got: %d", *pollCount)
 		}
 	})
 
 	t.Run("retries on unknown status", func(t *testing.T) {
-		pollCount := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
-				pollCount++
-				status := storage.JobStatus("unknown_status")
-				if pollCount >= 3 {
-					status = storage.JobStatusDone
-				}
-				writeJSON(w, map[string][]storage.ReviewJob{
-					"jobs": {{ID: 123, Status: status}},
-				})
-			case "/api/review":
-				writeJSON(w, stubReview(123, "test-agent", "Final result"))
-			}
-		}))
-		t.Cleanup(server.Close)
+		server, pollCount := newPollingTestServer(t, []storage.JobStatus{
+			"unknown_status",
+			"unknown_status",
+			storage.JobStatusDone,
+		})
 
 		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
@@ -446,8 +437,8 @@ func TestWaitForPromptJob(t *testing.T) {
 			t.Errorf("Expected no error, got: %v", err)
 		}
 
-		if pollCount < 3 {
-			t.Errorf("Expected at least 3 polls, got: %d", pollCount)
+		if *pollCount < 3 {
+			t.Errorf("Expected at least 3 polls, got: %d", *pollCount)
 		}
 	})
 
@@ -473,122 +464,68 @@ func TestWaitForPromptJob(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to default interval when pollInterval is zero", func(t *testing.T) {
-		// Override the fallback interval to a known value
-		origInterval := promptPollInterval
-		promptPollInterval = 5 * time.Millisecond
-		t.Cleanup(func() { promptPollInterval = origInterval })
+	for _, tt := range []struct {
+		name     string
+		interval time.Duration
+	}{
+		{"zero", 0},
+		{"negative", -1 * time.Millisecond},
+	} {
+		t.Run("falls back to default interval when pollInterval is "+tt.name, func(t *testing.T) {
+			// Override the fallback interval to a known value
+			origInterval := promptPollInterval
+			promptPollInterval = 5 * time.Millisecond
+			t.Cleanup(func() { promptPollInterval = origInterval })
 
-		var pollTimes []time.Time
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
-				pollTimes = append(pollTimes, time.Now())
-				status := storage.JobStatusRunning
-				if len(pollTimes) >= 3 {
-					status = storage.JobStatusDone
+			var pollTimes []time.Time
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/jobs":
+					pollTimes = append(pollTimes, time.Now())
+					status := storage.JobStatusRunning
+					if len(pollTimes) >= 3 {
+						status = storage.JobStatusDone
+					}
+					writeJSON(w, map[string][]storage.ReviewJob{
+						"jobs": {{ID: 123, Status: status}},
+					})
+				case "/api/review":
+					writeJSON(w, stubReview(123, "test-agent", "Result"))
 				}
-				writeJSON(w, map[string][]storage.ReviewJob{
-					"jobs": {{ID: 123, Status: status}},
-				})
-			case "/api/review":
-				writeJSON(w, stubReview(123, "test-agent", "Result"))
+			}))
+			t.Cleanup(server.Close)
+
+			cmd, _ := newTestCmd(t)
+			err := waitForPromptJob(cmd, server.URL, 123, true, tt.interval)
+
+			if err != nil {
+				t.Fatalf("Expected no error, got: %v", err)
 			}
-		}))
-		t.Cleanup(server.Close)
-
-		cmd, _ := newTestCmd(t)
-		err := waitForPromptJob(cmd, server.URL, 123, true, 0)
-
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-		if len(pollTimes) < 3 {
-			t.Fatalf("Expected at least 3 polls, got: %d", len(pollTimes))
-		}
-		// Verify polls are spaced by at least 3ms (fallback is 5ms;
-		// allow slack for scheduling jitter but reject busy-polling)
-		for i := 1; i < len(pollTimes); i++ {
-			gap := pollTimes[i].Sub(pollTimes[i-1])
-			if gap < 3*time.Millisecond {
-				t.Errorf(
-					"Poll gap %d→%d was %v, expected ≥3ms (fallback interval)",
-					i-1, i, gap,
-				)
+			if len(pollTimes) < 3 {
+				t.Fatalf("Expected at least 3 polls, got: %d", len(pollTimes))
 			}
-		}
-	})
-
-	t.Run("falls back to default interval when pollInterval is negative", func(t *testing.T) {
-		// Override the fallback interval to a known value
-		origInterval := promptPollInterval
-		promptPollInterval = 5 * time.Millisecond
-		t.Cleanup(func() { promptPollInterval = origInterval })
-
-		var pollTimes []time.Time
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
-				pollTimes = append(pollTimes, time.Now())
-				status := storage.JobStatusRunning
-				if len(pollTimes) >= 3 {
-					status = storage.JobStatusDone
+			// Verify polls are spaced by at least 3ms (fallback is 5ms;
+			// allow slack for scheduling jitter but reject busy-polling)
+			for i := 1; i < len(pollTimes); i++ {
+				gap := pollTimes[i].Sub(pollTimes[i-1])
+				if gap < 3*time.Millisecond {
+					t.Errorf(
+						"Poll gap %d→%d was %v, expected ≥3ms (fallback interval)",
+						i-1, i, gap,
+					)
 				}
-				writeJSON(w, map[string][]storage.ReviewJob{
-					"jobs": {{ID: 123, Status: status}},
-				})
-			case "/api/review":
-				writeJSON(w, stubReview(123, "test-agent", "Result"))
 			}
-		}))
-		t.Cleanup(server.Close)
-
-		cmd, _ := newTestCmd(t)
-		err := waitForPromptJob(cmd, server.URL, 123, true, -1*time.Millisecond)
-
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-		if len(pollTimes) < 3 {
-			t.Fatalf("Expected at least 3 polls, got: %d", len(pollTimes))
-		}
-		// Verify polls are spaced by at least 3ms (fallback is 5ms;
-		// allow slack for scheduling jitter but reject busy-polling)
-		for i := 1; i < len(pollTimes); i++ {
-			gap := pollTimes[i].Sub(pollTimes[i-1])
-			if gap < 3*time.Millisecond {
-				t.Errorf(
-					"Poll gap %d→%d was %v, expected ≥3ms (fallback interval)",
-					i-1, i, gap,
-				)
-			}
-		}
-	})
+		})
+	}
 
 	t.Run("resets unknown counter on known status", func(t *testing.T) {
-		pollCount := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/jobs":
-				pollCount++
-				status := storage.JobStatus("unknown_status")
-				// 1..5: unknown (count=5)
-				// 6: running (count resets to 0)
-				// 7..12: unknown (count=6)
-				// 13: done
-				if pollCount == 6 {
-					status = storage.JobStatusRunning
-				} else if pollCount >= 13 {
-					status = storage.JobStatusDone
-				}
-				writeJSON(w, map[string][]storage.ReviewJob{
-					"jobs": {{ID: 123, Status: status}},
-				})
-			case "/api/review":
-				writeJSON(w, stubReview(123, "test-agent", "Final result"))
-			}
-		}))
-		t.Cleanup(server.Close)
+		statuses := []storage.JobStatus{
+			"unknown_status", "unknown_status", "unknown_status", "unknown_status", "unknown_status",
+			storage.JobStatusRunning,
+			"unknown_status", "unknown_status", "unknown_status", "unknown_status", "unknown_status", "unknown_status",
+			storage.JobStatusDone,
+		}
+		server, pollCount := newPollingTestServer(t, statuses)
 
 		cmd, _ := newTestCmd(t)
 		err := waitForPromptJob(cmd, server.URL, 123, true, 1*time.Millisecond)
@@ -597,8 +534,8 @@ func TestWaitForPromptJob(t *testing.T) {
 			t.Errorf("Expected no error, got: %v", err)
 		}
 
-		if pollCount < 13 {
-			t.Errorf("Expected at least 13 polls, got: %d", pollCount)
+		if *pollCount < 13 {
+			t.Errorf("Expected at least 13 polls, got: %d", *pollCount)
 		}
 	})
 }
