@@ -13,7 +13,27 @@ import (
 // waitForJobStatus polls until the job reaches one of the given statuses.
 func (c *workerTestContext) waitForJobStatus(t *testing.T, jobID int64, statuses ...storage.JobStatus) *storage.ReviewJob {
 	t.Helper()
-	return testutil.WaitForJobStatus(t, c.DB, jobID, 10*time.Second, statuses...)
+
+	waitingForFailure := false
+	for _, status := range statuses {
+		if status == storage.JobStatusFailed {
+			waitingForFailure = true
+			break
+		}
+	}
+
+	waitStatuses := statuses
+	if !waitingForFailure {
+		waitStatuses = append(statuses, storage.JobStatusFailed)
+	}
+
+	job := testutil.WaitForJobStatus(t, c.DB, jobID, 10*time.Second, waitStatuses...)
+
+	if !waitingForFailure && job.Status == storage.JobStatusFailed {
+		t.Fatalf("job failed unexpectedly: %s", job.Error)
+	}
+
+	return job
 }
 
 func TestWorkerPoolE2E(t *testing.T) {
