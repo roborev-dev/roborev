@@ -18,7 +18,6 @@ import (
 const (
 	defaultTestPort = 7373
 	defaultTestAddr = "127.0.0.1:7373"
-	mockPID         = 12345
 )
 
 type runtimeData struct {
@@ -183,11 +182,11 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 	dataDir := testenv.SetDataDir(t)
 
 	// Create a valid runtime file
-	createRuntimeFile(t, dataDir, mockPID, nil)
+	createRuntimeFile(t, dataDir, math.MaxInt32, nil)
 
 	// Create an unreadable runtime file
-	unreadablePath := createRuntimeFile(t, dataDir, math.MaxInt32, &runtimeData{
-		PID:  math.MaxInt32,
+	unreadablePath := createRuntimeFile(t, dataDir, math.MaxInt32-1, &runtimeData{
+		PID:  math.MaxInt32 - 1,
 		Addr: "127.0.0.1:7374",
 	})
 	os.Chmod(unreadablePath, 0000)
@@ -209,8 +208,8 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 	if len(runtimes) != 1 {
 		t.Fatalf("Expected exactly 1 runtime, got %d", len(runtimes))
 	}
-	if runtimes[0].PID != mockPID {
-		t.Errorf("Expected PID %d, got %d", mockPID, runtimes[0].PID)
+	if runtimes[0].PID != math.MaxInt32 {
+		t.Errorf("Expected PID %d, got %d", math.MaxInt32, runtimes[0].PID)
 	}
 }
 
@@ -359,7 +358,7 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 
 	// Create a valid runtime file
-	createRuntimeFile(t, dataDir, mockPID, nil)
+	createRuntimeFile(t, dataDir, math.MaxInt32, nil)
 
 	// ListAllRuntimes should work despite glob metacharacters in path
 	runtimes, err := ListAllRuntimes()
@@ -370,7 +369,7 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 	if len(runtimes) != 1 {
 		t.Fatalf("Expected exactly 1 runtime, got %d", len(runtimes))
 	}
-	if runtimes[0].PID != mockPID {
-		t.Errorf("Expected PID %d, got %d", mockPID, runtimes[0].PID)
+	if runtimes[0].PID != math.MaxInt32 {
+		t.Errorf("Expected PID %d, got %d", math.MaxInt32, runtimes[0].PID)
 	}
 }
