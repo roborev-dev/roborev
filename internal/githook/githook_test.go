@@ -892,9 +892,6 @@ func readFileForAssert(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "" // Return empty string for NotContains checks
-		}
 		t.Fatalf("failed to read %s: %v", path, err)
 	}
 	return string(content)
@@ -912,7 +909,14 @@ func assertFileContains(t *testing.T, path string, substrings ...string) {
 
 func assertFileNotContains(t *testing.T, path string, substrings ...string) {
 	t.Helper()
-	str := readFileForAssert(t, path)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return // If file doesn't exist, it doesn't contain the substrings
+		}
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	str := string(content)
 	if str == "" {
 		return
 	}
