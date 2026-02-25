@@ -1,4 +1,5 @@
 import os
+import re
 
 files_to_update = [
     "internal/worktree/worktree_integration_test.go",
@@ -13,6 +14,25 @@ files_to_update = [
     "cmd/roborev/fix_test.go"
 ]
 
+# Match Go import blocks: import "pkg" or import (\n...\n)
+_SINGLE_IMPORT_RE = re.compile(
+    r'^import\s+"[^"]*testutil[^"]*"', re.MULTILINE
+)
+_BLOCK_IMPORT_RE = re.compile(
+    r'^import\s*\(.*?\)', re.MULTILINE | re.DOTALL
+)
+
+
+def has_testutil_in_imports(content: str) -> bool:
+    """Return True only if 'testutil' appears inside a Go import."""
+    if _SINGLE_IMPORT_RE.search(content):
+        return True
+    for block in _BLOCK_IMPORT_RE.finditer(content):
+        if "testutil" in block.group(0):
+            return True
+    return False
+
+
 for file_path in files_to_update:
     if not os.path.exists(file_path):
         continue
@@ -20,7 +40,7 @@ for file_path in files_to_update:
     with open(file_path, "r") as f:
         content = f.read()
 
-    has_testutil_import = "testutil" in content
+    has_testutil_import = has_testutil_in_imports(content)
     has_email = '"test@test.com"' in content
     has_name = '"Test"' in content
 

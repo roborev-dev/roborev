@@ -23,6 +23,9 @@ coverage.out
 .DS_Store
 Thumbs.db
 
+# Python
+__pycache__/
+
 # Local config (users create their own)
 .roborev.toml
 
