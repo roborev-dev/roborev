@@ -67,6 +67,17 @@ func newIntegrationEnv(t *testing.T, timeout time.Duration) *integrationEnv {
 	return env
 }
 
+func (e *integrationEnv) waitForLocalJobs(db *DB, expected int, timeout time.Duration) {
+	e.T.Helper()
+	waitCondition(e.T, timeout, fmt.Sprintf("local job count %d", expected), func() (bool, error) {
+		jobs, err := db.ListJobs("", "", 1000, 0)
+		if err != nil {
+			return false, err
+		}
+		return len(jobs) >= expected, nil
+	})
+}
+
 // openDB creates a new SQLite database in the temp directory.
 func (e *integrationEnv) openDB(name string) *DB {
 	e.T.Helper()
@@ -76,6 +87,23 @@ func (e *integrationEnv) openDB(name string) *DB {
 	}
 	e.T.Cleanup(func() { db.Close() })
 	return db
+}
+
+type testNode struct {
+	DB     *DB
+	Repo   *Repo
+	Worker *SyncWorker
+}
+
+func (e *integrationEnv) setupNode(name, repoIdentity, syncInterval string) testNode {
+	e.T.Helper()
+	db := e.openDB(name + ".db")
+	repo, err := db.GetOrCreateRepo(filepath.Join(e.TmpDir, "repo_"+name), repoIdentity)
+	if err != nil {
+		e.T.Fatalf("%s: GetOrCreateRepo failed: %v", name, err)
+	}
+	worker := startSyncWorker(e.T, db, e.pgURL, name, syncInterval)
+	return testNode{DB: db, Repo: repo, Worker: worker}
 }
 
 // validPgTables is the allowlist of tables that may be queried by test helpers.
@@ -166,6 +194,21 @@ func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt
 		}
 	}
 	return job, review, nil
+}
+
+// tryCreateCompletedReviewWithoutCommit creates a job and completes it without an underlying commit.
+func tryCreateCompletedReviewWithoutCommit(db *DB, repoID int64) (*ReviewJob, error) {
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, CommitID: 0, GitRef: "HEAD", Agent: "test"})
+	if err != nil {
+		return nil, fmt.Errorf("EnqueueJob failed: %w", err)
+	}
+	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
+		return nil, fmt.Errorf("failed to set job running: %w", err)
+	}
+	if err := db.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
+		return nil, fmt.Errorf("CompleteJob failed: %w", err)
+	}
+	return job, nil
 }
 
 // createCompletedReview creates a repo, commit, enqueues a job, marks it running, and completes it.
@@ -407,16 +450,8 @@ func TestIntegration_FinalPush(t *testing.T) {
 	// Create 150 jobs without commits to match previous test behavior
 	// (replacing createBatchReviews which forces commits)
 	for i := 0; i < 150; i++ {
-		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: 0, GitRef: "HEAD", Agent: "test"})
-		if err != nil {
-			t.Fatalf("EnqueueJob failed: %v", err)
-		}
-		// Update status and complete manually
-		if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
-			t.Fatalf("failed to set job running: %v", err)
-		}
-		if err := db.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
+		if _, err := tryCreateCompletedReviewWithoutCommit(db, repo.ID); err != nil {
+			t.Fatalf("tryCreateCompletedReviewWithoutCommit failed: %v", err)
 		}
 	}
 
@@ -444,15 +479,9 @@ func TestIntegration_FinalPush_NoCommit(t *testing.T) {
 	}
 
 	// Create a job without a commit (CommitID=0)
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: 0, GitRef: "HEAD", Agent: "test"})
+	_, err = tryCreateCompletedReviewWithoutCommit(db, repo.ID)
 	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
-		t.Fatalf("failed to set job running: %v", err)
-	}
-	if err := db.CompleteJob(job.ID, "test", "prompt", "output"); err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		t.Fatalf("tryCreateCompletedReviewWithoutCommit failed: %v", err)
 	}
 
 	worker := startSyncWorker(t, db, env.pgURL, "finalpush-nocommit-test", "1h")
@@ -492,25 +521,16 @@ func TestIntegration_SchemaCreation(t *testing.T) {
 func TestIntegration_Multiplayer(t *testing.T) {
 	env := newIntegrationEnv(t, 60*time.Second)
 
-	dbA := env.openDB("machine_a.db")
-	dbB := env.openDB("machine_b.db")
-
 	sharedRepoIdentity := "git@github.com:test/multiplayer-repo.git"
 
-	repoA, err := dbA.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo_a"), sharedRepoIdentity)
-	if err != nil {
-		t.Fatalf("Machine A: GetOrCreateRepo failed: %v", err)
-	}
-	jobA, reviewA := createCompletedReview(t, dbA, repoA.ID, "aaaa1111", "Alice", "Feature A", "prompt A", "Review from Machine A")
+	nodeA := env.setupNode("machine-a", sharedRepoIdentity, "100ms")
+	nodeB := env.setupNode("machine-b", sharedRepoIdentity, "100ms")
 
-	repoB, err := dbB.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo_b"), sharedRepoIdentity)
-	if err != nil {
-		t.Fatalf("Machine B: GetOrCreateRepo failed: %v", err)
-	}
-	jobB, reviewB := createCompletedReview(t, dbB, repoB.ID, "bbbb2222", "Bob", "Feature B", "prompt B", "Review from Machine B")
+	dbA, dbB := nodeA.DB, nodeB.DB
+	workerA, workerB := nodeA.Worker, nodeB.Worker
 
-	workerA := startSyncWorker(t, dbA, env.pgURL, "machine-a", "100ms")
-	workerB := startSyncWorker(t, dbB, env.pgURL, "machine-b", "100ms")
+	jobA, reviewA := createCompletedReview(t, dbA, nodeA.Repo.ID, "aaaa1111", "Alice", "Feature A", "prompt A", "Review from Machine A")
+	jobB, reviewB := createCompletedReview(t, dbB, nodeB.Repo.ID, "bbbb2222", "Bob", "Feature B", "prompt B", "Review from Machine B")
 
 	// Sync to push, then sync again to pull each other's data
 	if _, err := workerA.SyncNow(); err != nil {
@@ -526,18 +546,8 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
 	}
 
-	checkJobs := func(db *DB, count int) func() (bool, error) {
-		return func() (bool, error) {
-			jobs, err := db.ListJobs("", "", 1000, 0)
-			if err != nil {
-				return false, err
-			}
-			return len(jobs) >= count, nil
-		}
-	}
-
-	waitCondition(t, 10*time.Second, "Machine A job count", checkJobs(dbA, 2))
-	waitCondition(t, 10*time.Second, "Machine B job count", checkJobs(dbB, 2))
+	env.waitForLocalJobs(dbA, 2, 10*time.Second)
+	env.waitForLocalJobs(dbB, 2, 10*time.Second)
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
@@ -605,30 +615,20 @@ func TestIntegration_Multiplayer(t *testing.T) {
 func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	env := newIntegrationEnv(t, 60*time.Second)
 
-	dbA := env.openDB("machine_a.db")
-	dbB := env.openDB("machine_b.db")
-
 	sharedRepoIdentity := "git@github.com:test/same-commit-repo.git"
 	sharedCommitSHA := "cccc3333"
 
-	repoA, err := dbA.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo_a"), sharedRepoIdentity)
-	if err != nil {
-		t.Fatalf("Machine A: GetOrCreateRepo failed: %v", err)
-	}
-	jobA, reviewA := createCompletedReview(t, dbA, repoA.ID, sharedCommitSHA, "Charlie", "Shared commit", "prompt", "Machine A's review of shared commit")
+	nodeA := env.setupNode("machine-a", sharedRepoIdentity, "100ms")
+	nodeB := env.setupNode("machine-b", sharedRepoIdentity, "100ms")
+	dbA, dbB := nodeA.DB, nodeB.DB
+	workerA, workerB := nodeA.Worker, nodeB.Worker
 
-	repoB, err := dbB.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo_b"), sharedRepoIdentity)
-	if err != nil {
-		t.Fatalf("Machine B: GetOrCreateRepo failed: %v", err)
-	}
-	jobB, reviewB := createCompletedReview(t, dbB, repoB.ID, sharedCommitSHA, "Charlie", "Shared commit", "prompt", "Machine B's review of shared commit")
+	jobA, reviewA := createCompletedReview(t, dbA, nodeA.Repo.ID, sharedCommitSHA, "Charlie", "Shared commit", "prompt", "Machine A's review of shared commit")
+	jobB, reviewB := createCompletedReview(t, dbB, nodeB.Repo.ID, sharedCommitSHA, "Charlie", "Shared commit", "prompt", "Machine B's review of shared commit")
 
 	if jobA.UUID == jobB.UUID {
 		t.Fatal("Jobs from different machines should have different UUIDs")
 	}
-
-	workerA := startSyncWorker(t, dbA, env.pgURL, "machine-a", "100ms")
-	workerB := startSyncWorker(t, dbB, env.pgURL, "machine-b", "100ms")
 
 	// Sync both, then pull each other's data
 	if _, err := workerA.SyncNow(); err != nil {
@@ -644,18 +644,8 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
 	}
 
-	checkJobs := func(db *DB, count int) func() (bool, error) {
-		return func() (bool, error) {
-			jobs, err := db.ListJobs("", "", 1000, 0)
-			if err != nil {
-				return false, err
-			}
-			return len(jobs) >= count, nil
-		}
-	}
-
-	waitCondition(t, 10*time.Second, "Machine A job count", checkJobs(dbA, 2))
-	waitCondition(t, 10*time.Second, "Machine B job count", checkJobs(dbB, 2))
+	env.waitForLocalJobs(dbA, 2, 10*time.Second)
+	env.waitForLocalJobs(dbB, 2, 10*time.Second)
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
@@ -748,31 +738,38 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 	t.Log("Same-commit multiplayer verified: both reviews preserved with unique UUIDs")
 }
 
+func runConcurrentReviewsAndSync(db *DB, repoID int64, worker *SyncWorker, prefix, author string, count int, results chan<- string, errs chan<- error, done chan<- bool) {
+	go func() {
+		defer func() { done <- true }()
+		for i := 0; i < count; i++ {
+			job, _, err := tryCreateCompletedReview(db, repoID, fmt.Sprintf("%s_%02d", prefix, i), author, fmt.Sprintf("%s concurrent %d", author, i), "prompt", fmt.Sprintf("Review %s-%d", prefix, i))
+			if err != nil {
+				errs <- err
+				continue
+			}
+			results <- job.UUID
+			if i%3 == 0 {
+				if _, err := worker.SyncNow(); err != nil {
+					errs <- fmt.Errorf("%s sync at job %d: %w", author, i, err)
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+}
+
 func TestIntegration_MultiplayerRealistic(t *testing.T) {
 	env := newIntegrationEnv(t, 120*time.Second)
 
-	dbA := env.openDB("machine_a.db")
-	dbB := env.openDB("machine_b.db")
-	dbC := env.openDB("machine_c.db")
-
 	sharedRepoIdentity := "git@github.com:team/shared-project.git"
 
-	repoA, err := dbA.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo_a"), sharedRepoIdentity)
-	if err != nil {
-		t.Fatalf("Machine A: GetOrCreateRepo failed: %v", err)
-	}
-	repoB, err := dbB.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo_b"), sharedRepoIdentity)
-	if err != nil {
-		t.Fatalf("Machine B: GetOrCreateRepo failed: %v", err)
-	}
-	repoC, err := dbC.GetOrCreateRepo(filepath.Join(env.TmpDir, "repo_c"), sharedRepoIdentity)
-	if err != nil {
-		t.Fatalf("Machine C: GetOrCreateRepo failed: %v", err)
-	}
+	nodeA := env.setupNode("alice-laptop", sharedRepoIdentity, "1h")
+	nodeB := env.setupNode("bob-desktop", sharedRepoIdentity, "1h")
+	nodeC := env.setupNode("carol-workstation", sharedRepoIdentity, "1h")
 
-	workerA := startSyncWorker(t, dbA, env.pgURL, "alice-laptop", "1h")
-	workerB := startSyncWorker(t, dbB, env.pgURL, "bob-desktop", "1h")
-	workerC := startSyncWorker(t, dbC, env.pgURL, "carol-workstation", "1h")
+	dbA, repoA, workerA := nodeA.DB, nodeA.Repo, nodeA.Worker
+	dbB, repoB, workerB := nodeB.DB, nodeB.Repo, nodeB.Worker
+	dbC, repoC, workerC := nodeC.DB, nodeC.Repo, nodeC.Worker
 
 	var jobsCreatedByA, jobsCreatedByB, jobsCreatedByC []string
 
@@ -789,16 +786,6 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		}
 	}
 
-	checkJobs := func(db *DB, count int) func() (bool, error) {
-		return func() (bool, error) {
-			jobs, err := db.ListJobs("", "", 1000, 0)
-			if err != nil {
-				return false, err
-			}
-			return len(jobs) >= count, nil
-		}
-	}
-
 	t.Run("Round 1: Sequential", func(t *testing.T) {
 		t.Log("Round 1: Each machine creates 10 reviews (no sync yet)")
 		jobsCreatedByA = append(jobsCreatedByA, createBatchReviews(t, dbA, repoA.ID, 10, "a1", "Alice", "Alice commit")...)
@@ -809,7 +796,7 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		syncAll(t)
 		syncAll(t)
 
-		waitCondition(t, 10*time.Second, "Machine A round 1 job count", checkJobs(dbA, 30))
+		env.waitForLocalJobs(dbA, 30, 10*time.Second)
 		env.assertPgCount("review_jobs", 30)
 	})
 
@@ -833,109 +820,37 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		// All machines sync again
 		syncAll(t)
 
-		waitCondition(t, 10*time.Second, "Machine A round 2 job count", checkJobs(dbA, 45))
+		env.waitForLocalJobs(dbA, 45, 10*time.Second)
 		env.assertPgCount("review_jobs", 45)
 	})
 
 	t.Run("Round 3: Concurrent", func(t *testing.T) {
 		t.Log("Round 3: Concurrent creation during sync")
 
-		type jobResult struct {
-			uuid string
-			err  error
-		}
-		jobResultsA := make(chan jobResult, 10)
-		jobResultsB := make(chan jobResult, 10)
-		jobResultsC := make(chan jobResult, 10)
+		jobResultsA := make(chan string, 10)
+		jobResultsB := make(chan string, 10)
+		jobResultsC := make(chan string, 10)
 		syncErrsA := make(chan error, 4)
 		syncErrsB := make(chan error, 4)
 		syncErrsC := make(chan error, 4)
 		done := make(chan bool, 3)
 
-		go func() {
-			for i := 0; i < 10; i++ {
-				job, _, err := tryCreateCompletedReview(dbA, repoA.ID, fmt.Sprintf("a3_%02d", i), "Alice", fmt.Sprintf("Alice concurrent %d", i), "prompt", fmt.Sprintf("Review A3-%d", i))
-				if err != nil {
-					jobResultsA <- jobResult{err: err}
-					continue
-				}
-				jobResultsA <- jobResult{uuid: job.UUID}
-				if i%3 == 0 {
-					if _, err := workerA.SyncNow(); err != nil {
-						syncErrsA <- fmt.Errorf("Machine A round 3 sync at job %d: %w", i, err)
-					}
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
-			close(jobResultsA)
-			close(syncErrsA)
-			done <- true
-		}()
-
-		go func() {
-			for i := 0; i < 10; i++ {
-				job, _, err := tryCreateCompletedReview(dbB, repoB.ID, fmt.Sprintf("b3_%02d", i), "Bob", fmt.Sprintf("Bob concurrent %d", i), "prompt", fmt.Sprintf("Review B3-%d", i))
-				if err != nil {
-					jobResultsB <- jobResult{err: err}
-					continue
-				}
-				jobResultsB <- jobResult{uuid: job.UUID}
-				if i%3 == 0 {
-					if _, err := workerB.SyncNow(); err != nil {
-						syncErrsB <- fmt.Errorf("Machine B round 3 sync at job %d: %w", i, err)
-					}
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
-			close(jobResultsB)
-			close(syncErrsB)
-			done <- true
-		}()
-
-		go func() {
-			for i := 0; i < 10; i++ {
-				job, _, err := tryCreateCompletedReview(dbC, repoC.ID, fmt.Sprintf("c3_%02d", i), "Carol", fmt.Sprintf("Carol concurrent %d", i), "prompt", fmt.Sprintf("Review C3-%d", i))
-				if err != nil {
-					jobResultsC <- jobResult{err: err}
-					continue
-				}
-				jobResultsC <- jobResult{uuid: job.UUID}
-				if i%3 == 0 {
-					if _, err := workerC.SyncNow(); err != nil {
-						syncErrsC <- fmt.Errorf("Machine C round 3 sync at job %d: %w", i, err)
-					}
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
-			close(jobResultsC)
-			close(syncErrsC)
-			done <- true
-		}()
+		runConcurrentReviewsAndSync(dbA, repoA.ID, workerA, "a3", "Alice", 10, jobResultsA, syncErrsA, done)
+		runConcurrentReviewsAndSync(dbB, repoB.ID, workerB, "b3", "Bob", 10, jobResultsB, syncErrsB, done)
+		runConcurrentReviewsAndSync(dbC, repoC.ID, workerC, "c3", "Carol", 10, jobResultsC, syncErrsC, done)
 
 		<-done
 		<-done
 		<-done
 
-		for r := range jobResultsA {
-			if r.err != nil {
-				t.Errorf("%v", r.err)
-			} else {
-				jobsCreatedByA = append(jobsCreatedByA, r.uuid)
-			}
+		for uuid := range jobResultsA {
+			jobsCreatedByA = append(jobsCreatedByA, uuid)
 		}
-		for r := range jobResultsB {
-			if r.err != nil {
-				t.Errorf("%v", r.err)
-			} else {
-				jobsCreatedByB = append(jobsCreatedByB, r.uuid)
-			}
+		for uuid := range jobResultsB {
+			jobsCreatedByB = append(jobsCreatedByB, uuid)
 		}
-		for r := range jobResultsC {
-			if r.err != nil {
-				t.Errorf("%v", r.err)
-			} else {
-				jobsCreatedByC = append(jobsCreatedByC, r.uuid)
-			}
+		for uuid := range jobResultsC {
+			jobsCreatedByC = append(jobsCreatedByC, uuid)
 		}
 
 		for err := range syncErrsA {
@@ -953,9 +868,9 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 
 		expectedTotal := 75
 
-		waitCondition(t, 15*time.Second, "Machine A final job count", checkJobs(dbA, expectedTotal))
-		waitCondition(t, 15*time.Second, "Machine B final job count", checkJobs(dbB, expectedTotal))
-		waitCondition(t, 15*time.Second, "Machine C final job count", checkJobs(dbC, expectedTotal))
+		env.waitForLocalJobs(dbA, expectedTotal, 15*time.Second)
+		env.waitForLocalJobs(dbB, expectedTotal, 15*time.Second)
+		env.waitForLocalJobs(dbC, expectedTotal, 15*time.Second)
 
 		env.assertPgCount("review_jobs", expectedTotal)
 
@@ -1088,17 +1003,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 		t.Fatalf("Machine B: SyncNow failed: %v", err)
 	}
 
-	checkJobs := func(db *DB, count int) func() (bool, error) {
-		return func() (bool, error) {
-			jobs, err := db.ListJobs("", "", 1000, 0)
-			if err != nil {
-				return false, err
-			}
-			return len(jobs) >= count, nil
-		}
-	}
-
-	waitCondition(t, 10*time.Second, "Machine B job count", checkJobs(dbB, 3))
+	env.waitForLocalJobs(dbB, 3, 10*time.Second)
 
 	jobsB, err := dbB.ListJobs("", "", 100, 0)
 	if err != nil {
