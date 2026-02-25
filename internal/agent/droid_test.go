@@ -12,7 +12,7 @@ func TestDroidBuildArgs(t *testing.T) {
 	tests := []struct {
 		name     string
 		agentic  bool
-		setup    func(Agent) Agent
+		setup    func(*DroidAgent) *DroidAgent
 		wantArgs []string
 		dontWant []string
 	}{
@@ -29,29 +29,29 @@ func TestDroidBuildArgs(t *testing.T) {
 		},
 		{
 			name:     "Reasoning Thorough",
-			setup:    func(a Agent) Agent { return a.WithReasoning(ReasoningThorough) },
+			setup:    func(a *DroidAgent) *DroidAgent { return a.WithReasoning(ReasoningThorough).(*DroidAgent) },
 			wantArgs: []string{"--reasoning-effort", "high"},
 		},
 		{
 			name:     "Reasoning Fast",
-			setup:    func(a Agent) Agent { return a.WithReasoning(ReasoningFast) },
+			setup:    func(a *DroidAgent) *DroidAgent { return a.WithReasoning(ReasoningFast).(*DroidAgent) },
 			wantArgs: []string{"--reasoning-effort", "low"},
 		},
 		{
 			name:     "Reasoning Standard",
-			setup:    func(a Agent) Agent { return a.WithReasoning(ReasoningStandard) },
+			setup:    func(a *DroidAgent) *DroidAgent { return a.WithReasoning(ReasoningStandard).(*DroidAgent) },
 			dontWant: []string{"--reasoning-effort"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var a Agent = NewDroidAgent("droid")
+			a := NewDroidAgent("droid")
 			if tt.setup != nil {
 				a = tt.setup(a)
 			}
 
-			args := a.(*DroidAgent).buildArgs(tt.agentic)
+			args := a.buildArgs(tt.agentic)
 
 			for _, want := range tt.wantArgs {
 				assertContainsArg(t, args, want)
@@ -95,6 +95,7 @@ func TestDroidReviewOutcomes(t *testing.T) {
 		wantError   bool
 		errContains string
 		wantResult  string
+		exactMatch  bool
 	}{
 		{
 			name:       "Success",
@@ -111,6 +112,7 @@ func TestDroidReviewOutcomes(t *testing.T) {
 			name:       "Empty Output",
 			mockOpts:   MockCLIOpts{},
 			wantResult: "No review output generated",
+			exactMatch: true,
 		},
 	}
 
@@ -133,7 +135,11 @@ func TestDroidReviewOutcomes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
-			if !strings.Contains(result, tt.wantResult) {
+			if tt.exactMatch {
+				if result != tt.wantResult {
+					t.Fatalf("expected exact result %q, got %q", tt.wantResult, result)
+				}
+			} else if !strings.Contains(result, tt.wantResult) {
 				t.Fatalf("expected result to contain %q, got %q", tt.wantResult, result)
 			}
 		})
