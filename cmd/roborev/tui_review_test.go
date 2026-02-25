@@ -219,6 +219,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 		wantScroll    int
 		wantFlash     string
 		wantCmd       bool // Expect a command (fetch)
+		checkFailedJobInline bool
 	}{
 		{
 			name: "J Next skips queued/running",
@@ -324,6 +325,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 			wantIdx:    1,
 			wantJobID:  2,
 			wantCmd:    false,
+			checkFailedJobInline: true,
 		},
 	}
 
@@ -376,7 +378,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 			}
 
 			// Specific check for failed job inline content
-			if tt.name == "Navigate to Failed Job Inline" {
+			if tt.checkFailedJobInline {
 				if m2.currentReview == nil {
 					t.Fatal("Expected currentReview to be set for failed job")
 				}
@@ -2825,6 +2827,7 @@ func TestTUILogOutputTable(t *testing.T) {
 		initialFetchSeq  uint64
 		initialLoading   bool
 		initialOffset    int64
+		initialFmtr      *streamFormatter
 
 		msg tuiLogOutputMsg
 
@@ -2840,13 +2843,25 @@ func TestTUILogOutputTable(t *testing.T) {
 		wantFmtr       *streamFormatter
 	}{
 		{
-			name:             "persists formatter",
+			name:             "updates formatter from message",
 			initialView:      tuiViewLog,
 			initialStreaming: true,
 			msg:              tuiLogOutputMsg{fmtr: dummyFmtr, hasMore: true, append: true},
 			wantView:         tuiViewLog,
 			wantFmtr:         dummyFmtr,
 			wantStreaming:    true,
+			wantLinesNil:     true,
+		},
+		{
+			name:             "persists formatter when message has none",
+			initialView:      tuiViewLog,
+			initialStreaming: true,
+			initialFmtr:      dummyFmtr,
+			msg:              tuiLogOutputMsg{hasMore: true, append: true},
+			wantView:         tuiViewLog,
+			wantFmtr:         dummyFmtr,
+			wantStreaming:    true,
+			wantLinesNil:     true,
 		},
 		{
 			name:             "preserves lines on empty response",
@@ -2880,6 +2895,7 @@ func TestTUILogOutputTable(t *testing.T) {
 			msg:              tuiLogOutputMsg{err: errNoLog},
 			wantView:         tuiViewQueue,
 			wantFlashMsg:     "agent timeout",
+			wantLinesNil:     true,
 		},
 		{
 			name:             "err no log generic for non failed",
@@ -2888,6 +2904,7 @@ func TestTUILogOutputTable(t *testing.T) {
 			msg:              tuiLogOutputMsg{err: errNoLog},
 			wantView:         tuiViewQueue,
 			wantFlashMsg:     "No log available for this job",
+			wantLinesNil:     true,
 		},
 		{
 			name:             "running job keeps waiting",
@@ -3000,6 +3017,7 @@ func TestTUILogOutputTable(t *testing.T) {
 			m.logFetchSeq = tt.initialFetchSeq
 			m.logLoading = tt.initialLoading
 			m.logOffset = tt.initialOffset
+			m.logFmtr = tt.initialFmtr
 			m.height = 30
 
 			if tt.initialJobStatus != "" || tt.initialJobError != "" {
@@ -3017,11 +3035,16 @@ func TestTUILogOutputTable(t *testing.T) {
 			if m2.currentView != tt.wantView {
 				t.Errorf("Expected view %d, got %d", tt.wantView, m2.currentView)
 			}
-			if tt.wantLinesNil && m2.logLines != nil {
-				t.Errorf("Expected logLines to be nil, got %#v", m2.logLines)
-			}
-			if tt.wantLinesEmpty && (m2.logLines == nil || len(m2.logLines) != 0) {
-				t.Errorf("Expected logLines to be an empty slice, got %#v", m2.logLines)
+			if tt.wantLinesNil {
+				if m2.logLines != nil {
+					t.Errorf("Expected logLines to be nil, got %#v", m2.logLines)
+				}
+			} else if tt.wantLinesEmpty {
+				if m2.logLines == nil || len(m2.logLines) != 0 {
+					t.Errorf("Expected logLines to be an empty slice, got %#v", m2.logLines)
+				}
+			} else if m2.logLines == nil {
+				t.Errorf("Expected logLines to not be nil")
 			}
 			if len(m2.logLines) != tt.wantLinesLen {
 				t.Errorf("Expected %d lines, got %d", tt.wantLinesLen, len(m2.logLines))

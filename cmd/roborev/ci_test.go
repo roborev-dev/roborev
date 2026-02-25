@@ -51,16 +51,17 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 		name      string
 		args      []string
 		wantError string
+		clearEnv  bool
 	}{
-		{"InvalidReviewType", []string{"review", "--ref", "abc", "--review-types", "bogus"}, "invalid review_type"},
-		{"InvalidReasoning", []string{"review", "--ref", "abc", "--reasoning", "bogus"}, "invalid reasoning"},
-		{"InvalidMinSeverity", []string{"review", "--ref", "abc", "--min-severity", "bogus"}, "invalid min_severity"},
-		{"RequiresRef", []string{"review"}, "auto-detection"},
+		{"InvalidReviewType", []string{"review", "--ref", "abc", "--review-types", "bogus"}, "invalid review_type", false},
+		{"InvalidReasoning", []string{"review", "--ref", "abc", "--reasoning", "bogus"}, "invalid reasoning", false},
+		{"InvalidMinSeverity", []string{"review", "--ref", "abc", "--min-severity", "bogus"}, "invalid min_severity", false},
+		{"RequiresRef", []string{"review"}, "auto-detection", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.name == "RequiresRef" {
+			if tt.clearEnv {
 				t.Setenv("GITHUB_EVENT_PATH", "")
 				t.Setenv("GITHUB_REF", "")
 			}

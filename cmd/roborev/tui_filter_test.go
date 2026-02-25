@@ -386,6 +386,7 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 	m.activeRepoFilter = []string{"/repo1", "/repo2"}
 	m.currentView = tuiViewQueue
 	m.height = 10
+	m.heightDetected = false
 
 	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 50})
 
@@ -394,6 +395,12 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 	}
 	if m2.loadingJobs {
 		t.Error("loadingJobs should not be set when multi-repo filter is active (window resize)")
+	}
+	if m2.height != 50 {
+		t.Errorf("Expected height to be 50 after resize, got %d", m2.height)
+	}
+	if !m2.heightDetected {
+		t.Error("Expected heightDetected to be true after resize")
 	}
 
 	_ = cmd

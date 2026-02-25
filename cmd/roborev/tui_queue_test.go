@@ -643,14 +643,16 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 
 func TestTUIResizeBehavior(t *testing.T) {
 	tests := []struct {
-		name          string
-		initialHeight int
-		jobsCount     int
-		loadingJobs   bool
-		loadingMore   bool
-		msg           tea.WindowSizeMsg
-		wantCmd       bool
-		wantLoading   bool
+		name                     string
+		initialHeight            int
+		jobsCount                int
+		loadingJobs              bool
+		loadingMore              bool
+		activeFilters            []string
+		msg                      tea.WindowSizeMsg
+		wantCmd                  bool
+		wantLoading              bool
+		checkRefetchOnLaterResize bool
 	}{
 		{
 			name:          "During Pagination No Refetch",
@@ -691,6 +693,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 			msg:           tea.WindowSizeMsg{Height: 20}, // same height first
 			wantCmd:       false,                         // intermediate state wantCmd=false
 			wantLoading:   false,
+			checkRefetchOnLaterResize: true,
 		},
 		{
 			name:          "No Refetch While Loading Jobs",
@@ -701,6 +704,17 @@ func TestTUIResizeBehavior(t *testing.T) {
 			msg:           tea.WindowSizeMsg{Height: 40},
 			wantCmd:       false,
 			wantLoading:   true, // remains true
+		},
+		{
+			name:          "No Refetch Multi-Repo Filter Active",
+			initialHeight: 20,
+			jobsCount:     3,
+			loadingJobs:   false,
+			loadingMore:   false,
+			activeFilters: []string{"/repo1", "/repo2"},
+			msg:           tea.WindowSizeMsg{Height: 40},
+			wantCmd:       false,
+			wantLoading:   false,
 		},
 	}
 
@@ -715,12 +729,13 @@ func TestTUIResizeBehavior(t *testing.T) {
 				withQueueTestJobs(jobs...),
 				withQueueTestFlags(true, tt.loadingMore, tt.loadingJobs),
 			)
+			m.activeRepoFilter = tt.activeFilters
 			m.height = tt.initialHeight
 			m.heightDetected = false // ensure we can verify the msg updates this
 
 			var cmd tea.Cmd
 
-			if tt.name == "Refetch On Later Resize" {
+			if tt.checkRefetchOnLaterResize {
 				m, cmd = updateModel(t, m, tt.msg)
 				
 				if cmd != nil {
