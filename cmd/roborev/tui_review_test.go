@@ -2579,12 +2579,15 @@ func TestTUIRenderViews(t *testing.T) {
 	verdictPass := "P"
 
 	tests := []struct {
-		name         string
-		view         tuiView
-		branch       string
-		review       *storage.Review
-		wantContains []string
-		wantAbsent   []string
+		name                      string
+		view                      tuiView
+		branch                    string
+		review                    *storage.Review
+		wantContains              []string
+		wantAbsent                []string
+		checkContentStartsOnLine3 bool
+		checkContentStartsOnLine4 bool
+		checkNoVerdictOnLine3     bool
 	}{
 		{
 			name:   "review view with branch and addressed",
@@ -2702,7 +2705,8 @@ func TestTUIRenderViews(t *testing.T) {
 					Verdict:  nil,
 				},
 			},
-			wantContains: []string{"Review", "abc1234"},
+			wantContains:              []string{"Review", "abc1234"},
+			checkContentStartsOnLine3: true,
 		},
 		{
 			name: "review view verdict on line 2",
@@ -2718,7 +2722,8 @@ func TestTUIRenderViews(t *testing.T) {
 					Verdict:  &verdictPass,
 				},
 			},
-			wantContains: []string{"Review", "abc1234", "Verdict"},
+			wantContains:              []string{"Review", "abc1234", "Verdict"},
+			checkContentStartsOnLine4: true,
 		},
 		{
 			name: "review view addressed without verdict",
@@ -2735,7 +2740,9 @@ func TestTUIRenderViews(t *testing.T) {
 					Verdict:  nil,
 				},
 			},
-			wantContains: []string{"Review", "abc1234", "[ADDRESSED]"},
+			wantContains:              []string{"Review", "abc1234", "[ADDRESSED]"},
+			checkContentStartsOnLine4: true,
+			checkNoVerdictOnLine3:     true,
 		},
 		{
 			name:   "failed job no branch shown",
@@ -2769,7 +2776,7 @@ func TestTUIRenderViews(t *testing.T) {
 			}
 
 			// Specific check for layout tests (Lines 0, 1, 2)
-			if tt.name == "review view no blank line without verdict" {
+			if tt.checkContentStartsOnLine3 {
 				lines := strings.Split(output, "\n")
 				foundContent := false
 				for _, line := range lines[2:] {
@@ -2782,7 +2789,7 @@ func TestTUIRenderViews(t *testing.T) {
 					t.Errorf("Content should contain 'Line 1' after header, output:\n%s", output)
 				}
 			}
-			if tt.name == "review view verdict on line 2" || tt.name == "review view addressed without verdict" {
+			if tt.checkContentStartsOnLine4 {
 				lines := strings.Split(output, "\n")
 				foundContent := false
 				for _, line := range lines[3:] {
@@ -2794,7 +2801,10 @@ func TestTUIRenderViews(t *testing.T) {
 				if !foundContent {
 					t.Errorf("Content should contain 'Line 1' after addressed/verdict line, output:\n%s", output)
 				}
-				if tt.name == "review view addressed without verdict" && strings.Contains(lines[2], "Verdict") {
+			}
+			if tt.checkNoVerdictOnLine3 {
+				lines := strings.Split(output, "\n")
+				if len(lines) > 2 && strings.Contains(lines[2], "Verdict") {
 					t.Errorf("Line 2 should not contain 'Verdict' when no verdict is set, got: %s", lines[2])
 				}
 			}
@@ -2803,6 +2813,8 @@ func TestTUIRenderViews(t *testing.T) {
 }
 
 func TestTUILogOutputTable(t *testing.T) {
+	dummyFmtr := &streamFormatter{}
+
 	tests := []struct {
 		name             string
 		initialView      tuiView
@@ -2816,14 +2828,26 @@ func TestTUILogOutputTable(t *testing.T) {
 
 		msg tuiLogOutputMsg
 
-		wantView      tuiView
-		wantLinesLen  int
-		wantLines     []string
-		wantStreaming bool
-		wantFlashMsg  string
-		wantLoading   bool
-		wantOffset    int64
+		wantView       tuiView
+		wantLinesLen   int
+		wantLines      []string
+		wantLinesNil   bool
+		wantLinesEmpty bool
+		wantStreaming  bool
+		wantFlashMsg   string
+		wantLoading    bool
+		wantOffset     int64
+		wantFmtr       *streamFormatter
 	}{
+		{
+			name:             "persists formatter",
+			initialView:      tuiViewLog,
+			initialStreaming: true,
+			msg:              tuiLogOutputMsg{fmtr: dummyFmtr, hasMore: true, append: true},
+			wantView:         tuiViewLog,
+			wantFmtr:         dummyFmtr,
+			wantStreaming:    true,
+		},
 		{
 			name:             "preserves lines on empty response",
 			initialView:      tuiViewLog,
@@ -2872,7 +2896,8 @@ func TestTUILogOutputTable(t *testing.T) {
 			initialLogLines:  nil,
 			msg:              tuiLogOutputMsg{lines: nil, hasMore: true},
 			wantView:         tuiViewLog,
-			wantLinesLen:     0, // indicates nil or empty
+			wantLinesLen:     0,
+			wantLinesNil:     true,
 			wantStreaming:    true,
 		},
 		{
@@ -2960,6 +2985,7 @@ func TestTUILogOutputTable(t *testing.T) {
 			msg:              tuiLogOutputMsg{lines: nil, hasMore: false, newOffset: 0, append: false, seq: 1},
 			wantView:         tuiViewLog,
 			wantLinesLen:     0,
+			wantLinesEmpty:   true,
 			wantStreaming:    false,
 		},
 	}
@@ -2991,6 +3017,12 @@ func TestTUILogOutputTable(t *testing.T) {
 			if m2.currentView != tt.wantView {
 				t.Errorf("Expected view %d, got %d", tt.wantView, m2.currentView)
 			}
+			if tt.wantLinesNil && m2.logLines != nil {
+				t.Errorf("Expected logLines to be nil, got %#v", m2.logLines)
+			}
+			if tt.wantLinesEmpty && (m2.logLines == nil || len(m2.logLines) != 0) {
+				t.Errorf("Expected logLines to be an empty slice, got %#v", m2.logLines)
+			}
 			if len(m2.logLines) != tt.wantLinesLen {
 				t.Errorf("Expected %d lines, got %d", tt.wantLinesLen, len(m2.logLines))
 			}
@@ -3011,6 +3043,9 @@ func TestTUILogOutputTable(t *testing.T) {
 			if m2.logOffset != tt.wantOffset {
 				t.Errorf("Expected logOffset %d, got %d", tt.wantOffset, m2.logOffset)
 			}
+			if tt.wantFmtr != nil && m2.logFmtr != tt.wantFmtr {
+				t.Errorf("Expected logFmtr to match pointer %p, got %p", tt.wantFmtr, m2.logFmtr)
+			}
 		})
 	}
 }
@@ -3020,27 +3055,29 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 	verdictFail := "F"
 
 	tests := []struct {
-		name             string
-		width            int
-		height           int
-		branch           string
-		reviewAgent      string
-		jobRef           string
-		jobRepoName      string
-		jobAgent         string
-		jobVerdict       *string
-		addressed        bool
-		wantVisibleLines int
-		wantContains     []string
+		name                     string
+		width                    int
+		height                   int
+		branch                   string
+		reviewAgent              string
+		jobRef                   string
+		jobRepoName              string
+		jobAgent                 string
+		jobVerdict               *string
+		addressed                bool
+		wantVisibleLines         int
+		wantContains             []string
+		checkVisibleContentCount bool
 	}{
 		{
-			name:             "no verdict",
-			width:            120,
-			height:           10,
-			jobRef:           "abc1234",
-			jobAgent:         "codex",
-			jobVerdict:       nil,
-			wantVisibleLines: 5, // height 10 - 5 non-content = 5
+			name:                     "no verdict",
+			width:                    120,
+			height:                   10,
+			jobRef:                   "abc1234",
+			jobAgent:                 "codex",
+			jobVerdict:               nil,
+			wantVisibleLines:         5, // height 10 - 5 non-content = 5
+			checkVisibleContentCount: true,
 		},
 		{
 			name:             "with verdict",
@@ -3113,7 +3150,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 				t.Errorf("Expected scroll indicator '%s', output: %s", expectedIndicator, output)
 			}
 
-			if tt.name == "no verdict" {
+			if tt.checkVisibleContentCount {
 				contentCount := 0
 				for line := range strings.SplitSeq(output, "\n") {
 					trimmed := strings.TrimSpace(stripANSI(line))
