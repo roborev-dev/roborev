@@ -314,6 +314,14 @@ func assertFileNotContains(t *testing.T, path, unexpected string) {
 	}
 }
 
+// assertNoError checks that the given error is nil, failing the test with the given message if it is not.
+func assertNoError(t *testing.T, err error, msg string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", msg, err)
+	}
+}
+
 // FakeAgent implements Agent for testing purposes.
 type FakeAgent struct {
 	NameStr  string
