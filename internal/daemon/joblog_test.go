@@ -26,57 +26,57 @@ func TestJobLogPath(t *testing.T) {
 	}
 }
 
+func assertStrictPerms(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Errorf("permissions for %s = %o, want strict (no group/other)", path, info.Mode().Perm())
+	}
+}
+
 func TestOpenJobLog(t *testing.T) {
-	setupTestEnv(t)
+	t.Run("creates_and_writes", func(t *testing.T) {
+		setupTestEnv(t)
 
-	f := openJobLog(99)
-	if f == nil {
-		t.Fatal("openJobLog returned nil")
-	}
-	defer f.Close()
+		f := openJobLog(99)
+		if f == nil {
+			t.Fatal("openJobLog returned nil")
+		}
+		defer f.Close()
 
-	// Write some data and verify it lands on disk
-	_, err := f.WriteString("hello\n")
-	if err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	f.Close()
-
-	data, err := os.ReadFile(JobLogPath(99))
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if string(data) != "hello\n" {
-		t.Errorf("file contents = %q, want %q", data, "hello\n")
-	}
-
-	// Verify restrictive permissions (skip on Windows where
-	// POSIX file modes don't apply).
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(JobLogPath(99))
+		// Write some data and verify it lands on disk
+		_, err := f.WriteString("hello\n")
 		if err != nil {
-			t.Fatalf("stat: %v", err)
+			t.Fatalf("write: %v", err)
 		}
-		perm := info.Mode().Perm()
-		if perm&0o077 != 0 {
-			t.Errorf(
-				"log file permissions = %o, want 0600",
-				perm,
-			)
-		}
+		f.Close()
 
-		dirInfo, err := os.Stat(JobLogDir())
+		data, err := os.ReadFile(JobLogPath(99))
 		if err != nil {
-			t.Fatalf("stat dir: %v", err)
+			t.Fatalf("read: %v", err)
 		}
-		dirPerm := dirInfo.Mode().Perm()
-		if dirPerm&0o077 != 0 {
-			t.Errorf(
-				"log dir permissions = %o, want 0700",
-				dirPerm,
-			)
+		if string(data) != "hello\n" {
+			t.Errorf("file contents = %q, want %q", data, "hello\n")
 		}
-	}
+	})
+
+	t.Run("strict_permissions", func(t *testing.T) {
+		setupTestEnv(t)
+		f := openJobLog(99)
+		if f == nil {
+			t.Fatal("openJobLog returned nil")
+		}
+		f.Close()
+
+		assertStrictPerms(t, JobLogPath(99))
+		assertStrictPerms(t, JobLogDir())
+	})
 }
 
 func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
@@ -102,87 +102,70 @@ func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
 	}
 	f.Close()
 
-	dirInfo, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("stat dir: %v", err)
-	}
-	if dirInfo.Mode().Perm()&0o077 != 0 {
-		t.Errorf(
-			"dir permissions = %o, want 0700",
-			dirInfo.Mode().Perm(),
-		)
-	}
+	assertStrictPerms(t, dir)
+	assertStrictPerms(t, path)
+}
 
-	fileInfo, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat file: %v", err)
+func createLogFile(t *testing.T, path, content string, mtime time.Time) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if fileInfo.Mode().Perm()&0o077 != 0 {
-		t.Errorf(
-			"file permissions = %o, want 0600",
-			fileInfo.Mode().Perm(),
-		)
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestCleanJobLogs(t *testing.T) {
-	setupTestEnv(t)
+	t.Run("removes_old_keeps_new", func(t *testing.T) {
+		setupTestEnv(t)
 
-	dir := JobLogDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
+		dir := JobLogDir()
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
 
-	// Create an "old" log file by writing and then back-dating its mtime
-	oldPath := filepath.Join(dir, "1.log")
-	if err := os.WriteFile(oldPath, []byte("old"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-8 * 24 * time.Hour)
-	if err := os.Chtimes(oldPath, old, old); err != nil {
-		t.Fatal(err)
-	}
+		// Create an "old" log file by writing and then back-dating its mtime
+		oldPath := filepath.Join(dir, "1.log")
+		createLogFile(t, oldPath, "old", time.Now().Add(-8*24*time.Hour))
 
-	// Create a "new" log file (default mtime = now)
-	newPath := filepath.Join(dir, "2.log")
-	if err := os.WriteFile(newPath, []byte("new"), 0644); err != nil {
-		t.Fatal(err)
-	}
+		// Create a "new" log file (default mtime = now)
+		newPath := filepath.Join(dir, "2.log")
+		createLogFile(t, newPath, "new", time.Now())
 
-	// Create a non-log file (should be ignored)
-	txtPath := filepath.Join(dir, "notes.txt")
-	if err := os.WriteFile(txtPath, []byte("ignore"), 0644); err != nil {
-		t.Fatal(err)
-	}
+		// Create a non-log file (should be ignored)
+		txtPath := filepath.Join(dir, "notes.txt")
+		createLogFile(t, txtPath, "ignore", time.Now())
 
-	removed := CleanJobLogs(7 * 24 * time.Hour)
-	if removed != 1 {
-		t.Errorf("CleanJobLogs removed %d files, want 1", removed)
-	}
+		removed := CleanJobLogs(7 * 24 * time.Hour)
+		if removed != 1 {
+			t.Errorf("CleanJobLogs removed %d files, want 1", removed)
+		}
 
-	// Old file should be gone
-	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
-		t.Error("old log file should be removed")
-	}
+		// Old file should be gone
+		if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+			t.Error("old log file should be removed")
+		}
 
-	// New file should remain
-	if _, err := os.Stat(newPath); err != nil {
-		t.Error("new log file should still exist")
-	}
+		// New file should remain
+		if _, err := os.Stat(newPath); err != nil {
+			t.Error("new log file should still exist")
+		}
 
-	// Non-log file should remain
-	if _, err := os.Stat(txtPath); err != nil {
-		t.Error("non-log file should still exist")
-	}
-}
+		// Non-log file should remain
+		if _, err := os.Stat(txtPath); err != nil {
+			t.Error("non-log file should still exist")
+		}
+	})
 
-func TestCleanJobLogs_NoDir(t *testing.T) {
-	setupTestEnv(t)
-	// No logs/jobs directory exists — should return 0 without error
-	removed := CleanJobLogs(7 * 24 * time.Hour)
-	if removed != 0 {
-		t.Errorf("CleanJobLogs on missing dir = %d, want 0", removed)
-	}
+	t.Run("no_dir", func(t *testing.T) {
+		setupTestEnv(t)
+		// No logs/jobs directory exists — should return 0 without error
+		removed := CleanJobLogs(7 * 24 * time.Hour)
+		if removed != 0 {
+			t.Errorf("CleanJobLogs on missing dir = %d, want 0", removed)
+		}
+	})
 }
 
 func TestSafeWriter(t *testing.T) {
