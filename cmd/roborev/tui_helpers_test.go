@@ -488,7 +488,7 @@ func TestReflowHelpRows(t *testing.T) {
 		{
 			name:     "split into two rows",
 			items:    []string{"a: one", "b: two", "c: three", "d: four"},
-			width:    30,
+			width:    28, // 4 cols aligned = 29 chars, won't fit in 28
 			wantRows: 2,
 		},
 		{
