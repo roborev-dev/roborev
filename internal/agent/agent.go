@@ -223,3 +223,8 @@ func (sw *syncWriter) Write(p []byte) (n int, err error) {
 	defer sw.mu.Unlock()
 	return sw.w.Write(p)
 }
+
+// Unregister removes an agent from the registry (useful for testing)
+func Unregister(name string) {
+	delete(registry, name)
+}

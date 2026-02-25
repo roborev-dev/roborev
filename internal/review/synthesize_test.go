@@ -10,36 +10,52 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 )
 
+func assertContains(t *testing.T, s, substr string) {
+	t.Helper()
+	if !strings.Contains(s, substr) {
+		t.Errorf("expected string to contain %q, but got:\n%s", substr, s)
+	}
+}
+
+// commonMockAgent provides default no-op chaining methods
+type commonMockAgent struct {
+	self agent.Agent
+}
+
+func (a *commonMockAgent) WithReasoning(_ agent.ReasoningLevel) agent.Agent { return a.self }
+func (a *commonMockAgent) WithAgentic(_ bool) agent.Agent                   { return a.self }
+func (a *commonMockAgent) WithModel(_ string) agent.Agent                   { return a.self }
+
 // failingSynthAgent always returns an error from Review,
 // used to force synthesis fallback deterministically.
-type failingSynthAgent struct{}
-
-func (a *failingSynthAgent) Name() string {
-	return "failing-synth"
+type failingSynthAgent struct {
+	commonMockAgent
 }
+
+func newFailingSynthAgent() *failingSynthAgent {
+	a := &failingSynthAgent{}
+	a.self = a
+	return a
+}
+
+func (a *failingSynthAgent) Name() string { return "failing-synth" }
 func (a *failingSynthAgent) Review(
 	_ context.Context, _, _, _ string, _ io.Writer,
 ) (string, error) {
 	return "", errors.New("agent exploded")
 }
-func (a *failingSynthAgent) WithReasoning(
-	_ agent.ReasoningLevel,
-) agent.Agent {
-	return a
-}
-func (a *failingSynthAgent) WithAgentic(_ bool) agent.Agent {
-	return a
-}
-func (a *failingSynthAgent) WithModel(_ string) agent.Agent {
-	return a
-}
-func (a *failingSynthAgent) CommandLine() string {
-	return "failing-synth"
-}
+func (a *failingSynthAgent) CommandLine() string { return "failing-synth" }
 
 // capturingAgent records the gitRef passed to Review.
 type capturingAgent struct {
+	commonMockAgent
 	capturedGitRef string
+}
+
+func newCapturingAgent() *capturingAgent {
+	a := &capturingAgent{}
+	a.self = a
+	return a
 }
 
 func (a *capturingAgent) Name() string { return "capture" }
@@ -49,72 +65,77 @@ func (a *capturingAgent) Review(
 	a.capturedGitRef = gitRef
 	return "synthesized output", nil
 }
-func (a *capturingAgent) WithReasoning(
-	_ agent.ReasoningLevel,
-) agent.Agent {
-	return a
-}
-func (a *capturingAgent) WithAgentic(_ bool) agent.Agent {
-	return a
-}
-func (a *capturingAgent) WithModel(_ string) agent.Agent {
-	return a
-}
-func (a *capturingAgent) CommandLine() string {
-	return "capture"
-}
+func (a *capturingAgent) CommandLine() string { return "capture" }
 
-func TestSynthesize_AllFailed(t *testing.T) {
-	results := []ReviewResult{
+func TestSynthesize_Formatting(t *testing.T) {
+	tests := []struct {
+		name          string
+		results       []ReviewResult
+		expectedErr   error
+		expectedTexts []string
+	}{
 		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "failed",
-			Error:      "agent crashed",
+			name: "AllFailed",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "security",
+					Status:     "failed",
+					Error:      "agent crashed",
+				},
+			},
+			expectedErr: ErrAllFailed,
+			expectedTexts: []string{
+				"Review Failed",
+			},
+		},
+		{
+			name: "SingleSuccess",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "security",
+					Status:     "done",
+					Output:     "No issues found.",
+				},
+			},
+			expectedErr: nil,
+			expectedTexts: []string{
+				"Review Passed",
+				"No issues found.",
+				"Agent: codex",
+			},
+		},
+		{
+			name: "AllQuota",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "security",
+					Status:     "failed",
+					Error:      QuotaErrorPrefix + "exhausted",
+				},
+			},
+			expectedErr: nil,
+			expectedTexts: []string{
+				"Review Skipped",
+			},
 		},
 	}
 
-	comment, err := Synthesize(
-		context.Background(), results, SynthesizeOpts{
-			HeadSHA: "abc123456789",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			comment, err := Synthesize(
+				context.Background(), tt.results, SynthesizeOpts{
+					HeadSHA: "abc123456789",
+				})
+			if !errors.Is(err, tt.expectedErr) {
+				t.Fatalf("expected error %v, got: %v", tt.expectedErr, err)
+			}
+			for _, text := range tt.expectedTexts {
+				assertContains(t, comment, text)
+			}
 		})
-	if !errors.Is(err, ErrAllFailed) {
-		t.Fatalf(
-			"expected ErrAllFailed, got: %v", err)
-	}
-
-	if !strings.Contains(comment, "Review Failed") {
-		t.Error("expected 'Review Failed' in comment")
-	}
-}
-
-func TestSynthesize_SingleSuccess(t *testing.T) {
-	results := []ReviewResult{
-		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "done",
-			Output:     "No issues found.",
-		},
-	}
-
-	comment, err := Synthesize(
-		context.Background(), results, SynthesizeOpts{
-			HeadSHA: "abc123456789",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(comment, "Review Passed") {
-		t.Error("expected 'Review Passed' in comment")
-	}
-	if !strings.Contains(
-		comment, "No issues found.") {
-		t.Error("expected output in comment")
-	}
-	if !strings.Contains(comment, "Agent: codex") {
-		t.Error("expected agent name in metadata")
 	}
 }
 
@@ -122,7 +143,9 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 	// Register an agent that always fails so the test is
 	// deterministic regardless of what other agents exist
 	// in the global registry.
-	agent.Register(&failingSynthAgent{})
+	ag := newFailingSynthAgent()
+	agent.Register(ag)
+	t.Cleanup(func() { agent.Unregister("failing-synth") })
 
 	results := []ReviewResult{
 		{
@@ -149,42 +172,9 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 	}
 
 	// Should fall back to raw format
-	if !strings.Contains(
-		comment, "Synthesis unavailable") {
-		t.Error(
-			"expected raw fallback when synthesis fails")
-	}
-	if !strings.Contains(
-		comment, "Found issue A") {
-		t.Error("expected first review output")
-	}
-	if !strings.Contains(
-		comment, "Design looks good") {
-		t.Error("expected second review output")
-	}
-}
-
-func TestSynthesize_AllQuota(t *testing.T) {
-	results := []ReviewResult{
-		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "failed",
-			Error:      QuotaErrorPrefix + "exhausted",
-		},
-	}
-
-	comment, err := Synthesize(
-		context.Background(), results, SynthesizeOpts{
-			HeadSHA: "abc123456789",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(comment, "Review Skipped") {
-		t.Error("expected 'Review Skipped' in comment")
-	}
+	assertContains(t, comment, "Synthesis unavailable")
+	assertContains(t, comment, "Found issue A")
+	assertContains(t, comment, "Design looks good")
 }
 
 func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {
@@ -214,15 +204,13 @@ func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {
 
 	// Should fall back to raw format since synthesis agent
 	// doesn't exist
-	if !strings.Contains(
-		comment, "Combined Review") {
-		t.Error("expected combined review header")
-	}
+	assertContains(t, comment, "Combined Review")
 }
 
 func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
-	cap := &capturingAgent{}
+	cap := newCapturingAgent()
 	agent.Register(cap)
+	t.Cleanup(func() { agent.Unregister("capture") })
 
 	results := []ReviewResult{
 		{
