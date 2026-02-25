@@ -162,7 +162,7 @@ func mockReviewDaemon(t *testing.T, review storage.Review) func() string {
 	t.Helper()
 	var mu sync.Mutex
 	var receivedQuery string
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/review" && r.Method == "GET" {
 			mu.Lock()
 			receivedQuery = r.URL.RawQuery
@@ -171,7 +171,6 @@ func mockReviewDaemon(t *testing.T, review storage.Review) func() string {
 			return
 		}
 	}))
-	t.Cleanup(cleanup)
 	return func() string {
 		mu.Lock()
 		defer mu.Unlock()

@@ -230,7 +230,7 @@ func runListTest(t *testing.T, tc listTestCase) {
 			tc.handler(w, r)
 		}
 	})
-	_, cleanup := setupMockDaemon(t, wrapperHandler)
+	daemonFromHandler(t, wrapperHandler)
 	t.Cleanup(cleanup)
 
 	// Setup repo and cwd

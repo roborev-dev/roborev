@@ -18,8 +18,7 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 		WithReview(20, "Review for Job 20").
 		WithReview(30, "Review for Job 30")
 
-	ts, cleanup := builder.Build()
-	defer cleanup()
+	ts := builder.Build()
 
 	tests := []struct {
 		name       string

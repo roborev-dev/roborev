@@ -59,8 +59,7 @@ func TestCommentJobFlag(t *testing.T) {
 			var receivedJobID int64
 
 			if !tt.wantErr {
-				_, cleanup := setupMockDaemon(t, mockCommentHandler(t, &receivedJobID))
-				defer cleanup()
+				daemonFromHandler(t, mockCommentHandler(t, &receivedJobID))
 			}
 
 			cmd := commentCmd()

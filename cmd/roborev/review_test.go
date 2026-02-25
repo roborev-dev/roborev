@@ -37,8 +37,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		respondJSON(w, http.StatusCreated, job)
 	})
 
-	_, cleanup := setupMockDaemon(t, mux)
-	defer cleanup()
+	daemonFromHandler(t, mux)
 
 	// Create a temp git repo with two commits
 	repo := newTestGitRepo(t)
@@ -105,8 +104,7 @@ func TestEnqueueSkippedBranch(t *testing.T) {
 		})
 	})
 
-	_, cleanup := setupMockDaemon(t, mux)
-	defer cleanup()
+	daemonFromHandler(t, mux)
 
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")
@@ -164,8 +162,7 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 			respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
 		})
 
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		var stdout, stderr bytes.Buffer
 		cmd := reviewCmd()
@@ -199,8 +196,7 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 			respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling"})
 		})
 
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		var stdout, stderr bytes.Buffer
 		cmd := reviewCmd()
@@ -250,8 +246,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 			})
 		})
 
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		cmd := reviewCmd()
 		cmd.SetArgs([]string{"--repo", repo.Dir, "--wait", "--quiet"})
@@ -289,8 +284,7 @@ func TestWaitForJobUnknownStatus(t *testing.T) {
 			})
 		})
 
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		cmd := reviewCmd()
 		cmd.SetArgs([]string{"--repo", repo.Dir, "--wait", "--quiet"})
@@ -345,8 +339,7 @@ func TestReviewSinceFlag(t *testing.T) {
 			gitRefChan <- req.GitRef
 			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
 		})
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
@@ -376,8 +369,7 @@ func TestReviewSinceFlag(t *testing.T) {
 		// The original code was returning version on any request.
 		// Let's just pass empty mux, as /api/status is handled by setupMockDaemon wrapper.
 
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 		repo.CommitFile("file.txt", "content", "initial")
@@ -395,8 +387,7 @@ func TestReviewSinceFlag(t *testing.T) {
 
 	t.Run("since with no commits ahead fails", func(t *testing.T) {
 		mux := http.NewServeMux()
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 		repo.CommitFile("file.txt", "content", "initial")
@@ -414,8 +405,7 @@ func TestReviewSinceFlag(t *testing.T) {
 
 	t.Run("since and branch are mutually exclusive", func(t *testing.T) {
 		mux := http.NewServeMux()
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 
@@ -432,8 +422,7 @@ func TestReviewSinceFlag(t *testing.T) {
 
 	t.Run("since and dirty are mutually exclusive", func(t *testing.T) {
 		mux := http.NewServeMux()
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 
@@ -450,8 +439,7 @@ func TestReviewSinceFlag(t *testing.T) {
 
 	t.Run("since with positional args fails", func(t *testing.T) {
 		mux := http.NewServeMux()
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 
@@ -470,8 +458,7 @@ func TestReviewSinceFlag(t *testing.T) {
 func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch and dirty are mutually exclusive", func(t *testing.T) {
 		mux := http.NewServeMux()
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 
@@ -488,8 +475,7 @@ func TestReviewBranchFlag(t *testing.T) {
 
 	t.Run("branch with positional args fails", func(t *testing.T) {
 		mux := http.NewServeMux()
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 
@@ -509,8 +495,7 @@ func TestReviewBranchFlag(t *testing.T) {
 
 	t.Run("branch on default branch fails", func(t *testing.T) {
 		mux := http.NewServeMux()
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
@@ -529,8 +514,7 @@ func TestReviewBranchFlag(t *testing.T) {
 
 	t.Run("branch with no commits fails", func(t *testing.T) {
 		mux := http.NewServeMux()
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
@@ -559,8 +543,7 @@ func TestReviewBranchFlag(t *testing.T) {
 			receivedGitRef = req.GitRef
 			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
 		})
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
@@ -601,8 +584,7 @@ func TestReviewFastFlag(t *testing.T) {
 			reasoningChan <- req.Reasoning
 			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, Agent: "test"})
 		})
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 		repo.CommitFile("file.txt", "content", "initial")
@@ -638,8 +620,7 @@ func TestReviewFastFlag(t *testing.T) {
 			reasoningChan <- req.Reasoning
 			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, Agent: "test"})
 		})
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		repo := newTestGitRepo(t)
 		repo.CommitFile("file.txt", "content", "initial")
@@ -669,8 +650,7 @@ func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	_, cleanup := setupMockDaemon(t, mux)
-	defer cleanup()
+	daemonFromHandler(t, mux)
 
 	repo := newTestGitRepo(t)
 	hooksDir := filepath.Join(repo.Dir, ".git", "hooks")

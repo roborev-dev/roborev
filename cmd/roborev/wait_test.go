@@ -84,8 +84,7 @@ func newWaitEnv(t *testing.T, handler http.Handler) *waitEnv {
 	t.Helper()
 	repo := newTestGitRepo(t)
 	sha := repo.CommitFile("file.txt", "content", "initial commit")
-	_, cleanup := setupMockDaemon(t, handler)
-	t.Cleanup(cleanup)
+	daemonFromHandler(t, handler)
 	chdir(t, repo.Dir)
 	return &waitEnv{repo: repo, sha: sha}
 }
@@ -302,8 +301,7 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 		},
 	}
 
-	_, cleanup := setupMockDaemon(t, newWaitMockHandler(mock))
-	t.Cleanup(cleanup)
+	daemonFromHandler(t, newWaitMockHandler(mock))
 	chdir(t, repo.Dir)
 
 	_, err := runWait(t, "42", "--quiet")
@@ -396,8 +394,7 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 		},
 	}
 
-	_, cleanup := setupMockDaemon(t, newWaitMockHandler(mock))
-	t.Cleanup(cleanup)
+	daemonFromHandler(t, newWaitMockHandler(mock))
 
 	chdir(t, worktreeDir)
 

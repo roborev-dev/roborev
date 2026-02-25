@@ -466,7 +466,7 @@ func (b *MockDaemonBuilder) WithJobs(jobs []storage.ReviewJob) *MockDaemonBuilde
 	})
 }
 
-func (b *MockDaemonBuilder) Build() (*httptest.Server, func()) {
+func (b *MockDaemonBuilder) Build() *httptest.Server {
 	// Register default review handler if not already overridden
 	if _, ok := b.handlers["/api/review"]; !ok && len(b.reviews) > 0 {
 		b.handlers["/api/review"] = func(w http.ResponseWriter, r *http.Request) {
@@ -505,5 +505,5 @@ func (b *MockDaemonBuilder) Build() (*httptest.Server, func()) {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
-	return setupMockDaemon(b.t, handler)
+	return daemonFromHandler(b.t, handler).Server
 }

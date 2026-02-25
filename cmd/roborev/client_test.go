@@ -111,8 +111,7 @@ func TestGetCommentsForJob(t *testing.T) {
 			baseHandler(w, r)
 		}
 
-		_, cleanup := setupMockDaemon(t, http.HandlerFunc(handler))
-		defer cleanup()
+		daemonFromHandler(t, http.HandlerFunc(handler))
 
 		responses, err := getCommentsForJob(42)
 		if err != nil {
@@ -125,8 +124,7 @@ func TestGetCommentsForJob(t *testing.T) {
 
 	t.Run("returns error on non-200", func(t *testing.T) {
 		handler := newMockHandler(t, "GET", "/api/comments", nil, http.StatusInternalServerError)
-		_, cleanup := setupMockDaemon(t, handler)
-		defer cleanup()
+		daemonFromHandler(t, handler)
 
 		_, err := getCommentsForJob(42)
 		if err == nil {
@@ -143,8 +141,7 @@ func TestWaitForReview(t *testing.T) {
 		mux.Handle("/api/review", newMockHandler(t, "GET", "/api/review",
 			storage.Review{ID: 1, JobID: 1, Output: "Review complete"}, 0))
 
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		review, err := waitForReview(1)
 		if err != nil {
@@ -171,8 +168,7 @@ func TestWaitForReview(t *testing.T) {
 		mux.Handle("/api/review", newMockHandler(t, "GET", "/api/review",
 			storage.Review{ID: 1, JobID: 1, Output: "Review after polling"}, 0))
 
-		_, cleanup := setupMockDaemon(t, mux)
-		defer cleanup()
+		daemonFromHandler(t, mux)
 
 		review, err := waitForReviewWithInterval(1, 1*time.Millisecond)
 		if err != nil {
@@ -190,8 +186,7 @@ func TestWaitForReview(t *testing.T) {
 		resp := map[string]any{
 			"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusFailed, Error: "agent crashed"}},
 		}
-		_, cleanup := setupMockDaemon(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
-		defer cleanup()
+		daemonFromHandler(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
 
 		_, err := waitForReview(1)
 		if err == nil {
@@ -206,8 +201,7 @@ func TestWaitForReview(t *testing.T) {
 		resp := map[string]any{
 			"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusCanceled}},
 		}
-		_, cleanup := setupMockDaemon(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
-		defer cleanup()
+		daemonFromHandler(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
 
 		_, err := waitForReview(1)
 		if err == nil {
@@ -379,8 +373,7 @@ func TestFindJobForCommit(t *testing.T) {
 				handler = mockSequenceHandler(t, steps...)
 			}
 
-			_, cleanup := setupMockDaemon(t, handler)
-			defer cleanup()
+			daemonFromHandler(t, handler)
 
 			job, err := findJobForCommit(repoDir, tt.commitSHA)
 

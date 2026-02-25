@@ -382,14 +382,13 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 	//
 	// Use a mock daemon so ensureDaemon doesn't try to spawn a real
 	// daemon subprocess (which hangs on CI).
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return empty for all queries — we only care about argument routing
 		json.NewEncoder(w).Encode(map[string]any{
 			"jobs":     []any{},
 			"has_more": false,
 		})
 	}))
-	defer cleanup()
 
 	cmd := fixCmd()
 	cmd.SilenceUsage = true
@@ -428,7 +427,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	t.Run("no unaddressed jobs", func(t *testing.T) {
-		_, cleanup := newMockDaemonBuilder(t).
+		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
 				if q.Get("status") != "done" {
@@ -443,7 +442,6 @@ func TestRunFixUnaddressed(t *testing.T) {
 				})
 			}).
 			Build()
-		defer cleanup()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
@@ -460,7 +458,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		var reviewCalls, addressCalls atomic.Int32
 		var unaddressedCalls atomic.Int32
 
-		_, cleanup := newMockDaemonBuilder(t).
+		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
 				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
@@ -499,7 +497,6 @@ func TestRunFixUnaddressed(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}).
 			Build()
-		defer cleanup()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
@@ -520,7 +517,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 
 	t.Run("passes branch filter to API", func(t *testing.T) {
 		var gotBranch string
-		_, cleanup := newMockDaemonBuilder(t).
+		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Query().Get("addressed") == "false" {
 					gotBranch = r.URL.Query().Get("branch")
@@ -531,7 +528,6 @@ func TestRunFixUnaddressed(t *testing.T) {
 				})
 			}).
 			Build()
-		defer cleanup()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixUnaddressed(cmd, "feature-branch", false, fixOptions{agentName: "test"})
@@ -545,13 +541,12 @@ func TestRunFixUnaddressed(t *testing.T) {
 	})
 
 	t.Run("server error", func(t *testing.T) {
-		_, cleanup := newMockDaemonBuilder(t).
+		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte("db error"))
 			}).
 			Build()
-		defer cleanup()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
@@ -615,8 +610,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 
 	t.Run("oldest first by default", func(t *testing.T) {
 		b, _ := makeBuilder()
-		_, cleanup := b.Build()
-		defer cleanup()
+		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
@@ -631,8 +625,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 
 	t.Run("newest first with flag", func(t *testing.T) {
 		b, _ := makeBuilder()
-		_, cleanup := b.Build()
-		defer cleanup()
+		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixUnaddressed(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
@@ -649,7 +642,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	var queryCount atomic.Int32
-	_, cleanup := newMockDaemonBuilder(t).
+	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
 			if q.Get("addressed") == "false" && q.Get("limit") == "0" {
@@ -702,7 +695,6 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}).
 		Build()
-	defer cleanup()
 
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 		return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
@@ -1047,7 +1039,7 @@ func TestRunFixList(t *testing.T) {
 		finishedAt := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 		verdict := "FAIL"
 
-		_, cleanup := newMockDaemonBuilder(t).
+		_ = newMockDaemonBuilder(t).
 			WithJobs([]storage.ReviewJob{{
 				ID:            42,
 				GitRef:        "abc123def456",
@@ -1061,8 +1053,7 @@ func TestRunFixList(t *testing.T) {
 			}}).
 			WithReview(42, "Found 3 issues:\n- Missing error handling\n- Unused variable").
 			Build()
-		defer cleanup()
-		// serverAddr is patched by setupMockDaemon called inside Build()
+			// serverAddr is patched by setupMockDaemon called inside Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixList(cmd, "", false)
@@ -1112,10 +1103,9 @@ func TestRunFixList(t *testing.T) {
 	})
 
 	t.Run("no unaddressed jobs", func(t *testing.T) {
-		_, cleanup := newMockDaemonBuilder(t).
+		_ = newMockDaemonBuilder(t).
 			WithJobs([]storage.ReviewJob{}).
 			Build()
-		defer cleanup()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixList(cmd, "", false)
@@ -1131,7 +1121,7 @@ func TestRunFixList(t *testing.T) {
 
 	t.Run("respects newest-first flag", func(t *testing.T) {
 		var gotIDs []int64
-		_, cleanup := newMockDaemonBuilder(t).
+		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
 				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
@@ -1160,7 +1150,6 @@ func TestRunFixList(t *testing.T) {
 			WithReview(20, "findings").
 			WithReview(10, "findings").
 			Build()
-		defer cleanup()
 
 		gotIDs = nil
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
@@ -1228,7 +1217,7 @@ func setupWorktree(t *testing.T) (mainRepo *TestGitRepo, worktreeDir string) {
 func setupWorktreeMockDaemon(t *testing.T) (receivedRepo *string) {
 	t.Helper()
 	var repo string
-	_, cleanup := newMockDaemonBuilder(t).
+	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			repo = r.URL.Query().Get("repo")
 			writeJSON(w, map[string]any{
@@ -1237,7 +1226,6 @@ func setupWorktreeMockDaemon(t *testing.T) (receivedRepo *string) {
 			})
 		}).
 		Build()
-	t.Cleanup(cleanup)
 	return &repo
 }
 
