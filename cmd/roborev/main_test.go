@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -94,6 +93,14 @@ func setupRefineRepo(t *testing.T) (string, string) {
 	headSHA := repo.CommitFile("feature.txt", "change", "feature commit")
 
 	return repo.Dir, headSHA
+}
+
+func newFastRunContext(repoDir string) RunContext {
+	return RunContext{
+		WorkingDir:      repoDir,
+		PollInterval:    1 * time.Millisecond,
+		PostCommitDelay: 1 * time.Millisecond,
+	}
 }
 
 func TestEnqueueReviewRefine(t *testing.T) {
@@ -186,36 +193,9 @@ func TestRefineNoChangeSkipsImmediately(t *testing.T) {
 	// Integration coverage: TestRunRefineSurfacesResponseErrors exercises
 	// the full loop. Here we verify the predicate and skip-tracking logic.
 
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	// A fresh repo with a committed file should have a clean working tree
-	dir := t.TempDir()
-	for _, args := range [][]string{
-		{"init"},
-		{"config", "user.email", "test@test.com"},
-		{"config", "user.name", "Test"},
-	} {
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if err := c.Run(); err != nil {
-			t.Fatalf("git %v: %v", args, err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"add", "."},
-		{"commit", "-m", "initial"},
-	} {
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if err := c.Run(); err != nil {
-			t.Fatalf("git %v: %v", args, err)
-		}
-	}
+	repo := NewGitTestRepo(t)
+	repo.CommitFile("file.txt", "content", "initial")
+	dir := repo.Dir
 
 	if !git.IsWorkingTreeClean(dir) {
 		t.Fatal("expected clean working tree after commit")
@@ -249,11 +229,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	})
 	defer md.Close()
 
-	ctx := RunContext{
-		WorkingDir:      repoDir,
-		PollInterval:    1 * time.Millisecond,
-		PostCommitDelay: 1 * time.Millisecond,
-	}
+	ctx := newFastRunContext(repoDir)
 
 	if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
 		t.Fatal("expected error, got nil")
@@ -274,11 +250,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	isTerminal = func(fd uintptr) bool { return false }
 	defer func() { isTerminal = origIsTerminal }()
 
-	ctx := RunContext{
-		WorkingDir:      repoDir,
-		PollInterval:    1 * time.Millisecond,
-		PostCommitDelay: 1 * time.Millisecond,
-	}
+	ctx := newFastRunContext(repoDir)
 
 	output := captureStdout(t, func() {
 		if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
@@ -313,11 +285,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	}})
 	defer agent.Register(agent.NewTestAgent())
 
-	ctx := RunContext{
-		WorkingDir:      repoDir,
-		PollInterval:    1 * time.Millisecond,
-		PostCommitDelay: 1 * time.Millisecond,
-	}
+	ctx := newFastRunContext(repoDir)
 
 	output := captureStdout(t, func() {
 		if err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true}); err == nil {
@@ -533,73 +501,77 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	// Track how many times the job has been polled
 	var pollCount int32
 
-	md := NewMockDaemon(t, MockRefineHooks{
-		OnGetJobs: func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
-			q := r.URL.Query()
-			if idStr := q.Get("id"); idStr != "" {
-				var jobID int64
-				fmt.Sscanf(idStr, "%d", &jobID)
-				s.mu.Lock()
-				job, ok := s.jobs[jobID]
-				if !ok {
-					s.mu.Unlock()
-					json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
-					return true
+	handleGetJobs := func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
+		q := r.URL.Query()
+		if idStr := q.Get("id"); idStr != "" {
+			var jobID int64
+			fmt.Sscanf(idStr, "%d", &jobID)
+			s.mu.Lock()
+			job, ok := s.jobs[jobID]
+			if !ok {
+				s.mu.Unlock()
+				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{}})
+				return true
+			}
+			// On first poll, job is still Running; on subsequent polls, transition to Done
+			count := atomic.AddInt32(&pollCount, 1)
+			if count > 1 {
+				job.Status = storage.JobStatusDone
+			}
+			jobCopy := *job
+			s.mu.Unlock()
+			json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{jobCopy}})
+			return true
+		}
+		if gitRef := q.Get("git_ref"); gitRef != "" {
+			s.mu.Lock()
+			var job *storage.ReviewJob
+			for _, j := range s.jobs {
+				if j.GitRef == gitRef {
+					job = j
+					break
 				}
-				// On first poll, job is still Running; on subsequent polls, transition to Done
-				count := atomic.AddInt32(&pollCount, 1)
-				if count > 1 {
-					job.Status = storage.JobStatusDone
-				}
+			}
+			if job != nil {
 				jobCopy := *job
 				s.mu.Unlock()
 				json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{jobCopy}})
 				return true
 			}
-			if gitRef := q.Get("git_ref"); gitRef != "" {
-				s.mu.Lock()
-				var job *storage.ReviewJob
-				for _, j := range s.jobs {
-					if j.GitRef == gitRef {
-						job = j
-						break
-					}
-				}
-				if job != nil {
-					jobCopy := *job
-					s.mu.Unlock()
-					json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{jobCopy}})
-					return true
-				}
-				s.mu.Unlock()
-			}
-			return false // fall through to base handler
-		},
-		OnEnqueue: func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
-			// Handle branch review enqueue - create a passing branch review
-			var req struct {
-				GitRef string `json:"git_ref"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			s.mu.Lock()
-			branchJobID := s.nextJobID
-			s.nextJobID++
-			s.jobs[branchJobID] = &storage.ReviewJob{
-				ID:       branchJobID,
-				GitRef:   req.GitRef,
-				Agent:    "test",
-				Status:   storage.JobStatusDone,
-				RepoPath: repoDir,
-			}
-			s.reviews[req.GitRef] = &storage.Review{
-				ID: branchJobID + 1000, JobID: branchJobID, Output: "No issues found. Branch looks good!",
-			}
-			jobCopy := *s.jobs[branchJobID]
 			s.mu.Unlock()
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(jobCopy)
-			return true
-		},
+		}
+		return false // fall through to base handler
+	}
+
+	handleEnqueue := func(w http.ResponseWriter, r *http.Request, s *mockRefineState) bool {
+		// Handle branch review enqueue - create a passing branch review
+		var req struct {
+			GitRef string `json:"git_ref"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		s.mu.Lock()
+		branchJobID := s.nextJobID
+		s.nextJobID++
+		s.jobs[branchJobID] = &storage.ReviewJob{
+			ID:       branchJobID,
+			GitRef:   req.GitRef,
+			Agent:    "test",
+			Status:   storage.JobStatusDone,
+			RepoPath: repoDir,
+		}
+		s.reviews[req.GitRef] = &storage.Review{
+			ID: branchJobID + 1000, JobID: branchJobID, Output: "No issues found. Branch looks good!",
+		}
+		jobCopy := *s.jobs[branchJobID]
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(jobCopy)
+		return true
+	}
+
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnGetJobs: handleGetJobs,
+		OnEnqueue: handleEnqueue,
 	})
 	defer md.Close()
 
@@ -617,11 +589,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	}
 	md.State.nextJobID = 2
 
-	ctx := RunContext{
-		WorkingDir:      repoDir,
-		PollInterval:    1 * time.Millisecond,
-		PostCommitDelay: 1 * time.Millisecond,
-	}
+	ctx := newFastRunContext(repoDir)
 
 	// Run refine with maxIterations=1. If waiting on the pending job consumed
 	// an iteration, this would fail with "max iterations reached". Since the
@@ -816,19 +784,16 @@ func TestStartDaemonRefusesFromGoTestBinary(t *testing.T) {
 	}
 }
 
+func setupIsolatedDataDir(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	return tmpDir
+}
+
 // TestDaemonStopNotRunning verifies daemon stop reports when no daemon is running
 func TestDaemonStopNotRunning(t *testing.T) {
-	// Use ROBOREV_DATA_DIR to isolate test
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
+	_ = setupIsolatedDataDir(t)
 
 	err := stopDaemon()
 	if err != ErrDaemonNotRunning {
@@ -838,17 +803,7 @@ func TestDaemonStopNotRunning(t *testing.T) {
 
 // TestDaemonStopInvalidPID verifies stopDaemon handles invalid PID in daemon.json
 func TestDaemonStopInvalidPID(t *testing.T) {
-	// Use ROBOREV_DATA_DIR to isolate test
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
+	tmpDir := setupIsolatedDataDir(t)
 
 	// Create daemon.json with PID 0 and an address on a port that's definitely not in use
 	// Port 59999 is unlikely to be in use and will get connection refused quickly
@@ -874,17 +829,7 @@ func TestDaemonStopInvalidPID(t *testing.T) {
 
 // TestDaemonStopCorruptedFile verifies stopDaemon cleans up malformed daemon.json
 func TestDaemonStopCorruptedFile(t *testing.T) {
-	// Use ROBOREV_DATA_DIR to isolate test
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
+	tmpDir := setupIsolatedDataDir(t)
 
 	// Create corrupted daemon.json
 	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte("not valid json"), 0644); err != nil {
@@ -905,17 +850,7 @@ func TestDaemonStopCorruptedFile(t *testing.T) {
 // TestDaemonStopTruncatedFile verifies stopDaemon cleans up truncated daemon.json
 // (yields io.ErrUnexpectedEOF during JSON decode)
 func TestDaemonStopTruncatedFile(t *testing.T) {
-	// Use ROBOREV_DATA_DIR to isolate test
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
+	tmpDir := setupIsolatedDataDir(t)
 
 	// Create truncated daemon.json (partial JSON that triggers io.ErrUnexpectedEOF)
 	// A JSON object that ends abruptly mid-string causes io.ErrUnexpectedEOF
@@ -943,17 +878,7 @@ func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
 		t.Skip("skipping permission test when running as root")
 	}
 
-	// Use ROBOREV_DATA_DIR to isolate test
-	tmpDir := t.TempDir()
-	origDataDir := os.Getenv("ROBOREV_DATA_DIR")
-	os.Setenv("ROBOREV_DATA_DIR", tmpDir)
-	defer func() {
-		if origDataDir != "" {
-			os.Setenv("ROBOREV_DATA_DIR", origDataDir)
-		} else {
-			os.Unsetenv("ROBOREV_DATA_DIR")
-		}
-	}()
+	tmpDir := setupIsolatedDataDir(t)
 
 	// Create daemon.json with valid content
 	daemonInfo := daemon.RuntimeInfo{PID: 12345, Addr: "127.0.0.1:7373"}
