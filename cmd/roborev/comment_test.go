@@ -11,6 +11,27 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+func mockCommentHandler(t *testing.T, receivedJobID *int64) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/comment" && r.Method == "POST" {
+			var req struct {
+				JobID int64 `json:"job_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("failed to decode request body: %v", err)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			*receivedJobID = req.JobID
+			w.WriteHeader(http.StatusCreated)
+			if err := json.NewEncoder(w).Encode(storage.Response{ID: 1, JobID: receivedJobID}); err != nil {
+				t.Logf("failed to encode response: %v", err)
+			}
+			return
+		}
+	}
+}
+
 func TestCommentJobFlag(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -36,25 +57,11 @@ func TestCommentJobFlag(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var receivedJobID int64
-			_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/comment" && r.Method == "POST" {
-					var req struct {
-						JobID int64 `json:"job_id"`
-					}
-					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-						t.Errorf("failed to decode request body: %v", err)
-						http.Error(w, "bad request", http.StatusBadRequest)
-						return
-					}
-					receivedJobID = req.JobID
-					w.WriteHeader(http.StatusCreated)
-					if err := json.NewEncoder(w).Encode(storage.Response{ID: 1, JobID: &receivedJobID}); err != nil {
-						t.Logf("failed to encode response: %v", err)
-					}
-					return
-				}
-			}))
-			defer cleanup()
+
+			if !tt.wantErr {
+				_, cleanup := setupMockDaemon(t, mockCommentHandler(t, &receivedJobID))
+				defer cleanup()
+			}
 
 			cmd := commentCmd()
 			cmd.SetArgs(tt.args)
