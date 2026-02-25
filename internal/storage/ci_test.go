@@ -87,8 +87,16 @@ func setBatchClaimedAt(t *testing.T, db *DB, batchID int64, offset time.Duration
 
 func setJobStatusAndError(t *testing.T, db *DB, jobID int64, status, errorMsg string) {
 	t.Helper()
-	if _, err := db.Exec(`UPDATE review_jobs SET status=?, error=? WHERE id=?`, status, errorMsg, jobID); err != nil {
+	res, err := db.Exec(`UPDATE review_jobs SET status=?, error=? WHERE id=?`, status, errorMsg, jobID)
+	if err != nil {
 		t.Fatalf("setJobStatusAndError: %v", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		t.Fatalf("Failed to get rows affected: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("Expected exactly 1 row updated for jobID %d, got %d", jobID, rows)
 	}
 }
 

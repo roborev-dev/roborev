@@ -129,8 +129,16 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	default:
 		t.Fatalf("Unknown job status: %s", status)
 	}
-	if _, err := db.Exec(query, jobID); err != nil {
+	res, err := db.Exec(query, jobID)
+	if err != nil {
 		t.Fatalf("Failed to set job status to %s: %v", status, err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		t.Fatalf("Failed to get rows affected: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("Expected exactly 1 row updated for jobID %d, got %d", jobID, rows)
 	}
 }
 
