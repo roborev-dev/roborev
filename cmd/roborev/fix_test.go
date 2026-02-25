@@ -405,13 +405,12 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 func TestFixAllBranchesImpliesUnaddressed(t *testing.T) {
 	// --all-branches alone should imply --unaddressed and pass
 	// validation, routing through unaddressed discovery.
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"jobs":     []any{},
 			"has_more": false,
 		})
 	}))
-	defer cleanup()
 
 	cmd := fixCmd()
 	cmd.SilenceUsage = true
@@ -1053,7 +1052,7 @@ func TestRunFixList(t *testing.T) {
 			}}).
 			WithReview(42, "Found 3 issues:\n- Missing error handling\n- Unused variable").
 			Build()
-			// serverAddr is patched by setupMockDaemon called inside Build()
+			// serverAddr is patched by daemonFromHandler called inside Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 			return runFixList(cmd, "", false)
