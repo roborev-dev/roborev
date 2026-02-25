@@ -187,70 +187,79 @@ func TestFindJobForCommit(t *testing.T) {
 	tests := []struct {
 		name           string
 		queryRepo      string
-		mockHandler    func(t *testing.T, w http.ResponseWriter, r *http.Request)
+		setupMock      func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request)
 		expectedJobID  int64
 		expectNotFound bool
 	}{
 		{
 			name:      "worktree path normalized to main repo",
 			queryRepo: worktreeDir,
-			mockHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				assertRequest(t, r, http.MethodGet, "/api/jobs")
+			setupMock: func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				return func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+					assertRequest(t, r, http.MethodGet, "/api/jobs")
 
-				repo := r.URL.Query().Get("repo")
-				if repo == "" {
-					t.Error("expected server to receive a repo path, got empty")
-				}
-				if repo == worktreeDir {
-					t.Errorf("expected server to NOT receive worktree path %q", worktreeDir)
-				}
+					repo := r.URL.Query().Get("repo")
+					if repo == "" {
+						t.Error("expected server to receive a repo path, got empty")
+					}
+					if repo == worktreeDir {
+						t.Errorf("expected server to NOT receive worktree path %q", worktreeDir)
+					}
 
-				normalizedReceived := repo
-				if resolved, err := filepath.EvalSymlinks(repo); err == nil {
-					normalizedReceived = resolved
-				}
+					normalizedReceived := repo
+					if resolved, err := filepath.EvalSymlinks(repo); err == nil {
+						normalizedReceived = resolved
+					}
 
-				if normalizedReceived == mainRepo {
-					writeTestJSON(t, w, map[string]any{
-						"jobs": []storage.ReviewJob{
-							{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
-						},
-					})
-					return
+					if normalizedReceived == mainRepo {
+						writeTestJSON(t, w, map[string]any{
+							"jobs": []storage.ReviewJob{
+								{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
+							},
+						})
+						return
+					}
+					writeTestJSON(t, w, map[string]any{"jobs": []storage.ReviewJob{}})
 				}
-				writeTestJSON(t, w, map[string]any{"jobs": []storage.ReviewJob{}})
 			},
 			expectedJobID: 1,
 		},
 		{
 			name:      "main repo path works directly",
 			queryRepo: mainRepo,
-			mockHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				assertRequest(t, r, http.MethodGet, "/api/jobs")
+			setupMock: func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				return func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+					assertRequest(t, r, http.MethodGet, "/api/jobs")
 
-				repo := r.URL.Query().Get("repo")
-				normalizedReceived := repo
-				if resolved, err := filepath.EvalSymlinks(repo); err == nil {
-					normalizedReceived = resolved
-				}
+					repo := r.URL.Query().Get("repo")
+					normalizedReceived := repo
+					if resolved, err := filepath.EvalSymlinks(repo); err == nil {
+						normalizedReceived = resolved
+					}
 
-				if normalizedReceived == mainRepo {
-					writeTestJSON(t, w, map[string]any{
-						"jobs": []storage.ReviewJob{
-							{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
-						},
-					})
-					return
+					if normalizedReceived == mainRepo {
+						writeTestJSON(t, w, map[string]any{
+							"jobs": []storage.ReviewJob{
+								{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
+							},
+						})
+						return
+					}
+					writeTestJSON(t, w, map[string]any{"jobs": []storage.ReviewJob{}})
 				}
-				writeTestJSON(t, w, map[string]any{"jobs": []storage.ReviewJob{}})
 			},
 			expectedJobID: 1,
 		},
 		{
 			name:      "fallback when primary query returns no results",
 			queryRepo: mainRepo,
-			mockHandler: func() func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+			setupMock: func(t *testing.T) func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				var calls int
+				t.Cleanup(func() {
+					if calls != 2 {
+						t.Errorf("expected 2 calls, got %d", calls)
+					}
+				})
 				return func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 					assertRequest(t, r, http.MethodGet, "/api/jobs")
 					calls++
@@ -279,15 +288,16 @@ func TestFindJobForCommit(t *testing.T) {
 					}
 					t.Errorf("unexpected call %d", calls)
 				}
-			}(),
+			},
 			expectedJobID: 1,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			handler := tc.setupMock(t)
 			client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-				tc.mockHandler(t, w, r)
+				handler(t, w, r)
 			})
 			job, err := client.FindJobForCommit(tc.queryRepo, sha)
 			if err != nil {

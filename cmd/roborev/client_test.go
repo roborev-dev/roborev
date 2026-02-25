@@ -237,7 +237,7 @@ func TestFindJobForCommit(t *testing.T) {
 	tests := []struct {
 		name        string
 		setupTest   func(t *testing.T) (string, []MockStep) // Returns the repo path and mock steps
-		mockHandler http.HandlerFunc                        // Optional custom handler override
+		mockHandler func(t *testing.T, w http.ResponseWriter, r *http.Request) // Optional custom handler override
 		commitSHA   string
 		expectedID  int64
 		expectFound bool
@@ -328,7 +328,7 @@ func TestFindJobForCommit(t *testing.T) {
 			setupTest: func(t *testing.T) (string, []MockStep) {
 				return normalizeTestPath(t, "/test/repo"), nil
 			},
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
+			mockHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 			},
 			expectError: "500",
@@ -339,7 +339,7 @@ func TestFindJobForCommit(t *testing.T) {
 			setupTest: func(t *testing.T) (string, []MockStep) {
 				return normalizeTestPath(t, t.TempDir()), nil
 			},
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
+			mockHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("not json"))
 			},
@@ -376,7 +376,9 @@ func TestFindJobForCommit(t *testing.T) {
 
 			var handler http.HandlerFunc
 			if tt.mockHandler != nil {
-				handler = tt.mockHandler
+				handler = func(w http.ResponseWriter, r *http.Request) {
+					tt.mockHandler(t, w, r)
+				}
 			} else {
 				handler = mockSequenceHandler(t, steps...)
 			}
