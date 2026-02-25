@@ -54,6 +54,9 @@ func TestEnqueueIfNeeded(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/jobs":
 					n := jobCheckCalls.Add(1)
+					if len(tt.jobResponses) == 0 {
+						t.Fatalf("jobResponses must not be empty")
+					}
 					// Return the response corresponding to the call sequence, or the last one
 					idx := int(n - 1)
 					if idx >= len(tt.jobResponses) {
