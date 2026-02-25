@@ -244,12 +244,8 @@ func TestEnqueuePromptJob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db := openTestDB(t)
-			defer db.Close()
-
-			// Use unique repo per test case
 			repoName := "prompt-test-" + strings.ReplaceAll(tt.name, " ", "-")
-			repo := createRepo(t, db, filepath.Join(t.TempDir(), repoName))
+			db, repo := setupDBAndRepo(t, repoName)
 
 			opts := tt.opts
 			opts.RepoID = repo.ID
@@ -285,14 +281,8 @@ func TestPromptJobOutputProcessing(t *testing.T) {
 			OutputPrefix: outputPrefix,
 		})
 
-		// Claim and complete the job
-		claimJob(t, db, "test-worker")
-
 		agentOutput := "No issues found."
-		err := db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
-		if err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
-		}
+		completeTestJob(t, db, job.ID, agentOutput)
 
 		// Fetch the review and verify prefix was prepended
 		review, err := db.GetReviewByJobID(job.ID)
@@ -316,14 +306,8 @@ func TestPromptJobOutputProcessing(t *testing.T) {
 			OutputPrefix: "", // Empty prefix
 		})
 
-		// Claim and complete the job
-		claimJob(t, db, "test-worker")
-
 		agentOutput := "Analysis complete."
-		err := db.CompleteJob(job.ID, "test", "Test prompt", agentOutput)
-		if err != nil {
-			t.Fatalf("CompleteJob failed: %v", err)
-		}
+		completeTestJob(t, db, job.ID, agentOutput)
 
 		// Fetch the review and verify output is unchanged
 		review, err := db.GetReviewByJobID(job.ID)
@@ -338,11 +322,8 @@ func TestPromptJobOutputProcessing(t *testing.T) {
 }
 
 func TestRenameRepo(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	initialPath := filepath.Join(t.TempDir(), "rename-test")
-	repo := createRepo(t, db, initialPath)
+	db, repo := setupDBAndRepo(t, "rename-test")
+	initialPath := repo.RootPath
 
 	t.Run("rename by path", func(t *testing.T) {
 		affected, err := db.RenameRepo(initialPath, "new-name")
@@ -474,11 +455,8 @@ func TestGetRepoByName(t *testing.T) {
 }
 
 func TestFindRepo(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-
-	initialPath := filepath.Join(t.TempDir(), "findrepo-test")
-	repo := createRepo(t, db, initialPath)
+	db, repo := setupDBAndRepo(t, "findrepo-test")
+	initialPath := repo.RootPath
 
 	t.Run("find by path", func(t *testing.T) {
 		found, err := db.FindRepo(initialPath)
@@ -646,9 +624,8 @@ func TestGetRepoStats(t *testing.T) {
 
 		// Create a prompt job with output that contains verdict-like text
 		promptJob := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
-		claimJob(t, db, "worker-1")
 		// This has FAIL verdict text but should NOT count toward failed reviews
-		db.CompleteJob(promptJob.ID, "codex", "prompt", "**Verdict: FAIL**\nSome issues found")
+		completeTestJob(t, db, promptJob.ID, "**Verdict: FAIL**\nSome issues found")
 
 		// Get stats - prompt job should be excluded from verdict counts
 		stats, err := db.GetRepoStats(repo.ID)
@@ -937,9 +914,8 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 
 		// Create a prompt job and complete it with output containing verdict-like text
 		promptJob := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repo.ID, Agent: "codex", Prompt: "Test prompt"})
-		claimJob(t, db, "worker-1")
 		// Output that would normally be parsed as FAIL
-		db.CompleteJob(promptJob.ID, "codex", "prompt", "Found issues:\n1. Problem A")
+		completeTestJob(t, db, promptJob.ID, "Found issues:\n1. Problem A")
 
 		// Fetch via ListJobs and check verdict is nil
 		jobs, _ := db.ListJobs("", repo.RootPath, 100, 0)
