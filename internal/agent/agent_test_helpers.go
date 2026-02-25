@@ -118,22 +118,6 @@ type MockCLIResult struct {
 	StdinFile string // Non-empty when CaptureStdin was set
 }
 
-// newMockDroidAgent creates a DroidAgent backed by a temporary shell script.
-// Returns the agent and the temp directory used by writeTempCommand.
-func newMockDroidAgent(t *testing.T, scriptContent string) *DroidAgent {
-	t.Helper()
-	cmdPath := writeTempCommand(t, scriptContent)
-	return NewDroidAgent(cmdPath)
-}
-
-// runReviewScenario creates a mock DroidAgent from a shell script, runs Review,
-// and returns the result and error.
-func runReviewScenario(t *testing.T, script, prompt string) (string, error) {
-	t.Helper()
-	a := newMockDroidAgent(t, script)
-	return a.Review(context.Background(), t.TempDir(), "deadbeef", prompt, nil)
-}
-
 // readMockArgs reads the captured arguments from a mock CLI's ArgsFile and splits them into a slice.
 func readMockArgs(t *testing.T, path string) []string {
 	t.Helper()
