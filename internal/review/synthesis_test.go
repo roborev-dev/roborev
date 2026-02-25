@@ -154,16 +154,11 @@ func TestBuildSynthesisPrompt_QuotaAndFailed(t *testing.T) {
 	}
 	prompt := BuildSynthesisPrompt(reviews, "")
 
-	if !strings.Contains(prompt, "[SKIPPED]") {
-		t.Error("expected [SKIPPED] for quota failure")
-	}
-	if !strings.Contains(prompt, "[FAILED]") {
-		t.Error("expected [FAILED] for real failure")
-	}
-	if !strings.Contains(
-		prompt, "agent quota exhausted") {
-		t.Error("expected quota note")
-	}
+	assertContainsAll(t, prompt, []string{
+		"[SKIPPED]",
+		"[FAILED]",
+		"agent quota exhausted",
+	})
 }
 
 func TestBuildSynthesisPrompt_Truncation(t *testing.T) {
@@ -179,9 +174,7 @@ func TestBuildSynthesisPrompt_Truncation(t *testing.T) {
 	}
 	prompt := BuildSynthesisPrompt(reviews, "")
 
-	if !strings.Contains(prompt, "...(truncated)") {
-		t.Error("expected truncation marker for long output")
-	}
+	assertContainsAll(t, prompt, []string{"...(truncated)"})
 	if len(prompt) > promptLimit {
 		t.Errorf(
 			"prompt should be truncated, got %d chars",
@@ -249,14 +242,10 @@ func TestFormatAllFailedComment(t *testing.T) {
 		comment := FormatAllFailedComment(
 			reviews, "aaa111222333")
 
-		if !strings.Contains(
-			comment, "Review Failed") {
-			t.Error("expected 'Review Failed' header")
-		}
-		if !strings.Contains(
-			comment, "Check CI logs") {
-			t.Error("expected log check instruction")
-		}
+		assertContainsAll(t, comment, []string{
+			"Review Failed",
+			"Check CI logs",
+		})
 	})
 
 	t.Run("all quota", func(t *testing.T) {
@@ -272,10 +261,7 @@ func TestFormatAllFailedComment(t *testing.T) {
 		comment := FormatAllFailedComment(
 			reviews, "bbb222333444")
 
-		if !strings.Contains(
-			comment, "Review Skipped") {
-			t.Error("expected 'Review Skipped' header")
-		}
+		assertContainsAll(t, comment, []string{"Review Skipped"})
 		if strings.Contains(
 			comment, "Check CI logs") {
 			t.Error(
@@ -304,13 +290,7 @@ func TestSkippedAgentNote(t *testing.T) {
 			},
 		}
 		note := SkippedAgentNote(reviews)
-		if !strings.Contains(note, "gemini") {
-			t.Error("expected gemini in note")
-		}
-		if !strings.Contains(
-			note, "review skipped") {
-			t.Error("expected singular 'review skipped'")
-		}
+		assertContainsAll(t, note, []string{"gemini", "review skipped"})
 	})
 
 	t.Run("multiple skips", func(t *testing.T) {
@@ -327,9 +307,6 @@ func TestSkippedAgentNote(t *testing.T) {
 			},
 		}
 		note := SkippedAgentNote(reviews)
-		if !strings.Contains(
-			note, "reviews skipped") {
-			t.Error("expected plural 'reviews skipped'")
-		}
+		assertContainsAll(t, note, []string{"reviews skipped"})
 	})
 }
