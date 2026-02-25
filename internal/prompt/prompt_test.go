@@ -5,52 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
-
-const testAuthor = "test"
-
-// setupTestRepo creates a git repo with multiple commits and returns the repo path and commit SHAs
-func setupTestRepo(t *testing.T) (string, []string) {
-	t.Helper()
-	r := newTestRepo(t)
-
-	var commits []string
-
-	// Create 6 commits so we can test with 5 previous commits
-	for i := 1; i <= 6; i++ {
-		filename := filepath.Join(r.dir, "file.txt")
-		content := strings.Repeat("x", i) // Different content each time
-		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-		r.git("add", "file.txt")
-		r.git("commit", "-m", "commit "+string(rune('0'+i)))
-
-		sha := r.git("rev-parse", "HEAD")
-		commits = append(commits, sha)
-	}
-
-	return r.dir, commits
-}
-
-func setupDBWithCommits(t *testing.T, repoPath string, commits []string) (*storage.DB, int64) {
-	t.Helper()
-	db := testutil.OpenTestDB(t)
-	repo, err := db.GetOrCreateRepo(repoPath)
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	for _, sha := range commits {
-		if _, err := db.GetOrCreateCommit(repo.ID, sha, testAuthor, "commit message", time.Now()); err != nil {
-			t.Fatalf("GetOrCreateCommit failed: %v", err)
-		}
-	}
-	return db, repo.ID
-}
 
 func TestBuildPromptWithoutContext(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
@@ -478,61 +435,13 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 	assertContains(t, prompt, "commit range", "Expected range system prompt for reviewType=review alias, got wrong prompt type")
 }
 
-type guidelinesRepoContext struct {
-	Dir        string
-	BaseSHA    string
-	FeatureSHA string
-}
-
-// setupGuidelinesRepo creates a git repo with .roborev.toml on the
-// default branch and optionally a feature branch with different
-// guidelines. Returns guidelinesRepoContext.
-func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuidelines string) guidelinesRepoContext {
-	t.Helper()
-	r := newTestRepoWithBranch(t, defaultBranch)
-
-	// Initial commit with base guidelines
-	if baseGuidelines != "" {
-		toml := `review_guidelines = """` + "\n" + baseGuidelines + "\n" + `"""` + "\n"
-		os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644)
-	} else {
-		os.WriteFile(filepath.Join(r.dir, "README.md"), []byte("init"), 0644)
-	}
-	r.git("add", "-A")
-	r.git("commit", "-m", "initial")
-	baseSHA := r.git("rev-parse", "HEAD")
-
-	// Set up origin pointing to itself so origin/<branch> exists
-	r.git("remote", "add", "origin", r.dir)
-	r.git("fetch", "origin")
-	// Set origin/HEAD to point to the default branch
-	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
-
-	// Create feature branch with different guidelines
-	var featureSHA string
-	if branchGuidelines != "" {
-		r.git("checkout", "-b", "feature-branch")
-		toml := `review_guidelines = """` + "\n" + branchGuidelines + "\n" + `"""` + "\n"
-		os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644)
-		r.git("add", ".roborev.toml")
-		r.git("commit", "-m", "update guidelines on branch")
-		featureSHA = r.git("rev-parse", "HEAD")
-		r.git("checkout", defaultBranch)
-	}
-
-	return guidelinesRepoContext{
-		Dir:        r.dir,
-		BaseSHA:    baseSHA,
-		FeatureSHA: featureSHA,
-	}
-}
-
 func TestLoadGuidelines(t *testing.T) {
 	tests := []struct {
 		name             string
 		defaultBranch    string
 		baseGuidelines   string
 		branchGuidelines string
+		setupGit         func(r *testRepo)
 		setupFilesystem  func(dir string)
 		wantContains     string
 		wantNotContains  string
@@ -560,10 +469,48 @@ func TestLoadGuidelines(t *testing.T) {
 			},
 			wantContains: "Filesystem rule.",
 		},
+		{
+			name:          "ParseErrorBlocksFallback",
+			defaultBranch: "main",
+			setupGit: func(r *testRepo) {
+				os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
+					[]byte("review_guidelines = INVALID[[["), 0644)
+				r.git("add", "-A")
+				r.git("commit", "-m", "bad toml")
+			},
+			setupFilesystem: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0644)
+			},
+			wantNotContains: "Filesystem guideline",
+		},
+		{
+			name:          "GitErrorFallsBackToFilesystem",
+			defaultBranch: "main",
+			setupGit: func(r *testRepo) {
+				os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"From main\"\n"), 0644)
+				r.git("add", "-A")
+				r.git("commit", "-m", "init")
+
+				blobSHA := r.git("rev-parse", "HEAD:.roborev.toml")
+				objPath := filepath.Join(r.dir, ".git", "objects",
+					blobSHA[:2], blobSHA[2:])
+				if err := os.Chmod(objPath, 0644); err != nil {
+					t.Fatalf("chmod: %v", err)
+				}
+				os.WriteFile(objPath, []byte("corrupt"), 0444)
+			},
+			setupFilesystem: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0644)
+			},
+			wantContains: "Filesystem fallback.",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := setupGuidelinesRepo(t, tt.defaultBranch, tt.baseGuidelines, tt.branchGuidelines)
+			ctx := setupGuidelinesRepo(t, tt.defaultBranch, tt.baseGuidelines, tt.branchGuidelines, tt.setupGit)
 			if tt.setupFilesystem != nil {
 				tt.setupFilesystem(ctx.Dir)
 			}
@@ -577,59 +524,6 @@ func TestLoadGuidelines(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestLoadGuidelines_ParseErrorBlocksFallback(t *testing.T) {
-	// If the default branch has invalid .roborev.toml (parse error),
-	// should NOT fall back to filesystem config.
-	r := newTestRepoWithBranch(t, "main")
-
-	// Commit invalid TOML on main
-	os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
-		[]byte("review_guidelines = INVALID[[["), 0644)
-	r.git("add", "-A")
-	r.git("commit", "-m", "bad toml")
-
-	r.git("remote", "add", "origin", r.dir)
-	r.git("fetch", "origin")
-
-	// Write valid filesystem config
-	os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
-		[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0644)
-
-	guidelines := loadGuidelines(r.dir)
-
-	assertNotContains(t, guidelines, "Filesystem guideline", "parse error on default branch should block filesystem fallback")
-}
-
-func TestLoadGuidelines_GitErrorFallsBackToFilesystem(t *testing.T) {
-	// When LoadRepoConfigFromRef fails with a non-parse error (e.g.,
-	// corrupt object), loadGuidelines should fall back to filesystem.
-	r := newTestRepoWithBranch(t, "main")
-
-	// Commit .roborev.toml so it exists in the tree.
-	os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
-		[]byte("review_guidelines = \"From main\"\n"), 0644)
-	r.git("add", "-A")
-	r.git("commit", "-m", "init")
-
-	// Corrupt the blob object for .roborev.toml so git show fails
-	// with a non-"does not exist" error ("loose object ... is corrupt").
-	blobSHA := r.git("rev-parse", "HEAD:.roborev.toml")
-	objPath := filepath.Join(r.dir, ".git", "objects",
-		blobSHA[:2], blobSHA[2:])
-	if err := os.Chmod(objPath, 0644); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	os.WriteFile(objPath, []byte("corrupt"), 0444)
-
-	// Write valid filesystem config that should be used as fallback.
-	os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
-		[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0644)
-
-	guidelines := loadGuidelines(r.dir)
-
-	assertContains(t, guidelines, "Filesystem fallback.", "non-parse git error should fall back to filesystem")
 }
 
 // extractGuidelinesSection returns the text between "## Project Guidelines"
@@ -648,7 +542,7 @@ func extractGuidelinesSection(prompt string) string {
 
 func TestBuildSinglePrompt_WithGuidelines(t *testing.T) {
 	ctx := setupGuidelinesRepo(t, "main",
-		"Security: validate all inputs.", "Branch-only rule.")
+		"Security: validate all inputs.", "Branch-only rule.", nil)
 
 	b := NewBuilder(nil)
 	prompt, err := b.Build(ctx.Dir, ctx.FeatureSHA, 0, 0, "test", "review")
@@ -663,7 +557,7 @@ func TestBuildSinglePrompt_WithGuidelines(t *testing.T) {
 
 func TestBuildRangePrompt_WithGuidelines(t *testing.T) {
 	ctx := setupGuidelinesRepo(t, "main",
-		"Base guideline.", "Branch-only rule.")
+		"Base guideline.", "Branch-only rule.", nil)
 
 	rangeRef := ctx.BaseSHA + ".." + ctx.FeatureSHA
 	b := NewBuilder(nil)
