@@ -1944,27 +1944,30 @@ func (m *tuiModel) pushFilter(filterType string) {
 	m.filterStack = append(m.filterStack, filterType)
 }
 
-// popFilter removes the most recent filter from the stack and clears its value.
-// Locked filters (set via --repo/--branch CLI flags) cannot be popped.
-// Returns the filter type that was popped, or empty string if stack was empty or locked.
+// popFilter walks the stack from end to start, removes the first
+// unlocked filter, clears its value, and returns the filter type.
+// Returns empty string if no unlocked filter exists.
 func (m *tuiModel) popFilter() string {
-	if len(m.filterStack) == 0 {
-		return ""
+	for i := len(m.filterStack) - 1; i >= 0; i-- {
+		ft := m.filterStack[i]
+		if ft == filterTypeRepo && m.lockedRepoFilter {
+			continue
+		}
+		if ft == filterTypeBranch && m.lockedBranchFilter {
+			continue
+		}
+		m.filterStack = append(
+			m.filterStack[:i], m.filterStack[i+1:]...,
+		)
+		switch ft {
+		case filterTypeRepo:
+			m.activeRepoFilter = nil
+		case filterTypeBranch:
+			m.activeBranchFilter = ""
+		}
+		return ft
 	}
-	// Skip locked filters: walk backwards to find the first poppable filter
-	last := m.filterStack[len(m.filterStack)-1]
-	if (last == filterTypeRepo && m.lockedRepoFilter) || (last == filterTypeBranch && m.lockedBranchFilter) {
-		return ""
-	}
-	m.filterStack = m.filterStack[:len(m.filterStack)-1]
-	// Clear the corresponding filter value
-	switch last {
-	case filterTypeRepo:
-		m.activeRepoFilter = nil
-	case filterTypeBranch:
-		m.activeBranchFilter = ""
-	}
-	return last
+	return ""
 }
 
 // removeFilterFromStack removes a filter type from the stack without clearing its value
@@ -3908,11 +3911,13 @@ side-by-side working when you want to focus on a specific repo or branch.
 When set via flags, the filter is locked and cannot be changed in the TUI.
 
 Without a value, --repo resolves to the current repo and --branch resolves
-to the current branch. You can also provide explicit values:
-  roborev tui --repo              # current repo
-  roborev tui --repo /path/to/repo
-  roborev tui --branch            # current branch
-  roborev tui --repo --branch     # current repo + current branch`,
+to the current branch. Use = syntax for explicit values:
+  roborev tui --repo                  # current repo
+  roborev tui --repo=/path/to/repo    # explicit repo path
+  roborev tui --branch                # current branch
+  roborev tui --branch=feature-x      # explicit branch name
+  roborev tui --repo --branch         # current repo + branch`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := ensureDaemon(); err != nil {

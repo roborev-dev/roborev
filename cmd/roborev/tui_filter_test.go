@@ -2968,3 +2968,147 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 		t.Error("Should not trigger branch fetch on reconnect without active search")
 	}
 }
+
+func TestTUILockedFilterModalBlocksAll(t *testing.T) {
+	// Selecting "All" in the filter modal must not clear locked filters.
+	nodes := []treeFilterNode{
+		makeNode("repo-a", 3),
+	}
+	m := initFilterModel(nodes)
+	m.activeRepoFilter = []string{"/locked/repo"}
+	m.activeBranchFilter = "locked-branch"
+	m.filterStack = []string{"repo", "branch"}
+	m.lockedRepoFilter = true
+	m.lockedBranchFilter = true
+
+	// Select "All" (filterSelectedIdx 0 → repoIdx -1)
+	m.filterSelectedIdx = 0
+	m2, _ := pressKey(m, '\r')
+
+	if m2.activeRepoFilter == nil {
+		t.Error("Locked repo filter was cleared by All")
+	}
+	if m2.activeBranchFilter == "" {
+		t.Error("Locked branch filter was cleared by All")
+	}
+}
+
+func TestTUILockedBranchPreservedOnRepoSelect(t *testing.T) {
+	// Selecting a repo node must not clear a locked branch filter.
+	nodes := []treeFilterNode{
+		makeNode("repo-a", 3),
+	}
+	m := initFilterModel(nodes)
+	m.activeBranchFilter = "locked-branch"
+	m.filterStack = []string{"branch"}
+	m.lockedBranchFilter = true
+
+	// Select repo-a (first repo node, filterSelectedIdx 1)
+	m.filterSelectedIdx = 1
+	m2, _ := pressKey(m, '\r')
+
+	if m2.activeBranchFilter != "locked-branch" {
+		t.Errorf(
+			"Locked branch filter changed: got %q, want %q",
+			m2.activeBranchFilter, "locked-branch",
+		)
+	}
+}
+
+func TestTUILockedRepoPreservedOnBranchSelect(t *testing.T) {
+	// Selecting a branch node must not overwrite a locked repo filter.
+	node := makeNode("repo-a", 2)
+	node.children = []branchFilterItem{
+		{name: "feature-x", count: 2},
+	}
+	node.expanded = true
+	m := initFilterModel([]treeFilterNode{node})
+	m.activeRepoFilter = []string{"/locked/repo"}
+	m.filterStack = []string{"repo"}
+	m.lockedRepoFilter = true
+
+	// Expand repo-a then select its branch child
+	m.filterSelectedIdx = 1
+	m2, _ := pressKey(m, '\r')
+
+	if len(m2.activeRepoFilter) != 1 ||
+		m2.activeRepoFilter[0] != "/locked/repo" {
+		t.Errorf(
+			"Locked repo filter changed: got %v, want [/locked/repo]",
+			m2.activeRepoFilter,
+		)
+	}
+}
+
+func TestTUIPopFilterSkipsLockedWalksBack(t *testing.T) {
+	// popFilter should skip a locked entry on top and pop the
+	// unlocked entry beneath it.
+	m := initFilterModel(nil)
+	m.activeRepoFilter = []string{"/unlocked/repo"}
+	m.activeBranchFilter = "locked-branch"
+	m.filterStack = []string{"repo", "branch"}
+	m.lockedBranchFilter = true
+
+	popped := m.popFilter()
+	if popped != "repo" {
+		t.Errorf("Expected popped='repo', got %q", popped)
+	}
+	if m.activeRepoFilter != nil {
+		t.Errorf("Expected repo filter cleared, got %v", m.activeRepoFilter)
+	}
+	if m.activeBranchFilter != "locked-branch" {
+		t.Errorf("Locked branch filter was modified: %q", m.activeBranchFilter)
+	}
+	// Stack should only contain the locked branch
+	if len(m.filterStack) != 1 || m.filterStack[0] != "branch" {
+		t.Errorf("Expected filterStack=[branch], got %v", m.filterStack)
+	}
+}
+
+func TestTUIPopFilterAllLocked(t *testing.T) {
+	// popFilter with all entries locked returns empty.
+	m := initFilterModel(nil)
+	m.activeRepoFilter = []string{"/locked/repo"}
+	m.activeBranchFilter = "locked-branch"
+	m.filterStack = []string{"repo", "branch"}
+	m.lockedRepoFilter = true
+	m.lockedBranchFilter = true
+
+	popped := m.popFilter()
+	if popped != "" {
+		t.Errorf("Expected empty pop on all-locked stack, got %q", popped)
+	}
+	if len(m.filterStack) != 2 {
+		t.Errorf("Stack should be unchanged, got %v", m.filterStack)
+	}
+}
+
+func TestTUIEscapeWithLockedFilters(t *testing.T) {
+	// Escape in queue view should skip locked filters.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoName("r"), withRepoPath("/r"), withBranch("b")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+	m.activeRepoFilter = []string{"/r"}
+	m.activeBranchFilter = "b"
+	m.filterStack = []string{"repo", "branch"}
+	m.lockedBranchFilter = true
+
+	// Escape should pop unlocked repo, leave locked branch
+	m2, _ := pressSpecial(m, tea.KeyEscape)
+	if m2.activeBranchFilter != "b" {
+		t.Errorf("Locked branch cleared by escape: %q", m2.activeBranchFilter)
+	}
+	if m2.activeRepoFilter != nil {
+		t.Errorf("Unlocked repo not cleared: %v", m2.activeRepoFilter)
+	}
+
+	// Second escape should be a no-op (only locked left)
+	m3, _ := pressSpecial(m2, tea.KeyEscape)
+	if m3.activeBranchFilter != "b" {
+		t.Errorf("Locked branch cleared by second escape: %q", m3.activeBranchFilter)
+	}
+}
