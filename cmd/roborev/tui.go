@@ -75,6 +75,11 @@ var (
 
 	tuiHelpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
+
+	tuiHelpKeyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray (matches status/scroll text)
+	tuiHelpDescStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "240"}) // Dimmer gray for descriptions
 )
 
 // reflowHelpRows redistributes items across rows so each fits within
@@ -122,32 +127,31 @@ func renderHelpTable(rows [][]string, width int) string {
 		return ""
 	}
 
-	// Border with only internal vertical lines.
+	// Border with only internal vertical column separators.
 	border := lipgloss.Border{
-		Left:         "",
-		Right:        "",
-		Top:          "",
-		Bottom:       "",
-		TopLeft:      "",
-		TopRight:     "",
-		BottomLeft:   "",
-		BottomRight:  "",
-		MiddleLeft:   "",
-		MiddleRight:  "",
-		Middle:       "│",
-		MiddleTop:    "",
-		MiddleBottom: "",
+		Left:  "│",
+		Right: "│",
 	}
 
 	borderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
+		Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "238"})
 	cellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
 		PaddingLeft(1).
 		PaddingRight(1)
 
 	var parts []string
 	for _, row := range rows {
+		// Style each cell: key in lighter gray, description in dimmer gray, no colon.
+		styled := make([]string, len(row))
+		for i, item := range row {
+			if idx := strings.Index(item, ": "); idx >= 0 {
+				key := item[:idx]
+				desc := item[idx+2:]
+				styled[i] = tuiHelpKeyStyle.Render(key) + " " + tuiHelpDescStyle.Render(desc)
+			} else {
+				styled[i] = tuiHelpKeyStyle.Render(item)
+			}
+		}
 		t := table.New().
 			Border(border).
 			BorderStyle(borderStyle).
@@ -159,7 +163,7 @@ func renderHelpTable(rows [][]string, width int) string {
 				return cellStyle
 			}).
 			Wrap(false).
-			Rows(row)
+			Row(styled...)
 		parts = append(parts, t.Render())
 	}
 
