@@ -69,6 +69,8 @@ func (hr *HookRunner) listen(eventCh <-chan Event) {
 		drainLoop:
 			for {
 				select {
+				case <-hr.stopCh:
+					return
 				case event, ok := <-eventCh:
 					if !ok {
 						close(req)

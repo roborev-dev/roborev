@@ -769,7 +769,7 @@ func TestWaitUntilIdle_ConcurrentEvents(t *testing.T) {
 		// Verify all hook marker files were created
 		for j := range numEvents {
 			markerFile := filepath.Join(tmpDir, fmt.Sprintf("job-%d", i*100+j))
-			if _, err := os.Stat(markerFile); os.IsNotExist(err) {
+			if _, err := os.Stat(markerFile); err != nil {
 				t.Fatalf("iteration %d: marker file for job %d was not created before WaitUntilIdle returned", i, i*100+j)
 			}
 		}
