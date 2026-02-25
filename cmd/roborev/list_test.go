@@ -14,6 +14,43 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
+type repoSetupResult struct {
+	workingDir string
+	repo       *TestGitRepo
+	extraArgs  []string
+}
+
+type listTestCase struct {
+	name          string
+	args          []string
+	handler       http.HandlerFunc
+	repoSetup     func(t *testing.T) repoSetupResult
+	check         func(t *testing.T, output string, query string, repo *TestGitRepo, wd string)
+	wantOutput    []string
+	notWantOutput []string
+	wantError     string
+	wantQuery     []string
+	notWantQuery  []string
+}
+
+func assertListContainsAll(t *testing.T, name, subject string, wants []string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(subject, want) {
+			t.Errorf("expected %s to contain %q, got: %s", name, want, subject)
+		}
+	}
+}
+
+func assertListNotContainsAny(t *testing.T, name, subject string, notWants []string) {
+	t.Helper()
+	for _, notWant := range notWants {
+		if strings.Contains(subject, notWant) {
+			t.Errorf("expected %s NOT to contain %q, got: %s", name, notWant, subject)
+		}
+	}
+}
+
 func TestListCommand(t *testing.T) {
 	now := time.Now()
 	started := now.Add(-10 * time.Second)
@@ -59,18 +96,7 @@ func TestListCommand(t *testing.T) {
 		}
 	}
 
-	tests := []struct {
-		name          string
-		args          []string
-		handler       http.HandlerFunc
-		repoSetup     func(t *testing.T) (string, *TestGitRepo, []string) // returns wd, repo, extraArgs
-		check         func(t *testing.T, output string, query string, repo *TestGitRepo, wd string)
-		wantOutput    []string
-		notWantOutput []string
-		wantError     string
-		wantQuery     []string
-		notWantQuery  []string
-	}{
+	tests := []listTestCase{
 		{
 			name:       "tabular output shows jobs",
 			args:       []string{},
@@ -132,24 +158,24 @@ func TestListCommand(t *testing.T) {
 		},
 		{
 			name: "explicit --repo to cwd repo still auto-resolves branch",
-			repoSetup: func(t *testing.T) (string, *TestGitRepo, []string) {
+			repoSetup: func(t *testing.T) repoSetupResult {
 				repo := newTestGitRepo(t)
 				repo.CommitFile("file.txt", "content", "initial")
 				// We want to pass repo.Dir as --repo arg
-				return repo.Dir, repo, []string{"--repo", repo.Dir}
+				return repoSetupResult{workingDir: repo.Dir, repo: repo, extraArgs: []string{"--repo", repo.Dir}}
 			},
 			handler:   jobsHandler([]storage.ReviewJob{}, false),
 			wantQuery: []string{"branch="},
 		},
 		{
 			name: "worktree sends main repo path as repo param",
-			repoSetup: func(t *testing.T) (string, *TestGitRepo, []string) {
+			repoSetup: func(t *testing.T) repoSetupResult {
 				repo := newTestGitRepo(t)
 				repo.CommitFile("file.txt", "content", "initial")
 				worktreeDir := t.TempDir()
 				os.Remove(worktreeDir)
 				repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
-				return worktreeDir, repo, nil
+				return repoSetupResult{workingDir: worktreeDir, repo: repo, extraArgs: nil}
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
@@ -166,13 +192,13 @@ func TestListCommand(t *testing.T) {
 		},
 		{
 			name: "explicit --repo with worktree path normalizes to main repo",
-			repoSetup: func(t *testing.T) (string, *TestGitRepo, []string) {
+			repoSetup: func(t *testing.T) repoSetupResult {
 				repo := newTestGitRepo(t)
 				repo.CommitFile("file.txt", "content", "initial")
 				worktreeDir := t.TempDir()
 				os.Remove(worktreeDir)
 				repo.Run("worktree", "add", "-b", "wt-branch", worktreeDir)
-				return worktreeDir, repo, []string{"--repo", worktreeDir}
+				return repoSetupResult{workingDir: worktreeDir, repo: repo, extraArgs: []string{"--repo", worktreeDir}}
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
 			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
@@ -186,83 +212,72 @@ func TestListCommand(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Setup mock daemon to capture query and handle request
-			var capturedQuery string
-			wrapperHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/jobs" {
-					capturedQuery = r.URL.RawQuery
-				}
-				if tt.handler != nil {
-					tt.handler(w, r)
-				}
-			})
-			_, cleanup := setupMockDaemon(t, wrapperHandler)
-			t.Cleanup(cleanup)
-
-			// Setup repo and cwd
-			var wd string
-			var repo *TestGitRepo
-			var extraArgs []string
-			if tt.repoSetup != nil {
-				wd, repo, extraArgs = tt.repoSetup(t)
-			} else {
-				repo = newTestGitRepo(t)
-				repo.CommitFile("file.txt", "content", "initial")
-				wd = repo.Dir
-			}
-			chdir(t, wd)
-
-			// Execute command
-			var cmdErr error
-			output := captureStdout(t, func() {
-				cmd := listCmd()
-				args := append(tt.args, extraArgs...)
-				cmd.SetArgs(args)
-				cmdErr = cmd.Execute()
-			})
-
-			// Verify error
-			if tt.wantError != "" {
-				if cmdErr == nil {
-					t.Fatal("expected error but got none")
-				}
-				if !strings.Contains(cmdErr.Error(), tt.wantError) {
-					t.Errorf("expected error containing %q, got %q", tt.wantError, cmdErr.Error())
-				}
-			} else if cmdErr != nil {
-				t.Fatalf("unexpected error: %v", cmdErr)
-			}
-
-			// Verify string output
-			for _, want := range tt.wantOutput {
-				if !strings.Contains(output, want) {
-					t.Errorf("expected output to contain %q, got: %s", want, output)
-				}
-			}
-			for _, notWant := range tt.notWantOutput {
-				if strings.Contains(output, notWant) {
-					t.Errorf("expected output NOT to contain %q, got: %s", notWant, output)
-				}
-			}
-
-			// Verify query parameters
-			for _, want := range tt.wantQuery {
-				if !strings.Contains(capturedQuery, want) {
-					t.Errorf("expected query to contain %q, got: %s", want, capturedQuery)
-				}
-			}
-			for _, notWant := range tt.notWantQuery {
-				if strings.Contains(capturedQuery, notWant) {
-					t.Errorf("expected query NOT to contain %q, got: %s", notWant, capturedQuery)
-				}
-			}
-
-			// Custom checks
-			if tt.check != nil {
-				tt.check(t, output, capturedQuery, repo, wd)
-			}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runListTest(t, tc)
 		})
+	}
+}
+
+func runListTest(t *testing.T, tc listTestCase) {
+	// Setup mock daemon to capture query and handle request
+	var capturedQuery string
+	wrapperHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			capturedQuery = r.URL.RawQuery
+		}
+		if tc.handler != nil {
+			tc.handler(w, r)
+		}
+	})
+	_, cleanup := setupMockDaemon(t, wrapperHandler)
+	t.Cleanup(cleanup)
+
+	// Setup repo and cwd
+	var wd string
+	var repo *TestGitRepo
+	var extraArgs []string
+	if tc.repoSetup != nil {
+		res := tc.repoSetup(t)
+		wd, repo, extraArgs = res.workingDir, res.repo, res.extraArgs
+	} else {
+		repo = newTestGitRepo(t)
+		repo.CommitFile("file.txt", "content", "initial")
+		wd = repo.Dir
+	}
+	chdir(t, wd)
+
+	// Execute command
+	var cmdErr error
+	output := captureStdout(t, func() {
+		cmd := listCmd()
+		args := append(tc.args, extraArgs...)
+		cmd.SetArgs(args)
+		cmdErr = cmd.Execute()
+	})
+
+	// Verify error
+	if tc.wantError != "" {
+		if cmdErr == nil {
+			t.Fatal("expected error but got none")
+		}
+		if !strings.Contains(cmdErr.Error(), tc.wantError) {
+			t.Errorf("expected error containing %q, got %q", tc.wantError, cmdErr.Error())
+		}
+	} else if cmdErr != nil {
+		t.Fatalf("unexpected error: %v", cmdErr)
+	}
+
+	// Verify string output
+	assertListContainsAll(t, "output", output, tc.wantOutput)
+	assertListNotContainsAny(t, "output", output, tc.notWantOutput)
+
+	// Verify query parameters
+	assertListContainsAll(t, "query", capturedQuery, tc.wantQuery)
+	assertListNotContainsAny(t, "query", capturedQuery, tc.notWantQuery)
+
+	// Custom checks
+	if tc.check != nil {
+		tc.check(t, output, capturedQuery, repo, wd)
 	}
 }
