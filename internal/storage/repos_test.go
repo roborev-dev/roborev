@@ -1039,6 +1039,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 		manuallySavePrompt bool
 		expectedJobType    string
 		expectStoredPrompt bool
+		expectedPrompt     string
 	}{
 		{
 			name: "review job",
@@ -1049,6 +1050,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			manuallySavePrompt: true,
 			expectedJobType:    JobTypeReview,
 			expectStoredPrompt: false,
+			expectedPrompt:     "Saved prompt...",
 		},
 		{
 			name: "task job",
@@ -1062,6 +1064,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			manuallySavePrompt: false,
 			expectedJobType:    JobTypeTask,
 			expectStoredPrompt: true,
+			expectedPrompt:     "Analyze the codebase architecture",
 		},
 		{
 			name: "compact job",
@@ -1077,6 +1080,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			manuallySavePrompt: false,
 			expectedJobType:    JobTypeCompact,
 			expectStoredPrompt: true,
+			expectedPrompt:     "Verify these findings are still relevant...",
 		},
 		{
 			name: "dirty job",
@@ -1085,12 +1089,13 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 					RepoID:      repoID,
 					Agent:       "test",
 					GitRef:      "dirty",
-					DiffContent: "diff --git a/file.go b/file.go\\n+new line",
+					DiffContent: "diff --git a/file.go b/file.go\n+new line",
 				})
 			},
 			manuallySavePrompt: true,
 			expectedJobType:    JobTypeDirty,
 			expectStoredPrompt: false,
+			expectedPrompt:     "Saved prompt...",
 		},
 		{
 			name: "range job",
@@ -1104,6 +1109,7 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			manuallySavePrompt: true,
 			expectedJobType:    JobTypeRange,
 			expectStoredPrompt: false,
+			expectedPrompt:     "Saved prompt...",
 		},
 	}
 
@@ -1135,6 +1141,9 @@ func TestRetriedReviewJobNotRoutedAsPromptJob(t *testing.T) {
 			reclaimed := claimJob(t, db, "worker-2")
 			if reclaimed.UsesStoredPrompt() != tt.expectStoredPrompt {
 				t.Errorf("UsesStoredPrompt() = %v, want %v", reclaimed.UsesStoredPrompt(), tt.expectStoredPrompt)
+			}
+			if reclaimed.Prompt != tt.expectedPrompt {
+				t.Errorf("Prompt = %q, want %q", reclaimed.Prompt, tt.expectedPrompt)
 			}
 		})
 	}
