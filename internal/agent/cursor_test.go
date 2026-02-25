@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 )
@@ -46,7 +45,11 @@ func TestCursorBuildArgs_Table(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := NewCursorAgent("agent")
 			if tt.model != "" {
-				a = a.WithModel(tt.model).(*CursorAgent)
+				var ok bool
+				a, ok = a.WithModel(tt.model).(*CursorAgent)
+				if !ok {
+					t.Fatalf("expected *CursorAgent")
+				}
 			}
 
 			args := a.buildArgs(tt.agentic)
@@ -61,35 +64,33 @@ func TestCursorBuildArgs_Table(t *testing.T) {
 	}
 }
 
-func TestCursorReviewPassesModelFlag(t *testing.T) {
+func setupMockCursorAgent(t *testing.T, opts MockCLIOpts) (*CursorAgent, *MockCLIResult) {
+	t.Helper()
 	skipIfWindows(t)
+	mock := mockAgentCLI(t, opts)
+	return NewCursorAgent(mock.CmdPath), mock
+}
 
-	mock := mockAgentCLI(t, MockCLIOpts{
+func TestCursorReviewPassesModelFlag(t *testing.T) {
+	a, mock := setupMockCursorAgent(t, MockCLIOpts{
 		CaptureArgs: true,
 		StdoutLines: []string{`{"type":"result","result":"ok"}`},
 	})
 
-	a := NewCursorAgent(mock.CmdPath)
-	a = a.WithModel("test-model").(*CursorAgent)
+	b := a.WithModel("test-model")
+	cursor, ok := b.(*CursorAgent)
+	if !ok {
+		t.Fatalf("expected *CursorAgent, got %T", b)
+	}
 
-	_, err := a.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
+	_, err := cursor.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
 
-	// Read captured args from file
-	argsBytes, err := os.ReadFile(mock.ArgsFile)
-	if err != nil {
-		t.Fatalf("failed to read args file: %v", err)
-	}
-	args := string(argsBytes)
-
-	if !strings.Contains(args, "--model") {
-		t.Errorf("expected --model in args, got: %q", args)
-	}
-	if !strings.Contains(args, "test-model") {
-		t.Errorf("expected test-model in args, got: %q", args)
-	}
+	args := readMockArgs(t, mock.ArgsFile)
+	assertContainsArg(t, args, "--model")
+	assertContainsArg(t, args, "test-model")
 }
 
 func TestCursorParseStreamJSON(t *testing.T) {
@@ -137,7 +138,10 @@ func TestCursorWithChaining(t *testing.T) {
 
 	// Chain WithModel, WithReasoning, WithAgentic
 	b := a.WithModel("m1").WithReasoning(ReasoningThorough).WithAgentic(true)
-	cursor := b.(*CursorAgent)
+	cursor, ok := b.(*CursorAgent)
+	if !ok {
+		t.Fatalf("expected *CursorAgent, got %T", b)
+	}
 
 	if cursor.Model != "m1" {
 		t.Errorf("expected model m1, got %q", cursor.Model)
@@ -154,9 +158,7 @@ func TestCursorWithChaining(t *testing.T) {
 }
 
 func TestCursorReviewPipesPromptViaStdin(t *testing.T) {
-	skipIfWindows(t)
-
-	mock := mockAgentCLI(t, MockCLIOpts{
+	a, mock := setupMockCursorAgent(t, MockCLIOpts{
 		CaptureArgs:  true,
 		CaptureStdin: true,
 		StdoutLines: []string{
@@ -164,7 +166,6 @@ func TestCursorReviewPipesPromptViaStdin(t *testing.T) {
 		},
 	})
 
-	a := NewCursorAgent(mock.CmdPath)
 	prompt := "Review this commit carefully"
 	_, err := a.Review(
 		context.Background(), t.TempDir(), "HEAD", prompt, nil,

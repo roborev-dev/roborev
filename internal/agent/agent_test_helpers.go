@@ -134,6 +134,16 @@ func runReviewScenario(t *testing.T, script, prompt string) (string, error) {
 	return a.Review(context.Background(), t.TempDir(), "deadbeef", prompt, nil)
 }
 
+// readMockArgs reads the captured arguments from a mock CLI's ArgsFile and splits them into a slice.
+func readMockArgs(t *testing.T, path string) []string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read args file %s: %v", path, err)
+	}
+	return strings.Split(strings.TrimSpace(string(content)), " ")
+}
+
 // assertContainsArg checks that args contains target, failing with a descriptive message.
 func assertContainsArg(t *testing.T, args []string, target string) {
 	t.Helper()
