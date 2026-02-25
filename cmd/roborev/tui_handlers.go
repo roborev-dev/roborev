@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -1789,4 +1791,611 @@ func (m *tuiModel) handleConnectionError(err error) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// handleWindowSizeMsg processes terminal resize events.
+func (m tuiModel) handleWindowSizeMsg(
+	msg tea.WindowSizeMsg,
+) (tea.Model, tea.Cmd) {
+	m.width = msg.Width
+	m.height = msg.Height
+	m.heightDetected = true
+
+	// If terminal can show more jobs than we have, re-fetch to fill
+	if !m.loadingMore && !m.loadingJobs &&
+		len(m.jobs) > 0 && m.hasMore &&
+		len(m.activeRepoFilter) <= 1 {
+		newVisibleRows := m.queueVisibleRows() + queuePrefetchBuffer
+		if newVisibleRows > len(m.jobs) {
+			m.loadingJobs = true
+			return m, m.fetchJobs()
+		}
+	}
+
+	// Width change in log view requires full re-render
+	if m.currentView == tuiViewLog && m.logLines != nil {
+		m.logOffset = 0
+		m.logLines = nil
+		m.logFmtr = newStreamFormatterWithWidth(
+			io.Discard, msg.Width, m.glamourStyle,
+		)
+		m.logFetchSeq++
+		m.logLoading = true
+		return m, m.fetchJobLog(m.logJobID)
+	}
+
+	return m, nil
+}
+
+// handleTickMsg processes periodic tick events for adaptive polling.
+func (m tuiModel) handleTickMsg(
+	_ tuiTickMsg,
+) (tea.Model, tea.Cmd) {
+	// Skip job refresh while pagination or another refresh is in flight
+	if m.loadingMore || m.loadingJobs {
+		return m, tea.Batch(m.tick(), m.fetchStatus())
+	}
+	cmds := []tea.Cmd{m.tick(), m.fetchJobs(), m.fetchStatus()}
+	if m.currentView == tuiViewTasks || m.hasActiveFixJobs() {
+		cmds = append(cmds, m.fetchFixJobs())
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handleLogTickMsg processes log stream polling ticks.
+func (m tuiModel) handleLogTickMsg(
+	_ tuiLogTickMsg,
+) (tea.Model, tea.Cmd) {
+	if m.currentView == tuiViewLog && m.logStreaming &&
+		m.logJobID > 0 && !m.logLoading {
+		m.logLoading = true
+		return m, m.fetchJobLog(m.logJobID)
+	}
+	return m, nil
+}
+
+// handleUpdateCheckMsg processes version update check results.
+func (m tuiModel) handleUpdateCheckMsg(
+	msg tuiUpdateCheckMsg,
+) (tea.Model, tea.Cmd) {
+	m.updateAvailable = msg.version
+	m.updateIsDevBuild = msg.isDevBuild
+	return m, nil
+}
+
+// handleReviewMsg processes review fetch results.
+func (m tuiModel) handleReviewMsg(
+	msg tuiReviewMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.jobID != m.selectedJobID {
+		// Stale fetch -- clear pending fix panel if it was
+		// for this (now-discarded) review.
+		if m.reviewFixPanelPending &&
+			m.fixPromptJobID == msg.jobID {
+			m.reviewFixPanelPending = false
+			m.fixPromptJobID = 0
+		}
+		return m, nil
+	}
+	m.consecutiveErrors = 0
+	m.currentReview = msg.review
+	m.currentResponses = msg.responses
+	m.currentBranch = msg.branchName
+	m.currentView = tuiViewReview
+	m.reviewScroll = 0
+	if m.reviewFixPanelPending &&
+		m.fixPromptJobID == msg.review.JobID {
+		m.reviewFixPanelPending = false
+		m.reviewFixPanelOpen = true
+		m.reviewFixPanelFocused = true
+	}
+	return m, nil
+}
+
+// handlePromptMsg processes prompt fetch results.
+func (m tuiModel) handlePromptMsg(
+	msg tuiPromptMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.jobID != m.selectedJobID {
+		return m, nil
+	}
+	m.consecutiveErrors = 0
+	m.currentReview = msg.review
+	m.currentView = tuiViewPrompt
+	m.promptScroll = 0
+	return m, nil
+}
+
+// handleLogOutputMsg processes log output from the daemon.
+func (m tuiModel) handleLogOutputMsg(
+	msg tuiLogOutputMsg,
+) (tea.Model, tea.Cmd) {
+	// Drop stale responses from previous log sessions.
+	if msg.seq != m.logFetchSeq {
+		return m, nil
+	}
+	m.logLoading = false
+	m.consecutiveErrors = 0
+	// If the user navigated away while a fetch was in-flight, drop it.
+	if m.currentView != tuiViewLog {
+		return m, nil
+	}
+	if msg.err != nil {
+		if errors.Is(msg.err, errNoLog) {
+			flash := "No log available for this job"
+			if job := m.logViewLookupJob(); job != nil &&
+				job.Status == storage.JobStatusFailed &&
+				job.Error != "" {
+				flash = fmt.Sprintf(
+					"Job #%d failed: %s",
+					m.logJobID, job.Error,
+				)
+			}
+			m.flashMessage = flash
+			m.flashExpiresAt = time.Now().Add(5 * time.Second)
+			m.flashView = m.logFromView
+			m.currentView = m.logFromView
+			m.logStreaming = false
+			return m, nil
+		}
+		m.err = msg.err
+		return m, nil
+	}
+	if m.currentView == tuiViewLog {
+		// Persist formatter state for incremental polls
+		if msg.fmtr != nil {
+			m.logFmtr = msg.fmtr
+		}
+
+		if msg.append {
+			if len(msg.lines) > 0 {
+				m.logLines = append(
+					m.logLines, msg.lines...,
+				)
+			}
+		} else if len(msg.lines) > 0 {
+			m.logLines = msg.lines
+		} else if m.logLines == nil {
+			if !msg.hasMore {
+				m.logLines = []logLine{}
+			}
+		} else if msg.newOffset == 0 {
+			m.logLines = []logLine{}
+		}
+		m.logOffset = msg.newOffset
+		m.logStreaming = msg.hasMore
+		if m.logFollow && len(m.logLines) > 0 {
+			visibleLines := m.logVisibleLines()
+			maxScroll := max(len(m.logLines)-visibleLines, 0)
+			m.logScroll = maxScroll
+		}
+		if m.logStreaming {
+			return m, tea.Tick(
+				500*time.Millisecond,
+				func(t time.Time) tea.Msg {
+					return tuiLogTickMsg{}
+				},
+			)
+		}
+	}
+	return m, nil
+}
+
+// handleAddressedToggleMsg processes addressed state toggle messages.
+func (m tuiModel) handleAddressedToggleMsg(
+	msg tuiAddressedMsg,
+) (tea.Model, tea.Cmd) {
+	if m.currentReview != nil {
+		m.currentReview.Addressed = bool(msg)
+	}
+	return m, nil
+}
+
+// handleCancelResultMsg processes job cancellation results.
+func (m tuiModel) handleCancelResultMsg(
+	msg tuiCancelResultMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.setJobStatus(msg.jobID, msg.oldState)
+		m.setJobFinishedAt(msg.jobID, msg.oldFinishedAt)
+		m.err = msg.err
+	}
+	return m, nil
+}
+
+// handleRerunResultMsg processes job re-run results.
+func (m tuiModel) handleRerunResultMsg(
+	msg tuiRerunResultMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.setJobStatus(msg.jobID, msg.oldState)
+		m.setJobStartedAt(msg.jobID, msg.oldStartedAt)
+		m.setJobFinishedAt(msg.jobID, msg.oldFinishedAt)
+		m.setJobError(msg.jobID, msg.oldError)
+		m.err = msg.err
+	}
+	return m, nil
+}
+
+// handleReposMsg processes repo list results for the filter modal.
+func (m tuiModel) handleReposMsg(
+	msg tuiReposMsg,
+) (tea.Model, tea.Cmd) {
+	m.consecutiveErrors = 0
+	// Build filterTree from repos (all collapsed, no children)
+	m.filterTree = make([]treeFilterNode, len(msg.repos))
+	for i, r := range msg.repos {
+		m.filterTree[i] = treeFilterNode{
+			name:      r.name,
+			rootPaths: r.rootPaths,
+			count:     r.count,
+		}
+	}
+	// Move cwd repo to first position for quick access
+	if m.cwdRepoRoot != "" && len(m.filterTree) > 1 {
+		moveToFront(m.filterTree, func(n treeFilterNode) bool {
+			return slices.Contains(n.rootPaths, m.cwdRepoRoot)
+		})
+	}
+	m.rebuildFilterFlatList()
+	// Pre-select active filter if any
+	if len(m.activeRepoFilter) > 0 {
+		for i, entry := range m.filterFlatList {
+			if entry.repoIdx >= 0 && entry.branchIdx == -1 &&
+				rootPathsMatch(
+					m.filterTree[entry.repoIdx].rootPaths,
+					m.activeRepoFilter,
+				) {
+				m.filterSelectedIdx = i
+				break
+			}
+		}
+	}
+	// Auto-expand repo to branches when opened via 'b' key
+	if m.filterBranchMode && len(m.filterTree) > 0 {
+		targetIdx := 0
+		if len(m.activeRepoFilter) > 0 {
+			for i, node := range m.filterTree {
+				if rootPathsMatch(
+					node.rootPaths, m.activeRepoFilter,
+				) {
+					targetIdx = i
+					goto foundTarget
+				}
+			}
+		}
+		if m.cwdRepoRoot != "" {
+			for i, node := range m.filterTree {
+				for _, p := range node.rootPaths {
+					if p == m.cwdRepoRoot {
+						targetIdx = i
+						goto foundTarget
+					}
+				}
+			}
+		}
+	foundTarget:
+		m.filterTree[targetIdx].loading = true
+		for i, entry := range m.filterFlatList {
+			if entry.repoIdx == targetIdx &&
+				entry.branchIdx == -1 {
+				m.filterSelectedIdx = i
+				break
+			}
+		}
+		return m, m.fetchBranchesForRepo(
+			m.filterTree[targetIdx].rootPaths,
+			targetIdx, true, m.filterSearchSeq,
+		)
+	}
+	// If user typed search before repos loaded, kick off fetches
+	if cmd := m.fetchUnloadedBranches(); cmd != nil {
+		return m, cmd
+	}
+	return m, nil
+}
+
+// handleRepoBranchesMsg processes branch list results for a repo.
+func (m tuiModel) handleRepoBranchesMsg(
+	msg tuiRepoBranchesMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.err = msg.err
+		m.filterBranchMode = false
+		if msg.repoIdx >= 0 &&
+			msg.repoIdx < len(m.filterTree) &&
+			rootPathsMatch(
+				m.filterTree[msg.repoIdx].rootPaths,
+				msg.rootPaths,
+			) {
+			m.filterTree[msg.repoIdx].loading = false
+			if !msg.expandOnLoad && m.filterSearch != "" &&
+				msg.searchSeq == m.filterSearchSeq {
+				m.filterTree[msg.repoIdx].fetchFailed = true
+			}
+		}
+		if cmd := m.handleConnectionError(msg.err); cmd != nil {
+			return m, cmd
+		}
+		return m, m.fetchUnloadedBranches()
+	}
+	// Verify filter view, repoIdx valid, and identity matches
+	if m.currentView == tuiViewFilter &&
+		msg.repoIdx >= 0 &&
+		msg.repoIdx < len(m.filterTree) &&
+		rootPathsMatch(
+			m.filterTree[msg.repoIdx].rootPaths,
+			msg.rootPaths,
+		) {
+		m.consecutiveErrors = 0
+		m.filterTree[msg.repoIdx].loading = false
+		m.filterTree[msg.repoIdx].children = msg.branches
+		if msg.expandOnLoad {
+			m.filterTree[msg.repoIdx].expanded = true
+		}
+		// Move cwd branch to first position if this is cwd repo
+		if m.cwdBranch != "" && len(msg.branches) > 1 {
+			isCwdRepo := slices.Contains(
+				m.filterTree[msg.repoIdx].rootPaths,
+				m.cwdRepoRoot,
+			)
+			if isCwdRepo {
+				moveToFront(
+					m.filterTree[msg.repoIdx].children,
+					func(b branchFilterItem) bool {
+						return b.name == m.cwdBranch
+					},
+				)
+			}
+		}
+		m.rebuildFilterFlatList()
+		// Auto-position on first branch when opened via 'b'
+		if m.filterBranchMode {
+			m.filterBranchMode = false
+			for i, entry := range m.filterFlatList {
+				if entry.repoIdx == msg.repoIdx &&
+					entry.branchIdx >= 0 {
+					m.filterSelectedIdx = i
+					break
+				}
+			}
+		}
+		if cmd := m.fetchUnloadedBranches(); cmd != nil {
+			return m, cmd
+		}
+	}
+	return m, nil
+}
+
+// handleBranchesMsg processes branch backfill completion.
+func (m tuiModel) handleBranchesMsg(
+	msg tuiBranchesMsg,
+) (tea.Model, tea.Cmd) {
+	m.consecutiveErrors = 0
+	m.branchBackfillDone = true
+	if msg.backfillCount > 0 {
+		m.flashMessage = fmt.Sprintf(
+			"Backfilled branch info for %d jobs",
+			msg.backfillCount,
+		)
+		m.flashExpiresAt = time.Now().Add(5 * time.Second)
+		m.flashView = tuiViewFilter
+	}
+	return m, nil
+}
+
+// handleCommentResultMsg processes comment submission results.
+func (m tuiModel) handleCommentResultMsg(
+	msg tuiCommentResultMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.err = msg.err
+	} else {
+		if m.commentJobID == msg.jobID {
+			m.commentText = ""
+			m.commentJobID = 0
+		}
+		if m.currentView == tuiViewReview &&
+			m.currentReview != nil &&
+			m.currentReview.JobID == msg.jobID {
+			return m, m.fetchReview(msg.jobID)
+		}
+	}
+	return m, nil
+}
+
+// handleClipboardResultMsg processes clipboard copy results.
+func (m tuiModel) handleClipboardResultMsg(
+	msg tuiClipboardResultMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.err = fmt.Errorf("copy failed: %w", msg.err)
+	} else {
+		m.flashMessage = "Copied to clipboard"
+		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashView = msg.view
+	}
+	return m, nil
+}
+
+// handleCommitMsgMsg processes commit message fetch results.
+func (m tuiModel) handleCommitMsgMsg(
+	msg tuiCommitMsgMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.jobID != m.commitMsgJobID {
+		return m, nil
+	}
+	if msg.err != nil {
+		m.flashMessage = msg.err.Error()
+		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashView = m.currentView
+		return m, nil
+	}
+	m.commitMsgContent = msg.content
+	m.commitMsgScroll = 0
+	m.currentView = tuiViewCommitMsg
+	return m, nil
+}
+
+// handleJobsErrMsg processes job fetch errors.
+func (m tuiModel) handleJobsErrMsg(
+	msg tuiJobsErrMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.seq < m.fetchSeq {
+		return m, nil
+	}
+	m.err = msg.err
+	m.loadingJobs = false
+	if cmd := m.handleConnectionError(msg.err); cmd != nil {
+		return m, cmd
+	}
+	return m, nil
+}
+
+// handlePaginationErrMsg processes pagination fetch errors.
+func (m tuiModel) handlePaginationErrMsg(
+	msg tuiPaginationErrMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.seq < m.fetchSeq {
+		m.loadingMore = false
+		m.paginateNav = 0
+		return m, nil
+	}
+	m.err = msg.err
+	m.loadingMore = false
+	m.paginateNav = 0
+	if cmd := m.handleConnectionError(msg.err); cmd != nil {
+		return m, cmd
+	}
+	return m, nil
+}
+
+// handleErrMsg processes generic error messages.
+func (m tuiModel) handleErrMsg(
+	msg tuiErrMsg,
+) (tea.Model, tea.Cmd) {
+	m.err = msg
+	if cmd := m.handleConnectionError(msg); cmd != nil {
+		return m, cmd
+	}
+	return m, nil
+}
+
+// handleFixJobsMsg processes fix job list results.
+func (m tuiModel) handleFixJobsMsg(
+	msg tuiFixJobsMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.err = msg.err
+	} else {
+		m.fixJobs = msg.jobs
+		if m.fixSelectedIdx >= len(m.fixJobs) &&
+			len(m.fixJobs) > 0 {
+			m.fixSelectedIdx = len(m.fixJobs) - 1
+		}
+	}
+	return m, nil
+}
+
+// handleFixTriggerResultMsg processes fix job trigger results.
+func (m tuiModel) handleFixTriggerResultMsg(
+	msg tuiFixTriggerResultMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.err = msg.err
+		m.flashMessage = fmt.Sprintf(
+			"Fix failed: %v", msg.err,
+		)
+		m.flashExpiresAt = time.Now().Add(3 * time.Second)
+		m.flashView = tuiViewTasks
+	} else if msg.warning != "" {
+		m.flashMessage = msg.warning
+		m.flashExpiresAt = time.Now().Add(5 * time.Second)
+		m.flashView = tuiViewTasks
+		return m, m.fetchFixJobs()
+	} else {
+		m.flashMessage = fmt.Sprintf(
+			"Fix job #%d enqueued", msg.job.ID,
+		)
+		m.flashExpiresAt = time.Now().Add(3 * time.Second)
+		m.flashView = tuiViewTasks
+		return m, m.fetchFixJobs()
+	}
+	return m, nil
+}
+
+// handlePatchResultMsg processes patch fetch results.
+func (m tuiModel) handlePatchResultMsg(
+	msg tuiPatchMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.flashMessage = fmt.Sprintf(
+			"Patch fetch failed: %v", msg.err,
+		)
+		m.flashExpiresAt = time.Now().Add(3 * time.Second)
+		m.flashView = tuiViewTasks
+	} else {
+		m.patchText = msg.patch
+		m.patchJobID = msg.jobID
+		m.patchScroll = 0
+		m.currentView = tuiViewPatch
+	}
+	return m, nil
+}
+
+// handleApplyPatchResultMsg processes patch application results.
+func (m tuiModel) handleApplyPatchResultMsg(
+	msg tuiApplyPatchResultMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.needWorktree {
+		m.worktreeConfirmJobID = msg.jobID
+		m.worktreeConfirmBranch = msg.branch
+		m.currentView = tuiViewWorktreeConfirm
+		return m, nil
+	}
+	if msg.rebase {
+		m.flashMessage = fmt.Sprintf(
+			"Patch for job #%d doesn't apply cleanly"+
+				" - triggering rebase", msg.jobID,
+		)
+		m.flashExpiresAt = time.Now().Add(5 * time.Second)
+		m.flashView = tuiViewTasks
+		return m, tea.Batch(
+			m.triggerRebase(msg.jobID), m.fetchFixJobs(),
+		)
+	} else if msg.commitFailed {
+		detail := fmt.Sprintf(
+			"Job #%d: %v", msg.jobID, msg.err,
+		)
+		if msg.worktreeDir != "" {
+			detail += fmt.Sprintf(
+				" (worktree kept at %s)", msg.worktreeDir,
+			)
+		}
+		m.flashMessage = detail
+		m.flashExpiresAt = time.Now().Add(8 * time.Second)
+		m.flashView = tuiViewTasks
+	} else if msg.err != nil {
+		m.flashMessage = fmt.Sprintf(
+			"Apply failed: %v", msg.err,
+		)
+		m.flashExpiresAt = time.Now().Add(3 * time.Second)
+		m.flashView = tuiViewTasks
+	} else {
+		m.flashMessage = fmt.Sprintf(
+			"Patch from job #%d applied and committed",
+			msg.jobID,
+		)
+		m.flashExpiresAt = time.Now().Add(3 * time.Second)
+		m.flashView = tuiViewTasks
+		cmds := []tea.Cmd{m.fetchFixJobs()}
+		if msg.parentJobID > 0 {
+			cmds = append(
+				cmds,
+				m.markParentAddressed(msg.parentJobID),
+			)
+		}
+		return m, tea.Batch(cmds...)
+	}
+	return m, nil
 }

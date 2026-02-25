@@ -2181,488 +2181,61 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
-
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.heightDetected = true
-
-		// If terminal can show more jobs than we have, re-fetch to fill screen
-		// Gate on !loadingMore and !loadingJobs to avoid race conditions
-		if !m.loadingMore && !m.loadingJobs && len(m.jobs) > 0 && m.hasMore && len(m.activeRepoFilter) <= 1 {
-			newVisibleRows := m.queueVisibleRows() + queuePrefetchBuffer
-			if newVisibleRows > len(m.jobs) {
-				m.loadingJobs = true
-				return m, m.fetchJobs()
-			}
-		}
-
-		// Width change in log view requires full re-render
-		// because streamFormatter is width-aware.
-		if m.currentView == tuiViewLog && m.logLines != nil {
-			m.logOffset = 0
-			m.logLines = nil
-			m.logFmtr = newStreamFormatterWithWidth(
-				io.Discard, msg.Width, m.glamourStyle,
-			)
-			m.logFetchSeq++
-			m.logLoading = true
-			return m, m.fetchJobLog(m.logJobID)
-		}
-
+		return m.handleWindowSizeMsg(msg)
 	case tuiTickMsg:
-		// Skip job refresh while pagination or another refresh is in flight
-		if m.loadingMore || m.loadingJobs {
-			return m, tea.Batch(m.tick(), m.fetchStatus())
-		}
-		cmds := []tea.Cmd{m.tick(), m.fetchJobs(), m.fetchStatus()}
-		// Refresh fix jobs when viewing tasks or when fix jobs are in progress
-		if m.currentView == tuiViewTasks || m.hasActiveFixJobs() {
-			cmds = append(cmds, m.fetchFixJobs())
-		}
-		return m, tea.Batch(cmds...)
-
+		return m.handleTickMsg(msg)
 	case tuiLogTickMsg:
-		if m.currentView == tuiViewLog && m.logStreaming &&
-			m.logJobID > 0 && !m.logLoading {
-			m.logLoading = true
-			return m, m.fetchJobLog(m.logJobID)
-		}
-
+		return m.handleLogTickMsg(msg)
 	case tuiJobsMsg:
 		return m.handleJobsMsg(msg)
-
 	case tuiStatusMsg:
 		return m.handleStatusMsg(msg)
-
 	case tuiUpdateCheckMsg:
-		m.updateAvailable = msg.version
-		m.updateIsDevBuild = msg.isDevBuild
-
+		return m.handleUpdateCheckMsg(msg)
 	case tuiReviewMsg:
-		if msg.jobID != m.selectedJobID {
-			// Stale fetch -- clear pending fix panel if it was
-			// for this (now-discarded) review.
-			if m.reviewFixPanelPending && m.fixPromptJobID == msg.jobID {
-				m.reviewFixPanelPending = false
-				m.fixPromptJobID = 0
-			}
-			return m, nil
-		}
-		m.consecutiveErrors = 0
-		m.currentReview = msg.review
-		m.currentResponses = msg.responses
-		m.currentBranch = msg.branchName
-		m.currentView = tuiViewReview
-		m.reviewScroll = 0
-		if m.reviewFixPanelPending && m.fixPromptJobID == msg.review.JobID {
-			m.reviewFixPanelPending = false
-			m.reviewFixPanelOpen = true
-			m.reviewFixPanelFocused = true
-		}
-
+		return m.handleReviewMsg(msg)
 	case tuiPromptMsg:
-		if msg.jobID != m.selectedJobID {
-			return m, nil
-		}
-		m.consecutiveErrors = 0
-		m.currentReview = msg.review
-		m.currentView = tuiViewPrompt
-		m.promptScroll = 0
-
+		return m.handlePromptMsg(msg)
 	case tuiLogOutputMsg:
-		// Drop stale responses from previous log sessions.
-		// Clear logLoading only for the current seq — stale
-		// responses must not affect the in-flight guard.
-		if msg.seq != m.logFetchSeq {
-			return m, nil
-		}
-		m.logLoading = false
-		m.consecutiveErrors = 0
-		// If the user navigated away from the log view while
-		// a fetch was in-flight, drop the result silently.
-		if m.currentView != tuiViewLog {
-			return m, nil
-		}
-		if msg.err != nil {
-			if errors.Is(msg.err, errNoLog) {
-				// For failed jobs with stored error, show
-				// that instead of generic "No log available".
-				flash := "No log available for this job"
-				if job := m.logViewLookupJob(); job != nil &&
-					job.Status == storage.JobStatusFailed &&
-					job.Error != "" {
-					flash = fmt.Sprintf(
-						"Job #%d failed: %s",
-						m.logJobID, job.Error,
-					)
-				}
-				m.flashMessage = flash
-				m.flashExpiresAt = time.Now().Add(5 * time.Second)
-				m.flashView = m.logFromView
-				m.currentView = m.logFromView
-				m.logStreaming = false
-				return m, nil
-			}
-			m.err = msg.err
-			return m, nil
-		}
-		if m.currentView == tuiViewLog {
-			// Persist formatter state so incremental polls
-			// reuse accumulated state (lastWasTool, rendered
-			// command IDs, etc.).
-			if msg.fmtr != nil {
-				m.logFmtr = msg.fmtr
-			}
-
-			if msg.append {
-				// Incremental: append new lines if any.
-				if len(msg.lines) > 0 {
-					m.logLines = append(
-						m.logLines, msg.lines...,
-					)
-				}
-			} else if len(msg.lines) > 0 {
-				// Full replace with content.
-				m.logLines = msg.lines
-			} else if m.logLines == nil {
-				if !msg.hasMore {
-					// Completed job with empty log.
-					m.logLines = []logLine{}
-				}
-				// Else: still streaming, no data yet — keep
-				// nil so UI shows "Waiting for output...".
-			} else if msg.newOffset == 0 {
-				// Server reset offset to 0 with no content —
-				// clear stale lines from previous log state.
-				m.logLines = []logLine{}
-			}
-			// Else: replace mode, no lines, but logLines exists
-			// and offset nonzero — preserve existing lines
-			// (e.g. final streaming poll with no new data).
-			m.logOffset = msg.newOffset
-			m.logStreaming = msg.hasMore
-			if m.logFollow && len(m.logLines) > 0 {
-				visibleLines := m.logVisibleLines()
-				maxScroll := max(len(m.logLines)-visibleLines, 0)
-				m.logScroll = maxScroll
-			}
-			if m.logStreaming {
-				return m, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
-					return tuiLogTickMsg{}
-				})
-			}
-		}
-
+		return m.handleLogOutputMsg(msg)
 	case tuiAddressedMsg:
-		if m.currentReview != nil {
-			m.currentReview.Addressed = bool(msg)
-		}
-
+		return m.handleAddressedToggleMsg(msg)
 	case tuiAddressedResultMsg:
 		return m.handleAddressedResultMsg(msg)
-
 	case tuiCancelResultMsg:
-		if msg.err != nil {
-			m.setJobStatus(msg.jobID, msg.oldState)
-			m.setJobFinishedAt(msg.jobID, msg.oldFinishedAt)
-			m.err = msg.err
-		}
-
+		return m.handleCancelResultMsg(msg)
 	case tuiRerunResultMsg:
-		if msg.err != nil {
-			m.setJobStatus(msg.jobID, msg.oldState)
-			m.setJobStartedAt(msg.jobID, msg.oldStartedAt)
-			m.setJobFinishedAt(msg.jobID, msg.oldFinishedAt)
-			m.setJobError(msg.jobID, msg.oldError)
-			m.err = msg.err
-		}
-
+		return m.handleRerunResultMsg(msg)
 	case tuiReposMsg:
-		m.consecutiveErrors = 0
-		// Build filterTree from repos (all collapsed, no children)
-		m.filterTree = make([]treeFilterNode, len(msg.repos))
-		for i, r := range msg.repos {
-			m.filterTree[i] = treeFilterNode{
-				name:      r.name,
-				rootPaths: r.rootPaths,
-				count:     r.count,
-			}
-		}
-		// Move cwd repo to first position for quick access
-		if m.cwdRepoRoot != "" && len(m.filterTree) > 1 {
-			moveToFront(m.filterTree, func(n treeFilterNode) bool {
-				return slices.Contains(n.rootPaths, m.cwdRepoRoot)
-			})
-		}
-		m.rebuildFilterFlatList()
-		// Pre-select active filter if any
-		if len(m.activeRepoFilter) > 0 {
-			for i, entry := range m.filterFlatList {
-				if entry.repoIdx >= 0 && entry.branchIdx == -1 &&
-					rootPathsMatch(m.filterTree[entry.repoIdx].rootPaths, m.activeRepoFilter) {
-					m.filterSelectedIdx = i
-					break
-				}
-			}
-		}
-		// Auto-expand repo to branches when opened via 'b' key
-		if m.filterBranchMode && len(m.filterTree) > 0 {
-			targetIdx := 0
-			if len(m.activeRepoFilter) > 0 {
-				// Priority 1: active repo filter (any size)
-				for i, node := range m.filterTree {
-					if rootPathsMatch(node.rootPaths, m.activeRepoFilter) {
-						targetIdx = i
-						goto foundTarget
-					}
-				}
-			}
-			if m.cwdRepoRoot != "" {
-				// Priority 2: cwd repo
-				for i, node := range m.filterTree {
-					for _, p := range node.rootPaths {
-						if p == m.cwdRepoRoot {
-							targetIdx = i
-							goto foundTarget
-						}
-					}
-				}
-			}
-			// Priority 3: first repo (targetIdx already 0)
-		foundTarget:
-			m.filterTree[targetIdx].loading = true
-			// Position cursor on the target repo while branches load
-			for i, entry := range m.filterFlatList {
-				if entry.repoIdx == targetIdx && entry.branchIdx == -1 {
-					m.filterSelectedIdx = i
-					break
-				}
-			}
-			return m, m.fetchBranchesForRepo(m.filterTree[targetIdx].rootPaths, targetIdx, true, m.filterSearchSeq)
-		}
-		// If user typed search before repos loaded, kick off branch
-		// fetches now so search results include branch matches.
-		if cmd := m.fetchUnloadedBranches(); cmd != nil {
-			return m, cmd
-		}
-
+		return m.handleReposMsg(msg)
 	case tuiRepoBranchesMsg:
-		// Surface errors regardless of view/staleness so connection
-		// tracking and reconnect logic always fire.
-		if msg.err != nil {
-			m.err = msg.err
-			m.filterBranchMode = false
-			// Clear loading if the tree entry is still valid.
-			// Only mark fetchFailed for search-triggered loads to
-			// prevent retry loops; manual failures should not block
-			// later search auto-loading.
-			if msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
-				rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
-				m.filterTree[msg.repoIdx].loading = false
-				if !msg.expandOnLoad && m.filterSearch != "" &&
-					msg.searchSeq == m.filterSearchSeq {
-					m.filterTree[msg.repoIdx].fetchFailed = true
-				}
-			}
-			if cmd := m.handleConnectionError(msg.err); cmd != nil {
-				return m, cmd
-			}
-			// Top-up: fetch next batch of unloaded repos
-			return m, m.fetchUnloadedBranches()
-		}
-		// Verify we're still in filter view, repoIdx is valid, and the repo identity matches
-		// (the tree may have been rebuilt while the fetch was in-flight)
-		if m.currentView == tuiViewFilter && msg.repoIdx >= 0 && msg.repoIdx < len(m.filterTree) &&
-			rootPathsMatch(m.filterTree[msg.repoIdx].rootPaths, msg.rootPaths) {
-			m.consecutiveErrors = 0
-			m.filterTree[msg.repoIdx].loading = false
-			m.filterTree[msg.repoIdx].children = msg.branches
-			if msg.expandOnLoad {
-				m.filterTree[msg.repoIdx].expanded = true
-			}
-			// Move cwd branch to first position if this is the cwd repo
-			if m.cwdBranch != "" && len(msg.branches) > 1 {
-				isCwdRepo := slices.Contains(m.filterTree[msg.repoIdx].rootPaths, m.cwdRepoRoot)
-				if isCwdRepo {
-					moveToFront(m.filterTree[msg.repoIdx].children, func(b branchFilterItem) bool {
-						return b.name == m.cwdBranch
-					})
-				}
-			}
-			m.rebuildFilterFlatList()
-			// Auto-position cursor on first branch when opened via 'b' key
-			if m.filterBranchMode {
-				m.filterBranchMode = false
-				for i, entry := range m.filterFlatList {
-					if entry.repoIdx == msg.repoIdx && entry.branchIdx >= 0 {
-						m.filterSelectedIdx = i
-						break
-					}
-				}
-			}
-			// Top-up: fetch next batch of unloaded repos
-			if cmd := m.fetchUnloadedBranches(); cmd != nil {
-				return m, cmd
-			}
-		}
-
+		return m.handleRepoBranchesMsg(msg)
 	case tuiBranchesMsg:
-		m.consecutiveErrors = 0
-		m.branchBackfillDone = true
-		if msg.backfillCount > 0 {
-			m.flashMessage = fmt.Sprintf("Backfilled branch info for %d jobs", msg.backfillCount)
-			m.flashExpiresAt = time.Now().Add(5 * time.Second)
-			m.flashView = tuiViewFilter
-		}
-
+		return m.handleBranchesMsg(msg)
 	case tuiCommentResultMsg:
-		if msg.err != nil {
-			m.err = msg.err
-		} else {
-			if m.commentJobID == msg.jobID {
-				m.commentText = ""
-				m.commentJobID = 0
-			}
-			if m.currentView == tuiViewReview && m.currentReview != nil && m.currentReview.JobID == msg.jobID {
-				return m, m.fetchReview(msg.jobID)
-			}
-		}
-
+		return m.handleCommentResultMsg(msg)
 	case tuiClipboardResultMsg:
-		if msg.err != nil {
-			m.err = fmt.Errorf("copy failed: %w", msg.err)
-		} else {
-			m.flashMessage = "Copied to clipboard"
-			m.flashExpiresAt = time.Now().Add(2 * time.Second)
-			m.flashView = msg.view
-		}
-
+		return m.handleClipboardResultMsg(msg)
 	case tuiCommitMsgMsg:
-		if msg.jobID != m.commitMsgJobID {
-			return m, nil
-		}
-		if msg.err != nil {
-			m.flashMessage = msg.err.Error()
-			m.flashExpiresAt = time.Now().Add(2 * time.Second)
-			m.flashView = m.currentView
-			return m, nil
-		}
-		m.commitMsgContent = msg.content
-		m.commitMsgScroll = 0
-		m.currentView = tuiViewCommitMsg
-
+		return m.handleCommitMsgMsg(msg)
 	case tuiJobsErrMsg:
-		if msg.seq < m.fetchSeq {
-			return m, nil
-		}
-		m.err = msg.err
-		m.loadingJobs = false
-		if cmd := m.handleConnectionError(msg.err); cmd != nil {
-			return m, cmd
-		}
-
+		return m.handleJobsErrMsg(msg)
 	case tuiPaginationErrMsg:
-		if msg.seq < m.fetchSeq {
-			m.loadingMore = false
-			m.paginateNav = 0
-			return m, nil
-		}
-		m.err = msg.err
-		m.loadingMore = false
-		m.paginateNav = 0
-		if cmd := m.handleConnectionError(msg.err); cmd != nil {
-			return m, cmd
-		}
-
+		return m.handlePaginationErrMsg(msg)
 	case tuiErrMsg:
-		m.err = msg
-		if cmd := m.handleConnectionError(msg); cmd != nil {
-			return m, cmd
-		}
-
+		return m.handleErrMsg(msg)
 	case tuiReconnectMsg:
 		return m.handleReconnectMsg(msg)
-
 	case tuiFixJobsMsg:
-		if msg.err != nil {
-			m.err = msg.err
-		} else {
-			m.fixJobs = msg.jobs
-			if m.fixSelectedIdx >= len(m.fixJobs) && len(m.fixJobs) > 0 {
-				m.fixSelectedIdx = len(m.fixJobs) - 1
-			}
-		}
-
+		return m.handleFixJobsMsg(msg)
 	case tuiFixTriggerResultMsg:
-		if msg.err != nil {
-			m.err = msg.err
-			m.flashMessage = fmt.Sprintf("Fix failed: %v", msg.err)
-			m.flashExpiresAt = time.Now().Add(3 * time.Second)
-			m.flashView = tuiViewTasks
-		} else if msg.warning != "" {
-			m.flashMessage = msg.warning
-			m.flashExpiresAt = time.Now().Add(5 * time.Second)
-			m.flashView = tuiViewTasks
-			return m, m.fetchFixJobs()
-		} else {
-			m.flashMessage = fmt.Sprintf("Fix job #%d enqueued", msg.job.ID)
-			m.flashExpiresAt = time.Now().Add(3 * time.Second)
-			m.flashView = tuiViewTasks
-			// Refresh tasks list
-			return m, m.fetchFixJobs()
-		}
-
+		return m.handleFixTriggerResultMsg(msg)
 	case tuiPatchMsg:
-		if msg.err != nil {
-			m.flashMessage = fmt.Sprintf("Patch fetch failed: %v", msg.err)
-			m.flashExpiresAt = time.Now().Add(3 * time.Second)
-			m.flashView = tuiViewTasks
-		} else {
-			m.patchText = msg.patch
-			m.patchJobID = msg.jobID
-			m.patchScroll = 0
-			m.currentView = tuiViewPatch
-		}
-
+		return m.handlePatchResultMsg(msg)
 	case tuiApplyPatchResultMsg:
-		if msg.needWorktree {
-			m.worktreeConfirmJobID = msg.jobID
-			m.worktreeConfirmBranch = msg.branch
-			m.currentView = tuiViewWorktreeConfirm
-			return m, nil
-		}
-		if msg.rebase {
-			m.flashMessage = fmt.Sprintf("Patch for job #%d doesn't apply cleanly - triggering rebase", msg.jobID)
-			m.flashExpiresAt = time.Now().Add(5 * time.Second)
-			m.flashView = tuiViewTasks
-			return m, tea.Batch(m.triggerRebase(msg.jobID), m.fetchFixJobs())
-		} else if msg.commitFailed {
-			// Patch applied to working tree but commit failed — working tree is dirty
-			detail := fmt.Sprintf("Job #%d: %v", msg.jobID, msg.err)
-			if msg.worktreeDir != "" {
-				detail += fmt.Sprintf(" (worktree kept at %s)", msg.worktreeDir)
-			}
-			m.flashMessage = detail
-			m.flashExpiresAt = time.Now().Add(8 * time.Second)
-			m.flashView = tuiViewTasks
-		} else if msg.err != nil {
-			m.flashMessage = fmt.Sprintf("Apply failed: %v", msg.err)
-			m.flashExpiresAt = time.Now().Add(3 * time.Second)
-			m.flashView = tuiViewTasks
-		} else {
-			m.flashMessage = fmt.Sprintf("Patch from job #%d applied and committed", msg.jobID)
-			m.flashExpiresAt = time.Now().Add(3 * time.Second)
-			m.flashView = tuiViewTasks
-			// Refresh tasks list to show updated status, and mark parent addressed
-			cmds := []tea.Cmd{m.fetchFixJobs()}
-			if msg.parentJobID > 0 {
-				cmds = append(cmds, m.markParentAddressed(msg.parentJobID))
-			}
-			return m, tea.Batch(cmds...)
-		}
+		return m.handleApplyPatchResultMsg(msg)
 	}
-
 	return m, nil
 }
 
