@@ -493,8 +493,6 @@ func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
 	}
 }
 
-
-
 func TestTUIFetchUnloadedBranchesCapped(t *testing.T) {
 	m := initFilterModel(nil)
 

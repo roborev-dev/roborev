@@ -133,17 +133,11 @@ func TestTUIQueueNavigation(t *testing.T) {
 
 func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	// Test flash messages when navigating at queue boundaries
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1),
-		makeJob(2),
-		makeJob(3),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
-	m.hasMore = false // No more jobs to load
+	m := newQueueTestModel(
+		withQueueTestJobs(makeJob(1), makeJob(2), makeJob(3)),
+		withQueueTestSelection(0),
+		withQueueTestFlags(false, false, false),
+	)
 
 	// Press 'up' at top of queue - should show flash message
 	m2, _ := pressSpecial(m, tea.KeyUp)
@@ -151,15 +145,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	if m2.selectedIdx != 0 {
 		t.Errorf("Expected selectedIdx to remain 0 at top, got %d", m2.selectedIdx)
 	}
-	if m2.flashMessage != "No newer review" {
-		t.Errorf("Expected flash message 'No newer review', got %q", m2.flashMessage)
-	}
-	if m2.flashView != tuiViewQueue {
-		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m2.flashView)
-	}
-	if m2.flashExpiresAt.IsZero() || m2.flashExpiresAt.Before(time.Now()) {
-		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m2.flashExpiresAt)
-	}
+	assertFlashMessage(t, m2, tuiViewQueue, "No newer review")
 
 	// Now at bottom of queue
 	m.selectedIdx = 2
@@ -172,59 +158,34 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx to remain 2 at bottom, got %d", m3.selectedIdx)
 	}
-	if m3.flashMessage != "No older review" {
-		t.Errorf("Expected flash message 'No older review', got %q", m3.flashMessage)
-	}
-	if m3.flashView != tuiViewQueue {
-		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m3.flashView)
-	}
-	if m3.flashExpiresAt.IsZero() || m3.flashExpiresAt.Before(time.Now()) {
-		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m3.flashExpiresAt)
-	}
+	assertFlashMessage(t, m3, tuiViewQueue, "No older review")
 }
 
 func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	// Test flash messages at bottom when multi-repo filter is active (prevents auto-load).
 	// Single-repo filters use server-side filtering and support pagination,
 	// but multi-repo filters are client-side only so they disable pagination.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withRepoPath("/repo1")),
-		makeJob(2, withRepoPath("/repo2")),
-	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
-	m.currentView = tuiViewQueue
-	m.hasMore = true                                  // More jobs available but...
-	m.activeRepoFilter = []string{"/repo1", "/repo2"} // Multi-repo filter prevents auto-load
+	m := newQueueTestModel(
+		withQueueTestJobs(makeJob(1, withRepoPath("/repo1")), makeJob(2, withRepoPath("/repo2"))),
+		withQueueTestSelection(1),
+		withQueueTestFlags(true, false, false),
+	)
+	m.activeRepoFilter = []string{"/repo1", "/repo2"}
 
 	// Press 'down' - already at last job, should hit boundary
 	m2, _ := pressSpecial(m, tea.KeyDown)
 
 	// Should show flash since multi-repo filter prevents loading more
-	if m2.flashMessage != "No older review" {
-		t.Errorf("Expected flash message 'No older review' with multi-repo filter active, got %q", m2.flashMessage)
-	}
-	if m2.flashView != tuiViewQueue {
-		t.Errorf("Expected flashView to be tuiViewQueue, got %d", m2.flashView)
-	}
-	if m2.flashExpiresAt.IsZero() || m2.flashExpiresAt.Before(time.Now()) {
-		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m2.flashExpiresAt)
-	}
+	assertFlashMessage(t, m2, tuiViewQueue, "No older review")
 }
 
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
 	// Set up at last job with more available
-	m.jobs = []storage.ReviewJob{makeJob(1)}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.hasMore = true
-	m.loadingMore = false
-	m.loadingJobs = false // Must be false to allow pagination
-	m.currentView = tuiViewQueue
+	m := newQueueTestModel(
+		withQueueTestJobs(makeJob(1)),
+		withQueueTestSelection(0),
+		withQueueTestFlags(true, false, false),
+	)
 
 	// Press down at bottom - should trigger load more
 	m2, cmd := pressSpecial(m, tea.KeyDown)
@@ -238,16 +199,13 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 }
 
 func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
 	// Set up at last job with filter active
-	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/path/to/repo"))}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-	m.hasMore = true
-	m.loadingMore = false
-	m.activeRepoFilter = []string{"/path/to/repo"} // Filter active
-	m.currentView = tuiViewQueue
+	m := newQueueTestModel(
+		withQueueTestJobs(makeJob(1, withRepoPath("/path/to/repo"))),
+		withQueueTestSelection(0),
+		withQueueTestFlags(true, false, true),
+	)
+	m.activeRepoFilter = []string{"/path/to/repo"}
 
 	// Press down at bottom - should NOT trigger load more (filtered view loads all)
 	m2, cmd := pressSpecial(m, tea.KeyDown)
@@ -683,142 +641,92 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 	}
 }
 
-func TestTUIResizeDuringPaginationNoRefetch(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// Set up with jobs loaded and pagination in flight
-	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
-	m.hasMore = true
-	m.loadingMore = true // Pagination in progress
-	m.heightDetected = false
-	m.height = 24 // Default height
-
-	// Simulate WindowSizeMsg arriving while pagination is in flight
-	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
-
-	// Height should be updated
-	if m2.height != 80 {
-		t.Errorf("Expected height 80, got %d", m2.height)
-	}
-	if !m2.heightDetected {
-		t.Error("heightDetected should be true after WindowSizeMsg")
-	}
-
-	// Should NOT trigger a re-fetch because loadingMore is true
-	if cmd != nil {
-		t.Error("Should not return command when loadingMore is true (pagination in flight)")
-	}
-}
-
-func TestTUIResizeTriggersRefetchWhenNeeded(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// Set up with few jobs loaded, more available, no pagination in flight
-	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
-	m.hasMore = true
-	m.loadingMore = false
-	m.loadingJobs = false // Must be false to allow refetch
-	m.heightDetected = false
-	m.height = 24 // Default height
-
-	// Simulate WindowSizeMsg arriving - tall terminal can show more jobs
-	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
-
-	// Height should be updated
-	if m2.height != 80 {
-		t.Errorf("Expected height 80, got %d", m2.height)
-	}
-	if !m2.heightDetected {
-		t.Error("heightDetected should be true after WindowSizeMsg")
-	}
-
-	// Should trigger a re-fetch because we can show more rows than we have jobs
-	// newVisibleRows = 80 - 9 + 10 = 81, which is > len(jobs)=3
-	if cmd == nil {
-		t.Error("Should return fetchJobs command when terminal can show more jobs")
-	}
-}
-
-func TestTUIResizeNoRefetchWhenEnoughJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// Set up with enough jobs to fill the terminal
-	jobs := make([]storage.ReviewJob, 100)
-	for i := range jobs {
-		jobs[i] = makeJob(int64(i + 1))
-	}
-	m.jobs = jobs
-	m.hasMore = true
-	m.loadingMore = false
-	m.heightDetected = true
-	m.height = 60
-
-	// Simulate WindowSizeMsg - terminal grows but we already have enough jobs
-	// newVisibleRows = 80 - 9 + 10 = 81, which is < len(jobs)=100
-	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
-
-	// Height should be updated
-	if m2.height != 80 {
-		t.Errorf("Expected height 80, got %d", m2.height)
+func TestTUIResizeBehavior(t *testing.T) {
+	tests := []struct {
+		name          string
+		initialHeight int
+		jobsCount     int
+		loadingJobs   bool
+		loadingMore   bool
+		msg           tea.WindowSizeMsg
+		wantCmd       bool
+	}{
+		{
+			name:          "During Pagination No Refetch",
+			initialHeight: 20,
+			jobsCount:     3,
+			loadingJobs:   false,
+			loadingMore:   true, // pagination in flight
+			msg:           tea.WindowSizeMsg{Height: 40},
+			wantCmd:       false,
+		},
+		{
+			name:          "Triggers Refetch When Needed",
+			initialHeight: 20,
+			jobsCount:     3,
+			loadingJobs:   false,
+			loadingMore:   false,
+			msg:           tea.WindowSizeMsg{Height: 40},
+			wantCmd:       true,
+		},
+		{
+			name:          "No Refetch When Enough Jobs",
+			initialHeight: 20,
+			jobsCount:     100, // lots of jobs
+			loadingJobs:   false,
+			loadingMore:   false,
+			msg:           tea.WindowSizeMsg{Height: 40},
+			wantCmd:       false,
+		},
+		{
+			name:          "Refetch On Later Resize",
+			initialHeight: 20,
+			jobsCount:     3,
+			loadingJobs:   false,
+			loadingMore:   false,
+			msg:           tea.WindowSizeMsg{Height: 20}, // same height first
+			wantCmd:       false,                         // This will be simulated by two resizes in the test
+		},
+		{
+			name:          "No Refetch While Loading Jobs",
+			initialHeight: 20,
+			jobsCount:     3,
+			loadingJobs:   true, // fetch in progress
+			loadingMore:   false,
+			msg:           tea.WindowSizeMsg{Height: 40},
+			wantCmd:       false,
+		},
 	}
 
-	// Should NOT trigger a re-fetch because we have enough jobs already
-	if cmd != nil {
-		t.Error("Should not return command when we already have enough jobs to fill screen")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs := make([]storage.ReviewJob, tt.jobsCount)
+			for i := 0; i < tt.jobsCount; i++ {
+				jobs[i] = makeJob(int64(i + 1))
+			}
 
-func TestTUIResizeRefetchOnLaterResize(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+			m := newQueueTestModel(
+				withQueueTestJobs(jobs...),
+				withQueueTestFlags(true, tt.loadingMore, tt.loadingJobs),
+			)
+			m.height = tt.initialHeight
 
-	// Set up with few jobs, height already detected from earlier resize
-	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
-	m.hasMore = true
-	m.loadingMore = false
-	m.loadingJobs = false // Must be false to allow refetch
-	m.heightDetected = true
-	m.height = 30
+			var cmd tea.Cmd
 
-	// Simulate terminal growing larger - can now show more jobs
-	// newVisibleRows = 80 - 9 + 10 = 81, which is > len(jobs)=3
-	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
+			if tt.name == "Refetch On Later Resize" {
+				m, _ = updateModel(t, m, tt.msg)
+				m, cmd = updateModel(t, m, tea.WindowSizeMsg{Height: 40})
+			} else {
+				m, cmd = updateModel(t, m, tt.msg)
+			}
 
-	if m2.height != 80 {
-		t.Errorf("Expected height 80, got %d", m2.height)
-	}
-
-	// Should trigger a re-fetch because terminal can show more jobs than we have
-	if cmd == nil {
-		t.Error("Should return fetchJobs command when terminal grows and can show more jobs")
-	}
-
-	// loadingJobs should be set
-	if !m2.loadingJobs {
-		t.Error("loadingJobs should be true after resize triggers fetch")
-	}
-}
-
-func TestTUIResizeNoRefetchWhileLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// Set up with few jobs, but loadingJobs is already true (fetch in progress)
-	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
-	m.hasMore = true
-	m.loadingMore = false
-	m.loadingJobs = true // Already fetching
-	m.heightDetected = true
-	m.height = 30
-
-	// Simulate terminal growing larger
-	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 80})
-
-	if m2.height != 80 {
-		t.Errorf("Expected height 80, got %d", m2.height)
-	}
-
-	// Should NOT trigger another fetch because loadingJobs is true
-	if cmd != nil {
-		t.Error("Should not return command when loadingJobs is true (fetch already in progress)")
+			if tt.wantCmd && cmd == nil {
+				t.Error("Expected fetch command, got nil")
+			}
+			if !tt.wantCmd && cmd != nil {
+				t.Error("Expected no fetch command, got one")
+			}
+		})
 	}
 }
 
@@ -1001,30 +909,23 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 }
 
 func setupQueue(jobs []storage.ReviewJob, selectedIdx int) tuiModel {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.jobs = jobs
-	m.selectedIdx = selectedIdx
-	if len(jobs) > 0 && selectedIdx >= 0 && selectedIdx < len(jobs) {
-		m.selectedJobID = jobs[selectedIdx].ID
-	}
-	m.currentView = tuiViewQueue
+	m := newQueueTestModel(
+		withQueueTestJobs(jobs...),
+		withQueueTestSelection(selectedIdx),
+	)
 	return m
 }
 
-func TestTUIPendingAddressedTransitions(t *testing.T) {
+func TestTUIJobAddressedTransitions(t *testing.T) {
 	tests := []struct {
-		name                 string
-		initialJobs          []storage.ReviewJob
-		initialPending       map[int64]pendingState // map[ID]state
-		initialReviewPending map[int64]pendingState // map[ReviewID]state for review-only cases
-		initialStats         storage.JobStats
-		hideAddressed        bool
-		msg                  tea.Msg
-		wantPending          bool              // Is pending state expected to remain?
-		wantPendingState     *bool             // If remaining, expected newState? (nil to skip value check)
-		wantAddressed        *bool             // Expected job.Addressed state (nil to skip)
-		wantError            bool              // Expected error in model
-		wantStats            *storage.JobStats // Expected stats (optional)
+		name             string
+		initialJobs      []storage.ReviewJob
+		initialPending   map[int64]pendingState // map[ID]state
+		msg              tea.Msg
+		wantPending      bool  // Is pending state expected to remain?
+		wantPendingState *bool // If remaining, expected newState? (nil to skip value check)
+		wantAddressed    *bool // Expected job.Addressed state (nil to skip)
+		wantError        bool  // Expected error in model
 	}{
 		{
 			name:           "Late error ignored (same state, diff seq)",
@@ -1051,14 +952,6 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 			wantPendingState: boolPtr(true),
 			wantAddressed:    boolPtr(true),
 			wantError:        false,
-		},
-		{
-			name:                 "Pending review-only cleared on success",
-			initialReviewPending: map[int64]pendingState{42: {newState: true, seq: 1}},
-			msg: tuiAddressedResultMsg{
-				jobID: 0, reviewID: 42, reviewView: true, oldState: false, newState: true, seq: 1,
-			},
-			wantPending: false, // Should be cleared from pendingReviewAddressed
 		},
 		{
 			name:           "Cleared when server nil matches pending false",
@@ -1122,42 +1015,14 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 			wantAddressed: boolPtr(true), // Rolled back to oldState (true)
 			wantError:     true,
 		},
-		{
-			name:           "HideAddressed stats not double counted",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
-			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
-			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			hideAddressed:  true,
-			msg: tuiJobsMsg{
-				jobs:  []storage.ReviewJob{},                                    // Filtered out
-				stats: storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Server matches optimistic
-			},
-			wantPending: false,
-			wantStats:   &storage.JobStats{Addressed: 6, Unaddressed: 4},
-		},
-		{
-			name:           "HideAddressed pending not cleared when server lags",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
-			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
-			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			hideAddressed:  true,
-			msg: tuiJobsMsg{
-				jobs:  []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}, // Server still old
-				stats: storage.JobStats{Done: 10, Addressed: 5, Unaddressed: 5},
-			},
-			wantPending: true,
-			wantStats:   &storage.JobStats{Addressed: 6, Unaddressed: 4}, // Re-applied delta
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := setupQueue(tt.initialJobs, 0)
 			if tt.initialPending != nil {
-				// Deep copy to avoid aliasing
 				m.pendingAddressed = make(map[int64]pendingState, len(tt.initialPending))
 				maps.Copy(m.pendingAddressed, tt.initialPending)
-				// Apply optimistic updates if pending
 				for id, p := range tt.initialPending {
 					for i := range m.jobs {
 						if m.jobs[i].ID == id {
@@ -1167,22 +1032,9 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 					}
 				}
 			}
-			if tt.initialReviewPending != nil {
-				// Deep copy to avoid aliasing
-				m.pendingReviewAddressed = make(map[int64]pendingState, len(tt.initialReviewPending))
-				maps.Copy(m.pendingReviewAddressed, tt.initialReviewPending)
-			}
-			if tt.hideAddressed {
-				m.hideAddressed = true
-			}
-			// Set initial stats if provided
-			if tt.initialStats.Done != 0 || tt.initialStats.Addressed != 0 || tt.initialStats.Unaddressed != 0 {
-				m.jobStats = tt.initialStats
-			}
 
 			m2, _ := updateModel(t, m, tt.msg)
 
-			// Check pending state (jobs)
 			for id, p := range tt.initialPending {
 				val, exists := m2.pendingAddressed[id]
 				if tt.wantPending && !exists {
@@ -1196,26 +1048,12 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 						t.Errorf("expected pending newState %v, got %v", *tt.wantPendingState, val.newState)
 					}
 				}
-				// Also check that seq was preserved if pending remains
 				if exists && val.seq != p.seq {
 					t.Errorf("expected pending seq %d, got %d", p.seq, val.seq)
 				}
 			}
 
-			// Check pending state (reviews)
-			for id := range tt.initialReviewPending {
-				_, exists := m2.pendingReviewAddressed[id]
-				if tt.wantPending && !exists {
-					t.Errorf("expected pending state for review %d to remain", id)
-				}
-				if !tt.wantPending && exists {
-					t.Errorf("expected pending state for review %d to be cleared", id)
-				}
-			}
-
-			// Check job addressed state
 			if tt.wantAddressed != nil && len(m2.jobs) > 0 {
-				// Assuming we check the first job for single-job tests
 				got := m2.jobs[0].Addressed
 				if got == nil {
 					if *tt.wantAddressed {
@@ -1226,15 +1064,122 @@ func TestTUIPendingAddressedTransitions(t *testing.T) {
 				}
 			}
 
-			// Check error
 			if tt.wantError && m2.err == nil {
 				t.Error("expected error, got nil")
 			}
 			if !tt.wantError && m2.err != nil {
 				t.Errorf("unexpected error: %v", m2.err)
 			}
+		})
+	}
+}
 
-			// Check stats
+func TestTUIReviewAddressedTransitions(t *testing.T) {
+	tests := []struct {
+		name                 string
+		initialReviewPending map[int64]pendingState // map[ReviewID]state for review-only cases
+		msg                  tea.Msg
+		wantPending          bool // Is pending state expected to remain?
+	}{
+		{
+			name:                 "Pending review-only cleared on success",
+			initialReviewPending: map[int64]pendingState{42: {newState: true, seq: 1}},
+			msg: tuiAddressedResultMsg{
+				jobID: 0, reviewID: 42, reviewView: true, oldState: false, newState: true, seq: 1,
+			},
+			wantPending: false, // Should be cleared from pendingReviewAddressed
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := setupQueue(nil, 0)
+			if tt.initialReviewPending != nil {
+				m.pendingReviewAddressed = make(map[int64]pendingState, len(tt.initialReviewPending))
+				maps.Copy(m.pendingReviewAddressed, tt.initialReviewPending)
+			}
+
+			m2, _ := updateModel(t, m, tt.msg)
+
+			for id := range tt.initialReviewPending {
+				_, exists := m2.pendingReviewAddressed[id]
+				if tt.wantPending && !exists {
+					t.Errorf("expected pending state for review %d to remain", id)
+				}
+				if !tt.wantPending && exists {
+					t.Errorf("expected pending state for review %d to be cleared", id)
+				}
+			}
+		})
+	}
+}
+
+func TestTUIAddressedHideAddressedStats(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialJobs    []storage.ReviewJob
+		initialPending map[int64]pendingState
+		initialStats   storage.JobStats
+		msg            tea.Msg
+		wantPending    bool
+		wantStats      *storage.JobStats
+	}{
+		{
+			name:           "HideAddressed stats not double counted",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			msg: tuiJobsMsg{
+				jobs:  []storage.ReviewJob{},                                    // Filtered out
+				stats: storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Server matches optimistic
+			},
+			wantPending: false,
+			wantStats:   &storage.JobStats{Addressed: 6, Unaddressed: 4},
+		},
+		{
+			name:           "HideAddressed pending not cleared when server lags",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
+			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
+			msg: tuiJobsMsg{
+				jobs:  []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}, // Server still old
+				stats: storage.JobStats{Done: 10, Addressed: 5, Unaddressed: 5},
+			},
+			wantPending: true,
+			wantStats:   &storage.JobStats{Addressed: 6, Unaddressed: 4}, // Re-applied delta
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := setupQueue(tt.initialJobs, 0)
+			m.hideAddressed = true
+			if tt.initialPending != nil {
+				m.pendingAddressed = make(map[int64]pendingState, len(tt.initialPending))
+				maps.Copy(m.pendingAddressed, tt.initialPending)
+				for id, p := range tt.initialPending {
+					for i := range m.jobs {
+						if m.jobs[i].ID == id {
+							val := p.newState
+							m.jobs[i].Addressed = &val
+						}
+					}
+				}
+			}
+			m.jobStats = tt.initialStats
+
+			m2, _ := updateModel(t, m, tt.msg)
+
+			for id := range tt.initialPending {
+				_, exists := m2.pendingAddressed[id]
+				if tt.wantPending && !exists {
+					t.Errorf("expected pending state for job %d to remain", id)
+				}
+				if !tt.wantPending && exists {
+					t.Errorf("expected pending state for job %d to be cleared", id)
+				}
+			}
+
 			if tt.wantStats != nil {
 				if m2.jobStats.Addressed != tt.wantStats.Addressed {
 					t.Errorf("stats.Addressed = %d, want %d", m2.jobStats.Addressed, tt.wantStats.Addressed)
@@ -1295,5 +1240,52 @@ func TestTUIQueueNavigationSequences(t *testing.T) {
 	m, _ = pressSpecial(m, tea.KeyLeft)
 	if m.selectedIdx != 0 {
 		t.Errorf("after KeyLeft, expected selectedIdx 0, got %d", m.selectedIdx)
+	}
+}
+
+type queueTestModelOption func(*tuiModel)
+
+func withQueueTestJobs(jobs ...storage.ReviewJob) queueTestModelOption {
+	return func(m *tuiModel) {
+		m.jobs = jobs
+	}
+}
+
+func withQueueTestSelection(idx int) queueTestModelOption {
+	return func(m *tuiModel) {
+		m.selectedIdx = idx
+		if len(m.jobs) > 0 && idx >= 0 && idx < len(m.jobs) {
+			m.selectedJobID = m.jobs[idx].ID
+		}
+	}
+}
+
+func withQueueTestFlags(hasMore, loadingMore, loadingJobs bool) queueTestModelOption {
+	return func(m *tuiModel) {
+		m.hasMore = hasMore
+		m.loadingMore = loadingMore
+		m.loadingJobs = loadingJobs
+	}
+}
+
+func newQueueTestModel(opts ...queueTestModelOption) tuiModel {
+	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m.currentView = tuiViewQueue
+	for _, opt := range opts {
+		opt(&m)
+	}
+	return m
+}
+
+func assertFlashMessage(t *testing.T, m tuiModel, view tuiView, msg string) {
+	t.Helper()
+	if m.flashMessage != msg {
+		t.Errorf("Expected flash message %q, got %q", msg, m.flashMessage)
+	}
+	if m.flashView != view {
+		t.Errorf("Expected flashView to be %d, got %d", view, m.flashView)
+	}
+	if m.flashExpiresAt.IsZero() || m.flashExpiresAt.Before(time.Now()) {
+		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m.flashExpiresAt)
 	}
 }

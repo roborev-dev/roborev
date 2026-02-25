@@ -1,8 +1,8 @@
 package main
 
 import (
-	"testing"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"testing"
 )
 
 type testModelOption func(*tuiModel)
@@ -34,16 +34,9 @@ func withFilterStack(f ...string) testModelOption {
 	return func(m *tuiModel) { m.filterStack = f }
 }
 
-
 func withFilterSelectedIdx(idx int) testModelOption {
 	return func(m *tuiModel) { m.filterSelectedIdx = idx }
 }
-
-
-
-
-
-
 
 func withFilterTree(nodes []treeFilterNode) testModelOption {
 	return func(m *tuiModel) {
@@ -59,8 +52,6 @@ func initTestModel(opts ...testModelOption) tuiModel {
 	}
 	return m
 }
-
-
 
 func assertSearch(t *testing.T, m tuiModel, expected string) {
 	t.Helper()

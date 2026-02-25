@@ -33,8 +33,8 @@ func TestValidateRefineContext(t *testing.T) {
 	}
 
 	type refineTestSetup struct {
-		repo             *testutil.TestRepo
-		since            string
+		repo              *testutil.TestRepo
+		since             string
 		expectedMergeBase string
 	}
 
