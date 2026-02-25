@@ -1094,7 +1094,9 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 		repo.WriteFile("fail-gpg.bat", "@echo off\nexit /b 1\n")
 	} else {
 		repo.WriteFile("fail-gpg", "#!/bin/sh\nexit 1\n")
-		os.Chmod(dummyGPG, 0755)
+		if err := os.Chmod(dummyGPG, 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	repo.Run("config", "gpg.program", dummyGPG) // Force failure deterministically
