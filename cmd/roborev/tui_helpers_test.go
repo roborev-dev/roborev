@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -559,5 +560,187 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSanitizeForDisplay(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "plain text unchanged",
+			input:    "Hello, world!",
+			expected: "Hello, world!",
+		},
+		{
+			name:     "preserves newlines and tabs",
+			input:    "Line1\n\tIndented",
+			expected: "Line1\n\tIndented",
+		},
+		{
+			name:     "strips ANSI color codes",
+			input:    "\x1b[31mred text\x1b[0m",
+			expected: "red text",
+		},
+		{
+			name:     "strips cursor movement",
+			input:    "\x1b[2Jhello\x1b[H",
+			expected: "hello",
+		},
+		{
+			name:     "strips OSC sequences (title set with BEL)",
+			input:    "\x1b]0;Evil Title\x07normal text",
+			expected: "normal text",
+		},
+		{
+			name:     "strips OSC sequences (title set with ST)",
+			input:    "\x1b]0;Evil Title\x1b\\normal text",
+			expected: "normal text",
+		},
+		{
+			name:     "strips control characters",
+			input:    "hello\x00world\x07\x08test",
+			expected: "helloworldtest",
+		},
+		{
+			name:     "handles complex escape sequence",
+			input:    "\x1b[1;32mBold Green\x1b[0m and \x1b[4munderline\x1b[24m",
+			expected: "Bold Green and underline",
+		},
+		{
+			name:     "empty string unchanged",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeForDisplay(tt.input)
+			if got != tt.expected {
+				t.Errorf("sanitizeForDisplay(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestPatchFiles(t *testing.T) {
+	tests := []struct {
+		name  string
+		patch string
+		want  []string
+	}{
+		{
+			name: "simple add",
+			patch: `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1 +1,2 @@
+ package main
++// new line
+`,
+			want: []string{"main.go"},
+		},
+		{
+			name: "file in b/ directory not double-stripped",
+			patch: `diff --git a/b/main.go b/b/main.go
+--- a/b/main.go
++++ b/b/main.go
+@@ -1 +1,2 @@
+ package main
++// new line
+`,
+			want: []string{"b/main.go"},
+		},
+		{
+			name: "file in a/ directory not double-stripped",
+			patch: `diff --git a/a/utils.go b/a/utils.go
+--- a/a/utils.go
++++ b/a/utils.go
+@@ -1 +1,2 @@
+ package a
++// new line
+`,
+			want: []string{"a/utils.go"},
+		},
+		{
+			name: "new file with /dev/null",
+			patch: `diff --git a/new.go b/new.go
+--- /dev/null
++++ b/new.go
+@@ -0,0 +1 @@
++package main
+`,
+			want: []string{"new.go"},
+		},
+		{
+			name: "deleted file with /dev/null",
+			patch: `diff --git a/old.go b/old.go
+--- a/old.go
++++ /dev/null
+@@ -1 +0,0 @@
+-package main
+`,
+			want: []string{"old.go"},
+		},
+		{
+			name: "rename",
+			patch: `diff --git a/old.go b/renamed.go
+--- a/old.go
++++ b/renamed.go
+@@ -1 +1 @@
+-package old
++package renamed
+`,
+			want: []string{"old.go", "renamed.go"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := patchFiles(tt.patch)
+			if err != nil {
+				t.Fatalf("patchFiles returned error: %v", err)
+			}
+			wantSet := map[string]bool{}
+			for _, f := range tt.want {
+				wantSet[f] = true
+			}
+			if len(got) != len(tt.want) {
+				t.Errorf("expected %d files, got %d: %v", len(tt.want), len(got), got)
+			}
+			gotSet := map[string]bool{}
+			for _, f := range got {
+				if gotSet[f] {
+					t.Errorf("duplicate file in output: %q", f)
+				}
+				gotSet[f] = true
+			}
+			for f := range wantSet {
+				if !gotSet[f] {
+					t.Errorf("missing expected file %q", f)
+				}
+			}
+			for f := range gotSet {
+				if !wantSet[f] {
+					t.Errorf("unexpected file %q", f)
+				}
+			}
+		})
+	}
+}
+
+func TestDirtyPatchFilesError(t *testing.T) {
+	// dirtyPatchFiles should return an error when git diff fails
+	// (e.g., invalid repo path), not silently return nil.
+	missingPath := filepath.Join(t.TempDir(), "missing")
+	_, err := dirtyPatchFiles(missingPath, []string{"file.go"})
+	if err == nil {
+		t.Fatal("expected error from dirtyPatchFiles with invalid repo, got nil")
+	}
+	if !strings.Contains(err.Error(), "git diff") {
+		t.Errorf("expected error to mention 'git diff', got: %v", err)
 	}
 }

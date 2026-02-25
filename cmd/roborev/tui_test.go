@@ -215,131 +215,8 @@ func TestTUIHTTPTimeout(t *testing.T) {
 	}
 }
 
-func TestTUISelectionMaintainedOnInsert(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// Initial state with 3 jobs, select the middle one (ID=2)
-	m.jobs = []storage.ReviewJob{
-		makeJob(3), makeJob(2), makeJob(1),
-	}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
-
-	// New jobs added at the top (newer jobs first)
-	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		makeJob(5), makeJob(4), makeJob(3), makeJob(2), makeJob(1),
-	}}
-
-	m, _ = updateModel(t, m, newJobs)
-
-	// Should still be on job ID=2, now at index 3
-	if m.selectedJobID != 2 {
-		t.Errorf("Expected selectedJobID=2, got %d", m.selectedJobID)
-	}
-	if m.selectedIdx != 3 {
-		t.Errorf("Expected selectedIdx=3 (ID=2 moved), got %d", m.selectedIdx)
-	}
-}
-
-func TestTUISelectionClampsOnRemoval(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// Initial state with 3 jobs, select the last one (ID=1)
-	m.jobs = []storage.ReviewJob{
-		makeJob(3), makeJob(2), makeJob(1),
-	}
-	m.selectedIdx = 2
-	m.selectedJobID = 1
-
-	// Job ID=1 is removed
-	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		makeJob(3), makeJob(2),
-	}}
-
-	m, _ = updateModel(t, m, newJobs)
-
-	// Should clamp to last valid index and update selectedJobID
-	if m.selectedIdx != 1 {
-		t.Errorf("Expected selectedIdx=1 (clamped), got %d", m.selectedIdx)
-	}
-	if m.selectedJobID != 2 {
-		t.Errorf("Expected selectedJobID=2 (new selection), got %d", m.selectedJobID)
-	}
-}
-
-func TestTUISelectionFirstJobOnEmpty(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// No prior selection (empty jobs list, zero selectedJobID)
-	m.jobs = []storage.ReviewJob{}
-	m.selectedIdx = 0
-	m.selectedJobID = 0
-
-	// Jobs arrive
-	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
-		makeJob(5), makeJob(4), makeJob(3),
-	}}
-
-	m, _ = updateModel(t, m, newJobs)
-
-	// Should select first job
-	if m.selectedIdx != 0 {
-		t.Errorf("Expected selectedIdx=0, got %d", m.selectedIdx)
-	}
-	if m.selectedJobID != 5 {
-		t.Errorf("Expected selectedJobID=5 (first job), got %d", m.selectedJobID)
-	}
-}
-
-func TestTUISelectionEmptyList(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// Had jobs, now empty
-	m.jobs = []storage.ReviewJob{makeJob(1)}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{}}
-
-	m, _ = updateModel(t, m, newJobs)
-
-	// Empty list should have selectedIdx=-1 (no valid selection)
-	if m.selectedIdx != -1 {
-		t.Errorf("Expected selectedIdx=-1, got %d", m.selectedIdx)
-	}
-	if m.selectedJobID != 0 {
-		t.Errorf("Expected selectedJobID=0, got %d", m.selectedJobID)
-	}
-}
-
-func TestTUISelectionMaintainedOnLargeBatch(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-
-	// Initial state with 1 job selected
-	m.jobs = []storage.ReviewJob{makeJob(1)}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// 30 new jobs added at the top (simulating large batch)
-	newJobs := make([]storage.ReviewJob, 31)
-	for i := range 30 {
-		newJobs[i] = makeJob(int64(31 - i)) // IDs 31, 30, 29, ..., 2
-	}
-	newJobs[30] = makeJob(1) // Original job at the end
-
-	m, _ = updateModel(t, m, tuiJobsMsg{jobs: newJobs})
-
-	// Should still follow job ID=1, now at index 30
-	if m.selectedJobID != 1 {
-		t.Errorf("Expected selectedJobID=1, got %d", m.selectedJobID)
-	}
-	if m.selectedIdx != 30 {
-		t.Errorf("Expected selectedIdx=30 (ID=1 at end), got %d", m.selectedIdx)
-	}
-}
-
 func TestTUIGetVisibleJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -409,7 +286,7 @@ func TestTUIGetVisibleSelectedIdx(t *testing.T) {
 }
 
 func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 
 	// Set up with loadingJobs true
 	m.jobs = []storage.ReviewJob{makeJob(1), makeJob(2), makeJob(3)}
@@ -464,7 +341,7 @@ func TestTUITickInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newTuiModel("http://localhost", WithExternalIODisabled())
+			m := newTuiModel(testServerAddr, WithExternalIODisabled())
 			m.statusFetchedOnce = tt.statusFetchedOnce
 			m.status.RunningJobs = tt.runningJobs
 			m.status.QueuedJobs = tt.queuedJobs
@@ -478,7 +355,7 @@ func TestTUITickInterval(t *testing.T) {
 }
 
 func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 
 	// Set up with loadingJobs true
 	m.loadingJobs = true
@@ -497,7 +374,7 @@ func TestTUIJobsMsgClearsLoadingJobs(t *testing.T) {
 }
 
 func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 
 	// Set up with loadingJobs true (shouldn't normally happen with append, but test the logic)
 	m.jobs = []storage.ReviewJob{makeJob(1)}
@@ -516,199 +393,16 @@ func TestTUIJobsMsgAppendKeepsLoadingJobs(t *testing.T) {
 	}
 }
 
-func TestTUIHideAddressedDefaultFromConfig(t *testing.T) {
-	tmpDir := setupTuiTestEnv(t)
-
-	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	m := newTuiModel("http://localhost")
-	if !m.hideAddressed {
-		t.Error("hideAddressed should be true when config sets hide_addressed_by_default = true")
-	}
-}
-
-func TestTUIHideAddressedToggle(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-
-	// Initial state: hideAddressed is false (TestMain isolates from real config)
-	if m.hideAddressed {
-		t.Error("hideAddressed should be false initially")
-	}
-
-	// Press 'h' to toggle
-	m2, _ := pressKey(m, 'h')
-
-	if !m2.hideAddressed {
-		t.Error("hideAddressed should be true after pressing 'h'")
-	}
-
-	// Press 'h' again to toggle back
-	m3, _ := pressKey(m2, 'h')
-
-	if m3.hideAddressed {
-		t.Error("hideAddressed should be false after pressing 'h' again")
-	}
-}
-
-func TestTUIHideAddressedFiltersJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-	m.hideAddressed = true
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(true))),          // hidden: addressed
-		makeJob(2, withAddressed(boolPtr(false))),         // visible
-		makeJob(3, withStatus(storage.JobStatusFailed)),   // hidden: failed
-		makeJob(4, withStatus(storage.JobStatusCanceled)), // hidden: canceled
-		makeJob(5, withAddressed(boolPtr(false))),         // visible
-	}
-
-	// Check visibility
-	if m.isJobVisible(m.jobs[0]) {
-		t.Error("Addressed job should be hidden")
-	}
-	if !m.isJobVisible(m.jobs[1]) {
-		t.Error("Non-addressed job should be visible")
-	}
-	if m.isJobVisible(m.jobs[2]) {
-		t.Error("Failed job should be hidden")
-	}
-	if m.isJobVisible(m.jobs[3]) {
-		t.Error("Canceled job should be hidden")
-	}
-	if !m.isJobVisible(m.jobs[4]) {
-		t.Error("Non-addressed job should be visible")
-	}
-
-	// getVisibleJobs should only return 2 jobs
-	visible := m.getVisibleJobs()
-	if len(visible) != 2 {
-		t.Errorf("Expected 2 visible jobs, got %d", len(visible))
-	}
-	if visible[0].ID != 2 || visible[1].ID != 5 {
-		t.Errorf("Expected visible jobs 2 and 5, got %d and %d", visible[0].ID, visible[1].ID)
-	}
-}
-
-func TestTUIHideAddressedSelectionMovesToVisible(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(true))),  // will be hidden
-		makeJob(2, withAddressed(boolPtr(false))), // will be visible
-		makeJob(3, withAddressed(boolPtr(false))), // will be visible
-	}
-
-	// Select the first job (addressed)
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// Toggle hide addressed
-	m2, _ := pressKey(m, 'h')
-
-	// Selection should move to first visible job (ID=2)
-	if m2.selectedIdx != 1 {
-		t.Errorf("Expected selectedIdx=1, got %d", m2.selectedIdx)
-	}
-	if m2.selectedJobID != 2 {
-		t.Errorf("Expected selectedJobID=2, got %d", m2.selectedJobID)
-	}
-}
-
-func TestTUIHideAddressedRefreshRevalidatesSelection(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-	m.hideAddressed = true
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-		makeJob(2, withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// Simulate jobs refresh where job 1 is now addressed
-
-	m2, _ := updateModel(t, m, tuiJobsMsg{
-		jobs: []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(true))),  // now addressed (hidden)
-			makeJob(2, withAddressed(boolPtr(false))), // still visible
-		},
-		hasMore: false,
-	})
-
-	// Selection should move to job 2 since job 1 is now hidden
-	if m2.selectedJobID != 2 {
-		t.Errorf("Expected selectedJobID=2, got %d", m2.selectedJobID)
-	}
-	if m2.selectedIdx != 1 {
-		t.Errorf("Expected selectedIdx=1, got %d", m2.selectedIdx)
-	}
-}
-
-func TestTUIHideAddressedNavigationSkipsHidden(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-	m.hideAddressed = true
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),       // visible
-		makeJob(2, withAddressed(boolPtr(true))),        // hidden
-		makeJob(3, withStatus(storage.JobStatusFailed)), // hidden
-		makeJob(4, withAddressed(boolPtr(false))),       // visible
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// Navigate down - should skip jobs 2 and 3
-	m2, _ := pressKey(m, 'j')
-
-	if m2.selectedJobID != 4 {
-		t.Errorf("Expected selectedJobID=4, got %d", m2.selectedJobID)
-	}
-	if m2.selectedIdx != 3 {
-		t.Errorf("Expected selectedIdx=3, got %d", m2.selectedIdx)
-	}
-}
-
-func TestTUIHideAddressedWithRepoFilter(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-	m.hideAddressed = true
-	m.activeRepoFilter = []string{"/repo/a"}
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))),       // visible: matches repo, not addressed
-		makeJob(2, withRepoPath("/repo/b"), withAddressed(boolPtr(false))),       // hidden: wrong repo
-		makeJob(3, withRepoPath("/repo/a"), withAddressed(boolPtr(true))),        // hidden: addressed
-		makeJob(4, withRepoPath("/repo/a"), withStatus(storage.JobStatusFailed)), // hidden: failed
-	}
-
-	// Only job 1 should be visible
-	visible := m.getVisibleJobs()
-	if len(visible) != 1 {
-		t.Errorf("Expected 1 visible job, got %d", len(visible))
-	}
-	if visible[0].ID != 1 {
-		t.Errorf("Expected visible job ID=1, got %d", visible[0].ID)
-	}
-}
-
 func TestTUINewModelLoadingJobsTrue(t *testing.T) {
 	// newTuiModel should initialize loadingJobs to true since Init() calls fetchJobs
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 	if !m.loadingJobs {
 		t.Error("loadingJobs should be true in new model")
 	}
 }
 
 func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 	m.loadingJobs = true
 
 	// Simulate job fetch error
@@ -722,106 +416,6 @@ func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
 	}
 }
 
-func TestTUIHideAddressedClearRepoFilterRefetches(t *testing.T) {
-	// Scenario: hide addressed enabled, then filter by repo, then press escape
-	// to clear the repo filter. Should trigger a refetch to show all unaddressed reviews.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-	m.hideAddressed = true
-	m.activeRepoFilter = []string{"/repo/a"}
-	m.filterStack = []string{"repo"}
-	m.loadingJobs = false // Simulate that initial load has completed
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// Press escape to clear the repo filter
-	m2, cmd := pressSpecial(m, tea.KeyEscape)
-
-	// Repo filter should be cleared
-	if m2.activeRepoFilter != nil {
-		t.Errorf("Expected activeRepoFilter to be nil, got %v", m2.activeRepoFilter)
-	}
-
-	// hideAddressed should still be true
-	if !m2.hideAddressed {
-		t.Error("hideAddressed should still be true after clearing repo filter")
-	}
-
-	// Filter stack should be empty
-	if len(m2.filterStack) != 0 {
-		t.Errorf("Expected empty filter stack, got %v", m2.filterStack)
-	}
-
-	// jobs should be preserved (so fetchJobs limit stays large enough)
-	if len(m2.jobs) != 1 {
-		t.Errorf("Expected jobs to be preserved after escape, got %d jobs", len(m2.jobs))
-	}
-
-	// A refetch command should be returned
-	if cmd == nil {
-		t.Error("Expected a refetch command when clearing repo filter with hide-addressed active")
-	}
-
-	// loadingJobs should be set
-	if !m2.loadingJobs {
-		t.Error("loadingJobs should be set when refetching after clearing repo filter")
-	}
-}
-
-func TestTUIHideAddressedEnableTriggersRefetch(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-	m.hideAddressed = false
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// Toggle hide addressed ON
-	m2, cmd := pressKey(m, 'h')
-
-	// hideAddressed should be enabled
-	if !m2.hideAddressed {
-		t.Error("hideAddressed should be true after pressing 'h'")
-	}
-
-	// A command should be returned to fetch all jobs
-	if cmd == nil {
-		t.Error("Command should be returned to fetch all jobs when enabling hideAddressed")
-	}
-}
-
-func TestTUIHideAddressedDisableRefetches(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-	m.hideAddressed = true // Already enabled
-
-	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-	}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// Toggle hide addressed OFF
-	m2, cmd := pressKey(m, 'h')
-
-	// hideAddressed should be disabled
-	if m2.hideAddressed {
-		t.Error("hideAddressed should be false after pressing 'h' to disable")
-	}
-
-	// Disabling triggers a refetch to get previously-filtered addressed jobs
-	if cmd == nil {
-		t.Error("Expected a refetch command when disabling hideAddressed")
-	}
-}
-
 func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 	tmpDir := setupTuiTestEnv(t)
 
@@ -832,7 +426,7 @@ func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 		t.Fatalf("write malformed config: %v", err)
 	}
 
-	m := newTuiModel("http://localhost")
+	m := newTuiModel(testServerAddr)
 	m.currentView = tuiViewQueue
 
 	// Toggle hide addressed ON
@@ -859,48 +453,8 @@ func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 	}
 }
 
-func TestTUIHideAddressedValidConfigNotMutated(t *testing.T) {
-	tmpDir := setupTuiTestEnv(t)
-
-	// Write a valid config with the hide-addressed default enabled
-	validConfig := []byte("hide_addressed_by_default = true\n")
-	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, validConfig, 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	m := newTuiModel("http://localhost")
-	m.currentView = tuiViewQueue
-
-	// Verify the default was loaded
-	if !m.hideAddressed {
-		t.Fatal("hideAddressed should be true from config")
-	}
-
-	// Toggle hide addressed OFF
-	m2, _ := pressKey(m, 'h')
-	if m2.hideAddressed {
-		t.Error("hideAddressed should be false after pressing 'h'")
-	}
-
-	// Toggle hide addressed back ON
-	m3, _ := pressKey(m2, 'h')
-	if !m3.hideAddressed {
-		t.Error("hideAddressed should be true after pressing 'h' again")
-	}
-
-	// Valid config file must not have been mutated by either toggle
-	got, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	if string(got) != string(validConfig) {
-		t.Errorf("valid config was mutated:\n  before: %q\n  after:  %q", validConfig, got)
-	}
-}
-
 func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 	m.hideAddressed = true
 
 	// Job with Addressed=false but pendingAddressed=true should be hidden
@@ -934,39 +488,8 @@ func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
 	}
 }
 
-func TestTUIFlashMessageAppearsInQueueView(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
-	m.width = 80
-	m.height = 24
-	m.flashMessage = "Copied to clipboard"
-	m.flashExpiresAt = time.Now().Add(2 * time.Second)
-	m.flashView = tuiViewQueue // Flash was triggered in queue view
-
-	output := m.renderQueueView()
-	if !strings.Contains(output, "Copied to clipboard") {
-		t.Error("Expected flash message to appear in queue view")
-	}
-}
-
-func TestTUIFlashMessageNotShownInDifferentView(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
-	m.width = 80
-	m.height = 24
-	m.flashMessage = "Copied to clipboard"
-	m.flashExpiresAt = time.Now().Add(2 * time.Second)
-	m.flashView = tuiViewQueue // Flash was triggered in queue view, not review view
-	m.currentReview = makeReview(1, &storage.ReviewJob{}, withReviewOutput("Test review content"))
-
-	output := m.renderReviewView()
-	if strings.Contains(output, "Copied to clipboard") {
-		t.Error("Flash message should not appear when viewing different view than where it was triggered")
-	}
-}
-
 func TestTUIUpdateNotificationInQueueView(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.width = 80
 	m.height = 24
@@ -993,7 +516,7 @@ func TestTUIUpdateNotificationInQueueView(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationDevBuild(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.width = 80
 	m.height = 24
@@ -1010,7 +533,7 @@ func TestTUIUpdateNotificationDevBuild(t *testing.T) {
 }
 
 func TestTUIUpdateNotificationNotInReviewView(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 	m.currentView = tuiViewReview
 	m.width = 80
 	m.height = 24
@@ -1342,72 +865,9 @@ func TestTUIReconnectOnConsecutiveErrors(t *testing.T) {
 	}
 }
 
-func TestSanitizeForDisplay(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "plain text unchanged",
-			input:    "Hello, world!",
-			expected: "Hello, world!",
-		},
-		{
-			name:     "preserves newlines and tabs",
-			input:    "Line1\n\tIndented",
-			expected: "Line1\n\tIndented",
-		},
-		{
-			name:     "strips ANSI color codes",
-			input:    "\x1b[31mred text\x1b[0m",
-			expected: "red text",
-		},
-		{
-			name:     "strips cursor movement",
-			input:    "\x1b[2Jhello\x1b[H",
-			expected: "hello",
-		},
-		{
-			name:     "strips OSC sequences (title set with BEL)",
-			input:    "\x1b]0;Evil Title\x07normal text",
-			expected: "normal text",
-		},
-		{
-			name:     "strips OSC sequences (title set with ST)",
-			input:    "\x1b]0;Evil Title\x1b\\normal text",
-			expected: "normal text",
-		},
-		{
-			name:     "strips control characters",
-			input:    "hello\x00world\x07\x08test",
-			expected: "helloworldtest",
-		},
-		{
-			name:     "handles complex escape sequence",
-			input:    "\x1b[1;32mBold Green\x1b[0m and \x1b[4munderline\x1b[24m",
-			expected: "Bold Green and underline",
-		},
-		{
-			name:     "empty string unchanged",
-			input:    "",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeForDisplay(tt.input)
-			if got != tt.expected {
-				t.Errorf("sanitizeForDisplay(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 	// Test that the queue view renders status correctly
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 	m.width = 200
 	m.height = 30
 	m.currentView = tuiViewQueue
@@ -1434,127 +894,8 @@ func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 	}
 }
 
-func TestPatchFiles(t *testing.T) {
-	tests := []struct {
-		name  string
-		patch string
-		want  []string
-	}{
-		{
-			name: "simple add",
-			patch: `diff --git a/main.go b/main.go
---- a/main.go
-+++ b/main.go
-@@ -1 +1,2 @@
- package main
-+// new line
-`,
-			want: []string{"main.go"},
-		},
-		{
-			name: "file in b/ directory not double-stripped",
-			patch: `diff --git a/b/main.go b/b/main.go
---- a/b/main.go
-+++ b/b/main.go
-@@ -1 +1,2 @@
- package main
-+// new line
-`,
-			want: []string{"b/main.go"},
-		},
-		{
-			name: "file in a/ directory not double-stripped",
-			patch: `diff --git a/a/utils.go b/a/utils.go
---- a/a/utils.go
-+++ b/a/utils.go
-@@ -1 +1,2 @@
- package a
-+// new line
-`,
-			want: []string{"a/utils.go"},
-		},
-		{
-			name: "new file with /dev/null",
-			patch: `diff --git a/new.go b/new.go
---- /dev/null
-+++ b/new.go
-@@ -0,0 +1 @@
-+package main
-`,
-			want: []string{"new.go"},
-		},
-		{
-			name: "deleted file with /dev/null",
-			patch: `diff --git a/old.go b/old.go
---- a/old.go
-+++ /dev/null
-@@ -1 +0,0 @@
--package main
-`,
-			want: []string{"old.go"},
-		},
-		{
-			name: "rename",
-			patch: `diff --git a/old.go b/renamed.go
---- a/old.go
-+++ b/renamed.go
-@@ -1 +1 @@
--package old
-+package renamed
-`,
-			want: []string{"old.go", "renamed.go"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := patchFiles(tt.patch)
-			if err != nil {
-				t.Fatalf("patchFiles returned error: %v", err)
-			}
-			wantSet := map[string]bool{}
-			for _, f := range tt.want {
-				wantSet[f] = true
-			}
-			if len(got) != len(tt.want) {
-				t.Errorf("expected %d files, got %d: %v", len(tt.want), len(got), got)
-			}
-			gotSet := map[string]bool{}
-			for _, f := range got {
-				if gotSet[f] {
-					t.Errorf("duplicate file in output: %q", f)
-				}
-				gotSet[f] = true
-			}
-			for f := range wantSet {
-				if !gotSet[f] {
-					t.Errorf("missing expected file %q", f)
-				}
-			}
-			for f := range gotSet {
-				if !wantSet[f] {
-					t.Errorf("unexpected file %q", f)
-				}
-			}
-		})
-	}
-}
-
-func TestDirtyPatchFilesError(t *testing.T) {
-	// dirtyPatchFiles should return an error when git diff fails
-	// (e.g., invalid repo path), not silently return nil.
-	missingPath := filepath.Join(t.TempDir(), "missing")
-	_, err := dirtyPatchFiles(missingPath, []string{"file.go"})
-	if err == nil {
-		t.Fatal("expected error from dirtyPatchFiles with invalid repo, got nil")
-	}
-	if !strings.Contains(err.Error(), "git diff") {
-		t.Errorf("expected error to mention 'git diff', got: %v", err)
-	}
-}
-
 func TestHandleFixKeyRejectsFixJob(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newTuiModel(testServerAddr, WithExternalIODisabled())
 	m.currentView = tuiViewQueue
 	m.jobs = []storage.ReviewJob{
 		{
@@ -1587,7 +928,7 @@ func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 
 func TestTUIFixTriggerResultMsg(t *testing.T) {
 	t.Run("warning shows flash and triggers refresh", func(t *testing.T) {
-		m := newTuiModel("http://localhost", WithExternalIODisabled())
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 		m.currentView = tuiViewTasks
 		m.width = 80
 		m.height = 24
@@ -1612,7 +953,7 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 	})
 
 	t.Run("success shows enqueued flash and triggers refresh", func(t *testing.T) {
-		m := newTuiModel("http://localhost", WithExternalIODisabled())
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 		m.currentView = tuiViewTasks
 		m.width = 80
 		m.height = 24
@@ -1633,7 +974,7 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 	})
 
 	t.Run("error shows failure flash with no refresh", func(t *testing.T) {
-		m := newTuiModel("http://localhost", WithExternalIODisabled())
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
 		m.currentView = tuiViewTasks
 		m.width = 80
 		m.height = 24
@@ -1651,5 +992,450 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 		if cmd != nil {
 			t.Error("expected no cmd on error, got non-nil")
 		}
+	})
+}
+func TestTUISelection(t *testing.T) {
+	t.Run("MaintainedOnInsert", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+
+		// Initial state with 3 jobs, select the middle one (ID=2)
+		m.jobs = []storage.ReviewJob{
+			makeJob(3), makeJob(2), makeJob(1),
+		}
+		m.selectedIdx = 1
+		m.selectedJobID = 2
+
+		// New jobs added at the top (newer jobs first)
+		newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
+			makeJob(5), makeJob(4), makeJob(3), makeJob(2), makeJob(1),
+		}}
+
+		m, _ = updateModel(t, m, newJobs)
+
+		// Should still be on job ID=2, now at index 3
+		assertSelection(t, m, 3, 2)
+
+	})
+	t.Run("ClampsOnRemoval", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+
+		// Initial state with 3 jobs, select the last one (ID=1)
+		m.jobs = []storage.ReviewJob{
+			makeJob(3), makeJob(2), makeJob(1),
+		}
+		m.selectedIdx = 2
+		m.selectedJobID = 1
+
+		// Job ID=1 is removed
+		newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
+			makeJob(3), makeJob(2),
+		}}
+
+		m, _ = updateModel(t, m, newJobs)
+
+		// Should clamp to last valid index and update selectedJobID
+		assertSelection(t, m, 1, 2)
+
+	})
+	t.Run("FirstJobOnEmpty", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+
+		// No prior selection (empty jobs list, zero selectedJobID)
+		m.jobs = []storage.ReviewJob{}
+		m.selectedIdx = 0
+		m.selectedJobID = 0
+
+		// Jobs arrive
+		newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
+			makeJob(5), makeJob(4), makeJob(3),
+		}}
+
+		m, _ = updateModel(t, m, newJobs)
+
+		// Should select first job
+		assertSelection(t, m, 0, 5)
+
+	})
+	t.Run("EmptyList", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+
+		// Had jobs, now empty
+		m.jobs = []storage.ReviewJob{makeJob(1)}
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+
+		newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{}}
+
+		m, _ = updateModel(t, m, newJobs)
+
+		// Empty list should have selectedIdx=-1 (no valid selection)
+		assertSelection(t, m, -1, 0)
+
+	})
+	t.Run("MaintainedOnLargeBatch", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+
+		// Initial state with 1 job selected
+		m.jobs = []storage.ReviewJob{makeJob(1)}
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+
+		// 30 new jobs added at the top (simulating large batch)
+		newJobs := make([]storage.ReviewJob, 31)
+		for i := range 30 {
+			newJobs[i] = makeJob(int64(31 - i)) // IDs 31, 30, 29, ..., 2
+		}
+		newJobs[30] = makeJob(1) // Original job at the end
+
+		m, _ = updateModel(t, m, tuiJobsMsg{jobs: newJobs})
+
+		// Should still follow job ID=1, now at index 30
+		assertSelection(t, m, 30, 1)
+
+	})
+}
+
+func TestTUIHideAddressed(t *testing.T) {
+	t.Run("DefaultFromConfig", func(t *testing.T) {
+		tmpDir := setupTuiTestEnv(t)
+
+		configPath := filepath.Join(tmpDir, "config.toml")
+		if err := os.WriteFile(configPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+
+		m := newTuiModel(testServerAddr)
+		if !m.hideAddressed {
+			t.Error("hideAddressed should be true when config sets hide_addressed_by_default = true")
+		}
+
+	})
+	t.Run("Toggle", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+
+		// Initial state: hideAddressed is false (TestMain isolates from real config)
+		if m.hideAddressed {
+			t.Error("hideAddressed should be false initially")
+		}
+
+		// Press 'h' to toggle
+		m2, _ := pressKey(m, 'h')
+
+		if !m2.hideAddressed {
+			t.Error("hideAddressed should be true after pressing 'h'")
+		}
+
+		// Press 'h' again to toggle back
+		m3, _ := pressKey(m2, 'h')
+
+		if m3.hideAddressed {
+			t.Error("hideAddressed should be false after pressing 'h' again")
+		}
+
+	})
+	t.Run("FiltersJobs", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+		m.hideAddressed = true
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withAddressed(boolPtr(true))),          // hidden: addressed
+			makeJob(2, withAddressed(boolPtr(false))),         // visible
+			makeJob(3, withStatus(storage.JobStatusFailed)),   // hidden: failed
+			makeJob(4, withStatus(storage.JobStatusCanceled)), // hidden: canceled
+			makeJob(5, withAddressed(boolPtr(false))),         // visible
+		}
+
+		// Check visibility
+		if m.isJobVisible(m.jobs[0]) {
+			t.Error("Addressed job should be hidden")
+		}
+		if !m.isJobVisible(m.jobs[1]) {
+			t.Error("Non-addressed job should be visible")
+		}
+		if m.isJobVisible(m.jobs[2]) {
+			t.Error("Failed job should be hidden")
+		}
+		if m.isJobVisible(m.jobs[3]) {
+			t.Error("Canceled job should be hidden")
+		}
+		if !m.isJobVisible(m.jobs[4]) {
+			t.Error("Non-addressed job should be visible")
+		}
+
+		// getVisibleJobs should only return 2 jobs
+		visible := m.getVisibleJobs()
+		if len(visible) != 2 {
+			t.Errorf("Expected 2 visible jobs, got %d", len(visible))
+		}
+		if visible[0].ID != 2 || visible[1].ID != 5 {
+			t.Errorf("Expected visible jobs 2 and 5, got %d and %d", visible[0].ID, visible[1].ID)
+		}
+
+	})
+	t.Run("SelectionMovesToVisible", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withAddressed(boolPtr(true))),  // will be hidden
+			makeJob(2, withAddressed(boolPtr(false))), // will be visible
+			makeJob(3, withAddressed(boolPtr(false))), // will be visible
+		}
+
+		// Select the first job (addressed)
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+
+		// Toggle hide addressed
+		m2, _ := pressKey(m, 'h')
+
+		// Selection should move to first visible job (ID=2)
+		assertSelection(t, m2, 1, 2)
+
+	})
+	t.Run("RefreshRevalidatesSelection", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+		m.hideAddressed = true
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withAddressed(boolPtr(false))),
+			makeJob(2, withAddressed(boolPtr(false))),
+		}
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+
+		// Simulate jobs refresh where job 1 is now addressed
+
+		m2, _ := updateModel(t, m, tuiJobsMsg{
+			jobs: []storage.ReviewJob{
+				makeJob(1, withAddressed(boolPtr(true))),  // now addressed (hidden)
+				makeJob(2, withAddressed(boolPtr(false))), // still visible
+			},
+			hasMore: false,
+		})
+
+		// Selection should move to job 2 since job 1 is now hidden
+		assertSelection(t, m2, 1, 2)
+
+	})
+	t.Run("NavigationSkipsHidden", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+		m.hideAddressed = true
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withAddressed(boolPtr(false))),       // visible
+			makeJob(2, withAddressed(boolPtr(true))),        // hidden
+			makeJob(3, withStatus(storage.JobStatusFailed)), // hidden
+			makeJob(4, withAddressed(boolPtr(false))),       // visible
+		}
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+
+		// Navigate down - should skip jobs 2 and 3
+		m2, _ := pressKey(m, 'j')
+
+		assertSelection(t, m2, 3, 4)
+
+	})
+	t.Run("WithRepoFilter", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+		m.hideAddressed = true
+		m.activeRepoFilter = []string{"/repo/a"}
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))),       // visible: matches repo, not addressed
+			makeJob(2, withRepoPath("/repo/b"), withAddressed(boolPtr(false))),       // hidden: wrong repo
+			makeJob(3, withRepoPath("/repo/a"), withAddressed(boolPtr(true))),        // hidden: addressed
+			makeJob(4, withRepoPath("/repo/a"), withStatus(storage.JobStatusFailed)), // hidden: failed
+		}
+
+		// Only job 1 should be visible
+		visible := m.getVisibleJobs()
+		if len(visible) != 1 {
+			t.Errorf("Expected 1 visible job, got %d", len(visible))
+		}
+		if visible[0].ID != 1 {
+			t.Errorf("Expected visible job ID=1, got %d", visible[0].ID)
+		}
+
+	})
+	t.Run("ClearRepoFilterRefetches", func(t *testing.T) {
+		// Scenario: hide addressed enabled, then filter by repo, then press escape
+		// to clear the repo filter. Should trigger a refetch to show all unaddressed reviews.
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+		m.hideAddressed = true
+		m.activeRepoFilter = []string{"/repo/a"}
+		m.filterStack = []string{"repo"}
+		m.loadingJobs = false // Simulate that initial load has completed
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))),
+		}
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+
+		// Press escape to clear the repo filter
+		m2, cmd := pressSpecial(m, tea.KeyEscape)
+
+		// Repo filter should be cleared
+		if m2.activeRepoFilter != nil {
+			t.Errorf("Expected activeRepoFilter to be nil, got %v", m2.activeRepoFilter)
+		}
+
+		// hideAddressed should still be true
+		if !m2.hideAddressed {
+			t.Error("hideAddressed should still be true after clearing repo filter")
+		}
+
+		// Filter stack should be empty
+		if len(m2.filterStack) != 0 {
+			t.Errorf("Expected empty filter stack, got %v", m2.filterStack)
+		}
+
+		// jobs should be preserved (so fetchJobs limit stays large enough)
+		if len(m2.jobs) != 1 {
+			t.Errorf("Expected jobs to be preserved after escape, got %d jobs", len(m2.jobs))
+		}
+
+		// A refetch command should be returned
+		if cmd == nil {
+			t.Error("Expected a refetch command when clearing repo filter with hide-addressed active")
+		}
+
+		// loadingJobs should be set
+		if !m2.loadingJobs {
+			t.Error("loadingJobs should be set when refetching after clearing repo filter")
+		}
+
+	})
+	t.Run("EnableTriggersRefetch", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+		m.hideAddressed = false
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withAddressed(boolPtr(false))),
+		}
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+
+		// Toggle hide addressed ON
+		m2, cmd := pressKey(m, 'h')
+
+		// hideAddressed should be enabled
+		if !m2.hideAddressed {
+			t.Error("hideAddressed should be true after pressing 'h'")
+		}
+
+		// A command should be returned to fetch all jobs
+		if cmd == nil {
+			t.Error("Command should be returned to fetch all jobs when enabling hideAddressed")
+		}
+
+	})
+	t.Run("DisableRefetches", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+		m.hideAddressed = true // Already enabled
+
+		m.jobs = []storage.ReviewJob{
+			makeJob(1, withAddressed(boolPtr(false))),
+		}
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+
+		// Toggle hide addressed OFF
+		m2, cmd := pressKey(m, 'h')
+
+		// hideAddressed should be disabled
+		if m2.hideAddressed {
+			t.Error("hideAddressed should be false after pressing 'h' to disable")
+		}
+
+		// Disabling triggers a refetch to get previously-filtered addressed jobs
+		if cmd == nil {
+			t.Error("Expected a refetch command when disabling hideAddressed")
+		}
+
+	})
+	t.Run("ValidConfigNotMutated", func(t *testing.T) {
+		tmpDir := setupTuiTestEnv(t)
+
+		// Write a valid config with the hide-addressed default enabled
+		validConfig := []byte("hide_addressed_by_default = true\n")
+		configPath := filepath.Join(tmpDir, "config.toml")
+		if err := os.WriteFile(configPath, validConfig, 0644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+
+		m := newTuiModel(testServerAddr)
+		m.currentView = tuiViewQueue
+
+		// Verify the default was loaded
+		if !m.hideAddressed {
+			t.Fatal("hideAddressed should be true from config")
+		}
+
+		// Toggle hide addressed OFF
+		m2, _ := pressKey(m, 'h')
+		if m2.hideAddressed {
+			t.Error("hideAddressed should be false after pressing 'h'")
+		}
+
+		// Toggle hide addressed back ON
+		m3, _ := pressKey(m2, 'h')
+		if !m3.hideAddressed {
+			t.Error("hideAddressed should be true after pressing 'h' again")
+		}
+
+		// Valid config file must not have been mutated by either toggle
+		got, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("read config: %v", err)
+		}
+		if string(got) != string(validConfig) {
+			t.Errorf("valid config was mutated:\n  before: %q\n  after:  %q", validConfig, got)
+		}
+
+	})
+}
+
+func TestTUIFlashMessage(t *testing.T) {
+	t.Run("AppearsInQueueView", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewQueue
+		m.width = 80
+		m.height = 24
+		m.flashMessage = "Copied to clipboard"
+		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashView = tuiViewQueue // Flash was triggered in queue view
+
+		output := m.renderQueueView()
+		if !strings.Contains(output, "Copied to clipboard") {
+			t.Error("Expected flash message to appear in queue view")
+		}
+
+	})
+	t.Run("NotShownInDifferentView", func(t *testing.T) {
+		m := newTuiModel(testServerAddr, WithExternalIODisabled())
+		m.currentView = tuiViewReview
+		m.width = 80
+		m.height = 24
+		m.flashMessage = "Copied to clipboard"
+		m.flashExpiresAt = time.Now().Add(2 * time.Second)
+		m.flashView = tuiViewQueue // Flash was triggered in queue view, not review view
+		m.currentReview = makeReview(1, &storage.ReviewJob{}, withReviewOutput("Test review content"))
+
+		output := m.renderReviewView()
+		if strings.Contains(output, "Copied to clipboard") {
+			t.Error("Flash message should not appear when viewing different view than where it was triggered")
+		}
+
 	})
 }
