@@ -740,11 +740,7 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 
 func runConcurrentReviewsAndSync(db *DB, repoID int64, worker *SyncWorker, prefix, author string, count int, results chan<- string, errs chan<- error, done chan<- bool) {
 	go func() {
-		defer func() {
-			close(results)
-			close(errs)
-			done <- true
-		}()
+		defer func() { done <- true }()
 		for i := 0; i < count; i++ {
 			job, _, err := tryCreateCompletedReview(db, repoID, fmt.Sprintf("%s_%02d", prefix, i), author, fmt.Sprintf("%s concurrent %d", author, i), "prompt", fmt.Sprintf("Review %s-%d", prefix, i))
 			if err != nil {
@@ -846,6 +842,13 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		<-done
 		<-done
 		<-done
+
+		close(jobResultsA)
+		close(jobResultsB)
+		close(jobResultsC)
+		close(syncErrsA)
+		close(syncErrsB)
+		close(syncErrsC)
 
 		for uuid := range jobResultsA {
 			jobsCreatedByA = append(jobsCreatedByA, uuid)
