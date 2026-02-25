@@ -81,6 +81,9 @@ func (hr *HookRunner) listen(eventCh <-chan Event) {
 					break drainLoop
 				}
 			}
+			// Wait for in-flight hooks here (inside the listener) so
+			// no new wg.Add(1) can race with wg.Wait().
+			hr.wg.Wait()
 			close(req)
 		case event, ok := <-eventCh:
 			if !ok {
@@ -100,7 +103,6 @@ func (hr *HookRunner) WaitUntilIdle() {
 	case <-hr.stopCh:
 		return
 	}
-	hr.wg.Wait()
 }
 
 // Stop shuts down the hook runner and unsubscribes from the broadcaster.
