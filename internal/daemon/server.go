@@ -65,7 +65,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	configWatcher := NewConfigWatcher(configPath, cfg, broadcaster, activityLog)
 
 	// Create hook runner to fire hooks on review events
-	hookRunner := NewHookRunner(configWatcher, broadcaster)
+	hookRunner := NewHookRunner(configWatcher, broadcaster, log.Default())
 
 	s := &Server{
 		db:            db,
