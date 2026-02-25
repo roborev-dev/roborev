@@ -4,15 +4,14 @@ package git
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 func TestGetMainRepoRoot(t *testing.T) {
-	repo := NewTestRepo(t)
-
 	t.Run("regular repo returns same as GetRepoRoot", func(t *testing.T) {
+		repo := NewTestRepo(t)
+
 		mainRoot, err := GetMainRepoRoot(repo.Dir)
 		if err != nil {
 			t.Fatalf("GetMainRepoRoot failed: %v", err)
@@ -29,6 +28,7 @@ func TestGetMainRepoRoot(t *testing.T) {
 	})
 
 	t.Run("worktree returns main repo root", func(t *testing.T) {
+		repo := NewTestRepo(t)
 		repo.CommitFile("file.txt", "content", "initial")
 
 		wt := repo.AddWorktree("worktree-branch")
@@ -68,18 +68,13 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 	t.Run("submodule stays distinct from parent", func(t *testing.T) {
 		parentRepo := NewTestRepo(t)
-		parentRepo.Run("config", "protocol.file.allow", "always")
 		parentRepo.CommitFile("parent.txt", "parent", "parent initial")
 
 		subSource := NewTestRepo(t)
 		subSource.CommitFile("sub.txt", "sub", "sub initial")
 
 		// Add submodule to parent
-		cmd := exec.Command("git", "-c", "protocol.file.allow=always", "submodule", "add", subSource.Dir, "mysub")
-		cmd.Dir = parentRepo.Dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git submodule add failed: %v\n%s", err, out)
-		}
+		parentRepo.AddSubmodule(t, subSource.Dir, "mysub")
 
 		submoduleDir := filepath.Join(parentRepo.Dir, "mysub")
 		submoduleDirResolved, _ := filepath.EvalSymlinks(submoduleDir)
@@ -112,30 +107,21 @@ func TestGetMainRepoRoot(t *testing.T) {
 
 	t.Run("worktree from submodule returns submodule root", func(t *testing.T) {
 		parentRepo := NewTestRepo(t)
-		parentRepo.Run("config", "protocol.file.allow", "always")
 		parentRepo.CommitFile("parent.txt", "parent", "parent initial")
 
 		subSource := NewTestRepo(t)
 		subSource.CommitFile("sub.txt", "sub", "sub initial")
 
 		// Add submodule to parent
-		cmd := exec.Command("git", "-c", "protocol.file.allow=always", "submodule", "add", subSource.Dir, "mysub")
-		cmd.Dir = parentRepo.Dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git submodule add failed: %v\n%s", err, out)
-		}
+		parentRepo.AddSubmodule(t, subSource.Dir, "mysub")
 		parentRepo.CommitAll("add submodule")
 
 		submoduleDir := filepath.Join(parentRepo.Dir, "mysub")
 
 		// Create a worktree from within the submodule
-		worktreeDir := t.TempDir()
-		cmd = exec.Command("git", "worktree", "add", worktreeDir, "-b", "sub-wt-branch")
-		cmd.Dir = submoduleDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git worktree add from submodule failed: %v\n%s", err, out)
-		}
-		defer exec.Command("git", "-C", submoduleDir, "worktree", "remove", worktreeDir).Run()
+		subRepo := &TestRepo{T: t, Dir: submoduleDir}
+		wt := subRepo.AddWorktree("sub-wt-branch")
+		worktreeDir := wt.Dir
 
 		wtRoot, err := GetMainRepoRoot(worktreeDir)
 		if err != nil {
@@ -204,7 +190,8 @@ func TestGetMainRepoRoot(t *testing.T) {
 	})
 }
 
-func TestGetDefaultBranchOriginHead(t *testing.T) {
+func setupBranchOriginTest(t *testing.T) (*TestRepo, *TestRepo) {
+	t.Helper()
 	bareRepo := NewBareTestRepo(t)
 	bareRepo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 
@@ -214,10 +201,13 @@ func TestGetDefaultBranchOriginHead(t *testing.T) {
 	seedRepo.Run("remote", "add", "origin", bareRepo.Dir)
 	seedRepo.Run("push", "-u", "origin", "main")
 
+	return bareRepo, seedRepo
+}
+
+func TestGetDefaultBranchOriginHead(t *testing.T) {
 	t.Run("missing local branch uses origin ref", func(t *testing.T) {
-		cloneDir := t.TempDir()
-		runGit(t, "", "clone", bareRepo.Dir, cloneDir)
-		clone := &TestRepo{T: t, Dir: cloneDir}
+		bareRepo, _ := setupBranchOriginTest(t)
+		clone := CloneTestRepo(t, bareRepo.Dir)
 		clone.Run("remote", "set-head", "origin", "-a")
 		clone.Run("checkout", "--detach")
 		clone.Run("branch", "-D", "main")
@@ -232,9 +222,8 @@ func TestGetDefaultBranchOriginHead(t *testing.T) {
 	})
 
 	t.Run("stale local branch uses origin ref", func(t *testing.T) {
-		cloneDir := t.TempDir()
-		runGit(t, "", "clone", bareRepo.Dir, cloneDir)
-		clone := &TestRepo{T: t, Dir: cloneDir}
+		bareRepo, seedRepo := setupBranchOriginTest(t)
+		clone := CloneTestRepo(t, bareRepo.Dir)
 		clone.Run("remote", "set-head", "origin", "-a")
 
 		seedRepo.CommitFile("file2.txt", "new", "update")
@@ -251,9 +240,8 @@ func TestGetDefaultBranchOriginHead(t *testing.T) {
 	})
 
 	t.Run("origin/HEAD points to missing remote ref, falls back to local branch", func(t *testing.T) {
-		cloneDir := t.TempDir()
-		runGit(t, "", "clone", bareRepo.Dir, cloneDir)
-		clone := &TestRepo{T: t, Dir: cloneDir}
+		bareRepo, _ := setupBranchOriginTest(t)
+		clone := CloneTestRepo(t, bareRepo.Dir)
 		clone.Run("remote", "set-head", "origin", "-a")
 
 		// Delete the remote-tracking branch while keeping origin/HEAD symbolic ref intact
