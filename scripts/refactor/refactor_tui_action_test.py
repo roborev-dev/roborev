@@ -18,10 +18,14 @@ func expectJSONPost[Req any, Res any](t *testing.T, path string, expected Req, r
 
 		var req Req
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("Failed to decode request body: %v", err)
+			t.Errorf("Failed to decode request body: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
 		}
 		if diff := cmp.Diff(expected, req); diff != "" {
-			t.Fatalf("Request payload mismatch (-want +got):\n%s", diff)
+			t.Errorf("Request payload mismatch (-want +got):\n%s", diff)
+			http.Error(w, "payload mismatch", http.StatusBadRequest)
+			return
 		}
 		json.NewEncoder(w).Encode(response)
 	}
