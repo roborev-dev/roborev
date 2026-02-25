@@ -115,13 +115,13 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 	commitID := createTestCommit(t, pool, repoID, "abc123456789")
 
 	// Create two jobs with different UUIDs using explicit timestamps
-	createTestJob(t, pool, TestJobOpts{
+	createTestJob(t, pool.pool, TestJobOpts{
 		UUID:            jobUUID1,
 		RepoID:          repoID,
 		CommitID:        commitID,
 		SourceMachineID: machineID,
 	})
-	createTestJob(t, pool, TestJobOpts{
+	createTestJob(t, pool.pool, TestJobOpts{
 		UUID:            jobUUID2,
 		RepoID:          repoID,
 		CommitID:        commitID,
@@ -130,7 +130,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 
 	baseTime := time.Now().Truncate(time.Millisecond)
 	// Create reviews with explicit timestamps to ensure ordering
-	createTestReview(t, pool, TestReviewOpts{
+	createTestReview(t, pool.pool, TestReviewOpts{
 		UUID:               reviewUUID1,
 		JobUUID:            jobUUID1,
 		UpdatedByMachineID: otherMachineID,
@@ -138,7 +138,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 		UpdatedAt:          baseTime,
 	})
 
-	createTestReview(t, pool, TestReviewOpts{
+	createTestReview(t, pool.pool, TestReviewOpts{
 		UUID:               reviewUUID2,
 		JobUUID:            jobUUID2,
 		UpdatedByMachineID: otherMachineID,
@@ -868,7 +868,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	commitID := createTestCommit(t, pool, repoID, "batch-reviews-sha")
 	jobUUID := uuid.NewString()
 
-	createTestJob(t, pool, TestJobOpts{
+	createTestJob(t, pool.pool, TestJobOpts{
 		UUID:            jobUUID,
 		RepoID:          repoID,
 		CommitID:        commitID,
@@ -973,7 +973,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 	commitID := createTestCommit(t, pool, repoID, "batch-responses-sha")
 	jobUUID := uuid.NewString()
 
-	createTestJob(t, pool, TestJobOpts{
+	createTestJob(t, pool.pool, TestJobOpts{
 		UUID:            jobUUID,
 		RepoID:          repoID,
 		CommitID:        commitID,

@@ -147,8 +147,7 @@ type TestJobOpts struct {
 	UpdatedAt       time.Time
 }
 
-func createTestJob(t *testing.T, pool *PgPool, opts TestJobOpts) {
-	t.Helper()
+func (opts *TestJobOpts) applyDefaults() {
 	if opts.UUID == "" {
 		opts.UUID = uuid.NewString()
 	}
@@ -164,17 +163,24 @@ func createTestJob(t *testing.T, pool *PgPool, opts TestJobOpts) {
 	if opts.SourceMachineID == "" {
 		opts.SourceMachineID = uuid.NewString()
 	}
+
+	now := time.Now()
 	if opts.EnqueuedAt.IsZero() {
-		opts.EnqueuedAt = time.Now()
+		opts.EnqueuedAt = now
 	}
 	if opts.CreatedAt.IsZero() {
-		opts.CreatedAt = time.Now()
+		opts.CreatedAt = now
 	}
 	if opts.UpdatedAt.IsZero() {
-		opts.UpdatedAt = time.Now()
+		opts.UpdatedAt = now
 	}
+}
 
-	_, err := pool.pool.Exec(t.Context(), `
+func createTestJob(t *testing.T, pool *pgxpool.Pool, opts TestJobOpts) {
+	t.Helper()
+	opts.applyDefaults()
+
+	_, err := pool.Exec(t.Context(), `
 		INSERT INTO review_jobs (uuid, repo_id, commit_id, git_ref, agent, status, source_machine_id, enqueued_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, opts.UUID, opts.RepoID, opts.CommitID, opts.GitRef, opts.Agent, opts.Status, opts.SourceMachineID, opts.EnqueuedAt, opts.CreatedAt, opts.UpdatedAt)
@@ -195,25 +201,30 @@ type TestReviewOpts struct {
 	UpdatedByMachineID string
 }
 
-func createTestReview(t *testing.T, pool *PgPool, opts TestReviewOpts) {
-	t.Helper()
+func (opts *TestReviewOpts) applyDefaults() {
 	if opts.UUID == "" {
 		opts.UUID = uuid.NewString()
 	}
 	if opts.Agent == "" {
 		opts.Agent = "test"
 	}
+	now := time.Now()
 	if opts.CreatedAt.IsZero() {
-		opts.CreatedAt = time.Now()
+		opts.CreatedAt = now
 	}
 	if opts.UpdatedAt.IsZero() {
-		opts.UpdatedAt = time.Now()
+		opts.UpdatedAt = now
 	}
 	if opts.UpdatedByMachineID == "" {
 		opts.UpdatedByMachineID = uuid.NewString()
 	}
+}
 
-	_, err := pool.pool.Exec(t.Context(), `
+func createTestReview(t *testing.T, pool *pgxpool.Pool, opts TestReviewOpts) {
+	t.Helper()
+	opts.applyDefaults()
+
+	_, err := pool.Exec(t.Context(), `
 		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, addressed, created_at, updated_at, updated_by_machine_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, opts.UUID, opts.JobUUID, opts.Agent, opts.Prompt, opts.Output, opts.Addressed, opts.CreatedAt, opts.UpdatedAt, opts.UpdatedByMachineID)
@@ -222,23 +233,21 @@ func createTestReview(t *testing.T, pool *PgPool, opts TestReviewOpts) {
 	}
 }
 
+func hasExecutableCode(stmt string) bool {
+	for line := range strings.SplitSeq(stmt, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "--") {
+			return true
+		}
+	}
+	return false
+}
+
 func parseSQLStatements(sql string) []string {
 	var stmts []string
 	for stmt := range strings.SplitSeq(sql, ";") {
 		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-		// Skip statements that are only comments
-		hasCode := false
-		for line := range strings.SplitSeq(stmt, "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "--") {
-				hasCode = true
-				break
-			}
-		}
-		if hasCode {
+		if stmt != "" && hasExecutableCode(stmt) {
 			stmts = append(stmts, stmt)
 		}
 	}
