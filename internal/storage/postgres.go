@@ -321,6 +321,13 @@ func (p *PgPool) migrateLegacyTables(ctx context.Context) error {
 		return nil
 	}
 
+	// Ensure target schema exists before moving tables into it.
+	// AfterConnect's SET search_path doesn't fail for missing schemas,
+	// so the schema may not have been created yet.
+	if _, err := p.pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgSchemaName); err != nil {
+		return fmt.Errorf("create target schema: %w", err)
+	}
+
 	// Migrate tables in dependency order (reverse of pgLegacyTables)
 	for _, table := range pgLegacyTables {
 		// Check if table exists in public and not in roborev
