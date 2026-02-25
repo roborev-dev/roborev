@@ -108,11 +108,11 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 
 	// Create a repo using the helper
 	repoIdentity := "test-repo-" + time.Now().Format("20060102150405")
-	repoID := createTestRepo(t, pool, repoIdentity)
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: repoIdentity})
 	repoIDs = append(repoIDs, repoID)
 
 	// Create a commit using the helper
-	commitID := createTestCommit(t, pool, repoID, "abc123456789")
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "abc123456789"})
 
 	// Create two jobs with different UUIDs using explicit timestamps
 	createTestJob(t, pool.pool, TestJobOpts{
@@ -809,12 +809,12 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	ctx := t.Context()
 
 	// Create a test repo
-	repoID := createTestRepo(t, pool, "https://github.com/test/batch-jobs-test.git")
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-jobs-test.git"})
 
 	// Create multiple jobs with prepared IDs
 	var jobs []JobWithPgIDs
 	for i := range 5 {
-		commitID := createTestCommit(t, pool, repoID, fmt.Sprintf("batch-jobs-sha-%d", i))
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: fmt.Sprintf("batch-jobs-sha-%d", i)})
 		jobs = append(jobs, JobWithPgIDs{
 			Job: SyncableJob{
 				UUID:            uuid.NewString(),
@@ -864,8 +864,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
-	repoID := createTestRepo(t, pool, "https://github.com/test/batch-reviews-test.git")
-	commitID := createTestCommit(t, pool, repoID, "batch-reviews-sha")
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-reviews-test.git"})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "batch-reviews-sha"})
 	jobUUID := uuid.NewString()
 
 	createTestJob(t, pool.pool, TestJobOpts{
@@ -969,8 +969,8 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
-	repoID := createTestRepo(t, pool, "https://github.com/test/batch-responses-test.git")
-	commitID := createTestCommit(t, pool, repoID, "batch-responses-sha")
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-responses-test.git"})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "batch-responses-sha"})
 	jobUUID := uuid.NewString()
 
 	createTestJob(t, pool.pool, TestJobOpts{

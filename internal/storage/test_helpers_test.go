@@ -116,20 +116,69 @@ func (e *MigrationTestEnv) QueryRow(sql string, args ...any) pgx.Row {
 
 // Data Factory Helpers
 
-func createTestRepo(t *testing.T, pool *PgPool, identity string) int64 {
+type TestRepoOpts struct {
+	Identity string
+}
+
+func (opts *TestRepoOpts) applyDefaults() {
+	if opts.Identity == "" {
+		opts.Identity = "https://github.com/test/repo-" + uuid.NewString() + ".git"
+	}
+}
+
+func createTestRepo(t *testing.T, pool *pgxpool.Pool, opts TestRepoOpts) int64 {
 	t.Helper()
-	id, err := pool.GetOrCreateRepo(t.Context(), identity)
+	opts.applyDefaults()
+
+	var id int64
+	err := pool.QueryRow(t.Context(), `
+		INSERT INTO repos (identity)
+		VALUES ($1)
+		ON CONFLICT (identity) DO UPDATE SET identity = EXCLUDED.identity
+		RETURNING id
+	`, opts.Identity).Scan(&id)
 	if err != nil {
-		t.Fatalf("Failed to create repo %s: %v", identity, err)
+		t.Fatalf("Failed to create repo %s: %v", opts.Identity, err)
 	}
 	return id
 }
 
-func createTestCommit(t *testing.T, pool *PgPool, repoID int64, sha string) int64 {
+type TestCommitOpts struct {
+	RepoID     int64
+	SHA        string
+	Author     string
+	Subject    string
+	AuthorDate time.Time
+}
+
+func (opts *TestCommitOpts) applyDefaults() {
+	if opts.SHA == "" {
+		opts.SHA = uuid.NewString()
+	}
+	if opts.Author == "" {
+		opts.Author = "Test Author"
+	}
+	if opts.Subject == "" {
+		opts.Subject = "Test Subject"
+	}
+	if opts.AuthorDate.IsZero() {
+		opts.AuthorDate = time.Now()
+	}
+}
+
+func createTestCommit(t *testing.T, pool *pgxpool.Pool, opts TestCommitOpts) int64 {
 	t.Helper()
-	id, err := pool.GetOrCreateCommit(t.Context(), repoID, sha, "Test Author", "Test Subject", time.Now())
+	opts.applyDefaults()
+
+	var id int64
+	err := pool.QueryRow(t.Context(), `
+		INSERT INTO commits (repo_id, sha, author, subject, author_date)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (repo_id, sha) DO UPDATE SET author = EXCLUDED.author
+		RETURNING id
+	`, opts.RepoID, opts.SHA, opts.Author, opts.Subject, opts.AuthorDate).Scan(&id)
 	if err != nil {
-		t.Fatalf("Failed to create commit %s: %v", sha, err)
+		t.Fatalf("Failed to create commit %s: %v", opts.SHA, err)
 	}
 	return id
 }
