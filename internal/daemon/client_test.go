@@ -187,14 +187,14 @@ func TestFindJobForCommit(t *testing.T) {
 	tests := []struct {
 		name           string
 		queryRepo      string
-		mockHandler    http.HandlerFunc
+		mockHandler    func(t *testing.T, w http.ResponseWriter, r *http.Request)
 		expectedJobID  int64
 		expectNotFound bool
 	}{
 		{
 			name:      "worktree path normalized to main repo",
 			queryRepo: worktreeDir,
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
+			mockHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				assertRequest(t, r, http.MethodGet, "/api/jobs")
 
 				repo := r.URL.Query().Get("repo")
@@ -225,7 +225,7 @@ func TestFindJobForCommit(t *testing.T) {
 		{
 			name:      "main repo path works directly",
 			queryRepo: mainRepo,
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
+			mockHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				assertRequest(t, r, http.MethodGet, "/api/jobs")
 
 				repo := r.URL.Query().Get("repo")
@@ -249,30 +249,46 @@ func TestFindJobForCommit(t *testing.T) {
 		{
 			name:      "fallback when primary query returns no results",
 			queryRepo: mainRepo,
-			mockHandler: func(w http.ResponseWriter, r *http.Request) {
-				assertRequest(t, r, http.MethodGet, "/api/jobs")
+			mockHandler: func() func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				var calls int
+				return func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+					assertRequest(t, r, http.MethodGet, "/api/jobs")
+					calls++
 
-				repo := r.URL.Query().Get("repo")
-				if repo != "" {
-					// Return empty to trigger fallback
-					writeTestJSON(t, w, map[string]any{"jobs": []storage.ReviewJob{}})
-					return
+					repo := r.URL.Query().Get("repo")
+					if calls == 1 {
+						if repo == "" {
+							t.Error("expected first call to have non-empty repo")
+						}
+						// Return empty to trigger fallback
+						writeTestJSON(t, w, map[string]any{"jobs": []storage.ReviewJob{}})
+						return
+					}
+
+					if calls == 2 {
+						if repo != "" {
+							t.Errorf("expected second call to have empty repo, got %q", repo)
+						}
+						// Fallback query (no repo filter)
+						writeTestJSON(t, w, map[string]any{
+							"jobs": []storage.ReviewJob{
+								{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
+							},
+						})
+						return
+					}
+					t.Errorf("unexpected call %d", calls)
 				}
-
-				// Fallback query (no repo filter)
-				writeTestJSON(t, w, map[string]any{
-					"jobs": []storage.ReviewJob{
-						{ID: 1, GitRef: sha, RepoPath: mainRepo, Status: storage.JobStatusDone},
-					},
-				})
-			},
+			}(),
 			expectedJobID: 1,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			client := mockAPI(t, tc.mockHandler)
+			client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				tc.mockHandler(t, w, r)
+			})
 			job, err := client.FindJobForCommit(tc.queryRepo, sha)
 			if err != nil {
 				t.Fatalf("FindJobForCommit failed: %v", err)
