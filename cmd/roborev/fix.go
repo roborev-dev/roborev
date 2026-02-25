@@ -63,11 +63,11 @@ Examples:
 `,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if branch != "" && !unaddressed && !batch && !list {
-				return fmt.Errorf("--branch requires --unaddressed, --batch, or --list")
-			}
 			if allBranches && !unaddressed && !batch && !list {
 				unaddressed = true
+			}
+			if branch != "" && !unaddressed && !batch && !list {
+				return fmt.Errorf("--branch requires --unaddressed, --batch, or --list")
 			}
 			if allBranches && branch != "" {
 				return fmt.Errorf("--all-branches and --branch are mutually exclusive")

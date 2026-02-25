@@ -323,8 +323,8 @@ func TestFixCmdFlagValidation(t *testing.T) {
 			wantErr: "--newest-first requires --unaddressed",
 		},
 		{
-			name:    "--all-branches with --branch",
-			args:    []string{"--unaddressed", "--all-branches", "--branch", "main"},
+			name:    "--all-branches with --branch (no explicit --unaddressed)",
+			args:    []string{"--all-branches", "--branch", "main"},
 			wantErr: "--all-branches and --branch are mutually exclusive",
 		},
 	}
@@ -371,6 +371,27 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 	// not running) is acceptable.
 	if err != nil && strings.Contains(err.Error(), "requires at least") {
 		t.Errorf("no-args should default to --unaddressed, got validation error: %v", err)
+	}
+}
+
+func TestFixAllBranchesImpliesUnaddressed(t *testing.T) {
+	// --all-branches alone should imply --unaddressed and pass
+	// validation, routing through unaddressed discovery.
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"jobs":     []any{},
+			"has_more": false,
+		})
+	}))
+	defer cleanup()
+
+	cmd := fixCmd()
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"--all-branches"})
+	err := cmd.Execute()
+	if err != nil {
+		t.Errorf("--all-branches should not fail validation: %v", err)
 	}
 }
 
