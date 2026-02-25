@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -567,6 +569,20 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	cmd.Printf("To apply all:   roborev fix --unaddressed\n")
 
 	return nil
+}
+
+// isConnectionError checks if an error indicates a network/connection failure
+// (as opposed to an application-level error like 404 or invalid response).
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 // truncateString truncates s to maxLen characters, adding "..." if truncated.

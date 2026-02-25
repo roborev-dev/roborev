@@ -1,19 +1,19 @@
-package main
+package tui
 
 import (
 	"fmt"
 	"strings"
 )
 
-func (m tuiModel) renderFilterView() string {
+func (m model) renderFilterView() string {
 	var b strings.Builder
 
-	b.WriteString(tuiTitleStyle.Render("Filter"))
+	b.WriteString(titleStyle.Render("Filter"))
 	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
 
 	// Show loading state if tree hasn't been built yet
 	if m.filterTree == nil {
-		b.WriteString(tuiStatusStyle.Render("Loading repos..."))
+		b.WriteString(statusStyle.Render("Loading repos..."))
 		b.WriteString("\x1b[K\n")
 		// Pad to fill terminal height: title(1) + blank(1) + loading(1) + padding + help(1)
 		linesWritten := 3
@@ -21,7 +21,7 @@ func (m tuiModel) renderFilterView() string {
 			b.WriteString("\x1b[K\n")
 			linesWritten++
 		}
-		b.WriteString(tuiHelpStyle.Render("esc: cancel"))
+		b.WriteString(helpStyle.Render("esc: cancel"))
 		b.WriteString("\x1b[K")
 		b.WriteString("\x1b[J")
 		return b.String()
@@ -30,7 +30,7 @@ func (m tuiModel) renderFilterView() string {
 	// Search box
 	searchDisplay := m.filterSearch
 	if searchDisplay == "" {
-		searchDisplay = tuiStatusStyle.Render("Type to search...")
+		searchDisplay = statusStyle.Render("Type to search...")
 	}
 	fmt.Fprintf(&b, "Search: %s", searchDisplay)
 	b.WriteString("\x1b[K\n\x1b[K\n")
@@ -93,7 +93,7 @@ func (m tuiModel) renderFilterView() string {
 		}
 
 		if i == m.filterSelectedIdx {
-			b.WriteString(tuiSelectedStyle.Render(line))
+			b.WriteString(selectedStyle.Render(line))
 		} else {
 			b.WriteString(line)
 		}
@@ -102,11 +102,11 @@ func (m tuiModel) renderFilterView() string {
 	}
 
 	if len(flatList) == 0 {
-		b.WriteString(tuiStatusStyle.Render("  No matching items"))
+		b.WriteString(statusStyle.Render("  No matching items"))
 		b.WriteString("\x1b[K\n")
 		linesWritten++
 	} else if visibleRows == 0 {
-		b.WriteString(tuiStatusStyle.Render("  (terminal too small)"))
+		b.WriteString(statusStyle.Render("  (terminal too small)"))
 		b.WriteString("\x1b[K\n")
 		linesWritten++
 	}
@@ -119,7 +119,7 @@ func (m tuiModel) renderFilterView() string {
 
 	if needsScroll {
 		scrollInfo := fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(flatList))
-		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+		b.WriteString(statusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n")
 

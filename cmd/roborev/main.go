@@ -3172,15 +3172,6 @@ func shortJobRef(job storage.ReviewJob) string {
 	return shortRef(job.GitRef)
 }
 
-// formatAgentLabel returns the agent display string, including model if set.
-// Format: "agent" or "agent: model"
-func formatAgentLabel(agent string, model string) string {
-	if model != "" {
-		return fmt.Sprintf("%s: %s", agent, model)
-	}
-	return agent
-}
-
 // resolveReasoningWithFast returns the effective reasoning value, applying
 // the --fast shorthand only when --reasoning wasn't explicitly set.
 func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySet bool) string {

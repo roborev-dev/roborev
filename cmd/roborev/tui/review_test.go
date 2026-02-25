@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"encoding/json"
@@ -13,9 +13,9 @@ import (
 	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
-// setupRenderModel creates a standardized tuiModel for rendering tests
-func setupRenderModel(view tuiView, review *storage.Review, opts ...func(*tuiModel)) tuiModel {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+// setupRenderModel creates a standardized model for rendering tests
+func setupRenderModel(view viewKind, review *storage.Review, opts ...func(*model)) model {
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width, m.height = 100, 30
 	m.currentView = view
 	m.currentReview = review
@@ -25,8 +25,8 @@ func setupRenderModel(view tuiView, review *storage.Review, opts ...func(*tuiMod
 	return m
 }
 
-func withModelBranch(b string) func(*tuiModel) {
-	return func(m *tuiModel) { m.currentBranch = b }
+func withModelBranch(b string) func(*model) {
+	return func(m *model) { m.currentBranch = b }
 }
 
 func assertOutputContains(t *testing.T, got, want string) {
@@ -50,9 +50,9 @@ func TestTUIFetchReviewNotFound(t *testing.T) {
 	cmd := m.fetchReview(999)
 	msg := cmd()
 
-	errMsg, ok := msg.(tuiErrMsg)
+	errMsg, ok := msg.(errMsg)
 	if !ok {
-		t.Fatalf("Expected tuiErrMsg for 404, got %T: %v", msg, msg)
+		t.Fatalf("Expected errMsg for 404, got %T: %v", msg, msg)
 	}
 	if errMsg.Error() != "no review found" {
 		t.Errorf("Expected 'no review found', got: %v", errMsg)
@@ -66,9 +66,9 @@ func TestTUIFetchReviewServerError(t *testing.T) {
 	cmd := m.fetchReview(1)
 	msg := cmd()
 
-	errMsg, ok := msg.(tuiErrMsg)
+	errMsg, ok := msg.(errMsg)
 	if !ok {
-		t.Fatalf("Expected tuiErrMsg for 500, got %T: %v", msg, msg)
+		t.Fatalf("Expected errMsg for 500, got %T: %v", msg, msg)
 	}
 	if errMsg.Error() != "fetch review: 500 Internal Server Error" {
 		t.Errorf("Expected status in error, got: %v", errMsg)
@@ -125,9 +125,9 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 	cmd := m.fetchReview(42)
 	msg := cmd()
 
-	reviewMsg, ok := msg.(tuiReviewMsg)
+	reviewMsg, ok := msg.(reviewMsg)
 	if !ok {
-		t.Fatalf("Expected tuiReviewMsg, got %T: %v", msg, msg)
+		t.Fatalf("Expected reviewMsg, got %T: %v", msg, msg)
 	}
 
 	// Should have fetched both job_id and sha responses
@@ -194,9 +194,9 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 	cmd := m.fetchReview(42)
 	msg := cmd()
 
-	_, ok := msg.(tuiReviewMsg)
+	_, ok := msg.(reviewMsg)
 	if !ok {
-		t.Fatalf("Expected tuiReviewMsg, got %T: %v", msg, msg)
+		t.Fatalf("Expected reviewMsg, got %T: %v", msg, msg)
 	}
 
 	// Should NOT have made a SHA fallback request for range review
@@ -332,16 +332,16 @@ func TestTUIReviewNavigation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newTuiModel("http://localhost", WithExternalIODisabled())
+			m := newModel("http://localhost", withExternalIODisabled())
 			m.jobs = tt.initialJobs
 			m.selectedIdx = tt.initialIdx
 			m.selectedJobID = tt.initialID
-			m.currentView = tuiViewReview
+			m.currentView = viewReview
 			// Setup current review to match initial selection
 			m.currentReview = makeReview(10, &tt.initialJobs[tt.initialIdx])
 			m.reviewScroll = tt.initialScroll
 
-			var m2 tuiModel
+			var m2 model
 			var cmd tea.Cmd
 
 			switch k := tt.key.(type) {
@@ -361,8 +361,8 @@ func TestTUIReviewNavigation(t *testing.T) {
 				if m2.flashMessage != tt.wantFlash {
 					t.Errorf("flashMessage: got %q, want %q", m2.flashMessage, tt.wantFlash)
 				}
-				if m2.flashView != tuiViewReview {
-					t.Errorf("flashView: got %d, want %d", m2.flashView, tuiViewReview)
+				if m2.flashView != viewReview {
+					t.Errorf("flashView: got %d, want %d", m2.flashView, viewReview)
 				}
 				if m2.flashExpiresAt.IsZero() {
 					t.Error("flashExpiresAt should be set")
@@ -396,7 +396,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 
 func TestTUIReviewStaleResponseIgnored(t *testing.T) {
 	// Test that stale review responses are ignored (race condition fix)
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -404,11 +404,11 @@ func TestTUIReviewStaleResponseIgnored(t *testing.T) {
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2 // Currently viewing job 2
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2}, withReviewOutput("Review for job 2"))
 
 	// Simulate a stale response arriving for job 1 (user navigated away)
-	staleMsg := tuiReviewMsg{
+	staleMsg := reviewMsg{
 		review: makeReview(10, &storage.ReviewJob{ID: 1}, withReviewOutput("Stale review for job 1")),
 		jobID:  1, // This doesn't match selectedJobID (2)
 	}
@@ -426,16 +426,16 @@ func TestTUIReviewStaleResponseIgnored(t *testing.T) {
 
 func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
 	// Test that review responses with matching job ID are accepted
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue // Still in queue view, waiting for fetch
+	m.currentView = viewQueue // Still in queue view, waiting for fetch
 
-	validMsg := tuiReviewMsg{
+	validMsg := reviewMsg{
 		review: makeReview(10, &storage.ReviewJob{ID: 1}, withReviewOutput("New review")),
 		jobID:  1,
 	}
@@ -443,7 +443,7 @@ func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
 	m2, _ := updateModel(t, m, validMsg)
 
 	// Should accept the response and switch to review view
-	if m2.currentView != tuiViewReview {
+	if m2.currentView != viewReview {
 		t.Errorf("Expected to switch to review view, got %d", m2.currentView)
 	}
 	if m2.currentReview == nil || m2.currentReview.Output != "New review" {
@@ -456,7 +456,7 @@ func TestTUIReviewMsgWithMatchingJobID(t *testing.T) {
 
 func TestTUISelectionSyncInReviewView(t *testing.T) {
 	// Test that selectedIdx syncs with currentReview.Job.ID when jobs refresh
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Initial state: viewing review for job 2
 	m.jobs = []storage.ReviewJob{
@@ -466,11 +466,11 @@ func TestTUISelectionSyncInReviewView(t *testing.T) {
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2})
 
 	// New job arrives at the top, shifting indices
-	newJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
+	newJobs := jobsMsg{jobs: []storage.ReviewJob{
 		makeJob(4), // New job at top
 		makeJob(3),
 		makeJob(2), // Now at index 2
@@ -493,7 +493,7 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 	// This tests the race condition fix: user navigates to job 3, but jobs refresh
 	// arrives before the review loads. Selection should stay on job 3, not revert
 	// to the currently displayed review's job (job 2).
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -502,7 +502,7 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2}, withReviewOutput("Review for job 2"))
 
 	// Simulate user navigating to next review (job 3)
@@ -511,7 +511,7 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 	m.selectedJobID = 3
 
 	// Before the review for job 3 arrives, a jobs refresh comes in
-	refreshedJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
+	refreshedJobs := jobsMsg{jobs: []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2),
 		makeJob(3),
@@ -533,7 +533,7 @@ func TestTUIJobsRefreshDuringReviewNavigation(t *testing.T) {
 	}
 
 	// Now when the review for job 3 arrives, it should be accepted
-	newReviewMsg := tuiReviewMsg{
+	newReviewMsg := reviewMsg{
 		review: makeReview(30, &storage.ReviewJob{ID: 3}, withReviewOutput("Review for job 3")),
 		jobID:  3,
 	}
@@ -552,7 +552,7 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 	// Test that transient empty jobs refresh doesn't break selection
 	// when viewing a review. Selection should restore to displayed review
 	// when jobs repopulate.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
@@ -561,11 +561,11 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 	}
 	m.selectedIdx = 1
 	m.selectedJobID = 2
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2}, withReviewOutput("Review for job 2"))
 
 	// Transient empty refresh arrives
-	emptyJobs := tuiJobsMsg{jobs: []storage.ReviewJob{}}
+	emptyJobs := jobsMsg{jobs: []storage.ReviewJob{}}
 
 	m2, _ := updateModel(t, m, emptyJobs)
 
@@ -575,7 +575,7 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 	}
 
 	// Jobs repopulate
-	repopulatedJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
+	repopulatedJobs := jobsMsg{jobs: []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2),
 		makeJob(3),
@@ -595,16 +595,16 @@ func TestTUIEmptyRefreshWhileViewingReview(t *testing.T) {
 func TestTUIEmptyRefreshSeedsFromCurrentReview(t *testing.T) {
 	// Test that if selectedJobID somehow becomes 0 while viewing a review,
 	// it gets seeded from the current review when jobs repopulate
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{}
 	m.selectedIdx = 0
 	m.selectedJobID = 0 // Somehow cleared
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(20, &storage.ReviewJob{ID: 2}, withReviewOutput("Review for job 2"))
 
 	// Jobs repopulate
-	repopulatedJobs := tuiJobsMsg{jobs: []storage.ReviewJob{
+	repopulatedJobs := jobsMsg{jobs: []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2),
 		makeJob(3),
@@ -622,16 +622,16 @@ func TestTUIEmptyRefreshSeedsFromCurrentReview(t *testing.T) {
 }
 
 func TestTUIReviewMsgSetsBranchName(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 
 	// Receive review message with branch name
-	msg := tuiReviewMsg{
+	msg := reviewMsg{
 		review:     makeReview(10, &storage.ReviewJob{ID: 1}, withReviewOutput("Review text")),
 		jobID:      1,
 		branchName: "main",
@@ -645,16 +645,16 @@ func TestTUIReviewMsgSetsBranchName(t *testing.T) {
 }
 
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRef("abc123..def456")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 
 	// Receive review message with empty branch (range commits don't have branches)
-	msg := tuiReviewMsg{
+	msg := reviewMsg{
 		review:     makeReview(10, &storage.ReviewJob{ID: 1, GitRef: "abc123..def456"}, withReviewOutput("Review text")),
 		jobID:      1,
 		branchName: "", // Empty for ranges
@@ -669,10 +669,10 @@ func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {
 
 func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 	// Test that navigating from a successful review with branch to a failed job clears the branch
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 30
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentBranch = "main" // Cached from previous review
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -693,7 +693,7 @@ func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 	}
 
 	// Should still be in review view showing the failed job
-	if m2.currentView != tuiViewReview {
+	if m2.currentView != viewReview {
 		t.Errorf("Expected to stay in review view, got %d", m2.currentView)
 	}
 	if m2.currentReview == nil || !strings.Contains(m2.currentReview.Output, "Job failed") {
@@ -703,10 +703,10 @@ func TestTUIBranchClearedOnFailedJobNavigation(t *testing.T) {
 
 func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 	// Test that pressing Enter on a failed job clears the branch
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 30
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.currentBranch = "feature/old" // Stale from previous review
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -724,7 +724,7 @@ func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 	}
 
 	// Should show review view with error
-	if m2.currentView != tuiViewReview {
+	if m2.currentView != viewReview {
 		t.Errorf("Expected review view, got %d", m2.currentView)
 	}
 }
@@ -732,10 +732,10 @@ func TestTUIBranchClearedOnFailedJobEnter(t *testing.T) {
 func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
 	// Test that renderQueueView doesn't panic when branch filter is active
 	// but repo filter is empty (regression test for index out of range)
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 30
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.activeBranchFilter = "feature"
 	m.activeRepoFilter = nil // Empty repo filter
 	m.filterStack = []string{"branch"}
@@ -757,10 +757,10 @@ func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
 }
 
 func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Initial state with review view showing an unaddressed review
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
 
 	// Simulate optimistic update (what happens when 'a' is pressed in review view)
@@ -768,7 +768,7 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 	m.pendingAddressed[100] = pendingState{newState: true, seq: 1} // Track pending state
 
 	// Error result from server (reviewID must match currentReview.ID for rollback)
-	errMsg := tuiAddressedResultMsg{
+	errMsg := addressedResultMsg{
 		reviewID:   42,  // Must match currentReview.ID
 		jobID:      100, // Must match for isCurrentRequest check
 		reviewView: true,
@@ -790,17 +790,17 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 }
 
 func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Initial state with review view
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(42, &storage.ReviewJob{})
 
 	// Simulate optimistic update
 	m.currentReview.Addressed = true
 
 	// Success result (err is nil)
-	successMsg := tuiAddressedResultMsg{
+	successMsg := addressedResultMsg{
 		reviewView: true,
 		oldState:   false,
 		seq:        1, // Not strictly needed for success but included for consistency
@@ -819,7 +819,7 @@ func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
 }
 
 func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Setup: jobs in queue with addressed=false
 	addrA := false
@@ -830,7 +830,7 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 	}
 
 	// User views review A, toggles addressed (optimistic update)
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
 	m.currentReview.Addressed = true                               // Optimistic update to review
 	*m.jobs[0].Addressed = true                                    // Optimistic update to job in queue
@@ -840,7 +840,7 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 	m.currentReview = makeReview(99, &storage.ReviewJob{ID: 200})
 
 	// Error arrives for review A's toggle
-	errMsg := tuiAddressedResultMsg{
+	errMsg := addressedResultMsg{
 		reviewID:   42,  // Review A
 		jobID:      100, // Job A
 		reviewView: true,
@@ -869,7 +869,7 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 }
 
 func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Setup: job in queue with addressed=false
 	addr := false
@@ -878,7 +878,7 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 	}
 
 	// User views review for job 100 and presses 'a'
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
 
 	// Simulate the optimistic update that happens when 'a' is pressed
@@ -899,10 +899,10 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	// Test that review-view errors without jobID are still handled if
 	// pendingReviewAddressed matches
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Review without an associated job (Job is nil)
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = &storage.Review{ID: 42}
 
 	// Simulate optimistic update (what happens when 'a' is pressed)
@@ -910,7 +910,7 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	m.pendingReviewAddressed[42] = pendingState{newState: true, seq: 1} // Track pending state by review ID
 
 	// Error arrives for this toggle (no jobID since Job was nil)
-	errMsg := tuiAddressedResultMsg{
+	errMsg := addressedResultMsg{
 		reviewID:   42,
 		jobID:      0, // No job
 		reviewView: true,
@@ -940,10 +940,10 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 
 func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 	// Test that stale review-view errors without jobID are ignored
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Review without an associated job
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = &storage.Review{ID: 42}
 
 	// User toggled to true, then back to false
@@ -952,7 +952,7 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 	m.pendingReviewAddressed[42] = pendingState{newState: false, seq: 1}
 
 	// A stale error arrives from the earlier toggle to true
-	staleErrorMsg := tuiAddressedResultMsg{
+	staleErrorMsg := addressedResultMsg{
 		reviewID:   42,
 		jobID:      0, // No job
 		reviewView: true,
@@ -984,10 +984,10 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 	// Test: true (seq 1) → false (seq 2) → true (seq 3), with late error from first true
 	// The late error has newState=true which matches current pending newState,
 	// but sequence numbers now distinguish same-state toggles.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Review without an associated job
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = &storage.Review{ID: 42}
 
 	// Sequence: toggle true (seq 1) → toggle false (seq 2) → toggle true (seq 3)
@@ -998,7 +998,7 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 	// A late error arrives from the FIRST toggle (seq 1)
 	// This error has newState=true which matches current pending newState,
 	// but seq doesn't match, so it should be treated as stale and ignored.
-	lateErrorMsg := tuiAddressedResultMsg{
+	lateErrorMsg := addressedResultMsg{
 		reviewID:   42,
 		jobID:      0,
 		reviewView: true,
@@ -1028,8 +1028,8 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 }
 
 func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.hideAddressed = true
 	m.loadingJobs = false
 
@@ -1041,7 +1041,7 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
 	// Press escape to return to queue view
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
-	if m2.currentView != tuiViewQueue {
+	if m2.currentView != viewQueue {
 		t.Error("Expected to return to queue view")
 	}
 	if !m2.loadingJobs {
@@ -1053,8 +1053,8 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
 }
 
 func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.hideAddressed = false
 	m.loadingJobs = false
 
@@ -1066,7 +1066,7 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 	// Press escape to return to queue view
 	m2, cmd := pressSpecial(m, tea.KeyEscape)
 
-	if m2.currentView != tuiViewQueue {
+	if m2.currentView != viewQueue {
 		t.Error("Expected to return to queue view")
 	}
 	if m2.loadingJobs {
@@ -1079,26 +1079,26 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 
 func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 	// Test that pressing escape in commit message view returns to the originating view (queue)
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{makeJob(1, withRef("abc123"))}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
-	m.commitMsgJobID = 1               // Set to match incoming message (normally set by 'm' key handler)
-	m.commitMsgFromView = tuiViewQueue // Track where we came from
+	m.currentView = viewQueue
+	m.commitMsgJobID = 1            // Set to match incoming message (normally set by 'm' key handler)
+	m.commitMsgFromView = viewQueue // Track where we came from
 
 	// Simulate receiving commit message content (sets view to CommitMsg)
-	m2, _ := updateModel(t, m, tuiCommitMsgMsg{jobID: 1, content: "test message"})
+	m2, _ := updateModel(t, m, commitMsgMsg{jobID: 1, content: "test message"})
 
-	if m2.currentView != tuiViewCommitMsg {
-		t.Errorf("Expected tuiViewCommitMsg, got %d", m2.currentView)
+	if m2.currentView != viewCommitMsg {
+		t.Errorf("Expected viewCommitMsg, got %d", m2.currentView)
 	}
 
 	// Press escape to go back
 	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
-	if m3.currentView != tuiViewQueue {
-		t.Errorf("Expected to return to tuiViewQueue, got %d", m3.currentView)
+	if m3.currentView != viewQueue {
+		t.Errorf("Expected to return to viewQueue, got %d", m3.currentView)
 	}
 	if m3.commitMsgContent != "" {
 		t.Error("Expected commitMsgContent to be cleared")
@@ -1107,35 +1107,35 @@ func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {
 
 func TestTUICommitMsgViewNavigationFromReview(t *testing.T) {
 	// Test that pressing escape in commit message view returns to the originating view (review)
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	j := makeJob(1, withRef("abc123"))
 	m.jobs = []storage.ReviewJob{j}
 	m.currentReview = makeReview(1, &j)
-	m.currentView = tuiViewReview
-	m.commitMsgFromView = tuiViewReview
+	m.currentView = viewReview
+	m.commitMsgFromView = viewReview
 	m.commitMsgContent = "test message"
-	m.currentView = tuiViewCommitMsg
+	m.currentView = viewCommitMsg
 
 	// Press escape to go back
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
-	if m2.currentView != tuiViewReview {
-		t.Errorf("Expected to return to tuiViewReview, got %d", m2.currentView)
+	if m2.currentView != viewReview {
+		t.Errorf("Expected to return to viewReview, got %d", m2.currentView)
 	}
 }
 
 func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	// Test that pressing 'q' in commit message view also returns to originating view
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewCommitMsg
-	m.commitMsgFromView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewCommitMsg
+	m.commitMsgFromView = viewReview
 	m.commitMsgContent = "test message"
 
 	// Press 'q' to go back
 	m2, _ := pressKey(m, 'q')
 
-	if m2.currentView != tuiViewReview {
-		t.Errorf("Expected to return to tuiViewReview after 'q', got %d", m2.currentView)
+	if m2.currentView != viewReview {
+		t.Errorf("Expected to return to viewReview after 'q', got %d", m2.currentView)
 	}
 }
 
@@ -1144,7 +1144,7 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 	// This is critical: Prompt field is populated for ALL jobs (stores review prompt),
 	// so we must use IsTaskJob() to identify task jobs, not Prompt != ""
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	tests := []struct {
 		name        string
@@ -1255,9 +1255,9 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 			cmd := m.fetchCommitMsg(&tt.job)
 			msg := cmd()
 
-			result, ok := msg.(tuiCommitMsgMsg)
+			result, ok := msg.(commitMsgMsg)
 			if !ok {
-				t.Fatalf("Expected tuiCommitMsgMsg, got %T", msg)
+				t.Fatalf("Expected commitMsgMsg, got %T", msg)
 			}
 
 			if tt.expectError != "" {
@@ -1286,49 +1286,49 @@ func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 
 func TestTUIHelpViewToggleFromQueue(t *testing.T) {
 	// Test that '?' opens help from queue and pressing '?' again returns to queue
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 
 	// Press '?' to open help
 	m2, _ := pressKey(m, '?')
 
-	if m2.currentView != tuiViewHelp {
-		t.Errorf("Expected tuiViewHelp, got %d", m2.currentView)
+	if m2.currentView != viewHelp {
+		t.Errorf("Expected viewHelp, got %d", m2.currentView)
 	}
-	if m2.helpFromView != tuiViewQueue {
-		t.Errorf("Expected helpFromView to be tuiViewQueue, got %d", m2.helpFromView)
+	if m2.helpFromView != viewQueue {
+		t.Errorf("Expected helpFromView to be viewQueue, got %d", m2.helpFromView)
 	}
 
 	// Press '?' again to close help
 	m3, _ := pressKey(m2, '?')
 
-	if m3.currentView != tuiViewQueue {
-		t.Errorf("Expected to return to tuiViewQueue, got %d", m3.currentView)
+	if m3.currentView != viewQueue {
+		t.Errorf("Expected to return to viewQueue, got %d", m3.currentView)
 	}
 }
 
 func TestTUIHelpViewToggleFromReview(t *testing.T) {
 	// Test that '?' opens help from review and escape returns to review
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	j := makeJob(1, withRef("abc123"))
 	m.currentReview = makeReview(1, &j)
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 
 	// Press '?' to open help
 	m2, _ := pressKey(m, '?')
 
-	if m2.currentView != tuiViewHelp {
-		t.Errorf("Expected tuiViewHelp, got %d", m2.currentView)
+	if m2.currentView != viewHelp {
+		t.Errorf("Expected viewHelp, got %d", m2.currentView)
 	}
-	if m2.helpFromView != tuiViewReview {
-		t.Errorf("Expected helpFromView to be tuiViewReview, got %d", m2.helpFromView)
+	if m2.helpFromView != viewReview {
+		t.Errorf("Expected helpFromView to be viewReview, got %d", m2.helpFromView)
 	}
 
 	// Press escape to close help
 	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
-	if m3.currentView != tuiViewReview {
-		t.Errorf("Expected to return to tuiViewReview, got %d", m3.currentView)
+	if m3.currentView != viewReview {
+		t.Errorf("Expected to return to viewReview, got %d", m3.currentView)
 	}
 }
 
@@ -1349,9 +1349,9 @@ func (m *mockClipboard) WriteText(text string) error {
 func TestTUIYankCopyFromReviewView(t *testing.T) {
 	mock := &mockClipboard{}
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.clipboard = mock
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("This is the review content to copy"))
 
 	// Press 'y' to yank/copy
@@ -1364,9 +1364,9 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 
 	// Execute the command to get the result
 	msg := cmd()
-	result, ok := msg.(tuiClipboardResultMsg)
+	result, ok := msg.(clipboardResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
 	}
 
 	if result.err != nil {
@@ -1380,14 +1380,14 @@ func TestTUIYankCopyFromReviewView(t *testing.T) {
 }
 
 func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 	m.width = 80
 	m.height = 24
 
 	// Simulate receiving a successful clipboard result (view captured at trigger time)
-	m, _ = updateModel(t, m, tuiClipboardResultMsg{err: nil, view: tuiViewReview})
+	m, _ = updateModel(t, m, clipboardResultMsg{err: nil, view: viewReview})
 
 	if m.flashMessage != "Copied to clipboard" {
 		t.Errorf("Expected flash message 'Copied to clipboard', got %q", m.flashMessage)
@@ -1397,8 +1397,8 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 		t.Error("Expected flashExpiresAt to be set")
 	}
 
-	if m.flashView != tuiViewReview {
-		t.Errorf("Expected flashView to be tuiViewReview, got %v", m.flashView)
+	if m.flashView != viewReview {
+		t.Errorf("Expected flashView to be viewReview, got %v", m.flashView)
 	}
 
 	// Verify flash message appears in the rendered output
@@ -1409,11 +1409,11 @@ func TestTUIYankCopyShowsFlashMessage(t *testing.T) {
 }
 
 func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 
 	// Simulate receiving a failed clipboard result
-	m, _ = updateModel(t, m, tuiClipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: tuiViewQueue})
+	m, _ = updateModel(t, m, clipboardResultMsg{err: fmt.Errorf("clipboard not available"), view: viewQueue})
 
 	if m.err == nil {
 		t.Error("Expected error to be set")
@@ -1427,21 +1427,21 @@ func TestTUIYankCopyShowsErrorOnFailure(t *testing.T) {
 func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
 	// Test that flash message is attributed to the view where copy was triggered,
 	// even if the user switches views before the clipboard result arrives.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.width = 80
 	m.height = 24
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 
 	// User switches to review view before clipboard result arrives
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 
 	// Clipboard result arrives with view captured at trigger time (queue)
-	m, _ = updateModel(t, m, tuiClipboardResultMsg{err: nil, view: tuiViewQueue})
+	m, _ = updateModel(t, m, clipboardResultMsg{err: nil, view: viewQueue})
 
 	// Flash should be attributed to queue view, not current (review) view
-	if m.flashView != tuiViewQueue {
-		t.Errorf("Expected flashView to be tuiViewQueue (trigger view), got %v", m.flashView)
+	if m.flashView != viewQueue {
+		t.Errorf("Expected flashView to be viewQueue (trigger view), got %v", m.flashView)
 	}
 
 	// Flash should NOT appear in review view since it was triggered in queue
@@ -1452,8 +1452,8 @@ func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
 }
 
 func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRef("abc123"), withAgent("test"), withStatus(storage.JobStatusRunning)),
 		makeJob(2, withRef("def456"), withAgent("test")),
@@ -1500,9 +1500,9 @@ func TestTUIFetchReviewAndCopySuccess(t *testing.T) {
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
-	result, ok := msg.(tuiClipboardResultMsg)
+	result, ok := msg.(clipboardResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
 	}
 
 	if result.err != nil {
@@ -1525,9 +1525,9 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
-	result, ok := msg.(tuiClipboardResultMsg)
+	result, ok := msg.(clipboardResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
 	}
 
 	if result.err == nil {
@@ -1554,9 +1554,9 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
-	result, ok := msg.(tuiClipboardResultMsg)
+	result, ok := msg.(clipboardResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
 	}
 
 	if result.err == nil {
@@ -1571,9 +1571,9 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: xclip not found")}
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.clipboard = mock
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
 
 	// Press 'y' to copy
@@ -1584,9 +1584,9 @@ func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 
 	// Execute the command
 	msg := cmd()
-	result, ok := msg.(tuiClipboardResultMsg)
+	result, ok := msg.(clipboardResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
 	}
 
 	// Error should propagate
@@ -1618,9 +1618,9 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
 
-	result, ok := msg.(tuiClipboardResultMsg)
+	result, ok := msg.(clipboardResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
 	}
 
 	if result.err == nil {
@@ -1654,9 +1654,9 @@ func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 	cmd := m.fetchReviewAndCopy(123, &j)
 	msg := cmd()
 
-	result, ok := msg.(tuiClipboardResultMsg)
+	result, ok := msg.(clipboardResultMsg)
 	if !ok {
-		t.Fatalf("Expected tuiClipboardResultMsg, got %T", msg)
+		t.Fatalf("Expected clipboardResultMsg, got %T", msg)
 	}
 
 	if result.err != nil {
@@ -1837,7 +1837,7 @@ func TestFormatClipboardContent(t *testing.T) {
 func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
 	// logVisibleLines() should account for the command-line header
 	// when the job has a known agent with a command line.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.height = 30
 	m.logJobID = 1
 
@@ -1863,8 +1863,8 @@ func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
 func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 	// pgdown/end/g in log view should use logVisibleLines() for
 	// scroll calculations, correctly accounting for headers.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewLog
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewLog
 	m.logJobID = 1
 	m.height = 20
 	m.logScroll = 0
@@ -1924,8 +1924,8 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 
 func TestTUILogPagingNoHeader(t *testing.T) {
 	// Same paging test but without command header (no agent).
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewLog
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewLog
 	m.logJobID = 1
 	m.height = 20
 	m.logScroll = 0
@@ -1958,16 +1958,16 @@ func TestTUILogPagingNoHeader(t *testing.T) {
 }
 
 func TestTUILogLoadingGuard(t *testing.T) {
-	// When logLoading is true, tuiLogTickMsg should not start
+	// When logLoading is true, logTickMsg should not start
 	// another fetch.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewLog
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewLog
 	m.logJobID = 1
 	m.logStreaming = true
 	m.logLoading = true
 	m.height = 30
 
-	m2, cmd := updateModel(t, m, tuiLogTickMsg{})
+	m2, cmd := updateModel(t, m, logTickMsg{})
 
 	// Should not issue a fetch command.
 	if cmd != nil {
@@ -1981,12 +1981,12 @@ func TestTUILogLoadingGuard(t *testing.T) {
 func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
 	// A late-arriving error from an in-flight log fetch should
 	// not set m.err when the user has navigated away.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue // user navigated back
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue // user navigated back
 	m.logFetchSeq = 3
 	m.logLoading = true
 
-	msg := tuiLogOutputMsg{
+	msg := logOutputMsg{
 		err: fmt.Errorf("connection reset"),
 		seq: 3,
 	}
@@ -2004,10 +2004,10 @@ func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
 func TestTUILogViewLookupFixJob(t *testing.T) {
 	// renderLogView should find jobs in fixJobs when opened
 	// from the tasks view.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewLog
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewLog
 	m.logJobID = 42
-	m.logFromView = tuiViewTasks
+	m.logFromView = viewTasks
 	m.logStreaming = true
 	m.height = 30
 	m.width = 80
@@ -2033,10 +2033,10 @@ func TestTUILogViewLookupFixJob(t *testing.T) {
 
 func TestTUILogCancelFixJob(t *testing.T) {
 	// Pressing 'x' in log view should cancel fix jobs.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewLog
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewLog
 	m.logJobID = 42
-	m.logFromView = tuiViewTasks
+	m.logFromView = viewTasks
 	m.logStreaming = true
 	m.height = 30
 
@@ -2067,10 +2067,10 @@ func TestTUILogCancelFixJob(t *testing.T) {
 func TestTUILogVisibleLinesFixJob(t *testing.T) {
 	// logVisibleLines must account for the command-line header
 	// when viewing a fix job (from m.fixJobs, not m.jobs).
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewLog
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewLog
 	m.logJobID = 42
-	m.logFromView = tuiViewTasks
+	m.logFromView = viewTasks
 	m.height = 30
 
 	// Fix job with agent "test" produces a non-empty command line.
@@ -2111,10 +2111,10 @@ func TestTUILogVisibleLinesFixJob(t *testing.T) {
 func TestTUILogNavFromTasks(t *testing.T) {
 	// Left/right in log view opened from tasks should navigate
 	// through fixJobs, not m.jobs.
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewLog
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewLog
 	m.logJobID = 20
-	m.logFromView = tuiViewTasks
+	m.logFromView = viewTasks
 	m.logStreaming = false
 	m.height = 30
 	m.fixSelectedIdx = 1
@@ -2167,8 +2167,8 @@ func TestTUILogNavFromTasks(t *testing.T) {
 // Branch filter tests
 
 func TestReviewFixPanelOpenFromReview(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	done := storage.JobStatusDone
 	job := storage.ReviewJob{ID: 1, Status: done}
 	m.currentReview = &storage.Review{JobID: 1, Job: &job}
@@ -2177,7 +2177,7 @@ func TestReviewFixPanelOpenFromReview(t *testing.T) {
 	m.selectedJobID = 1
 
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if !got.reviewFixPanelOpen {
 		t.Error("Expected reviewFixPanelOpen to be true")
@@ -2188,41 +2188,41 @@ func TestReviewFixPanelOpenFromReview(t *testing.T) {
 	if got.fixPromptJobID != 1 {
 		t.Errorf("Expected fixPromptJobID=1, got %d", got.fixPromptJobID)
 	}
-	if got.currentView != tuiViewReview {
-		t.Errorf("Expected to stay in tuiViewReview, got %v", got.currentView)
+	if got.currentView != viewReview {
+		t.Errorf("Expected to stay in viewReview, got %v", got.currentView)
 	}
 }
 
 func TestReviewFixPanelTabTogglesReviewFocus(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.reviewFixPanelOpen = true
 	m.reviewFixPanelFocused = true
 
 	// Tab shifts focus to review
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyTab})
-	got := m2.(tuiModel)
+	got := m2.(model)
 	if got.reviewFixPanelFocused {
 		t.Error("Expected reviewFixPanelFocused to be false after Tab")
 	}
 
 	// Tab again shifts focus back to fix panel
 	m3, _ := got.handleKeyMsg(tea.KeyMsg{Type: tea.KeyTab})
-	got2 := m3.(tuiModel)
+	got2 := m3.(model)
 	if !got2.reviewFixPanelFocused {
 		t.Error("Expected reviewFixPanelFocused to be true after second Tab")
 	}
 }
 
 func TestReviewFixPanelTextInput(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.reviewFixPanelOpen = true
 	m.reviewFixPanelFocused = true
 
 	for _, ch := range "hello" {
 		m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
-		m = m2.(tuiModel)
+		m = m2.(model)
 	}
 
 	if m.fixPromptText != "hello" {
@@ -2231,68 +2231,68 @@ func TestReviewFixPanelTextInput(t *testing.T) {
 }
 
 func TestReviewFixPanelTextNotCapturedWhenUnfocused(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.reviewFixPanelOpen = true
 	m.reviewFixPanelFocused = false // review has focus
 
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	got := m2.(tuiModel)
+	got := m2.(model)
 	if got.fixPromptText != "" {
 		t.Errorf("Expected fixPromptText to remain empty, got %q", got.fixPromptText)
 	}
 }
 
 func TestReviewFixPanelEscWhenFocusedClosesPanel(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.reviewFixPanelOpen = true
 	m.reviewFixPanelFocused = true
 	m.fixPromptText = "some text"
 
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
-	got := m2.(tuiModel)
+	got := m2.(model)
 	if got.reviewFixPanelOpen {
 		t.Error("Expected panel to close on Esc when focused")
 	}
 	if got.fixPromptText != "" {
 		t.Error("Expected fixPromptText to be cleared on Esc")
 	}
-	if got.currentView != tuiViewReview {
-		t.Errorf("Expected to stay in tuiViewReview, got %v", got.currentView)
+	if got.currentView != viewReview {
+		t.Errorf("Expected to stay in viewReview, got %v", got.currentView)
 	}
 }
 
 func TestReviewFixPanelEscWhenUnfocusedClosesPanel(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.reviewFixPanelOpen = true
 	m.reviewFixPanelFocused = false // review has focus
 	done := storage.JobStatusDone
 	m.currentReview = &storage.Review{Job: &storage.ReviewJob{Status: done}}
-	m.reviewFromView = tuiViewQueue
+	m.reviewFromView = viewQueue
 
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
-	got := m2.(tuiModel)
+	got := m2.(model)
 	if got.reviewFixPanelOpen {
 		t.Error("Expected panel to close on Esc when unfocused")
 	}
 	// Should stay in review view (not navigate back to queue)
-	if got.currentView != tuiViewReview {
-		t.Errorf("Expected to stay in tuiViewReview, got %v", got.currentView)
+	if got.currentView != viewReview {
+		t.Errorf("Expected to stay in viewReview, got %v", got.currentView)
 	}
 }
 
 func TestReviewFixPanelPendingConsumedOnLoad(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.reviewFixPanelPending = true
 	m.fixPromptJobID = 5
 	m.selectedJobID = 5
 
 	review := &storage.Review{ID: 1, JobID: 5}
-	msg := tuiReviewMsg{review: review, jobID: 5}
+	msg := reviewMsg{review: review, jobID: 5}
 	m2, _ := m.Update(msg)
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if got.reviewFixPanelPending {
 		t.Error("Expected reviewFixPanelPending to be cleared")
@@ -2309,14 +2309,14 @@ func TestReviewFixPanelEnterSubmitsAndNavigatesToTasks(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1})
 	})
-	m.currentView = tuiViewReview
+	m.currentView = viewReview
 	m.reviewFixPanelOpen = true
 	m.reviewFixPanelFocused = true
 	m.fixPromptJobID = 1
 	m.fixPromptText = "fix the lint errors"
 
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEnter})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if got.reviewFixPanelOpen {
 		t.Error("Expected panel to close on Enter")
@@ -2327,20 +2327,20 @@ func TestReviewFixPanelEnterSubmitsAndNavigatesToTasks(t *testing.T) {
 	if got.fixPromptJobID != 0 {
 		t.Errorf("Expected fixPromptJobID to be cleared, got %d", got.fixPromptJobID)
 	}
-	if got.currentView != tuiViewTasks {
-		t.Errorf("Expected navigation to tuiViewTasks, got %v", got.currentView)
+	if got.currentView != viewTasks {
+		t.Errorf("Expected navigation to viewTasks, got %v", got.currentView)
 	}
 }
 
 func TestReviewFixPanelBackspaceDeletesRune(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	m.reviewFixPanelOpen = true
 	m.reviewFixPanelFocused = true
 	m.fixPromptText = "hello"
 
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyBackspace})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if got.fixPromptText != "hell" {
 		t.Errorf("Expected fixPromptText='hell' after backspace, got %q", got.fixPromptText)
@@ -2362,13 +2362,13 @@ func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
 	})
 	done := storage.JobStatusDone
 	job := storage.ReviewJob{ID: 42, Status: done}
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{job}
 	m.selectedIdx = 0
 	m.selectedJobID = 42
 
 	m2, cmd := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if !got.reviewFixPanelPending {
 		t.Error("Expected reviewFixPanelPending to be true after F from queue")
@@ -2382,8 +2382,8 @@ func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
 }
 
 func TestFixPanelClosedOnReviewNavNext(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	done := storage.JobStatusDone
 	job1 := storage.ReviewJob{ID: 1, Status: done}
 	job2 := storage.ReviewJob{ID: 2, Status: done}
@@ -2400,7 +2400,7 @@ func TestFixPanelClosedOnReviewNavNext(t *testing.T) {
 
 	// Navigate to next review (right/j)
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if got.reviewFixPanelOpen {
 		t.Error("Expected fix panel to be closed after navigating to next review")
@@ -2414,8 +2414,8 @@ func TestFixPanelClosedOnReviewNavNext(t *testing.T) {
 }
 
 func TestFixPanelClosedOnReviewNavPrev(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	done := storage.JobStatusDone
 	job1 := storage.ReviewJob{ID: 1, Status: done}
 	job2 := storage.ReviewJob{ID: 2, Status: done}
@@ -2432,7 +2432,7 @@ func TestFixPanelClosedOnReviewNavPrev(t *testing.T) {
 
 	// Navigate to previous review (left/k)
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if got.reviewFixPanelOpen {
 		t.Error("Expected fix panel to be closed after navigating to prev review")
@@ -2443,8 +2443,8 @@ func TestFixPanelClosedOnReviewNavPrev(t *testing.T) {
 }
 
 func TestFixPanelClosedOnQuitFromReview(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	done := storage.JobStatusDone
 	job := storage.ReviewJob{ID: 1, Status: done}
 	m.currentReview = &storage.Review{JobID: 1, Job: &job}
@@ -2458,7 +2458,7 @@ func TestFixPanelClosedOnQuitFromReview(t *testing.T) {
 	m.fixPromptText = "instructions"
 
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if got.reviewFixPanelOpen {
 		t.Error("Expected fix panel to be closed after q from review")
@@ -2466,22 +2466,22 @@ func TestFixPanelClosedOnQuitFromReview(t *testing.T) {
 	if got.fixPromptJobID != 0 {
 		t.Errorf("Expected fixPromptJobID=0, got %d", got.fixPromptJobID)
 	}
-	if got.currentView == tuiViewReview {
+	if got.currentView == viewReview {
 		t.Error("Expected to leave review view")
 	}
 }
 
 func TestFixPanelPendingNotConsumedByWrongReview(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.reviewFixPanelPending = true
 	m.fixPromptJobID = 5
 	m.selectedJobID = 10
 
 	// A review for job 10 loads, but pending was for job 5
 	review := &storage.Review{ID: 2, JobID: 10}
-	msg := tuiReviewMsg{review: review, jobID: 10}
+	msg := reviewMsg{review: review, jobID: 10}
 	m2, _ := m.Update(msg)
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if got.reviewFixPanelOpen {
 		t.Error("Panel should not open for a different job than pending")
@@ -2493,16 +2493,16 @@ func TestFixPanelPendingNotConsumedByWrongReview(t *testing.T) {
 }
 
 func TestFixPanelPendingClearedOnStaleFetch(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.reviewFixPanelPending = true
 	m.fixPromptJobID = 5
 	m.selectedJobID = 10 // User navigated away
 
 	// Stale review for job 5 arrives after user moved to job 10
 	review := &storage.Review{ID: 1, JobID: 5}
-	msg := tuiReviewMsg{review: review, jobID: 5}
+	msg := reviewMsg{review: review, jobID: 5}
 	m2, _ := m.Update(msg)
-	got := m2.(tuiModel)
+	got := m2.(model)
 
 	if got.reviewFixPanelPending {
 		t.Error("Stale fetch should clear pending flag")
@@ -2516,8 +2516,8 @@ func TestFixPanelPendingClearedOnStaleFetch(t *testing.T) {
 }
 
 func TestFixPanelClosedOnPromptKey(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	done := storage.JobStatusDone
 	job := storage.ReviewJob{ID: 1, Status: done}
 	m.currentReview = &storage.Review{
@@ -2537,10 +2537,10 @@ func TestFixPanelClosedOnPromptKey(t *testing.T) {
 
 	// Press 'p' to switch to prompt view
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
-	if got.currentView != tuiViewPrompt {
-		t.Errorf("Expected tuiViewPrompt, got %v", got.currentView)
+	if got.currentView != viewKindPrompt {
+		t.Errorf("Expected viewKindPrompt, got %v", got.currentView)
 	}
 	if got.reviewFixPanelOpen {
 		t.Error("Expected fix panel to be closed when switching to prompt view")
@@ -2551,8 +2551,8 @@ func TestFixPanelClosedOnPromptKey(t *testing.T) {
 }
 
 func TestFixPanelPendingClearedOnEscFromReview(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewReview
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewReview
 	done := storage.JobStatusDone
 	job := storage.ReviewJob{ID: 1, Status: done}
 	m.currentReview = &storage.Review{JobID: 1, Job: &job}
@@ -2565,9 +2565,9 @@ func TestFixPanelPendingClearedOnEscFromReview(t *testing.T) {
 	m.fixPromptJobID = 1
 
 	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
-	got := m2.(tuiModel)
+	got := m2.(model)
 
-	if got.currentView == tuiViewReview {
+	if got.currentView == viewReview {
 		t.Error("Expected to leave review view on Esc")
 	}
 	if got.reviewFixPanelPending {
@@ -2583,7 +2583,7 @@ func TestTUIRenderViews(t *testing.T) {
 
 	tests := []struct {
 		name                      string
-		view                      tuiView
+		view                      viewKind
 		branch                    string
 		review                    *storage.Review
 		wantContains              []string
@@ -2594,7 +2594,7 @@ func TestTUIRenderViews(t *testing.T) {
 	}{
 		{
 			name:   "review view with branch and addressed",
-			view:   tuiViewReview,
+			view:   viewReview,
 			branch: "feature/test",
 			review: &storage.Review{
 				ID:        10,
@@ -2611,7 +2611,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name: "review view with model",
-			view: tuiViewReview,
+			view: viewReview,
 			review: &storage.Review{
 				ID:     10,
 				Agent:  "codex",
@@ -2628,7 +2628,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name: "review view without model",
-			view: tuiViewReview,
+			view: viewReview,
 			review: &storage.Review{
 				ID:     10,
 				Agent:  "codex",
@@ -2646,7 +2646,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name: "prompt view with model",
-			view: tuiViewPrompt,
+			view: viewKindPrompt,
 			review: &storage.Review{
 				ID:     10,
 				Agent:  "codex",
@@ -2662,7 +2662,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name: "prompt view without model",
-			view: tuiViewPrompt,
+			view: viewKindPrompt,
 			review: &storage.Review{
 				ID:     10,
 				Agent:  "codex",
@@ -2679,7 +2679,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name:   "review view no branch for range",
-			view:   tuiViewReview,
+			view:   viewReview,
 			branch: "",
 			review: &storage.Review{
 				ID:     10,
@@ -2696,7 +2696,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name: "review view no blank line without verdict",
-			view: tuiViewReview,
+			view: viewReview,
 			review: &storage.Review{
 				ID:     10,
 				Output: "Line 1\nLine 2\nLine 3",
@@ -2713,7 +2713,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name: "review view verdict on line 2",
-			view: tuiViewReview,
+			view: viewReview,
 			review: &storage.Review{
 				ID:     10,
 				Output: "Line 1\nLine 2\nLine 3",
@@ -2730,7 +2730,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name: "review view addressed without verdict",
-			view: tuiViewReview,
+			view: viewReview,
 			review: &storage.Review{
 				ID:        10,
 				Output:    "Line 1\n\nLine 2\n\nLine 3",
@@ -2749,7 +2749,7 @@ func TestTUIRenderViews(t *testing.T) {
 		},
 		{
 			name:   "failed job no branch shown",
-			view:   tuiViewReview,
+			view:   viewReview,
 			branch: "",
 			review: &storage.Review{
 				Agent:  "codex",
@@ -2820,7 +2820,7 @@ func TestTUILogOutputTable(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		initialView      tuiView
+		initialView      viewKind
 		initialJobStatus storage.JobStatus
 		initialJobError  string
 		initialLogLines  []logLine
@@ -2830,9 +2830,9 @@ func TestTUILogOutputTable(t *testing.T) {
 		initialOffset    int64
 		initialFmtr      *streamfmt.Formatter
 
-		msg tuiLogOutputMsg
+		msg logOutputMsg
 
-		wantView       tuiView
+		wantView       viewKind
 		wantLinesLen   int
 		wantLines      []string
 		wantLinesNil   bool
@@ -2845,96 +2845,96 @@ func TestTUILogOutputTable(t *testing.T) {
 	}{
 		{
 			name:             "updates formatter from message",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
-			msg:              tuiLogOutputMsg{fmtr: dummyFmtr, hasMore: true, append: true},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{fmtr: dummyFmtr, hasMore: true, append: true},
+			wantView:         viewLog,
 			wantFmtr:         dummyFmtr,
 			wantStreaming:    true,
 			wantLinesNil:     true,
 		},
 		{
 			name:             "persists formatter when message has none",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialFmtr:      dummyFmtr,
-			msg:              tuiLogOutputMsg{hasMore: true, append: true},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{hasMore: true, append: true},
+			wantView:         viewLog,
 			wantFmtr:         dummyFmtr,
 			wantStreaming:    true,
 			wantLinesNil:     true,
 		},
 		{
 			name:             "preserves lines on empty response",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialFetchSeq:  1,
 			initialLogLines:  []logLine{{text: "Line 1"}, {text: "Line 2"}, {text: "Line 3"}},
-			msg:              tuiLogOutputMsg{lines: []logLine{}, hasMore: false, err: nil, append: true, seq: 1},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{lines: []logLine{}, hasMore: false, err: nil, append: true, seq: 1},
+			wantView:         viewLog,
 			wantLinesLen:     3,
 			wantLines:        []string{"Line 1", "Line 2", "Line 3"},
 			wantStreaming:    false,
 		},
 		{
 			name:             "updates lines when streaming",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialLogLines:  []logLine{{text: "Old line"}},
-			msg:              tuiLogOutputMsg{lines: []logLine{{text: "Old line"}, {text: "New line"}}, hasMore: true, err: nil},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{lines: []logLine{{text: "Old line"}, {text: "New line"}}, hasMore: true, err: nil},
+			wantView:         viewLog,
 			wantLinesLen:     2,
 			wantLines:        []string{"Old line", "New line"},
 			wantStreaming:    true,
 		},
 		{
 			name:             "err no log shows job error",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialJobStatus: storage.JobStatusFailed,
 			initialJobError:  "agent timeout after 300s",
 			initialStreaming: false,
-			msg:              tuiLogOutputMsg{err: errNoLog},
-			wantView:         tuiViewQueue,
+			msg:              logOutputMsg{err: errNoLog},
+			wantView:         viewQueue,
 			wantFlashMsg:     "agent timeout",
 			wantLinesNil:     true,
 		},
 		{
 			name:             "err no log generic for non failed",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialJobStatus: storage.JobStatusDone,
-			msg:              tuiLogOutputMsg{err: errNoLog},
-			wantView:         tuiViewQueue,
+			msg:              logOutputMsg{err: errNoLog},
+			wantView:         viewQueue,
 			wantFlashMsg:     "No log available for this job",
 			wantLinesNil:     true,
 		},
 		{
 			name:             "running job keeps waiting",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialLogLines:  nil,
-			msg:              tuiLogOutputMsg{lines: nil, hasMore: true},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{lines: nil, hasMore: true},
+			wantView:         viewLog,
 			wantLinesLen:     0,
 			wantLinesNil:     true,
 			wantStreaming:    true,
 		},
 		{
 			name:            "ignored when not in log view",
-			initialView:     tuiViewQueue,
+			initialView:     viewQueue,
 			initialLogLines: []logLine{{text: "Previous session line"}},
-			msg:             tuiLogOutputMsg{lines: []logLine{{text: "Should be ignored"}}, hasMore: false, err: nil},
-			wantView:        tuiViewQueue,
+			msg:             logOutputMsg{lines: []logLine{{text: "Should be ignored"}}, hasMore: false, err: nil},
+			wantView:        viewQueue,
 			wantLinesLen:    1,
 			wantLines:       []string{"Previous session line"},
 		},
 		{
 			name:             "append mode",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialLogLines:  []logLine{{text: "Line 1"}, {text: "Line 2"}},
 			initialOffset:    100,
-			msg:              tuiLogOutputMsg{lines: []logLine{{text: "Line 3"}, {text: "Line 4"}}, hasMore: true, newOffset: 200, append: true},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{lines: []logLine{{text: "Line 3"}, {text: "Line 4"}}, hasMore: true, newOffset: 200, append: true},
+			wantView:         viewLog,
 			wantLinesLen:     4,
 			wantLines:        []string{"Line 1", "Line 2", "Line 3", "Line 4"},
 			wantStreaming:    true,
@@ -2942,12 +2942,12 @@ func TestTUILogOutputTable(t *testing.T) {
 		},
 		{
 			name:             "append no new lines",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialLogLines:  []logLine{{text: "Existing"}},
 			initialOffset:    100,
-			msg:              tuiLogOutputMsg{hasMore: true, newOffset: 100, append: true},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{hasMore: true, newOffset: 100, append: true},
+			wantView:         viewLog,
 			wantLinesLen:     1,
 			wantLines:        []string{"Existing"},
 			wantStreaming:    true,
@@ -2955,11 +2955,11 @@ func TestTUILogOutputTable(t *testing.T) {
 		},
 		{
 			name:             "replace mode",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: false,
 			initialLogLines:  []logLine{{text: "Old line 1"}, {text: "Old line 2"}},
-			msg:              tuiLogOutputMsg{lines: []logLine{{text: "New line 1"}}, hasMore: false, newOffset: 50, append: false},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{lines: []logLine{{text: "New line 1"}}, hasMore: false, newOffset: 50, append: false},
+			wantView:         viewLog,
 			wantLinesLen:     1,
 			wantLines:        []string{"New line 1"},
 			wantStreaming:    false,
@@ -2967,13 +2967,13 @@ func TestTUILogOutputTable(t *testing.T) {
 		},
 		{
 			name:             "stale seq dropped",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialFetchSeq:  5,
 			initialLoading:   true,
 			initialLogLines:  []logLine{{text: "Current"}},
-			msg:              tuiLogOutputMsg{lines: []logLine{{text: "Stale data"}}, hasMore: true, newOffset: 999, append: false, seq: 3},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{lines: []logLine{{text: "Stale data"}}, hasMore: true, newOffset: 999, append: false, seq: 3},
+			wantView:         viewLog,
 			wantLinesLen:     1,
 			wantLines:        []string{"Current"},
 			wantStreaming:    true,
@@ -2982,13 +2982,13 @@ func TestTUILogOutputTable(t *testing.T) {
 		},
 		{
 			name:             "offset reset",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialFetchSeq:  1,
 			initialOffset:    500,
 			initialLogLines:  []logLine{{text: "Old line 1"}, {text: "Old line 2"}},
-			msg:              tuiLogOutputMsg{lines: []logLine{{text: "Reset line 1"}}, hasMore: true, newOffset: 100, append: false, seq: 1},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{lines: []logLine{{text: "Reset line 1"}}, hasMore: true, newOffset: 100, append: false, seq: 1},
+			wantView:         viewLog,
 			wantLinesLen:     1,
 			wantLines:        []string{"Reset line 1"},
 			wantStreaming:    true,
@@ -2996,12 +2996,12 @@ func TestTUILogOutputTable(t *testing.T) {
 		},
 		{
 			name:             "replace mode empty clears stale",
-			initialView:      tuiViewLog,
+			initialView:      viewLog,
 			initialStreaming: true,
 			initialFetchSeq:  1,
 			initialLogLines:  []logLine{{text: "Stale line 1"}, {text: "Stale line 2"}},
-			msg:              tuiLogOutputMsg{lines: nil, hasMore: false, newOffset: 0, append: false, seq: 1},
-			wantView:         tuiViewLog,
+			msg:              logOutputMsg{lines: nil, hasMore: false, newOffset: 0, append: false, seq: 1},
+			wantView:         viewLog,
 			wantLinesLen:     0,
 			wantLinesEmpty:   true,
 			wantStreaming:    false,
@@ -3010,10 +3010,10 @@ func TestTUILogOutputTable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newTuiModel("http://localhost", WithExternalIODisabled())
+			m := newModel("http://localhost", withExternalIODisabled())
 			m.currentView = tt.initialView
 			m.logJobID = 42
-			m.logFromView = tuiViewQueue
+			m.logFromView = viewQueue
 			m.logStreaming = tt.initialStreaming
 			m.logFetchSeq = tt.initialFetchSeq
 			m.logLoading = tt.initialLoading
@@ -3163,7 +3163,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 				},
 			}
 
-			m := setupRenderModel(tuiViewReview, review, withModelBranch(tt.branch))
+			m := setupRenderModel(viewReview, review, withModelBranch(tt.branch))
 			m.width = tt.width
 			m.height = tt.height
 

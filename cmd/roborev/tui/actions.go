@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"errors"
@@ -57,21 +57,21 @@ func formatClipboardContent(review *storage.Review) string {
 	return header + review.Output
 }
 
-func (m tuiModel) copyToClipboard(review *storage.Review) tea.Cmd {
+func (m model) copyToClipboard(review *storage.Review) tea.Cmd {
 	view := m.currentView // Capture view at trigger time
 	content := formatClipboardContent(review)
 	return func() tea.Msg {
 		if content == "" {
-			return tuiClipboardResultMsg{err: fmt.Errorf("no content to copy"), view: view}
+			return clipboardResultMsg{err: fmt.Errorf("no content to copy"), view: view}
 		}
 		err := m.clipboard.WriteText(content)
-		return tuiClipboardResultMsg{err: err, view: view}
+		return clipboardResultMsg{err: err, view: view}
 	}
 }
 
 // postAddressed sends an addressed state change to the server.
 // Translates "not found" to a context-specific error message.
-func (m tuiModel) postAddressed(jobID int64, newState bool, notFoundMsg string) error {
+func (m model) postAddressed(jobID int64, newState bool, notFoundMsg string) error {
 	err := m.postJSON("/api/review/address", map[string]any{
 		"job_id":    jobID,
 		"addressed": newState,
@@ -85,62 +85,62 @@ func (m tuiModel) postAddressed(jobID int64, newState bool, notFoundMsg string) 
 	return nil
 }
 
-func (m tuiModel) addressReview(reviewID, jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
+func (m model) addressReview(reviewID, jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		err := m.postAddressed(jobID, newState, "review not found")
-		return tuiAddressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, seq: seq, err: err}
+		return addressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, seq: seq, err: err}
 	}
 }
 
 // addressReviewInBackground updates addressed status by job ID.
 // Used for optimistic updates from queue view - UI already updated, this syncs to server.
-// On error, returns tuiAddressedResultMsg with oldState for rollback.
-func (m tuiModel) addressReviewInBackground(jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
+// On error, returns addressedResultMsg with oldState for rollback.
+func (m model) addressReviewInBackground(jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		err := m.postAddressed(jobID, newState, "no review for this job")
-		return tuiAddressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
+		return addressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
 	}
 }
 
-func (m tuiModel) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd {
+func (m model) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd {
 	return func() tea.Msg {
 		newState := currentState == nil || !*currentState
 
 		if err := m.postAddressed(jobID, newState, "no review for this job"); err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
-		return tuiAddressedMsg(newState)
+		return addressedMsg(newState)
 	}
 }
 
 // markParentAddressed marks the parent review job as addressed after a fix is applied.
-func (m tuiModel) markParentAddressed(parentJobID int64) tea.Cmd {
+func (m model) markParentAddressed(parentJobID int64) tea.Cmd {
 	return func() tea.Msg {
 		err := m.postAddressed(parentJobID, true, "parent review not found")
 		if err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
 		return nil
 	}
 }
 
 // cancelJob sends a cancel request to the server
-func (m tuiModel) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishedAt *time.Time) tea.Cmd {
+func (m model) cancelJob(jobID int64, oldStatus storage.JobStatus, oldFinishedAt *time.Time) tea.Cmd {
 	return func() tea.Msg {
 		err := m.postJSON("/api/job/cancel", map[string]any{"job_id": jobID}, nil)
-		return tuiCancelResultMsg{jobID: jobID, oldState: oldStatus, oldFinishedAt: oldFinishedAt, err: err}
+		return cancelResultMsg{jobID: jobID, oldState: oldStatus, oldFinishedAt: oldFinishedAt, err: err}
 	}
 }
 
 // rerunJob sends a rerun request to the server for failed/canceled jobs
-func (m tuiModel) rerunJob(jobID int64, oldStatus storage.JobStatus, oldStartedAt, oldFinishedAt *time.Time, oldError string) tea.Cmd {
+func (m model) rerunJob(jobID int64, oldStatus storage.JobStatus, oldStartedAt, oldFinishedAt *time.Time, oldError string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.postJSON("/api/job/rerun", map[string]any{"job_id": jobID}, nil)
-		return tuiRerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: err}
+		return rerunResultMsg{jobID: jobID, oldState: oldStatus, oldStartedAt: oldStartedAt, oldFinishedAt: oldFinishedAt, oldError: oldError, err: err}
 	}
 }
 
-func (m tuiModel) submitComment(jobID int64, text string) tea.Cmd {
+func (m model) submitComment(jobID int64, text string) tea.Cmd {
 	return func() tea.Msg {
 		commenter := os.Getenv("USER")
 		if commenter == "" {
@@ -153,15 +153,15 @@ func (m tuiModel) submitComment(jobID int64, text string) tea.Cmd {
 			"comment":   strings.TrimSpace(text),
 		}, nil)
 		if err != nil {
-			return tuiCommentResultMsg{jobID: jobID, err: fmt.Errorf("submit comment: %w", err)}
+			return commentResultMsg{jobID: jobID, err: fmt.Errorf("submit comment: %w", err)}
 		}
 
-		return tuiCommentResultMsg{jobID: jobID, err: nil}
+		return commentResultMsg{jobID: jobID, err: nil}
 	}
 }
 
 // triggerFix triggers a background fix job for a parent review.
-func (m tuiModel) triggerFix(parentJobID int64, prompt, gitRef string) tea.Cmd {
+func (m model) triggerFix(parentJobID int64, prompt, gitRef string) tea.Cmd {
 	return func() tea.Msg {
 		req := map[string]any{
 			"parent_job_id": parentJobID,
@@ -175,16 +175,16 @@ func (m tuiModel) triggerFix(parentJobID int64, prompt, gitRef string) tea.Cmd {
 		var job storage.ReviewJob
 		err := m.postJSON("/api/job/fix", req, &job)
 		if err != nil {
-			return tuiFixTriggerResultMsg{err: err}
+			return fixTriggerResultMsg{err: err}
 		}
-		return tuiFixTriggerResultMsg{job: &job}
+		return fixTriggerResultMsg{job: &job}
 	}
 }
 
 // applyFixPatch fetches and applies the patch for a completed fix job.
 // It resolves the target directory from the branch's worktree, or signals
 // needWorktree if the branch is not checked out anywhere.
-func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
+func (m model) applyFixPatch(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		patch, jobDetail, msg := m.fetchPatchAndJob(jobID)
 		if msg != nil {
@@ -195,10 +195,10 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 		// apply the patch there instead of the main repo path.
 		targetDir, checkedOut, wtErr := git.WorktreePathForBranch(jobDetail.RepoPath, jobDetail.Branch)
 		if wtErr != nil {
-			return tuiApplyPatchResultMsg{jobID: jobID, err: wtErr}
+			return applyPatchResultMsg{jobID: jobID, err: wtErr}
 		}
 		if !checkedOut {
-			return tuiApplyPatchResultMsg{
+			return applyPatchResultMsg{
 				jobID:        jobID,
 				needWorktree: true,
 				branch:       jobDetail.Branch,
@@ -211,7 +211,7 @@ func (m tuiModel) applyFixPatch(jobID int64) tea.Cmd {
 
 // applyFixPatchInWorktree creates a temporary worktree for the branch, applies the
 // patch there, commits, and removes the worktree. The commit persists on the branch.
-func (m tuiModel) applyFixPatchInWorktree(jobID int64) tea.Cmd {
+func (m model) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		patch, jobDetail, msg := m.fetchPatchAndJob(jobID)
 		if msg != nil {
@@ -221,7 +221,7 @@ func (m tuiModel) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 		// Create a temporary worktree on the branch.
 		wtDir, err := os.MkdirTemp("", "roborev-apply-")
 		if err != nil {
-			return tuiApplyPatchResultMsg{jobID: jobID, err: fmt.Errorf("create temp dir: %w", err)}
+			return applyPatchResultMsg{jobID: jobID, err: fmt.Errorf("create temp dir: %w", err)}
 		}
 
 		removeWorktree := func() {
@@ -234,7 +234,7 @@ func (m tuiModel) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 		cmd := exec.Command("git", "-C", jobDetail.RepoPath, "worktree", "add", wtDir, jobDetail.Branch)
 		if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 			os.RemoveAll(wtDir)
-			return tuiApplyPatchResultMsg{jobID: jobID,
+			return applyPatchResultMsg{jobID: jobID,
 				err: fmt.Errorf("git worktree add: %w: %s", cmdErr, out)}
 		}
 
@@ -253,30 +253,30 @@ func (m tuiModel) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 
 // fetchPatchAndJob fetches the patch content and job details for a fix job.
 // Returns nil msg on success; a non-nil msg should be returned to the TUI immediately.
-func (m tuiModel) fetchPatchAndJob(jobID int64) (string, *storage.ReviewJob, *tuiApplyPatchResultMsg) {
+func (m model) fetchPatchAndJob(jobID int64) (string, *storage.ReviewJob, *applyPatchResultMsg) {
 	url := m.serverAddr + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
 	resp, err := m.client.Get(url)
 	if err != nil {
-		return "", nil, &tuiApplyPatchResultMsg{jobID: jobID, err: err}
+		return "", nil, &applyPatchResultMsg{jobID: jobID, err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", nil, &tuiApplyPatchResultMsg{jobID: jobID, err: fmt.Errorf("no patch available")}
+		return "", nil, &applyPatchResultMsg{jobID: jobID, err: fmt.Errorf("no patch available")}
 	}
 
 	patchData, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, &tuiApplyPatchResultMsg{jobID: jobID, err: err}
+		return "", nil, &applyPatchResultMsg{jobID: jobID, err: err}
 	}
 	patch := string(patchData)
 	if patch == "" {
-		return "", nil, &tuiApplyPatchResultMsg{jobID: jobID, err: fmt.Errorf("empty patch")}
+		return "", nil, &applyPatchResultMsg{jobID: jobID, err: fmt.Errorf("empty patch")}
 	}
 
 	jobDetail, jErr := m.fetchJobByID(jobID)
 	if jErr != nil {
-		return "", nil, &tuiApplyPatchResultMsg{jobID: jobID, err: jErr}
+		return "", nil, &applyPatchResultMsg{jobID: jobID, err: jErr}
 	}
 
 	return patch, jobDetail, nil
@@ -284,19 +284,19 @@ func (m tuiModel) fetchPatchAndJob(jobID int64) (string, *storage.ReviewJob, *tu
 
 // checkApplyCommitPatch validates, applies, commits, and marks a patch as applied.
 // Shared by both applyFixPatch (existing worktree) and applyFixPatchInWorktree (temp worktree).
-func (m tuiModel) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, targetDir, patch string) tuiApplyPatchResultMsg {
+func (m model) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, targetDir, patch string) applyPatchResultMsg {
 	// Check for uncommitted changes in files the patch touches
 	patchedFiles, pfErr := patchFiles(patch)
 	if pfErr != nil {
-		return tuiApplyPatchResultMsg{jobID: jobID, err: pfErr}
+		return applyPatchResultMsg{jobID: jobID, err: pfErr}
 	}
 	dirty, dirtyErr := dirtyPatchFiles(targetDir, patchedFiles)
 	if dirtyErr != nil {
-		return tuiApplyPatchResultMsg{jobID: jobID,
+		return applyPatchResultMsg{jobID: jobID,
 			err: fmt.Errorf("checking dirty files: %w", dirtyErr)}
 	}
 	if len(dirty) > 0 {
-		return tuiApplyPatchResultMsg{jobID: jobID,
+		return applyPatchResultMsg{jobID: jobID,
 			err: fmt.Errorf("uncommitted changes in patch files: %s — stash or commit first", strings.Join(dirty, ", "))}
 	}
 
@@ -304,14 +304,14 @@ func (m tuiModel) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJo
 	if err := worktree.CheckPatch(targetDir, patch); err != nil {
 		var conflictErr *worktree.PatchConflictError
 		if errors.As(err, &conflictErr) {
-			return tuiApplyPatchResultMsg{jobID: jobID, rebase: true, err: err}
+			return applyPatchResultMsg{jobID: jobID, rebase: true, err: err}
 		}
-		return tuiApplyPatchResultMsg{jobID: jobID, err: err}
+		return applyPatchResultMsg{jobID: jobID, err: err}
 	}
 
 	// Apply the patch
 	if err := worktree.ApplyPatch(targetDir, patch); err != nil {
-		return tuiApplyPatchResultMsg{jobID: jobID, err: err}
+		return applyPatchResultMsg{jobID: jobID, err: err}
 	}
 
 	var parentJobID int64
@@ -326,17 +326,17 @@ func (m tuiModel) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJo
 		commitMsg = fmt.Sprintf("fix: apply roborev fix for %s (job #%d)", ref, jobID)
 	}
 	if err := commitPatch(targetDir, patch, commitMsg); err != nil {
-		return tuiApplyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
+		return applyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
 			commitFailed: true, err: fmt.Errorf("patch applied but commit failed: %w", err)}
 	}
 
 	// Mark the fix job as applied on the server
 	if err := m.postJSON("/api/job/applied", map[string]any{"job_id": jobID}, nil); err != nil {
-		return tuiApplyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
+		return applyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
 			err: fmt.Errorf("patch applied and committed but failed to mark applied: %w", err)}
 	}
 
-	return tuiApplyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true}
+	return applyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true}
 }
 
 // commitPatch stages only the files touched by patch and commits them.
@@ -415,12 +415,12 @@ func patchFiles(patch string) ([]string, error) {
 
 // triggerRebase triggers a new fix job that re-applies a stale patch to the current HEAD.
 // The server looks up the stale patch from the DB, avoiding large client-to-server transfers.
-func (m tuiModel) triggerRebase(staleJobID int64) tea.Cmd {
+func (m model) triggerRebase(staleJobID int64) tea.Cmd {
 	return func() tea.Msg {
 		// Find the parent job ID (the original review this fix was for)
 		staleJob, fetchErr := m.fetchJobByID(staleJobID)
 		if fetchErr != nil {
-			return tuiFixTriggerResultMsg{err: fmt.Errorf("stale job %d not found: %w", staleJobID, fetchErr)}
+			return fixTriggerResultMsg{err: fmt.Errorf("stale job %d not found: %w", staleJobID, fetchErr)}
 		}
 
 		// Use the original parent job ID if this was already a fix job
@@ -436,7 +436,7 @@ func (m tuiModel) triggerRebase(staleJobID int64) tea.Cmd {
 		}
 		var newJob storage.ReviewJob
 		if err := m.postJSON("/api/job/fix", req, &newJob); err != nil {
-			return tuiFixTriggerResultMsg{err: fmt.Errorf("trigger rebase: %w", err)}
+			return fixTriggerResultMsg{err: fmt.Errorf("trigger rebase: %w", err)}
 		}
 		// Mark the stale job as rebased now that the new job exists.
 		// Skip if already rebased (e.g. retry via R on a rebased job).
@@ -453,6 +453,6 @@ func (m tuiModel) triggerRebase(staleJobID int64) tea.Cmd {
 				)
 			}
 		}
-		return tuiFixTriggerResultMsg{job: &newJob, warning: warning}
+		return fixTriggerResultMsg{job: &newJob, warning: warning}
 	}
 }

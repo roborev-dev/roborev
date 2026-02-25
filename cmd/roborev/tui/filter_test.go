@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"strings"
@@ -9,9 +9,9 @@ import (
 )
 
 // Helper function to initialize model for filter tests
-func initFilterModel(nodes []treeFilterNode) tuiModel {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+func initFilterModel(nodes []treeFilterNode) model {
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	if nodes != nil {
 		setupFilterTree(&m, nodes)
 	}
@@ -28,7 +28,7 @@ func makeNode(name string, count int) treeFilterNode {
 }
 
 func TestTUIFilterOpenModal(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a")),
@@ -37,12 +37,12 @@ func TestTUIFilterOpenModal(t *testing.T) {
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 
 	m2, cmd := pressKey(m, 'f')
 
-	if m2.currentView != tuiViewFilter {
-		t.Errorf("Expected tuiViewFilter, got %d", m2.currentView)
+	if m2.currentView != viewFilter {
+		t.Errorf("Expected viewFilter, got %d", m2.currentView)
 	}
 
 	if m2.filterTree != nil {
@@ -67,7 +67,7 @@ func TestTUIFilterReposMsg(t *testing.T) {
 		{name: "repo-b", count: 1},
 		{name: "repo-c", count: 1},
 	}
-	msg := tuiReposMsg{repos: repos}
+	msg := reposMsg{repos: repos}
 
 	m2, _ := updateModel(t, m, msg)
 
@@ -105,8 +105,8 @@ func TestTUIFilterSelectRepo(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEnter)
 
-	if m2.currentView != tuiViewQueue {
-		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
+	if m2.currentView != viewQueue {
+		t.Errorf("Expected viewQueue, got %d", m2.currentView)
 	}
 	if len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-a" {
 		t.Errorf("Expected activeRepoFilter=['/path/to/repo-a'], got %v", m2.activeRepoFilter)
@@ -128,8 +128,8 @@ func TestTUIFilterSelectAll(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEnter)
 
-	if m2.currentView != tuiViewQueue {
-		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
+	if m2.currentView != viewQueue {
+		t.Errorf("Expected viewQueue, got %d", m2.currentView)
 	}
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
@@ -150,7 +150,7 @@ func TestTUIFilterPreselectsCurrent(t *testing.T) {
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 1},
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 1},
 	}
-	msg := tuiReposMsg{repos: repos}
+	msg := reposMsg{repos: repos}
 
 	m2, _ := updateModel(t, m, msg)
 
@@ -168,7 +168,7 @@ func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
 		{name: "other", rootPaths: []string{"/path/c"}, count: 1},
 		{name: "multi", rootPaths: []string{"/path/a", "/path/b"}, count: 2},
 	}
-	m2, _ := updateModel(t, m, tuiReposMsg{repos: repos})
+	m2, _ := updateModel(t, m, reposMsg{repos: repos})
 
 	if m2.filterSelectedIdx != 2 {
 		t.Errorf("Expected filterSelectedIdx=2 (multi), got %d",
@@ -377,14 +377,14 @@ func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
 
 func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/repo1"))}
 	m.hasMore = true
 	m.loadingMore = false
 	m.loadingJobs = false
 	m.activeRepoFilter = []string{"/repo1", "/repo2"}
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.height = 10
 	m.heightDetected = false
 
@@ -407,15 +407,15 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 }
 
 func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	m.filterBranchMode = true
 
 	repos := []repoFilterItem{
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
 	}
-	msg := tuiReposMsg{repos: repos}
+	msg := reposMsg{repos: repos}
 
 	m2, cmd := updateModel(t, m, msg)
 
@@ -428,8 +428,8 @@ func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {
 }
 
 func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	m.filterBranchMode = true
 	m.activeRepoFilter = []string{"/path/to/repo-b"}
 	m.cwdRepoRoot = "/path/to/repo-a"
@@ -438,7 +438,7 @@ func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 3},
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
 	}
-	msg := tuiReposMsg{repos: repos}
+	msg := reposMsg{repos: repos}
 
 	m2, cmd := updateModel(t, m, msg)
 
@@ -454,8 +454,8 @@ func TestTUIBKeyUsesActiveRepoFilter(t *testing.T) {
 }
 
 func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	m.filterBranchMode = true
 	m.activeRepoFilter = []string{"/path/a", "/path/b"}
 	m.cwdRepoRoot = "/path/to/other"
@@ -464,7 +464,7 @@ func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
 		{name: "other", rootPaths: []string{"/path/to/other"}, count: 1},
 		{name: "multi-root", rootPaths: []string{"/path/a", "/path/b"}, count: 5},
 	}
-	msg := tuiReposMsg{repos: repos}
+	msg := reposMsg{repos: repos}
 
 	m2, cmd := updateModel(t, m, msg)
 
@@ -480,16 +480,16 @@ func TestTUIBKeyUsesMultiPathActiveRepoFilter(t *testing.T) {
 }
 
 func TestTUIFilterOpenSkipsBackfillWhenDone(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.branchBackfillDone = true
 	m.jobs = []storage.ReviewJob{makeJob(1)}
 	m.selectedIdx = 0
 
 	m2, cmd := pressKey(m, 'f')
 
-	if m2.currentView != tuiViewFilter {
-		t.Errorf("Expected tuiViewFilter, got %d", m2.currentView)
+	if m2.currentView != viewFilter {
+		t.Errorf("Expected viewFilter, got %d", m2.currentView)
 	}
 	if cmd == nil {
 		t.Error("Expected a command to be returned")

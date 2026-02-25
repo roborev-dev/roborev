@@ -1,66 +1,66 @@
-package main
+package tui
 
 import (
 	"github.com/roborev-dev/roborev/internal/storage"
 	"testing"
 )
 
-type testModelOption func(*tuiModel)
+type testModelOption func(*model)
 
-func withCurrentView(v tuiView) testModelOption {
-	return func(m *tuiModel) { m.currentView = v }
+func withCurrentView(v viewKind) testModelOption {
+	return func(m *model) { m.currentView = v }
 }
 
 func withTestJobs(jobs ...storage.ReviewJob) testModelOption {
-	return func(m *tuiModel) { m.jobs = jobs }
+	return func(m *model) { m.jobs = jobs }
 }
 
 func withSelection(idx int, jobID int64) testModelOption {
-	return func(m *tuiModel) {
+	return func(m *model) {
 		m.selectedIdx = idx
 		m.selectedJobID = jobID
 	}
 }
 
 func withActiveRepoFilter(f []string) testModelOption {
-	return func(m *tuiModel) { m.activeRepoFilter = f }
+	return func(m *model) { m.activeRepoFilter = f }
 }
 
 func withActiveBranchFilter(f string) testModelOption {
-	return func(m *tuiModel) { m.activeBranchFilter = f }
+	return func(m *model) { m.activeBranchFilter = f }
 }
 
 func withFilterStack(f ...string) testModelOption {
-	return func(m *tuiModel) { m.filterStack = f }
+	return func(m *model) { m.filterStack = f }
 }
 
 func withFilterSelectedIdx(idx int) testModelOption {
-	return func(m *tuiModel) { m.filterSelectedIdx = idx }
+	return func(m *model) { m.filterSelectedIdx = idx }
 }
 
 func withFilterTree(nodes []treeFilterNode) testModelOption {
-	return func(m *tuiModel) {
+	return func(m *model) {
 		m.filterTree = nodes
 		m.rebuildFilterFlatList()
 	}
 }
 
-func initTestModel(opts ...testModelOption) tuiModel {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+func initTestModel(opts ...testModelOption) model {
+	m := newModel("http://localhost", withExternalIODisabled())
 	for _, opt := range opts {
 		opt(&m)
 	}
 	return m
 }
 
-func assertSearch(t *testing.T, m tuiModel, expected string) {
+func assertSearch(t *testing.T, m model, expected string) {
 	t.Helper()
 	if m.filterSearch != expected {
 		t.Errorf("Expected search=%q, got %q", expected, m.filterSearch)
 	}
 }
 
-func countLoading(m *tuiModel) int {
+func countLoading(m *model) int {
 	n := 0
 	for _, node := range m.filterTree {
 		if node.loading {
@@ -70,7 +70,7 @@ func countLoading(m *tuiModel) int {
 	return n
 }
 
-func countLoaded(m *tuiModel) int {
+func countLoaded(m *model) int {
 	n := 0
 	for _, node := range m.filterTree {
 		if node.children != nil {

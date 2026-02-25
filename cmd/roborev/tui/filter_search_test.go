@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"errors"
@@ -84,18 +84,18 @@ func TestTUIFilterSearchSequential(t *testing.T) {
 
 func TestTUIFilterTypingSearch(t *testing.T) {
 	m := initTestModel(
-		withCurrentView(tuiViewFilter),
+		withCurrentView(viewFilter),
 		withFilterTree([]treeFilterNode{makeNode("repo-a", 5)}),
 		withFilterSelectedIdx(1),
 	)
 
 	steps := []struct {
-		action func(m tuiModel) (tuiModel, tea.Cmd)
-		assert func(t *testing.T, m tuiModel)
+		action func(m model) (model, tea.Cmd)
+		assert func(t *testing.T, m model)
 	}{
 		{
-			action: func(m tuiModel) (tuiModel, tea.Cmd) { return pressKey(m, 'a') },
-			assert: func(t *testing.T, m tuiModel) {
+			action: func(m model) (model, tea.Cmd) { return pressKey(m, 'a') },
+			assert: func(t *testing.T, m model) {
 				assertSearch(t, m, "a")
 				if m.filterSelectedIdx != 0 {
 					t.Errorf("Expected filterSelectedIdx reset to 0, got %d", m.filterSelectedIdx)
@@ -103,12 +103,12 @@ func TestTUIFilterTypingSearch(t *testing.T) {
 			},
 		},
 		{
-			action: func(m tuiModel) (tuiModel, tea.Cmd) { return pressKey(m, 'b') },
-			assert: func(t *testing.T, m tuiModel) { assertSearch(t, m, "ab") },
+			action: func(m model) (model, tea.Cmd) { return pressKey(m, 'b') },
+			assert: func(t *testing.T, m model) { assertSearch(t, m, "ab") },
 		},
 		{
-			action: func(m tuiModel) (tuiModel, tea.Cmd) { return pressSpecial(m, tea.KeyBackspace) },
-			assert: func(t *testing.T, m tuiModel) { assertSearch(t, m, "a") },
+			action: func(m model) (model, tea.Cmd) { return pressSpecial(m, tea.KeyBackspace) },
+			assert: func(t *testing.T, m model) { assertSearch(t, m, "a") },
 		},
 	}
 
@@ -194,29 +194,29 @@ func TestTUIFilterSearchByDisplayName(t *testing.T) {
 
 func TestTUIFilterBackspaceMultiByte(t *testing.T) {
 	m := initTestModel(
-		withCurrentView(tuiViewFilter),
+		withCurrentView(viewFilter),
 		withFilterTree([]treeFilterNode{makeNode("repo-a", 10)}),
 	)
 
 	steps := []struct {
-		action func(m tuiModel) (tuiModel, tea.Cmd)
-		assert func(t *testing.T, m tuiModel)
+		action func(m model) (model, tea.Cmd)
+		assert func(t *testing.T, m model)
 	}{
 		{
-			action: func(m tuiModel) (tuiModel, tea.Cmd) {
+			action: func(m model) (model, tea.Cmd) {
 				m, _ = pressKey(m, 'a')
 				m, _ = pressKeys(m, []rune("\xf0\x9f\x98\x8a"))
 				return pressKey(m, 'b')
 			},
-			assert: func(t *testing.T, m tuiModel) { assertSearch(t, m, "a\xf0\x9f\x98\x8ab") },
+			assert: func(t *testing.T, m model) { assertSearch(t, m, "a\xf0\x9f\x98\x8ab") },
 		},
 		{
-			action: func(m tuiModel) (tuiModel, tea.Cmd) { return pressSpecial(m, tea.KeyBackspace) },
-			assert: func(t *testing.T, m tuiModel) { assertSearch(t, m, "a\xf0\x9f\x98\x8a") },
+			action: func(m model) (model, tea.Cmd) { return pressSpecial(m, tea.KeyBackspace) },
+			assert: func(t *testing.T, m model) { assertSearch(t, m, "a\xf0\x9f\x98\x8a") },
 		},
 		{
-			action: func(m tuiModel) (tuiModel, tea.Cmd) { return pressSpecial(m, tea.KeyBackspace) },
-			assert: func(t *testing.T, m tuiModel) { assertSearch(t, m, "a") },
+			action: func(m model) (model, tea.Cmd) { return pressSpecial(m, tea.KeyBackspace) },
+			assert: func(t *testing.T, m model) { assertSearch(t, m, "a") },
 		},
 	}
 
@@ -243,7 +243,7 @@ func TestTUIRightArrowDuringSearchLoad(t *testing.T) {
 		t.Error("Expected expanded=true after right-arrow on loading repo")
 	}
 
-	m3, _ := updateModel(t, m2, tuiRepoBranchesMsg{
+	m3, _ := updateModel(t, m2, repoBranchesMsg{
 		repoIdx:      0,
 		rootPaths:    []string{"/path/to/repo-a"},
 		branches:     []branchFilterItem{{name: "main", count: 3}},
@@ -291,7 +291,7 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 		}
 	}
 
-	m2, cmd := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, cmd := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/path/repo-0"},
 		branches:  []branchFilterItem{{name: "main", count: 1}},
@@ -309,7 +309,7 @@ func TestTUISearchFetchProgressiveLoading(t *testing.T) {
 
 	for i := 1; i < 8; i++ {
 		if m2.filterTree[i].loading {
-			m2, _ = updateModel(t, m2, tuiRepoBranchesMsg{
+			m2, _ = updateModel(t, m2, repoBranchesMsg{
 				repoIdx:   i,
 				rootPaths: []string{fmt.Sprintf("/path/repo-%d", i)},
 				branches:  []branchFilterItem{{name: "main", count: 1}},
@@ -344,7 +344,7 @@ func TestTUISearchFetchErrorNoRetryLoop(t *testing.T) {
 		t.Fatalf("Expected 3 loading, got %d", countLoading(&m))
 	}
 
-	m2, cmd := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, cmd := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/path/repo-0"},
 		err:       errors.New("server error"),
@@ -422,7 +422,7 @@ func TestTUILateErrorAfterSearchClear(t *testing.T) {
 	m.filterSearch = ""
 	m.rebuildFilterFlatList()
 
-	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, _ := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/path/repo-a"},
 		err:       errors.New("timeout"),
@@ -444,8 +444,8 @@ func TestTUILateErrorAfterSearchClear(t *testing.T) {
 // session. Scenario: type "f" → clear → type "m" → old error
 // arrives with stale searchSeq.
 func TestTUIStaleSearchErrorIgnored(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
 		{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
@@ -466,7 +466,7 @@ func TestTUIStaleSearchErrorIgnored(t *testing.T) {
 		t.Fatalf("Expected filterSearchSeq=3, got %d", newSeq)
 	}
 
-	m, cmd := updateModel(t, m, tuiRepoBranchesMsg{
+	m, cmd := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/a"},
 		err:       fmt.Errorf("connection refused"),
@@ -486,17 +486,17 @@ func TestTUIStaleSearchErrorIgnored(t *testing.T) {
 
 // TestTUISearchBeforeReposLoad verifies that when the user types
 // search text before repos have loaded, fetchUnloadedBranches is
-// triggered once repos arrive via tuiReposMsg.
+// triggered once repos arrive via reposMsg.
 func TestTUISearchBeforeReposLoad(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 
 	m, _ = pressKey(m, 'f')
 	if m.filterSearch != "f" {
 		t.Fatalf("Expected filterSearch='f', got %q", m.filterSearch)
 	}
 
-	m2, cmd := updateModel(t, m, tuiReposMsg{
+	m2, cmd := updateModel(t, m, reposMsg{
 		repos: []repoFilterItem{
 			{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
 			{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
@@ -527,8 +527,8 @@ func TestTUISearchBeforeReposLoad(t *testing.T) {
 // text (non-empty → non-empty) clears fetchFailed so previously
 // failed repos are retried with the new search.
 func TestTUISearchEditClearsFetchFailed(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
 		{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
@@ -537,7 +537,7 @@ func TestTUISearchEditClearsFetchFailed(t *testing.T) {
 	m, _ = pressKey(m, 'a')
 	seqA := m.filterSearchSeq
 
-	m, _ = updateModel(t, m, tuiRepoBranchesMsg{
+	m, _ = updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/a"},
 		err:       fmt.Errorf("timeout"),

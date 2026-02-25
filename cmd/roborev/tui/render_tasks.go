@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -9,10 +9,10 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func (m tuiModel) renderTasksView() string {
+func (m model) renderTasksView() string {
 	var b strings.Builder
 
-	b.WriteString(tuiTitleStyle.Render("roborev tasks (background fixes)"))
+	b.WriteString(titleStyle.Render("roborev tasks (background fixes)"))
 	b.WriteString("\x1b[K\n")
 
 	// Help overlay
@@ -43,7 +43,7 @@ func (m tuiModel) renderTasksView() string {
 	// Header
 	header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %s",
 		statusW, "Status", idW, "Job", parentW, "Parent", refW, "Ref", "Subject")
-	b.WriteString(tuiStatusStyle.Render(header))
+	b.WriteString(statusStyle.Render(header))
 	b.WriteString("\x1b[K\n")
 	b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
 	b.WriteString("\x1b[K\n")
@@ -69,25 +69,25 @@ func (m tuiModel) renderTasksView() string {
 		switch job.Status {
 		case storage.JobStatusQueued:
 			statusLabel = "queued"
-			statusStyle = tuiQueuedStyle
+			statusStyle = queuedStyle
 		case storage.JobStatusRunning:
 			statusLabel = "running"
-			statusStyle = tuiRunningStyle
+			statusStyle = runningStyle
 		case storage.JobStatusDone:
 			statusLabel = "ready"
-			statusStyle = tuiDoneStyle
+			statusStyle = doneStyle
 		case storage.JobStatusFailed:
 			statusLabel = "failed"
-			statusStyle = tuiFailedStyle
+			statusStyle = failedStyle
 		case storage.JobStatusCanceled:
 			statusLabel = "canceled"
-			statusStyle = tuiCanceledStyle
+			statusStyle = canceledStyle
 		case storage.JobStatusApplied:
 			statusLabel = "applied"
-			statusStyle = tuiDoneStyle
+			statusStyle = doneStyle
 		case storage.JobStatusRebased:
 			statusLabel = "rebased"
-			statusStyle = tuiCanceledStyle
+			statusStyle = canceledStyle
 		}
 
 		parentRef := ""
@@ -103,7 +103,7 @@ func (m tuiModel) renderTasksView() string {
 		if i == m.fixSelectedIdx {
 			line := fmt.Sprintf("  %-*s #%-4d %-*s %-*s %s",
 				statusW, statusLabel, job.ID, parentW, parentRef, refW, ref, subject)
-			b.WriteString(tuiSelectedStyle.Render(line))
+			b.WriteString(selectedStyle.Render(line))
 		} else {
 			styledStatus := statusStyle.Render(fmt.Sprintf("%-*s", statusW, statusLabel))
 			rest := fmt.Sprintf(" #%-4d %-*s %-*s %s",
@@ -114,7 +114,7 @@ func (m tuiModel) renderTasksView() string {
 	}
 
 	// Flash message
-	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewTasks {
+	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewTasks {
 		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	}
@@ -126,7 +126,7 @@ func (m tuiModel) renderTasksView() string {
 
 	return b.String()
 }
-func (m tuiModel) renderTasksHelpOverlay(b *strings.Builder) string {
+func (m model) renderTasksHelpOverlay(b *strings.Builder) string {
 	help := []string{
 		"",
 		"  Task Status",
@@ -159,14 +159,14 @@ func (m tuiModel) renderTasksHelpOverlay(b *strings.Builder) string {
 		b.WriteString(line)
 		b.WriteString("\x1b[K\n")
 	}
-	b.WriteString(tuiHelpStyle.Render("?: close help"))
+	b.WriteString(helpStyle.Render("?: close help"))
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }
-func (m tuiModel) renderPatchView() string {
+func (m model) renderPatchView() string {
 	var b strings.Builder
 
-	b.WriteString(tuiTitleStyle.Render(fmt.Sprintf("patch for fix job #%d", m.patchJobID)))
+	b.WriteString(titleStyle.Render(fmt.Sprintf("patch for fix job #%d", m.patchJobID)))
 	b.WriteString("\x1b[K\n")
 
 	if m.patchText == "" {
@@ -205,7 +205,7 @@ func (m tuiModel) renderPatchView() string {
 			if maxScroll > 0 {
 				pct = start * 100 / maxScroll
 			}
-			b.WriteString(tuiHelpStyle.Render(fmt.Sprintf("  [%d%%]", pct)))
+			b.WriteString(helpStyle.Render(fmt.Sprintf("  [%d%%]", pct)))
 			b.WriteString("\x1b[K\n")
 		}
 	}
@@ -216,10 +216,10 @@ func (m tuiModel) renderPatchView() string {
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }
-func (m tuiModel) renderWorktreeConfirmView() string {
+func (m model) renderWorktreeConfirmView() string {
 	var b strings.Builder
 
-	b.WriteString(tuiTitleStyle.Render("Create Worktree"))
+	b.WriteString(titleStyle.Render("Create Worktree"))
 	b.WriteString("\x1b[K\n\n")
 
 	fmt.Fprintf(&b, "  Branch %q is not checked out anywhere.\n", m.worktreeConfirmBranch)
@@ -227,7 +227,7 @@ func (m tuiModel) renderWorktreeConfirmView() string {
 	b.WriteString("  The worktree will be removed after the commit.\n")
 	b.WriteString("  The commit will persist on the branch.\n\n")
 
-	b.WriteString(tuiHelpStyle.Render("y/enter: create worktree and apply | esc/n: cancel"))
+	b.WriteString(helpStyle.Render("y/enter: create worktree and apply | esc/n: cancel"))
 	b.WriteString("\x1b[K\x1b[J")
 
 	return b.String()

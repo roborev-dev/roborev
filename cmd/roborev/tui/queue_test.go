@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -113,7 +113,7 @@ func TestTUIQueueNavigation(t *testing.T) {
 				m.activeRepoFilter = tt.activeFilter
 			}
 
-			var m2 tuiModel
+			var m2 model
 			switch k := tt.key.(type) {
 			case rune:
 				m2, _ = pressKey(m, k)
@@ -145,7 +145,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	if m2.selectedIdx != 0 {
 		t.Errorf("Expected selectedIdx to remain 0 at top, got %d", m2.selectedIdx)
 	}
-	assertFlashMessage(t, m2, tuiViewQueue, "No newer review")
+	assertFlashMessage(t, m2, viewQueue, "No newer review")
 
 	// Now at bottom of queue
 	m.selectedIdx = 2
@@ -158,7 +158,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	if m3.selectedIdx != 2 {
 		t.Errorf("Expected selectedIdx to remain 2 at bottom, got %d", m3.selectedIdx)
 	}
-	assertFlashMessage(t, m3, tuiViewQueue, "No older review")
+	assertFlashMessage(t, m3, viewQueue, "No older review")
 }
 
 func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
@@ -176,7 +176,7 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	m2, _ := pressSpecial(m, tea.KeyDown)
 
 	// Should show flash since multi-repo filter prevents loading more
-	assertFlashMessage(t, m2, tuiViewQueue, "No older review")
+	assertFlashMessage(t, m2, viewQueue, "No older review")
 }
 
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
@@ -261,7 +261,7 @@ func TestTUICalculateColumnWidths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := tuiModel{width: tt.termWidth}
+			m := model{width: tt.termWidth}
 			widths := m.calculateColumnWidths(tt.idWidth)
 
 			// All columns must have positive widths
@@ -295,7 +295,7 @@ func TestTUICalculateColumnWidths(t *testing.T) {
 
 func TestTUICalculateColumnWidthsProportions(t *testing.T) {
 	// On wide terminals, columns should use higher minimums
-	m := tuiModel{width: 200}
+	m := model{width: 200}
 	widths := m.calculateColumnWidths(3)
 
 	if widths.ref < 10 {
@@ -310,7 +310,7 @@ func TestTUICalculateColumnWidthsProportions(t *testing.T) {
 }
 
 func TestTUIRenderJobLineTruncation(t *testing.T) {
-	m := tuiModel{width: 80}
+	m := model{width: 80}
 	// Use a git range - shortRef truncates ranges to 17 chars max, then renderJobLine
 	// truncates further based on colWidths.ref. Use a range longer than 17 chars.
 	job := makeJob(1,
@@ -351,7 +351,7 @@ func TestTUIRenderJobLineTruncation(t *testing.T) {
 
 func TestTUIRenderJobLineLength(t *testing.T) {
 	// Test that rendered line length respects column widths
-	m := tuiModel{width: 100}
+	m := model{width: 100}
 	job := makeJob(123,
 		withRef("abc1234..def5678901234567890"), // Long range
 		withRepoName("my-very-long-repository-name-here"),
@@ -387,7 +387,7 @@ func TestTUIRenderJobLineLength(t *testing.T) {
 }
 
 func TestTUIRenderJobLineNoTruncation(t *testing.T) {
-	m := tuiModel{width: 200}
+	m := model{width: 200}
 	job := makeJob(1,
 		withRef("abc1234"),
 		withRepoName("myrepo"),
@@ -422,7 +422,7 @@ func TestTUIRenderJobLineNoTruncation(t *testing.T) {
 }
 
 func TestTUIRenderJobLineReviewTypeTag(t *testing.T) {
-	m := tuiModel{width: 80}
+	m := model{width: 80}
 	colWidths := columnWidths{ref: 30, repo: 15, agent: 10}
 
 	tests := []struct {
@@ -453,7 +453,7 @@ func TestTUIRenderJobLineReviewTypeTag(t *testing.T) {
 }
 
 func TestTUIPaginationAppendMode(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Start with 50 jobs
 	initialJobs := make([]storage.ReviewJob, 50)
@@ -470,7 +470,7 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 	for i := range 25 {
 		moreJobs[i] = makeJob(int64(i + 1)) // IDs 1-25 (older)
 	}
-	appendMsg := tuiJobsMsg{jobs: moreJobs, hasMore: false, append: true}
+	appendMsg := jobsMsg{jobs: moreJobs, hasMore: false, append: true}
 
 	m2, _ := updateModel(t, m, appendMsg)
 
@@ -496,7 +496,7 @@ func TestTUIPaginationAppendMode(t *testing.T) {
 }
 
 func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Simulate user has paginated to 100 jobs
 	jobs := make([]storage.ReviewJob, 100)
@@ -512,7 +512,7 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 	for i := range 100 {
 		refreshedJobs[i] = makeJob(int64(101 - i)) // New job at top
 	}
-	refreshMsg := tuiJobsMsg{jobs: refreshedJobs, hasMore: true, append: false}
+	refreshMsg := jobsMsg{jobs: refreshedJobs, hasMore: true, append: false}
 
 	m2, _ := updateModel(t, m, refreshMsg)
 
@@ -531,11 +531,11 @@ func TestTUIPaginationRefreshMaintainsView(t *testing.T) {
 }
 
 func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.loadingMore = true
 
 	// Pagination error arrives (only pagination errors clear loadingMore)
-	errMsg := tuiPaginationErrMsg{err: fmt.Errorf("network error")}
+	errMsg := paginationErrMsg{err: fmt.Errorf("network error")}
 	m2, _ := updateModel(t, m, errMsg)
 
 	// loadingMore should be cleared so user can retry
@@ -550,11 +550,11 @@ func TestTUILoadingMoreClearedOnPaginationError(t *testing.T) {
 }
 
 func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.loadingMore = true
 
 	// Generic error arrives (should NOT clear loadingMore)
-	errMsg := tuiErrMsg(fmt.Errorf("some other error"))
+	errMsg := errMsg(fmt.Errorf("some other error"))
 	m2, _ := updateModel(t, m, errMsg)
 
 	// loadingMore should remain true - only pagination errors clear it
@@ -569,8 +569,8 @@ func TestTUILoadingMoreNotClearedOnGenericError(t *testing.T) {
 }
 
 func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.loadingJobs = true
 	m.hasMore = true
 	m.loadingMore = false
@@ -593,8 +593,8 @@ func TestTUIPaginationBlockedWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.loadingJobs = false
 	m.hasMore = true
 	m.loadingMore = false
@@ -617,8 +617,8 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.loadingJobs = true
 	m.hasMore = true
 	m.loadingMore = false
@@ -785,8 +785,8 @@ func TestTUIResizeBehavior(t *testing.T) {
 }
 
 func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.hideAddressed = true
 	m.height = 29 // queueVisibleRows = 20
 	m.loadingJobs = true
@@ -803,7 +803,7 @@ func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
 		id--
 	}
 
-	m2, cmd := updateModel(t, m, tuiJobsMsg{
+	m2, cmd := updateModel(t, m, jobsMsg{
 		jobs:    jobs,
 		hasMore: true,
 		append:  false,
@@ -821,8 +821,8 @@ func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
 }
 
 func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.hideAddressed = true
 	m.height = 29 // queueVisibleRows = 21
 	m.loadingJobs = true
@@ -839,7 +839,7 @@ func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) 
 		id--
 	}
 
-	m2, cmd := updateModel(t, m, tuiJobsMsg{
+	m2, cmd := updateModel(t, m, jobsMsg{
 		jobs:    jobs,
 		hasMore: true,
 		append:  false,
@@ -858,7 +858,7 @@ func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) 
 
 func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 	// Test that empty queue view pads output to fill terminal height
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{} // Empty queue
@@ -885,7 +885,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 	// Test that empty queue with filter pads output correctly
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
@@ -907,7 +907,7 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 
 func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 	// Test that loading state shows "Loading..." instead of "No jobs" messages
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{}
@@ -928,7 +928,7 @@ func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 
 func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 	// Test that "Loading..." shows when loadingMore is set on empty queue
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 20
 	m.jobs = []storage.ReviewJob{} // Empty after filter clear
@@ -944,7 +944,7 @@ func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 
 func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 	// Test that queue view with few jobs (no scroll indicator) still maintains height
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.width = 100
 	m.height = 30
 	// Add just 2 jobs - should not need scroll indicator
@@ -962,7 +962,7 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 	}
 }
 
-func setupQueue(jobs []storage.ReviewJob, selectedIdx int) tuiModel {
+func setupQueue(jobs []storage.ReviewJob, selectedIdx int) model {
 	m := newQueueTestModel(
 		withQueueTestJobs(jobs...),
 		withQueueTestSelection(selectedIdx),
@@ -985,7 +985,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			name:           "Late error ignored (same state, diff seq)",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 3}},
-			msg: tuiAddressedResultMsg{
+			msg: addressedResultMsg{
 				jobID: 1, oldState: false, newState: true, seq: 1,
 				err: fmt.Errorf("late error"),
 			},
@@ -998,7 +998,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			name:           "Stale error response ignored",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg: tuiAddressedResultMsg{
+			msg: addressedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 0,
 				err: fmt.Errorf("network error"),
 			},
@@ -1011,14 +1011,14 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			name:           "Cleared when server nil matches pending false",
 			initialJobs:    []storage.ReviewJob{makeJob(1)},
 			initialPending: map[int64]pendingState{1: {newState: false, seq: 1}},
-			msg:            tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Addressed is nil
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Addressed is nil
 			wantPending:    false,
 		},
 		{
 			name:           "Not cleared when server nil mismatches pending true",
 			initialJobs:    []storage.ReviewJob{makeJob(1)},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Addressed is nil
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Addressed is nil
 			wantPending:    true,
 			wantAddressed:  boolPtr(true),
 		},
@@ -1026,7 +1026,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			name:           "Not cleared by stale response (mismatched newState)",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg: tuiAddressedResultMsg{
+			msg: addressedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 0,
 			},
 			wantPending:      true,
@@ -1036,7 +1036,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			name:           "Not cleared on success (waits for refresh)",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg: tuiAddressedResultMsg{
+			msg: addressedResultMsg{
 				jobID: 1, oldState: false, newState: true, seq: 1,
 			},
 			wantPending: true,
@@ -1045,7 +1045,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			name:           "Cleared by jobs refresh",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))}},
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))}},
 			wantPending:    false,
 			wantAddressed:  boolPtr(true),
 		},
@@ -1053,7 +1053,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			name:           "Not cleared by stale jobs refresh",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}},
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}},
 			wantPending:    true,
 			wantAddressed:  boolPtr(true),
 		},
@@ -1061,7 +1061,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			name:           "Cleared on current error",
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))},
 			initialPending: map[int64]pendingState{1: {newState: false, seq: 1}},
-			msg: tuiAddressedResultMsg{
+			msg: addressedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 1,
 				err: fmt.Errorf("server error"),
 			},
@@ -1138,7 +1138,7 @@ func TestTUIReviewAddressedTransitions(t *testing.T) {
 		{
 			name:                 "Pending review-only cleared on success",
 			initialReviewPending: map[int64]pendingState{42: {newState: true, seq: 1}},
-			msg: tuiAddressedResultMsg{
+			msg: addressedResultMsg{
 				jobID: 0, reviewID: 42, reviewView: true, oldState: false, newState: true, seq: 1,
 			},
 			wantPending: false, // Should be cleared from pendingReviewAddressed
@@ -1183,7 +1183,7 @@ func TestTUIAddressedHideAddressedStats(t *testing.T) {
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
 			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg: tuiJobsMsg{
+			msg: jobsMsg{
 				jobs:  []storage.ReviewJob{},                                    // Filtered out
 				stats: storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Server matches optimistic
 			},
@@ -1195,7 +1195,7 @@ func TestTUIAddressedHideAddressedStats(t *testing.T) {
 			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
 			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg: tuiJobsMsg{
+			msg: jobsMsg{
 				jobs:  []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}, // Server still old
 				stats: storage.JobStats{Done: 10, Addressed: 5, Unaddressed: 5},
 			},
@@ -1297,16 +1297,16 @@ func TestTUIQueueNavigationSequences(t *testing.T) {
 	}
 }
 
-type queueTestModelOption func(*tuiModel)
+type queueTestModelOption func(*model)
 
 func withQueueTestJobs(jobs ...storage.ReviewJob) queueTestModelOption {
-	return func(m *tuiModel) {
+	return func(m *model) {
 		m.jobs = jobs
 	}
 }
 
 func withQueueTestSelection(idx int) queueTestModelOption {
-	return func(m *tuiModel) {
+	return func(m *model) {
 		m.selectedIdx = idx
 		if len(m.jobs) > 0 && idx >= 0 && idx < len(m.jobs) {
 			m.selectedJobID = m.jobs[idx].ID
@@ -1315,23 +1315,23 @@ func withQueueTestSelection(idx int) queueTestModelOption {
 }
 
 func withQueueTestFlags(hasMore, loadingMore, loadingJobs bool) queueTestModelOption {
-	return func(m *tuiModel) {
+	return func(m *model) {
 		m.hasMore = hasMore
 		m.loadingMore = loadingMore
 		m.loadingJobs = loadingJobs
 	}
 }
 
-func newQueueTestModel(opts ...queueTestModelOption) tuiModel {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+func newQueueTestModel(opts ...queueTestModelOption) model {
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	for _, opt := range opts {
 		opt(&m)
 	}
 	return m
 }
 
-func assertFlashMessage(t *testing.T, m tuiModel, view tuiView, msg string) {
+func assertFlashMessage(t *testing.T, m model, view viewKind, msg string) {
 	t.Helper()
 	if m.flashMessage != msg {
 		t.Errorf("Expected flash message %q, got %q", msg, m.flashMessage)

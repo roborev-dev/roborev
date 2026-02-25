@@ -1,9 +1,9 @@
-package main
+package tui
 
 import "github.com/roborev-dev/roborev/internal/storage"
 
 // updateSelectedJobID updates the tracked job ID after navigation
-func (m *tuiModel) updateSelectedJobID() {
+func (m *model) updateSelectedJobID() {
 	if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) {
 		m.selectedJobID = m.jobs[m.selectedIdx].ID
 	}
@@ -11,7 +11,7 @@ func (m *tuiModel) updateSelectedJobID() {
 
 // findNextViewableJob finds the next job that can be viewed (done or failed).
 // Respects active filters. Returns the index or -1 if none found.
-func (m *tuiModel) findNextViewableJob() int {
+func (m *model) findNextViewableJob() int {
 	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
 		job := m.jobs[i]
 		if (job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed) &&
@@ -24,7 +24,7 @@ func (m *tuiModel) findNextViewableJob() int {
 
 // findPrevViewableJob finds the previous job that can be viewed (done or failed).
 // Respects active filters. Returns the index or -1 if none found.
-func (m *tuiModel) findPrevViewableJob() int {
+func (m *model) findPrevViewableJob() int {
 	for i := m.selectedIdx - 1; i >= 0; i-- {
 		job := m.jobs[i]
 		if (job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed) &&
@@ -37,7 +37,7 @@ func (m *tuiModel) findPrevViewableJob() int {
 
 // findNextPromptableJob finds the next job that has a viewable prompt (done or running with prompt).
 // Respects active filters. Returns the index or -1 if none found.
-func (m *tuiModel) findNextPromptableJob() int {
+func (m *model) findNextPromptableJob() int {
 	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
 		job := m.jobs[i]
 		if m.isJobVisible(job) &&
@@ -50,7 +50,7 @@ func (m *tuiModel) findNextPromptableJob() int {
 
 // findPrevPromptableJob finds the previous job that has a viewable prompt (done or running with prompt).
 // Respects active filters. Returns the index or -1 if none found.
-func (m *tuiModel) findPrevPromptableJob() int {
+func (m *model) findPrevPromptableJob() int {
 	for i := m.selectedIdx - 1; i >= 0; i-- {
 		job := m.jobs[i]
 		if m.isJobVisible(job) &&
@@ -63,7 +63,7 @@ func (m *tuiModel) findPrevPromptableJob() int {
 
 // findNextLoggableJob finds the next job that has a log
 // (running, done, or failed). Respects active filters.
-func (m *tuiModel) findNextLoggableJob() int {
+func (m *model) findNextLoggableJob() int {
 	for i := m.selectedIdx + 1; i < len(m.jobs); i++ {
 		job := m.jobs[i]
 		if job.Status != storage.JobStatusQueued &&
@@ -76,7 +76,7 @@ func (m *tuiModel) findNextLoggableJob() int {
 
 // findPrevLoggableJob finds the previous job that has a log
 // (running, done, or failed). Respects active filters.
-func (m *tuiModel) findPrevLoggableJob() int {
+func (m *model) findPrevLoggableJob() int {
 	for i := m.selectedIdx - 1; i >= 0; i-- {
 		job := m.jobs[i]
 		if job.Status != storage.JobStatusQueued &&
@@ -88,7 +88,7 @@ func (m *tuiModel) findPrevLoggableJob() int {
 }
 
 // findNextLoggableFixJob finds the next fix job that has a log.
-func (m *tuiModel) findNextLoggableFixJob() int {
+func (m *model) findNextLoggableFixJob() int {
 	for i := m.fixSelectedIdx + 1; i < len(m.fixJobs); i++ {
 		if m.fixJobs[i].Status != storage.JobStatusQueued {
 			return i
@@ -99,7 +99,7 @@ func (m *tuiModel) findNextLoggableFixJob() int {
 
 // findPrevLoggableFixJob finds the previous fix job that has a
 // log.
-func (m *tuiModel) findPrevLoggableFixJob() int {
+func (m *model) findPrevLoggableFixJob() int {
 	for i := m.fixSelectedIdx - 1; i >= 0; i-- {
 		if m.fixJobs[i].Status != storage.JobStatusQueued {
 			return i
@@ -111,7 +111,7 @@ func (m *tuiModel) findPrevLoggableFixJob() int {
 // logViewLookupJob finds the job being viewed in the log view.
 // Searches m.jobs first, then m.fixJobs for jobs opened from
 // the tasks view.
-func (m *tuiModel) logViewLookupJob() *storage.ReviewJob {
+func (m *model) logViewLookupJob() *storage.ReviewJob {
 	for i := range m.jobs {
 		if m.jobs[i].ID == m.logJobID {
 			return &m.jobs[i]
@@ -128,7 +128,7 @@ func (m *tuiModel) logViewLookupJob() *storage.ReviewJob {
 // logVisibleLines returns the number of content lines visible in the
 // log view, accounting for title, optional command line, separator,
 // status, and help bar.
-func (m *tuiModel) logVisibleLines() int {
+func (m *model) logVisibleLines() int {
 	// title + separator + status + help(N)
 	helpRows := m.logHelpRows()
 	reserved := 3 + len(reflowHelpRows(helpRows, m.width))
@@ -142,7 +142,7 @@ func (m *tuiModel) logVisibleLines() int {
 }
 
 // logHelpRows returns the help row items for the log view.
-func (m *tuiModel) logHelpRows() [][]helpItem {
+func (m *model) logHelpRows() [][]helpItem {
 	helpRow := []helpItem{
 		{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"g", "toggle top/bottom"},
 	}
@@ -156,7 +156,7 @@ func (m *tuiModel) logHelpRows() [][]helpItem {
 // normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current
 // selection is hidden (e.g., marked addressed with hideAddressed filter active).
 // Call this when returning to queue view from review view.
-func (m *tuiModel) normalizeSelectionIfHidden() {
+func (m *model) normalizeSelectionIfHidden() {
 	if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) && !m.isJobVisible(m.jobs[m.selectedIdx]) {
 		nextIdx := m.findNextVisibleJob(m.selectedIdx)
 		if nextIdx < 0 {
@@ -173,7 +173,7 @@ func (m *tuiModel) normalizeSelectionIfHidden() {
 }
 
 // findNextVisibleJob returns the first visible job index after currentIdx.
-func (m tuiModel) findNextVisibleJob(currentIdx int) int {
+func (m model) findNextVisibleJob(currentIdx int) int {
 	for i := currentIdx + 1; i < len(m.jobs); i++ {
 		if m.isJobVisible(m.jobs[i]) {
 			return i
@@ -183,7 +183,7 @@ func (m tuiModel) findNextVisibleJob(currentIdx int) int {
 }
 
 // findPrevVisibleJob returns the first visible job index before currentIdx.
-func (m tuiModel) findPrevVisibleJob(currentIdx int) int {
+func (m model) findPrevVisibleJob(currentIdx int) int {
 	for i := currentIdx - 1; i >= 0; i-- {
 		if m.isJobVisible(m.jobs[i]) {
 			return i
@@ -193,7 +193,7 @@ func (m tuiModel) findPrevVisibleJob(currentIdx int) int {
 }
 
 // findFirstVisibleJob returns the index of the first visible job.
-func (m tuiModel) findFirstVisibleJob() int {
+func (m model) findFirstVisibleJob() int {
 	for i := range m.jobs {
 		if m.isJobVisible(m.jobs[i]) {
 			return i
@@ -203,7 +203,7 @@ func (m tuiModel) findFirstVisibleJob() int {
 }
 
 // hasActiveFixJobs returns true if any fix jobs are queued or running.
-func (m tuiModel) hasActiveFixJobs() bool {
+func (m model) hasActiveFixJobs() bool {
 	for _, j := range m.fixJobs {
 		if j.Status == storage.JobStatusQueued || j.Status == storage.JobStatusRunning {
 			return true

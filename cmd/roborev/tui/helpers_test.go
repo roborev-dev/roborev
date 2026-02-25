@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -119,30 +119,30 @@ func TestMarkdownCachePromptSeparateFromReview(t *testing.T) {
 func TestRenderViewSafety_NilCache(t *testing.T) {
 	tests := []struct {
 		name   string
-		view   tuiView
+		view   viewKind
 		setup  func(*storage.Review)
-		render func(tuiModel) string
+		render func(model) string
 		want   string
 	}{
 		{
 			name:   "ReviewView",
-			view:   tuiViewReview,
+			view:   viewReview,
 			setup:  func(r *storage.Review) { r.Output = "output text" },
-			render: func(m tuiModel) string { return m.renderReviewView() },
+			render: func(m model) string { return m.renderReviewView() },
 			want:   "output text",
 		},
 		{
 			name:   "PromptView",
-			view:   tuiViewPrompt,
+			view:   viewKindPrompt,
 			setup:  func(r *storage.Review) { r.Prompt = "prompt text" },
-			render: func(m tuiModel) string { return m.renderPromptView() },
+			render: func(m model) string { return m.renderPromptView() },
 			want:   "prompt text",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := tuiModel{
+			m := model{
 				width:       80,
 				height:      24,
 				currentView: tt.view,
@@ -164,10 +164,10 @@ func TestRenderViewSafety_NilCache(t *testing.T) {
 func TestScrollPageUpAfterPageDown(t *testing.T) {
 	tests := []struct {
 		name string
-		view tuiView
+		view viewKind
 	}{
-		{"PromptView", tuiViewPrompt},
-		{"ReviewView", tuiViewReview},
+		{"PromptView", viewKindPrompt},
+		{"ReviewView", viewReview},
 	}
 
 	for _, tt := range tests {
@@ -178,7 +178,7 @@ func TestScrollPageUpAfterPageDown(t *testing.T) {
 			}
 			longContent := strings.Join(lines, "\n")
 
-			m := tuiModel{
+			m := model{
 				width:       80,
 				height:      24,
 				currentView: tt.view,
@@ -190,7 +190,7 @@ func TestScrollPageUpAfterPageDown(t *testing.T) {
 			}
 
 			var maxScroll int
-			if tt.view == tuiViewPrompt {
+			if tt.view == viewKindPrompt {
 				m.currentReview.Prompt = longContent
 				m.renderPromptView()
 				maxScroll = m.mdCache.lastPromptMaxScroll
@@ -209,8 +209,8 @@ func TestScrollPageUpAfterPageDown(t *testing.T) {
 				m, _ = pressSpecial(m, tea.KeyPgDown)
 			}
 
-			getScroll := func(m tuiModel) int {
-				if tt.view == tuiViewPrompt {
+			getScroll := func(m model) int {
+				if tt.view == viewKindPrompt {
 					return m.promptScroll
 				}
 				return m.reviewScroll

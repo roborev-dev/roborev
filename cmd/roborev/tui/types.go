@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"errors"
@@ -9,20 +9,20 @@ import (
 	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
-type tuiView int
+type viewKind int
 
 const (
-	tuiViewQueue tuiView = iota
-	tuiViewReview
-	tuiViewPrompt
-	tuiViewFilter
-	tuiViewComment
-	tuiViewCommitMsg
-	tuiViewHelp
-	tuiViewLog
-	tuiViewTasks           // Background fix tasks view
-	tuiViewWorktreeConfirm // Confirm creating a worktree to apply patch
-	tuiViewPatch           // Patch viewer for fix jobs
+	viewQueue viewKind = iota
+	viewReview
+	viewKindPrompt
+	viewFilter
+	viewKindComment
+	viewCommitMsg
+	viewHelp
+	viewLog
+	viewTasks               // Background fix tasks view
+	viewKindWorktreeConfirm // Confirm creating a worktree to apply patch
+	viewPatch               // Patch viewer for fix jobs
 )
 
 // queuePrefetchBuffer is the number of extra rows to fetch beyond what's visible,
@@ -86,8 +86,8 @@ type columnWidths struct {
 	agent  int
 }
 
-// tuiLogOutputMsg delivers output lines from the daemon
-type tuiLogOutputMsg struct {
+// logOutputMsg delivers output lines from the daemon
+type logOutputMsg struct {
 	lines     []logLine
 	hasMore   bool // true if job is still running
 	err       error
@@ -97,30 +97,30 @@ type tuiLogOutputMsg struct {
 	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
 }
 
-// tuiLogTickMsg triggers a refresh of the log output
-type tuiLogTickMsg struct{}
+// logTickMsg triggers a refresh of the log output
+type logTickMsg struct{}
 
-type tuiTickMsg time.Time
-type tuiJobsMsg struct {
+type tickMsg time.Time
+type jobsMsg struct {
 	jobs    []storage.ReviewJob
 	hasMore bool
 	append  bool             // true to append to existing jobs, false to replace
 	seq     int              // fetch sequence number — stale responses (seq < model.fetchSeq) are discarded
 	stats   storage.JobStats // aggregate counts from server
 }
-type tuiStatusMsg storage.DaemonStatus
-type tuiReviewMsg struct {
+type statusMsg storage.DaemonStatus
+type reviewMsg struct {
 	review     *storage.Review
 	responses  []storage.Response // Responses for this review
 	jobID      int64              // The job ID that was requested (for race condition detection)
 	branchName string             // Pre-computed branch name (empty if not applicable)
 }
-type tuiPromptMsg struct {
+type promptMsg struct {
 	review *storage.Review
 	jobID  int64 // The job ID that was requested (for stale response detection)
 }
-type tuiAddressedMsg bool
-type tuiAddressedResultMsg struct {
+type addressedMsg bool
+type addressedResultMsg struct {
 	jobID      int64 // job ID for queue view rollback
 	reviewID   int64 // review ID for review view rollback
 	reviewView bool  // true if from review view (rollback currentReview)
@@ -129,13 +129,13 @@ type tuiAddressedResultMsg struct {
 	seq        uint64 // request sequence number (for distinguishing same-state rapid toggles)
 	err        error
 }
-type tuiCancelResultMsg struct {
+type cancelResultMsg struct {
 	jobID         int64
 	oldState      storage.JobStatus
 	oldFinishedAt *time.Time
 	err           error
 }
-type tuiRerunResultMsg struct {
+type rerunResultMsg struct {
 	jobID         int64
 	oldState      storage.JobStatus
 	oldStartedAt  *time.Time
@@ -143,26 +143,26 @@ type tuiRerunResultMsg struct {
 	oldError      string
 	err           error
 }
-type tuiErrMsg error
-type tuiJobsErrMsg struct {
+type errMsg error
+type jobsErrMsg struct {
 	err error
 	seq int // fetch sequence number for staleness check
 }
-type tuiPaginationErrMsg struct {
+type paginationErrMsg struct {
 	err error
 	seq int // fetch sequence number for staleness check
 }
-type tuiUpdateCheckMsg struct {
+type updateCheckMsg struct {
 	version    string // Latest version if available, empty if up to date
 	isDevBuild bool   // True if running a dev build
 }
-type tuiReposMsg struct {
+type reposMsg struct {
 	repos []repoFilterItem
 }
-type tuiBranchesMsg struct {
+type branchesMsg struct {
 	backfillCount int // Number of branches successfully backfilled to the database
 }
-type tuiRepoBranchesMsg struct {
+type repoBranchesMsg struct {
 	repoIdx      int                // Which repo in filterTree
 	rootPaths    []string           // Repo identity (for stale message detection)
 	branches     []branchFilterItem // Branch data
@@ -170,37 +170,37 @@ type tuiRepoBranchesMsg struct {
 	expandOnLoad bool               // Set expanded=true when branches arrive
 	searchSeq    int                // Search generation; stale errors don't set fetchFailed
 }
-type tuiCommentResultMsg struct {
+type commentResultMsg struct {
 	jobID int64
 	err   error
 }
-type tuiClipboardResultMsg struct {
+type clipboardResultMsg struct {
 	err  error
-	view tuiView // The view where copy was triggered (for flash attribution)
+	view viewKind // The view where copy was triggered (for flash attribution)
 }
-type tuiCommitMsgMsg struct {
+type commitMsgMsg struct {
 	jobID   int64
 	content string
 	err     error
 }
-type tuiReconnectMsg struct {
+type reconnectMsg struct {
 	newAddr string // New daemon address if found, empty if not found
 	version string // Daemon version (to avoid sync call in Update)
 	err     error
 }
 
-type tuiFixJobsMsg struct {
+type fixJobsMsg struct {
 	jobs []storage.ReviewJob
 	err  error
 }
 
-type tuiFixTriggerResultMsg struct {
+type fixTriggerResultMsg struct {
 	job     *storage.ReviewJob
 	err     error
 	warning string // non-fatal issue (e.g. failed to mark stale job)
 }
 
-type tuiApplyPatchResultMsg struct {
+type applyPatchResultMsg struct {
 	jobID        int64
 	parentJobID  int64 // Parent review job (to mark addressed on success)
 	success      bool
@@ -212,7 +212,7 @@ type tuiApplyPatchResultMsg struct {
 	worktreeDir  string // Non-empty if a temp worktree was kept for recovery
 }
 
-type tuiPatchMsg struct {
+type patchMsg struct {
 	jobID int64
 	patch string
 	err   error
@@ -230,26 +230,26 @@ func (r *realClipboard) WriteText(text string) error {
 	return clipboard.WriteAll(text)
 }
 
-// tuiOption func(*tuiOptions) is a functional option for TUI.
-type tuiOption func(*tuiOptions)
+// option func(*options) is a functional option for TUI.
+type option func(*options)
 
-// WithRepoFilter locks the TUI filter to a specific repo.
-func WithRepoFilter(repo string) tuiOption {
-	return func(o *tuiOptions) { o.repoFilter = repo }
+// withRepoFilter locks the TUI filter to a specific repo.
+func withRepoFilter(repo string) option {
+	return func(o *options) { o.repoFilter = repo }
 }
 
-// WithBranchFilter locks the TUI filter to a specific branch.
-func WithBranchFilter(branch string) tuiOption {
-	return func(o *tuiOptions) { o.branchFilter = branch }
+// withBranchFilter locks the TUI filter to a specific branch.
+func withBranchFilter(branch string) option {
+	return func(o *options) { o.branchFilter = branch }
 }
 
-// WithExternalIODisabled disables daemon/config/git calls in newTuiModel.
-func WithExternalIODisabled() tuiOption {
-	return func(o *tuiOptions) { o.disableExternalIO = true }
+// withExternalIODisabled disables daemon/config/git calls in newModel.
+func withExternalIODisabled() option {
+	return func(o *options) { o.disableExternalIO = true }
 }
 
-// tuiOptions holds optional overrides for the TUI model, set from CLI flags.
-type tuiOptions struct {
+// options holds optional overrides for the TUI model, set from CLI flags.
+type options struct {
 	repoFilter        string // --repo flag: lock filter to this repo path
 	branchFilter      string // --branch flag: lock filter to this branch
 	disableExternalIO bool   // tests: disable daemon/config/git calls

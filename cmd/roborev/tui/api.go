@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ func readErrorBody(body io.Reader, status string) string {
 
 // getJSON performs a GET request and decodes the JSON response into out.
 // Returns errNotFound for 404 responses. Other errors include the server's message.
-func (m tuiModel) getJSON(path string, out any) error {
+func (m model) getJSON(path string, out any) error {
 	url := m.serverAddr + path
 	resp, err := m.client.Get(url)
 	if err != nil {
@@ -59,7 +59,7 @@ func (m tuiModel) getJSON(path string, out any) error {
 // postJSON performs a POST request with a JSON body and decodes the response into out.
 // If out is nil, the response body is discarded.
 // Returns errNotFound (wrapped with server message) for 404 responses.
-func (m tuiModel) postJSON(path string, in any, out any) error {
+func (m model) postJSON(path string, in any, out any) error {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)

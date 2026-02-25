@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"path/filepath"
@@ -23,7 +23,7 @@ func moveToFront[T any](items []T, match func(T) bool) {
 // rebuildFilterFlatList rebuilds the flat list of visible filter entries from the tree.
 // When search is active, auto-expands repos with matching branches and hides non-matching items.
 // Clamps filterSelectedIdx after rebuild.
-func (m *tuiModel) rebuildFilterFlatList() {
+func (m *model) rebuildFilterFlatList() {
 	var flat []flatFilterEntry
 	search := strings.ToLower(m.filterSearch)
 
@@ -99,21 +99,21 @@ func (m *tuiModel) rebuildFilterFlatList() {
 }
 
 // filterNavigateUp moves selection up in the tree filter
-func (m *tuiModel) filterNavigateUp() {
+func (m *model) filterNavigateUp() {
 	if m.filterSelectedIdx > 0 {
 		m.filterSelectedIdx--
 	}
 }
 
 // filterNavigateDown moves selection down in the tree filter
-func (m *tuiModel) filterNavigateDown() {
+func (m *model) filterNavigateDown() {
 	if m.filterSelectedIdx < len(m.filterFlatList)-1 {
 		m.filterSelectedIdx++
 	}
 }
 
 // getSelectedFilterEntry returns the currently selected flat entry, or nil
-func (m *tuiModel) getSelectedFilterEntry() *flatFilterEntry {
+func (m *model) getSelectedFilterEntry() *flatFilterEntry {
 	if m.filterSelectedIdx >= 0 && m.filterSelectedIdx < len(m.filterFlatList) {
 		return &m.filterFlatList[m.filterSelectedIdx]
 	}
@@ -121,7 +121,7 @@ func (m *tuiModel) getSelectedFilterEntry() *flatFilterEntry {
 }
 
 // filterTreeTotalCount returns the total job count across all repos in the tree
-func (m *tuiModel) filterTreeTotalCount() int {
+func (m *model) filterTreeTotalCount() int {
 	total := 0
 	for _, node := range m.filterTree {
 		total += node.count
@@ -155,12 +155,12 @@ func rootPathsMatch(a, b []string) bool {
 }
 
 // repoMatchesFilter checks if a repo path matches the active filter.
-func (m tuiModel) repoMatchesFilter(repoPath string) bool {
+func (m model) repoMatchesFilter(repoPath string) bool {
 	return slices.Contains(m.activeRepoFilter, repoPath)
 }
 
 // isJobVisible checks if a job passes all active filters
-func (m tuiModel) isJobVisible(job storage.ReviewJob) bool {
+func (m model) isJobVisible(job storage.ReviewJob) bool {
 	if len(m.activeRepoFilter) > 0 && !m.repoMatchesFilter(job.RepoPath) {
 		return false
 	}
@@ -185,7 +185,7 @@ func (m tuiModel) isJobVisible(job storage.ReviewJob) bool {
 }
 
 // branchMatchesFilter checks if a job's branch matches the active branch filter
-func (m tuiModel) branchMatchesFilter(job storage.ReviewJob) bool {
+func (m model) branchMatchesFilter(job storage.ReviewJob) bool {
 	branch := m.getBranchForJob(job)
 	if branch == "" {
 		branch = branchNone
@@ -194,7 +194,7 @@ func (m tuiModel) branchMatchesFilter(job storage.ReviewJob) bool {
 }
 
 // pushFilter adds a filter type to the stack (or moves it to the end if already present)
-func (m *tuiModel) pushFilter(filterType string) {
+func (m *model) pushFilter(filterType string) {
 	// Remove if already present
 	m.removeFilterFromStack(filterType)
 	// Add to end
@@ -204,7 +204,7 @@ func (m *tuiModel) pushFilter(filterType string) {
 // popFilter walks the stack from end to start, removes the first
 // unlocked filter, clears its value, and returns the filter type.
 // Returns empty string if no unlocked filter exists.
-func (m *tuiModel) popFilter() string {
+func (m *model) popFilter() string {
 	for i := len(m.filterStack) - 1; i >= 0; i-- {
 		ft := m.filterStack[i]
 		if ft == filterTypeRepo && m.lockedRepoFilter {
@@ -228,7 +228,7 @@ func (m *tuiModel) popFilter() string {
 }
 
 // removeFilterFromStack removes a filter type from the stack without clearing its value
-func (m *tuiModel) removeFilterFromStack(filterType string) {
+func (m *model) removeFilterFromStack(filterType string) {
 	var newStack []string
 	for _, f := range m.filterStack {
 		if f != filterType {

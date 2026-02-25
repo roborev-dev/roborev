@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-func (m tuiModel) renderLogView() string {
+func (m model) renderLogView() string {
 	var b strings.Builder
 
 	// Title with job info (matches Prompt view format)
@@ -23,11 +23,11 @@ func (m tuiModel) renderLogView() string {
 		title = fmt.Sprintf("Log #%d", m.logJobID)
 	}
 	if m.logStreaming {
-		title += " " + tuiRunningStyle.Render("● live")
+		title += " " + runningStyle.Render("● live")
 	} else {
-		title += " " + tuiDoneStyle.Render("● complete")
+		title += " " + doneStyle.Render("● complete")
 	}
-	b.WriteString(tuiTitleStyle.Render(title))
+	b.WriteString(titleStyle.Render(title))
 	b.WriteString("\x1b[K\n")
 
 	// Show command line below title (dimmed, like Prompt view)
@@ -37,7 +37,7 @@ func (m tuiModel) renderLogView() string {
 		if m.width > 0 && runewidth.StringWidth(cmdText) > m.width {
 			cmdText = runewidth.Truncate(cmdText, m.width, "…")
 		}
-		b.WriteString(tuiStatusStyle.Render(cmdText))
+		b.WriteString(statusStyle.Render(cmdText))
 		b.WriteString("\x1b[K\n")
 		headerLines++
 	}
@@ -60,9 +60,9 @@ func (m tuiModel) renderLogView() string {
 	linesWritten := 0
 	if len(m.logLines) == 0 {
 		if m.logLines == nil {
-			b.WriteString(tuiStatusStyle.Render("Waiting for output..."))
+			b.WriteString(statusStyle.Render("Waiting for output..."))
 		} else {
-			b.WriteString(tuiStatusStyle.Render("(no output)"))
+			b.WriteString(statusStyle.Render("(no output)"))
 		}
 		b.WriteString("\x1b[K\n")
 		linesWritten++
@@ -91,11 +91,11 @@ func (m tuiModel) renderLogView() string {
 		status = fmt.Sprintf("[%d lines]", len(m.logLines))
 	}
 	if m.logFollow {
-		status += " " + tuiRunningStyle.Render("[following]")
+		status += " " + runningStyle.Render("[following]")
 	} else {
-		status += " " + tuiStatusStyle.Render("[paused - G to follow]")
+		status += " " + statusStyle.Render("[paused - G to follow]")
 	}
-	b.WriteString(tuiStatusStyle.Render(status))
+	b.WriteString(statusStyle.Render(status))
 	b.WriteString("\x1b[K\n")
 
 	b.WriteString(renderHelpTable(logHelp, m.width))
@@ -209,7 +209,7 @@ func helpLines() []string {
 	}
 	return lines
 }
-func (m tuiModel) helpMaxScroll() int {
+func (m model) helpMaxScroll() int {
 	reservedLines := 3 // title + blank + help hint
 	visibleLines := max(m.height-reservedLines, 5)
 	maxScroll := len(helpLines()) - visibleLines
@@ -218,10 +218,10 @@ func (m tuiModel) helpMaxScroll() int {
 	}
 	return maxScroll
 }
-func (m tuiModel) renderHelpView() string {
+func (m model) renderHelpView() string {
 	var b strings.Builder
 
-	b.WriteString(tuiTitleStyle.Render("Keyboard Shortcuts"))
+	b.WriteString(titleStyle.Render("Keyboard Shortcuts"))
 	b.WriteString("\x1b[K\n\x1b[K\n")
 
 	allLines := helpLines()
@@ -239,7 +239,7 @@ func (m tuiModel) renderHelpView() string {
 	linesWritten := 0
 	for _, line := range allLines[scroll:end] {
 		if after, ok := strings.CutPrefix(line, "\x00group:"); ok {
-			b.WriteString(tuiSelectedStyle.Render(after))
+			b.WriteString(selectedStyle.Render(after))
 		} else {
 			b.WriteString(line)
 		}

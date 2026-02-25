@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"bytes"
@@ -22,15 +22,15 @@ import (
 	"github.com/roborev-dev/roborev/internal/update"
 )
 
-func (m tuiModel) tick() tea.Cmd {
+func (m model) tick() tea.Cmd {
 	return tea.Tick(m.tickInterval(), func(t time.Time) tea.Msg {
-		return tuiTickMsg(t)
+		return tickMsg(t)
 	})
 }
 
 // tickInterval returns the appropriate polling interval based on queue activity.
 // Uses faster polling when jobs are running or pending, slower when idle.
-func (m tuiModel) tickInterval() time.Duration {
+func (m model) tickInterval() time.Duration {
 	// Before first status fetch, use active interval to be responsive on startup
 	if !m.statusFetchedOnce {
 		return tickIntervalActive
@@ -42,7 +42,7 @@ func (m tuiModel) tickInterval() time.Duration {
 	return tickIntervalIdle
 }
 
-func (m tuiModel) fetchJobs() tea.Cmd {
+func (m model) fetchJobs() tea.Cmd {
 	// Fetch enough to fill the visible area plus a buffer for smooth scrolling.
 	// Use minimum of 100 only before first WindowSizeMsg (when height is default 24)
 	visibleRows := m.queueVisibleRows() + queuePrefetchBuffer
@@ -97,12 +97,12 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())
 		resp, err := m.client.Get(url)
 		if err != nil {
-			return tuiJobsErrMsg{err: err, seq: seq}
+			return jobsErrMsg{err: err, seq: seq}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiJobsErrMsg{err: fmt.Errorf("fetch jobs: %s", resp.Status), seq: seq}
+			return jobsErrMsg{err: fmt.Errorf("fetch jobs: %s", resp.Status), seq: seq}
 		}
 
 		var result struct {
@@ -111,13 +111,13 @@ func (m tuiModel) fetchJobs() tea.Cmd {
 			Stats   storage.JobStats    `json:"stats"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return tuiJobsErrMsg{err: err, seq: seq}
+			return jobsErrMsg{err: err, seq: seq}
 		}
-		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false, seq: seq, stats: result.Stats}
+		return jobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false, seq: seq, stats: result.Stats}
 	}
 }
 
-func (m tuiModel) fetchMoreJobs() tea.Cmd {
+func (m model) fetchMoreJobs() tea.Cmd {
 	seq := m.fetchSeq
 	return func() tea.Msg {
 		// Only fetch more when not doing client-side filtering that loads all jobs
@@ -141,12 +141,12 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())
 		resp, err := m.client.Get(url)
 		if err != nil {
-			return tuiPaginationErrMsg{err: err, seq: seq}
+			return paginationErrMsg{err: err, seq: seq}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiPaginationErrMsg{err: fmt.Errorf("fetch more jobs: %s", resp.Status), seq: seq}
+			return paginationErrMsg{err: fmt.Errorf("fetch more jobs: %s", resp.Status), seq: seq}
 		}
 
 		var result struct {
@@ -154,46 +154,46 @@ func (m tuiModel) fetchMoreJobs() tea.Cmd {
 			HasMore bool                `json:"has_more"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return tuiPaginationErrMsg{err: err, seq: seq}
+			return paginationErrMsg{err: err, seq: seq}
 		}
-		return tuiJobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: true, seq: seq}
+		return jobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: true, seq: seq}
 	}
 }
 
-func (m tuiModel) fetchStatus() tea.Cmd {
+func (m model) fetchStatus() tea.Cmd {
 	return func() tea.Msg {
 		var status storage.DaemonStatus
 		if err := m.getJSON("/api/status", &status); err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
-		return tuiStatusMsg(status)
+		return statusMsg(status)
 	}
 }
 
-func (m tuiModel) checkForUpdate() tea.Cmd {
+func (m model) checkForUpdate() tea.Cmd {
 	return func() tea.Msg {
 		info, err := update.CheckForUpdate(false) // Use cache
 		if err != nil || info == nil {
-			return tuiUpdateCheckMsg{} // No update or error
+			return updateCheckMsg{} // No update or error
 		}
-		return tuiUpdateCheckMsg{version: info.LatestVersion, isDevBuild: info.IsDevBuild}
+		return updateCheckMsg{version: info.LatestVersion, isDevBuild: info.IsDevBuild}
 	}
 }
 
 // tryReconnect attempts to find a running daemon at a new address.
 // This is called after consecutive connection failures to handle daemon restarts.
-func (m tuiModel) tryReconnect() tea.Cmd {
+func (m model) tryReconnect() tea.Cmd {
 	return func() tea.Msg {
 		info, err := daemon.GetAnyRunningDaemon()
 		if err != nil {
-			return tuiReconnectMsg{err: err}
+			return reconnectMsg{err: err}
 		}
 		newAddr := fmt.Sprintf("http://%s", info.Addr)
-		return tuiReconnectMsg{newAddr: newAddr, version: info.Version}
+		return reconnectMsg{newAddr: newAddr, version: info.Version}
 	}
 }
 
-func (m tuiModel) fetchRepos() tea.Cmd {
+func (m model) fetchRepos() tea.Cmd {
 	// Capture values for use in goroutine
 	client := m.client
 	serverAddr := m.serverAddr
@@ -211,12 +211,12 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 
 		resp, err := client.Get(reposURL)
 		if err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return tuiErrMsg(fmt.Errorf("fetch repos: %s", resp.Status))
+			return errMsg(fmt.Errorf("fetch repos: %s", resp.Status))
 		}
 
 		var reposResult struct {
@@ -228,7 +228,7 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 			TotalCount int `json:"total_count"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&reposResult); err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
 
 		// Aggregate repos by display name
@@ -255,23 +255,23 @@ func (m tuiModel) fetchRepos() tea.Cmd {
 		for i, name := range displayNameOrder {
 			repos[i] = *displayNameMap[name]
 		}
-		return tuiReposMsg{repos: repos}
+		return reposMsg{repos: repos}
 	}
 }
 
 // fetchBranchesForRepo fetches branches for a specific repo in the tree filter.
-// Returns tuiRepoBranchesMsg with the branch data (or err set on failure).
+// Returns repoBranchesMsg with the branch data (or err set on failure).
 // When expand is true, the handler sets expanded=true on the tree node.
 // searchSeq is the search generation at dispatch time; the error handler
 // uses it to avoid marking fetchFailed for stale search sessions.
-func (m tuiModel) fetchBranchesForRepo(
+func (m model) fetchBranchesForRepo(
 	rootPaths []string, repoIdx int, expand bool, searchSeq int,
 ) tea.Cmd {
 	client := m.client
 	serverAddr := m.serverAddr
 
-	errMsg := func(err error) tuiRepoBranchesMsg {
-		return tuiRepoBranchesMsg{
+	errMsg := func(err error) repoBranchesMsg {
+		return repoBranchesMsg{
 			repoIdx:      repoIdx,
 			rootPaths:    rootPaths,
 			err:          err,
@@ -325,7 +325,7 @@ func (m tuiModel) fetchBranchesForRepo(
 			}
 		}
 
-		return tuiRepoBranchesMsg{
+		return repoBranchesMsg{
 			repoIdx:      repoIdx,
 			rootPaths:    rootPaths,
 			branches:     branches,
@@ -335,7 +335,7 @@ func (m tuiModel) fetchBranchesForRepo(
 	}
 }
 
-func (m tuiModel) backfillBranches() tea.Cmd {
+func (m model) backfillBranches() tea.Cmd {
 	// Capture values for use in goroutine
 	machineID := m.status.MachineID
 	client := m.client
@@ -347,18 +347,18 @@ func (m tuiModel) backfillBranches() tea.Cmd {
 		// First, check if there are any NULL branches via the API
 		resp, err := client.Get(serverAddr + "/api/branches")
 		if err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
 		var checkResult struct {
 			NullsRemaining int `json:"nulls_remaining"`
 		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return tuiErrMsg(fmt.Errorf("check branches for backfill: %s", resp.Status))
+			return errMsg(fmt.Errorf("check branches for backfill: %s", resp.Status))
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&checkResult); err != nil {
 			resp.Body.Close()
-			return tuiErrMsg(fmt.Errorf("decode branches response: %w", err))
+			return errMsg(fmt.Errorf("decode branches response: %w", err))
 		}
 		resp.Body.Close()
 
@@ -366,19 +366,19 @@ func (m tuiModel) backfillBranches() tea.Cmd {
 		if checkResult.NullsRemaining > 0 {
 			resp, err := client.Get(serverAddr + "/api/jobs")
 			if err != nil {
-				return tuiErrMsg(err)
+				return errMsg(err)
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				return tuiErrMsg(fmt.Errorf("fetch jobs for backfill: %s", resp.Status))
+				return errMsg(fmt.Errorf("fetch jobs for backfill: %s", resp.Status))
 			}
 
 			var jobsResult struct {
 				Jobs []storage.ReviewJob `json:"jobs"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&jobsResult); err != nil {
-				return tuiErrMsg(err)
+				return errMsg(err)
 			}
 
 			// Find jobs that need backfill
@@ -435,13 +435,13 @@ func (m tuiModel) backfillBranches() tea.Cmd {
 			}
 		}
 
-		return tuiBranchesMsg{backfillCount: backfillCount}
+		return branchesMsg{backfillCount: backfillCount}
 	}
 }
 
 // loadReview fetches a review from the server by job ID.
 // Used by fetchReview, fetchReviewForPrompt, and fetchReviewAndCopy.
-func (m tuiModel) loadReview(jobID int64) (*storage.Review, error) {
+func (m model) loadReview(jobID int64) (*storage.Review, error) {
 	var review storage.Review
 	if err := m.getJSON(fmt.Sprintf("/api/review?job_id=%d", jobID), &review); err != nil {
 		if errors.Is(err, errNotFound) {
@@ -453,7 +453,7 @@ func (m tuiModel) loadReview(jobID int64) (*storage.Review, error) {
 }
 
 // loadResponses fetches responses for a job, merging legacy SHA-based responses.
-func (m tuiModel) loadResponses(jobID int64, review *storage.Review) []storage.Response {
+func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Response {
 	var responses []storage.Response
 
 	// Fetch responses by job ID
@@ -492,11 +492,11 @@ func (m tuiModel) loadResponses(jobID int64, review *storage.Review) []storage.R
 	return responses
 }
 
-func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
+func (m model) fetchReview(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		review, err := m.loadReview(jobID)
 		if err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
 
 		responses := m.loadResponses(jobID, review)
@@ -507,17 +507,17 @@ func (m tuiModel) fetchReview(jobID int64) tea.Cmd {
 			branchName = git.GetBranchName(review.Job.RepoPath, review.Job.GitRef)
 		}
 
-		return tuiReviewMsg{review: review, responses: responses, jobID: jobID, branchName: branchName}
+		return reviewMsg{review: review, responses: responses, jobID: jobID, branchName: branchName}
 	}
 }
 
-func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
+func (m model) fetchReviewForPrompt(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		review, err := m.loadReview(jobID)
 		if err != nil {
-			return tuiErrMsg(err)
+			return errMsg(err)
 		}
-		return tuiPromptMsg{review: review, jobID: jobID}
+		return promptMsg{review: review, jobID: jobID}
 	}
 }
 
@@ -525,7 +525,7 @@ func (m tuiModel) fetchReviewForPrompt(jobID int64) tea.Cmd {
 // through streamFormatter, and returns pre-styled logLines.
 // Uses incremental fetching: only new bytes since logOffset are
 // downloaded and rendered, reusing the persistent logFmtr state.
-func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
+func (m model) fetchJobLog(jobID int64) tea.Cmd {
 	addr := m.serverAddr
 	width := m.width
 	client := m.client
@@ -540,15 +540,15 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		)
 		resp, err := client.Get(url)
 		if err != nil {
-			return tuiLogOutputMsg{err: err, seq: seq}
+			return logOutputMsg{err: err, seq: seq}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return tuiLogOutputMsg{err: errNoLog, seq: seq}
+			return logOutputMsg{err: errNoLog, seq: seq}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return tuiLogOutputMsg{
+			return logOutputMsg{
 				err: fmt.Errorf("fetch log: %s", resp.Status),
 				seq: seq,
 			}
@@ -577,7 +577,7 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 
 		// No new data — return early with current state
 		if newOffset == offset && isIncremental {
-			return tuiLogOutputMsg{
+			return logOutputMsg{
 				hasMore:   hasMore,
 				newOffset: newOffset,
 				append:    true,
@@ -603,7 +603,7 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		if err := streamfmt.RenderLogWith(
 			resp.Body, renderFmtr, &buf,
 		); err != nil {
-			return tuiLogOutputMsg{err: err, seq: seq}
+			return logOutputMsg{err: err, seq: seq}
 		}
 
 		// Split rendered output into lines
@@ -620,7 +620,7 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 			}
 		}
 
-		return tuiLogOutputMsg{
+		return logOutputMsg{
 			lines:     lines,
 			hasMore:   hasMore,
 			newOffset: newOffset,
@@ -631,16 +631,16 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 	}
 }
 
-func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cmd {
+func (m model) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cmd {
 	view := m.currentView // Capture view at trigger time
 	return func() tea.Msg {
 		review, err := m.loadReview(jobID)
 		if err != nil {
-			return tuiClipboardResultMsg{err: err, view: view}
+			return clipboardResultMsg{err: err, view: view}
 		}
 
 		if review.Output == "" {
-			return tuiClipboardResultMsg{err: fmt.Errorf("review has no content"), view: view}
+			return clipboardResultMsg{err: fmt.Errorf("review has no content"), view: view}
 		}
 
 		// Attach job info if not already present (for header formatting)
@@ -650,7 +650,7 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 
 		content := formatClipboardContent(review)
 		err = m.clipboard.WriteText(content)
-		return tuiClipboardResultMsg{err: err, view: view}
+		return clipboardResultMsg{err: err, view: view}
 	}
 }
 
@@ -658,13 +658,13 @@ func (m tuiModel) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cm
 // For single commits, returns the commit message.
 // For ranges, returns all commit messages in the range.
 // For dirty reviews or prompt jobs, returns an error.
-func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
+func (m model) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 	jobID := job.ID
 	return func() tea.Msg {
 		// Handle task jobs first (run, analyze, custom labels)
 		// Check this before dirty to handle backward compatibility with older run jobs
 		if job.IsTaskJob() {
-			return tuiCommitMsgMsg{
+			return commitMsgMsg{
 				jobID: jobID,
 				err:   fmt.Errorf("no commit message for task jobs"),
 			}
@@ -672,7 +672,7 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 
 		// Handle dirty reviews (uncommitted changes)
 		if job.DiffContent != nil || job.IsDirtyJob() {
-			return tuiCommitMsgMsg{
+			return commitMsgMsg{
 				jobID: jobID,
 				err:   fmt.Errorf("no commit message for uncommitted changes"),
 			}
@@ -680,7 +680,7 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 
 		// Handle missing GitRef (could be from incomplete job data or older versions)
 		if job.GitRef == "" {
-			return tuiCommitMsgMsg{
+			return commitMsgMsg{
 				jobID: jobID,
 				err:   fmt.Errorf("no git reference available for this job"),
 			}
@@ -691,10 +691,10 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 			// Fetch all commits in range
 			commits, err := git.GetRangeCommits(job.RepoPath, job.GitRef)
 			if err != nil {
-				return tuiCommitMsgMsg{jobID: jobID, err: err}
+				return commitMsgMsg{jobID: jobID, err: err}
 			}
 			if len(commits) == 0 {
-				return tuiCommitMsgMsg{
+				return commitMsgMsg{
 					jobID: jobID,
 					err:   fmt.Errorf("no commits in range %s", job.GitRef),
 				}
@@ -722,13 +722,13 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 				content.WriteString("\n")
 			}
 
-			return tuiCommitMsgMsg{jobID: jobID, content: sanitizeForDisplay(content.String())}
+			return commitMsgMsg{jobID: jobID, content: sanitizeForDisplay(content.String())}
 		}
 
 		// Single commit
 		info, err := git.GetCommitInfo(job.RepoPath, job.GitRef)
 		if err != nil {
-			return tuiCommitMsgMsg{jobID: jobID, err: err}
+			return commitMsgMsg{jobID: jobID, err: err}
 		}
 
 		var content strings.Builder
@@ -740,28 +740,28 @@ func (m tuiModel) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 			content.WriteString("\n" + info.Body + "\n")
 		}
 
-		return tuiCommitMsgMsg{jobID: jobID, content: sanitizeForDisplay(content.String())}
+		return commitMsgMsg{jobID: jobID, content: sanitizeForDisplay(content.String())}
 	}
 }
-func (m tuiModel) fetchPatch(jobID int64) tea.Cmd {
+func (m model) fetchPatch(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		url := m.serverAddr + fmt.Sprintf("/api/job/patch?job_id=%d", jobID)
 		resp, err := m.client.Get(url)
 		if err != nil {
-			return tuiPatchMsg{jobID: jobID, err: err}
+			return patchMsg{jobID: jobID, err: err}
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return tuiPatchMsg{jobID: jobID, err: fmt.Errorf("no patch available (HTTP %d)", resp.StatusCode)}
+			return patchMsg{jobID: jobID, err: fmt.Errorf("no patch available (HTTP %d)", resp.StatusCode)}
 		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return tuiPatchMsg{jobID: jobID, err: err}
+			return patchMsg{jobID: jobID, err: err}
 		}
-		return tuiPatchMsg{jobID: jobID, patch: string(data)}
+		return patchMsg{jobID: jobID, patch: string(data)}
 	}
 }
-func (m tuiModel) fetchJobByID(jobID int64) (*storage.ReviewJob, error) {
+func (m model) fetchJobByID(jobID int64) (*storage.ReviewJob, error) {
 	var result struct {
 		Jobs []storage.ReviewJob `json:"jobs"`
 	}
@@ -777,15 +777,15 @@ func (m tuiModel) fetchJobByID(jobID int64) (*storage.ReviewJob, error) {
 }
 
 // fetchFixJobs fetches fix jobs from the daemon.
-func (m tuiModel) fetchFixJobs() tea.Cmd {
+func (m model) fetchFixJobs() tea.Cmd {
 	return func() tea.Msg {
 		var result struct {
 			Jobs []storage.ReviewJob `json:"jobs"`
 		}
 		err := m.getJSON("/api/jobs?job_type=fix&limit=200", &result)
 		if err != nil {
-			return tuiFixJobsMsg{err: err}
+			return fixJobsMsg{err: err}
 		}
-		return tuiFixJobsMsg{jobs: result.Jobs}
+		return fixJobsMsg{jobs: result.Jobs}
 	}
 }

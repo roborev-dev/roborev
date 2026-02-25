@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"strings"
@@ -9,7 +9,7 @@ import (
 )
 
 func TestTUIFilterClearWithEsc(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -17,7 +17,7 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
 	m.filterStack = []string{"repo"}
 
@@ -34,7 +34,7 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 
 func TestTUIFilterClearWithEscLayered(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
@@ -42,7 +42,7 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
 	m.filterStack = []string{"repo"}
 	m.hideAddressed = true
@@ -65,14 +65,14 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 
 func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.hideAddressed = true
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
@@ -87,14 +87,14 @@ func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 
 func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
 	m.filterStack = []string{"repo"}
 	m.loadingJobs = true
@@ -112,7 +112,7 @@ func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 		t.Error("Expected a fetch command when escape pressed (fetchSeq ensures stale discard)")
 	}
 
-	m3, _ := updateModel(t, m2, tuiJobsMsg{jobs: []storage.ReviewJob{makeJob(2)}, hasMore: false, seq: oldSeq})
+	m3, _ := updateModel(t, m2, jobsMsg{jobs: []storage.ReviewJob{makeJob(2)}, hasMore: false, seq: oldSeq})
 
 	if !m3.loadingJobs {
 		t.Error("Expected loadingJobs to still be true (stale response discarded)")
@@ -121,14 +121,14 @@ func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 
 func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a")),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
 	m.filterStack = []string{"repo"}
 	m.loadingMore = true
@@ -147,7 +147,7 @@ func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
 		t.Error("Expected a fetch command when escape pressed")
 	}
 
-	m3, _ := updateModel(t, m2, tuiJobsMsg{
+	m3, _ := updateModel(t, m2, jobsMsg{
 		jobs:    []storage.ReviewJob{makeJob(99, withRepoName("stale"))},
 		hasMore: true,
 		append:  true,
@@ -169,8 +169,8 @@ func TestTUIFilterEscapeCloses(t *testing.T) {
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
-	if m2.currentView != tuiViewQueue {
-		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
+	if m2.currentView != viewQueue {
+		t.Errorf("Expected viewQueue, got %d", m2.currentView)
 	}
 	if m2.filterSearch != "" {
 		t.Errorf("Expected filterSearch to be cleared, got '%s'", m2.filterSearch)
@@ -239,19 +239,19 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 	m := initTestModel(
 		withTestJobs(makeJob(1, withRepoName("repo-a"), withRepoPath("/path/to/repo-a"), withBranch("main"))),
 		withSelection(0, 1),
-		withCurrentView(tuiViewQueue),
+		withCurrentView(viewQueue),
 		withActiveRepoFilter([]string{"/path/to/repo-a"}),
 		withActiveBranchFilter("main"),
 		withFilterStack("repo", "branch"),
 	)
 
 	steps := []struct {
-		action func(m tuiModel) (tuiModel, tea.Cmd)
-		assert func(t *testing.T, m tuiModel)
+		action func(m model) (model, tea.Cmd)
+		assert func(t *testing.T, m model)
 	}{
 		{
-			action: func(m tuiModel) (tuiModel, tea.Cmd) { return pressSpecial(m, tea.KeyEscape) },
-			assert: func(t *testing.T, m tuiModel) {
+			action: func(m model) (model, tea.Cmd) { return pressSpecial(m, tea.KeyEscape) },
+			assert: func(t *testing.T, m model) {
 				if m.activeBranchFilter != "" {
 					t.Errorf("Expected branch filter to be cleared first, got %s", m.activeBranchFilter)
 				}
@@ -264,8 +264,8 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 			},
 		},
 		{
-			action: func(m tuiModel) (tuiModel, tea.Cmd) { return pressSpecial(m, tea.KeyEscape) },
-			assert: func(t *testing.T, m tuiModel) {
+			action: func(m model) (model, tea.Cmd) { return pressSpecial(m, tea.KeyEscape) },
+			assert: func(t *testing.T, m model) {
 				if len(m.activeRepoFilter) != 0 {
 					t.Errorf("Expected repo filter to be cleared, got %v", m.activeRepoFilter)
 				}
@@ -284,12 +284,12 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 
 func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("myrepo"), withRepoPath("/path/to/myrepo"), withBranch("feature")),
 	}
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 
 	m.activeBranchFilter = "feature"
 	m.filterStack = []string{"branch"}
@@ -314,12 +314,12 @@ func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 
 func TestTUIFilterStackReverseOrder(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("myrepo"), withRepoPath("/path/to/myrepo"), withBranch("develop")),
 	}
-	m.currentView = tuiViewQueue
+	m.currentView = viewQueue
 
 	m.activeRepoFilter = []string{"/path/to/myrepo"}
 	m.filterStack = []string{"repo"}
@@ -336,7 +336,7 @@ func TestTUIFilterStackReverseOrder(t *testing.T) {
 }
 
 func TestTUIRemoveFilterFromStack(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 
 	m.filterStack = []string{"repo", "branch", "other"}
 
@@ -355,8 +355,8 @@ func TestTUIRemoveFilterFromStack(t *testing.T) {
 // daemon reconnect clears fetchFailed and retriggers branch
 // fetches when search is active.
 func TestTUIReconnectClearsFetchFailed(t *testing.T) {
-	m := newTuiModel("http://localhost:7373", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost:7373", withExternalIODisabled())
+	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/a"}, count: 3},
 	})
@@ -364,7 +364,7 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 	m.filterSearch = "test"
 	m.filterTree[0].fetchFailed = true
 
-	m2, cmd := updateModel(t, m, tuiReconnectMsg{
+	m2, cmd := updateModel(t, m, reconnectMsg{
 		newAddr: "http://localhost:7374",
 	})
 
@@ -379,14 +379,14 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 		t.Error("Expected repo to be loading after reconnect with active search")
 	}
 
-	m3 := newTuiModel("http://localhost:7373", WithExternalIODisabled())
-	m3.currentView = tuiViewFilter
+	m3 := newModel("http://localhost:7373", withExternalIODisabled())
+	m3.currentView = viewFilter
 	setupFilterTree(&m3, []treeFilterNode{
 		{name: "repo-b", rootPaths: []string{"/b"}, count: 2},
 	})
 	m3.filterTree[0].fetchFailed = true
 
-	m4, _ := updateModel(t, m3, tuiReconnectMsg{
+	m4, _ := updateModel(t, m3, reconnectMsg{
 		newAddr: "http://localhost:7374",
 	})
 
@@ -466,8 +466,8 @@ func TestTUIPopFilterAllLocked(t *testing.T) {
 
 func TestTUIEscapeWithLockedFilters(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{
 		makeJob(1, withRepoName("r"), withRepoPath("/r"), withBranch("b")),
 	}

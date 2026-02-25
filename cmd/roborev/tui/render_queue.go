@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
-func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
+func (m model) getVisibleJobs() []storage.ReviewJob {
 	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideAddressed {
 		return m.jobs
 	}
@@ -25,7 +25,7 @@ func (m tuiModel) getVisibleJobs() []storage.ReviewJob {
 	}
 	return visible
 }
-func (m tuiModel) queueHelpRows() [][]helpItem {
+func (m model) queueHelpRows() [][]helpItem {
 	row1 := []helpItem{
 		{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"},
 		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"},
@@ -39,20 +39,20 @@ func (m tuiModel) queueHelpRows() [][]helpItem {
 	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
 	return [][]helpItem{row1, row2}
 }
-func (m tuiModel) queueHelpLines() int {
+func (m model) queueHelpLines() int {
 	return len(reflowHelpRows(m.queueHelpRows(), m.width))
 }
-func (m tuiModel) queueVisibleRows() int {
+func (m model) queueVisibleRows() int {
 	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
 	reserved := 7 + m.queueHelpLines()
 	visibleRows := max(m.height-reserved, 3)
 	return visibleRows
 }
-func (m tuiModel) canPaginate() bool {
+func (m model) canPaginate() bool {
 	return m.hasMore && !m.loadingMore && !m.loadingJobs &&
 		len(m.activeRepoFilter) <= 1 && m.activeBranchFilter != branchNone
 }
-func (m tuiModel) getVisibleSelectedIdx() int {
+func (m model) getVisibleSelectedIdx() int {
 	if m.selectedIdx < 0 {
 		return -1
 	}
@@ -70,7 +70,7 @@ func (m tuiModel) getVisibleSelectedIdx() int {
 	}
 	return -1
 }
-func (m tuiModel) renderQueueView() string {
+func (m model) renderQueueView() string {
 	var b strings.Builder
 
 	// Title with version, optional update notification, and filter indicators (in stack order)
@@ -92,7 +92,7 @@ func (m tuiModel) renderQueueView() string {
 	if m.hideAddressed {
 		title.WriteString(" [hiding addressed]")
 	}
-	b.WriteString(tuiTitleStyle.Render(title.String()))
+	b.WriteString(titleStyle.Render(title.String()))
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Status line - use server-side aggregate counts for paginated views,
@@ -133,7 +133,7 @@ func (m tuiModel) renderQueueView() string {
 			m.status.ActiveWorkers, m.status.MaxWorkers,
 			done, addressed, unaddressed)
 	}
-	b.WriteString(tuiStatusStyle.Render(statusLine))
+	b.WriteString(statusStyle.Render(statusLine))
 	b.WriteString("\x1b[K\n") // Clear status line
 
 	// Update notification on line 3 (above the table)
@@ -203,7 +203,7 @@ func (m tuiModel) renderQueueView() string {
 			colWidths.repo, "Repo",
 			colWidths.agent, "Agent",
 			"Status", "P/F", "Queued", "Elapsed", "Addressed")
-		b.WriteString(tuiStatusStyle.Render(header))
+		b.WriteString(statusStyle.Render(header))
 		b.WriteString("\x1b[K\n") // Clear to end of line
 		b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
 		b.WriteString("\x1b[K\n") // Clear to end of line
@@ -235,7 +235,7 @@ func (m tuiModel) renderQueueView() string {
 				if padding := m.width - lineWidth - 2; padding > 0 {
 					paddedLine += strings.Repeat(" ", padding)
 				}
-				line = tuiSelectedStyle.Render(paddedLine)
+				line = selectedStyle.Render(paddedLine)
 			} else {
 				line = "  " + line
 			}
@@ -264,7 +264,7 @@ func (m tuiModel) renderQueueView() string {
 
 	// Always emit scroll indicator line (blank if no scroll info) to maintain consistent height
 	if scrollInfo != "" {
-		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+		b.WriteString(statusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
@@ -273,7 +273,7 @@ func (m tuiModel) renderQueueView() string {
 	if m.versionMismatch {
 		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
 		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewQueue {
+	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewQueue {
 		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	}
@@ -286,7 +286,7 @@ func (m tuiModel) renderQueueView() string {
 
 	return b.String()
 }
-func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
+func (m model) calculateColumnWidths(idWidth int) columnWidths {
 	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addressed (9)
 	// Status width 8 accommodates "canceled" (longest status)
 	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
@@ -328,7 +328,7 @@ func (m tuiModel) calculateColumnWidths(idWidth int) columnWidths {
 		agent:  agentWidth,
 	}
 }
-func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, colWidths columnWidths) string {
+func (m model) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, colWidths columnWidths) string {
 	ref := shortJobRef(job)
 	// Show review type tag for non-standard review types (e.g., [security])
 	if !config.IsDefaultReviewType(job.ReviewType) {
@@ -384,15 +384,15 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 	} else {
 		switch job.Status {
 		case storage.JobStatusQueued:
-			styledStatus = tuiQueuedStyle.Render(status)
+			styledStatus = queuedStyle.Render(status)
 		case storage.JobStatusRunning:
-			styledStatus = tuiRunningStyle.Render(status)
+			styledStatus = runningStyle.Render(status)
 		case storage.JobStatusDone:
-			styledStatus = tuiDoneStyle.Render(status)
+			styledStatus = doneStyle.Render(status)
 		case storage.JobStatusFailed:
-			styledStatus = tuiFailedStyle.Render(status)
+			styledStatus = failedStyle.Render(status)
 		case storage.JobStatusCanceled:
-			styledStatus = tuiCanceledStyle.Render(status)
+			styledStatus = canceledStyle.Render(status)
 		default:
 			styledStatus = status
 		}
@@ -411,9 +411,9 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 		if selected {
 			verdict = v
 		} else if v == "P" {
-			verdict = tuiPassStyle.Render(v)
+			verdict = passStyle.Render(v)
 		} else {
-			verdict = tuiFailStyle.Render(v)
+			verdict = failStyle.Render(v)
 		}
 	}
 	// Pad to 3 chars
@@ -428,13 +428,13 @@ func (m tuiModel) renderJobLine(job storage.ReviewJob, selected bool, idWidth in
 			if selected {
 				addr = "true"
 			} else {
-				addr = tuiAddressedStyle.Render("true")
+				addr = addressedStyle.Render("true")
 			}
 		} else {
 			if selected {
 				addr = "false"
 			} else {
-				addr = tuiQueuedStyle.Render("false")
+				addr = queuedStyle.Render("false")
 			}
 		}
 	}

@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"regexp"
@@ -25,7 +25,7 @@ const branchNone = "(none)"
 
 // mutateJob finds a job by ID and applies the mutation function.
 // Returns true if the job was found and mutated.
-func (m *tuiModel) mutateJob(id int64, fn func(*storage.ReviewJob)) bool {
+func (m *model) mutateJob(id int64, fn func(*storage.ReviewJob)) bool {
 	for i := range m.jobs {
 		if m.jobs[i].ID == id {
 			fn(&m.jobs[i])
@@ -37,7 +37,7 @@ func (m *tuiModel) mutateJob(id int64, fn func(*storage.ReviewJob)) bool {
 
 // applyStatsDelta adjusts jobStats for an addressed state change.
 // addressed=true means marking as addressed (+Addressed, -Unaddressed).
-func (m *tuiModel) applyStatsDelta(addressed bool) {
+func (m *model) applyStatsDelta(addressed bool) {
 	if addressed {
 		m.jobStats.Addressed++
 		m.jobStats.Unaddressed--
@@ -49,7 +49,7 @@ func (m *tuiModel) applyStatsDelta(addressed bool) {
 
 // setJobAddressed updates the addressed state for a job by ID.
 // Handles nil pointer by allocating if necessary.
-func (m *tuiModel) setJobAddressed(jobID int64, state bool) {
+func (m *model) setJobAddressed(jobID int64, state bool) {
 	m.mutateJob(jobID, func(job *storage.ReviewJob) {
 		if job.Addressed == nil {
 			job.Addressed = new(bool)
@@ -59,28 +59,28 @@ func (m *tuiModel) setJobAddressed(jobID int64, state bool) {
 }
 
 // setJobStatus updates the status for a job by ID.
-func (m *tuiModel) setJobStatus(jobID int64, status storage.JobStatus) {
+func (m *model) setJobStatus(jobID int64, status storage.JobStatus) {
 	m.mutateJob(jobID, func(job *storage.ReviewJob) {
 		job.Status = status
 	})
 }
 
 // setJobFinishedAt updates the FinishedAt for a job by ID.
-func (m *tuiModel) setJobFinishedAt(jobID int64, finishedAt *time.Time) {
+func (m *model) setJobFinishedAt(jobID int64, finishedAt *time.Time) {
 	m.mutateJob(jobID, func(job *storage.ReviewJob) {
 		job.FinishedAt = finishedAt
 	})
 }
 
 // setJobStartedAt updates the StartedAt for a job by ID.
-func (m *tuiModel) setJobStartedAt(jobID int64, startedAt *time.Time) {
+func (m *model) setJobStartedAt(jobID int64, startedAt *time.Time) {
 	m.mutateJob(jobID, func(job *storage.ReviewJob) {
 		job.StartedAt = startedAt
 	})
 }
 
 // setJobError updates the Error for a job by ID.
-func (m *tuiModel) setJobError(jobID int64, errMsg string) {
+func (m *model) setJobError(jobID int64, errMsg string) {
 	m.mutateJob(jobID, func(job *storage.ReviewJob) {
 		job.Error = errMsg
 	})
@@ -150,7 +150,7 @@ func wrapText(text string, width int) []string {
 }
 
 // markdownCache caches glamour-rendered lines for review and prompt views.
-// Stored as a pointer in tuiModel so that View() (value receiver) can update
+// Stored as a pointer in model so that View() (value receiver) can update
 // the cache and have it persist across bubbletea's model copies.
 //
 // glamourStyle is detected once at creation time (before bubbletea takes over

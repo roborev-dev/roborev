@@ -1,8 +1,7 @@
-package main
+package tui
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	neturl "net/url"
@@ -22,7 +21,6 @@ import (
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/streamfmt"
-	"github.com/spf13/cobra"
 )
 
 // Tick intervals for adaptive polling
@@ -34,33 +32,33 @@ const (
 // TUI styles using AdaptiveColor for light/dark terminal support.
 // Light colors are chosen for dark-on-light terminals; Dark colors for light-on-dark.
 var (
-	tuiTitleStyle = lipgloss.NewStyle().
+	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.AdaptiveColor{Light: "125", Dark: "205"}) // Magenta/Pink
 
-	tuiStatusStyle = lipgloss.NewStyle().
+	statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
 
-	tuiSelectedStyle = lipgloss.NewStyle().
-				Background(lipgloss.AdaptiveColor{Light: "153", Dark: "24"}) // Light blue background
+	selectedStyle = lipgloss.NewStyle().
+			Background(lipgloss.AdaptiveColor{Light: "153", Dark: "24"}) // Light blue background
 
-	tuiQueuedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}) // Yellow/Gold
-	tuiRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "25", Dark: "33"})   // Blue
-	tuiDoneStyle     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})   // Green
-	tuiFailedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}) // Red
-	tuiCanceledStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "166", Dark: "208"}) // Orange
+	queuedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}) // Yellow/Gold
+	runningStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "25", Dark: "33"})   // Blue
+	doneStyle     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})   // Green
+	failedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}) // Red
+	canceledStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "166", Dark: "208"}) // Orange
 
-	tuiPassStyle      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})   // Green
-	tuiFailStyle      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}) // Red
-	tuiAddressedStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "30", Dark: "51"})   // Cyan
+	passStyle      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})   // Green
+	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}) // Red
+	addressedStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "30", Dark: "51"})   // Cyan
 
-	tuiHelpStyle = lipgloss.NewStyle().
+	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
 
-	tuiHelpKeyStyle = lipgloss.NewStyle().
+	helpKeyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray (matches status/scroll text)
-	tuiHelpDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "240"}) // Dimmer gray for descriptions
+	helpDescStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "240"}) // Dimmer gray for descriptions
 )
 
 // reflowHelpRows redistributes items across rows so that when rendered
@@ -203,9 +201,9 @@ func renderHelpTable(rows [][]helpItem, width int) string {
 		empty[ri] = make([]bool, maxCols)
 		for i, item := range row {
 			if item.desc != "" {
-				styled[i] = tuiHelpKeyStyle.Render(item.key) + " " + tuiHelpDescStyle.Render(item.desc)
+				styled[i] = helpKeyStyle.Render(item.key) + " " + helpDescStyle.Render(item.desc)
 			} else {
-				styled[i] = tuiHelpKeyStyle.Render(item.key)
+				styled[i] = helpKeyStyle.Render(item.key)
 			}
 		}
 		for i := len(row); i < maxCols; i++ {
@@ -240,7 +238,7 @@ func sanitizeForDisplay(s string) string {
 	return result.String()
 }
 
-type tuiModel struct {
+type model struct {
 	serverAddr       string
 	daemonVersion    string
 	client           *http.Client
@@ -250,7 +248,7 @@ type tuiModel struct {
 	status           storage.DaemonStatus
 	selectedIdx      int
 	selectedJobID    int64 // Track selected job by ID to maintain position on refresh
-	currentView      tuiView
+	currentView      viewKind
 	currentReview    *storage.Review
 	currentResponses []storage.Response // Responses for current review (fetched with review)
 	currentBranch    string             // Cached branch name for current review (computed on load)
@@ -269,12 +267,12 @@ type tuiModel struct {
 	lockedBranchFilter bool // true if branch filter was set via --branch flag
 
 	// Pagination state
-	hasMore        bool    // true if there are more jobs to load
-	loadingMore    bool    // true if currently loading more jobs (pagination)
-	loadingJobs    bool    // true if currently loading jobs (full refresh)
-	heightDetected bool    // true after first WindowSizeMsg (real terminal height known)
-	fetchSeq       int     // incremented on filter changes; stale fetch responses are discarded
-	paginateNav    tuiView // non-zero: auto-navigate in this view after pagination loads
+	hasMore        bool     // true if there are more jobs to load
+	loadingMore    bool     // true if currently loading more jobs (pagination)
+	loadingJobs    bool     // true if currently loading jobs (full refresh)
+	heightDetected bool     // true after first WindowSizeMsg (real terminal height known)
+	fetchSeq       int      // incremented on filter changes; stale fetch responses are discarded
+	paginateNav    viewKind // non-zero: auto-navigate in this view after pagination loads
 
 	// Unified tree filter modal state
 	filterTree        []treeFilterNode  // Tree of repos (each may have branch children)
@@ -285,10 +283,10 @@ type tuiModel struct {
 	filterBranchMode  bool              // True when opened via 'b' key (auto-expand repo to branches)
 
 	// Comment modal state
-	commentText     string  // The response text being typed
-	commentJobID    int64   // Job ID we're responding to
-	commentCommit   string  // Short commit SHA for display
-	commentFromView tuiView // View to return to after comment modal closes
+	commentText     string   // The response text being typed
+	commentJobID    int64    // Job ID we're responding to
+	commentCommit   string   // Short commit SHA for display
+	commentFromView viewKind // View to return to after comment modal closes
 
 	// Active filter (applied to queue view)
 	activeRepoFilter   []string // Empty = show all, otherwise repo root_paths to filter by
@@ -317,7 +315,7 @@ type tuiModel struct {
 	// Flash message (temporary status message shown briefly)
 	flashMessage   string
 	flashExpiresAt time.Time
-	flashView      tuiView // View where flash was triggered (only show in same view)
+	flashView      viewKind // View where flash was triggered (only show in same view)
 
 	// Track config reload notifications
 	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status
@@ -330,21 +328,21 @@ type tuiModel struct {
 	reconnecting      bool // True if currently attempting reconnection
 
 	// Commit message view state
-	commitMsgContent  string  // Formatted commit message(s) content
-	commitMsgScroll   int     // Scroll position in commit message view
-	commitMsgJobID    int64   // Job ID for the commit message being viewed
-	commitMsgFromView tuiView // View to return to after closing commit message view
+	commitMsgContent  string   // Formatted commit message(s) content
+	commitMsgScroll   int      // Scroll position in commit message view
+	commitMsgJobID    int64    // Job ID for the commit message being viewed
+	commitMsgFromView viewKind // View to return to after closing commit message view
 
 	// Help view state
-	helpFromView tuiView // View to return to after closing help
-	helpScroll   int     // Scroll position in help view
+	helpFromView viewKind // View to return to after closing help
+	helpScroll   int      // Scroll position in help view
 
 	// Log view state
 	logJobID     int64                // Job being viewed
 	logLines     []logLine            // Buffer of output lines
 	logScroll    int                  // Scroll position
 	logStreaming bool                 // True if job is still running
-	logFromView  tuiView              // View to return to
+	logFromView  viewKind             // View to return to
 	logFollow    bool                 // True if auto-scrolling to bottom (follow mode)
 	logOffset    int64                // Byte offset for next incremental fetch
 	logFmtr      *streamfmt.Formatter // Persistent formatter across polls
@@ -357,7 +355,7 @@ type tuiModel struct {
 	clipboard ClipboardWriter
 
 	// Review view navigation
-	reviewFromView tuiView // View to return to when exiting review (queue or tasks)
+	reviewFromView viewKind // View to return to when exiting review (queue or tasks)
 
 	// Fix task state
 	fixJobs        []storage.ReviewJob // Fix jobs for tasks view
@@ -395,8 +393,8 @@ func isConnectionError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
-func newTuiModel(serverAddr string, opts ...tuiOption) tuiModel {
-	var opt tuiOptions
+func newModel(serverAddr string, opts ...option) model {
+	var opt options
 	for _, o := range opts {
 		o(&opt)
 	}
@@ -450,13 +448,13 @@ func newTuiModel(serverAddr string, opts ...tuiOption) tuiModel {
 		lockedBranch = true
 	}
 
-	return tuiModel{
+	return model{
 		serverAddr:             serverAddr,
 		daemonVersion:          daemonVersion,
 		client:                 &http.Client{Timeout: 10 * time.Second},
 		glamourStyle:           streamfmt.GlamourStyle(),
 		jobs:                   []storage.ReviewJob{},
-		currentView:            tuiViewQueue,
+		currentView:            viewQueue,
 		width:                  80, // sensible defaults until we get WindowSizeMsg
 		height:                 24,
 		loadingJobs:            true, // Init() calls fetchJobs, so mark as loading
@@ -477,7 +475,7 @@ func newTuiModel(serverAddr string, opts ...tuiOption) tuiModel {
 	}
 }
 
-func (m tuiModel) Init() tea.Cmd {
+func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.WindowSize(), // request initial window size
 		m.tick(),
@@ -489,7 +487,7 @@ func (m tuiModel) Init() tea.Cmd {
 
 // getDisplayName returns the display name for a repo, using the cache.
 // Falls back to loading from config on cache miss, then to the provided default name.
-func (m *tuiModel) getDisplayName(repoPath, defaultName string) string {
+func (m *model) getDisplayName(repoPath, defaultName string) string {
 	if repoPath == "" {
 		return defaultName
 	}
@@ -510,7 +508,7 @@ func (m *tuiModel) getDisplayName(repoPath, defaultName string) string {
 
 // updateDisplayNameCache refreshes display names for the given repo paths.
 // Called on each jobs fetch to pick up config changes without restart.
-func (m *tuiModel) updateDisplayNameCache(jobs []storage.ReviewJob) {
+func (m *model) updateDisplayNameCache(jobs []storage.ReviewJob) {
 	for _, job := range jobs {
 		if job.RepoPath == "" {
 			continue
@@ -523,7 +521,7 @@ func (m *tuiModel) updateDisplayNameCache(jobs []storage.ReviewJob) {
 // getBranchForJob returns the branch name for a job, falling back to git lookup
 // if the stored branch is empty and the repo is available locally.
 // Results are cached to avoid repeated git calls on render.
-func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
+func (m *model) getBranchForJob(job storage.ReviewJob) string {
 	// Use stored branch if available
 	if job.Branch != "" {
 		return job.Branch
@@ -570,97 +568,97 @@ func (m *tuiModel) getBranchForJob(job storage.ReviewJob) string {
 	return branch
 }
 
-func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	case tea.WindowSizeMsg:
 		return m.handleWindowSizeMsg(msg)
-	case tuiTickMsg:
+	case tickMsg:
 		return m.handleTickMsg(msg)
-	case tuiLogTickMsg:
+	case logTickMsg:
 		return m.handleLogTickMsg(msg)
-	case tuiJobsMsg:
+	case jobsMsg:
 		return m.handleJobsMsg(msg)
-	case tuiStatusMsg:
+	case statusMsg:
 		return m.handleStatusMsg(msg)
-	case tuiUpdateCheckMsg:
+	case updateCheckMsg:
 		return m.handleUpdateCheckMsg(msg)
-	case tuiReviewMsg:
+	case reviewMsg:
 		return m.handleReviewMsg(msg)
-	case tuiPromptMsg:
+	case promptMsg:
 		return m.handlePromptMsg(msg)
-	case tuiLogOutputMsg:
+	case logOutputMsg:
 		return m.handleLogOutputMsg(msg)
-	case tuiAddressedMsg:
+	case addressedMsg:
 		return m.handleAddressedToggleMsg(msg)
-	case tuiAddressedResultMsg:
+	case addressedResultMsg:
 		return m.handleAddressedResultMsg(msg)
-	case tuiCancelResultMsg:
+	case cancelResultMsg:
 		return m.handleCancelResultMsg(msg)
-	case tuiRerunResultMsg:
+	case rerunResultMsg:
 		return m.handleRerunResultMsg(msg)
-	case tuiReposMsg:
+	case reposMsg:
 		return m.handleReposMsg(msg)
-	case tuiRepoBranchesMsg:
+	case repoBranchesMsg:
 		return m.handleRepoBranchesMsg(msg)
-	case tuiBranchesMsg:
+	case branchesMsg:
 		return m.handleBranchesMsg(msg)
-	case tuiCommentResultMsg:
+	case commentResultMsg:
 		return m.handleCommentResultMsg(msg)
-	case tuiClipboardResultMsg:
+	case clipboardResultMsg:
 		return m.handleClipboardResultMsg(msg)
-	case tuiCommitMsgMsg:
+	case commitMsgMsg:
 		return m.handleCommitMsgMsg(msg)
-	case tuiJobsErrMsg:
+	case jobsErrMsg:
 		return m.handleJobsErrMsg(msg)
-	case tuiPaginationErrMsg:
+	case paginationErrMsg:
 		return m.handlePaginationErrMsg(msg)
-	case tuiErrMsg:
+	case errMsg:
 		return m.handleErrMsg(msg)
-	case tuiReconnectMsg:
+	case reconnectMsg:
 		return m.handleReconnectMsg(msg)
-	case tuiFixJobsMsg:
+	case fixJobsMsg:
 		return m.handleFixJobsMsg(msg)
-	case tuiFixTriggerResultMsg:
+	case fixTriggerResultMsg:
 		return m.handleFixTriggerResultMsg(msg)
-	case tuiPatchMsg:
+	case patchMsg:
 		return m.handlePatchResultMsg(msg)
-	case tuiApplyPatchResultMsg:
+	case applyPatchResultMsg:
 		return m.handleApplyPatchResultMsg(msg)
 	}
 	return m, nil
 }
 
-func (m tuiModel) View() string {
-	if m.currentView == tuiViewComment {
+func (m model) View() string {
+	if m.currentView == viewKindComment {
 		return m.renderRespondView()
 	}
-	if m.currentView == tuiViewFilter {
+	if m.currentView == viewFilter {
 		return m.renderFilterView()
 	}
-	if m.currentView == tuiViewCommitMsg {
+	if m.currentView == viewCommitMsg {
 		return m.renderCommitMsgView()
 	}
-	if m.currentView == tuiViewHelp {
+	if m.currentView == viewHelp {
 		return m.renderHelpView()
 	}
-	if m.currentView == tuiViewLog {
+	if m.currentView == viewLog {
 		return m.renderLogView()
 	}
-	if m.currentView == tuiViewTasks {
+	if m.currentView == viewTasks {
 		return m.renderTasksView()
 	}
-	if m.currentView == tuiViewWorktreeConfirm {
+	if m.currentView == viewKindWorktreeConfirm {
 		return m.renderWorktreeConfirmView()
 	}
-	if m.currentView == tuiViewPatch {
+	if m.currentView == viewPatch {
 		return m.renderPatchView()
 	}
-	if m.currentView == tuiViewPrompt && m.currentReview != nil {
+	if m.currentView == viewKindPrompt && m.currentReview != nil {
 		return m.renderPromptView()
 	}
-	if m.currentView == tuiViewReview && m.currentReview != nil {
+	if m.currentView == viewReview && m.currentReview != nil {
 		return m.renderReviewView()
 	}
 	return m.renderQueueView()
@@ -670,84 +668,28 @@ func (m tuiModel) View() string {
 
 // helpMaxScroll returns the maximum scroll offset for the help view.
 
-func tuiCmd() *cobra.Command {
-	var addr string
-	var repoFilter string
-	var branchFilter string
+// Config holds resolved parameters for running the TUI.
+type Config struct {
+	ServerAddr   string
+	RepoFilter   string
+	BranchFilter string
+}
 
-	cmd := &cobra.Command{
-		Use:   "tui",
-		Short: "Interactive terminal UI for monitoring reviews",
-		Long: `Interactive terminal UI for monitoring reviews.
-
-Use --repo and --branch flags to launch the TUI pre-filtered, useful for
-side-by-side working when you want to focus on a specific repo or branch.
-When set via flags, the filter is locked and cannot be changed in the TUI.
-
-Without a value, --repo resolves to the current repo and --branch resolves
-to the current branch. Use = syntax for explicit values:
-  roborev tui --repo                  # current repo
-  roborev tui --repo=/path/to/repo    # explicit repo path
-  roborev tui --branch                # current branch
-  roborev tui --branch=feature-x      # explicit branch name
-  roborev tui --repo --branch         # current repo + branch`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Ensure daemon is running (and restart if version mismatch)
-			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon error: %w", err)
-			}
-
-			if addr == "" {
-				addr = getDaemonAddr()
-			} else if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
-				addr = "http://" + addr
-			}
-
-			// Resolve --repo and --branch flags
-			if cmd.Flags().Changed("repo") {
-				resolved, err := resolveRepoFlag(repoFilter)
-				if err != nil {
-					return fmt.Errorf("--repo: %w", err)
-				}
-				repoFilter = resolved
-			}
-			if cmd.Flags().Changed("branch") {
-				branchRepo := "."
-				if repoFilter != "" {
-					branchRepo = repoFilter
-				}
-				resolved, err := resolveBranchFlag(branchFilter, branchRepo)
-				if err != nil {
-					return fmt.Errorf("--branch: %w", err)
-				}
-				branchFilter = resolved
-			}
-
-			var tuiOpts []tuiOption
-			if repoFilter != "" {
-				tuiOpts = append(tuiOpts, WithRepoFilter(repoFilter))
-			}
-			if branchFilter != "" {
-				tuiOpts = append(tuiOpts, WithBranchFilter(branchFilter))
-			}
-			p := tea.NewProgram(newTuiModel(addr, tuiOpts...), tea.WithAltScreen())
-			if _, err := p.Run(); err != nil {
-				return fmt.Errorf("TUI error: %w", err)
-			}
-			return nil
-		},
+// Run starts the interactive TUI.
+func Run(cfg Config) error {
+	var opts []option
+	if cfg.RepoFilter != "" {
+		opts = append(opts, withRepoFilter(cfg.RepoFilter))
 	}
-
-	cmd.Flags().StringVar(&addr, "addr", "", "daemon address (default: auto-detect)")
-
-	cmd.Flags().StringVar(&repoFilter, "repo", "", "lock filter to a repo (default: current repo)")
-	cmd.Flag("repo").NoOptDefVal = "."
-
-	cmd.Flags().StringVar(&branchFilter, "branch", "", "lock filter to a branch (default: current branch)")
-	cmd.Flag("branch").NoOptDefVal = "HEAD"
-
-	return cmd
+	if cfg.BranchFilter != "" {
+		opts = append(opts, withBranchFilter(cfg.BranchFilter))
+	}
+	p := tea.NewProgram(
+		newModel(cfg.ServerAddr, opts...),
+		tea.WithAltScreen(),
+	)
+	_, err := p.Run()
+	return err
 }
 
 // renderTasksView renders the background fix tasks list.

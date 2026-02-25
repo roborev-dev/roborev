@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
-func (m tuiModel) renderReviewView() string {
+func (m model) renderReviewView() string {
 	var b strings.Builder
 
 	review := m.currentReview
@@ -36,7 +36,7 @@ func (m tuiModel) renderReviewView() string {
 		title = fmt.Sprintf("Review %s%s (%s)", idStr, repoStr, agentStr)
 		titleLen = runewidth.StringWidth(title)
 
-		b.WriteString(tuiTitleStyle.Render(title))
+		b.WriteString(titleStyle.Render(title))
 		b.WriteString("\x1b[K") // Clear to end of line
 
 		// Show location line: repo path (or identity/name), git ref, and branch
@@ -55,7 +55,7 @@ func (m tuiModel) renderReviewView() string {
 			locationLine += " on " + m.currentBranch
 		}
 		locationLineLen = runewidth.StringWidth(locationLine)
-		b.WriteString(tuiStatusStyle.Render(locationLine))
+		b.WriteString(statusStyle.Render(locationLine))
 		b.WriteString("\x1b[K") // Clear to end of line
 
 		// Show verdict and addressed status on next line (skip verdict for fix jobs)
@@ -65,9 +65,9 @@ func (m tuiModel) renderReviewView() string {
 			if hasVerdict {
 				v := *review.Job.Verdict
 				if v == "P" {
-					b.WriteString(tuiPassStyle.Render("Verdict: Pass"))
+					b.WriteString(passStyle.Render("Verdict: Pass"))
 				} else {
-					b.WriteString(tuiFailStyle.Render("Verdict: Fail"))
+					b.WriteString(failStyle.Render("Verdict: Fail"))
 				}
 			}
 			// Show [ADDRESSED] with distinct color (after verdict if present)
@@ -75,7 +75,7 @@ func (m tuiModel) renderReviewView() string {
 				if hasVerdict {
 					b.WriteString(" ")
 				}
-				b.WriteString(tuiAddressedStyle.Render("[ADDRESSED]"))
+				b.WriteString(addressedStyle.Render("[ADDRESSED]"))
 			}
 			b.WriteString("\x1b[K") // Clear to end of line
 		}
@@ -83,7 +83,7 @@ func (m tuiModel) renderReviewView() string {
 	} else {
 		title = "Review"
 		titleLen = len(title)
-		b.WriteString(tuiTitleStyle.Render(title))
+		b.WriteString(titleStyle.Render(title))
 		b.WriteString("\x1b[K\n") // Clear to end of line
 	}
 
@@ -205,11 +205,11 @@ func (m tuiModel) renderReviewView() string {
 				b.WriteString(line)
 				b.WriteString("\x1b[K\n")
 			}
-			b.WriteString(tuiHelpStyle.Render("tab: scroll review | enter: submit | esc: cancel"))
+			b.WriteString(helpStyle.Render("tab: scroll review | enter: submit | esc: cancel"))
 			b.WriteString("\x1b[K\n")
 		} else {
 			// Label line (dimmed)
-			b.WriteString(tuiStatusStyle.Render("Fix (Tab to focus)"))
+			b.WriteString(statusStyle.Render("Fix (Tab to focus)"))
 			b.WriteString("\x1b[K\n")
 
 			inputDisplay := m.fixPromptText
@@ -226,10 +226,10 @@ func (m tuiModel) renderReviewView() string {
 				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
 				Width(innerWidth)
 			for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
-				b.WriteString(tuiStatusStyle.Render(line))
+				b.WriteString(statusStyle.Render(line))
 				b.WriteString("\x1b[K\n")
 			}
-			b.WriteString(tuiHelpStyle.Render("F: fix | tab: focus fix panel"))
+			b.WriteString(helpStyle.Render("F: fix | tab: focus fix panel"))
 			b.WriteString("\x1b[K\n")
 		}
 	}
@@ -238,12 +238,12 @@ func (m tuiModel) renderReviewView() string {
 	if m.versionMismatch {
 		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
 		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == tuiViewReview {
+	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewReview {
 		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	} else if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
-		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+		b.WriteString(statusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n") // Clear status line
 
@@ -253,7 +253,7 @@ func (m tuiModel) renderReviewView() string {
 
 	return b.String()
 }
-func (m tuiModel) renderPromptView() string {
+func (m model) renderPromptView() string {
 	var b strings.Builder
 
 	review := m.currentReview
@@ -262,9 +262,9 @@ func (m tuiModel) renderPromptView() string {
 		idStr := fmt.Sprintf("#%d ", review.Job.ID)
 		agentStr := formatAgentLabel(review.Agent, review.Job.Model)
 		title := fmt.Sprintf("Prompt %s%s (%s)", idStr, ref, agentStr)
-		b.WriteString(tuiTitleStyle.Render(title))
+		b.WriteString(titleStyle.Render(title))
 	} else {
-		b.WriteString(tuiTitleStyle.Render("Prompt"))
+		b.WriteString(titleStyle.Render("Prompt"))
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
@@ -275,7 +275,7 @@ func (m tuiModel) renderPromptView() string {
 		if m.width > 0 && runewidth.StringWidth(cmdText) > m.width {
 			cmdText = runewidth.Truncate(cmdText, m.width, "…")
 		}
-		b.WriteString(tuiStatusStyle.Render(cmdText))
+		b.WriteString(statusStyle.Render(cmdText))
 		b.WriteString("\x1b[K\n")
 		headerLines++
 	}
@@ -326,7 +326,7 @@ func (m tuiModel) renderPromptView() string {
 	// Scroll indicator
 	if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
-		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+		b.WriteString(statusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
@@ -336,17 +336,17 @@ func (m tuiModel) renderPromptView() string {
 
 	return b.String()
 }
-func (m tuiModel) renderRespondView() string {
+func (m model) renderRespondView() string {
 	var b strings.Builder
 
 	title := "Add Comment"
 	if m.commentCommit != "" {
 		title = fmt.Sprintf("Add Comment (%s)", m.commentCommit)
 	}
-	b.WriteString(tuiTitleStyle.Render(title))
+	b.WriteString(titleStyle.Render(title))
 	b.WriteString("\x1b[K\n\x1b[K\n") // Clear title and blank line
 
-	b.WriteString(tuiStatusStyle.Render("Enter your comment (e.g., \"This is a known issue, can be ignored\")"))
+	b.WriteString(statusStyle.Render("Enter your comment (e.g., \"This is a known issue, can be ignored\")"))
 	b.WriteString("\x1b[K\n\x1b[K\n")
 
 	// Simple text box with border
@@ -364,7 +364,7 @@ func (m tuiModel) renderRespondView() string {
 		// Show placeholder (styled, but we pad manually to avoid ANSI issues)
 		placeholder := "Type your comment..."
 		padded := placeholder + strings.Repeat(" ", boxWidth-2-len(placeholder))
-		b.WriteString("| " + tuiStatusStyle.Render(padded) + " |\x1b[K\n")
+		b.WriteString("| " + statusStyle.Render(padded) + " |\x1b[K\n")
 		textLinesWritten++
 	} else {
 		lines := strings.SplitSeq(m.commentText, "\n")
@@ -406,14 +406,14 @@ func (m tuiModel) renderRespondView() string {
 
 	return b.String()
 }
-func (m tuiModel) renderCommitMsgView() string {
+func (m model) renderCommitMsgView() string {
 	var b strings.Builder
 
-	b.WriteString(tuiTitleStyle.Render("Commit Message"))
+	b.WriteString(titleStyle.Render("Commit Message"))
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	if m.commitMsgContent == "" {
-		b.WriteString(tuiStatusStyle.Render("Loading commit message..."))
+		b.WriteString(statusStyle.Render("Loading commit message..."))
 		b.WriteString("\x1b[K\n")
 		// Pad to fill terminal
 		linesWritten := 2
@@ -421,7 +421,7 @@ func (m tuiModel) renderCommitMsgView() string {
 			b.WriteString("\x1b[K\n")
 			linesWritten++
 		}
-		b.WriteString(tuiHelpStyle.Render("esc/q: back"))
+		b.WriteString(helpStyle.Render("esc/q: back"))
 		b.WriteString("\x1b[K")
 		b.WriteString("\x1b[J")
 		return b.String()
@@ -455,7 +455,7 @@ func (m tuiModel) renderCommitMsgView() string {
 	// Scroll indicator
 	if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
-		b.WriteString(tuiStatusStyle.Render(scrollInfo))
+		b.WriteString(statusStyle.Render(scrollInfo))
 	}
 	b.WriteString("\x1b[K\n") // Clear scroll indicator line
 

@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 )
 
 // setupFilterTree is a helper that sets filterTree and rebuilds the flat list.
-func setupFilterTree(m *tuiModel, nodes []treeFilterNode) {
+func setupFilterTree(m *model, nodes []treeFilterNode) {
 	m.filterTree = nodes
 	m.rebuildFilterFlatList()
 }
@@ -82,8 +82,8 @@ func TestTUITreeFilterSelectBranch(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyEnter)
 
-	if m2.currentView != tuiViewQueue {
-		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
+	if m2.currentView != viewQueue {
+		t.Errorf("Expected viewQueue, got %d", m2.currentView)
 	}
 	if len(m2.activeRepoFilter) != 1 || m2.activeRepoFilter[0] != "/path/to/repo-a" {
 		t.Errorf("Expected activeRepoFilter=['/path/to/repo-a'], got %v", m2.activeRepoFilter)
@@ -129,7 +129,7 @@ func TestTUITreeFilterLazyLoadBranches(t *testing.T) {
 		t.Error("Expected fetchBranchesForRepo command")
 	}
 
-	m3, _ := updateModel(t, m2, tuiRepoBranchesMsg{
+	m3, _ := updateModel(t, m2, repoBranchesMsg{
 		repoIdx:      0,
 		rootPaths:    []string{"/path/to/repo-a"},
 		branches:     []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
@@ -162,7 +162,7 @@ func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
 	})
 	m.filterSelectedIdx = 1
 
-	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, _ := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/path/to/repo-a"},
 		err:       errors.New("connection refused"),
@@ -180,8 +180,8 @@ func TestTUITreeFilterBranchFetchFailureClearsLoading(t *testing.T) {
 }
 
 func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewQueue
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewQueue
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
 		{
@@ -192,7 +192,7 @@ func TestTUITreeFilterBranchFetchFailureOutOfView(t *testing.T) {
 		},
 	})
 
-	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, _ := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/path/to/repo-a"},
 		err:       errors.New("server error"),
@@ -222,7 +222,7 @@ func TestTUITreeFilterBranchFetchConnectionErrorTriggersReconnect(t *testing.T) 
 	})
 	m.consecutiveErrors = 2
 
-	m2, cmd := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, cmd := updateModel(t, m, repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/path/to/repo-a"},
 		err:       mockConnError("connection refused"),
@@ -312,7 +312,7 @@ func TestTUISearchTriggeredLoadDoesNotExpand(t *testing.T) {
 		makeNode("repo-a", 5),
 	})
 
-	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, _ := updateModel(t, m, repoBranchesMsg{
 		repoIdx:      0,
 		rootPaths:    []string{"/path/to/repo-a"},
 		branches:     []branchFilterItem{{name: "main", count: 3}},
@@ -452,7 +452,7 @@ func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
 		},
 	})
 
-	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, _ := updateModel(t, m, repoBranchesMsg{
 		repoIdx:      0,
 		rootPaths:    []string{"/path/a", "/path/b"},
 		branches:     []branchFilterItem{{name: "main", count: 5}},
@@ -478,7 +478,7 @@ func TestTUIBranchResponseReorderedRootPaths(t *testing.T) {
 		},
 	})
 
-	m4, _ := updateModel(t, m3, tuiRepoBranchesMsg{
+	m4, _ := updateModel(t, m3, repoBranchesMsg{
 		repoIdx:      0,
 		rootPaths:    []string{"/path/d"},
 		branches:     []branchFilterItem{{name: "main", count: 3}},
@@ -537,7 +537,7 @@ func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
 		},
 	})
 
-	m2, _ := updateModel(t, m, tuiRepoBranchesMsg{
+	m2, _ := updateModel(t, m, repoBranchesMsg{
 		repoIdx:      0,
 		rootPaths:    []string{"/path/repo-a"},
 		err:          errors.New("connection refused"),
@@ -560,8 +560,8 @@ func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
 
 func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{
 			name:      "repo-a",
@@ -594,10 +594,10 @@ func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 
 func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.branchBackfillDone = false
 
-	m2, _ := updateModel(t, m, tuiBranchesMsg{
+	m2, _ := updateModel(t, m, branchesMsg{
 		backfillCount: 0,
 	})
 
@@ -608,10 +608,10 @@ func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 
 func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.branchBackfillDone = false
 
-	m2, _ := updateModel(t, m, tuiBranchesMsg{
+	m2, _ := updateModel(t, m, branchesMsg{
 		backfillCount: 2,
 	})
 
@@ -622,10 +622,10 @@ func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 
 func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.branchBackfillDone = false
 
-	m2, _ := updateModel(t, m, tuiBranchesMsg{
+	m2, _ := updateModel(t, m, branchesMsg{
 		backfillCount: 1,
 	})
 
@@ -633,7 +633,7 @@ func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 		t.Error("Expected branchBackfillDone to be true after first fetch")
 	}
 
-	m3, _ := updateModel(t, m2, tuiBranchesMsg{
+	m3, _ := updateModel(t, m2, branchesMsg{
 		backfillCount: 0,
 	})
 
@@ -644,10 +644,10 @@ func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 
 func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
+	m := newModel("http://localhost", withExternalIODisabled())
 	m.branchBackfillDone = true
 
-	m2, _ := updateModel(t, m, tuiBranchesMsg{
+	m2, _ := updateModel(t, m, branchesMsg{
 		backfillCount: 0,
 	})
 
@@ -657,8 +657,8 @@ func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
 }
 
 func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
 		{
 			name:      "repo-a",
@@ -686,8 +686,8 @@ func TestTUITreeFilterCollapseOnExpandedRepo(t *testing.T) {
 }
 
 func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	m.filterBranchMode = true
 	m.cwdRepoRoot = "/path/to/repo-b"
 
@@ -696,7 +696,7 @@ func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
 		{name: "repo-b", rootPaths: []string{"/path/to/repo-b"}, count: 2},
 		{name: "repo-c", rootPaths: []string{"/path/to/repo-c"}, count: 1},
 	}
-	msg := tuiReposMsg{repos: repos}
+	msg := reposMsg{repos: repos}
 
 	m2, cmd := updateModel(t, m, msg)
 
@@ -712,14 +712,14 @@ func TestTUIBKeyAutoExpandsCwdRepo(t *testing.T) {
 }
 
 func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5},
 	})
 
-	msg := tuiRepoBranchesMsg{
+	msg := repoBranchesMsg{
 		repoIdx:      0,
 		rootPaths:    []string{"/path/to/repo-a"},
 		branches:     []branchFilterItem{{name: "main", count: 3}, {name: "dev", count: 2}},
@@ -741,8 +741,8 @@ func TestTUIBKeyPositionsCursorOnBranch(t *testing.T) {
 }
 
 func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", count: 1},
@@ -753,14 +753,14 @@ func TestTUIBKeyEscapeClearsBranchMode(t *testing.T) {
 	if m2.filterBranchMode {
 		t.Error("Expected filterBranchMode to be cleared on escape")
 	}
-	if m2.currentView != tuiViewQueue {
-		t.Errorf("Expected tuiViewQueue, got %d", m2.currentView)
+	if m2.currentView != viewQueue {
+		t.Errorf("Expected viewQueue, got %d", m2.currentView)
 	}
 }
 
 func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	m.cwdRepoRoot = "/path/to/repo-a"
 	m.cwdBranch = "feature"
 
@@ -768,7 +768,7 @@ func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5},
 	})
 
-	msg := tuiRepoBranchesMsg{
+	msg := repoBranchesMsg{
 		repoIdx:   0,
 		rootPaths: []string{"/path/to/repo-a"},
 		branches: []branchFilterItem{
@@ -796,8 +796,8 @@ func TestTUIFilterCwdBranchSortsFirst(t *testing.T) {
 }
 
 func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
-	m := newTuiModel("http://localhost", WithExternalIODisabled())
-	m.currentView = tuiViewFilter
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.currentView = viewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
 		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5,
@@ -811,8 +811,8 @@ func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
 	if m2.filterBranchMode {
 		t.Error("Expected filterBranchMode to be cleared on Enter")
 	}
-	if m2.currentView != tuiViewQueue {
-		t.Errorf("Expected tuiViewQueue after Enter, got %d", m2.currentView)
+	if m2.currentView != viewQueue {
+		t.Errorf("Expected viewQueue after Enter, got %d", m2.currentView)
 	}
 }
 
