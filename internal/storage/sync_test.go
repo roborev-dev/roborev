@@ -1411,61 +1411,38 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	// This test verifies that legacy responses with job_id IS NULL (tied only to commit_id)
 	// are excluded from sync since they cannot be synced via job_uuid.
-	db := openTestDB(t)
-	defer db.Close()
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("legacy-resp-sha")
 
-	machineID, err := db.GetMachineID()
+	// Need commit ID for the legacy response
+	commit, err := h.db.GetCommitBySHA("legacy-resp-sha")
 	if err != nil {
-		t.Fatalf("GetMachineID failed: %v", err)
-	}
-
-	// Create a repo and commit
-	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "legacy-resp-sha", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-
-	// Create a job-based response (should be synced)
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "legacy-resp-sha", Agent: "test", Reasoning: "thorough"})
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
-	_, err = db.ClaimJob("worker-1")
-	if err != nil {
-		t.Fatalf("ClaimJob failed: %v", err)
-	}
-	err = db.CompleteJob(job.ID, "test", "prompt", "output")
-	if err != nil {
-		t.Fatalf("CompleteJob failed: %v", err)
+		t.Fatalf("GetCommitBySHA failed: %v", err)
 	}
 
 	// Mark job as synced (required before responses can sync due to FK ordering)
-	err = db.MarkJobSynced(job.ID)
+	err = h.db.MarkJobSynced(job.ID)
 	if err != nil {
 		t.Fatalf("MarkJobSynced failed: %v", err)
 	}
 
-	jobResp, err := db.AddCommentToJob(job.ID, "human", "This is a job response")
+	jobResp, err := h.db.AddCommentToJob(job.ID, "human", "This is a job response")
 	if err != nil {
 		t.Fatalf("AddCommentToJob failed: %v", err)
 	}
 
 	// Create a legacy commit-only response by directly inserting with job_id IS NULL
-	result, err := db.Exec(`
+	result, err := h.db.Exec(`
 		INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at)
 		VALUES (?, 'human', 'This is a legacy response', ?, ?, datetime('now'))
-	`, commit.ID, GenerateUUID(), machineID)
+	`, commit.ID, GenerateUUID(), h.machineID)
 	if err != nil {
 		t.Fatalf("Failed to insert legacy response: %v", err)
 	}
 	legacyRespID, _ := result.LastInsertId()
 
 	// Get responses to sync - should only include the job-based response
-	responses, err := db.GetCommentsToSync(machineID, 100)
+	responses, err := h.db.GetCommentsToSync(h.machineID, 100)
 	if err != nil {
 		t.Fatalf("GetCommentsToSync failed: %v", err)
 	}
@@ -1525,22 +1502,8 @@ func TestUpsertPulledResponse_MissingParentJob(t *testing.T) {
 
 func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 	// This test verifies UpsertPulledResponse works when the parent job exists
-	db := openTestDB(t)
-	defer db.Close()
-
-	// Create a repo and job
-	repo, err := db.GetOrCreateRepo(t.TempDir())
-	if err != nil {
-		t.Fatalf("GetOrCreateRepo failed: %v", err)
-	}
-	commit, err := db.GetOrCreateCommit(repo.ID, "parent-job-sha", "Author", "Subject", time.Now())
-	if err != nil {
-		t.Fatalf("GetOrCreateCommit failed: %v", err)
-	}
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "parent-job-sha", Agent: "test", Reasoning: "thorough"})
-	if err != nil {
-		t.Fatalf("EnqueueJob failed: %v", err)
-	}
+	h := newSyncTestHelper(t)
+	job := h.createPendingJob("parent-job-sha")
 
 	// Upsert a response for the existing job
 	response := PulledResponse{
@@ -1552,14 +1515,14 @@ func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 		CreatedAt:       time.Now(),
 	}
 
-	err = db.UpsertPulledResponse(response)
+	err := h.db.UpsertPulledResponse(response)
 	if err != nil {
 		t.Fatalf("UpsertPulledResponse failed: %v", err)
 	}
 
 	// Verify response was inserted
 	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM responses WHERE uuid = ?`, response.UUID).Scan(&count)
+	err = h.db.QueryRow(`SELECT COUNT(*) FROM responses WHERE uuid = ?`, response.UUID).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to count responses: %v", err)
 	}
