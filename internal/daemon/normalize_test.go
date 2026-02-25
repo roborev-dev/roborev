@@ -20,21 +20,21 @@ func runNormalizeTests(t *testing.T, fn func(string) *OutputLine, cases []normal
 			result := fn(tc.input)
 			if tc.wantNil {
 				if result != nil {
-					t.Errorf("expected nil, got %+v", result)
+					t.Errorf("input %q: expected nil, got %+v", tc.input, result)
 				}
 				return
 			}
 			if result == nil {
-				t.Fatal("expected non-nil result")
+				t.Fatalf("input %q: expected non-nil result", tc.input)
 			}
 			if result.Text != tc.wantText {
-				t.Errorf("text = %q, want %q", result.Text, tc.wantText)
+				t.Errorf("input %q: text = %q, want %q", tc.input, result.Text, tc.wantText)
 			}
 			if tc.wantType != "" && result.Type != tc.wantType {
-				t.Errorf("type = %q, want %q", result.Type, tc.wantType)
+				t.Errorf("input %q: type = %q, want %q", tc.input, result.Type, tc.wantType)
 			}
 			if tc.notWantType != "" && result.Type == tc.notWantType {
-				t.Errorf("type = %q, should not be %q", result.Type, tc.notWantType)
+				t.Errorf("input %q: type = %q, should not be %q", tc.input, result.Type, tc.notWantType)
 			}
 		})
 	}
@@ -100,17 +100,13 @@ func TestNormalizeClaudeOutput(t *testing.T) {
 }
 
 func TestNormalizeClaudeOutput_SkipsLifecycleEvents(t *testing.T) {
-	for _, line := range []string{
-		`{"type":"message_start"}`,
-		`{"type":"message_delta"}`,
-		`{"type":"message_stop"}`,
-		`{"type":"content_block_start"}`,
-		`{"type":"content_block_stop"}`,
-	} {
-		if result := NormalizeClaudeOutput(line); result != nil {
-			t.Errorf("expected nil for %s, got %+v", line, result)
-		}
-	}
+	runNormalizeTests(t, NormalizeClaudeOutput, []normalizeTestCase{
+		{name: "MessageStart", input: `{"type":"message_start"}`, wantNil: true},
+		{name: "MessageDelta", input: `{"type":"message_delta"}`, wantNil: true},
+		{name: "MessageStop", input: `{"type":"message_stop"}`, wantNil: true},
+		{name: "ContentBlockStart", input: `{"type":"content_block_start"}`, wantNil: true},
+		{name: "ContentBlockStop", input: `{"type":"content_block_stop"}`, wantNil: true},
+	})
 }
 
 func TestNormalizeOpenCodeOutput(t *testing.T) {
@@ -166,21 +162,25 @@ func TestGetNormalizer(t *testing.T) {
 		agent    string
 		input    string
 		wantText string
+		wantType string
 	}{
 		{
 			agent:    "claude-code",
 			input:    `{"type":"assistant","message":{"content":"hi"}}`,
 			wantText: "hi",
+			wantType: "text",
 		},
 		{
 			agent:    "opencode",
 			input:    `{"name":"read","arguments":{}}`,
 			wantText: "[Tool call]",
+			wantType: "tool",
 		},
 		{
 			agent:    "codex",
 			input:    `{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`,
 			wantText: "hello",
+			wantType: "text",
 		},
 		{
 			agent:    "gemini",
@@ -208,6 +208,9 @@ func TestGetNormalizer(t *testing.T) {
 
 			if result.Text != tc.wantText {
 				t.Errorf("Normalizer for %q: got text %q, want %q", tc.agent, result.Text, tc.wantText)
+			}
+			if tc.wantType != "" && result.Type != tc.wantType {
+				t.Errorf("Normalizer for %q: got type %q, want %q", tc.agent, result.Type, tc.wantType)
 			}
 		})
 	}
@@ -351,10 +354,12 @@ func TestStripANSI(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		result := stripANSI(tc.input)
-		if result != tc.expected {
-			t.Errorf("stripANSI(%q) = %q, want %q", tc.input, result, tc.expected)
-		}
+		t.Run(tc.input, func(t *testing.T) {
+			result := stripANSI(tc.input)
+			if result != tc.expected {
+				t.Errorf("stripANSI(%q) = %q, want %q", tc.input, result, tc.expected)
+			}
+		})
 	}
 }
 
@@ -373,9 +378,11 @@ func TestIsToolCallJSON(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		result := isToolCallJSON(tc.input)
-		if result != tc.expected {
-			t.Errorf("isToolCallJSON(%q) = %v, want %v", tc.input, result, tc.expected)
-		}
+		t.Run(tc.input, func(t *testing.T) {
+			result := isToolCallJSON(tc.input)
+			if result != tc.expected {
+				t.Errorf("isToolCallJSON(%q) = %v, want %v", tc.input, result, tc.expected)
+			}
+		})
 	}
 }
