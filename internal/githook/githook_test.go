@@ -13,12 +13,18 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
+const (
+	shebang         = "#!/bin/sh\n"
+	hookPostCommit  = "post-commit"
+	hookPostRewrite = "post-rewrite"
+)
+
 func TestGeneratePostCommit(t *testing.T) {
 	content := GeneratePostCommit()
 	lines := strings.Split(content, "\n")
 
 	t.Run("has shebang", func(t *testing.T) {
-		if !strings.HasPrefix(content, "#!/bin/sh\n") {
+		if !strings.HasPrefix(content, shebang) {
 			t.Error("hook should start with #!/bin/sh")
 		}
 	})
@@ -30,17 +36,9 @@ func TestGeneratePostCommit(t *testing.T) {
 	})
 
 	t.Run("baked path comes first", func(t *testing.T) {
-		bakedIdx := -1
-		pathIdx := -1
-		for i, line := range lines {
-			if strings.HasPrefix(line, "ROBOREV=") &&
-				!strings.Contains(line, "command -v") {
-				bakedIdx = i
-			}
-			if strings.Contains(line, "command -v roborev") {
-				pathIdx = i
-			}
-		}
+		bakedIdx := strings.Index(content, "ROBOREV=\"")
+		pathIdx := strings.Index(content, "command -v roborev")
+
 		if bakedIdx == -1 {
 			t.Error("hook should have baked ROBOREV= assignment")
 		}
@@ -53,20 +51,20 @@ func TestGeneratePostCommit(t *testing.T) {
 	})
 
 	t.Run("enqueue line without background", func(t *testing.T) {
-		found := false
-		for _, line := range lines {
-			if strings.Contains(line, "enqueue --quiet") &&
-				strings.Contains(line, "2>/dev/null") &&
-				!strings.HasSuffix(
-					strings.TrimSpace(line), "&",
-				) {
-				found = true
-				break
-			}
+		if !strings.Contains(content, "enqueue --quiet") || !strings.Contains(content, "2>/dev/null") {
+			t.Error("hook should have enqueue with --quiet and 2>/dev/null")
 		}
-		if !found {
-			t.Error("hook should have enqueue with --quiet " +
-				"and 2>/dev/null but no trailing &")
+		
+		enqueueIdx := strings.Index(content, "enqueue --quiet")
+		if enqueueIdx != -1 {
+			lineEnd := strings.Index(content[enqueueIdx:], "\n")
+			if lineEnd == -1 {
+				lineEnd = len(content[enqueueIdx:])
+			}
+			enqueueLine := strings.TrimSpace(content[enqueueIdx : enqueueIdx+lineEnd])
+			if strings.HasSuffix(enqueueLine, "&") {
+				t.Error("enqueue line should not have trailing &")
+			}
 		}
 	})
 
@@ -118,7 +116,7 @@ func TestGeneratePostCommit(t *testing.T) {
 func TestGeneratePostRewrite(t *testing.T) {
 	content := GeneratePostRewrite()
 
-	if !strings.HasPrefix(content, "#!/bin/sh\n") {
+	if !strings.HasPrefix(content, shebang) {
 		t.Error("hook should start with #!/bin/sh")
 	}
 	if !strings.Contains(content, PostRewriteVersionMarker) {
@@ -185,7 +183,7 @@ func TestEmbedSnippet(t *testing.T) {
 		existing := "#!/bin/sh\necho 'user code'\nexit 0\n"
 		snippet := "# roborev snippet\n_roborev_hook\n"
 		result := embedSnippet(existing, snippet)
-		if !strings.HasPrefix(result, "#!/bin/sh\n") {
+		if !strings.HasPrefix(result, shebang) {
 			t.Error("should preserve shebang")
 		}
 		shebangEnd := strings.Index(result, "\n") + 1
@@ -228,7 +226,7 @@ func TestEmbedSnippet(t *testing.T) {
 		existing := "#!/bin/sh"
 		snippet := "SNIPPET\n"
 		result := embedSnippet(existing, snippet)
-		if !strings.HasPrefix(result, "#!/bin/sh\n") {
+		if !strings.HasPrefix(result, shebang) {
 			t.Errorf(
 				"shebang should get trailing newline, got:\n%q",
 				result,
@@ -248,7 +246,7 @@ func TestNeedsUpgrade(t *testing.T) {
 				"roborev enqueue\n",
 		)
 		if !NeedsUpgrade(
-			repo.Root, "post-commit", PostCommitVersionMarker,
+			repo.Root, hookPostCommit, PostCommitVersionMarker,
 		) {
 			t.Error("should detect outdated hook")
 		}
@@ -262,7 +260,7 @@ func TestNeedsUpgrade(t *testing.T) {
 				"\nroborev enqueue\n",
 		)
 		if NeedsUpgrade(
-			repo.Root, "post-commit", PostCommitVersionMarker,
+			repo.Root, hookPostCommit, PostCommitVersionMarker,
 		) {
 			t.Error("should not flag current hook")
 		}
@@ -271,7 +269,7 @@ func TestNeedsUpgrade(t *testing.T) {
 	t.Run("no hook", func(t *testing.T) {
 		repo := setupHooksRepo(t)
 		if NeedsUpgrade(
-			repo.Root, "post-commit", PostCommitVersionMarker,
+			repo.Root, hookPostCommit, PostCommitVersionMarker,
 		) {
 			t.Error("should not flag missing hook")
 		}
@@ -281,7 +279,7 @@ func TestNeedsUpgrade(t *testing.T) {
 		repo := setupHooksRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
 		if NeedsUpgrade(
-			repo.Root, "post-commit", PostCommitVersionMarker,
+			repo.Root, hookPostCommit, PostCommitVersionMarker,
 		) {
 			t.Error("should not flag non-roborev hook")
 		}
@@ -290,13 +288,13 @@ func TestNeedsUpgrade(t *testing.T) {
 	t.Run("post-rewrite outdated", func(t *testing.T) {
 		repo := setupHooksRepo(t)
 		os.WriteFile(
-			filepath.Join(repo.HooksDir, "post-rewrite"),
+			filepath.Join(repo.HooksDir, hookPostRewrite),
 			[]byte("#!/bin/sh\n# roborev hook\n"+
 				"roborev remap\n"),
 			0755,
 		)
 		if !NeedsUpgrade(
-			repo.Root, "post-rewrite",
+			repo.Root, hookPostRewrite,
 			PostRewriteVersionMarker,
 		) {
 			t.Error("should detect outdated post-rewrite hook")
@@ -306,14 +304,14 @@ func TestNeedsUpgrade(t *testing.T) {
 	t.Run("post-rewrite current", func(t *testing.T) {
 		repo := setupHooksRepo(t)
 		os.WriteFile(
-			filepath.Join(repo.HooksDir, "post-rewrite"),
+			filepath.Join(repo.HooksDir, hookPostRewrite),
 			[]byte("#!/bin/sh\n# roborev "+
 				PostRewriteVersionMarker+
 				"\nroborev remap\n"),
 			0755,
 		)
 		if NeedsUpgrade(
-			repo.Root, "post-rewrite",
+			repo.Root, hookPostRewrite,
 			PostRewriteVersionMarker,
 		) {
 			t.Error("should not flag current post-rewrite hook")
@@ -324,7 +322,7 @@ func TestNeedsUpgrade(t *testing.T) {
 func TestNotInstalled(t *testing.T) {
 	t.Run("hook file absent", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
-		if !NotInstalled(repo.Root, "post-commit") {
+		if !NotInstalled(repo.Root, hookPostCommit) {
 			t.Error("absent hook should be not installed")
 		}
 	})
@@ -332,7 +330,7 @@ func TestNotInstalled(t *testing.T) {
 	t.Run("hook without roborev", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
-		if !NotInstalled(repo.Root, "post-commit") {
+		if !NotInstalled(repo.Root, hookPostCommit) {
 			t.Error("non-roborev hook should be not installed")
 		}
 	})
@@ -340,7 +338,7 @@ func TestNotInstalled(t *testing.T) {
 	t.Run("hook with roborev", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook(GeneratePostCommit())
-		if NotInstalled(repo.Root, "post-commit") {
+		if NotInstalled(repo.Root, hookPostCommit) {
 			t.Error("roborev hook should be installed")
 		}
 	})
@@ -351,10 +349,10 @@ func TestNotInstalled(t *testing.T) {
 			// Create a directory where the hook file would be.
 			// Reading a directory is a non-ENOENT I/O error.
 			hookPath := filepath.Join(
-				repo.Root, ".git", "hooks", "post-commit",
+				repo.Root, ".git", "hooks", hookPostCommit,
 			)
 			os.MkdirAll(hookPath, 0755)
-			if NotInstalled(repo.Root, "post-commit") {
+			if NotInstalled(repo.Root, hookPostCommit) {
 				t.Error(
 					"non-ENOENT error should not report " +
 						"as not installed",
@@ -373,7 +371,7 @@ func TestMissing(t *testing.T) {
 					PostCommitVersionMarker + "\n" +
 					"roborev enqueue\n",
 			)
-			if !Missing(repo.Root, "post-rewrite") {
+			if !Missing(repo.Root, hookPostRewrite) {
 				t.Error("should detect missing post-rewrite")
 			}
 		},
@@ -381,7 +379,7 @@ func TestMissing(t *testing.T) {
 
 	t.Run("no post-commit hook at all", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
-		if Missing(repo.Root, "post-rewrite") {
+		if Missing(repo.Root, hookPostRewrite) {
 			t.Error("should not warn without post-commit")
 		}
 	})
@@ -395,13 +393,13 @@ func TestMissing(t *testing.T) {
 		)
 		hooksDir := filepath.Join(repo.Root, ".git", "hooks")
 		os.WriteFile(
-			filepath.Join(hooksDir, "post-rewrite"),
+			filepath.Join(hooksDir, hookPostRewrite),
 			[]byte("#!/bin/sh\n# roborev "+
 				PostRewriteVersionMarker+
 				"\nroborev remap\n"),
 			0755,
 		)
-		if Missing(repo.Root, "post-rewrite") {
+		if Missing(repo.Root, hookPostRewrite) {
 			t.Error("should not warn when present")
 		}
 	})
@@ -409,7 +407,7 @@ func TestMissing(t *testing.T) {
 	t.Run("non-roborev post-commit", func(t *testing.T) {
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
-		if Missing(repo.Root, "post-rewrite") {
+		if Missing(repo.Root, hookPostRewrite) {
 			t.Error("should not warn for non-roborev")
 		}
 	})
@@ -428,10 +426,10 @@ func TestMissing(t *testing.T) {
 			// Create post-rewrite as a directory so ReadFile
 			// fails with a non-ENOENT error.
 			prPath := filepath.Join(
-				repo.Root, ".git", "hooks", "post-rewrite",
+				repo.Root, ".git", "hooks", hookPostRewrite,
 			)
 			os.MkdirAll(prPath, 0755)
-			if Missing(repo.Root, "post-rewrite") {
+			if Missing(repo.Root, hookPostRewrite) {
 				t.Error(
 					"non-ENOENT error should return false",
 				)
@@ -440,43 +438,45 @@ func TestMissing(t *testing.T) {
 	)
 }
 
+type installTestCase struct {
+	name           string
+	hookName       string
+	initialContent string
+	force          bool
+	expectedError  error
+	expectContent  []string
+	expectMissing  []string
+	expectPrefix   string
+	expectExact    string
+	orderedChecks  []string
+}
+
 func TestInstall(t *testing.T) {
-	tests := []struct {
-		name           string
-		hookName       string
-		initialContent string
-		force          bool
-		expectedError  error
-		expectContent  []string
-		expectMissing  []string
-		expectPrefix   string
-		expectExact    string
-		orderedChecks  []string
-	}{
+	tests := []installTestCase{
 		{
 			name:          "fresh install creates standalone hook",
-			hookName:      "post-commit",
-			expectPrefix:  "#!/bin/sh\n",
+			hookName:      hookPostCommit,
+			expectPrefix:  shebang,
 			expectContent: []string{PostCommitVersionMarker},
 		},
 		{
 			name:           "embeds after shebang in existing hook",
-			hookName:       "post-commit",
+			hookName:       hookPostCommit,
 			initialContent: "#!/bin/sh\necho 'custom'\n",
-			expectPrefix:   "#!/bin/sh\n",
+			expectPrefix:   shebang,
 			expectContent:  []string{"echo 'custom'", PostCommitVersionMarker},
 		},
 		{
 			name:           "function wrapper uses return not exit",
-			hookName:       "post-commit",
+			hookName:       hookPostCommit,
 			initialContent: "#!/bin/sh\necho 'custom'\n",
 			expectContent:  []string{"return 0", "_roborev_hook() {"},
 			expectMissing:  []string{"exit 0"},
 		},
 		{
 			name:     "early exit does not block snippet",
-			hookName: "post-commit",
-			initialContent: "#!/bin/sh\n" +
+			hookName: hookPostCommit,
+			initialContent: shebang +
 				". \"$(dirname \"$0\")/_/husky.sh\"\n" +
 				"npx lint-staged\n" +
 				"exit 0\n",
@@ -485,14 +485,14 @@ func TestInstall(t *testing.T) {
 		},
 		{
 			name:           "skips current version",
-			hookName:       "post-rewrite",
+			hookName:       hookPostRewrite,
 			initialContent: GeneratePostRewrite(),
 			expectExact:    GeneratePostRewrite(),
 		},
 		{
 			name:     "upgrades outdated hook",
-			hookName: "post-commit",
-			initialContent: "#!/bin/sh\n" +
+			hookName: hookPostCommit,
+			initialContent: shebang +
 				"# roborev post-commit hook\n" +
 				"ROBOREV=\"/usr/local/bin/roborev\"\n" +
 				"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n",
@@ -501,8 +501,8 @@ func TestInstall(t *testing.T) {
 		},
 		{
 			name:     "upgrade from v2 to v3",
-			hookName: "post-commit",
-			initialContent: "#!/bin/sh\n" +
+			hookName: hookPostCommit,
+			initialContent: shebang +
 				"# roborev post-commit hook v2 - auto-reviews every commit\n" +
 				"ROBOREV=\"/usr/local/bin/roborev\"\n" +
 				"if [ ! -x \"$ROBOREV\" ]; then\n" +
@@ -515,7 +515,7 @@ func TestInstall(t *testing.T) {
 		},
 		{
 			name:     "upgrades mixed hook preserving user content",
-			hookName: "post-rewrite",
+			hookName: hookPostRewrite,
 			initialContent: "#!/bin/sh\necho 'user code'\n" +
 				"# roborev post-rewrite hook\n" +
 				"ROBOREV=\"/usr/bin/roborev\"\n" +
@@ -524,24 +524,24 @@ func TestInstall(t *testing.T) {
 		},
 		{
 			name:           "refuses non-shell hook",
-			hookName:       "post-commit",
+			hookName:       hookPostCommit,
 			initialContent: "#!/usr/bin/env python3\nprint('hello')\n",
 			expectedError:  ErrNonShellHook,
 			expectExact:    "#!/usr/bin/env python3\nprint('hello')\n",
 		},
 		{
 			name:           "refuses upgrade of non-shell hook",
-			hookName:       "post-commit",
+			hookName:       hookPostCommit,
 			initialContent: "#!/usr/bin/env python3\n# reviewed by roborev\nprint('hello')\n",
 			expectedError:  ErrNonShellHook,
 			expectExact:    "#!/usr/bin/env python3\n# reviewed by roborev\nprint('hello')\n",
 		},
 		{
 			name:           "force overwrites existing hook",
-			hookName:       "post-commit",
+			hookName:       hookPostCommit,
 			initialContent: "#!/bin/sh\necho 'custom'\n",
 			force:          true,
-			expectPrefix:   "#!/bin/sh\n",
+			expectPrefix:   shebang,
 			expectContent:  []string{PostCommitVersionMarker},
 			expectMissing:  []string{"echo 'custom'"},
 		},
@@ -571,38 +571,7 @@ func TestInstall(t *testing.T) {
 				t.Fatalf("Install: %v", err)
 			}
 
-			if tc.expectExact != "" {
-				assertFileEquals(t, hookPath, tc.expectExact)
-			} else {
-				if tc.expectPrefix != "" {
-					assertFileHasPrefix(t, hookPath, tc.expectPrefix)
-				}
-				if len(tc.expectContent) > 0 {
-					assertFileContains(t, hookPath, tc.expectContent...)
-				}
-				if len(tc.expectMissing) > 0 {
-					assertFileNotContains(t, hookPath, tc.expectMissing...)
-				}
-				if len(tc.orderedChecks) > 1 {
-					content, err := os.ReadFile(hookPath)
-					if err != nil {
-						t.Fatal(err)
-					}
-					s := string(content)
-					searchFrom := 0
-					for _, check := range tc.orderedChecks {
-						idx := strings.Index(s[searchFrom:], check)
-						if idx == -1 {
-							t.Errorf(
-								"missing %q after offset %d in hook",
-								check, searchFrom,
-							)
-						} else {
-							searchFrom += idx + len(check)
-						}
-					}
-				}
-			}
+			assertInstallResult(t, hookPath, tc)
 		})
 	}
 
@@ -617,11 +586,11 @@ func TestInstall(t *testing.T) {
 		for _, shebang := range shebangs {
 			t.Run(shebang, func(t *testing.T) {
 				repo := setupHooksRepo(t)
-				hookPath := filepath.Join(repo.HooksDir, "post-commit")
+				hookPath := filepath.Join(repo.HooksDir, hookPostCommit)
 				existing := shebang + "\necho 'custom'\n"
 				os.WriteFile(hookPath, []byte(existing), 0755)
 
-				if err := Install(repo.HooksDir, "post-commit", false); err != nil {
+				if err := Install(repo.HooksDir, hookPostCommit, false); err != nil {
 					t.Fatalf("should append to %s: %v", shebang, err)
 				}
 				assertFileContains(t, hookPath, "echo 'custom'", PostCommitVersionMarker)
@@ -630,10 +599,46 @@ func TestInstall(t *testing.T) {
 	})
 }
 
+func assertInstallResult(t *testing.T, hookPath string, tc installTestCase) {
+	t.Helper()
+	if tc.expectExact != "" {
+		assertFileEquals(t, hookPath, tc.expectExact)
+		return
+	}
+	if tc.expectPrefix != "" {
+		assertFileHasPrefix(t, hookPath, tc.expectPrefix)
+	}
+	if len(tc.expectContent) > 0 {
+		assertFileContains(t, hookPath, tc.expectContent...)
+	}
+	if len(tc.expectMissing) > 0 {
+		assertFileNotContains(t, hookPath, tc.expectMissing...)
+	}
+	if len(tc.orderedChecks) > 1 {
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(content)
+		searchFrom := 0
+		for _, check := range tc.orderedChecks {
+			idx := strings.Index(s[searchFrom:], check)
+			if idx == -1 {
+				t.Errorf(
+					"missing %q after offset %d in hook",
+					check, searchFrom,
+				)
+			} else {
+				searchFrom += idx + len(check)
+			}
+		}
+	}
+}
+
 func TestInstall_ReReadError(t *testing.T) {
 	repo := setupHooksRepo(t)
-	hookPath := filepath.Join(repo.HooksDir, "post-commit")
-	outdated := "#!/bin/sh\n" +
+	hookPath := filepath.Join(repo.HooksDir, hookPostCommit)
+	outdated := shebang +
 		"# roborev post-commit hook\n" +
 		"ROBOREV=\"/usr/local/bin/roborev\"\n" +
 		"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
@@ -645,7 +650,7 @@ func TestInstall_ReReadError(t *testing.T) {
 	}
 	t.Cleanup(func() { ReadFile = origReadFile })
 
-	err := Install(repo.HooksDir, "post-commit", false)
+	err := Install(repo.HooksDir, hookPostCommit, false)
 	if err == nil {
 		t.Fatal("expected error from re-read failure")
 	}
@@ -668,7 +673,7 @@ func TestInstallAll(t *testing.T) {
 		t.Fatalf("InstallAll: %v", err)
 	}
 
-	for _, name := range []string{"post-commit", "post-rewrite"} {
+	for _, name := range []string{hookPostCommit, hookPostRewrite} {
 		path := filepath.Join(repo.HooksDir, name)
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -697,13 +702,13 @@ func TestUninstall(t *testing.T) {
 	}{
 		{
 			name:           "generated hook is deleted entirely",
-			hookName:       "post-rewrite",
+			hookName:       hookPostRewrite,
 			initialContent: GeneratePostRewrite(),
 			expectDeleted:  true,
 		},
 		{
 			name:     "mixed hook preserves non-roborev content",
-			hookName: "post-rewrite",
+			hookName: hookPostRewrite,
 			initialContent: "#!/bin/sh\necho 'custom logic'\n" +
 				GeneratePostRewrite(),
 			expectContent: []string{"echo 'custom logic'"},
@@ -711,8 +716,8 @@ func TestUninstall(t *testing.T) {
 		},
 		{
 			name:     "v3 function wrapper removed",
-			hookName: "post-commit",
-			initialContent: "#!/bin/sh\n" +
+			hookName: hookPostCommit,
+			initialContent: shebang +
 				generateEmbeddablePostCommit() +
 				"echo 'user code after'\n",
 			expectContent: []string{"echo 'user code after'"},
@@ -720,8 +725,8 @@ func TestUninstall(t *testing.T) {
 		},
 		{
 			name:     "v3 mixed hook preserves user content",
-			hookName: "post-commit",
-			initialContent: "#!/bin/sh\n" +
+			hookName: hookPostCommit,
+			initialContent: shebang +
 				generateEmbeddablePostCommit() +
 				"echo 'before'\necho 'after'\n",
 			expectContent: []string{"echo 'before'", "echo 'after'"},
@@ -729,43 +734,43 @@ func TestUninstall(t *testing.T) {
 		},
 		{
 			name:           "v0 hook removed",
-			hookName:       "post-commit",
+			hookName:       hookPostCommit,
 			initialContent: v0Hook,
 			expectDeleted:  true,
 		},
 		{
 			name:           "v0.5 hook removed",
-			hookName:       "post-commit",
+			hookName:       hookPostCommit,
 			initialContent: v05Hook,
 			expectDeleted:  true,
 		},
 		{
 			name:           "v1 hook removed",
-			hookName:       "post-commit",
+			hookName:       hookPostCommit,
 			initialContent: v1Hook,
 			expectDeleted:  true,
 		},
 		{
 			name:           "v1 mixed hook removes only roborev block",
-			hookName:       "post-commit",
-			initialContent: "#!/bin/sh\necho 'custom'\n" + strings.TrimPrefix(v1Hook, "#!/bin/sh\n"),
+			hookName:       hookPostCommit,
+			initialContent: "#!/bin/sh\necho 'custom'\n" + strings.TrimPrefix(v1Hook, shebang),
 			expectContent:  []string{"echo 'custom'"},
 			expectMissing:  []string{"roborev"},
 		},
 		{
 			name:           "no-op for no roborev content",
-			hookName:       "post-rewrite",
+			hookName:       hookPostRewrite,
 			initialContent: "#!/bin/sh\necho 'unrelated'\n",
 			expectContent:  []string{"#!/bin/sh\necho 'unrelated'\n"},
 		},
 		{
 			name:     "custom if-block after snippet preserved",
-			hookName: "post-rewrite",
+			hookName: hookPostRewrite,
 			initialContent: GeneratePostRewrite() +
 				"if [ -f .notify ]; then\n" +
 				"    echo 'send notification'\n" +
 				"fi\n",
-			expectExact: "#!/bin/sh\n" +
+			expectExact: shebang +
 				"if [ -f .notify ]; then\n" +
 				"    echo 'send notification'\n" +
 				"fi\n",
@@ -811,10 +816,10 @@ func TestUninstall(t *testing.T) {
 }
 
 func TestVersionMarker(t *testing.T) {
-	if m := VersionMarker("post-commit"); m != PostCommitVersionMarker {
+	if m := VersionMarker(hookPostCommit); m != PostCommitVersionMarker {
 		t.Errorf("got %q, want %q", m, PostCommitVersionMarker)
 	}
-	if m := VersionMarker("post-rewrite"); m != PostRewriteVersionMarker {
+	if m := VersionMarker(hookPostRewrite); m != PostRewriteVersionMarker {
 		t.Errorf("got %q, want %q", m, PostRewriteVersionMarker)
 	}
 	if m := VersionMarker("unknown"); m != "" {
@@ -883,13 +888,21 @@ func setupHooksRepo(t *testing.T) *testutil.TestRepo {
 	return repo
 }
 
-func assertFileContains(t *testing.T, path string, substrings ...string) {
+func readFileForAssert(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "" // Return empty string for NotContains checks
+		}
 		t.Fatalf("failed to read %s: %v", path, err)
 	}
-	str := string(content)
+	return string(content)
+}
+
+func assertFileContains(t *testing.T, path string, substrings ...string) {
+	t.Helper()
+	str := readFileForAssert(t, path)
 	for _, sub := range substrings {
 		if !strings.Contains(str, sub) {
 			t.Errorf("file %s should contain %q", filepath.Base(path), sub)
@@ -899,14 +912,10 @@ func assertFileContains(t *testing.T, path string, substrings ...string) {
 
 func assertFileNotContains(t *testing.T, path string, substrings ...string) {
 	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return
-		}
-		t.Fatalf("failed to read %s: %v", path, err)
+	str := readFileForAssert(t, path)
+	if str == "" {
+		return
 	}
-	str := string(content)
 	for _, sub := range substrings {
 		if strings.Contains(str, sub) {
 			t.Errorf("file %s should NOT contain %q", filepath.Base(path), sub)
@@ -916,23 +925,17 @@ func assertFileNotContains(t *testing.T, path string, substrings ...string) {
 
 func assertFileEquals(t *testing.T, path string, expected string) {
 	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	if string(content) != expected {
-		t.Errorf("file %s content mismatch.\nGot:\n%q\nWant:\n%q", filepath.Base(path), string(content), expected)
+	str := readFileForAssert(t, path)
+	if str != expected {
+		t.Errorf("file %s content mismatch.\nGot:\n%q\nWant:\n%q", filepath.Base(path), str, expected)
 	}
 }
 
 func assertFileHasPrefix(t *testing.T, path string, prefix string) {
 	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	if !strings.HasPrefix(string(content), prefix) {
-		t.Errorf("file %s should start with:\n%q\nGot start:\n%q", filepath.Base(path), prefix, string(content))
+	str := readFileForAssert(t, path)
+	if !strings.HasPrefix(str, prefix) {
+		t.Errorf("file %s should start with:\n%q\nGot start:\n%q", filepath.Base(path), prefix, str)
 	}
 }
 
