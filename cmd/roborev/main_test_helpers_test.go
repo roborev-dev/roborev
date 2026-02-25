@@ -470,16 +470,32 @@ func daemonFromHandler(t *testing.T, handler http.Handler) *MockDaemon {
 	})
 }
 
+var chdirMutex sync.Mutex
+
 // runWithOutput runs a cobra command within a specific directory and returns its output.
 func runWithOutput(t *testing.T, dir string, fn func(cmd *cobra.Command) error) (string, error) {
 	t.Helper()
-	oldWd, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(oldWd) }()
+
+	chdirMutex.Lock()
+	defer chdirMutex.Unlock()
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to change directory to %s: %v", dir, err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Fatalf("failed to restore directory to %s: %v", oldWd, err)
+		}
+	}()
 
 	var output bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&output)
-	err := fn(cmd)
+	err = fn(cmd)
 	return output.String(), err
 }
