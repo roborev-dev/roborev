@@ -8,6 +8,8 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupTestServer creates a temporary DB and Server, handling cleanup automatically.
@@ -15,21 +17,12 @@ func setupTestServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := storage.Open(dir + "/test.db")
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
+	require.NoError(t, err, "Failed to open database")
 	t.Cleanup(func() { db.Close() })
 
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
-	t.Cleanup(func() {
-		if server.errorLog != nil {
-			server.errorLog.Close()
-		}
-		if server.activityLog != nil {
-			server.activityLog.Close()
-		}
-	})
+	t.Cleanup(func() { server.Close() })
 	return server
 }
 
@@ -37,7 +30,7 @@ func setupTestServer(t *testing.T) *Server {
 func executeHealthCheck(server *Server, method string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, "/api/health", nil)
 	w := httptest.NewRecorder()
-	server.handleHealth(w, req)
+	server.httpServer.Handler.ServeHTTP(w, req)
 	return w
 }
 
@@ -45,9 +38,8 @@ func executeHealthCheck(server *Server, method string) *httptest.ResponseRecorde
 func decodeHealthStatus(t *testing.T, w *httptest.ResponseRecorder) storage.HealthStatus {
 	t.Helper()
 	var health storage.HealthStatus
-	if err := json.NewDecoder(w.Result().Body).Decode(&health); err != nil {
-		t.Fatalf("Failed to parse health response: %v", err)
-	}
+	err := json.NewDecoder(w.Result().Body).Decode(&health)
+	require.NoError(t, err, "Failed to parse health response")
 	return health
 }
 
@@ -55,19 +47,14 @@ func TestHealth(t *testing.T) {
 	t.Run("Happy Path", func(t *testing.T) {
 		server := setupTestServer(t)
 		w := executeHealthCheck(server, http.MethodGet)
-		if w.Code != http.StatusOK {
-			t.Fatalf("Expected status 200, got %d", w.Code)
-		}
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		health := decodeHealthStatus(t, w)
-		assertNotEmpty(t, health.Uptime, "Uptime")
-		assertNotEmpty(t, health.Version, "Version")
-		assertComponentExists(t, health.Components, "database")
-		assertComponentExists(t, health.Components, "workers")
-
-		if !health.Healthy {
-			t.Error("Expected health to be OK")
-		}
+		assert.NotEmpty(t, health.Uptime, "Uptime")
+		assert.NotEmpty(t, health.Version, "Version")
+		assert.True(t, hasComponent(health.Components, "database"), "Expected component 'database' in health check")
+		assert.True(t, hasComponent(health.Components, "workers"), "Expected component 'workers' in health check")
+		assert.True(t, health.Healthy, "Expected health to be OK")
 	})
 
 	t.Run("With Errors", func(t *testing.T) {
@@ -81,47 +68,33 @@ func TestHealth(t *testing.T) {
 		w := executeHealthCheck(server, http.MethodGet)
 		health := decodeHealthStatus(t, w)
 
-		if health.ErrorCount == 0 {
-			t.Error("Expected error count > 0")
-		}
-
-		assertErrorExists(t, health.RecentErrors, "worker", 456)
+		assert.Greater(t, health.ErrorCount, 0, "Expected error count > 0")
+		assert.True(t, hasError(health.RecentErrors, "worker", 456), "Expected error for component 'worker' with JobID 456")
 	})
 
 	t.Run("Method Not Allowed", func(t *testing.T) {
 		server := setupTestServer(t)
 		w := executeHealthCheck(server, http.MethodPost)
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("Expected status 405, got %d", w.Code)
-		}
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
 }
 
 // Helpers
 
-func assertNotEmpty(t *testing.T, val, name string) {
-	t.Helper()
-	if val == "" {
-		t.Errorf("Expected %s to be set", name)
-	}
-}
-
-func assertComponentExists(t *testing.T, components []storage.ComponentHealth, name string) {
-	t.Helper()
+func hasComponent(components []storage.ComponentHealth, name string) bool {
 	for _, c := range components {
 		if c.Name == name {
-			return
+			return true
 		}
 	}
-	t.Errorf("Expected component '%s' in health check", name)
+	return false
 }
 
-func assertErrorExists(t *testing.T, errors []storage.ErrorEntry, component string, jobID int64) {
-	t.Helper()
+func hasError(errors []storage.ErrorEntry, component string, jobID int64) bool {
 	for _, e := range errors {
 		if e.Component == component && e.JobID == jobID {
-			return
+			return true
 		}
 	}
-	t.Errorf("Expected error for component '%s' with JobID %d", component, jobID)
+	return false
 }

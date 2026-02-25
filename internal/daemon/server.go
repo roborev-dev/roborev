@@ -255,6 +255,12 @@ func (s *Server) Stop() error {
 	return nil
 }
 
+// Close shuts down the server and releases its resources.
+// It is primarily provided for ease of use in test cleanup.
+func (s *Server) Close() error {
+	return s.Stop()
+}
+
 // ConfigWatcher returns the server's config watcher (for use by external components)
 func (s *Server) ConfigWatcher() *ConfigWatcher {
 	return s.configWatcher
