@@ -13,7 +13,7 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 	var shutdownCalled atomic.Bool
 	var requestCount atomic.Int32
 
-	mux := http.NewServeMux()
+	addr, mux := startMockDaemon(t)
 	mux.HandleFunc("/api/shutdown", func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		shutdownCalled.Store(true)
@@ -25,12 +25,8 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	addr := startMockDaemon(t, mux.ServeHTTP)
-
-	const dummyNonExistentPID = 999999
-
 	info := &RuntimeInfo{
-		PID:  dummyNonExistentPID,
+		PID:  mockPID,
 		Addr: addr, // Loopback address from test server
 	}
 

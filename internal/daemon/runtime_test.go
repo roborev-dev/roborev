@@ -18,6 +18,7 @@ import (
 const (
 	defaultTestPort = 7373
 	defaultTestAddr = "127.0.0.1:7373"
+	mockPID         = 99999
 )
 
 type runtimeData struct {
@@ -50,13 +51,14 @@ func createRuntimeFile(t *testing.T, dir string, pid int, data *runtimeData) str
 	return path
 }
 
-// startMockDaemon starts an httptest server handled by handler and returns the
-// "host:port" address. The server is closed automatically when the test ends.
-func startMockDaemon(t *testing.T, handler http.HandlerFunc) string {
+// startMockDaemon starts an httptest server with an http.ServeMux and returns the
+// "host:port" address and the mux. The server is closed automatically when the test ends.
+func startMockDaemon(t *testing.T) (string, *http.ServeMux) {
 	t.Helper()
-	server := httptest.NewServer(handler)
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	return strings.TrimPrefix(server.URL, "http://")
+	return strings.TrimPrefix(server.URL, "http://"), mux
 }
 
 // mockIdentifyProcess replaces the global identifyProcess function with mock
@@ -184,8 +186,8 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 	createRuntimeFile(t, dataDir, 12345, nil)
 
 	// Create an unreadable runtime file
-	unreadablePath := createRuntimeFile(t, dataDir, 99999, &runtimeData{
-		PID:  99999,
+	unreadablePath := createRuntimeFile(t, dataDir, mockPID, &runtimeData{
+		PID:  mockPID,
 		Addr: "127.0.0.1:7374",
 	})
 	os.Chmod(unreadablePath, 0000)
@@ -332,7 +334,8 @@ func TestIsDaemonAliveStatusCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			addr := startMockDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+			addr, mux := startMockDaemon(t)
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.statusCode)
 			})
 			got := IsDaemonAlive(addr)
