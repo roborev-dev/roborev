@@ -16,62 +16,30 @@ func TestEnqueueIfNeeded(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		handlerFactory   func(*atomic.Int32, *atomic.Int32) http.HandlerFunc
+		jobResponses     []any
 		expectedChecks   int32
 		expectedEnqueues int32
 		minChecks        int32
+		checkExact       bool
 	}{
 		{
 			name: "SkipsWhenJobAppearsAfterWait",
-			handlerFactory: func(jobCheckCalls *atomic.Int32, enqueueCalls *atomic.Int32) http.HandlerFunc {
-				return func(w http.ResponseWriter, r *http.Request) {
-					switch r.URL.Path {
-					case "/api/jobs":
-						n := jobCheckCalls.Add(1)
-						if n == 1 {
-							// First check: no jobs yet
-							json.NewEncoder(w).Encode(map[string]interface{}{
-								"jobs": []map[string]interface{}{},
-							})
-						} else {
-							// Second check: hook has fired
-							json.NewEncoder(w).Encode(map[string]interface{}{
-								"jobs": []map[string]interface{}{{"id": 42}},
-							})
-						}
-					case "/api/enqueue":
-						enqueueCalls.Add(1)
-						w.WriteHeader(http.StatusCreated)
-						json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
-					default:
-						w.WriteHeader(http.StatusNotFound)
-					}
-				}
+			jobResponses: []any{
+				map[string]any{"jobs": []any{}},                         // First call
+				map[string]any{"jobs": []any{map[string]any{"id": 42}}}, // Second call
 			},
 			expectedChecks:   2,
 			expectedEnqueues: 0,
+			checkExact:       true,
 		},
 		{
 			name: "EnqueuesWhenNoJobExists",
-			handlerFactory: func(jobCheckCalls *atomic.Int32, enqueueCalls *atomic.Int32) http.HandlerFunc {
-				return func(w http.ResponseWriter, r *http.Request) {
-					switch r.URL.Path {
-					case "/api/jobs":
-						jobCheckCalls.Add(1)
-						json.NewEncoder(w).Encode(map[string]interface{}{
-							"jobs": []map[string]interface{}{},
-						})
-					case "/api/enqueue":
-						enqueueCalls.Add(1)
-						w.WriteHeader(http.StatusCreated)
-						json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
-					default:
-						w.WriteHeader(http.StatusNotFound)
-					}
-				}
+			jobResponses: []any{
+				map[string]any{"jobs": []any{}},
 			},
 			minChecks:        1,
 			expectedEnqueues: 1,
+			checkExact:       false,
 		},
 	}
 
@@ -82,7 +50,25 @@ func TestEnqueueIfNeeded(t *testing.T) {
 			var jobCheckCalls atomic.Int32
 			var enqueueCalls atomic.Int32
 
-			ts := httptest.NewServer(tt.handlerFactory(&jobCheckCalls, &enqueueCalls))
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/jobs":
+					n := jobCheckCalls.Add(1)
+					// Return the response corresponding to the call sequence, or the last one
+					idx := int(n - 1)
+					if idx >= len(tt.jobResponses) {
+						idx = len(tt.jobResponses) - 1
+					}
+					json.NewEncoder(w).Encode(tt.jobResponses[idx])
+				case "/api/enqueue":
+					enqueueCalls.Add(1)
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(map[string]any{"id": 99})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			ts := httptest.NewServer(handler)
 			defer ts.Close()
 
 			err := enqueueIfNeeded(ts.URL, tmpDir, sha)
@@ -90,11 +76,11 @@ func TestEnqueueIfNeeded(t *testing.T) {
 				t.Fatalf("enqueueIfNeeded: %v", err)
 			}
 
-			if tt.expectedChecks > 0 {
+			if tt.checkExact {
 				if jobCheckCalls.Load() != tt.expectedChecks {
 					t.Errorf("expected %d job checks, got %d", tt.expectedChecks, jobCheckCalls.Load())
 				}
-			} else if tt.minChecks > 0 {
+			} else {
 				if jobCheckCalls.Load() < tt.minChecks {
 					t.Errorf("expected at least %d job checks, got %d", tt.minChecks, jobCheckCalls.Load())
 				}
