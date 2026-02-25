@@ -125,24 +125,16 @@ func TestIsUnbornHead(t *testing.T) {
 	}
 
 	t.Run("true for empty repo", func(t *testing.T) {
-		dir := t.TempDir()
-		runGit(t, dir, "init")
-		if !IsUnbornHead(dir) {
+		repo := NewTestRepo(t)
+		if !IsUnbornHead(repo.Dir) {
 			t.Error("expected IsUnbornHead=true for empty repo")
 		}
 	})
 
 	t.Run("false after first commit", func(t *testing.T) {
-		dir := t.TempDir()
-		runGit(t, dir, "init")
-		runGit(t, dir, "config", "user.email", "test@test.com")
-		runGit(t, dir, "config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit(t, dir, "add", ".")
-		runGit(t, dir, "commit", "-m", "init")
-		if IsUnbornHead(dir) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("file.txt", "x", "init")
+		if IsUnbornHead(repo.Dir) {
 			t.Error("expected IsUnbornHead=false after commit")
 		}
 	})
@@ -157,25 +149,18 @@ func TestIsUnbornHead(t *testing.T) {
 	t.Run("false for corrupt ref", func(t *testing.T) {
 		// Simulate a repo where HEAD's target branch exists but points to
 		// a missing object — this is NOT unborn, it's corrupt.
-		dir := t.TempDir()
-		runGit(t, dir, "init")
-		runGit(t, dir, "config", "user.email", "test@test.com")
-		runGit(t, dir, "config", "user.name", "Test")
-		if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		runGit(t, dir, "add", ".")
-		runGit(t, dir, "commit", "-m", "init")
+		repo := NewTestRepo(t)
+		repo.CommitFile("file.txt", "x", "init")
 
 		// Corrupt the branch ref by writing a bogus SHA.
 		// Read the actual HEAD target to avoid hardcoding main/master.
-		headRef := strings.TrimSpace(runGit(t, dir, "symbolic-ref", "HEAD"))
-		refPath := filepath.Join(dir, ".git", headRef)
+		headRef := repo.Run("symbolic-ref", "HEAD")
+		refPath := filepath.Join(repo.Dir, ".git", headRef)
 		if err := os.WriteFile(refPath, []byte("0000000000000000000000000000000000000000\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 
-		if IsUnbornHead(dir) {
+		if IsUnbornHead(repo.Dir) {
 			t.Error("expected IsUnbornHead=false for corrupt ref (ref exists but object is missing)")
 		}
 	})
@@ -341,12 +326,7 @@ func TestIsRebaseInProgress(t *testing.T) {
 		}
 
 		// Get the actual gitdir for the worktree to simulate rebase
-		gitDirCmd := exec.Command("git", "-C", wt.Dir, "rev-parse", "--git-dir")
-		gitDirOut, err := gitDirCmd.Output()
-		if err != nil {
-			t.Fatalf("git rev-parse --git-dir failed: %v", err)
-		}
-		worktreeGitDir := strings.TrimSpace(string(gitDirOut))
+		worktreeGitDir := wt.Run("rev-parse", "--git-dir")
 		if !filepath.IsAbs(worktreeGitDir) {
 			worktreeGitDir = filepath.Join(wt.Dir, worktreeGitDir)
 		}
@@ -392,10 +372,7 @@ func TestGetCommitInfo(t *testing.T) {
 		repo.Run("add", ".")
 
 		commitMsg := "Subject line\n\nThis is the body.\nIt has multiple lines.\n\nAnd paragraphs."
-		cmd := exec.Command("git", "-C", repo.Dir, "commit", "-m", commitMsg)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git commit failed: %v\n%s", err, out)
-		}
+		repo.Run("commit", "-m", commitMsg)
 
 		commitSHA := repo.HeadSHA()
 
@@ -420,10 +397,7 @@ func TestGetCommitInfo(t *testing.T) {
 		repo.Run("add", ".")
 
 		commitMsg := "Fix bug | important\n\nDetails: foo | bar | baz"
-		cmd := exec.Command("git", "-C", repo.Dir, "commit", "-m", commitMsg)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git commit failed: %v\n%s", err, out)
-		}
+		repo.Run("commit", "-m", commitMsg)
 
 		commitSHA := repo.HeadSHA()
 
@@ -1080,6 +1054,7 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 
 	// Force GPG signing with a non-existent key
 	repo.Run("config", "commit.gpgsign", "true")
+	repo.Run("config", "gpg.program", "false") // Force failure deterministically
 	repo.Run("config", "user.signingkey", "DEADBEEF00000000")
 
 	repo.WriteFile("new.txt", "content")
@@ -1087,9 +1062,7 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 
 	_, err := CreateCommit(repo.Dir, "should fail from gpg")
 	if err == nil {
-		// Some CI environments may have gpg configured in a way
-		// that doesn't fail. Skip rather than give a false pass.
-		t.Skip("commit succeeded unexpectedly (gpg may be configured)")
+		t.Fatal("expected commit to fail due to gpg.program=false")
 	}
 
 	var commitErr *CommitError
