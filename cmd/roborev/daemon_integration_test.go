@@ -193,10 +193,10 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	t.Cleanup(func() {
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			_ = cmd.Process.Kill()
-		}
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+			}
 		}
 	})
 
