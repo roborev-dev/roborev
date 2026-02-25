@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -11,10 +12,9 @@ import (
 // toolsArgValue returns the value of the --allowedTools argument.
 func toolsArgValue(t *testing.T, args []string) string {
 	t.Helper()
-	for i, a := range args {
-		if a == "--allowedTools" && i+1 < len(args) {
-			return args[i+1]
-		}
+	idx := slices.Index(args, "--allowedTools")
+	if idx != -1 && idx+1 < len(args) {
+		return args[idx+1]
 	}
 	t.Fatal("--allowedTools not found in args")
 	return ""
@@ -151,22 +151,13 @@ still not json
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			var w io.Writer
 			if tt.expectOutput {
-				var out bytes.Buffer
-				res, err := parseStreamJSON(strings.NewReader(tt.input), &out)
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if res != tt.expectedResult {
-					t.Errorf("expected result %q, got %q", tt.expectedResult, res)
-				}
-				if out.Len() == 0 {
-					t.Error("expected output to be written")
-				}
-				return
+				w = &out
 			}
 
-			res, err := parseStreamJSON(strings.NewReader(tt.input), nil)
+			res, err := parseStreamJSON(strings.NewReader(tt.input), w)
 
 			if tt.expectedErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.expectedErr) {
@@ -174,11 +165,16 @@ still not json
 				}
 				return
 			}
+
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if res != tt.expectedResult {
 				t.Errorf("expected result %q, got %q", tt.expectedResult, res)
+			}
+
+			if tt.expectOutput && out.Len() == 0 {
+				t.Error("expected output to be written")
 			}
 		})
 	}
@@ -237,13 +233,8 @@ func TestFilterEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := filterEnv(tt.env, tt.keys...)
-			if len(got) != len(tt.expected) {
-				t.Fatalf("expected %d vars, got %d", len(tt.expected), len(got))
-			}
-			for i := range got {
-				if got[i] != tt.expected[i] {
-					t.Errorf("expected %q at index %d, got %q", tt.expected[i], i, got[i])
-				}
+			if !slices.Equal(got, tt.expected) {
+				t.Errorf("expected %q, got %q", tt.expected, got)
 			}
 		})
 	}
