@@ -203,9 +203,9 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/path/to/repo"))),
 		withQueueTestSelection(0),
-		withQueueTestFlags(true, false, true),
+		withQueueTestFlags(true, false, false),
 	)
-	m.activeRepoFilter = []string{"/path/to/repo"}
+	m.activeRepoFilter = []string{"/path/to/repo", "/path/to/repo2"}
 
 	// Press down at bottom - should NOT trigger load more (filtered view loads all)
 	m2, cmd := pressSpecial(m, tea.KeyDown)
@@ -650,6 +650,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 		loadingMore   bool
 		msg           tea.WindowSizeMsg
 		wantCmd       bool
+		wantLoading   bool
 	}{
 		{
 			name:          "During Pagination No Refetch",
@@ -659,6 +660,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 			loadingMore:   true, // pagination in flight
 			msg:           tea.WindowSizeMsg{Height: 40},
 			wantCmd:       false,
+			wantLoading:   false,
 		},
 		{
 			name:          "Triggers Refetch When Needed",
@@ -668,6 +670,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 			loadingMore:   false,
 			msg:           tea.WindowSizeMsg{Height: 40},
 			wantCmd:       true,
+			wantLoading:   true,
 		},
 		{
 			name:          "No Refetch When Enough Jobs",
@@ -677,15 +680,17 @@ func TestTUIResizeBehavior(t *testing.T) {
 			loadingMore:   false,
 			msg:           tea.WindowSizeMsg{Height: 40},
 			wantCmd:       false,
+			wantLoading:   false,
 		},
 		{
 			name:          "Refetch On Later Resize",
 			initialHeight: 20,
-			jobsCount:     3,
+			jobsCount:     25, // enough for height 20 (visible=12+10=22), but not height 40 (visible=32+10=42)
 			loadingJobs:   false,
 			loadingMore:   false,
 			msg:           tea.WindowSizeMsg{Height: 20}, // same height first
-			wantCmd:       false,                         // This will be simulated by two resizes in the test
+			wantCmd:       false,                         // intermediate state wantCmd=false
+			wantLoading:   false,
 		},
 		{
 			name:          "No Refetch While Loading Jobs",
@@ -695,6 +700,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 			loadingMore:   false,
 			msg:           tea.WindowSizeMsg{Height: 40},
 			wantCmd:       false,
+			wantLoading:   true, // remains true
 		},
 	}
 
@@ -710,12 +716,36 @@ func TestTUIResizeBehavior(t *testing.T) {
 				withQueueTestFlags(true, tt.loadingMore, tt.loadingJobs),
 			)
 			m.height = tt.initialHeight
+			m.heightDetected = false // ensure we can verify the msg updates this
 
 			var cmd tea.Cmd
 
 			if tt.name == "Refetch On Later Resize" {
-				m, _ = updateModel(t, m, tt.msg)
+				m, cmd = updateModel(t, m, tt.msg)
+				
+				if cmd != nil {
+					t.Error("Expected no fetch command on first resize, got one")
+				}
+				if m.height != tt.msg.Height {
+					t.Errorf("Expected height to be %d, got %d", tt.msg.Height, m.height)
+				}
+				if !m.heightDetected {
+					t.Error("Expected heightDetected to be true")
+				}
+
+				// Second resize that should trigger the refetch
 				m, cmd = updateModel(t, m, tea.WindowSizeMsg{Height: 40})
+				
+				if cmd == nil {
+					t.Error("Expected fetch command on second resize, got nil")
+				}
+				if m.height != 40 {
+					t.Errorf("Expected height to be 40, got %d", m.height)
+				}
+				if !m.loadingJobs {
+					t.Error("Expected loadingJobs to be true after second resize triggered fetch")
+				}
+				return
 			} else {
 				m, cmd = updateModel(t, m, tt.msg)
 			}
@@ -725,6 +755,15 @@ func TestTUIResizeBehavior(t *testing.T) {
 			}
 			if !tt.wantCmd && cmd != nil {
 				t.Error("Expected no fetch command, got one")
+			}
+			if m.height != tt.msg.Height {
+				t.Errorf("Expected height to be %d, got %d", tt.msg.Height, m.height)
+			}
+			if !m.heightDetected {
+				t.Error("Expected heightDetected to be true")
+			}
+			if m.loadingJobs != tt.wantLoading {
+				t.Errorf("Expected loadingJobs %v, got %v", tt.wantLoading, m.loadingJobs)
 			}
 		})
 	}
