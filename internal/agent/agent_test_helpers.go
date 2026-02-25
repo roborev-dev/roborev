@@ -240,6 +240,14 @@ func assertNotContains(t *testing.T, s, substr string) {
 	}
 }
 
+// assertEqual fails the test if got != want.
+func assertEqual(t *testing.T, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // ScriptBuilder helps construct shell scripts for mocking CLI output in tests.
 type ScriptBuilder struct {
 	lines []string

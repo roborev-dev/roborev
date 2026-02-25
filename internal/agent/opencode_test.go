@@ -111,10 +111,7 @@ func TestOpenCodeReviewParsesJSONStream(t *testing.T) {
 		makeOpenCodeEvent("step_start", map[string]any{
 			"type": "step-start",
 		}),
-		makeOpenCodeEvent("text", map[string]any{
-			"type": "text",
-			"text": "**Review:** Fix the typo.",
-		}),
+		makeTextEvent("**Review:** Fix the typo."),
 		makeOpenCodeEvent("tool", map[string]any{
 			"type": "tool",
 			"tool": "Read",
@@ -125,10 +122,7 @@ func TestOpenCodeReviewParsesJSONStream(t *testing.T) {
 				},
 			},
 		}),
-		makeOpenCodeEvent("text", map[string]any{
-			"type": "text",
-			"text": " Done.",
-		}),
+		makeTextEvent(" Done."),
 		makeOpenCodeEvent("step_finish", map[string]any{
 			"type":   "step-finish",
 			"reason": "stop",
@@ -149,31 +143,23 @@ func TestOpenCodeReviewStreamsToOutput(t *testing.T) {
 	skipIfWindows(t)
 
 	stdoutLines := []string{
-		makeOpenCodeEvent("text", map[string]any{
-			"type": "text",
-			"text": "Hello world",
-		}),
+		makeTextEvent("Hello world"),
 	}
 
-	mock := mockAgentCLI(t, MockCLIOpts{
-		CaptureStdin: true,
-		StdoutLines:  stdoutLines,
-	})
-
-	a := NewOpenCodeAgent(mock.CmdPath)
-
 	var outputBuf bytes.Buffer
-	result, err := a.Review(
-		context.Background(), t.TempDir(),
-		"HEAD", "prompt", &outputBuf,
-	)
+	result, _, _, err := executeReviewTest(t, reviewTestOpts{
+		MockOpts: MockCLIOpts{
+			CaptureStdin: true,
+			StdoutLines:  stdoutLines,
+		},
+		Prompt: "prompt",
+		Writer: &outputBuf,
+	})
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
 
-	if result != "Hello world" {
-		t.Errorf("result = %q, want %q", result, "Hello world")
-	}
+	assertEqual(t, result, "Hello world")
 
 	// Raw JSONL should have been written to the output writer
 	outStr := outputBuf.String()
@@ -185,24 +171,17 @@ func TestOpenCodeReviewPartialOnError(t *testing.T) {
 	skipIfWindows(t)
 
 	stdoutLines := []string{
-		makeOpenCodeEvent("text", map[string]any{
-			"type": "text",
-			"text": "Partial review text",
-		}),
+		makeTextEvent("Partial review text"),
 	}
 
-	mock := mockAgentCLI(t, MockCLIOpts{
-		CaptureStdin: true,
-		StdoutLines:  stdoutLines,
-		ExitCode:     1,
+	_, _, _, err := executeReviewTest(t, reviewTestOpts{
+		MockOpts: MockCLIOpts{
+			CaptureStdin: true,
+			StdoutLines:  stdoutLines,
+			ExitCode:     1,
+		},
+		Prompt: "prompt",
 	})
-
-	a := NewOpenCodeAgent(mock.CmdPath)
-
-	_, err := a.Review(
-		context.Background(), t.TempDir(),
-		"HEAD", "prompt", nil,
-	)
 	if err == nil {
 		t.Fatal("expected error for non-zero exit")
 	}
@@ -227,27 +206,18 @@ func TestOpenCodeReviewNoOutput(t *testing.T) {
 
 	result, _, _ := runMockOpenCodeReview(t, "", "prompt", stdoutLines)
 
-	if result != "No review output generated" {
-		t.Errorf(
-			"result = %q, want %q",
-			result, "No review output generated",
-		)
-	}
+	assertEqual(t, result, "No review output generated")
 }
 
 func TestParseOpenCodeJSON(t *testing.T) {
 	t.Parallel()
 
 	lines := strings.Join([]string{
-		makeOpenCodeEvent("text", map[string]any{
-			"type": "text", "text": "Part one.",
-		}),
+		makeTextEvent("Part one."),
 		makeOpenCodeEvent("reasoning", map[string]any{
 			"type": "reasoning", "text": "thinking...",
 		}),
-		makeOpenCodeEvent("text", map[string]any{
-			"type": "text", "text": " Part two.",
-		}),
+		makeTextEvent(" Part two."),
 	}, "\n") + "\n"
 
 	var outputBuf bytes.Buffer
@@ -258,9 +228,7 @@ func TestParseOpenCodeJSON(t *testing.T) {
 		t.Fatalf("parseOpenCodeJSON: %v", err)
 	}
 
-	if result != "Part one. Part two." {
-		t.Errorf("result = %q, want %q", result, "Part one. Part two.")
-	}
+	assertEqual(t, result, "Part one. Part two.")
 
 	// All raw lines should be written to output
 	out := outputBuf.String()
@@ -272,9 +240,7 @@ func TestParseOpenCodeJSON(t *testing.T) {
 func TestParseOpenCodeJSON_NilOutput(t *testing.T) {
 	t.Parallel()
 
-	lines := makeOpenCodeEvent("text", map[string]any{
-		"type": "text", "text": "ok",
-	}) + "\n"
+	lines := makeTextEvent("ok") + "\n"
 
 	result, err := parseOpenCodeJSON(
 		strings.NewReader(lines), nil,
@@ -282,9 +248,7 @@ func TestParseOpenCodeJSON_NilOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseOpenCodeJSON: %v", err)
 	}
-	if result != "ok" {
-		t.Errorf("result = %q, want %q", result, "ok")
-	}
+	assertEqual(t, result, "ok")
 }
 
 func TestOpenCodeReviewStderrStreamedToOutput(t *testing.T) {
@@ -292,31 +256,24 @@ func TestOpenCodeReviewStderrStreamedToOutput(t *testing.T) {
 	skipIfWindows(t)
 
 	stdoutLines := []string{
-		makeOpenCodeEvent("text", map[string]any{
-			"type": "text", "text": "Review done",
-		}),
+		makeTextEvent("Review done"),
 	}
 
-	mock := mockAgentCLI(t, MockCLIOpts{
-		CaptureStdin: true,
-		StdoutLines:  stdoutLines,
-		StderrLines:  []string{"warning: something"},
-	})
-
-	a := NewOpenCodeAgent(mock.CmdPath)
-
 	var outputBuf bytes.Buffer
-	result, err := a.Review(
-		context.Background(), t.TempDir(),
-		"HEAD", "prompt", &outputBuf,
-	)
+	result, _, _, err := executeReviewTest(t, reviewTestOpts{
+		MockOpts: MockCLIOpts{
+			CaptureStdin: true,
+			StdoutLines:  stdoutLines,
+			StderrLines:  []string{"warning: something"},
+		},
+		Prompt: "prompt",
+		Writer: &outputBuf,
+	})
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
 
-	if result != "Review done" {
-		t.Errorf("result = %q, want %q", result, "Review done")
-	}
+	assertEqual(t, result, "Review done")
 
 	// Both stdout JSONL and stderr should appear in output
 	outStr := outputBuf.String()
@@ -329,29 +286,21 @@ func TestOpenCodeReviewNilOutput(t *testing.T) {
 	skipIfWindows(t)
 
 	stdoutLines := []string{
-		makeOpenCodeEvent("text", map[string]any{
-			"type": "text", "text": "Review content",
-		}),
+		makeTextEvent("Review content"),
 	}
 
-	mock := mockAgentCLI(t, MockCLIOpts{
-		CaptureStdin: true,
-		StdoutLines:  stdoutLines,
+	result, _, _, err := executeReviewTest(t, reviewTestOpts{
+		MockOpts: MockCLIOpts{
+			CaptureStdin: true,
+			StdoutLines:  stdoutLines,
+		},
+		Prompt: "prompt",
 	})
-
-	a := NewOpenCodeAgent(mock.CmdPath)
-
-	result, err := a.Review(
-		context.Background(), t.TempDir(),
-		"HEAD", "prompt", nil,
-	)
 	if err != nil {
 		t.Fatalf("Review with nil output: %v", err)
 	}
 
-	if result != "Review content" {
-		t.Errorf("result = %q, want %q", result, "Review content")
-	}
+	assertEqual(t, result, "Review content")
 }
 
 func TestParseOpenCodeJSON_ReadError(t *testing.T) {
@@ -359,9 +308,7 @@ func TestParseOpenCodeJSON_ReadError(t *testing.T) {
 
 	result, err := parseOpenCodeJSON(
 		&failAfterReader{
-			data: makeOpenCodeEvent("text", map[string]any{
-				"type": "text", "text": "partial",
-			}) + "\n",
+			data: makeTextEvent("partial") + "\n",
 		},
 		nil,
 	)
@@ -387,6 +334,45 @@ func (r *failAfterReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// reviewTestOpts configures executeReviewTest.
+type reviewTestOpts struct {
+	MockOpts MockCLIOpts
+	Model    string
+	Prompt   string
+	Writer   io.Writer
+}
+
+// executeReviewTest handles mockAgentCLI setup, instantiation, and Review execution.
+func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, string, error) {
+	t.Helper()
+
+	if opts.Prompt == "" {
+		opts.Prompt = "prompt"
+	}
+
+	mock := mockAgentCLI(t, opts.MockOpts)
+
+	a := NewOpenCodeAgent(mock.CmdPath)
+	if opts.Model != "" {
+		a.Model = opts.Model
+	}
+
+	out, err := a.Review(
+		context.Background(), t.TempDir(),
+		"HEAD", opts.Prompt, opts.Writer,
+	)
+
+	var argsBytes, stdinBytes []byte
+	if opts.MockOpts.CaptureArgs {
+		argsBytes = readFileOrFatal(t, mock.ArgsFile)
+	}
+	if opts.MockOpts.CaptureStdin {
+		stdinBytes = readFileOrFatal(t, mock.StdinFile)
+	}
+
+	return out, string(argsBytes), string(stdinBytes), err
+}
+
 func runMockOpenCodeReview(
 	t *testing.T, model, prompt string,
 	stdoutLines []string,
@@ -395,35 +381,24 @@ func runMockOpenCodeReview(
 
 	if stdoutLines == nil {
 		stdoutLines = []string{
-			makeOpenCodeEvent("text", map[string]any{
-				"type": "text", "text": "ok",
-			}),
+			makeTextEvent("ok"),
 		}
 	}
 
-	mock := mockAgentCLI(t, MockCLIOpts{
-		CaptureArgs:  true,
-		CaptureStdin: true,
-		StdoutLines:  stdoutLines,
+	out, argsStr, stdinStr, err := executeReviewTest(t, reviewTestOpts{
+		MockOpts: MockCLIOpts{
+			CaptureArgs:  true,
+			CaptureStdin: true,
+			StdoutLines:  stdoutLines,
+		},
+		Model:  model,
+		Prompt: prompt,
 	})
-
-	a := NewOpenCodeAgent(mock.CmdPath)
-	if model != "" {
-		a.Model = model
-	}
-
-	out, err := a.Review(
-		context.Background(), t.TempDir(),
-		"HEAD", prompt, nil,
-	)
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}
 
-	argsBytes := readFileOrFatal(t, mock.ArgsFile)
-	stdinBytes := readFileOrFatal(t, mock.StdinFile)
-
-	return out, string(argsBytes), string(stdinBytes)
+	return out, argsStr, stdinStr
 }
 
 func readFileOrFatal(t *testing.T, path string) []byte {
@@ -456,12 +431,7 @@ func TestStripTerminalControls(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := stripTerminalControls(tt.input)
-			if got != tt.want {
-				t.Errorf(
-					"stripTerminalControls(%q) = %q, want %q",
-					tt.input, got, tt.want,
-				)
-			}
+			assertEqual(t, got, tt.want)
 		})
 	}
 }
@@ -469,10 +439,7 @@ func TestStripTerminalControls(t *testing.T) {
 func TestParseOpenCodeJSON_SanitizesControlChars(t *testing.T) {
 	t.Parallel()
 
-	lines := makeOpenCodeEvent("text", map[string]any{
-		"type": "text",
-		"text": "\x1b[31mred\x1b[0m and \x1b]0;evil\x07safe",
-	}) + "\n"
+	lines := makeTextEvent("\x1b[31mred\x1b[0m and \x1b]0;evil\x07safe") + "\n"
 
 	result, err := parseOpenCodeJSON(
 		strings.NewReader(lines), nil,
@@ -503,4 +470,12 @@ func makeOpenCodeEvent(eventType string, part map[string]any) string {
 		panic("makeOpenCodeEvent: " + err.Error())
 	}
 	return string(b)
+}
+
+// makeTextEvent is a convenience helper for making 'text' events.
+func makeTextEvent(text string) string {
+	return makeOpenCodeEvent("text", map[string]any{
+		"type": "text",
+		"text": text,
+	})
 }
