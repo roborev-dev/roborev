@@ -1268,9 +1268,9 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 
 func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 	tests := []struct {
-		name      string
-		repoName  string
-		setupFs   func(t *testing.T, dataDir string, clonePath string)
+		name     string
+		repoName string
+		setupFs  func(t *testing.T, dataDir string, clonePath string)
 	}{
 		{
 			name:     "empty dir is re-cloned",

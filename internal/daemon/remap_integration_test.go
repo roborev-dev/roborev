@@ -155,13 +155,13 @@ func assertReviewReachable(t *testing.T, db *storage.DB, newSHA string) {
 // covered by manual testing (see design doc verification section).
 func TestRemapAfterRebase(t *testing.T) {
 	fixture := newRemapFixture(t)
-	
+
 	// 1. Setup Git state directly
 	fixture.repo.CommitFile("base.txt", "base content", "initial commit")
 	// Create feature branch with a commit
 	fixture.repo.Run("checkout", "-b", "feature")
 	fixture.repo.CommitFile("feature.txt", "feature content", "add feature")
-	
+
 	// 2. Seed the database based on the current Git state
 	fixture.seedCompletedReview(t)
 
@@ -198,10 +198,10 @@ func TestRemapAfterRebase(t *testing.T) {
 // TestRemapAfterAmendMessageOnly exercises the message-only amend flow.
 func TestRemapAfterAmendMessageOnly(t *testing.T) {
 	fixture := newRemapFixture(t)
-	
+
 	// 1. Setup Git state directly
 	fixture.repo.CommitFile("file.txt", "content", "original message")
-	
+
 	// 2. Seed the database based on the current Git state
 	fixture.seedCompletedReview(t)
 

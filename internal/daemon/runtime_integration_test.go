@@ -31,7 +31,7 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 
 	info := &RuntimeInfo{
 		PID:  dummyNonExistentPID,
-		Addr: addr,   // Loopback address from test server
+		Addr: addr, // Loopback address from test server
 	}
 
 	// This should make HTTP request since address is loopback

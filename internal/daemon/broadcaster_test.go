@@ -36,6 +36,15 @@ func assertEventFields(t *testing.T, got Event, expected Event) {
 
 func assertNoEventWithin(t *testing.T, ch <-chan Event, duration time.Duration) {
 	t.Helper()
+	// fast path non-blocking check
+	select {
+	case e := <-ch:
+		t.Errorf("Received unexpected event: %+v", e)
+		return
+	default:
+	}
+
+	// timeout-backed check
 	select {
 	case e := <-ch:
 		t.Errorf("Received unexpected event: %+v", e)
@@ -99,4 +108,29 @@ func TestStreamMultipleEvents(t *testing.T) {
 			t.Errorf("Expected event %d, got JobID %d", i, e.JobID)
 		}
 	}
+}
+
+func TestBroadcaster_MultiSubscriber(t *testing.T) {
+	broadcaster := NewBroadcaster()
+
+	_, chAll := broadcaster.Subscribe("")
+	_, chRepo1 := broadcaster.Subscribe("/path/to/repo1")
+	_, chRepo2 := broadcaster.Subscribe("/path/to/repo2")
+
+	broadcaster.Broadcast(newTestEvent(123, func(e *Event) { e.Repo = "/path/to/repo1" }))
+
+	// catch-all should receive
+	e1 := testutil.ReceiveWithTimeout(t, chAll, 500*time.Millisecond)
+	if e1.JobID != 123 {
+		t.Errorf("Expected catch-all to receive JobID 123, got %d", e1.JobID)
+	}
+
+	// exact-match should receive
+	e2 := testutil.ReceiveWithTimeout(t, chRepo1, 500*time.Millisecond)
+	if e2.JobID != 123 {
+		t.Errorf("Expected exact-match to receive JobID 123, got %d", e2.JobID)
+	}
+
+	// mismatch should NOT receive
+	assertNoEventWithin(t, chRepo2, 100*time.Millisecond)
 }
