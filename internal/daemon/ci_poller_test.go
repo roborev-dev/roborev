@@ -174,6 +174,60 @@ func (h *ciPollerHarness) markJobCanceled(t *testing.T, jobID int64, errText str
 	}
 }
 
+// stubGitCloneFn returns a stub git clone function that records if it was called
+// and creates a minimal git repository with the given remote URL.
+func stubGitCloneFn(t *testing.T, remoteURL string, called *bool) func(context.Context, string, string, []string) error {
+	t.Helper()
+	return func(_ context.Context, _, targetPath string, _ []string) error {
+		*called = true
+		if err := exec.Command("git", "init", "-b", "main", targetPath).Run(); err != nil {
+			return err
+		}
+		return exec.Command("git", "-C", targetPath, "remote", "add", "origin", remoteURL).Run()
+	}
+}
+
+// AssertBatchState validates the synthesized and claimed status of a batch.
+func (h *ciPollerHarness) AssertBatchState(t *testing.T, batchID int64, wantSynthesized int, wantClaimed bool) {
+	t.Helper()
+	var synthesized int
+	var claimedAt sql.NullString
+	err := h.DB.QueryRow(`SELECT synthesized, claimed_at FROM ci_pr_batches WHERE id = ?`, batchID).Scan(&synthesized, &claimedAt)
+	if err != nil {
+		t.Fatalf("query batch: %v", err)
+	}
+	if synthesized != wantSynthesized {
+		t.Errorf("synthesized=%d, want %d", synthesized, wantSynthesized)
+	}
+	if claimedAt.Valid != wantClaimed {
+		t.Errorf("claimed=%v, want %v", claimedAt.Valid, wantClaimed)
+	}
+}
+
+// AssertBatchCounts validates the completed and failed job counts of a batch.
+func (h *ciPollerHarness) AssertBatchCounts(t *testing.T, batchID int64, wantCompleted, wantFailed int) {
+	t.Helper()
+	var completed, failed int
+	if err := h.DB.QueryRow(`SELECT completed_jobs, failed_jobs FROM ci_pr_batches WHERE id = ?`, batchID).Scan(&completed, &failed); err != nil {
+		t.Fatalf("query reconciled counts: %v", err)
+	}
+	if completed != wantCompleted || failed != wantFailed {
+		t.Fatalf("expected counts %d/%d, got %d/%d", wantCompleted, wantFailed, completed, failed)
+	}
+}
+
+// AssertBatchUnclaimed validates that a batch is unclaimed and not synthesized.
+func (h *ciPollerHarness) AssertBatchUnclaimed(t *testing.T, batchID int64) {
+	t.Helper()
+	var synthesized int
+	if err := h.DB.QueryRow(`SELECT synthesized FROM ci_pr_batches WHERE id = ?`, batchID).Scan(&synthesized); err != nil {
+		t.Fatalf("query batch: %v", err)
+	}
+	if synthesized != 0 {
+		t.Fatalf("expected batch to be unclaimed (synthesized=0), got %d", synthesized)
+	}
+}
+
 // assertContainsAll checks that s contains every substring, failing the test for each miss.
 func assertContainsAll(t *testing.T, s string, wantLabel string, subs ...string) {
 	t.Helper()
@@ -562,17 +616,7 @@ func TestCIPollerHandleBatchJobDone_CompleteBatchPostsAndFinalizes(t *testing.T)
 		t.Fatalf("expected roborev comment body, got: %q", c.Body)
 	}
 
-	var synthesized int
-	var claimedAt sql.NullString
-	if err := h.DB.QueryRow(`SELECT synthesized, claimed_at FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&synthesized, &claimedAt); err != nil {
-		t.Fatalf("query batch: %v", err)
-	}
-	if synthesized != 1 {
-		t.Fatalf("expected synthesized=1, got %d", synthesized)
-	}
-	if claimedAt.Valid {
-		t.Fatalf("expected claimed_at to be cleared after finalize, got %q", claimedAt.String)
-	}
+	h.AssertBatchState(t, batch.ID, 1, false)
 }
 
 func TestCIPollerReconcileStaleBatches_PostsCanceledJobsAsFailed(t *testing.T) {
@@ -593,13 +637,7 @@ func TestCIPollerReconcileStaleBatches_PostsCanceledJobsAsFailed(t *testing.T) {
 		t.Fatalf("expected all-failed comment, got: %q", postedBody)
 	}
 
-	var completed, failed int
-	if err := h.DB.QueryRow(`SELECT completed_jobs, failed_jobs FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&completed, &failed); err != nil {
-		t.Fatalf("query reconciled counts: %v", err)
-	}
-	if completed != 0 || failed != 1 {
-		t.Fatalf("expected reconciled counts 0/1, got %d/%d", completed, failed)
-	}
+	h.AssertBatchCounts(t, batch.ID, 0, 1)
 }
 
 func TestCIPollerHandleReviewCompleted_LegacyCIReviewPostsComment(t *testing.T) {
@@ -687,13 +725,7 @@ func TestCIPollerPostBatchResults_PostFailureUnclaimsBatch(t *testing.T) {
 
 	h.Poller.postBatchResults(batch)
 
-	var synthesized int
-	if err := h.DB.QueryRow(`SELECT synthesized FROM ci_pr_batches WHERE id = ?`, batch.ID).Scan(&synthesized); err != nil {
-		t.Fatalf("query batch: %v", err)
-	}
-	if synthesized != 0 {
-		t.Fatalf("expected batch to be unclaimed (synthesized=0), got %d", synthesized)
-	}
+	h.AssertBatchUnclaimed(t, batch.ID)
 }
 
 func TestCIPollerFindLocalRepo_PartialIdentityFallback(t *testing.T) {
@@ -1140,29 +1172,12 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 
 	// Stub gitCloneFn to create a bare git repo instead of real cloning
 	cloneCalled := false
-	p.gitCloneFn = func(
-		_ context.Context, ghRepo, targetPath string, _ []string,
-	) error {
-		cloneCalled = true
+	stub := stubGitCloneFn(t, "https://github.com/acme/newrepo.git", &cloneCalled)
+	p.gitCloneFn = func(ctx context.Context, ghRepo, targetPath string, args []string) error {
 		if ghRepo != "acme/newrepo" {
 			t.Errorf("ghRepo=%q, want acme/newrepo", ghRepo)
 		}
-		// Create a minimal git repo at targetPath
-		cmd := exec.Command(
-			"git", "init", "-b", "main", targetPath,
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git init: %s: %s", err, out)
-		}
-		// Set remote origin so ResolveRepoIdentity works
-		cmd = exec.Command(
-			"git", "-C", targetPath, "remote", "add",
-			"origin", "https://github.com/acme/newrepo.git",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git remote add: %s: %s", err, out)
-		}
-		return nil
+		return stub(ctx, ghRepo, targetPath, args)
 	}
 
 	repo, err := p.findOrCloneRepo(
@@ -1252,302 +1267,109 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 }
 
 func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
-	t.Run("empty dir is re-cloned", func(t *testing.T) {
-		db := testutil.OpenTestDB(t)
-		cfg := config.DefaultConfig()
-		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	tests := []struct {
+		name      string
+		repoName  string
+		setupFs   func(t *testing.T, dataDir string, clonePath string)
+	}{
+		{
+			name:     "empty dir is re-cloned",
+			repoName: "acme/empty",
+			setupFs: func(t *testing.T, _ string, p string) {
+				if err := os.MkdirAll(p, 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+			},
+		},
+		{
+			name:     "non-git dir is re-cloned",
+			repoName: "acme/notgit",
+			setupFs: func(t *testing.T, _ string, p string) {
+				if err := os.MkdirAll(p, 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(p, "README.md"), []byte("not a repo"), 0o644); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			},
+		},
+		{
+			name:     "file at clone path is replaced",
+			repoName: "acme/filerepo",
+			setupFs: func(t *testing.T, dataDir string, p string) {
+				parentDir := filepath.Join(dataDir, "clones", "acme")
+				if err := os.MkdirAll(parentDir, 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				if err := os.WriteFile(p, []byte("oops"), 0o644); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			},
+		},
+		{
+			name:     "mismatched origin is re-cloned",
+			repoName: "acme/mismatch",
+			setupFs: func(t *testing.T, _ string, p string) {
+				if err := os.MkdirAll(p, 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				cmd := exec.Command("git", "init", "-b", "main", p)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git init: %s: %s", err, out)
+				}
+				cmd = exec.Command("git", "-C", p, "remote", "add", "origin", "https://github.com/other/repo.git")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git remote add: %s: %s", err, out)
+				}
+			},
+		},
+		{
+			name:     "missing origin is re-cloned",
+			repoName: "acme/noorigin",
+			setupFs: func(t *testing.T, _ string, p string) {
+				if err := os.MkdirAll(p, 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				cmd := exec.Command("git", "init", "-b", "main", p)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git init: %s: %s", err, out)
+				}
+			},
+		},
+	}
 
-		dataDir := t.TempDir()
-		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := testutil.OpenTestDB(t)
+			cfg := config.DefaultConfig()
+			p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-		// Pre-create an empty directory (not a git repo)
-		clonePath := filepath.Join(
-			dataDir, "clones", "acme", "empty",
-		)
-		if err := os.MkdirAll(clonePath, 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
+			dataDir := t.TempDir()
+			t.Setenv("ROBOREV_DATA_DIR", dataDir)
 
-		cloneCalled := false
-		p.gitCloneFn = func(
-			_ context.Context, _, targetPath string, _ []string,
-		) error {
-			cloneCalled = true
-			cmd := exec.Command(
-				"git", "init", "-b", "main", targetPath,
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("git init: %s: %s", err, out)
+			clonePath := filepath.Join(dataDir, "clones", filepath.Dir(tt.repoName), filepath.Base(tt.repoName))
+			tt.setupFs(t, dataDir, clonePath)
+
+			cloneCalled := false
+			p.gitCloneFn = stubGitCloneFn(t, "https://github.com/"+tt.repoName+".git", &cloneCalled)
+
+			repo, err := p.findOrCloneRepo(context.Background(), tt.repoName)
+			if err != nil {
+				t.Fatalf("findOrCloneRepo: %v", err)
 			}
-			cmd = exec.Command(
-				"git", "-C", targetPath, "remote", "add",
-				"origin", "https://github.com/acme/empty.git",
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf(
-					"git remote add: %s: %s", err, out,
-				)
+			if !cloneCalled {
+				t.Fatal("expected re-clone for invalid dir")
 			}
-			return nil
-		}
-
-		repo, err := p.findOrCloneRepo(
-			context.Background(), "acme/empty",
-		)
-		if err != nil {
-			t.Fatalf("findOrCloneRepo: %v", err)
-		}
-		if !cloneCalled {
-			t.Fatal("expected re-clone for empty dir")
-		}
-		if repo.RootPath != clonePath {
-			t.Errorf(
-				"RootPath=%q, want %q",
-				repo.RootPath, clonePath,
-			)
-		}
-	})
-
-	t.Run("non-git dir is re-cloned", func(t *testing.T) {
-		db := testutil.OpenTestDB(t)
-		cfg := config.DefaultConfig()
-		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
-
-		dataDir := t.TempDir()
-		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-
-		// Create a dir with files but no .git
-		clonePath := filepath.Join(
-			dataDir, "clones", "acme", "notgit",
-		)
-		if err := os.MkdirAll(clonePath, 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(
-			filepath.Join(clonePath, "README.md"),
-			[]byte("not a repo"), 0o644,
-		); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-
-		cloneCalled := false
-		p.gitCloneFn = func(
-			_ context.Context, _, targetPath string, _ []string,
-		) error {
-			cloneCalled = true
-			cmd := exec.Command(
-				"git", "init", "-b", "main", targetPath,
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("git init: %s: %s", err, out)
+			if repo == nil {
+				t.Fatal("expected non-nil repo")
 			}
-			cmd = exec.Command(
-				"git", "-C", targetPath, "remote", "add",
-				"origin",
-				"https://github.com/acme/notgit.git",
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf(
-					"git remote add: %s: %s", err, out,
-				)
+			if tt.name == "empty dir is re-cloned" {
+				if repo.RootPath != clonePath {
+					t.Errorf("RootPath=%q, want %q", repo.RootPath, clonePath)
+				}
 			}
-			return nil
-		}
-
-		repo, err := p.findOrCloneRepo(
-			context.Background(), "acme/notgit",
-		)
-		if err != nil {
-			t.Fatalf("findOrCloneRepo: %v", err)
-		}
-		if !cloneCalled {
-			t.Fatal("expected re-clone for non-git dir")
-		}
-		if repo == nil {
-			t.Fatal("expected non-nil repo")
-		}
-	})
-
-	t.Run("file at clone path is replaced", func(t *testing.T) {
-		db := testutil.OpenTestDB(t)
-		cfg := config.DefaultConfig()
-		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
-
-		dataDir := t.TempDir()
-		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-
-		// Create parent dir and a file (not dir) at clone path
-		parentDir := filepath.Join(
-			dataDir, "clones", "acme",
-		)
-		if err := os.MkdirAll(parentDir, 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		clonePath := filepath.Join(parentDir, "filerepo")
-		if err := os.WriteFile(
-			clonePath, []byte("oops"), 0o644,
-		); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-
-		cloneCalled := false
-		p.gitCloneFn = func(
-			_ context.Context, _, targetPath string, _ []string,
-		) error {
-			cloneCalled = true
-			cmd := exec.Command(
-				"git", "init", "-b", "main", targetPath,
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("git init: %s: %s", err, out)
-			}
-			cmd = exec.Command(
-				"git", "-C", targetPath, "remote", "add",
-				"origin",
-				"https://github.com/acme/filerepo.git",
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf(
-					"git remote add: %s: %s", err, out,
-				)
-			}
-			return nil
-		}
-
-		repo, err := p.findOrCloneRepo(
-			context.Background(), "acme/filerepo",
-		)
-		if err != nil {
-			t.Fatalf("findOrCloneRepo: %v", err)
-		}
-		if !cloneCalled {
-			t.Fatal("expected re-clone when file exists at path")
-		}
-		if repo == nil {
-			t.Fatal("expected non-nil repo")
-		}
-	})
-
-	t.Run("mismatched origin is re-cloned", func(t *testing.T) {
-		db := testutil.OpenTestDB(t)
-		cfg := config.DefaultConfig()
-		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
-
-		dataDir := t.TempDir()
-		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-
-		// Create a valid git repo with a different origin
-		clonePath := filepath.Join(
-			dataDir, "clones", "acme", "mismatch",
-		)
-		cmd := exec.Command("git", "init", "-b", "main", clonePath)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %s: %s", err, out)
-		}
-		cmd = exec.Command(
-			"git", "-C", clonePath, "remote", "add",
-			"origin", "https://github.com/other/repo.git",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git remote add: %s: %s", err, out)
-		}
-
-		cloneCalled := false
-		p.gitCloneFn = func(
-			_ context.Context, _, targetPath string, _ []string,
-		) error {
-			cloneCalled = true
-			cmd := exec.Command(
-				"git", "init", "-b", "main", targetPath,
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("git init: %s: %s", err, out)
-			}
-			cmd = exec.Command(
-				"git", "-C", targetPath, "remote", "add",
-				"origin",
-				"https://github.com/acme/mismatch.git",
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf(
-					"git remote add: %s: %s", err, out,
-				)
-			}
-			return nil
-		}
-
-		repo, err := p.findOrCloneRepo(
-			context.Background(), "acme/mismatch",
-		)
-		if err != nil {
-			t.Fatalf("findOrCloneRepo: %v", err)
-		}
-		if !cloneCalled {
-			t.Fatal("expected re-clone for mismatched origin")
-		}
-		if repo == nil {
-			t.Fatal("expected non-nil repo")
-		}
-	})
-
-	t.Run("missing origin is re-cloned", func(t *testing.T) {
-		db := testutil.OpenTestDB(t)
-		cfg := config.DefaultConfig()
-		p := NewCIPoller(db, NewStaticConfig(cfg), nil)
-
-		dataDir := t.TempDir()
-		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-
-		// Create a valid git repo with NO origin remote
-		clonePath := filepath.Join(
-			dataDir, "clones", "acme", "noorigin",
-		)
-		cmd := exec.Command(
-			"git", "init", "-b", "main", clonePath,
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git init: %s: %s", err, out)
-		}
-
-		cloneCalled := false
-		p.gitCloneFn = func(
-			_ context.Context, _, targetPath string, _ []string,
-		) error {
-			cloneCalled = true
-			cmd := exec.Command(
-				"git", "init", "-b", "main", targetPath,
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf(
-					"git init: %s: %s", err, out,
-				)
-			}
-			cmd = exec.Command(
-				"git", "-C", targetPath, "remote", "add",
-				"origin",
-				"https://github.com/acme/noorigin.git",
-			)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf(
-					"git remote add: %s: %s", err, out,
-				)
-			}
-			return nil
-		}
-
-		repo, err := p.findOrCloneRepo(
-			context.Background(), "acme/noorigin",
-		)
-		if err != nil {
-			t.Fatalf("findOrCloneRepo: %v", err)
-		}
-		if !cloneCalled {
-			t.Fatal("expected re-clone for missing origin")
-		}
-		if repo == nil {
-			t.Fatal("expected non-nil repo")
-		}
-	})
+		})
+	}
 }
 
 func TestCloneRemoteMatches(t *testing.T) {
@@ -1852,24 +1674,8 @@ func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
 	}
 
 	// Stub clone to create a minimal git repo
-	p.gitCloneFn = func(
-		_ context.Context, _, targetPath string, _ []string,
-	) error {
-		cmd := exec.Command(
-			"git", "init", "-b", "main", targetPath,
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git init: %s: %s", err, out)
-		}
-		cmd = exec.Command(
-			"git", "-C", targetPath, "remote", "add",
-			"origin", "https://github.com/org/newrepo.git",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git remote add: %s: %s", err, out)
-		}
-		return nil
-	}
+	cloneCalled := false
+	p.gitCloneFn = stubGitCloneFn(t, "https://github.com/org/newrepo.git", &cloneCalled)
 
 	err := p.processPR(context.Background(), "org/newrepo", ghPR{
 		Number:      1,
