@@ -193,7 +193,9 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
-			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
 		}
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -215,7 +217,9 @@ func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
 func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
-			t.Fatalf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
 		}
 		w.WriteHeader(http.StatusInternalServerError)
 	})

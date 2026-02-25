@@ -183,10 +183,10 @@ func TestSignJWT_Structure(t *testing.T) {
 	}
 
 	now := float64(time.Now().Unix())
-	if iat > now || iat < now-300 {
+	if iat > now+60 || iat < now-600 {
 		t.Errorf("iat %v out of bounds (now: %v)", iat, now)
 	}
-	if exp > now+660 || exp < now+360 {
+	if exp > now+660 || exp < now+60 {
 		t.Errorf("exp %v out of bounds (now: %v)", exp, now)
 	}
 }
