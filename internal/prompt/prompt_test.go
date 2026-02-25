@@ -441,8 +441,8 @@ func TestLoadGuidelines(t *testing.T) {
 		defaultBranch    string
 		baseGuidelines   string
 		branchGuidelines string
-		setupGit         func(r *testRepo)
-		setupFilesystem  func(dir string)
+		setupGit         func(t *testing.T, r *testRepo)
+		setupFilesystem  func(t *testing.T, dir string)
 		wantContains     string
 		wantNotContains  string
 	}{
@@ -463,35 +463,56 @@ func TestLoadGuidelines(t *testing.T) {
 		{
 			name:          "FallsBackToFilesystem",
 			defaultBranch: "main",
-			setupFilesystem: func(dir string) {
-				os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0644)
+			setupFilesystem: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0644); err != nil {
+					t.Fatalf("write .roborev.toml: %v", err)
+				}
 			},
 			wantContains: "Filesystem rule.",
 		},
 		{
 			name:          "ParseErrorBlocksFallback",
 			defaultBranch: "main",
-			setupGit: func(r *testRepo) {
-				os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
-					[]byte("review_guidelines = INVALID[[["), 0644)
+			setupGit: func(t *testing.T, r *testRepo) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
+					[]byte("review_guidelines = INVALID[[["), 0644); err != nil {
+					t.Fatalf("write .roborev.toml: %v", err)
+				}
 				r.git("add", "-A")
 				r.git("commit", "-m", "bad toml")
+				r.git("remote", "add", "origin", r.dir)
+				r.git("fetch", "origin")
+				r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 			},
-			setupFilesystem: func(dir string) {
-				os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0644)
+			setupFilesystem: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0644); err != nil {
+					t.Fatalf("write .roborev.toml: %v", err)
+				}
 			},
 			wantNotContains: "Filesystem guideline",
 		},
 		{
 			name:          "GitErrorFallsBackToFilesystem",
 			defaultBranch: "main",
-			setupGit: func(r *testRepo) {
-				os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"From main\"\n"), 0644)
+			setupGit: func(t *testing.T, r *testRepo) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"From main\"\n"), 0644); err != nil {
+					t.Fatalf("write .roborev.toml: %v", err)
+				}
 				r.git("add", "-A")
 				r.git("commit", "-m", "init")
+
+				// Set up remote before corrupting the blob so
+				// git fetch sees a healthy object store.
+				r.git("remote", "add", "origin", r.dir)
+				r.git("fetch", "origin")
+				r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 
 				blobSHA := r.git("rev-parse", "HEAD:.roborev.toml")
 				objPath := filepath.Join(r.dir, ".git", "objects",
@@ -499,11 +520,16 @@ func TestLoadGuidelines(t *testing.T) {
 				if err := os.Chmod(objPath, 0644); err != nil {
 					t.Fatalf("chmod: %v", err)
 				}
-				os.WriteFile(objPath, []byte("corrupt"), 0444)
+				if err := os.WriteFile(objPath, []byte("corrupt"), 0444); err != nil {
+					t.Fatalf("write corrupt blob: %v", err)
+				}
 			},
-			setupFilesystem: func(dir string) {
-				os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0644)
+			setupFilesystem: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0644); err != nil {
+					t.Fatalf("write .roborev.toml: %v", err)
+				}
 			},
 			wantContains: "Filesystem fallback.",
 		},
@@ -512,7 +538,7 @@ func TestLoadGuidelines(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := setupGuidelinesRepo(t, tt.defaultBranch, tt.baseGuidelines, tt.branchGuidelines, tt.setupGit)
 			if tt.setupFilesystem != nil {
-				tt.setupFilesystem(ctx.Dir)
+				tt.setupFilesystem(t, ctx.Dir)
 			}
 
 			guidelines := loadGuidelines(ctx.Dir)
