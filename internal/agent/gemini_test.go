@@ -80,29 +80,7 @@ func TestGeminiBuildArgs(t *testing.T) {
 
 			// Check flag-value pairs by exact next token
 			for flag, val := range tc.wantArgPairs {
-				// Assert the flag appears exactly once
-				count := 0
-				for _, a := range args {
-					if a == flag {
-						count++
-					}
-				}
-				if count != 1 {
-					t.Errorf(
-						"flag %q appears %d times, want exactly 1 in args %v",
-						flag, count, args,
-					)
-					continue
-				}
-
-				idx := slices.Index(args, flag)
-				if idx+1 >= len(args) {
-					t.Errorf("flag %q is last arg, expected value %q", flag, val)
-					continue
-				}
-				if args[idx+1] != val {
-					t.Errorf("flag %q: got value %q, want %q", flag, args[idx+1], val)
-				}
+				assertFlagValue(t, args, flag, val)
 			}
 
 			// Check absence of specific tokens
@@ -115,14 +93,39 @@ func TestGeminiBuildArgs(t *testing.T) {
 	}
 }
 
+func assertFlagValue(t *testing.T, args []string, flag, expectedVal string) {
+	t.Helper()
+	count := 0
+	for _, a := range args {
+		if a == flag {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf(
+			"flag %q appears %d times, want exactly 1 in args %v",
+			flag, count, args,
+		)
+		return
+	}
+
+	idx := slices.Index(args, flag)
+	if idx+1 >= len(args) {
+		t.Errorf("flag %q is last arg, expected value %q", flag, expectedVal)
+		return
+	}
+	if args[idx+1] != expectedVal {
+		t.Errorf("flag %q: got value %q, want %q", flag, args[idx+1], expectedVal)
+	}
+}
+
 func TestGeminiParseStreamJSON(t *testing.T) {
 	tests := []struct {
 		name         string
 		input        string
-		wantResult   string
-		wantContains []string // if set, check result contains each substring instead of exact match
-		wantErr      error    // if non-nil, expect errors.Is match
-		wantOutput   bool     // if true, pass a writer and check it received data
+		assertResult func(t *testing.T, res string)
+		wantErr      error // if non-nil, expect errors.Is match
+		wantOutput   bool  // if true, pass a writer and check it received data
 	}{
 		{
 			name: "ResultEvent",
@@ -130,7 +133,11 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 {"type":"assistant","message":{"content":"Working on it..."}}
 {"type":"result","result":"Done! Review complete."}
 `,
-			wantResult: "Done! Review complete.",
+			assertResult: func(t *testing.T, res string) {
+				if res != "Done! Review complete." {
+					t.Errorf("expected result %q, got %q", "Done! Review complete.", res)
+				}
+			},
 		},
 		{
 			name: "GeminiMessageFormat",
@@ -138,7 +145,13 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 {"type":"message","timestamp":"2026-01-19T17:49:13.447Z","role":"assistant","content":" with filtering logic.","delta":true}
 {"type":"result","timestamp":"2026-01-19T17:49:13.519Z","status":"success","stats":{"total_tokens":1000}}
 `,
-			wantContains: []string{"Changes:", "filtering logic"},
+			assertResult: func(t *testing.T, res string) {
+				for _, s := range []string{"Changes:", "filtering logic"} {
+					if !strings.Contains(res, s) {
+						t.Errorf("expected result to contain %q, got %q", s, res)
+					}
+				}
+			},
 		},
 		{
 			name: "AssistantFallback",
@@ -146,7 +159,12 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 {"type":"assistant","message":{"content":"First message"}}
 {"type":"assistant","message":{"content":"Second message"}}
 `,
-			wantResult: "First message\nSecond message",
+			assertResult: func(t *testing.T, res string) {
+				want := "First message\nSecond message"
+				if res != want {
+					t.Errorf("expected result %q, got %q", want, res)
+				}
+			},
 		},
 		{
 			name: "NoValidEvents",
@@ -160,7 +178,11 @@ still not json
 			input: `{"type":"system","subtype":"init"}
 {"type":"result","result":"Done"}
 `,
-			wantResult: "Done",
+			assertResult: func(t *testing.T, res string) {
+				if res != "Done" {
+					t.Errorf("expected result %q, got %q", "Done", res)
+				}
+			},
 			wantOutput: true,
 		},
 		{
@@ -168,7 +190,11 @@ still not json
 			input: `{"type":"system","subtype":"init"}
 {"type":"tool","name":"Read"}
 `,
-			wantResult: "",
+			assertResult: func(t *testing.T, res string) {
+				if res != "" {
+					t.Errorf("expected empty result, got %q", res)
+				}
+			},
 		},
 		{
 			name: "PlainTextError",
@@ -203,14 +229,8 @@ No issues found in the code.
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if tc.wantContains != nil {
-				for _, s := range tc.wantContains {
-					if !strings.Contains(parsed.result, s) {
-						t.Errorf("expected result to contain %q, got %q", s, parsed.result)
-					}
-				}
-			} else if parsed.result != tc.wantResult {
-				t.Fatalf("expected result %q, got %q", tc.wantResult, parsed.result)
+			if tc.assertResult != nil {
+				tc.assertResult(t, parsed.result)
 			}
 
 			if tc.wantOutput && output.Len() == 0 {
@@ -227,8 +247,7 @@ func TestGemini_Review_Integration(t *testing.T) {
 		name        string
 		script      string
 		wantResult  string
-		wantErr     string // substring match
-		wantIsError error  // errors.Is match
+		checkErr    func(t *testing.T, err error)
 	}{
 		{
 			name: "PlainTextError",
@@ -236,8 +255,17 @@ func TestGemini_Review_Integration(t *testing.T) {
 echo "Plain text review output"
 echo "No issues found."
 `,
-			wantErr:     "stream-json",
-			wantIsError: errNoStreamJSON,
+			checkErr: func(t *testing.T, err error) {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), "stream-json") {
+					t.Errorf("expected error to contain %q, got %q", "stream-json", err.Error())
+				}
+				if !errors.Is(err, errNoStreamJSON) {
+					t.Errorf("expected error type %v, got %v", errNoStreamJSON, err)
+				}
+			},
 		},
 		{
 			name: "PlainTextErrorWithStderr",
@@ -245,7 +273,14 @@ echo "No issues found."
 echo "Plain text review output"
 echo "Some stderr message" >&2
 `,
-			wantErr: "Some stderr message",
+			checkErr: func(t *testing.T, err error) {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), "Some stderr message") {
+					t.Errorf("expected error to contain %q, got %q", "Some stderr message", err.Error())
+				}
+			},
 		},
 		{
 			name: "LargeStderrTruncation",
@@ -253,7 +288,14 @@ echo "Some stderr message" >&2
 echo "Plain text"
 yes "This is a long stderr line that will contribute to the total size" | head -n 200 >&2
 `,
-			wantErr: "... (truncated)",
+			checkErr: func(t *testing.T, err error) {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), "... (truncated)") {
+					t.Errorf("expected error to contain %q, got %q", "... (truncated)", err.Error())
+				}
+			},
 		},
 		{
 			name: "StreamJSON_Success",
@@ -278,7 +320,14 @@ echo '{"type":"tool_result","content":"file contents here"}'
 echo "Error message" >&2
 exit 1
 `,
-			wantErr: "gemini failed",
+			checkErr: func(t *testing.T, err error) {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), "gemini failed") {
+					t.Errorf("expected error to contain %q, got %q", "gemini failed", err.Error())
+				}
+			},
 		},
 	}
 
@@ -290,16 +339,8 @@ exit 1
 
 			res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
 
-			if tc.wantErr != "" || tc.wantIsError != nil {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr) {
-					t.Errorf("expected error to contain %q, got %q", tc.wantErr, err.Error())
-				}
-				if tc.wantIsError != nil && !errors.Is(err, tc.wantIsError) {
-					t.Errorf("expected error type %v, got %v", tc.wantIsError, err)
-				}
+			if tc.checkErr != nil {
+				tc.checkErr(t, err)
 				return
 			}
 			if err != nil {
