@@ -8,21 +8,33 @@ import (
 	"testing"
 )
 
+func appendToFile(t *testing.T, path, content string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("failed to open file: %v", err)
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintln(f, content); err != nil {
+		t.Fatalf("failed to write to file: %v", err)
+	}
+}
+
 func TestBarrierDetectsTestEventPollution(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "activity.log")
 
 	// Write a "pre-existing" prod entry.
-	os.WriteFile(logPath, []byte(
+	if err := os.WriteFile(logPath, []byte(
 		`{"event":"job.completed","component":"worker"}`+"\n",
-	), 0644)
+	), 0644); err != nil {
+		t.Fatalf("failed to write initial file: %v", err)
+	}
 
 	barrier := NewProdLogBarrier(dir)
 
 	// Append a test event.
-	f, _ := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
-	fmt.Fprintln(f, `{"event":"test","component":"test","message":"msg"}`)
-	f.Close()
+	appendToFile(t, logPath, `{"event":"test","component":"test","message":"msg"}`)
 
 	msg := barrier.Check()
 	if msg == "" {
@@ -33,15 +45,10 @@ func TestBarrierDetectsTestEventPollution(t *testing.T) {
 func TestBarrierDetectsDevDaemonStart(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "activity.log")
-	os.WriteFile(logPath, nil, 0644)
 
 	barrier := NewProdLogBarrier(dir)
 
-	f, _ := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
-	fmt.Fprintln(f,
-		`{"event":"daemon.started","details":{"version":"dev","pid":"999"}}`,
-	)
-	f.Close()
+	appendToFile(t, logPath, `{"event":"daemon.started","details":{"version":"dev","pid":"999"}}`)
 
 	msg := barrier.Check()
 	if msg == "" {
@@ -57,7 +64,9 @@ func TestBarrierDetectsDaemonRuntimeFile(t *testing.T) {
 	// Create a daemon.<our-pid>.json file.
 	runtimePath := filepath.Join(dir,
 		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	os.WriteFile(runtimePath, []byte("{}"), 0644)
+	if err := os.WriteFile(runtimePath, []byte("{}"), 0644); err != nil {
+		t.Fatalf("failed to write initial file: %v", err)
+	}
 
 	msg := barrier.Check()
 	if msg == "" {
@@ -68,13 +77,10 @@ func TestBarrierDetectsDaemonRuntimeFile(t *testing.T) {
 func TestBarrierDetectsErrorsLogPollution(t *testing.T) {
 	dir := t.TempDir()
 	errPath := filepath.Join(dir, "errors.log")
-	os.WriteFile(errPath, nil, 0644)
 
 	barrier := NewProdLogBarrier(dir)
 
-	f, _ := os.OpenFile(errPath, os.O_APPEND|os.O_WRONLY, 0644)
-	fmt.Fprintln(f, `{"event":"test","component":"test","message":"err"}`)
-	f.Close()
+	appendToFile(t, errPath, `{"event":"test","component":"test","message":"err"}`)
 
 	msg := barrier.Check()
 	if msg == "" {
@@ -91,7 +97,9 @@ func TestBarrierIgnoresPreExistingRuntimeFile(t *testing.T) {
 	// Create a daemon.<our-pid>.json BEFORE the barrier.
 	runtimePath := filepath.Join(dir,
 		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	os.WriteFile(runtimePath, []byte("{}"), 0644)
+	if err := os.WriteFile(runtimePath, []byte("{}"), 0644); err != nil {
+		t.Fatalf("failed to write initial file: %v", err)
+	}
 
 	barrier := NewProdLogBarrier(dir)
 
@@ -108,12 +116,16 @@ func TestBarrierDetectsPreExistingRuntimeMutation(t *testing.T) {
 	// Create a daemon.<our-pid>.json BEFORE the barrier.
 	runtimePath := filepath.Join(dir,
 		fmt.Sprintf("daemon.%d.json", os.Getpid()))
-	os.WriteFile(runtimePath, []byte("{}"), 0644)
+	if err := os.WriteFile(runtimePath, []byte("{}"), 0644); err != nil {
+		t.Fatalf("failed to write initial file: %v", err)
+	}
 
 	barrier := NewProdLogBarrier(dir)
 
 	// Modify the file after barrier creation.
-	os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0644)
+	if err := os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0644); err != nil {
+		t.Fatalf("failed to modify file: %v", err)
+	}
 
 	msg := barrier.Check()
 	if msg == "" {
@@ -127,18 +139,16 @@ func TestBarrierDetectsPreExistingRuntimeMutation(t *testing.T) {
 func TestBarrierPassesWhenClean(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "activity.log")
-	os.WriteFile(logPath, []byte(
+	if err := os.WriteFile(logPath, []byte(
 		`{"event":"job.completed","component":"worker"}`+"\n",
-	), 0644)
+	), 0644); err != nil {
+		t.Fatalf("failed to write initial file: %v", err)
+	}
 
 	barrier := NewProdLogBarrier(dir)
 
 	// Append a legitimate prod entry (no test markers).
-	f, _ := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
-	fmt.Fprintln(f,
-		`{"event":"job.completed","component":"worker","details":{"job_id":"6638"}}`,
-	)
-	f.Close()
+	appendToFile(t, logPath, `{"event":"job.completed","component":"worker","details":{"job_id":"6638"}}`)
 
 	msg := barrier.Check()
 	if msg != "" {
