@@ -1,19 +1,19 @@
 package main
 
 import (
-        "bytes"
-        "encoding/json"
-        "net/http"
-        "net/http/httptest"
-        "os"
-        "os/exec"
-        "path/filepath"
-        "strings"
-        "sync"
-        "sync/atomic"
-        "testing"
+	"bytes"
+	"encoding/json"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
 )
 
 // TestGitRepo wraps a temporary git repository for test use.
@@ -24,12 +24,12 @@ type TestGitRepo struct {
 
 // newTestGitRepo creates and initializes a temporary git repository.
 func newTestGitRepo(t *testing.T) *TestGitRepo {
-        t.Helper()
-        if _, err := exec.LookPath("git"); err != nil {
-                t.Skip("git not available")
-        }
-                dir := t.TempDir()
-                resolved, err := filepath.EvalSymlinks(dir)
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatalf("Failed to resolve symlinks: %v", err)
 	}
@@ -124,11 +124,11 @@ func patchServerAddr(t *testing.T, newURL string) {
 // createTestRepo creates a temporary git repository with the given files
 // committed. It returns the TestGitRepo.
 func createTestRepo(t *testing.T, files map[string]string) *TestGitRepo {
-        t.Helper()
+	t.Helper()
 
-        r := newTestGitRepo(t)
-        r.WriteFiles(files)
-        r.Run("add", ".")
+	r := newTestGitRepo(t)
+	r.WriteFiles(files)
+	r.Run("add", ".")
 	r.Run("commit", "-m", "initial")
 	return r
 }
@@ -159,25 +159,26 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 // GET /api/review. It returns a function to retrieve the last received query
 // string.
 func mockReviewDaemon(t *testing.T, review storage.Review) func() string {
-        t.Helper()
-        var mu sync.Mutex
-        var receivedQuery string
-        _, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                if r.URL.Path == "/api/review" && r.Method == "GET" {
-                        mu.Lock()
-                        receivedQuery = r.URL.RawQuery
-                        mu.Unlock()
-                        json.NewEncoder(w).Encode(review)
-                        return
-                }
-        }))
-        t.Cleanup(cleanup)
-        return func() string {
-                mu.Lock()
-                defer mu.Unlock()
-                return receivedQuery
-        }
+	t.Helper()
+	var mu sync.Mutex
+	var receivedQuery string
+	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/review" && r.Method == "GET" {
+			mu.Lock()
+			receivedQuery = r.URL.RawQuery
+			mu.Unlock()
+			json.NewEncoder(w).Encode(review)
+			return
+		}
+	}))
+	t.Cleanup(cleanup)
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return receivedQuery
+	}
 }
+
 // runShowCmd executes showCmd() with the given args and returns captured stdout.
 func runShowCmd(t *testing.T, args ...string) string {
 	t.Helper()

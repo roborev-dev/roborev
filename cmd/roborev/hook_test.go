@@ -17,6 +17,19 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
+func assertError(t *testing.T, err error, expectError bool, contains string) {
+	t.Helper()
+	if expectError {
+		if err == nil {
+			t.Error("expected error but got nil")
+		} else if contains != "" && !strings.Contains(err.Error(), contains) {
+			t.Errorf("error %q expected to contain %q", err.Error(), contains)
+		}
+	} else if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestUninstallHookCmd(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -114,7 +127,7 @@ func TestUninstallHookCmd(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := testutil.NewTestRepo(t)
-			defer repo.Chdir()()
+			t.Cleanup(repo.Chdir())
 
 			if tt.setup != nil {
 				tt.setup(t, repo)
@@ -155,7 +168,7 @@ func TestInstallHookCmdCreatesHooksDirectory(t *testing.T) {
 		t.Fatal("hooks directory should not exist before test")
 	}
 
-	defer repo.Chdir()()
+	t.Cleanup(repo.Chdir())
 
 	installCmd := installHookCmd()
 	installCmd.SetArgs([]string{})
@@ -181,7 +194,7 @@ func TestInstallHookCmdCreatesPostRewriteHook(t *testing.T) {
 
 	repo := testutil.NewTestRepo(t)
 	repo.RemoveHooksDir()
-	defer repo.Chdir()()
+	t.Cleanup(repo.Chdir())
 
 	installCmd := installHookCmd()
 	installCmd.SetArgs([]string{})
@@ -262,7 +275,7 @@ func TestRegisterRepoError(t *testing.T) {
 
 // initNoDaemonSetup prepares the environment for init --no-daemon tests:
 // isolated HOME, fake roborev binary, and chdir to a test repo.
-func initNoDaemonSetup(t *testing.T) string {
+func initNoDaemonSetup(t *testing.T) *testutil.TestRepo {
 	t.Helper()
 
 	tmpHome := t.TempDir()
@@ -274,19 +287,17 @@ func initNoDaemonSetup(t *testing.T) string {
 	t.Cleanup(testutil.MockBinaryInPath(t, "roborev", "#!/bin/sh\nexit 0\n"))
 	t.Cleanup(repo.Chdir())
 
-	return repo.Root
+	return repo
 }
 
-func withMockServer(t *testing.T, handler http.HandlerFunc, fn func(url string)) {
+func setupMockServer(t *testing.T, handler http.HandlerFunc) {
 	t.Helper()
 	ts := httptest.NewServer(handler)
-	defer ts.Close()
+	t.Cleanup(ts.Close)
 
 	oldAddr := serverAddr
 	serverAddr = ts.URL
-	defer func() { serverAddr = oldAddr }()
-
-	fn(ts.URL)
+	t.Cleanup(func() { serverAddr = oldAddr })
 }
 
 func TestInitNoDaemon(t *testing.T) {
@@ -297,12 +308,12 @@ func TestInitNoDaemon(t *testing.T) {
 	tests := []struct {
 		name           string
 		serverHandler  http.HandlerFunc
-		setupFiles     func(t *testing.T, root string)
+		setupFiles     func(t *testing.T, repo *testutil.TestRepo)
 		expectContains []string
 		expectNot      []string
 		expectError    bool
 		errorContains  string
-		postCheck      func(t *testing.T, root string)
+		postCheck      func(t *testing.T, repo *testutil.TestRepo)
 	}{
 		{
 			name:          "Connection Error",
@@ -342,18 +353,16 @@ func TestInitNoDaemon(t *testing.T) {
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(200)
 			},
-			setupFiles: func(t *testing.T, root string) {
-				hooksDir := filepath.Join(root, ".git", "hooks")
-				if err := os.MkdirAll(hooksDir, 0755); err != nil {
+			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
+				if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(hooksDir, "post-commit"), []byte(githook.GeneratePostCommit()), 0755); err != nil {
+				if err := os.WriteFile(filepath.Join(repo.HooksDir, "post-commit"), []byte(githook.GeneratePostCommit()), 0755); err != nil {
 					t.Fatal(err)
 				}
 			},
-			postCheck: func(t *testing.T, root string) {
-				hooksDir := filepath.Join(root, ".git", "hooks")
-				prHookPath := filepath.Join(hooksDir, "post-rewrite")
+			postCheck: func(t *testing.T, repo *testutil.TestRepo) {
+				prHookPath := filepath.Join(repo.HooksDir, "post-rewrite")
 				content, err := os.ReadFile(prHookPath)
 				if err != nil {
 					t.Fatalf("post-rewrite hook should be installed: %v", err)
@@ -368,11 +377,10 @@ func TestInitNoDaemon(t *testing.T) {
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(200)
 			},
-			setupFiles: func(t *testing.T, root string) {
-				hooksDir := filepath.Join(root, ".git", "hooks")
-				os.MkdirAll(hooksDir, 0755)
+			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
+				os.MkdirAll(repo.HooksDir, 0755)
 				os.WriteFile(
-					filepath.Join(hooksDir, "post-commit"),
+					filepath.Join(repo.HooksDir, "post-commit"),
 					[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
 					0755,
 				)
@@ -387,11 +395,10 @@ func TestInitNoDaemon(t *testing.T) {
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(200)
 			},
-			setupFiles: func(t *testing.T, root string) {
-				hooksDir := filepath.Join(root, ".git", "hooks")
-				os.MkdirAll(hooksDir, 0755)
-				os.Chmod(hooksDir, 0555)
-				t.Cleanup(func() { os.Chmod(hooksDir, 0755) })
+			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
+				os.MkdirAll(repo.HooksDir, 0755)
+				os.Chmod(repo.HooksDir, 0555)
+				t.Cleanup(func() { os.Chmod(repo.HooksDir, 0755) })
 			},
 			expectError:   true,
 			errorContains: "install hooks",
@@ -401,16 +408,15 @@ func TestInitNoDaemon(t *testing.T) {
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(200)
 			},
-			setupFiles: func(t *testing.T, root string) {
-				hooksDir := filepath.Join(root, ".git", "hooks")
-				os.MkdirAll(hooksDir, 0755)
+			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
+				os.MkdirAll(repo.HooksDir, 0755)
 				os.WriteFile(
-					filepath.Join(hooksDir, "post-commit"),
+					filepath.Join(repo.HooksDir, "post-commit"),
 					[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
 					0755,
 				)
 				// Create post-rewrite as a directory so writing it fails.
-				os.MkdirAll(filepath.Join(hooksDir, "post-rewrite"), 0755)
+				os.MkdirAll(filepath.Join(repo.HooksDir, "post-rewrite"), 0755)
 			},
 			expectError:   true,
 			errorContains: "install hooks",
@@ -419,54 +425,41 @@ func TestInitNoDaemon(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root := initNoDaemonSetup(t)
+			repo := initNoDaemonSetup(t)
 
 			if tt.setupFiles != nil {
-				tt.setupFiles(t, root)
-			}
-
-			runTest := func() {
-				output := captureStdout(t, func() {
-					cmd := initCmd()
-					cmd.SetArgs([]string{"--no-daemon"})
-					err := cmd.Execute()
-					if tt.expectError {
-						if err == nil {
-							t.Error("expected error but got nil")
-						} else if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
-							t.Errorf("error %q expected to contain %q", err.Error(), tt.errorContains)
-						}
-					} else if err != nil {
-						t.Errorf("unexpected error: %v", err)
-					}
-				})
-
-				for _, s := range tt.expectContains {
-					if !strings.Contains(output, s) {
-						t.Errorf("output missing %q", s)
-					}
-				}
-				for _, s := range tt.expectNot {
-					if strings.Contains(output, s) {
-						t.Errorf("output should not contain %q", s)
-					}
-				}
+				tt.setupFiles(t, repo)
 			}
 
 			if tt.serverHandler != nil {
-				withMockServer(t, tt.serverHandler, func(_ string) {
-					runTest()
-				})
+				setupMockServer(t, tt.serverHandler)
 			} else {
 				// Simulate connection error
 				oldAddr := serverAddr
 				serverAddr = "http://127.0.0.1:1"
-				defer func() { serverAddr = oldAddr }()
-				runTest()
+				t.Cleanup(func() { serverAddr = oldAddr })
+			}
+
+			output := captureStdout(t, func() {
+				cmd := initCmd()
+				cmd.SetArgs([]string{"--no-daemon"})
+				err := cmd.Execute()
+				assertError(t, err, tt.expectError, tt.errorContains)
+			})
+
+			for _, s := range tt.expectContains {
+				if !strings.Contains(output, s) {
+					t.Errorf("output missing %q", s)
+				}
+			}
+			for _, s := range tt.expectNot {
+				if strings.Contains(output, s) {
+					t.Errorf("output should not contain %q", s)
+				}
 			}
 
 			if tt.postCheck != nil {
-				tt.postCheck(t, root)
+				tt.postCheck(t, repo)
 			}
 		})
 	}
