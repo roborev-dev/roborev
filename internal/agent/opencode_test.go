@@ -346,6 +346,10 @@ type reviewTestOpts struct {
 func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, string, error) {
 	t.Helper()
 
+	if opts.Prompt == "" {
+		t.Fatal("executeReviewTest requires an explicit Prompt")
+	}
+
 	mock := mockAgentCLI(t, opts.MockOpts)
 
 	a := NewOpenCodeAgent(mock.CmdPath)
