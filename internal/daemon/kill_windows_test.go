@@ -10,105 +10,123 @@ const testRoborevExe = `C:\Program Files\roborev\roborev.exe`
 
 func TestClassifyCommandLine(t *testing.T) {
 	tests := []struct {
-		name    string
-		cmdLine string
-		want    processIdentity
+		group string
+		cases []struct {
+			name    string
+			cmdLine string
+			want    processIdentity
+		}
 	}{
 		{
-			name:    "empty string returns unknown",
-			cmdLine: "",
-			want:    processUnknown,
+			group: "Standard Matching",
+			cases: []struct {
+				name    string
+				cmdLine string
+				want    processIdentity
+			}{
+				{
+					name:    "empty string returns unknown",
+					cmdLine: "",
+					want:    processUnknown,
+				},
+				{
+					name:    "whitespace only returns unknown",
+					cmdLine: "   \t\n  ",
+					want:    processUnknown,
+				},
+				{
+					name:    "roborev daemon run returns isRoborev",
+					cmdLine: testRoborevExe + ` daemon run`,
+					want:    processIsRoborev,
+				},
+				{
+					name:    "roborev daemon run with flags after returns isRoborev",
+					cmdLine: testRoborevExe + ` daemon run --port 7373`,
+					want:    processIsRoborev,
+				},
+				{
+					name:    "roborev daemon run with flags between returns isRoborev",
+					cmdLine: testRoborevExe + ` daemon --verbose run`,
+					want:    processIsRoborev,
+				},
+				{
+					name:    "roborev daemon run with multiple flags between returns isRoborev",
+					cmdLine: testRoborevExe + ` daemon -v --config C:\roborev.toml run`,
+					want:    processIsRoborev,
+				},
+				{
+					name:    "roborev daemon status returns notRoborev",
+					cmdLine: testRoborevExe + ` daemon status`,
+					want:    processNotRoborev,
+				},
+				{
+					name:    "roborev daemon stop returns notRoborev",
+					cmdLine: testRoborevExe + ` daemon stop`,
+					want:    processNotRoborev,
+				},
+				{
+					name:    "roborev without daemon returns notRoborev",
+					cmdLine: testRoborevExe + ` review`,
+					want:    processNotRoborev,
+				},
+				{
+					name:    "unrelated process returns notRoborev",
+					cmdLine: `C:\Windows\System32\notepad.exe`,
+					want:    processNotRoborev,
+				},
+				{
+					name:    "case insensitive match",
+					cmdLine: `C:\ROBOREV\ROBOREV.EXE DAEMON RUN`,
+					want:    processIsRoborev,
+				},
+			},
 		},
 		{
-			name:    "whitespace only returns unknown",
-			cmdLine: "   \t\n  ",
-			want:    processUnknown,
-		},
-		{
-			name:    "roborev daemon run returns isRoborev",
-			cmdLine: testRoborevExe + ` daemon run`,
-			want:    processIsRoborev,
-		},
-		{
-			name:    "roborev daemon run with flags after returns isRoborev",
-			cmdLine: testRoborevExe + ` daemon run --port 7373`,
-			want:    processIsRoborev,
-		},
-		{
-			name:    "roborev daemon run with flags between returns isRoborev",
-			cmdLine: testRoborevExe + ` daemon --verbose run`,
-			want:    processIsRoborev,
-		},
-		{
-			name:    "roborev daemon run with multiple flags between returns isRoborev",
-			cmdLine: testRoborevExe + ` daemon -v --config C:\roborev.toml run`,
-			want:    processIsRoborev,
-		},
-		{
-			name:    "roborev daemon status returns notRoborev",
-			cmdLine: testRoborevExe + ` daemon status`,
-			want:    processNotRoborev,
-		},
-		{
-			name:    "roborev daemon stop returns notRoborev",
-			cmdLine: testRoborevExe + ` daemon stop`,
-			want:    processNotRoborev,
-		},
-		{
-			name:    "roborev without daemon returns notRoborev",
-			cmdLine: testRoborevExe + ` review`,
-			want:    processNotRoborev,
-		},
-		{
-			name:    "unrelated process returns notRoborev",
-			cmdLine: `C:\Windows\System32\notepad.exe`,
-			want:    processNotRoborev,
-		},
-		{
-			name:    "case insensitive match",
-			cmdLine: `C:\ROBOREV\ROBOREV.EXE DAEMON RUN`,
-			want:    processIsRoborev,
-		},
-		// False positive prevention - "run" in flags
-		{
-			name:    "dry-run flag with daemon status",
-			cmdLine: testRoborevExe + ` daemon status --dry-run`,
-			want:    processNotRoborev,
-		},
-		{
-			name:    "run-once flag with daemon stop",
-			cmdLine: testRoborevExe + ` daemon stop --run-once`,
-			want:    processNotRoborev,
-		},
-		// False positive prevention - "run" as flag value after another subcommand
-		{
-			name:    "run as flag value after status",
-			cmdLine: testRoborevExe + ` daemon status --output run`,
-			want:    processNotRoborev,
-		},
-		{
-			name:    "run as positional arg after status",
-			cmdLine: testRoborevExe + ` daemon status run`,
-			want:    processNotRoborev,
-		},
-		{
-			name:    "strips NUL bytes before matching",
-			cmdLine: "r\x00o\x00b\x00o\x00r\x00e\x00v\x00 \x00d\x00a\x00e\x00m\x00o\x00n\x00 \x00r\x00u\x00n\x00",
-			want:    processIsRoborev,
+			group: "False Positive Prevention",
+			cases: []struct {
+				name    string
+				cmdLine string
+				want    processIdentity
+			}{
+				{
+					name:    "dry-run flag with daemon status",
+					cmdLine: testRoborevExe + ` daemon status --dry-run`,
+					want:    processNotRoborev,
+				},
+				{
+					name:    "run-once flag with daemon stop",
+					cmdLine: testRoborevExe + ` daemon stop --run-once`,
+					want:    processNotRoborev,
+				},
+				{
+					name:    "run as flag value after status",
+					cmdLine: testRoborevExe + ` daemon status --output run`,
+					want:    processNotRoborev,
+				},
+				{
+					name:    "run as positional arg after status",
+					cmdLine: testRoborevExe + ` daemon status run`,
+					want:    processNotRoborev,
+				},
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := classifyCommandLine(tt.cmdLine)
-			if got != tt.want {
-				t.Errorf("classifyCommandLine(%q) = %v, want %v", tt.cmdLine, got, tt.want)
+	for _, g := range tests {
+		t.Run(g.group, func(t *testing.T) {
+			for _, tt := range g.cases {
+				t.Run(tt.name, func(t *testing.T) {
+					got := classifyCommandLine(tt.cmdLine)
+					if got != tt.want {
+						t.Errorf("classifyCommandLine(%q) = %v, want %v", tt.cmdLine, got, tt.want)
+					}
+				})
 			}
 		})
 	}
 }
 
-func TestWmicHeaderOnlyOutput(t *testing.T) {
+func TestParseWmicOutput(t *testing.T) {
 	// Verify that WMIC output containing only the header is treated as empty.
 	// This simulates the flow in getCommandLineWmic without spawning wmic.
 
