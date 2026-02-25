@@ -1,17 +1,17 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"sync/atomic"
-	"testing"
-
+        "bytes"
+        "encoding/json"
+        "net/http"
+        "net/http/httptest"
+        "os"
+        "os/exec"
+        "path/filepath"
+        "strings"
+        "sync"
+        "sync/atomic"
+        "testing"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -24,9 +24,12 @@ type TestGitRepo struct {
 
 // newTestGitRepo creates and initializes a temporary git repository.
 func newTestGitRepo(t *testing.T) *TestGitRepo {
-	t.Helper()
-	dir := t.TempDir()
-	resolved, err := filepath.EvalSymlinks(dir)
+        t.Helper()
+        if _, err := exec.LookPath("git"); err != nil {
+                t.Skip("git not available")
+        }
+                dir := t.TempDir()
+                resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatalf("Failed to resolve symlinks: %v", err)
 	}
@@ -121,14 +124,11 @@ func patchServerAddr(t *testing.T, newURL string) {
 // createTestRepo creates a temporary git repository with the given files
 // committed. It returns the TestGitRepo.
 func createTestRepo(t *testing.T, files map[string]string) *TestGitRepo {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+        t.Helper()
 
-	r := newTestGitRepo(t)
-	r.WriteFiles(files)
-	r.Run("add", ".")
+        r := newTestGitRepo(t)
+        r.WriteFiles(files)
+        r.Run("add", ".")
 	r.Run("commit", "-m", "initial")
 	return r
 }
@@ -159,19 +159,25 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 // GET /api/review. It returns a function to retrieve the last received query
 // string.
 func mockReviewDaemon(t *testing.T, review storage.Review) func() string {
-	t.Helper()
-	var receivedQuery string
-	_, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/review" && r.Method == "GET" {
-			receivedQuery = r.URL.RawQuery
-			json.NewEncoder(w).Encode(review)
-			return
-		}
-	}))
-	t.Cleanup(cleanup)
-	return func() string { return receivedQuery }
+        t.Helper()
+        var mu sync.Mutex
+        var receivedQuery string
+        _, cleanup := setupMockDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                if r.URL.Path == "/api/review" && r.Method == "GET" {
+                        mu.Lock()
+                        receivedQuery = r.URL.RawQuery
+                        mu.Unlock()
+                        json.NewEncoder(w).Encode(review)
+                        return
+                }
+        }))
+        t.Cleanup(cleanup)
+        return func() string {
+                mu.Lock()
+                defer mu.Unlock()
+                return receivedQuery
+        }
 }
-
 // runShowCmd executes showCmd() with the given args and returns captured stdout.
 func runShowCmd(t *testing.T, args ...string) string {
 	t.Helper()
@@ -202,6 +208,12 @@ type MockServerState struct {
 	CommentCount int32
 }
 
+func (s *MockServerState) Enqueues() int32  { return atomic.LoadInt32(&s.EnqueueCount) }
+func (s *MockServerState) Jobs() int32      { return atomic.LoadInt32(&s.JobsCount) }
+func (s *MockServerState) Reviews() int32   { return atomic.LoadInt32(&s.ReviewCount) }
+func (s *MockServerState) Addresses() int32 { return atomic.LoadInt32(&s.AddressCount) }
+func (s *MockServerState) Comments() int32  { return atomic.LoadInt32(&s.CommentCount) }
+
 // MockServerOpts configures the behavior of a mock roborev server.
 type MockServerOpts struct {
 	// JobIDStart is the starting job ID for enqueue responses (0 defaults to 1).
@@ -216,6 +228,90 @@ type MockServerOpts struct {
 	OnEnqueue func(w http.ResponseWriter, r *http.Request)
 	// OnJobs is an optional callback for /api/jobs requests. If set, overrides default behavior.
 	OnJobs func(w http.ResponseWriter, r *http.Request)
+}
+
+type mockServerHandler struct {
+	opts  MockServerOpts
+	state *MockServerState
+	jobID int64
+}
+
+func (h *mockServerHandler) handleEnqueue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if h.opts.OnEnqueue != nil {
+		atomic.AddInt32(&h.state.EnqueueCount, 1)
+		h.opts.OnEnqueue(w, r)
+		return
+	}
+	id := atomic.AddInt64(&h.jobID, 1)
+	atomic.AddInt32(&h.state.EnqueueCount, 1)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(storage.ReviewJob{
+		ID:     id,
+		Agent:  h.opts.Agent,
+		Status: storage.JobStatusQueued,
+	})
+}
+
+func (h *mockServerHandler) handleJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if h.opts.OnJobs != nil {
+		atomic.AddInt32(&h.state.JobsCount, 1)
+		h.opts.OnJobs(w, r)
+		return
+	}
+	count := atomic.AddInt32(&h.state.JobsCount, 1)
+	status := storage.JobStatusQueued
+	if count >= h.opts.DoneAfterPolls {
+		status = storage.JobStatusDone
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"jobs": []storage.ReviewJob{{
+			ID:     atomic.LoadInt64(&h.jobID),
+			Status: status,
+		}},
+	})
+}
+
+func (h *mockServerHandler) handleReview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	atomic.AddInt32(&h.state.ReviewCount, 1)
+	output := h.opts.ReviewOutput
+	if output == "" {
+		output = "review output"
+	}
+	json.NewEncoder(w).Encode(storage.Review{
+		JobID:  atomic.LoadInt64(&h.jobID),
+		Agent:  h.opts.Agent,
+		Output: output,
+	})
+}
+
+func (h *mockServerHandler) handleComment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	atomic.AddInt32(&h.state.CommentCount, 1)
+	w.WriteHeader(http.StatusCreated)
+}
+
+func (h *mockServerHandler) handleAddress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	atomic.AddInt32(&h.state.AddressCount, 1)
+	w.WriteHeader(http.StatusOK)
 }
 
 // newMockServer creates an httptest.Server that mimics the roborev daemon API.
@@ -234,87 +330,20 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	if jobIDStart <= 0 {
 		jobIDStart = 1
 	}
-	jobID := jobIDStart - 1
+
+	h := &mockServerHandler{
+		opts:  opts,
+		state: state,
+		jobID: jobIDStart - 1,
+	}
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		if opts.OnEnqueue != nil {
-			atomic.AddInt32(&state.EnqueueCount, 1)
-			opts.OnEnqueue(w, r)
-			return
-		}
-		id := atomic.AddInt64(&jobID, 1)
-		atomic.AddInt32(&state.EnqueueCount, 1)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(storage.ReviewJob{
-			ID:     id,
-			Agent:  opts.Agent,
-			Status: storage.JobStatusQueued,
-		})
-	})
-
-	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		if opts.OnJobs != nil {
-			atomic.AddInt32(&state.JobsCount, 1)
-			opts.OnJobs(w, r)
-			return
-		}
-		count := atomic.AddInt32(&state.JobsCount, 1)
-		status := storage.JobStatusQueued
-		if count >= opts.DoneAfterPolls {
-			status = storage.JobStatusDone
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"jobs": []storage.ReviewJob{{
-				ID:     atomic.LoadInt64(&jobID),
-				Status: status,
-			}},
-		})
-	})
-
-	mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		atomic.AddInt32(&state.ReviewCount, 1)
-		output := opts.ReviewOutput
-		if output == "" {
-			output = "review output"
-		}
-		json.NewEncoder(w).Encode(storage.Review{
-			JobID:  atomic.LoadInt64(&jobID),
-			Agent:  opts.Agent,
-			Output: output,
-		})
-	})
-
-	mux.HandleFunc("/api/comment", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		atomic.AddInt32(&state.CommentCount, 1)
-		w.WriteHeader(http.StatusCreated)
-	})
-
-	mux.HandleFunc("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		atomic.AddInt32(&state.AddressCount, 1)
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("/api/enqueue", h.handleEnqueue)
+	mux.HandleFunc("/api/jobs", h.handleJobs)
+	mux.HandleFunc("/api/review", h.handleReview)
+	mux.HandleFunc("/api/comment", h.handleComment)
+	mux.HandleFunc("/api/review/address", h.handleAddress)
 
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
