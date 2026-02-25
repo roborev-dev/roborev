@@ -16,7 +16,7 @@ import (
 )
 
 // expectedAgents is the single source of truth for registered agent names.
-var expectedAgents = []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kilo", "test"}
+var expectedAgents = []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kilo", "droid", "test"}
 
 // verifyAgentPassesFlag creates a mock command that echoes args, runs the agent's Review method,
 // and validates that the output contains the expected flag and value.

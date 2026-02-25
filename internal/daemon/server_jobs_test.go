@@ -941,6 +941,13 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			expectedCode:  http.StatusCreated,
 		},
 		{
+			name:          "default falls back to kilo when only kilo available",
+			requestAgent:  "",
+			mockBinaries:  []string{"kilo"},
+			expectedAgent: "kilo",
+			expectedCode:  http.StatusCreated,
+		},
+		{
 			name:         "no agents available returns 503",
 			requestAgent: "codex",
 			mockBinaries: nil,

@@ -110,7 +110,6 @@ func TestKiloReviewFiltersToolCallLines(t *testing.T) {
 }
 
 func TestKiloAgenticAutoFlag(t *testing.T) {
-	t.Parallel()
 	skipIfWindows(t)
 
 	withUnsafeAgents(t, false)

@@ -177,7 +177,7 @@ func GetAvailable(preferred string) (Agent, error) {
 		return Get(preferred)
 	}
 
-	// Fallback order: codex, claude-code, gemini, copilot, opencode, cursor, droid
+	// Fallback order: codex, claude-code, gemini, copilot, opencode, cursor, kilo, droid
 	fallbacks := []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kilo", "droid"}
 	for _, name := range fallbacks {
 		if name != preferred && IsAvailable(name) {

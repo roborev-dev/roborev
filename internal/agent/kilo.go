@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -77,35 +78,26 @@ func (a *KiloAgent) kiloVariant() string {
 	}
 }
 
-func (a *KiloAgent) CommandLine() string {
+func (a *KiloAgent) buildArgs() []string {
 	args := []string{"run", "--format", "default"}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
 	}
-	agenticMode := a.Agentic || AllowUnsafeAgents()
-	if agenticMode {
+	if a.Agentic || AllowUnsafeAgents() {
 		args = append(args, "--auto")
 	}
 	if variant := a.kiloVariant(); variant != "" {
 		args = append(args, "--variant", variant)
 	}
-	return a.Command + " " + strings.Join(args, " ")
+	return args
+}
+
+func (a *KiloAgent) CommandLine() string {
+	return a.Command + " " + strings.Join(a.buildArgs(), " ")
 }
 
 func (a *KiloAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	args := []string{"run", "--format", "default"}
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
-	}
-	agenticMode := a.Agentic || AllowUnsafeAgents()
-	if agenticMode {
-		args = append(args, "--auto")
-	}
-	if variant := a.kiloVariant(); variant != "" {
-		args = append(args, "--variant", variant)
-	}
-
-	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd := exec.CommandContext(ctx, a.Command, a.buildArgs()...)
 	cmd.Dir = repoPath
 	cmd.Stdin = strings.NewReader(prompt)
 
@@ -127,11 +119,46 @@ func (a *KiloAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		)
 	}
 
-	result := filterOpencodeToolCallLines(stdout.String())
+	result := filterToolCallLines(stdout.String())
 	if len(result) == 0 {
 		return "No review output generated", nil
 	}
 	return result, nil
+}
+
+// filterToolCallLines removes lines that look like JSON tool-call
+// objects from plain-text CLI output. Kilo's --format default mode
+// interleaves tool-call JSON ({"name":...,"arguments":...}) with
+// human-readable review text; we keep only the review text.
+func filterToolCallLines(s string) string {
+	var kept []string
+	for line := range strings.SplitSeq(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			kept = append(kept, line)
+			continue
+		}
+		if isToolCallJSON(trimmed) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimRight(strings.Join(kept, "\n"), "\n")
+}
+
+// isToolCallJSON returns true if line is a JSON object containing
+// both "name" and "arguments" keys (the tool-call signature).
+func isToolCallJSON(line string) bool {
+	if len(line) == 0 || line[0] != '{' {
+		return false
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(line), &obj) != nil {
+		return false
+	}
+	_, hasName := obj["name"]
+	_, hasArgs := obj["arguments"]
+	return hasName && hasArgs
 }
 
 func init() {
