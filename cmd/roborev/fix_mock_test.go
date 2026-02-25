@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -38,18 +39,21 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := fmt.Sprintf("%s/api/review", ts.URL)
-			if tt.query != "" {
-				url += "?" + tt.query
+			u, err := url.Parse(fmt.Sprintf("%s/api/review", ts.URL))
+			if err != nil {
+				t.Fatalf("failed to parse base URL: %v", err)
 			}
-			resp, err := http.Get(url)
+			if tt.query != "" {
+				u.RawQuery = tt.query
+			}
+			resp, err := http.Get(u.String())
 			if err != nil {
 				t.Fatalf("failed to make request: %v", err)
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != tt.wantStatus {
-				t.Errorf("expected status %d, got %d", tt.wantStatus, resp.StatusCode)
+				t.Fatalf("expected status %d, got %d", tt.wantStatus, resp.StatusCode)
 			}
 
 			if tt.wantStatus != http.StatusOK {

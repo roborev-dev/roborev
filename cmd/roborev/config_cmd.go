@@ -25,23 +25,23 @@ const (
 )
 
 var (
-        errNotGitRepository = errors.New("not in a git repository")
+	errNotGitRepository = errors.New("not in a git repository")
 )
 
 // RepoResolver provides filesystem and git context.
 type RepoResolver interface {
-        RepoRoot() (string, error)
-        WorkingDir() (string, error)
+	RepoRoot() (string, error)
+	WorkingDir() (string, error)
 }
 
 type defaultRepoResolver struct{}
 
 func (defaultRepoResolver) RepoRoot() (string, error) {
-        return git.GetRepoRoot(".")
+	return git.GetRepoRoot(".")
 }
 
 func (defaultRepoResolver) WorkingDir() (string, error) {
-        return os.Getwd()
+	return os.Getwd()
 }
 
 // determineScope returns the scope based on --global and --local flags.
@@ -61,98 +61,99 @@ func determineScope(globalFlag, localFlag bool) (configScope, error) {
 // repoRoot returns the git repo root for the current directory.
 // Returns ("", nil) when the repo root is optional and not found.
 func repoRoot(resolver RepoResolver) (string, error) {
-        if root, err := resolver.RepoRoot(); err == nil {
-                return root, nil
-        }
+	if root, err := resolver.RepoRoot(); err == nil {
+		return root, nil
+	}
 
-        root, err := findRepoRoot(resolver)
-        if err != nil {
-                if errors.Is(err, errNotGitRepository) {
-                        return "", nil
-                }
-                return "", err
-        }
-        return root, nil
+	root, err := findRepoRoot(resolver)
+	if err != nil {
+		if errors.Is(err, errNotGitRepository) {
+			return "", nil
+		}
+		return "", err
+	}
+	return root, nil
 }
 
 // requireRepoRoot returns the git repo root or an actionable error.
 func requireRepoRoot(resolver RepoResolver) (string, error) {
-        root, err := repoRoot(resolver)
-        if err != nil {
-                return "", fmt.Errorf("determine repository root: %w", err)
-        }
-        if root == "" {
-                return "", errNotGitRepository
-        }
-        return root, nil
+	root, err := repoRoot(resolver)
+	if err != nil {
+		return "", fmt.Errorf("determine repository root: %w", err)
+	}
+	if root == "" {
+		return "", errNotGitRepository
+	}
+	return root, nil
 }
 
 // findRepoRoot walks up from the current directory to find a git repo root.
 func findRepoRoot(resolver RepoResolver) (string, error) {
-        dir, err := resolver.WorkingDir()
-        if err != nil {
-                return "", err
-        }
+	dir, err := resolver.WorkingDir()
+	if err != nil {
+		return "", err
+	}
 
-        for {
-                if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-                        return dir, nil
-                } else if !os.IsNotExist(err) {
-                        return "", err
-                }
-                parent := filepath.Dir(dir)
-                if parent == dir {
-                        return "", errNotGitRepository
-                }
-                dir = parent
-        }
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", errNotGitRepository
+		}
+		dir = parent
+	}
 }
+
 // getValueForScope retrieves a single config key value from the appropriate scope.
 func getValueForScope(resolver RepoResolver, key string, scope configScope) (string, error) {
-        switch scope {
-        case scopeGlobal:
-                cfg, err := config.LoadGlobal()
-                if err != nil {
-                        return "", fmt.Errorf("load global config: %w", err)
-                }
-                val, err := config.GetConfigValue(cfg, key)
-                if err != nil {
-                        return "", err
-                }
-                raw, _ := config.LoadRawGlobal()
-                if raw == nil || !config.IsKeyInTOMLFile(raw, key) {
-                        return "", fmt.Errorf("key %q is not set in global config", key)
-                }
-                return val, nil
+	switch scope {
+	case scopeGlobal:
+		cfg, err := config.LoadGlobal()
+		if err != nil {
+			return "", fmt.Errorf("load global config: %w", err)
+		}
+		val, err := config.GetConfigValue(cfg, key)
+		if err != nil {
+			return "", err
+		}
+		raw, _ := config.LoadRawGlobal()
+		if raw == nil || !config.IsKeyInTOMLFile(raw, key) {
+			return "", fmt.Errorf("key %q is not set in global config", key)
+		}
+		return val, nil
 
-        case scopeLocal:
-                repoPath, err := requireRepoRoot(resolver)
-                if err != nil {
-                        return "", err
-                }
-                repoCfg, err := config.LoadRepoConfig(repoPath)
-                if err != nil {
-                        return "", fmt.Errorf("load repo config: %w", err)
-                }
-                if repoCfg == nil {
-                        return "", fmt.Errorf("no local config (.roborev.toml) found")
-                }
-                val, err := config.GetConfigValue(repoCfg, key)
-                if err != nil {
-                        return "", err
-                }
-                raw, _ := config.LoadRawRepo(repoPath)
-                if raw == nil || !config.IsKeyInTOMLFile(raw, key) {
-                        return "", fmt.Errorf("key %q is not set in local config", key)
-                }
-                return val, nil
+	case scopeLocal:
+		repoPath, err := requireRepoRoot(resolver)
+		if err != nil {
+			return "", err
+		}
+		repoCfg, err := config.LoadRepoConfig(repoPath)
+		if err != nil {
+			return "", fmt.Errorf("load repo config: %w", err)
+		}
+		if repoCfg == nil {
+			return "", fmt.Errorf("no local config (.roborev.toml) found")
+		}
+		val, err := config.GetConfigValue(repoCfg, key)
+		if err != nil {
+			return "", err
+		}
+		raw, _ := config.LoadRawRepo(repoPath)
+		if raw == nil || !config.IsKeyInTOMLFile(raw, key) {
+			return "", fmt.Errorf("key %q is not set in local config", key)
+		}
+		return val, nil
 
-        default: // scopeMerged
-                if !config.IsValidKey(key) {
-                        return "", fmt.Errorf("unknown config key: %q", key)
-                }
-                // Try local first, then global
-                repoPath, err := repoRoot(resolver)
+	default: // scopeMerged
+		if !config.IsValidKey(key) {
+			return "", fmt.Errorf("unknown config key: %q", key)
+		}
+		// Try local first, then global
+		repoPath, err := repoRoot(resolver)
 		if err != nil {
 			return "", fmt.Errorf("determine repository root: %w", err)
 		}
@@ -202,23 +203,23 @@ func configCmd() *cobra.Command {
 func configGetCmd() *cobra.Command {
 	var globalFlag, localFlag bool
 
-	        cmd := &cobra.Command{
-	                Use:   "get <key>",
-	                Short: "Get a configuration value",
-	                Args:  cobra.ExactArgs(1),
-	                RunE: func(cmd *cobra.Command, args []string) error {
-	                        scope, err := determineScope(globalFlag, localFlag)
-	                        if err != nil {
-	                                return err
-	                        }
-	                        val, err := getValueForScope(defaultRepoResolver{}, args[0], scope)
-	                        if err != nil {
-	                                return err
-	                        }
-	                        fmt.Println(val)
-	                        return nil
-	                },
-	        }
+	cmd := &cobra.Command{
+		Use:   "get <key>",
+		Short: "Get a configuration value",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			scope, err := determineScope(globalFlag, localFlag)
+			if err != nil {
+				return err
+			}
+			val, err := getValueForScope(defaultRepoResolver{}, args[0], scope)
+			if err != nil {
+				return err
+			}
+			fmt.Println(val)
+			return nil
+		},
+	}
 	cmd.Flags().BoolVar(&globalFlag, "global", false, "get from global config only")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "get from local repo config only")
 
@@ -240,13 +241,14 @@ func configSetCmd() *cobra.Command {
 				return err
 			}
 
-			                        if scope == scopeGlobal {
-			                                return setConfigKey(config.GlobalConfigPath(), key, value, true)
-			                        }
-			
-			                        // Default (and --local): set in local config
-			                        repoPath, err := requireRepoRoot(defaultRepoResolver{})
-			                        if err != nil {				if errors.Is(err, errNotGitRepository) {
+			if scope == scopeGlobal {
+				return setConfigKey(config.GlobalConfigPath(), key, value, true)
+			}
+
+			// Default (and --local): set in local config
+			repoPath, err := requireRepoRoot(defaultRepoResolver{})
+			if err != nil {
+				if errors.Is(err, errNotGitRepository) {
 					return fmt.Errorf("%w (use --global for global config)", errNotGitRepository)
 				}
 				return err
@@ -265,25 +267,25 @@ func configSetCmd() *cobra.Command {
 func configListCmd() *cobra.Command {
 	var globalFlag, localFlag, showOrigin bool
 
-	        cmd := &cobra.Command{
-	                Use:   "list",
-	                Short: "List configuration values",
-	                RunE: func(cmd *cobra.Command, args []string) error {
-	                        scope, err := determineScope(globalFlag, localFlag)
-	                        if err != nil {
-	                                return err
-	                        }
-	
-	                        switch scope {
-	                        case scopeGlobal:
-	                                return listGlobalConfig()
-	                        case scopeLocal:
-	                                return listLocalConfig(defaultRepoResolver{})
-	                        default:
-	                                return listMergedConfig(defaultRepoResolver{}, showOrigin)
-	                        }
-	                },
-	        }
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List configuration values",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			scope, err := determineScope(globalFlag, localFlag)
+			if err != nil {
+				return err
+			}
+
+			switch scope {
+			case scopeGlobal:
+				return listGlobalConfig()
+			case scopeLocal:
+				return listLocalConfig(defaultRepoResolver{})
+			default:
+				return listMergedConfig(defaultRepoResolver{}, showOrigin)
+			}
+		},
+	}
 	cmd.Flags().BoolVar(&globalFlag, "global", false, "list global config only")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "list local repo config only")
 	cmd.Flags().BoolVar(&showOrigin, "show-origin", false, "show where each value comes from (global/local/default)")
@@ -305,10 +307,10 @@ func listGlobalConfig() error {
 }
 
 func listLocalConfig(resolver RepoResolver) error {
-        repoPath, err := requireRepoRoot(resolver)
-        if err != nil {
-                return err
-        }
+	repoPath, err := requireRepoRoot(resolver)
+	if err != nil {
+		return err
+	}
 	repoCfg, err := config.LoadRepoConfig(repoPath)
 	if err != nil {
 		return fmt.Errorf("load repo config: %w", err)
@@ -325,18 +327,18 @@ func listLocalConfig(resolver RepoResolver) error {
 }
 
 func listMergedConfig(resolver RepoResolver, showOrigin bool) error {
-        cfg, err := config.LoadGlobal()
-        if err != nil {
-                return fmt.Errorf("load global config: %w", err)
-        }
-        rawGlobal, _ := config.LoadRawGlobal()
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return fmt.Errorf("load global config: %w", err)
+	}
+	rawGlobal, _ := config.LoadRawGlobal()
 
-        var repoCfg *config.RepoConfig
-        var rawRepo map[string]any
-        repoPath, err := repoRoot(resolver)
-        if err != nil {
-                return fmt.Errorf("determine repository root: %w", err)
-        }
+	var repoCfg *config.RepoConfig
+	var rawRepo map[string]any
+	repoPath, err := repoRoot(resolver)
+	if err != nil {
+		return fmt.Errorf("determine repository root: %w", err)
+	}
 	if repoPath != "" {
 		repoCfg, err = config.LoadRepoConfig(repoPath)
 		if err != nil {
