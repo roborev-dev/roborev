@@ -3,12 +3,10 @@
 package daemon
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
-
-	"github.com/roborev-dev/roborev/internal/config"
 )
 
 func setupTestEnv(t *testing.T) string {
@@ -19,65 +17,52 @@ func setupTestEnv(t *testing.T) string {
 }
 
 func TestReadCompactMetadata(t *testing.T) {
-	setupTestEnv(t)
-
 	tests := []struct {
-		name    string
-		jobID   int64
-		setup   func(jobID int64) error
-		wantIDs []int64
-		wantErr bool
+		name     string
+		jobID    int64
+		mockFile []byte
+		wantIDs  []int64
+		wantErr  bool
 	}{
 		{
-			name:  "valid_metadata",
-			jobID: 123,
-			setup: func(jobID int64) error {
-				metadata := CompactMetadata{SourceJobIDs: []int64{100, 200, 300}}
-				data, err := json.Marshal(metadata)
-				if err != nil {
-					return err
-				}
-				return os.WriteFile(compactMetadataPath(jobID), data, 0644)
-			},
-			wantIDs: []int64{100, 200, 300},
-			wantErr: false,
+			name:     "valid_metadata",
+			jobID:    123,
+			mockFile: []byte(`{"source_job_ids":[100, 200, 300]}`),
+			wantIDs:  []int64{100, 200, 300},
+			wantErr:  false,
 		},
 		{
-			name:    "missing_file",
-			jobID:   999,
-			setup:   func(jobID int64) error { return nil },
-			wantIDs: nil,
-			wantErr: true,
+			name:     "missing_file",
+			jobID:    999,
+			mockFile: nil,
+			wantIDs:  nil,
+			wantErr:  true,
 		},
 		{
-			name:  "invalid_json",
-			jobID: 456,
-			setup: func(jobID int64) error {
-				return os.WriteFile(compactMetadataPath(jobID), []byte("{invalid json}"), 0644)
-			},
-			wantIDs: nil,
-			wantErr: true,
+			name:     "invalid_json",
+			jobID:    456,
+			mockFile: []byte("{invalid json}"),
+			wantIDs:  nil,
+			wantErr:  true,
 		},
 		{
-			name:  "empty_source_ids",
-			jobID: 789,
-			setup: func(jobID int64) error {
-				metadata := CompactMetadata{SourceJobIDs: []int64{}}
-				data, err := json.Marshal(metadata)
-				if err != nil {
-					return err
-				}
-				return os.WriteFile(compactMetadataPath(jobID), data, 0644)
-			},
-			wantIDs: []int64{},
-			wantErr: false,
+			name:     "empty_source_ids",
+			jobID:    789,
+			mockFile: []byte(`{"source_job_ids":[]}`),
+			wantIDs:  []int64{},
+			wantErr:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.setup(tt.jobID); err != nil {
-				t.Fatalf("Setup failed: %v", err)
+			setupTestEnv(t)
+
+			if tt.mockFile != nil {
+				path := compactMetadataPath(tt.jobID)
+				if err := os.WriteFile(path, tt.mockFile, 0644); err != nil {
+					t.Fatalf("Setup failed: %v", err)
+				}
 			}
 
 			got, err := ReadCompactMetadata(tt.jobID)
@@ -87,13 +72,8 @@ func TestReadCompactMetadata(t *testing.T) {
 			}
 
 			if !tt.wantErr {
-				if len(got.SourceJobIDs) != len(tt.wantIDs) {
-					t.Errorf("Expected %d source job IDs, got %d", len(tt.wantIDs), len(got.SourceJobIDs))
-				}
-				for i, id := range got.SourceJobIDs {
-					if id != tt.wantIDs[i] {
-						t.Errorf("SourceJobIDs[%d] = %d, want %d", i, id, tt.wantIDs[i])
-					}
+				if !slices.Equal(got.SourceJobIDs, tt.wantIDs) {
+					t.Errorf("ReadCompactMetadata() = %v, want %v", got.SourceJobIDs, tt.wantIDs)
 				}
 			}
 		})
@@ -101,9 +81,8 @@ func TestReadCompactMetadata(t *testing.T) {
 }
 
 func TestDeleteCompactMetadata(t *testing.T) {
-	setupTestEnv(t)
-
 	t.Run("delete_existing_file", func(t *testing.T) {
+		setupTestEnv(t)
 		jobID := int64(123)
 
 		// Create a metadata file
@@ -125,6 +104,7 @@ func TestDeleteCompactMetadata(t *testing.T) {
 	})
 
 	t.Run("delete_nonexistent_file", func(t *testing.T) {
+		setupTestEnv(t)
 		jobID := int64(999)
 
 		// Try to delete non-existent file (should not error)
@@ -145,11 +125,5 @@ func TestCompactMetadataPath(t *testing.T) {
 	expected := filepath.Join(tmpDir, "compact-123.json")
 	if path != expected {
 		t.Errorf("compactMetadataPath(123) = %q, want %q", path, expected)
-	}
-
-	// Verify it uses config.DataDir() correctly
-	dataDir := config.DataDir()
-	if dataDir != tmpDir {
-		t.Errorf("config.DataDir() = %q, want %q", dataDir, tmpDir)
 	}
 }
