@@ -4,9 +4,10 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -175,16 +176,13 @@ func TestFilterReviewJobs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := filterReviewJobs(tt.jobs)
 
-			if len(got) != len(tt.wantIDs) {
-				t.Fatalf("filterReviewJobs() returned %d jobs, want %d",
-					len(got), len(tt.wantIDs))
+			var gotIDs []int64
+			for _, j := range got {
+				gotIDs = append(gotIDs, j.ID)
 			}
 
-			for i, j := range got {
-				if j.ID != tt.wantIDs[i] {
-					t.Errorf("filterReviewJobs()[%d].ID = %d, want %d",
-						i, j.ID, tt.wantIDs[i])
-				}
+			if !slices.Equal(gotIDs, tt.wantIDs) {
+				t.Errorf("filterReviewJobs() = %v, want %v", gotIDs, tt.wantIDs)
 			}
 		})
 	}
@@ -223,16 +221,18 @@ func TestExtractJobIDs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractJobIDs(tt.reviews)
 
-			if len(got) != len(tt.want) {
-				t.Fatalf("extractJobIDs() length = %d, want %d", len(got), len(tt.want))
-			}
-
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("extractJobIDs()[%d] = %d, want %d", i, got[i], tt.want[i])
-				}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("extractJobIDs() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func mockJobReview(id int64, ref, output string) jobReview {
+	return jobReview{
+		jobID:  id,
+		job:    &storage.ReviewJob{ID: id, GitRef: ref},
+		review: &storage.Review{Output: output},
 	}
 }
 
@@ -247,11 +247,7 @@ func TestBuildCompactPrompt(t *testing.T) {
 		{
 			name: "single_job_no_branch",
 			jobReviews: []jobReview{
-				{
-					jobID:  123,
-					job:    &storage.ReviewJob{ID: 123, GitRef: "abc123def456"},
-					review: &storage.Review{Output: "Finding 1: Issue in main.go"},
-				},
+				mockJobReview(123, "abc123def456", "Finding 1: Issue in main.go"),
 			},
 			branch: "",
 			wantContains: []string{
@@ -265,16 +261,8 @@ func TestBuildCompactPrompt(t *testing.T) {
 		{
 			name: "multiple_jobs_with_branch",
 			jobReviews: []jobReview{
-				{
-					jobID:  123,
-					job:    &storage.ReviewJob{ID: 123, GitRef: "sha1"},
-					review: &storage.Review{Output: "Issue 1"},
-				},
-				{
-					jobID:  124,
-					job:    &storage.ReviewJob{ID: 124, GitRef: "sha2"},
-					review: &storage.Review{Output: "Issue 2"},
-				},
+				mockJobReview(123, "sha1", "Issue 1"),
+				mockJobReview(124, "sha2", "Issue 2"),
 			},
 			branch: "main",
 			wantContains: []string{
@@ -288,11 +276,7 @@ func TestBuildCompactPrompt(t *testing.T) {
 		{
 			name: "all_branches",
 			jobReviews: []jobReview{
-				{
-					jobID:  100,
-					job:    &storage.ReviewJob{ID: 100},
-					review: &storage.Review{Output: "Finding"},
-				},
+				mockJobReview(100, "", "Finding"),
 			},
 			branch: "",
 			wantContains: []string{
@@ -413,12 +397,11 @@ func TestWriteCompactMetadata(t *testing.T) {
 				t.Fatalf("writeCompactMetadata failed: %v", err)
 			}
 
-			filename := fmt.Sprintf("compact-%d.json", tt.consolidatedID)
-			path := filepath.Join(tmpDir, filename)
+			path := filepath.Join(tmpDir, getCompactMetadataFilename(tt.consolidatedID))
 
 			if !tt.expectFile {
-				if _, err := os.Stat(path); !os.IsNotExist(err) {
-					t.Error("Metadata file should not be created for empty source job IDs")
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("Expected os.ErrNotExist, got: %v", err)
 				}
 				return
 			}
@@ -435,14 +418,8 @@ func TestWriteCompactMetadata(t *testing.T) {
 				t.Fatalf("Failed to parse metadata JSON: %v", err)
 			}
 
-			if len(metadata.SourceJobIDs) != len(tt.sourceIDs) {
-				t.Errorf("Expected %d source job IDs, got %d", len(tt.sourceIDs), len(metadata.SourceJobIDs))
-			}
-
-			for i, id := range metadata.SourceJobIDs {
-				if id != tt.sourceIDs[i] {
-					t.Errorf("SourceJobIDs[%d] = %d, want %d", i, id, tt.sourceIDs[i])
-				}
+			if !slices.Equal(metadata.SourceJobIDs, tt.sourceIDs) {
+				t.Errorf("Expected SourceJobIDs %v, got %v", tt.sourceIDs, metadata.SourceJobIDs)
 			}
 		})
 	}

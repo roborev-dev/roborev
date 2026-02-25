@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -603,6 +604,10 @@ func cancelJob(serverAddr string, jobID int64) error {
 	return nil
 }
 
+func getCompactMetadataFilename(id int64) string {
+	return fmt.Sprintf("compact-%d.json", id)
+}
+
 // writeCompactMetadata writes source job IDs to a metadata file for later processing
 func writeCompactMetadata(consolidatedJobID int64, sourceJobIDs []int64) error {
 	if len(sourceJobIDs) == 0 {
@@ -626,7 +631,7 @@ func writeCompactMetadata(consolidatedJobID int64, sourceJobIDs []int64) error {
 		return fmt.Errorf("create data directory: %w", err)
 	}
 
-	path := fmt.Sprintf("%s/compact-%d.json", dataDir, consolidatedJobID)
+	path := filepath.Join(dataDir, getCompactMetadataFilename(consolidatedJobID))
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("write metadata file: %w", err)
 	}
