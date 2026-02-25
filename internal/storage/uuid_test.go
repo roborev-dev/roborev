@@ -21,16 +21,15 @@ func assertUUIDFormat(t *testing.T, uuid string) {
 
 func checkUniqueness(t *testing.T, generator func() string, iterations int) {
 	t.Helper()
-	seen := make(map[string]bool, iterations)
+	seen := make(map[string]struct{}, iterations)
 	for i := range iterations {
-		s := generator()
-		if seen[s] {
-			t.Fatalf("Collision detected at iteration %d: %s", i, s)
+		uuid := generator()
+		if _, exists := seen[uuid]; exists {
+			t.Fatalf("Collision detected at iteration %d: %s", i, uuid)
 		}
-		seen[s] = true
+		seen[uuid] = struct{}{}
 	}
 }
-
 func TestGenerateUUID_Format(t *testing.T) {
 	for range formatIterations {
 		uuid := GenerateUUID()
