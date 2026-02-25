@@ -308,9 +308,9 @@ func TestFixCmdFlagValidation(t *testing.T) {
 			wantErr: "--branch requires --unaddressed",
 		},
 		{
-			name:    "--all-branches without --unaddressed",
-			args:    []string{"--all-branches"},
-			wantErr: "--all-branches requires --unaddressed",
+			name:    "--all-branches with positional args",
+			args:    []string{"--all-branches", "123"},
+			wantErr: "--unaddressed cannot be used with positional job IDs",
 		},
 		{
 			name:    "--unaddressed with positional args",

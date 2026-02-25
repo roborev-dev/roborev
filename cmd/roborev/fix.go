@@ -55,7 +55,7 @@ Examples:
   roborev fix --agent claude-code 123    # Use a specific agent
   roborev fix --unaddressed              # Fix all unaddressed on current branch
   roborev fix --unaddressed --branch main
-  roborev fix --unaddressed --all-branches
+  roborev fix --all-branches              # Fix all unaddressed across all branches
   roborev fix --batch 123 124 125        # Batch multiple jobs into one prompt
   roborev fix --batch                    # Batch all unaddressed on current branch
   roborev fix --list                     # List unaddressed jobs without fixing
@@ -67,7 +67,7 @@ Examples:
 				return fmt.Errorf("--branch requires --unaddressed, --batch, or --list")
 			}
 			if allBranches && !unaddressed && !batch && !list {
-				return fmt.Errorf("--all-branches requires --unaddressed, --batch, or --list")
+				unaddressed = true
 			}
 			if allBranches && branch != "" {
 				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
@@ -179,7 +179,7 @@ Examples:
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress progress output")
 	cmd.Flags().BoolVar(&unaddressed, "unaddressed", false, "fix all unaddressed completed jobs for the current repo")
 	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch; requires --unaddressed)")
-	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include unaddressed jobs from all branches (requires --unaddressed)")
+	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include unaddressed jobs from all branches (implies --unaddressed)")
 	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first (requires --unaddressed)")
 	cmd.Flags().BoolVar(&batch, "batch", false, "concatenate reviews into a single prompt for the agent")
 	cmd.Flags().BoolVar(&list, "list", false, "list unaddressed jobs without fixing (implies --unaddressed)")
