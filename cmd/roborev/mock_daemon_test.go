@@ -271,6 +271,25 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			},
 		},
 		{
+			name:       "OnEnqueue hook invoked on POST",
+			method:     http.MethodPost,
+			path:       "/api/enqueue",
+			wantCalled: true,
+			wantStatus: http.StatusCreated,
+			makeHooks: func(called *bool) MockRefineHooks {
+				return MockRefineHooks{
+					OnEnqueue: func(
+						w http.ResponseWriter, r *http.Request,
+						_ *mockRefineState,
+					) bool {
+						*called = true
+						w.WriteHeader(http.StatusCreated)
+						return true
+					},
+				}
+			},
+		},
+		{
 			name:       "OnStatus hook not invoked on POST",
 			method:     http.MethodPost,
 			path:       "/api/status",
@@ -333,6 +352,24 @@ func TestNewMockDaemon_HookRouting(t *testing.T) {
 			makeHooks: func(called *bool) MockRefineHooks {
 				return MockRefineHooks{
 					OnGetJobs: func(
+						w http.ResponseWriter, r *http.Request,
+						_ *mockRefineState,
+					) bool {
+						*called = true
+						return true
+					},
+				}
+			},
+		},
+		{
+			name:       "OnEnqueue hook not invoked on GET",
+			method:     http.MethodGet,
+			path:       "/api/enqueue",
+			wantCalled: false,
+			wantStatus: http.StatusMethodNotAllowed,
+			makeHooks: func(called *bool) MockRefineHooks {
+				return MockRefineHooks{
+					OnEnqueue: func(
 						w http.ResponseWriter, r *http.Request,
 						_ *mockRefineState,
 					) bool {
