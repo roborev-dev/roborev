@@ -18,7 +18,7 @@ func TestShowCommandArgParsing(t *testing.T) {
 		setupRepo    func(*TestGitRepo)
 		wantQueryHas []string
 		wantQueryNot []string
-		resolveRef   string
+		validate     func(t *testing.T, repo *TestGitRepo, query string)
 	}{
 		{
 			name: "numeric ref resolvable in repo treated as SHA not job ID",
@@ -28,7 +28,12 @@ func TestShowCommandArgParsing(t *testing.T) {
 			},
 			wantQueryHas: []string{"sha="},
 			wantQueryNot: []string{"job_id="},
-			resolveRef:   "12345",
+			validate: func(t *testing.T, repo *TestGitRepo, query string) {
+				tagSHA := repo.Run("rev-parse", "12345")
+				if !strings.Contains(query, tagSHA[:7]) {
+					t.Errorf("expected query to contain resolved SHA %s (from ref 12345), got: %s", tagSHA[:7], query)
+				}
+			},
 		},
 		{
 			name:         "numeric non-resolvable treated as job ID",
@@ -80,12 +85,8 @@ func TestShowCommandArgParsing(t *testing.T) {
 				}
 			}
 
-			// Special check for resolved SHA
-			if tt.resolveRef != "" {
-				tagSHA := repo.Run("rev-parse", tt.resolveRef)
-				if !strings.Contains(q, tagSHA[:7]) {
-					t.Errorf("expected query to contain resolved SHA %s (from ref %s), got: %s", tagSHA[:7], tt.resolveRef, q)
-				}
+			if tt.validate != nil {
+				tt.validate(t, repo, q)
 			}
 		})
 	}
@@ -93,21 +94,21 @@ func TestShowCommandArgParsing(t *testing.T) {
 
 func TestShowOutputFormat(t *testing.T) {
 	tests := []struct {
-		name       string
-		argIsSHA   bool
-		wantOutput string
-		notOutput  string
+		name           string
+		argsFunc       func(sha string) []string
+		wantOutputFunc func(shortSHA string) string
+		notOutput      string
 	}{
 		{
-			name:       "job ID shows 'Review for job X (by agent)'",
-			argIsSHA:   false,
-			wantOutput: "Review for job 42 (by codex)",
-			notOutput:  "(job 42, by",
+			name:           "job ID shows 'Review for job X (by agent)'",
+			argsFunc:       func(sha string) []string { return []string{"--job", "42"} },
+			wantOutputFunc: func(shortSHA string) string { return "Review for job 42 (by codex)" },
+			notOutput:      "(job 42, by",
 		},
 		{
-			name:       "SHA shows 'Review for abc123 (job X, by agent)'",
-			argIsSHA:   true,
-			wantOutput: "Review for %s (job 42, by codex)", // %s will be replaced by shortSHA
+			name:           "SHA shows 'Review for abc123 (job X, by agent)'",
+			argsFunc:       func(sha string) []string { return []string{sha} },
+			wantOutputFunc: func(shortSHA string) string { return fmt.Sprintf("Review for %s (job 42, by codex)", shortSHA) },
 		},
 	}
 
@@ -123,19 +124,10 @@ func TestShowOutputFormat(t *testing.T) {
 
 			chdir(t, repo.Dir)
 
-			var args []string
-			if tt.argIsSHA {
-				args = []string{commitSHA}
-			} else {
-				args = []string{"--job", "42"}
-			}
-
+			args := tt.argsFunc(commitSHA)
 			output := runShowCmd(t, args...)
 
-			expected := tt.wantOutput
-			if strings.Contains(expected, "%s") {
-				expected = fmt.Sprintf(expected, shortSHA)
-			}
+			expected := tt.wantOutputFunc(shortSHA)
 
 			if !strings.Contains(output, expected) {
 				t.Errorf("expected %q in output, got: %s", expected, output)
@@ -150,26 +142,18 @@ func TestShowOutputFormat(t *testing.T) {
 }
 
 func TestShowJSONOutput(t *testing.T) {
-	t.Run("--json outputs valid JSON", func(t *testing.T) {
-		repo := newTestGitRepo(t)
-		repo.CommitFile("file.txt", "content", "initial commit")
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
 
-		review := storage.Review{
-			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
-		}
-		mockReviewDaemon(t, review)
+	mockReviewDaemon(t, storage.Review{
+		ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+	})
 
-		chdir(t, repo.Dir)
+	chdir(t, repo.Dir)
 
-		cmd := showCmd()
-		var buf strings.Builder
-		cmd.SetOut(&buf)
-		cmd.SetArgs([]string{"--job", "42", "--json"})
-		if err := cmd.Execute(); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+	output := runShowCmd(t, "--job", "42", "--json")
 
-		output := buf.String()
+	t.Run("outputs valid JSON", func(t *testing.T) {
 		var parsed storage.Review
 		if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 			t.Fatalf("--json output not valid JSON: %v\noutput: %s", err, output)
@@ -185,25 +169,7 @@ func TestShowJSONOutput(t *testing.T) {
 		}
 	})
 
-	t.Run("--json skips formatted header", func(t *testing.T) {
-		repo := newTestGitRepo(t)
-		repo.CommitFile("file.txt", "content", "initial commit")
-
-		mockReviewDaemon(t, storage.Review{
-			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
-		})
-
-		chdir(t, repo.Dir)
-
-		cmd := showCmd()
-		var buf strings.Builder
-		cmd.SetOut(&buf)
-		cmd.SetArgs([]string{"--job", "42", "--json"})
-		if err := cmd.Execute(); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		output := buf.String()
+	t.Run("skips formatted header", func(t *testing.T) {
 		if strings.Contains(output, "Review for") {
 			t.Errorf("--json should not contain formatted header, got: %s", output)
 		}
