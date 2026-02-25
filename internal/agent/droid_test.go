@@ -100,7 +100,8 @@ func TestDroidReviewOutcomes(t *testing.T) {
 		{
 			name:       "Success",
 			mockOpts:   MockCLIOpts{StdoutLines: []string{"Review feedback from Droid"}},
-			wantResult: "Review feedback from Droid",
+			wantResult: "Review feedback from Droid\n",
+			exactMatch: true,
 		},
 		{
 			name:        "Failure",
