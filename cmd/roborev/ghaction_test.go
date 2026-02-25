@@ -10,156 +10,77 @@ import (
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
+func setupGhActionTest(t *testing.T) (*testutil.TestRepo, string) {
+	t.Helper()
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(tmpHome, ".roborev"))
+
+	repo := testutil.NewTestRepo(t)
+	t.Cleanup(repo.Chdir())
+
+	outPath := filepath.Join(repo.Root, ".github", "workflows", "roborev.yml")
+	return repo, outPath
+}
+
 func TestGhActionCmd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows due to shell script stubs")
 	}
 
 	tests := []struct {
-		name          string
-		flags         []string
-		repoConfig    string
-		expectError   bool
-		errorContains string
-		checkFile     func(t *testing.T, content string)
+		name             string
+		flags            []string
+		repoConfig       string
+		expectError      bool
+		errorContains    string
+		expectedContains []string
 	}{
 		{
-			name:  "default flags",
-			flags: []string{},
-			checkFile: func(t *testing.T, content string) {
-				t.Helper()
-				if !strings.Contains(
-					content, "OPENAI_API_KEY") {
-					t.Error("expected OPENAI_API_KEY")
-				}
-				if !strings.Contains(
-					content, "@openai/codex@latest") {
-					t.Error("expected codex install")
-				}
-				if !strings.Contains(
-					content, "roborev ci review") {
-					t.Error(
-						"expected roborev ci review")
-				}
-			},
+			name:             "default flags",
+			flags:            []string{},
+			expectedContains: []string{"OPENAI_API_KEY", "@openai/codex@latest", "roborev ci review"},
 		},
 		{
-			name:  "custom agent flag",
-			flags: []string{"--agent", "claude-code"},
-			checkFile: func(t *testing.T, content string) {
-				t.Helper()
-				if !strings.Contains(
-					content, "ANTHROPIC_API_KEY") {
-					t.Error("expected ANTHROPIC_API_KEY")
-				}
-				if !strings.Contains(
-					content,
-					"@anthropic-ai/claude-code@latest") {
-					t.Error(
-						"expected claude-code install")
-				}
-			},
+			name:             "custom agent flag",
+			flags:            []string{"--agent", "claude-code"},
+			expectedContains: []string{"ANTHROPIC_API_KEY", "@anthropic-ai/claude-code@latest"},
 		},
 		{
 			name: "multi-agent flag",
 			flags: []string{
 				"--agent", "codex,claude-code",
 			},
-			checkFile: func(t *testing.T, content string) {
-				t.Helper()
-				if !strings.Contains(
-					content, "OPENAI_API_KEY") {
-					t.Error("expected OPENAI_API_KEY")
-				}
-				if !strings.Contains(
-					content, "ANTHROPIC_API_KEY") {
-					t.Error("expected ANTHROPIC_API_KEY")
-				}
-				if !strings.Contains(
-					content, "@openai/codex@latest") {
-					t.Error("expected codex install")
-				}
-				if !strings.Contains(
-					content,
-					"@anthropic-ai/claude-code@latest") {
-					t.Error(
-						"expected claude-code install")
-				}
-			},
+			expectedContains: []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "@openai/codex@latest", "@anthropic-ai/claude-code@latest"},
 		},
 		{
-			name:  "pinned version",
-			flags: []string{"--roborev-version", "0.33.1"},
-			checkFile: func(t *testing.T, content string) {
-				t.Helper()
-				if !strings.Contains(
-					content,
-					`ROBOREV_VERSION="0.33.1"`) {
-					t.Error("expected pinned version")
-				}
-			},
+			name:             "pinned version",
+			flags:            []string{"--roborev-version", "0.33.1"},
+			expectedContains: []string{`ROBOREV_VERSION="0.33.1"`},
 		},
 		{
-			name:       "infers agent from repo config",
-			repoConfig: "agent = \"gemini\"\n",
-			checkFile: func(t *testing.T, content string) {
-				t.Helper()
-				if !strings.Contains(
-					content, "GOOGLE_API_KEY") {
-					t.Error(
-						"expected GOOGLE_API_KEY for gemini")
-				}
-				if !strings.Contains(
-					content,
-					"@google/gemini-cli@latest") {
-					t.Error(
-						"expected gemini install")
-				}
-			},
+			name:             "infers agent from repo config",
+			repoConfig:       "agent = \"gemini\"\n",
+			expectedContains: []string{"GOOGLE_API_KEY", "@google/gemini-cli@latest"},
 		},
 		{
-			name:       "flag overrides repo config",
-			repoConfig: "agent = \"gemini\"\n",
-			flags:      []string{"--agent", "codex"},
-			checkFile: func(t *testing.T, content string) {
-				t.Helper()
-				if !strings.Contains(
-					content, "OPENAI_API_KEY") {
-					t.Error(
-						"expected codex from flag, " +
-							"not gemini from config")
-				}
-			},
+			name:             "flag overrides repo config",
+			repoConfig:       "agent = \"gemini\"\n",
+			flags:            []string{"--agent", "codex"},
+			expectedContains: []string{"OPENAI_API_KEY"},
 		},
 		{
 			name: "infers agents from repo CI config",
 			repoConfig: "[ci]\nagents = " +
 				"[\"codex\", \"claude-code\"]\n",
-			checkFile: func(t *testing.T, content string) {
-				t.Helper()
-				if !strings.Contains(
-					content, "OPENAI_API_KEY") {
-					t.Error("expected OPENAI_API_KEY")
-				}
-				if !strings.Contains(
-					content, "ANTHROPIC_API_KEY") {
-					t.Error("expected ANTHROPIC_API_KEY")
-				}
-			},
+			expectedContains: []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpHome := t.TempDir()
-			t.Setenv("HOME", tmpHome)
-			t.Setenv("USERPROFILE", tmpHome)
-			t.Setenv(
-				"ROBOREV_DATA_DIR",
-				filepath.Join(tmpHome, ".roborev"))
-
-			repo := testutil.NewTestRepo(t)
-			t.Cleanup(repo.Chdir())
+			repo, outPath := setupGhActionTest(t)
 
 			if tt.repoConfig != "" {
 				if err := os.WriteFile(
@@ -170,10 +91,6 @@ func TestGhActionCmd(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-
-			outPath := filepath.Join(
-				repo.Root, ".github", "workflows",
-				"roborev.yml")
 
 			cmd := ghActionCmd()
 			args := append(
@@ -203,14 +120,17 @@ func TestGhActionCmd(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if tt.checkFile != nil {
-				content, err := os.ReadFile(outPath)
+			if len(tt.expectedContains) > 0 {
+				contentBytes, err := os.ReadFile(outPath)
 				if err != nil {
-					t.Fatalf(
-						"failed to read generated "+
-							"file: %v", err)
+					t.Fatalf("failed to read generated file: %v", err)
 				}
-				tt.checkFile(t, string(content))
+				content := string(contentBytes)
+				for _, expected := range tt.expectedContains {
+					if !strings.Contains(content, expected) {
+						t.Errorf("generated file missing expected content: %q", expected)
+					}
+				}
 			}
 		})
 	}
@@ -221,18 +141,7 @@ func TestGhActionCmd_ForceOverwrite(t *testing.T) {
 		t.Skip("skipping on Windows")
 	}
 
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-	t.Setenv("USERPROFILE", tmpHome)
-	t.Setenv(
-		"ROBOREV_DATA_DIR",
-		filepath.Join(tmpHome, ".roborev"))
-
-	repo := testutil.NewTestRepo(t)
-	t.Cleanup(repo.Chdir())
-
-	outPath := filepath.Join(
-		repo.Root, ".github", "workflows", "roborev.yml")
+	_, outPath := setupGhActionTest(t)
 
 	if err := os.MkdirAll(
 		filepath.Dir(outPath), 0755); err != nil {
