@@ -22,11 +22,13 @@ type BatchConfig struct {
 	// GlobalConfig enables workflow-aware agent/model resolution.
 	// When set, each job resolves its agent and model through
 	// config.ResolveAgentForWorkflow / ResolveModelForWorkflow,
-	// matching the CI poller's behavior. When nil, agents are
-	// used as-is (backward compatible).
-	GlobalConfig *config.Config
-}
-
+	        // matching the CI poller's behavior. When nil, agents are
+	        // used as-is (backward compatible).
+	        GlobalConfig *config.Config
+	        // AgentRegistry is an optional registry for dependency injection in testing.
+	        // If nil, the global agent registry is used.
+	        AgentRegistry map[string]agent.Agent
+	}
 // RunBatch executes all review_type x agent combinations in
 // parallel. Uses goroutines + sync.WaitGroup, no daemon/database.
 func RunBatch(
@@ -95,7 +97,18 @@ func runSingle(
 			cfg.GlobalConfig, workflow, cfg.Reasoning)
 	}
 
-	resolvedAgent, err := agent.GetAvailable(resolvedName)
+	var resolvedAgent agent.Agent
+	var err error
+	if cfg.AgentRegistry != nil {
+		if a, ok := cfg.AgentRegistry[resolvedName]; ok {
+			resolvedAgent = a
+		} else {
+			err = fmt.Errorf("no agents available (mock registry)")
+		}
+	} else {
+		resolvedAgent, err = agent.GetAvailable(resolvedName)
+	}
+
 	if err != nil {
 		result.Status = ResultFailed
 		result.Error = fmt.Sprintf(

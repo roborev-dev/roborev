@@ -47,18 +47,31 @@ func (m *mockAgent) CommandLine() string {
 	return m.name
 }
 
-func TestRunBatch_SingleJob(t *testing.T) {
-	// Register a test agent
-	agent.Register(&mockAgent{
-		name:   "test",
-		output: "looks good",
-	})
+// getResultByType is a helper to find a ReviewResult by its ReviewType
+func getResultByType(t *testing.T, results []ReviewResult, rType string) ReviewResult {
+	t.Helper()
+	for _, r := range results {
+		if r.ReviewType == rType {
+			return r
+		}
+	}
+	t.Fatalf("missing result for type %q", rType)
+	return ReviewResult{}
+}
 
+func TestRunBatch_SingleJob(t *testing.T) {
+	t.Parallel()
 	cfg := BatchConfig{
 		RepoPath:    t.TempDir(),
 		GitRef:      "abc123",
 		Agents:      []string{"test"},
 		ReviewTypes: []string{"security"},
+		AgentRegistry: map[string]agent.Agent{
+			"test": &mockAgent{
+				name:   "test",
+				output: "looks good",
+			},
+		},
 	}
 
 	// RunBatch will fail at prompt building because there's no
@@ -83,20 +96,25 @@ func TestRunBatch_SingleJob(t *testing.T) {
 	if r.Status != "failed" {
 		t.Errorf("status = %q, want 'failed'", r.Status)
 	}
+	if !strings.Contains(r.Error, "build prompt:") {
+		t.Errorf("expected build prompt error, got %q", r.Error)
+	}
 }
 
 func TestRunBatch_Matrix(t *testing.T) {
-	agent.Register(&mockAgent{
-		name:   "test",
-		output: "ok",
-	})
-
+	t.Parallel()
 	cfg := BatchConfig{
 		RepoPath: t.TempDir(),
 		GitRef:   "abc..def",
 		Agents:   []string{"test"},
 		ReviewTypes: []string{
 			"security", "default",
+		},
+		AgentRegistry: map[string]agent.Agent{
+			"test": &mockAgent{
+				name:   "test",
+				output: "ok",
+			},
 		},
 	}
 
@@ -106,22 +124,18 @@ func TestRunBatch_Matrix(t *testing.T) {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
 
-	types := map[string]bool{}
-	for _, r := range results {
-		types[r.ReviewType] = true
-	}
-	if !types["security"] || !types["default"] {
-		t.Errorf(
-			"expected both review types, got %v", types)
-	}
+	getResultByType(t, results, "security")
+	getResultByType(t, results, "default")
 }
 
 func TestRunBatch_AgentNotFound(t *testing.T) {
+	t.Parallel()
 	cfg := BatchConfig{
 		RepoPath:    t.TempDir(),
 		GitRef:      "abc123",
 		Agents:      []string{"nonexistent-agent-xyz"},
 		ReviewTypes: []string{"security"},
+		AgentRegistry: map[string]agent.Agent{}, // Empty mock registry
 	}
 
 	results := RunBatch(context.Background(), cfg)
@@ -136,19 +150,27 @@ func TestRunBatch_AgentNotFound(t *testing.T) {
 	if r.Error == "" {
 		t.Error("expected non-empty error message")
 	}
+	if !strings.Contains(r.Error, "no agents available (mock registry)") {
+		t.Errorf("expected agent not found error, got %q", r.Error)
+	}
 }
 
 func TestRunBatch_AgentFailure(t *testing.T) {
-	agent.Register(&mockAgent{
-		name: "fail-agent",
-		err:  fmt.Errorf("agent exploded"),
-	})
+	t.Parallel()
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.RevParse("HEAD")
 
 	cfg := BatchConfig{
-		RepoPath:    t.TempDir(),
-		GitRef:      "abc123",
+		RepoPath:    repo.Root,
+		GitRef:      sha,
 		Agents:      []string{"fail-agent"},
 		ReviewTypes: []string{"security"},
+		AgentRegistry: map[string]agent.Agent{
+			"fail-agent": &mockAgent{
+				name: "fail-agent",
+				err:  fmt.Errorf("agent exploded"),
+			},
+		},
 	}
 
 	results := RunBatch(context.Background(), cfg)
@@ -160,19 +182,13 @@ func TestRunBatch_AgentFailure(t *testing.T) {
 	if r.Status != "failed" {
 		t.Errorf("status = %q, want 'failed'", r.Status)
 	}
+	if !strings.Contains(r.Error, "agent exploded") {
+		t.Errorf("expected agent exploded error, got %q", r.Error)
+	}
 }
 
 func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
-	// Register two distinct agents.
-	agent.Register(&mockAgent{
-		name:   "base-agent",
-		output: "base",
-	})
-	agent.Register(&mockAgent{
-		name:   "security-agent",
-		output: "security",
-	})
-
+	t.Parallel()
 	// Configure security_agent override so security reviews
 	// resolve to "security-agent" while default reviews use
 	// the base agent.
@@ -187,6 +203,16 @@ func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
 		Agents:       []string{""},
 		ReviewTypes:  []string{"default", "security"},
 		GlobalConfig: globalCfg,
+		AgentRegistry: map[string]agent.Agent{
+			"base-agent": &mockAgent{
+				name:   "base-agent",
+				output: "base",
+			},
+			"security-agent": &mockAgent{
+				name:   "security-agent",
+				output: "security",
+			},
+		},
 	}
 
 	results := RunBatch(context.Background(), cfg)
@@ -196,28 +222,23 @@ func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
 
 	// Both will fail at prompt building (no real git repo),
 	// but we can verify the resolved agent names.
-	agentByType := map[string]string{}
-	for _, r := range results {
-		agentByType[r.ReviewType] = r.Agent
-	}
-	if agentByType["default"] != "base-agent" {
+	defResult := getResultByType(t, results, "default")
+	secResult := getResultByType(t, results, "security")
+
+	if defResult.Agent != "base-agent" {
 		t.Errorf(
 			"default type resolved to %q, want %q",
-			agentByType["default"], "base-agent")
+			defResult.Agent, "base-agent")
 	}
-	if agentByType["security"] != "security-agent" {
+	if secResult.Agent != "security-agent" {
 		t.Errorf(
 			"security type resolved to %q, want %q",
-			agentByType["security"], "security-agent")
+			secResult.Agent, "security-agent")
 	}
 }
 
 func TestRunBatch_WorkflowModelResolution(t *testing.T) {
-	agent.Register(&mockAgent{
-		name:   "model-test-agent",
-		output: "ok",
-	})
-
+	t.Parallel()
 	// Configure a security-specific model override.
 	globalCfg := &config.Config{
 		DefaultAgent:  "model-test-agent",
@@ -235,6 +256,12 @@ func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 		Agents:       []string{""},
 		ReviewTypes:  []string{"default", "security"},
 		GlobalConfig: globalCfg,
+		AgentRegistry: map[string]agent.Agent{
+			"model-test-agent": &mockAgent{
+				name:   "model-test-agent",
+				output: "ok",
+			},
+		},
 	}
 
 	results := RunBatch(context.Background(), cfg)
@@ -250,19 +277,8 @@ func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 		}
 	}
 
-	outputByType := map[string]string{}
-	for _, r := range results {
-		outputByType[r.ReviewType] = r.Output
-	}
-
-	secOut, ok := outputByType["security"]
-	if !ok {
-		t.Fatal("missing result for security review type")
-	}
-	defOut, ok := outputByType["default"]
-	if !ok {
-		t.Fatal("missing result for default review type")
-	}
+	secOut := getResultByType(t, results, "security").Output
+	defOut := getResultByType(t, results, "default").Output
 
 	// Security review should have the model applied.
 	if !strings.Contains(secOut, "model=sec-model-v2") {
