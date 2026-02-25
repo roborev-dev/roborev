@@ -43,10 +43,10 @@ func TestEnqueueIfNeeded(t *testing.T) {
 		},
 	}
 
+	tmpDir := initTestGitRepo(t)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := initTestGitRepo(t)
-
 			var jobCheckCalls atomic.Int32
 			var enqueueCalls atomic.Int32
 

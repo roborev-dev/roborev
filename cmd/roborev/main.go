@@ -2234,10 +2234,10 @@ func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storag
 func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 	addr := getDaemonAddr()
 
-	reqBody, _ := json.Marshal(map[string]string{
-		"repo_path": repoPath,
-		"git_ref":   gitRef,
-		"agent":     agentName,
+	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
+		RepoPath: repoPath,
+		GitRef:   gitRef,
+		Agent:    agentName,
 	})
 
 	resp, err := http.Post(addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))

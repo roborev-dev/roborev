@@ -14,6 +14,7 @@ import (
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
+	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/spf13/cobra"
@@ -1090,10 +1091,10 @@ func enqueueIfNeeded(serverAddr, repoPath, sha string) error {
 
 	branchName := git.GetCurrentBranch(repoPath)
 
-	reqBody, _ := json.Marshal(map[string]any{
-		"repo_path": repoPath,
-		"git_ref":   sha,
-		"branch":    branchName,
+	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
+		RepoPath: repoPath,
+		GitRef:   sha,
+		Branch:   branchName,
 	})
 
 	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))

@@ -175,10 +175,10 @@ func (c *HTTPClient) AddComment(jobID int64, commenter, comment string) error {
 }
 
 func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, error) {
-	reqBody, _ := json.Marshal(map[string]string{
-		"repo_path": repoPath,
-		"git_ref":   gitRef,
-		"agent":     agentName,
+	reqBody, _ := json.Marshal(EnqueueRequest{
+		RepoPath: repoPath,
+		GitRef:   gitRef,
+		Agent:    agentName,
 	})
 
 	resp, err := c.httpClient.Post(c.addr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
