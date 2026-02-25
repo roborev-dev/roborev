@@ -417,6 +417,10 @@ func TestIntegration_EnsureSchema_MigratesLegacyTables(t *testing.T) {
 	env.Exec(`CREATE TABLE IF NOT EXISTS public.schema_version (version INTEGER PRIMARY KEY)`)
 	env.Exec(`INSERT INTO public.schema_version (version) VALUES (1) ON CONFLICT DO NOTHING`)
 
+	// Drop roborev schema right before NewPgPool so AfterConnect recreates
+	// it fresh and migrateLegacyTables can ALTER TABLE SET SCHEMA into it.
+	env.DropSchema("roborev")
+
 	// Now connect with the normal pool and run EnsureSchema
 	connString := getTestPostgresURL(t)
 	pool, err := NewPgPool(ctx, connString, DefaultPgPoolConfig())
