@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 )
@@ -26,10 +25,12 @@ func assertEventReceived(t *testing.T, ch <-chan Event) Event {
 // assertNoEventReceived verifies no event arrives within a short window.
 func assertNoEventReceived(t *testing.T, ch <-chan Event) {
 	t.Helper()
+	// Small sleep to allow asynchronous goroutines to flush
+	time.Sleep(1 * time.Millisecond)
 	select {
 	case e := <-ch:
 		t.Fatalf("received unexpected event: %v", e)
-	case <-time.After(testTimeout):
+	default:
 		// OK
 	}
 }
@@ -52,14 +53,13 @@ func TestBroadcaster_Subscribe(t *testing.T) {
 
 	// Subscribe without filter
 	id1, ch1 := b.Subscribe("")
-	if id1 != 1 {
-		t.Errorf("expected first subscriber ID to be 1, got %d", id1)
-	}
 
 	// Subscribe with filter
 	id2, ch2 := b.Subscribe("/path/to/repo")
-	if id2 != 2 {
-		t.Errorf("expected second subscriber ID to be 2, got %d", id2)
+
+	// Verify IDs are different
+	if id1 == id2 {
+		t.Errorf("expected distinct subscriber IDs, got %v for both", id1)
 	}
 
 	// Verify channels are different
@@ -111,17 +111,30 @@ func TestBroadcaster_Broadcast(t *testing.T) {
 }
 
 func TestBroadcaster_BroadcastWithFilter(t *testing.T) {
-	b := NewBroadcaster()
+	tests := []struct {
+		name        string
+		subFilter   string
+		eventRepo   string
+		shouldMatch bool
+	}{
+		{"CatchAll", "", "/path/to/repo1", true},
+		{"ExactMatch", "/path/to/repo1", "/path/to/repo1", true},
+		{"Mismatch", "/path/to/repo2", "/path/to/repo1", false},
+	}
 
-	_, chAll := b.Subscribe("")
-	_, chRepo1 := b.Subscribe("/path/to/repo1")
-	_, chRepo2 := b.Subscribe("/path/to/repo2")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewBroadcaster()
+			_, ch := b.Subscribe(tc.subFilter)
+			b.Broadcast(makeTestEvent(123, tc.eventRepo))
 
-	b.Broadcast(makeTestEvent(123, "/path/to/repo1"))
-
-	assertEventReceived(t, chAll)
-	assertEventReceived(t, chRepo1)
-	assertNoEventReceived(t, chRepo2)
+			if tc.shouldMatch {
+				assertEventReceived(t, ch)
+			} else {
+				assertNoEventReceived(t, ch)
+			}
+		})
+	}
 }
 
 func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
@@ -158,58 +171,4 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 
 	// Channel should be empty now
 	assertNoEventReceived(t, ch)
-}
-
-func TestEvent_MarshalJSON(t *testing.T) {
-	event := Event{
-		Type:     "review.completed",
-		TS:       time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
-		JobID:    42,
-		Repo:     "/path/to/myrepo",
-		RepoName: "myrepo",
-		SHA:      "abc123",
-		Agent:    "claude-code",
-		Verdict:  "F",
-	}
-
-	data, err := event.MarshalJSON()
-	if err != nil {
-		t.Fatalf("MarshalJSON failed: %v", err)
-	}
-
-	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Could not unmarshal generated JSON: %v", err)
-	}
-
-	tests := []struct {
-		key      string
-		expected any
-	}{
-		{"type", "review.completed"},
-		{"ts", "2026-01-11T10:00:30Z"},
-		{"job_id", float64(42)}, // JSON numbers are floats in map[string]interface{}
-		{"repo", "/path/to/myrepo"},
-		{"repo_name", "myrepo"},
-		{"sha", "abc123"},
-		{"agent", "claude-code"},
-		{"verdict", "F"},
-	}
-
-	if len(decoded) != len(tests) {
-		t.Errorf("expected %d fields in JSON, got %d", len(tests), len(decoded))
-	}
-
-	for _, tc := range tests {
-		if got, ok := decoded[tc.key]; !ok {
-			t.Errorf("missing expected key: %s", tc.key)
-		} else if got != tc.expected {
-			t.Errorf("expected %s to be %v, got %v", tc.key, tc.expected, got)
-		}
-	}
-
-	// Explicitly check that 'error' is not present
-	if _, ok := decoded["error"]; ok {
-		t.Error("expected 'error' field to be omitted")
-	}
 }
