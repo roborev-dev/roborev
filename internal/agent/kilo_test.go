@@ -202,9 +202,9 @@ func TestIsToolCallJSON(t *testing.T) {
 			false,
 		},
 		{
-			"JSON code example with extra keys",
+			"JSON with extra keys rejected",
 			`{"name":"John","arguments":{"x":1},"age":30}`,
-			true, // still matches — extra keys don't disqualify
+			false,
 		},
 		{
 			"invalid JSON",
@@ -265,6 +265,18 @@ func TestFilterToolCallLines(t *testing.T) {
 			"empty input",
 			"",
 			"",
+		},
+		{
+			"indented tool call is still filtered",
+			"Review:\n" +
+				`  {"name":"read","arguments":{"path":"/x"}}` + "\n" +
+				"End.",
+			"Review:\nEnd.",
+		},
+		{
+			"preserves JSON example with extra keys",
+			`{"name":"config","arguments":{"a":1},"version":"2"}`,
+			`{"name":"config","arguments":{"a":1},"version":"2"}`,
 		},
 	}
 	for _, tt := range tests {
