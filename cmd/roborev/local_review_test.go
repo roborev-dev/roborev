@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/testutil"
 )
 
@@ -41,12 +40,10 @@ func (h *reviewHarness) writeConfig(content string) {
 	}
 }
 
-// runCmd executes the command with the given arguments, automatically adding --local and --repo.
+// runCmd executes the command with the given arguments.
 func (h *reviewHarness) runCmd(args ...string) error {
 	h.t.Helper()
-	// Always enforce --local and --repo to ensure we target the test repo and don't need daemon
-	finalArgs := append([]string{"--local", "--repo", h.Dir}, args...)
-	h.Cmd.SetArgs(finalArgs)
+	h.Cmd.SetArgs(args)
 	return h.Cmd.Execute()
 }
 
@@ -91,7 +88,8 @@ type runOpts struct {
 // run converts opts to CLI flags and executes the command.
 func (h *reviewHarness) run(opts runOpts) error {
 	h.t.Helper()
-	var args []string
+	// Always enforce --local and --repo to ensure we target the test repo and don't need daemon
+	args := []string{"--local", "--repo", h.Dir}
 
 	if opts.Revision != "" {
 		args = append(args, opts.Revision)
@@ -121,13 +119,8 @@ func (h *reviewHarness) run(opts runOpts) error {
 func TestLocalReviewFlag(t *testing.T) {
 	h := newReviewHarness(t)
 	// Passing --help to cobra usually returns nil error but prints usage.
-	// runCmd adds --local, so we check if --local is in help output.
-	// Note: We need to avoid runCmd enforcing --local if we want to test help for --local flag?
-	// Actually, `roborev review --local --help` is valid.
 
-	// Let's just use raw SetArgs for this specific test to ensure we test what we think we are testing.
-	h.Cmd.SetArgs([]string{"--local", "--help"})
-	if err := h.Cmd.Execute(); err != nil {
+	if err := h.runCmd("--local", "--help"); err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
@@ -227,10 +220,8 @@ func TestLocalReviewValidation(t *testing.T) {
 			err := h.run(tc.opts)
 			if tc.wantErr != "" {
 				h.assertErrorContains(err, tc.wantErr)
-			} else {
-				if err != nil {
-					t.Fatalf("Expected no error, got: %v", err)
-				}
+			} else if err != nil {
+				t.Fatalf("Expected no error, got: %v", err)
 			}
 			if tc.wantOutput != "" {
 				h.assertOutputContains(tc.wantOutput)
@@ -299,15 +290,10 @@ func TestLocalReviewQuietMode(t *testing.T) {
 func TestLocalReviewSkipsDaemon(t *testing.T) {
 	h := newReviewHarness(t)
 
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", t.TempDir())
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", t.TempDir())
 
 	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
 	if err != nil {
 		t.Fatalf("Expected --local to work without daemon, got: %v", err)
 	}
 }
-
-// Ensure config package is used (for the linker)
-var _ = config.LoadGlobal
