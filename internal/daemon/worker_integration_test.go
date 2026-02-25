@@ -23,7 +23,7 @@ func TestWorkerPoolE2E(t *testing.T) {
 
 	tc.Pool.Start()
 	defer tc.Pool.Stop()
-	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusDone)
+	finalJob := tc.waitForJobStatus(t, job.ID, storage.JobStatusDone, storage.JobStatusFailed)
 
 	if finalJob.Status != storage.JobStatusDone {
 		t.Fatalf("Expected job to complete successfully, got status: %s", finalJob.Status)
