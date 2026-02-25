@@ -504,7 +504,7 @@ func runWithOutput(t *testing.T, dir string, fn func(cmd *cobra.Command) error) 
 	}
 	defer func() {
 		if err := os.Chdir(oldWd); err != nil {
-			t.Fatalf("failed to restore directory to %s: %v", oldWd, err)
+			t.Errorf("failed to restore directory to %s: %v", oldWd, err)
 		}
 	}()
 

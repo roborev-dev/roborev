@@ -9,7 +9,6 @@ import (
 )
 
 func TestLocalReviewReasoningLevels(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		name      string
 		reasoning string
@@ -23,7 +22,6 @@ func TestLocalReviewReasoningLevels(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 			h := newReviewHarness(t)
 			err := h.run(runOpts{Agent: "test", Reasoning: tc.reasoning})
 			if err != nil {

@@ -468,7 +468,6 @@ func TestRenderMarkdownLinesNoOverflow(t *testing.T) {
 }
 
 func TestReflowHelpRows(t *testing.T) {
-	t.Parallel()
 
 	tests := []struct {
 		name     string
@@ -514,7 +513,6 @@ func TestReflowHelpRows(t *testing.T) {
 }
 
 func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
-	t.Parallel()
 
 	// Real help row sets used by the TUI views.
 	helpSets := map[string][][]helpItem{
