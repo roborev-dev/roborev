@@ -9,6 +9,27 @@ import (
 	"testing"
 )
 
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func writeTestFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write %s: %v", name, err)
+	}
+}
+
 // setupGitRepo creates a minimal git repo with one commit and returns its path.
 func setupGitRepo(t *testing.T) string {
 	t.Helper()
@@ -16,25 +37,12 @@ func setupGitRepo(t *testing.T) string {
 		t.Skip("git not available")
 	}
 	dir := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-	run("init")
-	run("config", "user.email", "test@test.com")
-	run("config", "user.name", "test")
-	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	run("add", "hello.txt")
-	run("commit", "-m", "initial")
+	runGit(t, dir, "init")
+	runGit(t, dir, "config", "user.email", "test@test.com")
+	runGit(t, dir, "config", "user.name", "test")
+	writeTestFile(t, dir, "hello.txt", "hello")
+	runGit(t, dir, "add", "hello.txt")
+	runGit(t, dir, "commit", "-m", "initial")
 	return dir
 }
 
@@ -88,12 +96,8 @@ func TestCapturePatchWithChanges(t *testing.T) {
 	defer wt.Close()
 
 	// Modify a file and add a new one
-	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("modified"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wt.Dir, "new.txt"), []byte("new file"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTestFile(t, wt.Dir, "hello.txt", "modified")
+	writeTestFile(t, wt.Dir, "new.txt", "new file")
 
 	patch, err := wt.CapturePatch()
 	if err != nil {
@@ -120,22 +124,9 @@ func TestCapturePatchCommittedChanges(t *testing.T) {
 	defer wt.Close()
 
 	// Simulate an agent that commits changes (instead of just staging)
-	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("committed-change"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", wt.Dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-	}
-	run("add", "-A")
-	run("commit", "-m", "agent commit")
+	writeTestFile(t, wt.Dir, "hello.txt", "committed-change")
+	runGit(t, wt.Dir, "add", "-A")
+	runGit(t, wt.Dir, "commit", "-m", "agent commit")
 
 	// CapturePatch should still capture the committed changes
 	patch, err := wt.CapturePatch()
@@ -169,12 +160,8 @@ func TestApplyPatchRoundTrip(t *testing.T) {
 	}
 
 	// Make changes in worktree
-	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("changed"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wt.Dir, "added.txt"), []byte("added"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTestFile(t, wt.Dir, "hello.txt", "changed")
+	writeTestFile(t, wt.Dir, "added.txt", "added")
 
 	patch, err := wt.CapturePatch()
 	if err != nil {
@@ -190,14 +177,14 @@ func TestApplyPatchRoundTrip(t *testing.T) {
 	// Verify the changes were applied
 	content, err := os.ReadFile(filepath.Join(repo, "hello.txt"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to read hello.txt: %v", err)
 	}
 	if string(content) != "changed" {
 		t.Errorf("expected 'changed', got %q", content)
 	}
 	content, err = os.ReadFile(filepath.Join(repo, "added.txt"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to read added.txt: %v", err)
 	}
 	if string(content) != "added" {
 		t.Errorf("expected 'added', got %q", content)
@@ -211,12 +198,10 @@ func TestCheckPatchClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("changed"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTestFile(t, wt.Dir, "hello.txt", "changed")
 	patch, err := wt.CapturePatch()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("CapturePatch failed: %v", err)
 	}
 	wt.Close()
 
@@ -240,19 +225,15 @@ func TestCheckPatchConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("from-worktree"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTestFile(t, wt.Dir, "hello.txt", "from-worktree")
 	patch, err := wt.CapturePatch()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("CapturePatch failed: %v", err)
 	}
 	wt.Close()
 
 	// Now modify hello.txt in the original repo to create a conflict
-	if err := os.WriteFile(filepath.Join(repo, "hello.txt"), []byte("conflicting-change"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTestFile(t, repo, "hello.txt", "conflicting-change")
 
 	// CheckPatch should fail
 	if err := CheckPatch(repo, patch); err == nil {
@@ -267,19 +248,15 @@ func TestApplyPatchConflictFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(wt.Dir, "hello.txt"), []byte("from-worktree"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTestFile(t, wt.Dir, "hello.txt", "from-worktree")
 	patch, err := wt.CapturePatch()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("CapturePatch failed: %v", err)
 	}
 	wt.Close()
 
 	// Create a conflict
-	if err := os.WriteFile(filepath.Join(repo, "hello.txt"), []byte("different"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTestFile(t, repo, "hello.txt", "different")
 
 	// ApplyPatch should fail
 	if err := ApplyPatch(repo, patch); err == nil {
@@ -301,29 +278,13 @@ func TestCreateEmptyRef(t *testing.T) {
 func TestCreateWithSpecificSHA(t *testing.T) {
 	repo := setupGitRepo(t)
 
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
 	// Record the SHA of the initial commit
-	initialSHA := run("rev-parse", "HEAD")
+	initialSHA := runGit(t, repo, "rev-parse", "HEAD")
 
 	// Add a second commit that changes hello.txt
-	if err := os.WriteFile(filepath.Join(repo, "hello.txt"), []byte("updated"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	run("add", "hello.txt")
-	run("commit", "-m", "second commit")
+	writeTestFile(t, repo, "hello.txt", "updated")
+	runGit(t, repo, "add", "hello.txt")
+	runGit(t, repo, "commit", "-m", "second commit")
 
 	// HEAD now has "updated", but create worktree at the initial SHA
 	wt, err := Create(repo, initialSHA)
@@ -369,10 +330,8 @@ func TestSubmoduleRequiresFileProtocol(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			gitmodules := filepath.Join(dir, ".gitmodules")
-			if err := os.WriteFile(gitmodules, fmt.Appendf(nil, tpl, tc.key, tc.url), 0644); err != nil {
-				t.Fatalf("write .gitmodules: %v", err)
-			}
+			gitmodules := ".gitmodules"
+			writeTestFile(t, dir, gitmodules, string(fmt.Appendf(nil, tpl, tc.key, tc.url)))
 			if got := submoduleRequiresFileProtocol(dir); got != tc.expected {
 				t.Fatalf("expected %v, got %v", tc.expected, got)
 			}
@@ -386,16 +345,13 @@ func TestSubmoduleRequiresFileProtocolNested(t *testing.T) {
 	url = %s
 `
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), fmt.Appendf(nil, tpl, "https://example.com/repo.git"), 0644); err != nil {
-		t.Fatalf("write root .gitmodules: %v", err)
-	}
+	writeTestFile(t, dir, ".gitmodules", string(fmt.Appendf(nil, tpl, "https://example.com/repo.git")))
+
 	nestedPath := filepath.Join(dir, "sub", ".gitmodules")
 	if err := os.MkdirAll(filepath.Dir(nestedPath), 0755); err != nil {
 		t.Fatalf("mkdir nested: %v", err)
 	}
-	if err := os.WriteFile(nestedPath, fmt.Appendf(nil, tpl, "file:///tmp/repo"), 0644); err != nil {
-		t.Fatalf("write nested .gitmodules: %v", err)
-	}
+	writeTestFile(t, dir, "sub/.gitmodules", string(fmt.Appendf(nil, tpl, "file:///tmp/repo")))
 
 	if !submoduleRequiresFileProtocol(dir) {
 		t.Fatalf("expected nested file URL to require file protocol")
