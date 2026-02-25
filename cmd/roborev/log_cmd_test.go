@@ -2,20 +2,30 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
-// Helpers
-func executeRenderJobLog(t *testing.T, input string, isJSON bool) string {
+func toJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("toJSON: %v", err))
+	}
+	return string(b)
+}
+
+func executeRenderJobLog(t *testing.T, input string, isTTY bool) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := renderJobLog(strings.NewReader(input), &buf, isJSON); err != nil {
-		t.Fatalf("renderJobLog: %v", err)
+	if err := streamfmt.RenderLog(strings.NewReader(input), &buf, isTTY); err != nil {
+		t.Fatalf("RenderLog: %v", err)
 	}
 	return buf.String()
 }
@@ -62,7 +72,7 @@ func TestRenderJobLog_JSONL(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Looks good overall."}]}}`,
 	}, "\n")
 
-	out := ansiEscapePattern.ReplaceAllString(executeRenderJobLog(t, input, true), "")
+	out := streamfmt.StripANSI(executeRenderJobLog(t, input, true))
 
 	// Should contain the text messages
 	assertLogContains(t, out, "Reviewing the code.")
@@ -292,9 +302,9 @@ func TestLooksLikeJSON(t *testing.T) {
 		{`{"type":""}`, false},
 	}
 	for _, tt := range tests {
-		got := looksLikeJSON(tt.input)
+		got := streamfmt.LooksLikeJSON(tt.input)
 		if got != tt.want {
-			t.Errorf("looksLikeJSON(%q) = %v, want %v",
+			t.Errorf("streamfmt.LooksLikeJSON(%q) = %v, want %v",
 				tt.input, got, tt.want)
 		}
 	}
@@ -302,18 +312,18 @@ func TestLooksLikeJSON(t *testing.T) {
 
 func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
 	input := strings.Join([]string{
-		toJson(map[string]any{
+		toJSON(map[string]any{
 			"type": "step_start",
 			"part": map[string]any{"type": "step-start"},
 		}),
-		toJson(map[string]any{
+		toJSON(map[string]any{
 			"type": "text",
 			"part": map[string]any{
 				"type": "text",
 				"text": "Reviewing the code.",
 			},
 		}),
-		toJson(map[string]any{
+		toJSON(map[string]any{
 			"type": "tool",
 			"part": map[string]any{
 				"type": "tool",
@@ -327,14 +337,14 @@ func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
 				},
 			},
 		}),
-		toJson(map[string]any{
+		toJSON(map[string]any{
 			"type": "text",
 			"part": map[string]any{
 				"type": "text",
 				"text": "Looks good overall.",
 			},
 		}),
-		toJson(map[string]any{
+		toJSON(map[string]any{
 			"type": "step_finish",
 			"part": map[string]any{
 				"type":   "step-finish",
@@ -343,7 +353,7 @@ func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
 		}),
 	}, "\n")
 
-	out := ansiEscapePattern.ReplaceAllString(executeRenderJobLog(t, input, true), "")
+	out := streamfmt.StripANSI(executeRenderJobLog(t, input, true))
 
 	assertLogContains(t, out, "Reviewing the code.")
 	assertLogContains(t, out, "Read")

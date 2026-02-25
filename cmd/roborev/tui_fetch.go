@@ -18,6 +18,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 	"github.com/roborev-dev/roborev/internal/update"
 )
 
@@ -587,19 +588,19 @@ func (m tuiModel) fetchJobLog(jobID int64) tea.Cmd {
 		// Render JSONL through streamFormatter. Use pre-computed
 		// glamour style to avoid terminal queries from goroutine.
 		var buf bytes.Buffer
-		var renderFmtr *streamFormatter
+		var renderFmtr *streamfmt.Formatter
 		if isIncremental {
 			// Reuse persistent formatter — redirect its output
 			// to a fresh buffer for this batch only.
-			fmtr.w = &buf
+			fmtr.SetWriter(&buf)
 			renderFmtr = fmtr
 		} else {
-			renderFmtr = newStreamFormatterWithWidth(
+			renderFmtr = streamfmt.NewWithWidth(
 				&buf, width, style,
 			)
 		}
 
-		if err := renderJobLogWith(
+		if err := streamfmt.RenderLogWith(
 			resp.Body, renderFmtr, &buf,
 		); err != nil {
 			return tuiLogOutputMsg{err: err, seq: seq}

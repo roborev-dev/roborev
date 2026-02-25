@@ -1,6 +1,7 @@
-package main
+package streamfmt
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -35,7 +36,7 @@ var (
 		}).Italic(true) // Dim italic — thinking indicator
 )
 
-// streamFormatter wraps an io.Writer to transform raw NDJSON stream output
+// Formatter wraps an io.Writer to transform raw NDJSON stream output
 // from Claude into compact, human-readable progress lines.
 //
 // In TTY mode, tool calls are shown as one-line summaries:
@@ -45,7 +46,7 @@ var (
 //	Bash  go test ./internal/gmail/ -run TestRateLimiter
 //
 // In non-TTY mode (piped output), raw JSON is passed through unchanged.
-type streamFormatter struct {
+type Formatter struct {
 	w     io.Writer
 	buf   []byte
 	isTTY bool
@@ -70,30 +71,32 @@ type streamFormatter struct {
 	codexStartedIDsByCommand map[string][]string
 }
 
-func newStreamFormatter(w io.Writer, isTTY bool) *streamFormatter {
-	f := &streamFormatter{w: w, isTTY: isTTY}
+// New creates a Formatter that writes to w. When isTTY is true,
+// NDJSON lines are rendered as compact progress lines; otherwise
+// raw JSON is passed through unchanged.
+func New(w io.Writer, isTTY bool) *Formatter {
+	f := &Formatter{w: w, isTTY: isTTY}
 	if isTTY {
-		f.glamourStyle = sfGlamourStyle()
-		f.width = sfTerminalWidth(w)
+		f.glamourStyle = GlamourStyle()
+		f.width = TerminalWidth(w)
 	}
 	return f
 }
 
-// newStreamFormatterWithWidth creates a stream formatter with an
-// explicit width and pre-computed glamour style. Used when rendering
-// into a buffer (e.g. the TUI log view) where terminal queries
-// aren't possible.
-func newStreamFormatterWithWidth(
+// NewWithWidth creates a Formatter with an explicit width and
+// pre-computed glamour style. Used when rendering into a buffer
+// (e.g. the TUI log view) where terminal queries aren't possible.
+func NewWithWidth(
 	w io.Writer, width int, style gansi.StyleConfig,
-) *streamFormatter {
-	return &streamFormatter{
+) *Formatter {
+	return &Formatter{
 		w: w, isTTY: true, width: width, glamourStyle: style,
 	}
 }
 
-// sfTerminalWidth returns the terminal width for the given writer,
+// TerminalWidth returns the terminal width for the given writer,
 // defaulting to 100 if detection fails.
-func sfTerminalWidth(w io.Writer) int {
+func TerminalWidth(w io.Writer) int {
 	if f, ok := w.(interface{ Fd() uintptr }); ok {
 		if w, _, err := term.GetSize(int(f.Fd())); err == nil && w > 0 {
 			return w
@@ -102,9 +105,9 @@ func sfTerminalWidth(w io.Writer) int {
 	return 100
 }
 
-// sfGlamourStyle returns a glamour style config with zero margins,
+// GlamourStyle returns a glamour style config with zero margins,
 // matching the TUI's rendering. Detects dark/light background once.
-func sfGlamourStyle() gansi.StyleConfig {
+func GlamourStyle() gansi.StyleConfig {
 	style := styles.LightStyleConfig
 	if termenv.HasDarkBackground() {
 		style = styles.DarkStyleConfig
@@ -117,7 +120,14 @@ func sfGlamourStyle() gansi.StyleConfig {
 	return style
 }
 
-func (f *streamFormatter) Write(p []byte) (int, error) {
+// SetWriter replaces the underlying writer. Used to redirect a
+// persistent formatter's output to a fresh buffer for incremental
+// rendering.
+func (f *Formatter) SetWriter(w io.Writer) {
+	f.w = w
+}
+
+func (f *Formatter) Write(p []byte) (int, error) {
 	if !f.isTTY {
 		return f.w.Write(p)
 	}
@@ -141,7 +151,7 @@ func (f *streamFormatter) Write(p []byte) (int, error) {
 }
 
 // Flush writes any remaining buffered content.
-func (f *streamFormatter) Flush() {
+func (f *Formatter) Flush() {
 	if len(f.buf) > 0 {
 		line := string(f.buf)
 		f.buf = nil
@@ -214,7 +224,7 @@ var geminiToolNames = map[string]string{
 	"list_dir":          "Glob",
 }
 
-func (f *streamFormatter) processLine(line string) {
+func (f *Formatter) processLine(line string) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return
@@ -266,7 +276,7 @@ func (f *streamFormatter) processLine(line string) {
 	}
 }
 
-func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
+func (f *Formatter) processCodexItem(eventType string, item *codexItem) {
 	if item == nil {
 		return
 	}
@@ -283,7 +293,7 @@ func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 		if eventType != "item.completed" {
 			return
 		}
-		f.writeText(sanitizeControlKeepNewlines(item.Text))
+		f.writeText(SanitizeControlKeepNewlines(item.Text))
 	case "command_execution":
 		cmd := strings.TrimSpace(sanitizeControl(item.Command))
 		if !f.shouldRenderCodexCommand(eventType, item, cmd) {
@@ -301,7 +311,7 @@ func (f *streamFormatter) processCodexItem(eventType string, item *codexItem) {
 	}
 }
 
-func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codexItem, cmd string) bool {
+func (f *Formatter) shouldRenderCodexCommand(eventType string, item *codexItem, cmd string) bool {
 	if eventType != "item.started" && eventType != "item.completed" {
 		return false
 	}
@@ -391,7 +401,7 @@ func (f *streamFormatter) shouldRenderCodexCommand(eventType string, item *codex
 	return true
 }
 
-func (f *streamFormatter) consumeCodexStartedCommandIDForCommand(cmd string) {
+func (f *Formatter) consumeCodexStartedCommandIDForCommand(cmd string) {
 	if cmd == "" {
 		return
 	}
@@ -410,7 +420,7 @@ func (f *streamFormatter) consumeCodexStartedCommandIDForCommand(cmd string) {
 }
 
 // removeCodexStartedIDFromQueue removes a specific ID from the per-command FIFO.
-func (f *streamFormatter) removeCodexStartedIDFromQueue(cmd, id string) {
+func (f *Formatter) removeCodexStartedIDFromQueue(cmd, id string) {
 	ids := f.codexStartedIDsByCommand[cmd]
 	for i, v := range ids {
 		if v == id {
@@ -423,7 +433,7 @@ func (f *streamFormatter) removeCodexStartedIDFromQueue(cmd, id string) {
 	}
 }
 
-func (f *streamFormatter) decrementCodexStartedCommand(cmd string) {
+func (f *Formatter) decrementCodexStartedCommand(cmd string) {
 	if cmd == "" {
 		return
 	}
@@ -438,14 +448,14 @@ func (f *streamFormatter) decrementCodexStartedCommand(cmd string) {
 	f.codexStartedCommands[cmd] = count - 1
 }
 
-func (f *streamFormatter) processOpenCodePart(
+func (f *Formatter) processOpenCodePart(
 	eventType string, raw json.RawMessage,
 ) {
 	switch eventType {
 	case "text":
 		var part struct{ Text string }
 		if json.Unmarshal(raw, &part) == nil && part.Text != "" {
-			f.writeText(sanitizeControlKeepNewlines(part.Text))
+			f.writeText(SanitizeControlKeepNewlines(part.Text))
 		}
 	case "reasoning":
 		var part struct{ Text string }
@@ -484,7 +494,7 @@ func (f *streamFormatter) processOpenCodePart(
 
 // opencodeToolInput returns the raw JSON input map from an opencode
 // tool part, suitable for passing to formatToolUse.
-func (f *streamFormatter) opencodeToolInput(
+func (f *Formatter) opencodeToolInput(
 	tp opencodeToolPart,
 ) json.RawMessage {
 	if len(tp.State.Input) == 0 {
@@ -497,7 +507,7 @@ func (f *streamFormatter) opencodeToolInput(
 	return b
 }
 
-func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {
+func (f *Formatter) processAssistantContent(raw json.RawMessage) {
 	if raw == nil {
 		return
 	}
@@ -523,7 +533,7 @@ func (f *streamFormatter) processAssistantContent(raw json.RawMessage) {
 	}
 }
 
-func (f *streamFormatter) formatToolUse(name string, input json.RawMessage) {
+func (f *Formatter) formatToolUse(name string, input json.RawMessage) {
 	name = sanitizeControl(name)
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(input, &fields); err != nil {
@@ -560,7 +570,7 @@ func (f *streamFormatter) formatToolUse(name string, input json.RawMessage) {
 }
 
 // writef writes formatted output, capturing the first error.
-func (f *streamFormatter) writef(format string, args ...any) {
+func (f *Formatter) writef(format string, args ...any) {
 	if f.writeErr != nil || f.w == nil {
 		return
 	}
@@ -569,8 +579,8 @@ func (f *streamFormatter) writef(format string, args ...any) {
 
 // writeText writes agent text, rendering markdown and wrapping to
 // terminal width when in TTY mode with a known width.
-func (f *streamFormatter) writeText(text string) {
-	text = sanitizeControlKeepNewlines(text)
+func (f *Formatter) writeText(text string) {
+	text = SanitizeControlKeepNewlines(text)
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
@@ -593,8 +603,8 @@ func (f *streamFormatter) writeText(text string) {
 }
 
 // writeReasoning writes a dimmed reasoning summary line.
-func (f *streamFormatter) writeReasoning(text string) {
-	text = sanitizeControlKeepNewlines(text)
+func (f *Formatter) writeReasoning(text string) {
+	text = SanitizeControlKeepNewlines(text)
 	if f.lastWasTool && f.hasOutput {
 		f.writef("\n")
 	}
@@ -608,7 +618,7 @@ func (f *streamFormatter) writeReasoning(text string) {
 //
 //	│ Read   internal/daemon/worker.go
 //	│ Edit   internal/daemon/worker.go
-func (f *streamFormatter) writeTool(name, arg string) {
+func (f *Formatter) writeTool(name, arg string) {
 	name = sanitizeControl(name)
 	arg = sanitizeControl(arg)
 	if !f.lastWasTool && f.hasOutput {
@@ -626,23 +636,28 @@ func (f *streamFormatter) writeTool(name, arg string) {
 	f.writef("%s\n", styled)
 }
 
-// writerIsTerminal checks if a writer is backed by a terminal.
-func writerIsTerminal(w io.Writer) bool {
+// WriterIsTerminal checks if a writer is backed by a terminal.
+func WriterIsTerminal(w io.Writer) bool {
 	if f, ok := w.(interface{ Fd() uintptr }); ok {
 		return isTerminal(f.Fd())
 	}
 	return false
 }
 
-// printMarkdownOrPlain renders text as glamour-styled markdown when
+// isTerminal checks if the file descriptor is a terminal.
+func isTerminal(fd uintptr) bool {
+	return term.IsTerminal(int(fd))
+}
+
+// PrintMarkdownOrPlain renders text as glamour-styled markdown when
 // writing to a TTY, or prints it as-is otherwise.
-func printMarkdownOrPlain(w io.Writer, text string) {
-	if !writerIsTerminal(w) {
+func PrintMarkdownOrPlain(w io.Writer, text string) {
+	if !WriterIsTerminal(w) {
 		fmt.Fprintln(w, text)
 		return
 	}
-	width := sfTerminalWidth(w)
-	style := sfGlamourStyle()
+	width := TerminalWidth(w)
+	style := GlamourStyle()
 	lines := renderMarkdownLines(text, width, width, style, 2)
 	for _, line := range lines {
 		fmt.Fprintln(w, line)
@@ -656,10 +671,10 @@ func sanitizeControl(s string) string {
 	return sanitizeControlChars(s, false)
 }
 
-// sanitizeControlKeepNewlines strips ANSI escape sequences and
+// SanitizeControlKeepNewlines strips ANSI escape sequences and
 // non-printable control characters but preserves newlines. Used for
 // agent text content that needs to retain paragraph structure.
-func sanitizeControlKeepNewlines(s string) string {
+func SanitizeControlKeepNewlines(s string) string {
 	return sanitizeControlChars(s, true)
 }
 
@@ -694,4 +709,77 @@ func jsonString(raw json.RawMessage) string {
 		return strings.Trim(string(raw), `"`)
 	}
 	return s
+}
+
+// RenderLog reads a job log file and writes human-friendly output.
+// JSONL lines are processed through Formatter for compact tool/text
+// rendering. Non-JSON lines are printed as-is.
+func RenderLog(r io.Reader, w io.Writer, isTTY bool) error {
+	return RenderLogWith(r, New(w, isTTY), w)
+}
+
+// RenderLogWith renders a job log using a pre-configured Formatter.
+// plainW receives non-JSON lines directly.
+func RenderLogWith(
+	r io.Reader, fmtr *Formatter, plainW io.Writer,
+) error {
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadString('\n')
+		// ReadString returns data even on error (e.g. EOF
+		// without trailing newline), so process before checking.
+		line = strings.TrimRight(line, "\n\r")
+		if line != "" {
+			if LooksLikeJSON(line) {
+				if _, werr := fmtr.Write(
+					[]byte(line + "\n"),
+				); werr != nil {
+					return werr
+				}
+			} else {
+				// Non-JSON lines: sanitize ANSI/control sequences
+				// to prevent terminal spoofing from agent stderr,
+				// then print.
+				line = SanitizeControlKeepNewlines(line)
+				if _, werr := fmt.Fprintln(plainW, line); werr != nil {
+					return werr
+				}
+			}
+		} else if err != io.EOF {
+			// Preserve blank lines for spacing in rendered output.
+			if _, werr := fmt.Fprintln(plainW); werr != nil {
+				return werr
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	fmtr.Flush()
+	return nil
+}
+
+// LooksLikeJSON returns true if line is a JSON object with a
+// non-empty "type" field, matching the stream event format used
+// by Claude Code, Codex, and Gemini CLI.
+func LooksLikeJSON(line string) bool {
+	for _, c := range line {
+		switch c {
+		case ' ', '\t':
+			continue
+		case '{':
+			var probe struct{ Type string }
+			if json.Unmarshal([]byte(line), &probe) != nil {
+				return false
+			}
+			return probe.Type != ""
+		default:
+			return false
+		}
+	}
+	return false
 }

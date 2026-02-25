@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
 // setupRenderModel creates a standardized tuiModel for rendering tests
@@ -2815,7 +2816,7 @@ func TestTUIRenderViews(t *testing.T) {
 }
 
 func TestTUILogOutputTable(t *testing.T) {
-	dummyFmtr := &streamFormatter{}
+	dummyFmtr := &streamfmt.Formatter{}
 
 	tests := []struct {
 		name             string
@@ -2827,7 +2828,7 @@ func TestTUILogOutputTable(t *testing.T) {
 		initialFetchSeq  uint64
 		initialLoading   bool
 		initialOffset    int64
-		initialFmtr      *streamFormatter
+		initialFmtr      *streamfmt.Formatter
 
 		msg tuiLogOutputMsg
 
@@ -2840,7 +2841,7 @@ func TestTUILogOutputTable(t *testing.T) {
 		wantFlashMsg   string
 		wantLoading    bool
 		wantOffset     int64
-		wantFmtr       *streamFormatter
+		wantFmtr       *streamfmt.Formatter
 	}{
 		{
 			name:             "updates formatter from message",

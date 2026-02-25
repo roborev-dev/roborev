@@ -6,6 +6,7 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 )
 
 type tuiView int
@@ -90,10 +91,10 @@ type tuiLogOutputMsg struct {
 	lines     []logLine
 	hasMore   bool // true if job is still running
 	err       error
-	newOffset int64            // byte offset for next fetch
-	append    bool             // true = append lines, false = replace
-	seq       uint64           // fetch sequence number for stale detection
-	fmtr      *streamFormatter // formatter used for rendering (persist for incremental reuse)
+	newOffset int64                // byte offset for next fetch
+	append    bool                 // true = append lines, false = replace
+	seq       uint64               // fetch sequence number for stale detection
+	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
 }
 
 // tuiLogTickMsg triggers a refresh of the log output

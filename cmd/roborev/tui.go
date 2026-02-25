@@ -21,6 +21,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 	"github.com/spf13/cobra"
 )
 
@@ -339,16 +340,16 @@ type tuiModel struct {
 	helpScroll   int     // Scroll position in help view
 
 	// Log view state
-	logJobID     int64            // Job being viewed
-	logLines     []logLine        // Buffer of output lines
-	logScroll    int              // Scroll position
-	logStreaming bool             // True if job is still running
-	logFromView  tuiView          // View to return to
-	logFollow    bool             // True if auto-scrolling to bottom (follow mode)
-	logOffset    int64            // Byte offset for next incremental fetch
-	logFmtr      *streamFormatter // Persistent formatter across polls
-	logLoading   bool             // True while a fetch is in-flight
-	logFetchSeq  uint64           // Monotonic seq to drop stale responses
+	logJobID     int64                // Job being viewed
+	logLines     []logLine            // Buffer of output lines
+	logScroll    int                  // Scroll position
+	logStreaming bool                 // True if job is still running
+	logFromView  tuiView              // View to return to
+	logFollow    bool                 // True if auto-scrolling to bottom (follow mode)
+	logOffset    int64                // Byte offset for next incremental fetch
+	logFmtr      *streamfmt.Formatter // Persistent formatter across polls
+	logLoading   bool                 // True while a fetch is in-flight
+	logFetchSeq  uint64               // Monotonic seq to drop stale responses
 
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
@@ -453,7 +454,7 @@ func newTuiModel(serverAddr string, opts ...tuiOption) tuiModel {
 		serverAddr:             serverAddr,
 		daemonVersion:          daemonVersion,
 		client:                 &http.Client{Timeout: 10 * time.Second},
-		glamourStyle:           sfGlamourStyle(),
+		glamourStyle:           streamfmt.GlamourStyle(),
 		jobs:                   []storage.ReviewJob{},
 		currentView:            tuiViewQueue,
 		width:                  80, // sensible defaults until we get WindowSizeMsg

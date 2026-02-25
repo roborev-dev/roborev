@@ -19,6 +19,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt/analyze"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 	"github.com/spf13/cobra"
 )
 
@@ -815,11 +816,11 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 
 	// Use stdout for streaming output, with stream formatting for TTY
 	var out io.Writer
-	var fmtr *streamFormatter
+	var fmtr *streamfmt.Formatter
 	if quiet {
 		out = io.Discard
 	} else {
-		fmtr = newStreamFormatter(cmd.OutOrStdout(), writerIsTerminal(cmd.OutOrStdout()))
+		fmtr = streamfmt.New(cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()))
 		out = fmtr
 	}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/prompt"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 	"github.com/roborev-dev/roborev/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -521,11 +522,11 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 		// Determine output writer
 		var agentOutput io.Writer
-		var fmtr *streamFormatter
+		var fmtr *streamfmt.Formatter
 		if opts.quiet {
 			agentOutput = io.Discard
 		} else {
-			fmtr = newStreamFormatter(os.Stdout, isTerminal(os.Stdout.Fd()))
+			fmtr = streamfmt.New(os.Stdout, isTerminal(os.Stdout.Fd()))
 			agentOutput = fmtr
 		}
 

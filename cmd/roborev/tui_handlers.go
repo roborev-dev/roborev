@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 	"github.com/roborev-dev/roborev/internal/version"
 )
 
@@ -984,7 +985,7 @@ func (m tuiModel) openLogView(
 	m.logFromView = fromView
 	m.currentView = tuiViewLog
 	m.logOffset = 0
-	m.logFmtr = newStreamFormatterWithWidth(
+	m.logFmtr = streamfmt.NewWithWidth(
 		io.Discard, m.width, m.glamourStyle,
 	)
 	m.logFetchSeq++
@@ -1816,7 +1817,7 @@ func (m tuiModel) handleWindowSizeMsg(
 	if m.currentView == tuiViewLog && m.logLines != nil {
 		m.logOffset = 0
 		m.logLines = nil
-		m.logFmtr = newStreamFormatterWithWidth(
+		m.logFmtr = streamfmt.NewWithWidth(
 			io.Discard, msg.Width, m.glamourStyle,
 		)
 		m.logFetchSeq++

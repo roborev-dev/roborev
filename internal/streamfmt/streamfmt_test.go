@@ -1,4 +1,4 @@
-package main
+package streamfmt
 
 import (
 	"bytes"
@@ -9,15 +9,16 @@ import (
 	"testing"
 )
 
-// streamFormatterFixture wraps the buffer and formatter setup common to most tests.
+// streamFormatterFixture wraps the buffer and formatter setup
+// common to most tests.
 type streamFormatterFixture struct {
 	buf bytes.Buffer
-	f   *streamFormatter
+	f   *Formatter
 }
 
 func newFixture(tty bool) *streamFormatterFixture {
 	fix := &streamFormatterFixture{}
-	fix.f = newStreamFormatter(&fix.buf, tty)
+	fix.f = New(&fix.buf, tty)
 	return fix
 }
 
@@ -26,22 +27,30 @@ func (fix *streamFormatterFixture) writeLine(s string) {
 }
 
 func (fix *streamFormatterFixture) output() string {
-	// Strip ANSI escape sequences so assertions test logical content
-	// regardless of TTY styling.
-	return ansiEscapePattern.ReplaceAllString(fix.buf.String(), "")
+	return StripANSI(fix.buf.String())
 }
 
-func (fix *streamFormatterFixture) assertContains(t *testing.T, substr string) {
+func (fix *streamFormatterFixture) assertContains(
+	t *testing.T, substr string,
+) {
 	t.Helper()
 	if !strings.Contains(fix.output(), substr) {
-		t.Errorf("expected output to contain %q, got:\n%s", substr, fix.output())
+		t.Errorf(
+			"expected output to contain %q, got:\n%s",
+			substr, fix.output(),
+		)
 	}
 }
 
-func (fix *streamFormatterFixture) assertNotContains(t *testing.T, substr string) {
+func (fix *streamFormatterFixture) assertNotContains(
+	t *testing.T, substr string,
+) {
 	t.Helper()
 	if strings.Contains(fix.output(), substr) {
-		t.Errorf("expected output NOT to contain %q, got:\n%s", substr, fix.output())
+		t.Errorf(
+			"expected output NOT to contain %q, got:\n%s",
+			substr, fix.output(),
+		)
 	}
 }
 
@@ -52,18 +61,23 @@ func (fix *streamFormatterFixture) assertEmpty(t *testing.T) {
 	}
 }
 
-func (fix *streamFormatterFixture) assertCount(t *testing.T, substr string, want int) {
+func (fix *streamFormatterFixture) assertCount(
+	t *testing.T, substr string, want int,
+) {
 	t.Helper()
 	got := strings.Count(fix.output(), substr)
 	if got != want {
-		t.Errorf("expected output to contain %q %d time(s), got %d:\n%s", substr, want, got, fix.output())
+		t.Errorf(
+			"expected output to contain %q %d time(s), got %d:\n%s",
+			substr, want, got, fix.output(),
+		)
 	}
 }
 
-func toJson(v any) string {
+func toJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
-		panic(fmt.Sprintf("toJson: %v", err))
+		panic(fmt.Sprintf("toJSON: %v", err))
 	}
 	return string(b)
 }
@@ -105,8 +119,10 @@ func runStreamTestCase(t *testing.T, tc streamTestCase) {
 
 // Event builders for Anthropic-style JSON.
 
-func eventAssistantToolUse(toolName string, input map[string]any) string {
-	return toJson(map[string]any{
+func eventAssistantToolUse(
+	toolName string, input map[string]any,
+) string {
+	return toJSON(map[string]any{
 		"type": "assistant",
 		"message": map[string]any{
 			"content": []any{
@@ -121,18 +137,20 @@ func eventAssistantToolUse(toolName string, input map[string]any) string {
 }
 
 func eventAssistantText(text string) string {
-	return toJson(map[string]any{
+	return toJSON(map[string]any{
 		"type": "assistant",
 		"message": map[string]any{
 			"content": []any{
-				map[string]any{"type": "text", "text": text},
+				map[string]any{
+					"type": "text", "text": text,
+				},
 			},
 		},
 	})
 }
 
 func eventAssistantMulti(blocks ...map[string]any) string {
-	return toJson(map[string]any{
+	return toJSON(map[string]any{
 		"type": "assistant",
 		"message": map[string]any{
 			"content": blocks,
@@ -144,41 +162,58 @@ func contentBlockText(text string) map[string]any {
 	return map[string]any{"type": "text", "text": text}
 }
 
-func contentBlockToolUse(toolName string, input map[string]any) map[string]any {
-	return map[string]any{"type": "tool_use", "name": toolName, "input": input}
+func contentBlockToolUse(
+	toolName string, input map[string]any,
+) map[string]any {
+	return map[string]any{
+		"type": "tool_use", "name": toolName, "input": input,
+	}
 }
 
 func eventAssistantLegacy(content string) string {
-	return toJson(map[string]any{
+	return toJSON(map[string]any{
 		"type":    "assistant",
 		"message": map[string]any{"content": content},
 	})
 }
 
 func eventAssistantToolUseResult(filePath string) string {
-	return toJson(map[string]any{"type": "user", "tool_use_result": map[string]any{"filePath": filePath}})
+	return toJSON(map[string]any{
+		"type":            "user",
+		"tool_use_result": map[string]any{"filePath": filePath},
+	})
 }
 
 func eventAssistantResult(result string) string {
-	return toJson(map[string]any{"type": "result", "result": result})
+	return toJSON(map[string]any{
+		"type": "result", "result": result,
+	})
 }
 
 // Event builders for Gemini-style JSON.
 
 func eventGeminiInit(sessionID string) string {
-	return toJson(map[string]any{"type": "init", "session_id": sessionID})
+	return toJSON(map[string]any{
+		"type": "init", "session_id": sessionID,
+	})
 }
 
-func eventGeminiMessage(role, content string, delta bool) string {
-	m := map[string]any{"type": "message", "role": role, "content": content}
+func eventGeminiMessage(
+	role, content string, delta bool,
+) string {
+	m := map[string]any{
+		"type": "message", "role": role, "content": content,
+	}
 	if delta {
 		m["delta"] = true
 	}
-	return toJson(m)
+	return toJSON(m)
 }
 
-func eventGeminiToolUse(toolName, toolID string, params map[string]any) string {
-	return toJson(map[string]any{
+func eventGeminiToolUse(
+	toolName, toolID string, params map[string]any,
+) string {
+	return toJSON(map[string]any{
 		"type":       "tool_use",
 		"tool_name":  toolName,
 		"tool_id":    toolID,
@@ -186,43 +221,56 @@ func eventGeminiToolUse(toolName, toolID string, params map[string]any) string {
 	})
 }
 
-func eventGeminiToolResult(toolID, status, output string) string {
-	m := map[string]any{"type": "tool_result", "tool_id": toolID, "status": status}
+func eventGeminiToolResult(
+	toolID, status, output string,
+) string {
+	m := map[string]any{
+		"type": "tool_result", "tool_id": toolID,
+		"status": status,
+	}
 	if output != "" {
 		m["output"] = output
 	}
-	return toJson(m)
+	return toJSON(m)
 }
 
 func eventGeminiResult(status string) string {
-	return toJson(map[string]any{"type": "result", "status": status})
+	return toJSON(map[string]any{
+		"type": "result", "status": status,
+	})
 }
 
 // Event builder for OpenCode-style JSON.
 
-func eventOpenCode(eventType string, part map[string]any) string {
-	return toJson(map[string]any{
+func eventOpenCode(
+	eventType string, part map[string]any,
+) string {
+	return toJSON(map[string]any{
 		"type": eventType,
 		"part": part,
 	})
 }
 
-func TestStreamFormatter_NonTTY(t *testing.T) {
+func TestFormatter_NonTTY(t *testing.T) {
 	fix := newFixture(false)
 	raw := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`
 	fix.writeLine(raw)
-	// Non-TTY should pass through raw JSON
 	if fix.output() != raw+"\n" {
-		t.Errorf("non-TTY should pass through raw, got:\n%s", fix.output())
+		t.Errorf(
+			"non-TTY should pass through raw, got:\n%s",
+			fix.output(),
+		)
 	}
 }
 
 type errWriter struct{}
 
-func (errWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+func (errWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
 
-func TestStreamFormatter_WriteError(t *testing.T) {
-	f := newStreamFormatter(errWriter{}, true)
+func TestFormatter_WriteError(t *testing.T) {
+	f := New(errWriter{}, true)
 
 	line := eventAssistantText("hello") + "\n"
 	_, err := f.Write([]byte(line))
@@ -234,20 +282,22 @@ func TestStreamFormatter_WriteError(t *testing.T) {
 	}
 }
 
-func TestStreamFormatter_PartialWrites(t *testing.T) {
+func TestFormatter_PartialWrites(t *testing.T) {
 	fix := newFixture(true)
 
 	full := eventAssistantText("hello") + "\n"
-	// Write in two parts
 	_, _ = fix.f.Write([]byte(full[:20]))
 	if fix.buf.Len() != 0 {
-		t.Errorf("partial write should buffer, got:\n%s", fix.output())
+		t.Errorf(
+			"partial write should buffer, got:\n%s",
+			fix.output(),
+		)
 	}
 	_, _ = fix.f.Write([]byte(full[20:]))
 	fix.assertContains(t, "hello")
 }
 
-func TestStreamFormatter_Anthropic(t *testing.T) {
+func TestFormatter_Anthropic(t *testing.T) {
 	tests := []streamTestCase{
 		{
 			name: "ToolUse",
@@ -427,7 +477,7 @@ func TestStreamFormatter_Anthropic(t *testing.T) {
 	}
 }
 
-func TestStreamFormatter_Gemini(t *testing.T) {
+func TestFormatter_Gemini(t *testing.T) {
 	tests := []streamTestCase{
 		{
 			name: "ToolUse",
@@ -463,7 +513,7 @@ func TestStreamFormatter_Gemini(t *testing.T) {
 		{
 			name: "SanitizesGeminiText",
 			events: []string{
-				toJson(map[string]any{
+				toJSON(map[string]any{
 					"type":    "message",
 					"role":    "assistant",
 					"content": "\x1b[1mbold\x1b[0m safe \x1b]0;title\x07",
@@ -488,7 +538,7 @@ func TestStreamFormatter_Gemini(t *testing.T) {
 	}
 }
 
-func TestStreamFormatter_OpenCode(t *testing.T) {
+func TestFormatter_OpenCode(t *testing.T) {
 	tests := []streamTestCase{
 		{
 			name: "Text",
@@ -615,7 +665,7 @@ func TestStreamFormatter_OpenCode(t *testing.T) {
 	}
 }
 
-func TestStreamFormatter_Codex_Scenarios(t *testing.T) {
+func TestFormatter_Codex_Scenarios(t *testing.T) {
 	longCmd := "bash -lc " + strings.Repeat("x", 100)
 	tests := []streamTestCase{
 		{
@@ -769,11 +819,8 @@ func TestStreamFormatter_Codex_Scenarios(t *testing.T) {
 			events: []string{
 				`{"type":"item.started","item":{"id":"cmd_A","type":"command_execution","command":"bash -lc ls"}}`,
 				`{"type":"item.started","item":{"id":"cmd_B","type":"command_execution","command":"bash -lc ls"}}`,
-				// Command-only completion consumes cmd_A (FIFO), counter 2→1.
 				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
-				// ID-only completion for cmd_B clears remaining state, counter 1→0.
 				`{"type":"item.completed","item":{"id":"cmd_B","type":"command_execution"}}`,
-				// With all started state drained, this completion must render.
 				`{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc ls"}}`,
 			},
 			counts: map[string]int{"Bash   bash -lc ls": 3},
@@ -823,10 +870,12 @@ func TestSanitizeControlKeepNewlines(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeControlKeepNewlines(tt.input)
+			got := SanitizeControlKeepNewlines(tt.input)
 			if got != tt.want {
-				t.Errorf("sanitizeControlKeepNewlines(%q) = %q, want %q",
-					tt.input, got, tt.want)
+				t.Errorf(
+					"SanitizeControlKeepNewlines(%q) = %q, want %q",
+					tt.input, got, tt.want,
+				)
 			}
 		})
 	}

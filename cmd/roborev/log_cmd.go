@@ -1,18 +1,16 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/daemon"
+	"github.com/roborev-dev/roborev/internal/streamfmt"
 	"github.com/spf13/cobra"
 )
 
@@ -71,8 +69,8 @@ Examples:
 				return nil
 			}
 
-			err = renderJobLog(
-				f, out, writerIsTerminal(out),
+			err = streamfmt.RenderLog(
+				f, out, streamfmt.WriterIsTerminal(out),
 			)
 			if isBrokenPipe(err) {
 				return nil
@@ -92,79 +90,6 @@ Examples:
 
 	cmd.AddCommand(logCleanCmd())
 	return cmd
-}
-
-// renderJobLog reads a job log file and writes human-friendly
-// output. JSONL lines are processed through streamFormatter for
-// compact tool/text rendering. Non-JSON lines are printed as-is.
-func renderJobLog(r io.Reader, w io.Writer, isTTY bool) error {
-	return renderJobLogWith(r, newStreamFormatter(w, isTTY), w)
-}
-
-// renderJobLogWith renders a job log using a pre-configured
-// streamFormatter. plainW receives non-JSON lines directly.
-func renderJobLogWith(
-	r io.Reader, fmtr *streamFormatter, plainW io.Writer,
-) error {
-	br := bufio.NewReader(r)
-	for {
-		line, err := br.ReadString('\n')
-		// ReadString returns data even on error (e.g. EOF
-		// without trailing newline), so process before checking.
-		line = strings.TrimRight(line, "\n\r")
-		if line != "" {
-			if looksLikeJSON(line) {
-				if _, werr := fmtr.Write(
-					[]byte(line + "\n"),
-				); werr != nil {
-					return werr
-				}
-			} else {
-				// Non-JSON lines: sanitize ANSI/control sequences
-				// to prevent terminal spoofing from agent stderr,
-				// then print.
-				line = sanitizeControlKeepNewlines(line)
-				if _, werr := fmt.Fprintln(plainW, line); werr != nil {
-					return werr
-				}
-			}
-		} else if err != io.EOF {
-			// Preserve blank lines for spacing in rendered output.
-			if _, werr := fmt.Fprintln(plainW); werr != nil {
-				return werr
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-	}
-
-	fmtr.Flush()
-	return nil
-}
-
-// looksLikeJSON returns true if line is a JSON object with a
-// non-empty "type" field, matching the stream event format used
-// by Claude Code, Codex, and Gemini CLI.
-func looksLikeJSON(line string) bool {
-	for _, c := range line {
-		switch c {
-		case ' ', '\t':
-			continue
-		case '{':
-			var probe struct{ Type string }
-			if json.Unmarshal([]byte(line), &probe) != nil {
-				return false
-			}
-			return probe.Type != ""
-		default:
-			return false
-		}
-	}
-	return false
 }
 
 // isBrokenPipe returns true if err is a broken pipe (EPIPE) error,
