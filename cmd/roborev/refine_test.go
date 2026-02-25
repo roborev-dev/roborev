@@ -401,7 +401,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 				c.WithReview("commit1", 100, "No issues found.", false)
 				c.markAddressedErr = fmt.Errorf("daemon connection failed")
 			},
-			commits: []string{"commit1"},
+			commits:  []string{"commit1"},
 			wantErrs: []string{"marking review (job 100) as addressed"},
 		},
 		{
@@ -409,7 +409,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			setup: func(c *mockDaemonClient) {
 				c.getReviewBySHAErr = fmt.Errorf("daemon connection failed")
 			},
-			commits: []string{"commit1", "commit2"},
+			commits:  []string{"commit1", "commit2"},
 			wantErrs: []string{"fetching review", "commit1"},
 		},
 	}
@@ -560,8 +560,6 @@ func chdirForTest(t *testing.T, dir string) {
 	}
 	t.Cleanup(func() { os.Chdir(orig) })
 }
-
-
 
 func TestValidateRefineContext_RefusesMainBranchWithoutSince(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

@@ -643,15 +643,15 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 
 func TestTUIResizeBehavior(t *testing.T) {
 	tests := []struct {
-		name                     string
-		initialHeight            int
-		jobsCount                int
-		loadingJobs              bool
-		loadingMore              bool
-		activeFilters            []string
-		msg                      tea.WindowSizeMsg
-		wantCmd                  bool
-		wantLoading              bool
+		name                      string
+		initialHeight             int
+		jobsCount                 int
+		loadingJobs               bool
+		loadingMore               bool
+		activeFilters             []string
+		msg                       tea.WindowSizeMsg
+		wantCmd                   bool
+		wantLoading               bool
 		checkRefetchOnLaterResize bool
 	}{
 		{
@@ -685,14 +685,14 @@ func TestTUIResizeBehavior(t *testing.T) {
 			wantLoading:   false,
 		},
 		{
-			name:          "Refetch On Later Resize",
-			initialHeight: 20,
-			jobsCount:     25, // enough for height 20 (visible=12+10=22), but not height 40 (visible=32+10=42)
-			loadingJobs:   false,
-			loadingMore:   false,
-			msg:           tea.WindowSizeMsg{Height: 20}, // same height first
-			wantCmd:       false,                         // intermediate state wantCmd=false
-			wantLoading:   false,
+			name:                      "Refetch On Later Resize",
+			initialHeight:             20,
+			jobsCount:                 25, // enough for height 20 (visible=12+10=22), but not height 40 (visible=32+10=42)
+			loadingJobs:               false,
+			loadingMore:               false,
+			msg:                       tea.WindowSizeMsg{Height: 20}, // same height first
+			wantCmd:                   false,                         // intermediate state wantCmd=false
+			wantLoading:               false,
 			checkRefetchOnLaterResize: true,
 		},
 		{
@@ -737,7 +737,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 
 			if tt.checkRefetchOnLaterResize {
 				m, cmd = updateModel(t, m, tt.msg)
-				
+
 				if cmd != nil {
 					t.Error("Expected no fetch command on first resize, got one")
 				}
@@ -750,7 +750,7 @@ func TestTUIResizeBehavior(t *testing.T) {
 
 				// Second resize that should trigger the refetch
 				m, cmd = updateModel(t, m, tea.WindowSizeMsg{Height: 40})
-				
+
 				if cmd == nil {
 					t.Error("Expected fetch command on second resize, got nil")
 				}

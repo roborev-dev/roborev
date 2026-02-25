@@ -244,10 +244,10 @@ func TestGemini_Review_Integration(t *testing.T) {
 	skipIfWindows(t)
 
 	tests := []struct {
-		name        string
-		script      string
-		wantResult  string
-		checkErr    func(t *testing.T, err error)
+		name       string
+		script     string
+		wantResult string
+		checkErr   func(t *testing.T, err error)
 	}{
 		{
 			name: "PlainTextError",

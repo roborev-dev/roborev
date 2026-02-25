@@ -208,17 +208,17 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 
 func TestTUIReviewNavigation(t *testing.T) {
 	tests := []struct {
-		name          string
-		initialJobs   []storage.ReviewJob
-		initialIdx    int
-		initialID     int64
-		initialScroll int
-		key           any // rune or tea.KeyType
-		wantIdx       int
-		wantJobID     int64
-		wantScroll    int
-		wantFlash     string
-		wantCmd       bool // Expect a command (fetch)
+		name                 string
+		initialJobs          []storage.ReviewJob
+		initialIdx           int
+		initialID            int64
+		initialScroll        int
+		key                  any // rune or tea.KeyType
+		wantIdx              int
+		wantJobID            int64
+		wantScroll           int
+		wantFlash            string
+		wantCmd              bool // Expect a command (fetch)
 		checkFailedJobInline bool
 	}{
 		{
@@ -319,12 +319,12 @@ func TestTUIReviewNavigation(t *testing.T) {
 				makeJob(1),
 				makeJob(2, withStatus(storage.JobStatusFailed), withAgent("codex"), withError("something went wrong")),
 			},
-			initialIdx: 0,
-			initialID:  1,
-			key:        'j',
-			wantIdx:    1,
-			wantJobID:  2,
-			wantCmd:    false,
+			initialIdx:           0,
+			initialID:            1,
+			key:                  'j',
+			wantIdx:              1,
+			wantJobID:            2,
+			wantCmd:              false,
 			checkFailedJobInline: true,
 		},
 	}

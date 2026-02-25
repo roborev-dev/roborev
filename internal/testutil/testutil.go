@@ -86,7 +86,6 @@ func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 	return repo
 }
 
-
 // InitTestRepo creates a standard test repository with an initial commit on the main branch.
 func InitTestRepo(t *testing.T) *TestRepo {
 	t.Helper()

@@ -54,7 +54,7 @@ func TestGeneratePostCommit(t *testing.T) {
 		if !strings.Contains(content, "enqueue --quiet") || !strings.Contains(content, "2>/dev/null") {
 			t.Error("hook should have enqueue with --quiet and 2>/dev/null")
 		}
-		
+
 		enqueueIdx := strings.Index(content, "enqueue --quiet")
 		if enqueueIdx != -1 {
 			lineEnd := strings.Index(content[enqueueIdx:], "\n")

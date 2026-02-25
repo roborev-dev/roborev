@@ -131,10 +131,10 @@ func TestRunBatch_Matrix(t *testing.T) {
 func TestRunBatch_AgentNotFound(t *testing.T) {
 	t.Parallel()
 	cfg := BatchConfig{
-		RepoPath:    t.TempDir(),
-		GitRef:      "abc123",
-		Agents:      []string{"nonexistent-agent-xyz"},
-		ReviewTypes: []string{"security"},
+		RepoPath:      t.TempDir(),
+		GitRef:        "abc123",
+		Agents:        []string{"nonexistent-agent-xyz"},
+		ReviewTypes:   []string{"security"},
 		AgentRegistry: map[string]agent.Agent{}, // Empty mock registry
 	}
 

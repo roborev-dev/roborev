@@ -951,7 +951,7 @@ func setupRangeFilesChangedTest(t *testing.T) (*TestRepo, string) {
 	repo.CommitFile("new.go", "package main", "add go file")
 	repo.CommitFile("docs.md", "# Docs", "add docs")
 	repo.CommitFile("config.yml", "key: val", "add config")
-	
+
 	return repo, baseSHA
 }
 
@@ -1168,7 +1168,7 @@ func setupAncestorTest(t *testing.T) (*TestRepo, string, string, string) {
 	repo.Run("checkout", "-b", "divergent")
 	repo.CommitFile("divergent.txt", "divergent", "divergent commit")
 	divergentSHA := repo.HeadSHA()
-	
+
 	return repo, baseSHA, secondSHA, divergentSHA
 }
 
