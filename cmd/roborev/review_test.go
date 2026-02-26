@@ -10,18 +10,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func respondJSON(w http.ResponseWriter, status int, payload any) {
+func respondJSON(
+	w http.ResponseWriter, status int, payload any,
+) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(payload)
 }
 
-func executeReviewCmd(args ...string) (string, string, error) {
+func executeReviewCmd(
+	args ...string,
+) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 
 	cmd := reviewCmd()
@@ -32,27 +35,72 @@ func executeReviewCmd(args ...string) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
-func setupTestEnvironment(t *testing.T) (*TestGitRepo, *http.ServeMux) {
+func setupTestEnvironment(
+	t *testing.T,
+) (*TestGitRepo, *http.ServeMux) {
 	t.Helper()
 	mux := http.NewServeMux()
 	daemonFromHandler(t, mux)
 	return newTestGitRepo(t), mux
 }
 
+type capturedEnqueue struct {
+	GitRef    string `json:"git_ref"`
+	Reasoning string `json:"reasoning"`
+}
+
+func mockEnqueue(
+	t *testing.T, mux *http.ServeMux,
+) *capturedEnqueue {
+	t.Helper()
+	var captured capturedEnqueue
+	mux.HandleFunc("/api/enqueue", func(
+		w http.ResponseWriter, r *http.Request,
+	) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		respondJSON(w, http.StatusCreated, storage.ReviewJob{
+			ID: 1, GitRef: captured.GitRef, Agent: "test",
+		})
+	})
+	return &captured
+}
+
+func mockWaitableReview(
+	t *testing.T, mux *http.ServeMux, output string,
+) {
+	t.Helper()
+	mux.HandleFunc("/api/enqueue", func(
+		w http.ResponseWriter, r *http.Request,
+	) {
+		respondJSON(w, http.StatusCreated, storage.ReviewJob{
+			ID: 1, GitRef: "abc123", Agent: "test",
+			Status: "queued",
+		})
+	})
+	mux.HandleFunc("/api/jobs", func(
+		w http.ResponseWriter, r *http.Request,
+	) {
+		job := storage.ReviewJob{
+			ID: 1, GitRef: "abc123", Agent: "test",
+			Status: "done",
+		}
+		respondJSON(w, http.StatusOK, map[string]any{
+			"jobs": []storage.ReviewJob{job}, "has_more": false,
+		})
+	})
+	mux.HandleFunc("/api/review", func(
+		w http.ResponseWriter, r *http.Request,
+	) {
+		respondJSON(w, http.StatusOK, storage.Review{
+			ID: 1, JobID: 1, Agent: "test", Output: output,
+		})
+	})
+}
+
 func TestEnqueueCmdPositionalArg(t *testing.T) {
 	t.Run("positional arg overrides default HEAD", func(t *testing.T) {
-		var receivedSHA string
 		repo, mux := setupTestEnvironment(t)
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				GitRef string `json:"git_ref"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			receivedSHA = req.GitRef
-
-			job := storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"}
-			respondJSON(w, http.StatusCreated, job)
-		})
+		req := mockEnqueue(t, mux)
 
 		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
 		repo.CommitFile("file2.txt", "second", "second commit")
@@ -63,27 +111,17 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			t.Fatalf("enqueue failed: %v", err)
 		}
 
-		if receivedSHA != shortFirstSHA {
-			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, receivedSHA)
+		if req.GitRef != shortFirstSHA {
+			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, req.GitRef)
 		}
-		if receivedSHA == "HEAD" {
+		if req.GitRef == "HEAD" {
 			t.Error("Received HEAD instead of positional arg - bug not fixed!")
 		}
 	})
 
 	t.Run("sha flag works", func(t *testing.T) {
-		var receivedSHA string
 		repo, mux := setupTestEnvironment(t)
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				GitRef string `json:"git_ref"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			receivedSHA = req.GitRef
-
-			job := storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"}
-			respondJSON(w, http.StatusCreated, job)
-		})
+		req := mockEnqueue(t, mux)
 
 		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
 		repo.CommitFile("file2.txt", "second", "second commit")
@@ -94,24 +132,14 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			t.Fatalf("enqueue failed: %v", err)
 		}
 
-		if receivedSHA != shortFirstSHA {
-			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, receivedSHA)
+		if req.GitRef != shortFirstSHA {
+			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, req.GitRef)
 		}
 	})
 
 	t.Run("defaults to HEAD", func(t *testing.T) {
-		var receivedSHA string
 		repo, mux := setupTestEnvironment(t)
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				GitRef string `json:"git_ref"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			receivedSHA = req.GitRef
-
-			job := storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"}
-			respondJSON(w, http.StatusCreated, job)
-		})
+		req := mockEnqueue(t, mux)
 
 		repo.CommitFile("file1.txt", "first", "first commit")
 
@@ -120,8 +148,8 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			t.Fatalf("enqueue failed: %v", err)
 		}
 
-		if receivedSHA != "HEAD" {
-			t.Errorf("Expected HEAD, got %s", receivedSHA)
+		if req.GitRef != "HEAD" {
+			t.Errorf("Expected HEAD, got %s", req.GitRef)
 		}
 	})
 }
@@ -176,18 +204,7 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 	t.Run("passing review exits 0 with no output", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		repo.CommitFile("file.txt", "content", "initial commit")
-
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
-			respondJSON(w, http.StatusCreated, job)
-		})
-		mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
-			respondJSON(w, http.StatusOK, map[string]any{"jobs": []storage.ReviewJob{job}, "has_more": false})
-		})
-		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "No issues found."})
-		})
+		mockWaitableReview(t, mux, "No issues found.")
 
 		stdout, stderr, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
@@ -205,18 +222,9 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 	t.Run("failing review exits 1 with no output", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		repo.CommitFile("file.txt", "content", "initial commit")
-
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "queued"}
-			respondJSON(w, http.StatusCreated, job)
-		})
-		mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-			job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: "done"}
-			respondJSON(w, http.StatusOK, map[string]any{"jobs": []storage.ReviewJob{job}, "has_more": false})
-		})
-		mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
-			respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling"})
-		})
+		mockWaitableReview(t, mux,
+			"Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling",
+		)
 
 		stdout, stderr, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
@@ -305,7 +313,9 @@ type mockJobPoller struct {
 	callCount int
 }
 
-func (m *mockJobPoller) HandleJobs(w http.ResponseWriter, r *http.Request) {
+func (m *mockJobPoller) HandleJobs(
+	w http.ResponseWriter, r *http.Request,
+) {
 	m.callCount++
 	var status string
 	switch {
@@ -318,30 +328,68 @@ func (m *mockJobPoller) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	default:
 		status = "done"
 	}
-	job := storage.ReviewJob{ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatus(status)}
+	job := storage.ReviewJob{
+		ID: 1, GitRef: "abc123", Agent: "test",
+		Status: storage.JobStatus(status),
+	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"jobs":     []storage.ReviewJob{job},
 		"has_more": false,
 	})
 }
 
+func TestReviewFlagValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			"since and branch exclusive",
+			[]string{"--since", "abc123", "--branch"},
+			[]string{"cannot use --branch with --since"},
+		},
+		{
+			"since and dirty exclusive",
+			[]string{"--since", "abc123", "--dirty"},
+			[]string{"cannot use --since with --dirty"},
+		},
+		{
+			"since with positional args",
+			[]string{"--since", "abc123", "def456"},
+			[]string{"cannot specify commits with --since"},
+		},
+		{
+			"branch and dirty exclusive",
+			[]string{"--branch", "--dirty"},
+			[]string{"cannot use --branch with --dirty"},
+		},
+		{
+			"branch with positional args",
+			[]string{"--branch", "abc123"},
+			[]string{
+				"cannot specify commits with --branch",
+				"--branch=<name>",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, _ := setupTestEnvironment(t)
+			_, _, err := executeReviewCmd(
+				append([]string{"--repo", repo.Dir}, tt.args...)...,
+			)
+			for _, w := range tt.want {
+				assertErrorContains(t, err, w)
+			}
+		})
+	}
+}
+
 func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with valid ref succeeds", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-
-		gitRefChan := make(chan string, 1)
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				GitRef string `json:"git_ref"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Errorf("failed to decode request: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			gitRefChan <- req.GitRef
-			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
-		})
+		req := mockEnqueue(t, mux)
 
 		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
 		repo.CommitFile("file2.txt", "second", "second commit")
@@ -351,12 +399,11 @@ func TestReviewSinceFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		receivedGitRef := <-gitRefChan
-		if !strings.Contains(receivedGitRef, firstSHA) {
-			t.Errorf("expected git_ref to contain first SHA %s, got %s", firstSHA, receivedGitRef)
+		if !strings.Contains(req.GitRef, firstSHA) {
+			t.Errorf("expected git_ref to contain first SHA %s, got %s", firstSHA, req.GitRef)
 		}
-		if !strings.HasSuffix(receivedGitRef, "..HEAD") {
-			t.Errorf("expected git_ref to end with ..HEAD, got %s", receivedGitRef)
+		if !strings.HasSuffix(req.GitRef, "..HEAD") {
+			t.Errorf("expected git_ref to end with ..HEAD, got %s", req.GitRef)
 		}
 	})
 
@@ -375,45 +422,9 @@ func TestReviewSinceFlag(t *testing.T) {
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", "HEAD")
 		assertErrorContains(t, err, "no commits since")
 	})
-
-	t.Run("since and branch are mutually exclusive", func(t *testing.T) {
-		repo, _ := setupTestEnvironment(t)
-
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", "abc123", "--branch")
-		assertErrorContains(t, err, "cannot use --branch with --since")
-	})
-
-	t.Run("since and dirty are mutually exclusive", func(t *testing.T) {
-		repo, _ := setupTestEnvironment(t)
-
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", "abc123", "--dirty")
-		assertErrorContains(t, err, "cannot use --since with --dirty")
-	})
-
-	t.Run("since with positional args fails", func(t *testing.T) {
-		repo, _ := setupTestEnvironment(t)
-
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", "abc123", "def456")
-		assertErrorContains(t, err, "cannot specify commits with --since")
-	})
 }
 
 func TestReviewBranchFlag(t *testing.T) {
-	t.Run("branch and dirty are mutually exclusive", func(t *testing.T) {
-		repo, _ := setupTestEnvironment(t)
-
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--dirty")
-		assertErrorContains(t, err, "cannot use --branch with --dirty")
-	})
-
-	t.Run("branch with positional args fails", func(t *testing.T) {
-		repo, _ := setupTestEnvironment(t)
-
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "abc123")
-		assertErrorContains(t, err, "cannot specify commits with --branch")
-		assertErrorContains(t, err, "--branch=<name>")
-	})
-
 	t.Run("branch on default branch fails", func(t *testing.T) {
 		repo, _ := setupTestEnvironment(t)
 
@@ -437,16 +448,7 @@ func TestReviewBranchFlag(t *testing.T) {
 
 	t.Run("branch review succeeds with commits", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-
-		var receivedGitRef string
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				GitRef string `json:"git_ref"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			receivedGitRef = req.GitRef
-			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, GitRef: req.GitRef, Agent: "test"})
-		})
+		req := mockEnqueue(t, mux)
 
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
@@ -459,11 +461,11 @@ func TestReviewBranchFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if !strings.Contains(receivedGitRef, mainSHA) {
-			t.Errorf("expected git_ref to contain main SHA %s, got %s", mainSHA, receivedGitRef)
+		if !strings.Contains(req.GitRef, mainSHA) {
+			t.Errorf("expected git_ref to contain main SHA %s, got %s", mainSHA, req.GitRef)
 		}
-		if !strings.HasSuffix(receivedGitRef, "..HEAD") {
-			t.Errorf("expected git_ref to end with ..HEAD, got %s", receivedGitRef)
+		if !strings.HasSuffix(req.GitRef, "..HEAD") {
+			t.Errorf("expected git_ref to end with ..HEAD, got %s", req.GitRef)
 		}
 	})
 }
@@ -471,20 +473,7 @@ func TestReviewBranchFlag(t *testing.T) {
 func TestReviewFastFlag(t *testing.T) {
 	t.Run("fast flag sets reasoning to fast", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-
-		reasoningChan := make(chan string, 1)
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				Reasoning string `json:"reasoning"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Errorf("failed to decode request: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			reasoningChan <- req.Reasoning
-			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, Agent: "test"})
-		})
+		req := mockEnqueue(t, mux)
 
 		repo.CommitFile("file.txt", "content", "initial")
 
@@ -493,32 +482,14 @@ func TestReviewFastFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		select {
-		case reasoning := <-reasoningChan:
-			if reasoning != "fast" {
-				t.Errorf("expected reasoning 'fast', got %q", reasoning)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("timeout waiting for enqueue request")
+		if req.Reasoning != "fast" {
+			t.Errorf("expected reasoning 'fast', got %q", req.Reasoning)
 		}
 	})
 
 	t.Run("explicit reasoning takes precedence over fast", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-
-		reasoningChan := make(chan string, 1)
-		mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				Reasoning string `json:"reasoning"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Errorf("failed to decode request: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			reasoningChan <- req.Reasoning
-			respondJSON(w, http.StatusCreated, storage.ReviewJob{ID: 1, Agent: "test"})
-		})
+		req := mockEnqueue(t, mux)
 
 		repo.CommitFile("file.txt", "content", "initial")
 
@@ -527,13 +498,8 @@ func TestReviewFastFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		select {
-		case reasoning := <-reasoningChan:
-			if reasoning != "thorough" {
-				t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", reasoning)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("timeout waiting for enqueue request")
+		if req.Reasoning != "thorough" {
+			t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", req.Reasoning)
 		}
 	})
 }
