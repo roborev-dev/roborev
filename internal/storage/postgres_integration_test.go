@@ -67,9 +67,9 @@ func newIntegrationEnv(t *testing.T, timeout time.Duration) *integrationEnv {
 	return env
 }
 
-func (e *integrationEnv) waitForLocalJobs(db *DB, expected int, timeout time.Duration) {
-	e.T.Helper()
-	waitCondition(e.T, timeout, fmt.Sprintf("local job count %d", expected), func() (bool, error) {
+func (e *integrationEnv) waitForLocalJobs(t *testing.T, db *DB, expected int, timeout time.Duration) {
+	t.Helper()
+	waitCondition(t, timeout, fmt.Sprintf("local job count %d", expected), func() (bool, error) {
 		jobs, err := db.ListJobs("", "", 1000, 0)
 		if err != nil {
 			return false, err
@@ -546,8 +546,8 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
 	}
 
-	env.waitForLocalJobs(dbA, 2, 10*time.Second)
-	env.waitForLocalJobs(dbB, 2, 10*time.Second)
+	env.waitForLocalJobs(t, dbA, 2, 10*time.Second)
+	env.waitForLocalJobs(t, dbB, 2, 10*time.Second)
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
@@ -644,8 +644,8 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) {
 		t.Fatalf("Machine B: Second SyncNow failed: %v", err)
 	}
 
-	env.waitForLocalJobs(dbA, 2, 10*time.Second)
-	env.waitForLocalJobs(dbB, 2, 10*time.Second)
+	env.waitForLocalJobs(t, dbA, 2, 10*time.Second)
+	env.waitForLocalJobs(t, dbB, 2, 10*time.Second)
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
@@ -796,7 +796,7 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		syncAll(t)
 		syncAll(t)
 
-		env.waitForLocalJobs(dbA, 30, 10*time.Second)
+		env.waitForLocalJobs(t, dbA, 30, 10*time.Second)
 		env.assertPgCount("review_jobs", 30)
 	})
 
@@ -820,7 +820,7 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 		// All machines sync again
 		syncAll(t)
 
-		env.waitForLocalJobs(dbA, 45, 10*time.Second)
+		env.waitForLocalJobs(t, dbA, 45, 10*time.Second)
 		env.assertPgCount("review_jobs", 45)
 	})
 
@@ -870,14 +870,38 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) {
 			t.Errorf("%v", err)
 		}
 
-		// Final sync
-		syncAll(t)
-
 		expectedTotal := 75
 
-		env.waitForLocalJobs(dbA, expectedTotal, 15*time.Second)
-		env.waitForLocalJobs(dbB, expectedTotal, 15*time.Second)
-		env.waitForLocalJobs(dbC, expectedTotal, 15*time.Second)
+		// Workers run with a long interval in this test, so convergence
+		// requires explicit repeated SyncNow calls until all nodes have
+		// pulled the full set.
+		waitCondition(t, 20*time.Second, fmt.Sprintf("all machines converge to %d jobs", expectedTotal), func() (bool, error) {
+			if _, err := workerA.SyncNow(); err != nil {
+				return false, fmt.Errorf("Machine A sync failed: %w", err)
+			}
+			if _, err := workerB.SyncNow(); err != nil {
+				return false, fmt.Errorf("Machine B sync failed: %w", err)
+			}
+			if _, err := workerC.SyncNow(); err != nil {
+				return false, fmt.Errorf("Machine C sync failed: %w", err)
+			}
+
+			jobsA, err := dbA.ListJobs("", "", 1000, 0)
+			if err != nil {
+				return false, fmt.Errorf("Machine A list jobs failed: %w", err)
+			}
+			jobsB, err := dbB.ListJobs("", "", 1000, 0)
+			if err != nil {
+				return false, fmt.Errorf("Machine B list jobs failed: %w", err)
+			}
+			jobsC, err := dbC.ListJobs("", "", 1000, 0)
+			if err != nil {
+				return false, fmt.Errorf("Machine C list jobs failed: %w", err)
+			}
+			return len(jobsA) >= expectedTotal &&
+				len(jobsB) >= expectedTotal &&
+				len(jobsC) >= expectedTotal, nil
+		})
 
 		env.assertPgCount("review_jobs", expectedTotal)
 
@@ -1010,7 +1034,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 		t.Fatalf("Machine B: SyncNow failed: %v", err)
 	}
 
-	env.waitForLocalJobs(dbB, 3, 10*time.Second)
+	env.waitForLocalJobs(t, dbB, 3, 10*time.Second)
 
 	jobsB, err := dbB.ListJobs("", "", 100, 0)
 	if err != nil {
