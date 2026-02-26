@@ -49,7 +49,8 @@ func identifyPIDForUpdate(pid int) updatePIDIdentity {
 		return updatePIDNotRoborev
 	}
 
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	// Use -ww to request untruncated command output on BSD/macOS ps.
+	cmd := exec.Command("ps", "-ww", "-p", strconv.Itoa(pid), "-o", "command=")
 	output, err := cmd.Output()
 	if err != nil {
 		return updatePIDUnknown
