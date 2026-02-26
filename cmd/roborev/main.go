@@ -2663,6 +2663,12 @@ func waitForDaemonExit(
 		info, err := getAnyRunningDaemon()
 		if err != nil {
 			if previousPIDExited(previousPID) {
+				// A manager-restarted daemon may exist but not be
+				// health-responsive yet. Detect the replacement PID
+				// from runtime files to avoid duplicate manual starts.
+				if handoffPID := replacementRuntimePID(previousPID); handoffPID > 0 {
+					return true, handoffPID
+				}
 				return true, 0
 			}
 		} else if info.PID != previousPID {
@@ -2736,6 +2742,28 @@ func previousPIDExited(previousPID int) bool {
 		return false
 	}
 	return !isPIDAliveForUpdate(previousPID)
+}
+
+// replacementRuntimePID returns a live daemon PID from runtime files
+// that differs from previousPID, or 0 if none are found.
+func replacementRuntimePID(previousPID int) int {
+	pids, err := runtimePIDSet()
+	if err != nil {
+		return 0
+	}
+	best := 0
+	for pid := range pids {
+		if pid <= 0 || pid == previousPID {
+			continue
+		}
+		if !isPIDAliveForUpdate(pid) {
+			continue
+		}
+		if best == 0 || pid < best {
+			best = pid
+		}
+	}
+	return best
 }
 
 // runtimePIDSet returns all runtime PIDs currently on disk.

@@ -1100,6 +1100,30 @@ func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
 	}
 }
 
+func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *testing.T) {
+	stubRestartVars(t)
+
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{
+			{PID: 200, Addr: "127.0.0.1:7373"},
+		}, nil
+	}
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 200
+	}
+
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+	if !exited {
+		t.Fatal("expected exited=true when previous pid is gone")
+	}
+	if newPID != 200 {
+		t.Fatalf("expected newPID=200 from runtime handoff, got %d", newPID)
+	}
+}
+
 func TestInitialPIDsExitedRequiresPIDDeath(t *testing.T) {
 	stubRestartVars(t)
 
@@ -1233,6 +1257,49 @@ func TestRestartDaemonAfterUpdateManagerRestartedAfterKill(t *testing.T) {
 	}
 	if !strings.Contains(output, "Restarting daemon... OK") {
 		t.Fatalf("expected manager-restart success output, got %q", output)
+	}
+}
+
+func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *testing.T) {
+	s := stubRestartVars(t)
+
+	var getCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		getCalls++
+		if getCalls == 1 {
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		// Replacement daemon is not yet responsive.
+		return nil, os.ErrNotExist
+	}
+
+	var listCalls int
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		listCalls++
+		if listCalls == 1 {
+			// Initial snapshot for stop validation.
+			return []*daemon.RuntimeInfo{
+				{PID: 100, Addr: "127.0.0.1:7373"},
+			}, nil
+		}
+		// Runtime handoff to manager-restarted PID.
+		return []*daemon.RuntimeInfo{
+			{PID: 200, Addr: "127.0.0.1:7373"},
+		}, nil
+	}
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 200
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called on runtime handoff, got %d", s.startCalls)
+	}
+	if !strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("expected successful handoff output, got %q", output)
 	}
 }
 
