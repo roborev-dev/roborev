@@ -1471,6 +1471,64 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 	}
 }
 
+func TestRestartDaemonAfterUpdateStopFailedHandoffNotReadyWarnsNoStart(t *testing.T) {
+	s := stubRestartVars(t)
+
+	var handoffSeen bool
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		if s.killCalls == 0 {
+			// Initial probe + first wait loop see only the old daemon,
+			// forcing timeout and kill fallback.
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		if !handoffSeen {
+			// Second wait loop sees manager handoff PID once.
+			handoffSeen = true
+			return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+		}
+		// Replacement remains unresponsive during readiness polling.
+		return nil, os.ErrNotExist
+	}
+
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		if s.killCalls == 0 {
+			return []*daemon.RuntimeInfo{
+				{PID: 100, Addr: "127.0.0.1:7373"},
+			}, nil
+		}
+		// previousPID is gone; only replacement PID runtime remains.
+		return []*daemon.RuntimeInfo{
+			{PID: 500, Addr: "127.0.0.1:7373"},
+		}, nil
+	}
+
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 500
+	}
+
+	stopDaemonForUpdate = func() error {
+		s.stopCalls++
+		return errors.New("cannot stop daemon")
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if s.killCalls != 1 {
+		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
+	}
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called for unready handoff, got %d", s.startCalls)
+	}
+	if !strings.Contains(output, "warning: daemon handoff detected but replacement is not ready; restart it manually") {
+		t.Fatalf("expected not-ready handoff warning, got %q", output)
+	}
+	if strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("unexpected success output: %q", output)
+	}
+}
+
 // Fix #2: Probe failure with runtime files should use PID from
 // runtime files and still attempt stop/wait/start.
 func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
