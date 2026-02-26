@@ -278,20 +278,31 @@ func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
 	m.selectedIdx = 15
 	m.selectedJobID = 16
 
+	// Compute the expected first visible job using the same
+	// scroll math as handleQueueMouseClick.
+	start := max(15-visibleRows/2, 0)
+	end := start + visibleRows
+	if end > 20 {
+		end = 20
+		start = max(end-visibleRows, 0)
+	}
+	wantJobID := m.jobs[start].ID
+	wantIdx := start // no filters, so visible idx == jobs idx
+
 	// Click the first data row (y=5). In a scrolled window the
-	// first visible row is not job 1 — it's whatever start is.
+	// first visible row maps to jobs[start], not jobs[0].
 	m2, _ := updateModel(t, m, mouseLeftClick(4, 5))
 
-	// The clicked job should NOT be job 1 (it scrolled past).
-	if m2.selectedJobID == 1 {
-		t.Fatal(
-			"scrolled click selected job 1; expected a later job",
+	if m2.selectedJobID != wantJobID {
+		t.Fatalf(
+			"expected selectedJobID %d, got %d",
+			wantJobID, m2.selectedJobID,
 		)
 	}
-	// Verify the selection is within the visible window.
-	if m2.selectedIdx < 0 || m2.selectedIdx >= len(m.jobs) {
+	if m2.selectedIdx != wantIdx {
 		t.Fatalf(
-			"selectedIdx %d out of range", m2.selectedIdx,
+			"expected selectedIdx %d, got %d",
+			wantIdx, m2.selectedIdx,
 		)
 	}
 }
