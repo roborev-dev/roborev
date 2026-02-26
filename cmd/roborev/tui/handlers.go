@@ -87,10 +87,7 @@ func (m *model) handleQueueMouseClick(_ int, y int) {
 	start := 0
 	end := len(visibleJobList)
 	if len(visibleJobList) > visibleRows {
-		visibleSelectedIdx := m.getVisibleSelectedIdx()
-		if visibleSelectedIdx < 0 {
-			visibleSelectedIdx = 0
-		}
+		visibleSelectedIdx := max(m.getVisibleSelectedIdx(), 0)
 		start = max(visibleSelectedIdx-visibleRows/2, 0)
 		end = start + visibleRows
 		if end > len(visibleJobList) {
