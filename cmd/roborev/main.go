@@ -2843,6 +2843,16 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 		}
 	}
 
+	// stopDaemonForUpdate reported failure; do not manually start a new daemon
+	// unless all pre-update daemon runtimes are confirmed gone.
+	if stopFailed && initialPIDsErr == nil && !initialPIDsExited(initialRuntimePIDs, 0) {
+		fmt.Println(
+			"warning: older daemon runtimes still present after stop;" +
+				" restart it manually",
+		)
+		return
+	}
+
 	if err := startUpdatedDaemon(binDir); err != nil {
 		fmt.Printf("warning: failed to start daemon: %v\n", err)
 		return

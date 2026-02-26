@@ -1213,6 +1213,63 @@ func TestRestartDaemonAfterUpdateManagerRestartedAfterKillWithLingeringInitialPI
 	}
 }
 
+func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingering(t *testing.T) {
+	s := stubRestartVars(t)
+
+	var getCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		getCalls++
+		if getCalls == 1 {
+			// Initial probe sees previous PID.
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		// previousPID exited quickly; no replacement PID observed.
+		return nil, os.ErrNotExist
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		switch getCalls {
+		case 0:
+			// Initial snapshot includes multiple daemon PIDs.
+			return []*daemon.RuntimeInfo{
+				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 101, Addr: "127.0.0.1:7373"},
+			}, nil
+		case 1:
+			// waitForDaemonExit still sees previous PID.
+			return []*daemon.RuntimeInfo{
+				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 101, Addr: "127.0.0.1:7373"},
+			}, nil
+		default:
+			// previousPID gone, but another initial PID lingers.
+			return []*daemon.RuntimeInfo{
+				{PID: 101, Addr: "127.0.0.1:7373"},
+			}, nil
+		}
+	}
+	stopDaemonForUpdate = func() error {
+		s.stopCalls++
+		return errors.New("cannot stop all daemons")
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if s.killCalls != 0 {
+		t.Fatalf("expected kill fallback not called when previousPID exited quickly, got %d", s.killCalls)
+	}
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called with lingering initial PID, got %d", s.startCalls)
+	}
+	if !strings.Contains(output, "warning: older daemon runtimes still present after stop; restart it manually") {
+		t.Fatalf("expected lingering-runtime warning, got %q", output)
+	}
+	if strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("unexpected success output when initial PID still lingers: %q", output)
+	}
+}
+
 // Fix #2: Probe failure with runtime files should use PID from
 // runtime files and still attempt stop/wait/start.
 func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
