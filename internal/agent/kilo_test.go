@@ -231,6 +231,28 @@ func TestKiloReviewStderrStripsANSI(t *testing.T) {
 	assertNotContains(t, err.Error(), "\x1b[")
 }
 
+func TestKiloReviewNonZeroExitFallsBackToStdout(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	// Some CLIs print errors to stdout instead of stderr.
+	// When stderr is empty, the raw stdout should be included
+	// in the error diagnostics.
+	mock := mockAgentCLI(t, MockCLIOpts{
+		StdoutLines: []string{"fatal: something went wrong"},
+		ExitCode:    1,
+	})
+
+	a := NewKiloAgent(mock.CmdPath)
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+	)
+	if err == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	assertContains(t, err.Error(), "something went wrong")
+}
+
 // kiloTextEvent returns a JSONL line representing a text event
 // in the opencode/kilo --format json envelope.
 func kiloTextEvent(text string) string {

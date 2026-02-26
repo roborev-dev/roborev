@@ -125,7 +125,12 @@ func (a *KiloAgent) Review(
 	}
 	defer stdoutPipe.Close()
 
-	result, parseErr := parseOpenCodeJSON(stdoutPipe, sw)
+	// Tee raw stdout so we can include it in error diagnostics
+	// when stderr is empty (some CLIs print errors to stdout).
+	var stdoutRaw bytes.Buffer
+	tee := io.TeeReader(stdoutPipe, &stdoutRaw)
+
+	result, parseErr := parseOpenCodeJSON(tee, sw)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		var detail strings.Builder
@@ -133,9 +138,13 @@ func (a *KiloAgent) Review(
 		if parseErr != nil {
 			fmt.Fprintf(&detail, "\nstream: %v", parseErr)
 		}
-		errOut := stripTerminalControls(stderrBuf.String())
-		if errOut != "" {
-			fmt.Fprintf(&detail, "\nstderr: %s", errOut)
+		errText := stripTerminalControls(stderrBuf.String())
+		if errText != "" {
+			fmt.Fprintf(&detail, "\nstderr: %s", errText)
+		} else if raw := stripTerminalControls(
+			stdoutRaw.String(),
+		); raw != "" {
+			fmt.Fprintf(&detail, "\noutput: %s", raw)
 		}
 		if result != "" {
 			partial := result
