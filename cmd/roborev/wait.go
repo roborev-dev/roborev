@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 
 	"github.com/roborev-dev/roborev/internal/git"
 	"github.com/spf13/cobra"
@@ -17,7 +18,7 @@ func waitCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "wait [job_id|sha]",
+		Use:   "wait [job_id|sha ...]",
 		Short: "Wait for an existing review job to complete",
 		Long: `Wait for an already-running review job to complete, without enqueuing a new one.
 
@@ -29,8 +30,11 @@ calls wait to block until the result is ready.
 The argument can be a job ID (numeric) or a git ref (commit SHA, branch, HEAD).
 If no argument is given, defaults to HEAD.
 
+Multiple arguments can be given to wait for several jobs concurrently.
+With --job, all arguments are treated as job IDs.
+
 Exit codes:
-  0  Review completed with verdict PASS
+  0  All reviews completed with verdict PASS
   1  Any failure (FAIL verdict, no job found, job error)
 
 Examples:
@@ -38,8 +42,8 @@ Examples:
   roborev wait abc123            # Wait for most recent job for commit
   roborev wait 42                # Job ID (if "42" is not a valid git ref)
   roborev wait --job 42          # Force as job ID
+  roborev wait --job 10 20 30    # Wait for multiple job IDs
   roborev wait --sha HEAD~1      # Wait for job matching HEAD~1`,
-		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// In quiet mode, suppress cobra's error output
 			if quiet {
@@ -53,6 +57,11 @@ Examples:
 			}
 			if forceJobID && len(args) == 0 {
 				return fmt.Errorf("--job requires a job ID argument")
+			}
+
+			// Multiple args: wait for all concurrently
+			if len(args) > 1 {
+				return waitMultiple(cmd, args, forceJobID, quiet)
 			}
 
 			// Resolve the target to a job ID (local validation first,
@@ -151,8 +160,120 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&shaFlag, "sha", "", "git ref to find the most recent job for")
-	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
+	cmd.Flags().BoolVar(&forceJobID, "job", false, "force arguments to be treated as job IDs")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (for use in hooks)")
 
 	return cmd
+}
+
+// waitMultiple resolves multiple args to job IDs and waits for all concurrently.
+// Returns exit code 1 if any job fails or has a FAIL verdict.
+func waitMultiple(cmd *cobra.Command, args []string, forceJobID, quiet bool) error {
+	// Resolve all args to job IDs first (before contacting daemon)
+	jobIDs := make([]int64, 0, len(args))
+	for _, arg := range args {
+		if forceJobID {
+			id, err := strconv.ParseInt(arg, 10, 64)
+			if err != nil || id <= 0 {
+				return fmt.Errorf("invalid job ID: %s", arg)
+			}
+			jobIDs = append(jobIDs, id)
+		} else {
+			// Try git ref first
+			var ref string
+			if repoRoot, err := git.GetRepoRoot("."); err == nil {
+				if _, err := git.ResolveSHA(repoRoot, arg); err == nil {
+					ref = arg
+				}
+			}
+			if ref != "" {
+				// Resolve to SHA, then find job
+				repoRoot, _ := git.GetRepoRoot(".")
+				sha, err := git.ResolveSHA(repoRoot, ref)
+				if err != nil {
+					return fmt.Errorf("invalid git ref: %s", ref)
+				}
+				if err := ensureDaemon(); err != nil {
+					return fmt.Errorf("daemon not running: %w", err)
+				}
+				mainRoot, _ := git.GetMainRepoRoot(".")
+				if mainRoot == "" {
+					mainRoot, _ = git.GetRepoRoot(".")
+				}
+				job, err := findJobForCommit(mainRoot, sha)
+				if err != nil {
+					return err
+				}
+				if job == nil {
+					if !quiet {
+						cmd.Printf("No job found for %s\n", ref)
+					}
+					cmd.SilenceErrors = true
+					cmd.SilenceUsage = true
+					return &exitError{code: 1}
+				}
+				jobIDs = append(jobIDs, job.ID)
+			} else {
+				// Try as numeric job ID
+				id, err := strconv.ParseInt(arg, 10, 64)
+				if err != nil || id <= 0 {
+					return fmt.Errorf("argument %q is not a valid git ref or job ID", arg)
+				}
+				jobIDs = append(jobIDs, id)
+			}
+		}
+	}
+
+	// Ensure daemon is running
+	if err := ensureDaemon(); err != nil {
+		return fmt.Errorf("daemon not running: %w", err)
+	}
+
+	addr := getDaemonAddr()
+
+	// Wait for all jobs concurrently
+	type result struct {
+		jobID int64
+		err   error
+	}
+	results := make([]result, len(jobIDs))
+	var wg sync.WaitGroup
+	for i, id := range jobIDs {
+		wg.Add(1)
+		go func(idx int, jobID int64) {
+			defer wg.Done()
+			err := waitForJob(cmd, addr, jobID, quiet)
+			results[idx] = result{jobID: jobID, err: err}
+		}(i, id)
+	}
+	wg.Wait()
+
+	// Collect errors: any failure means exit 1
+	var firstErr error
+	for _, r := range results {
+		if r.err != nil {
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			if errors.Is(r.err, ErrJobNotFound) {
+				if !quiet {
+					cmd.Printf("No job found for job %d\n", r.jobID)
+				}
+			}
+		}
+	}
+
+	if firstErr != nil {
+		cmd.SilenceErrors = true
+		cmd.SilenceUsage = true
+		if _, isExitErr := firstErr.(*exitError); isExitErr {
+			return firstErr
+		}
+		if errors.Is(firstErr, ErrJobNotFound) {
+			return &exitError{code: 1}
+		}
+		return firstErr
+	}
+
+	return nil
 }

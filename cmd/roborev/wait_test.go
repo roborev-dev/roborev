@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -286,6 +287,98 @@ func TestWaitNumericFallbackToJobID(t *testing.T) {
 	if !strings.Contains(lastJobsQuery, "id=42") {
 		t.Errorf("expected query by id=42, got: %s", lastJobsQuery)
 	}
+}
+
+func TestWaitMultipleJobIDs(t *testing.T) {
+	setupFastPolling(t)
+
+	// Mock that serves two jobs, both passing
+	mock := mockConfig{
+		Jobs: []storage.ReviewJob{
+			{ID: 10, Agent: "test", Status: "done"},
+			{ID: 20, Agent: "test", Status: "done"},
+		},
+		Review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+	}
+	newWaitEnv(t, newWaitMockHandler(mock))
+
+	_, err := runWait(t, "--job", "10", "20")
+	if err != nil {
+		t.Fatalf("expected no error when all jobs pass, got: %v", err)
+	}
+}
+
+func TestWaitMultipleJobIDsOneFails(t *testing.T) {
+	setupFastPolling(t)
+
+	// One job passes, one fails (has issues)
+	handler := newMultiJobMockHandler(map[int64]mockJobResult{
+		10: {
+			job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+			review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+		},
+		20: {
+			job:    storage.ReviewJob{ID: 20, Agent: "test", Status: "done"},
+			review: &storage.Review{ID: 2, JobID: 20, Agent: "test", Output: "Found 1 issue:\n1. Bug"},
+		},
+	})
+	newWaitEnv(t, handler)
+
+	_, err := runWait(t, "--job", "10", "20")
+	requireExitCode(t, err, 1)
+}
+
+func TestWaitMultipleJobIDsValidation(t *testing.T) {
+	// --sha is incompatible with multiple args
+	repo := newTestGitRepo(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+	chdir(t, repo.Dir)
+
+	_, err := runWait(t, "--sha", "HEAD", "10", "20")
+	assertErrorContains(t, err, "cannot use both")
+}
+
+// mockJobResult holds per-job mock data for multi-job tests.
+type mockJobResult struct {
+	job    storage.ReviewJob
+	review *storage.Review
+}
+
+// newMultiJobMockHandler creates a handler that serves different jobs by ID.
+func newMultiJobMockHandler(jobs map[int64]mockJobResult) http.HandlerFunc {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.URL.Query().Get("id")
+		if idStr != "" {
+			id, _ := strconv.ParseInt(idStr, 10, 64)
+			if result, ok := jobs[id]; ok {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]any{
+					"jobs":     []storage.ReviewJob{result.job},
+					"has_more": false,
+				})
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"jobs":     []storage.ReviewJob{},
+			"has_more": false,
+		})
+	})
+	mux.HandleFunc("/api/review", func(w http.ResponseWriter, r *http.Request) {
+		jobIDStr := r.URL.Query().Get("job_id")
+		if jobIDStr != "" {
+			id, _ := strconv.ParseInt(jobIDStr, 10, 64)
+			if result, ok := jobs[id]; ok && result.review != nil {
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(result.review)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	return mux.ServeHTTP
 }
 
 func TestWaitReviewFetchErrorIsPlainError(t *testing.T) {
