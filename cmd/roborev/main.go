@@ -2821,7 +2821,17 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 			previousPID, updateRestartWaitTimeout,
 		)
 		if newPIDAfterKill > 0 {
-			fmt.Println("OK")
+			// Apply the same stop-failure safety gate here to avoid
+			// accepting a manager restart while other pre-update
+			// daemon runtimes are still present.
+			if !stopFailed || (initialPIDsErr == nil && initialPIDsExited(initialRuntimePIDs, newPIDAfterKill)) {
+				fmt.Println("OK")
+				return
+			}
+			fmt.Println(
+				"warning: daemon restart detected but older daemon runtimes" +
+					" remain; restart it manually",
+			)
 			return
 		}
 		if !exitedAfterKill {

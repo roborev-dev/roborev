@@ -1165,6 +1165,54 @@ func TestRestartDaemonAfterUpdateManagerRestartedAfterKill(t *testing.T) {
 	}
 }
 
+func TestRestartDaemonAfterUpdateManagerRestartedAfterKillWithLingeringInitialPID(t *testing.T) {
+	s := stubRestartVars(t)
+
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		if s.killCalls == 0 {
+			// Before forced kill, old daemon stays on the same PID.
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		// After forced kill, external manager restarts one daemon PID.
+		return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		if s.killCalls == 0 {
+			// Initial runtime snapshot includes multiple daemon PIDs.
+			return []*daemon.RuntimeInfo{
+				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 101, Addr: "127.0.0.1:7373"},
+			}, nil
+		}
+		// After kill, previousPID is gone but another initial PID remains.
+		return []*daemon.RuntimeInfo{
+			{PID: 101, Addr: "127.0.0.1:7373"},
+			{PID: 500, Addr: "127.0.0.1:7373"},
+		}, nil
+	}
+	stopDaemonForUpdate = func() error {
+		s.stopCalls++
+		return errors.New("cannot stop all daemons")
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if s.killCalls != 1 {
+		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
+	}
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called with lingering initial PID, got %d", s.startCalls)
+	}
+	if !strings.Contains(output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually") {
+		t.Fatalf("expected lingering-runtime warning, got %q", output)
+	}
+	if strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("unexpected success output when initial PID still lingers: %q", output)
+	}
+}
+
 // Fix #2: Probe failure with runtime files should use PID from
 // runtime files and still attempt stop/wait/start.
 func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
