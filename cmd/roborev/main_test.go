@@ -1100,6 +1100,50 @@ func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
 	}
 }
 
+func TestInitialPIDsExitedRequiresPIDDeath(t *testing.T) {
+	stubRestartVars(t)
+
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return nil, nil
+	}
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 101
+	}
+
+	ok := initialPIDsExited(
+		map[int]struct{}{
+			100: {},
+			101: {},
+		},
+		0,
+	)
+	if ok {
+		t.Fatal("expected false when an initial PID is still alive")
+	}
+}
+
+func TestInitialPIDsExitedAllowsManagerPID(t *testing.T) {
+	stubRestartVars(t)
+
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return nil, nil
+	}
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 500
+	}
+
+	ok := initialPIDsExited(
+		map[int]struct{}{
+			100: {},
+			500: {},
+		},
+		500,
+	)
+	if !ok {
+		t.Fatal("expected true when only allowPID remains alive")
+	}
+}
+
 func TestRestartDaemonAfterUpdateStopFailureManagerRestartNeedsCleanup(t *testing.T) {
 	s := stubRestartVars(t)
 

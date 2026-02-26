@@ -2754,7 +2754,8 @@ func runtimePIDSet() (map[int]struct{}, error) {
 }
 
 // initialPIDsExited returns true when none of the initial runtime PIDs
-// remain on disk, excluding allowPID (typically the manager-restarted PID).
+// are still represented by a runtime file or a live process, excluding
+// allowPID (typically the manager-restarted PID).
 func initialPIDsExited(initialPIDs map[int]struct{}, allowPID int) bool {
 	if len(initialPIDs) == 0 {
 		return true
@@ -2767,7 +2768,7 @@ func initialPIDsExited(initialPIDs map[int]struct{}, allowPID int) bool {
 		if pid == allowPID {
 			continue
 		}
-		if _, exists := currentPIDs[pid]; exists {
+		if _, exists := currentPIDs[pid]; exists || isPIDAliveForUpdate(pid) {
 			return false
 		}
 	}
