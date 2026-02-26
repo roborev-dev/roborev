@@ -2817,9 +2817,13 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 	if !exited {
 		// Forcefully kill orphaned/stuck daemon processes.
 		killAllDaemonsForUpdate()
-		exitedAfterKill, _ := waitForDaemonExit(
+		exitedAfterKill, newPIDAfterKill := waitForDaemonExit(
 			previousPID, updateRestartWaitTimeout,
 		)
+		if newPIDAfterKill > 0 {
+			fmt.Println("OK")
+			return
+		}
 		if !exitedAfterKill {
 			fmt.Printf(
 				"warning: daemon pid %d is still running;"+

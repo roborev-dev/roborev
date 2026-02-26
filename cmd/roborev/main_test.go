@@ -1128,6 +1128,43 @@ func TestRestartDaemonAfterUpdateStopFailureManagerRestartNeedsCleanup(t *testin
 	}
 }
 
+func TestRestartDaemonAfterUpdateManagerRestartedAfterKill(t *testing.T) {
+	s := stubRestartVars(t)
+
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		if s.killCalls == 0 {
+			// Before forced kill, old daemon stays on the same PID.
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		// After forced kill, external manager restarts the daemon.
+		return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		if s.killCalls == 0 {
+			return []*daemon.RuntimeInfo{
+				{PID: 100, Addr: "127.0.0.1:7373"},
+			}, nil
+		}
+		return []*daemon.RuntimeInfo{
+			{PID: 500, Addr: "127.0.0.1:7373"},
+		}, nil
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if s.killCalls != 1 {
+		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
+	}
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called when manager restarted daemon, got %d", s.startCalls)
+	}
+	if !strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("expected manager-restart success output, got %q", output)
+	}
+}
+
 // Fix #2: Probe failure with runtime files should use PID from
 // runtime files and still attempt stop/wait/start.
 func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
