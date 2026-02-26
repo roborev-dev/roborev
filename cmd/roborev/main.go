@@ -2671,9 +2671,9 @@ func waitForDaemonExit(
 	}
 }
 
-// waitForDaemonReady polls until any daemon becomes responsive or the
+// waitForNewDaemonReady polls until any daemon becomes responsive or the
 // timeout expires.
-func waitForDaemonReady(timeout time.Duration) bool {
+func waitForNewDaemonReady(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
 		if _, err := getAnyRunningDaemon(); err == nil {
@@ -2744,7 +2744,7 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 		return
 	}
 
-	if waitForDaemonReady(updateRestartWaitTimeout) {
+	if waitForNewDaemonReady(updateRestartWaitTimeout) {
 		fmt.Println("OK")
 		return
 	}
