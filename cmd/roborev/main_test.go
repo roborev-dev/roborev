@@ -1295,11 +1295,17 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	if s.startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called on runtime handoff, got %d", s.startCalls)
+	if s.killCalls != 1 {
+		t.Fatalf("expected kill fallback called once for unresolved handoff, got %d", s.killCalls)
 	}
-	if !strings.Contains(output, "Restarting daemon... OK") {
-		t.Fatalf("expected successful handoff output, got %q", output)
+	if s.startCalls != 1 {
+		t.Fatalf("expected manual start after unresolved handoff, got %d", s.startCalls)
+	}
+	if strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("unexpected handoff success output: %q", output)
+	}
+	if !strings.Contains(output, "warning: daemon did not become ready after restart; restart it manually") {
+		t.Fatalf("expected not-ready warning after manual start, got %q", output)
 	}
 }
 

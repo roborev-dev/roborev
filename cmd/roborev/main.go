@@ -2851,8 +2851,12 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 		// all pre-update daemon PIDs are gone before accepting
 		// manager restart as success.
 		if !stopFailed || (initialPIDsErr == nil && initialPIDsExited(initialRuntimePIDs, newPID)) {
-			fmt.Println("OK")
-			return
+			// Runtime-file handoff can race before the replacement daemon
+			// is actually serving; only accept success once responsive.
+			if waitForNewDaemonReady(updateRestartWaitTimeout) {
+				fmt.Println("OK")
+				return
+			}
 		}
 		// Treat as unresolved and continue to kill fallback.
 		exited = false
@@ -2867,15 +2871,27 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 			// Apply the same stop-failure safety gate here to avoid
 			// accepting a manager restart while other pre-update
 			// daemon runtimes are still present.
-			if !stopFailed || (initialPIDsErr == nil && initialPIDsExited(initialRuntimePIDs, newPIDAfterKill)) {
+			if stopFailed && (initialPIDsErr != nil || !initialPIDsExited(initialRuntimePIDs, newPIDAfterKill)) {
+				fmt.Println(
+					"warning: daemon restart detected but older daemon runtimes" +
+						" remain; restart it manually",
+				)
+				return
+			}
+			// Do not report success until the handoff daemon is responsive.
+			if waitForNewDaemonReady(updateRestartWaitTimeout) {
 				fmt.Println("OK")
 				return
 			}
-			fmt.Println(
-				"warning: daemon restart detected but older daemon runtimes" +
-					" remain; restart it manually",
-			)
-			return
+			// In uncertain stop-failure paths, avoid starting another daemon
+			// when a handoff PID already exists but is not ready yet.
+			if stopFailed {
+				fmt.Println(
+					"warning: daemon handoff detected but replacement is not ready;" +
+						" restart it manually",
+				)
+				return
+			}
 		}
 		if !exitedAfterKill {
 			fmt.Printf(
