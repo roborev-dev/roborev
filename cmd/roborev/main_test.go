@@ -926,34 +926,55 @@ func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
 	}
 }
 
-func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
+// stubRestartVars saves and restores all package-level vars used by
+// restartDaemonAfterUpdate. Returns a struct with call counters.
+type restartStubs struct {
+	stopCalls  int
+	startCalls int
+}
+
+func stubRestartVars(t *testing.T) *restartStubs {
+	t.Helper()
 	origGet := getAnyRunningDaemon
+	origList := listAllRuntimes
 	origStop := stopDaemonForUpdate
 	origStart := startUpdatedDaemon
 	origWait := updateRestartWaitTimeout
 	origPoll := updateRestartPollInterval
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGet
+		listAllRuntimes = origList
 		stopDaemonForUpdate = origStop
 		startUpdatedDaemon = origStart
 		updateRestartWaitTimeout = origWait
 		updateRestartPollInterval = origPoll
 	})
+	updateRestartWaitTimeout = 5 * time.Millisecond
+	updateRestartPollInterval = 1 * time.Millisecond
 
-	var stopCalls, startCalls int
+	// Default: no runtimes on disk.
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return nil, nil
+	}
+
+	s := &restartStubs{}
+	stopDaemonForUpdate = func() error {
+		s.stopCalls++
+		return nil
+	}
+	startUpdatedDaemon = func(string) error {
+		s.startCalls++
+		return nil
+	}
+	return s
+}
+
+func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
+	s := stubRestartVars(t)
+
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
 	}
-	stopDaemonForUpdate = func() error {
-		stopCalls++
-		return nil
-	}
-	startUpdatedDaemon = func(binDir string) error {
-		startCalls++
-		return nil
-	}
-	updateRestartWaitTimeout = 5 * time.Millisecond
-	updateRestartPollInterval = 1 * time.Millisecond
 
 	output := captureStdout(t, func() {
 		restartDaemonAfterUpdate("/tmp/bin", true)
@@ -962,46 +983,26 @@ func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
 	if !strings.Contains(output, "Skipping daemon restart (--no-restart)") {
 		t.Fatalf("expected no-restart message, got %q", output)
 	}
-	if stopCalls != 0 {
-		t.Fatalf("expected stopDaemonForUpdate not called, got %d", stopCalls)
+	if s.stopCalls != 0 {
+		t.Fatalf("expected stopDaemonForUpdate not called, got %d", s.stopCalls)
 	}
-	if startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called, got %d", startCalls)
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called, got %d", s.startCalls)
 	}
 }
 
 func TestRestartDaemonAfterUpdateManagerRestarted(t *testing.T) {
-	origGet := getAnyRunningDaemon
-	origStop := stopDaemonForUpdate
-	origStart := startUpdatedDaemon
-	origWait := updateRestartWaitTimeout
-	origPoll := updateRestartPollInterval
-	t.Cleanup(func() {
-		getAnyRunningDaemon = origGet
-		stopDaemonForUpdate = origStop
-		startUpdatedDaemon = origStart
-		updateRestartWaitTimeout = origWait
-		updateRestartPollInterval = origPoll
-	})
+	s := stubRestartVars(t)
 
-	var getCalls, stopCalls, startCalls int
+	var getCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
 		if getCalls == 1 {
 			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
 		}
+		// After stop, an external manager restarted with a new PID.
 		return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
 	}
-	stopDaemonForUpdate = func() error {
-		stopCalls++
-		return nil
-	}
-	startUpdatedDaemon = func(binDir string) error {
-		startCalls++
-		return nil
-	}
-	updateRestartWaitTimeout = 5 * time.Millisecond
-	updateRestartPollInterval = 1 * time.Millisecond
 
 	output := captureStdout(t, func() {
 		restartDaemonAfterUpdate("/tmp/bin", false)
@@ -1010,41 +1011,24 @@ func TestRestartDaemonAfterUpdateManagerRestarted(t *testing.T) {
 	if !strings.Contains(output, "Restarting daemon... OK") {
 		t.Fatalf("expected successful restart output, got %q", output)
 	}
-	if stopCalls != 1 {
-		t.Fatalf("expected stopDaemonForUpdate called once, got %d", stopCalls)
+	if s.stopCalls != 1 {
+		t.Fatalf("expected stopDaemonForUpdate called once, got %d", s.stopCalls)
 	}
-	if startCalls != 0 {
-		t.Fatalf("expected startUpdatedDaemon not called, got %d", startCalls)
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called, got %d", s.startCalls)
 	}
 }
 
 func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
-	origGet := getAnyRunningDaemon
-	origStop := stopDaemonForUpdate
-	origStart := startUpdatedDaemon
-	origWait := updateRestartWaitTimeout
-	origPoll := updateRestartPollInterval
-	t.Cleanup(func() {
-		getAnyRunningDaemon = origGet
-		stopDaemonForUpdate = origStop
-		startUpdatedDaemon = origStart
-		updateRestartWaitTimeout = origWait
-		updateRestartPollInterval = origPoll
-	})
+	s := stubRestartVars(t)
 
-	var startCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
 	}
 	stopDaemonForUpdate = func() error {
+		s.stopCalls++
 		return errors.New("cannot stop daemon")
 	}
-	startUpdatedDaemon = func(binDir string) error {
-		startCalls++
-		return nil
-	}
-	updateRestartWaitTimeout = 5 * time.Millisecond
-	updateRestartPollInterval = 1 * time.Millisecond
 
 	output := captureStdout(t, func() {
 		restartDaemonAfterUpdate("/tmp/bin", false)
@@ -1059,8 +1043,101 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 	if strings.Contains(output, "Restarting daemon... OK") {
 		t.Fatalf("unexpected success output: %q", output)
 	}
-	if startCalls != 1 {
-		t.Fatalf("expected startUpdatedDaemon called once, got %d", startCalls)
+}
+
+// Fix #2: Probe failure with runtime files should still attempt restart.
+func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
+	s := stubRestartVars(t)
+
+	var getCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		getCalls++
+		if getCalls <= 1 {
+			// Initial probe fails (daemon unresponsive).
+			return nil, os.ErrNotExist
+		}
+		// After start, daemon responds.
+		return &daemon.RuntimeInfo{PID: 300, Addr: "127.0.0.1:7373"}, nil
+	}
+	// But runtime files exist on disk.
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{
+			{PID: 100, Addr: "127.0.0.1:7373"},
+		}, nil
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if !strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("expected restart OK, got %q", output)
+	}
+	if s.stopCalls != 1 {
+		t.Fatalf("expected stop called once, got %d", s.stopCalls)
+	}
+	if s.startCalls != 1 {
+		t.Fatalf("expected start called once, got %d", s.startCalls)
+	}
+}
+
+// Fix #2: No responsive daemon and no runtime files should skip silently.
+func TestRestartDaemonAfterUpdateNoDaemon(t *testing.T) {
+	s := stubRestartVars(t)
+
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	// No runtime files either.
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return nil, nil
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if output != "" {
+		t.Fatalf("expected no output, got %q", output)
+	}
+	if s.stopCalls != 0 {
+		t.Fatalf("expected stop not called, got %d", s.stopCalls)
+	}
+	if s.startCalls != 0 {
+		t.Fatalf("expected start not called, got %d", s.startCalls)
+	}
+}
+
+// Fix #3: Unmanaged daemon exits quickly — no 2s delay.
+func TestRestartDaemonAfterUpdateExitsQuickly(t *testing.T) {
+	s := stubRestartVars(t)
+
+	var getCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		getCalls++
+		if getCalls == 1 {
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		if getCalls == 2 {
+			// Daemon exited after stop.
+			return nil, os.ErrNotExist
+		}
+		// After manual start, daemon is ready.
+		return &daemon.RuntimeInfo{PID: 400, Addr: "127.0.0.1:7373"}, nil
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if !strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("expected restart OK, got %q", output)
+	}
+	if s.stopCalls != 1 {
+		t.Fatalf("expected stop called once, got %d", s.stopCalls)
+	}
+	if s.startCalls != 1 {
+		t.Fatalf("expected start called once, got %d", s.startCalls)
 	}
 }
 

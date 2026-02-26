@@ -49,6 +49,7 @@ var (
 	updateRestartWaitTimeout  = 2 * time.Second
 	updateRestartPollInterval = 200 * time.Millisecond
 	getAnyRunningDaemon       = daemon.GetAnyRunningDaemon
+	listAllRuntimes           = daemon.ListAllRuntimes
 	stopDaemonForUpdate       = stopDaemon
 	startUpdatedDaemon        = func(binDir string) error {
 		newBinary := filepath.Join(binDir, "roborev")
@@ -2647,29 +2648,57 @@ it only updates existing installations. Used by 'roborev update'.`,
 	return cmd
 }
 
-// waitForDaemonPIDChange polls for a responsive daemon with a PID different
-// from previousPID. Returns whether a PID change was observed and whether the
-// previous PID remained responsive during the wait window.
-func waitForDaemonPIDChange(previousPID int, timeout time.Duration) (changed bool, samePIDAlive bool) {
+// waitForDaemonExit polls until the daemon with previousPID stops
+// responding or the timeout expires. Returns (exited, newPID) where
+// newPID > 0 means an external manager already restarted the daemon
+// with a different PID.
+func waitForDaemonExit(
+	previousPID int, timeout time.Duration,
+) (exited bool, newPID int) {
 	deadline := time.Now().Add(timeout)
 	for {
-		if info, err := getAnyRunningDaemon(); err == nil {
-			if info.PID != previousPID {
-				return true, false
-			}
-			samePIDAlive = true
+		info, err := getAnyRunningDaemon()
+		if err != nil {
+			return true, 0
 		}
-
+		if info.PID != previousPID {
+			return true, info.PID
+		}
 		if time.Now().After(deadline) {
-			return false, samePIDAlive
+			return false, 0
 		}
 		time.Sleep(updateRestartPollInterval)
 	}
 }
 
+// waitForDaemonReady polls until any daemon becomes responsive or the
+// timeout expires.
+func waitForDaemonReady(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := getAnyRunningDaemon(); err == nil {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(updateRestartPollInterval)
+	}
+}
+
+// hasDaemonRuntimes returns true if daemon runtime files exist on
+// disk, even if the daemon is not currently responsive.
+func hasDaemonRuntimes() bool {
+	runtimes, err := listAllRuntimes()
+	return err == nil && len(runtimes) > 0
+}
+
 func restartDaemonAfterUpdate(binDir string, noRestart bool) {
+	// Check for a responsive daemon first; fall back to runtime
+	// files so we don't silently skip when the daemon is running
+	// but temporarily unresponsive.
 	runningInfo, err := getAnyRunningDaemon()
-	if err != nil {
+	if err != nil && !hasDaemonRuntimes() {
 		return
 	}
 
@@ -2679,33 +2708,51 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 	}
 
 	fmt.Print("Restarting daemon... ")
-	previousPID := runningInfo.PID
+
+	previousPID := 0
+	if runningInfo != nil {
+		previousPID = runningInfo.PID
+	}
 
 	if err := stopDaemonForUpdate(); err != nil && err != ErrDaemonNotRunning {
 		fmt.Printf("warning: failed to stop daemon: %v\n", err)
 	}
 
-	if changed, _ := waitForDaemonPIDChange(previousPID, updateRestartWaitTimeout); changed {
-		fmt.Println("OK")
-		return
+	// When we know the previous PID, wait for it to exit. If an
+	// external manager (launchd/systemd) restarts it, we detect the
+	// new PID and skip manual start. When previousPID is 0 (probe
+	// failed but runtime files existed), skip detection and go
+	// straight to starting a new daemon.
+	if previousPID != 0 {
+		exited, newPID := waitForDaemonExit(
+			previousPID, updateRestartWaitTimeout,
+		)
+		if newPID > 0 {
+			fmt.Println("OK")
+			return
+		}
+		if !exited {
+			fmt.Printf(
+				"warning: daemon pid %d is still running;"+
+					" restart it manually\n", previousPID,
+			)
+			return
+		}
 	}
-
 	if err := startUpdatedDaemon(binDir); err != nil {
 		fmt.Printf("warning: failed to start daemon: %v\n", err)
 		return
 	}
 
-	changed, samePIDAlive := waitForDaemonPIDChange(previousPID, updateRestartWaitTimeout)
-	if changed {
+	if waitForDaemonReady(updateRestartWaitTimeout) {
 		fmt.Println("OK")
 		return
 	}
-	if samePIDAlive {
-		fmt.Printf("warning: daemon pid %d is still running; restart it manually\n", previousPID)
-		return
-	}
 
-	fmt.Println("warning: daemon did not become ready after restart; restart it manually")
+	fmt.Println(
+		"warning: daemon did not become ready after restart;" +
+			" restart it manually",
+	)
 }
 
 func updateCmd() *cobra.Command {
