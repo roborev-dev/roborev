@@ -14,6 +14,14 @@ const (
 	updatePIDNotRoborev
 )
 
+var nonRunDaemonSubcommandsForUpdate = map[string]struct{}{
+	"status":  {},
+	"start":   {},
+	"stop":    {},
+	"restart": {},
+	"logs":    {},
+}
+
 func normalizeCommandLineForUpdate(s string) string {
 	// Strip NUL bytes first (common with UTF-16LE output and /proc cmdline).
 	s = strings.ReplaceAll(s, "\x00", " ")
@@ -117,6 +125,10 @@ func isRoborevDaemonCommandForUpdate(cmdStr string) bool {
 	fields := strings.Fields(cmdLower)
 	foundDaemon := false
 	for _, field := range fields {
+		field = trimCommandTokenQuotesForUpdate(field)
+		if field == "" {
+			continue
+		}
 		if !foundDaemon {
 			if field == "daemon" ||
 				strings.HasSuffix(field, "/daemon") ||
@@ -125,32 +137,16 @@ func isRoborevDaemonCommandForUpdate(cmdStr string) bool {
 			}
 			continue
 		}
-		if strings.HasPrefix(field, "-") {
-			continue
+		if field == "run" {
+			return true
 		}
-		if looksLikeFlagValueForUpdate(field) {
-			continue
+		if _, isNonRunSubcommand := nonRunDaemonSubcommandsForUpdate[field]; isNonRunSubcommand {
+			return false
 		}
-		return field == "run"
 	}
 	return false
 }
 
-func looksLikeFlagValueForUpdate(token string) bool {
-	if strings.ContainsAny(token, "/\\") {
-		return true
-	}
-	if strings.Contains(token, ":") {
-		return true
-	}
-	if strings.Contains(token, "=") {
-		return true
-	}
-	if len(token) > 0 && token[0] >= '0' && token[0] <= '9' {
-		return true
-	}
-	if strings.Contains(token, ".") {
-		return true
-	}
-	return false
+func trimCommandTokenQuotesForUpdate(token string) string {
+	return strings.Trim(token, `"'`)
 }

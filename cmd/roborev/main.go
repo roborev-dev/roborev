@@ -2880,6 +2880,13 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 				fmt.Println("OK")
 				return
 			}
+			// A replacement PID already exists; avoid manually starting
+			// another daemon instance while handoff is still warming up.
+			fmt.Println(
+				"warning: daemon handoff detected but replacement is not ready;" +
+					" restart it manually",
+			)
+			return
 		}
 		// Treat as unresolved and continue to kill fallback.
 		exited = false
@@ -2906,15 +2913,13 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 				fmt.Println("OK")
 				return
 			}
-			// In uncertain stop-failure paths, avoid starting another daemon
-			// when a handoff PID already exists but is not ready yet.
-			if stopFailed {
-				fmt.Println(
-					"warning: daemon handoff detected but replacement is not ready;" +
-						" restart it manually",
-				)
-				return
-			}
+			// A replacement PID already exists; avoid manually starting
+			// another daemon instance while handoff is still warming up.
+			fmt.Println(
+				"warning: daemon handoff detected but replacement is not ready;" +
+					" restart it manually",
+			)
+			return
 		}
 		if !exitedAfterKill {
 			fmt.Printf(

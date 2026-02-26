@@ -23,6 +23,16 @@ func TestIsRoborevDaemonCommandForUpdate(t *testing.T) {
 			want:    true,
 		},
 		{
+			name:    "quoted windows args daemon run",
+			cmdLine: `"C:\Tools\roborev.exe" "daemon" "run" "--port" "7373"`,
+			want:    true,
+		},
+		{
+			name:    "plain flag value before run",
+			cmdLine: "roborev daemon --profile prod run",
+			want:    true,
+		},
+		{
 			name:    "daemon status command",
 			cmdLine: "/usr/local/bin/roborev daemon status",
 			want:    false,

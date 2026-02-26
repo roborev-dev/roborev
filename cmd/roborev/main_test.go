@@ -1345,17 +1345,69 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	if s.killCalls != 1 {
-		t.Fatalf("expected kill fallback called once for unresolved handoff, got %d", s.killCalls)
+	if s.killCalls != 0 {
+		t.Fatalf("expected kill fallback not called when handoff PID already exists, got %d", s.killCalls)
 	}
-	if s.startCalls != 1 {
-		t.Fatalf("expected manual start after unresolved handoff, got %d", s.startCalls)
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called for unready handoff, got %d", s.startCalls)
 	}
 	if strings.Contains(output, "Restarting daemon... OK") {
 		t.Fatalf("unexpected handoff success output: %q", output)
 	}
-	if !strings.Contains(output, "warning: daemon did not become ready after restart; restart it manually") {
-		t.Fatalf("expected not-ready warning after manual start, got %q", output)
+	if !strings.Contains(output, "warning: daemon handoff detected but replacement is not ready; restart it manually") {
+		t.Fatalf("expected not-ready handoff warning, got %q", output)
+	}
+}
+
+func TestRestartDaemonAfterUpdateManagerHandoffAfterKillNotReadyWarnsNoStart(t *testing.T) {
+	s := stubRestartVars(t)
+
+	var handoffSeen bool
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		if s.killCalls == 0 {
+			// Initial probe + first wait loop see only the old daemon,
+			// forcing timeout and kill fallback.
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		if !handoffSeen {
+			// After kill fallback, handoff PID appears once.
+			handoffSeen = true
+			return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+		}
+		// Replacement remains unresponsive during readiness polling.
+		return nil, os.ErrNotExist
+	}
+
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		if s.killCalls == 0 {
+			return []*daemon.RuntimeInfo{
+				{PID: 100, Addr: "127.0.0.1:7373"},
+			}, nil
+		}
+		return []*daemon.RuntimeInfo{
+			{PID: 500, Addr: "127.0.0.1:7373"},
+		}, nil
+	}
+
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 500
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if s.killCalls != 1 {
+		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
+	}
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called for unready handoff, got %d", s.startCalls)
+	}
+	if !strings.Contains(output, "warning: daemon handoff detected but replacement is not ready; restart it manually") {
+		t.Fatalf("expected not-ready handoff warning, got %q", output)
+	}
+	if strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("unexpected success output: %q", output)
 	}
 }
 
