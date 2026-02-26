@@ -86,10 +86,11 @@ func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
 		return m, m.fetchReview(job.ID)
 	case storage.JobStatusFailed:
 		m.currentBranch = ""
+		jobCopy := *job
 		m.currentReview = &storage.Review{
 			Agent:  job.Agent,
 			Output: "Job failed:\n\n" + job.Error,
-			Job:    job,
+			Job:    &jobCopy,
 		}
 		m.reviewFromView = viewQueue
 		m.currentView = viewReview

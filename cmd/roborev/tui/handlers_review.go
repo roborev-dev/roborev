@@ -16,10 +16,11 @@ func (m model) handlePromptKey() (tea.Model, tea.Cmd) {
 			m.promptFromQueue = true
 			return m, m.fetchReviewForPrompt(job.ID)
 		} else if job.Status == storage.JobStatusRunning && job.Prompt != "" {
+			jobCopy := *job
 			m.currentReview = &storage.Review{
 				Agent:  job.Agent,
 				Prompt: job.Prompt,
-				Job:    job,
+				Job:    &jobCopy,
 			}
 			m.currentView = viewKindPrompt
 			m.promptScroll = 0
@@ -192,7 +193,8 @@ func (m model) handleCopyKey() (tea.Model, tea.Cmd) {
 		return m, m.copyToClipboard(m.currentReview)
 	} else if job, ok := m.selectedJob(); m.currentView == viewQueue && ok {
 		if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed {
-			return m, m.fetchReviewAndCopy(job.ID, job)
+			jobCopy := *job
+			return m, m.fetchReviewAndCopy(job.ID, &jobCopy)
 		}
 		var status string
 		switch job.Status {
@@ -217,7 +219,8 @@ func (m model) handleCommitMsgKey() (tea.Model, tea.Cmd) {
 		m.commitMsgJobID = job.ID
 		m.commitMsgContent = ""
 		m.commitMsgScroll = 0
-		return m, m.fetchCommitMsg(job)
+		jobCopy := *job
+		return m, m.fetchCommitMsg(&jobCopy)
 	} else if m.currentView == viewReview && m.currentReview != nil && m.currentReview.Job != nil {
 		job := m.currentReview.Job
 		m.commitMsgFromView = m.currentView
