@@ -136,7 +136,7 @@ func (a *KiloAgent) Review(
 	// and exit. Without this, cmd.Wait() can deadlock if the
 	// parser returned early (e.g., read error) while the process
 	// is still writing to the pipe.
-	_, _ = io.Copy(io.Discard, stdoutPipe)
+	_, _ = io.Copy(&stdoutRaw, stdoutPipe)
 
 	if waitErr := cmd.Wait(); waitErr != nil {
 		var detail strings.Builder
