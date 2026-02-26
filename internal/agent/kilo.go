@@ -132,6 +132,12 @@ func (a *KiloAgent) Review(
 
 	result, parseErr := parseOpenCodeJSON(tee, sw)
 
+	// Drain remaining stdout so the subprocess can finish writing
+	// and exit. Without this, cmd.Wait() can deadlock if the
+	// parser returned early (e.g., read error) while the process
+	// is still writing to the pipe.
+	_, _ = io.Copy(io.Discard, stdoutPipe)
+
 	if waitErr := cmd.Wait(); waitErr != nil {
 		var detail strings.Builder
 		fmt.Fprintf(&detail, "kilo failed")
