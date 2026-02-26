@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1422,7 +1424,8 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 		"main.go": "package main\n",
 	})
 
-	var addressCalls atomic.Int32
+	var mu sync.Mutex
+	var addressedJobIDs []int64
 
 	passVerdict := "P"
 
@@ -1468,7 +1471,14 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 			}
 		}).
 		WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
-			addressCalls.Add(1)
+			var body struct {
+				JobID int64 `json:"job_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+				mu.Lock()
+				addressedJobIDs = append(addressedJobIDs, body.JobID)
+				mu.Unlock()
+			}
 			w.WriteHeader(http.StatusOK)
 		}).
 		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
@@ -1495,5 +1505,13 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 	// Job 20 (FAIL) should be processed — its findings should appear
 	if !strings.Contains(out, "Bug in foo.go") {
 		t.Errorf("expected FAIL job findings in output, got:\n%s", out)
+	}
+
+	// Verify PASS job 10 was marked addressed during the skip phase
+	mu.Lock()
+	ids := addressedJobIDs
+	mu.Unlock()
+	if !slices.Contains(ids, int64(10)) {
+		t.Errorf("expected job 10 to be marked addressed, got IDs: %v", ids)
 	}
 }

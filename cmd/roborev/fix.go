@@ -822,7 +822,9 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			if !opts.quiet {
 				cmd.Printf("Skipping job %d (review passed)\n", id)
 			}
-			_ = markJobAddressed(serverAddr, id)
+			if err := markJobAddressed(serverAddr, id); err != nil && !opts.quiet {
+				cmd.Printf("Warning: could not mark job %d as addressed: %v\n", id, err)
+			}
 			continue
 		}
 		entries = append(entries, batchEntry{jobID: id, job: job, review: review})
