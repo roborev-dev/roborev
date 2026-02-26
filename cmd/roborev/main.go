@@ -2858,13 +2858,33 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 	}
 
 	// stopDaemonForUpdate reported failure; do not manually start a new daemon
-	// unless all pre-update daemon runtimes are confirmed gone.
-	if stopFailed && initialPIDsErr == nil && !initialPIDsExited(initialRuntimePIDs, 0) {
-		fmt.Println(
-			"warning: older daemon runtimes still present after stop;" +
-				" restart it manually",
-		)
-		return
+	// unless daemon runtime state is successfully verified first.
+	if stopFailed {
+		if initialPIDsErr != nil {
+			// Initial snapshot failed; require a successful resnapshot with
+			// no remaining daemon runtimes before we attempt manual start.
+			currentPIDs, err := runtimePIDSet()
+			if err != nil {
+				fmt.Println(
+					"warning: failed to verify daemon runtimes after stop;" +
+						" restart it manually",
+				)
+				return
+			}
+			if len(currentPIDs) > 0 {
+				fmt.Println(
+					"warning: older daemon runtimes still present after stop;" +
+						" restart it manually",
+				)
+				return
+			}
+		} else if !initialPIDsExited(initialRuntimePIDs, 0) {
+			fmt.Println(
+				"warning: older daemon runtimes still present after stop;" +
+					" restart it manually",
+			)
+			return
+		}
 	}
 
 	if err := startUpdatedDaemon(binDir); err != nil {

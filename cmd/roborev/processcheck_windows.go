@@ -4,7 +4,9 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 )
 
@@ -16,7 +18,8 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 	}
 
 	pidStr := strconv.Itoa(pid)
-	cmd := exec.Command("tasklist", "/FI", "PID eq "+pidStr, "/FO", "CSV", "/NH")
+	// Use an absolute path to avoid PATH/CWD binary hijacking.
+	cmd := exec.Command(tasklistPath(), "/FI", "PID eq "+pidStr, "/FO", "CSV", "/NH")
 	out, err := cmd.Output()
 	if err != nil {
 		// Be conservative on command failure.
@@ -25,4 +28,15 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 
 	quotedPID := []byte("\"" + pidStr + "\"")
 	return len(out) > 0 && bytes.Contains(out, quotedPID)
+}
+
+func tasklistPath() string {
+	systemRoot := os.Getenv("SystemRoot")
+	if systemRoot == "" {
+		systemRoot = os.Getenv("WINDIR")
+	}
+	if systemRoot == "" {
+		systemRoot = `C:\Windows`
+	}
+	return filepath.Join(systemRoot, "System32", "tasklist.exe")
 }
