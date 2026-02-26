@@ -1043,6 +1043,9 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 	if strings.Contains(output, "Restarting daemon... OK") {
 		t.Fatalf("unexpected success output: %q", output)
 	}
+	if s.startCalls != 0 {
+		t.Fatalf("expected start not called, got %d", s.startCalls)
+	}
 }
 
 // Fix #2: Probe failure with runtime files should still attempt restart.
