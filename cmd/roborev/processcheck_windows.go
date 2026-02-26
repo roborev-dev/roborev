@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 )
 
 // isPIDAliveForUpdateDefault returns true when pid exists.
@@ -76,7 +75,7 @@ func getCommandLineWmicForUpdate(pidStr string) string {
 	if err != nil {
 		return ""
 	}
-	return parseWmicOutputForUpdate(string(output))
+	return parseWmicOutputForUpdate(output)
 }
 
 func getCommandLinePowerShellForUpdate(pidStr string) string {
@@ -90,16 +89,7 @@ func getCommandLinePowerShellForUpdate(pidStr string) string {
 	if err != nil {
 		return ""
 	}
-	return normalizeCommandLineForUpdate(string(output))
-}
-
-func parseWmicOutputForUpdate(raw string) string {
-	result := normalizeCommandLineForUpdate(raw)
-	lower := strings.ToLower(result)
-	if strings.HasPrefix(lower, "commandline") {
-		result = strings.TrimSpace(result[11:]) // len("commandline") == 11
-	}
-	return result
+	return normalizeCommandLineBytesForUpdate(output)
 }
 
 func classifyCommandLineForUpdate(cmdLine string) updatePIDIdentity {

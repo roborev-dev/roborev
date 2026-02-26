@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"encoding/binary"
+	"testing"
+	"unicode/utf16"
+)
 
 func TestIsRoborevDaemonCommandForUpdate(t *testing.T) {
 	tests := []struct {
@@ -51,4 +55,44 @@ func TestNormalizeCommandLineForUpdate(t *testing.T) {
 	if got != "roborev daemon run" {
 		t.Fatalf("normalizeCommandLineForUpdate(%q)=%q, want %q", raw, got, "roborev daemon run")
 	}
+}
+
+func TestParseWmicOutputForUpdateUTF16LE(t *testing.T) {
+	raw := encodeUTF16LE(
+		"CommandLine\r\nC:\\Tools\\roborev.exe daemon run --port 7373\r\n", true,
+	)
+	got := parseWmicOutputForUpdate(raw)
+	want := `C:\Tools\roborev.exe daemon run --port 7373`
+	if got != want {
+		t.Fatalf("parseWmicOutputForUpdate()=%q, want %q", got, want)
+	}
+	if !isRoborevDaemonCommandForUpdate(got) {
+		t.Fatalf("expected parsed WMIC output to classify as daemon command, got %q", got)
+	}
+}
+
+func TestNormalizeCommandLineBytesForUpdateUTF16LENoBOM(t *testing.T) {
+	raw := encodeUTF16LE("roborev.exe daemon run --port 7373\r\n", false)
+	got := normalizeCommandLineBytesForUpdate(raw)
+	want := "roborev.exe daemon run --port 7373"
+	if got != want {
+		t.Fatalf("normalizeCommandLineBytesForUpdate()=%q, want %q", got, want)
+	}
+}
+
+func encodeUTF16LE(s string, withBOM bool) []byte {
+	u16 := utf16.Encode([]rune(s))
+	offset := 0
+	if withBOM {
+		offset = 2
+	}
+	out := make([]byte, offset+len(u16)*2)
+	if withBOM {
+		out[0] = 0xff
+		out[1] = 0xfe
+	}
+	for i, r := range u16 {
+		binary.LittleEndian.PutUint16(out[offset+i*2:offset+i*2+2], r)
+	}
+	return out
 }
