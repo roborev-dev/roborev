@@ -14,19 +14,17 @@ import (
 )
 
 // setupRenderModel creates a standardized model for rendering tests
-func setupRenderModel(view viewKind, review *storage.Review, opts ...func(*model)) model {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.width, m.height = 100, 30
-	m.currentView = view
-	m.currentReview = review
-	for _, opt := range opts {
-		opt(&m)
+func setupRenderModel(
+	view viewKind,
+	review *storage.Review,
+	opts ...testModelOption,
+) model {
+	base := []testModelOption{
+		withCurrentView(view),
+		withReview(review),
+		withDimensions(100, 30),
 	}
-	return m
-}
-
-func withModelBranch(b string) func(*model) {
-	return func(m *model) { m.currentBranch = b }
+	return initTestModel(append(base, opts...)...)
 }
 
 func assertOutputContains(t *testing.T, got, want string) {
@@ -1540,16 +1538,10 @@ func TestTUIFetchReviewAndCopy404(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
-	// Create test server that returns a review with empty output
-	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		review := storage.Review{
-			ID:     1,
-			JobID:  123,
-			Agent:  "test",
-			Output: "", // Empty output
-		}
-		json.NewEncoder(w).Encode(review)
-	})
+	_, m := mockServerModel(t, mockReviewHandler(
+		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: ""},
+		nil,
+	))
 
 	cmd := m.fetchReviewAndCopy(123, nil)
 	msg := cmd()
@@ -1571,10 +1563,11 @@ func TestTUIFetchReviewAndCopyEmptyOutput(t *testing.T) {
 func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: xclip not found")}
 
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.clipboard = mock
-	m.currentView = viewReview
-	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withClipboard(mock),
+		withReview(makeReview(1, &storage.ReviewJob{ID: 1}, withReviewAgent("test"), withReviewOutput("Review content"))),
+	)
 
 	// Press 'y' to copy
 	_, cmd := pressKey(m, 'y')
@@ -1602,16 +1595,10 @@ func TestTUIClipboardWriteFailurePropagates(t *testing.T) {
 func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 	mock := &mockClipboard{err: fmt.Errorf("clipboard unavailable: pbcopy not found")}
 
-	// Create test server that returns a valid review
-	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		review := storage.Review{
-			ID:     1,
-			JobID:  123,
-			Agent:  "test",
-			Output: "Review content",
-		}
-		json.NewEncoder(w).Encode(review)
-	})
+	_, m := mockServerModel(t, mockReviewHandler(
+		storage.Review{ID: 1, JobID: 123, Agent: "test", Output: "Review content"},
+		nil,
+	))
 	m.clipboard = mock
 
 	// Fetch succeeds but clipboard write fails
@@ -1635,17 +1622,11 @@ func TestTUIFetchReviewAndCopyClipboardFailure(t *testing.T) {
 func TestTUIFetchReviewAndCopyJobInjection(t *testing.T) {
 	mock := &mockClipboard{}
 
-	// Create test server that returns a review WITHOUT Job populated
-	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		review := storage.Review{
-			ID:     42,
-			JobID:  123,
-			Agent:  "test",
-			Output: "Review content",
-			// Job is intentionally nil
-		}
-		json.NewEncoder(w).Encode(review)
-	})
+	// Server returns a review WITHOUT Job populated (intentionally nil)
+	_, m := mockServerModel(t, mockReviewHandler(
+		storage.Review{ID: 42, JobID: 123, Agent: "test", Output: "Review content"},
+		nil,
+	))
 	m.clipboard = mock
 
 	// Pass a job parameter - this should be injected when review.Job is nil
@@ -2167,142 +2148,107 @@ func TestTUILogNavFromTasks(t *testing.T) {
 // Branch filter tests
 
 func TestReviewFixPanelOpenFromReview(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	done := storage.JobStatusDone
-	job := storage.ReviewJob{ID: 1, Status: done}
-	m.currentReview = &storage.Review{JobID: 1, Job: &job}
-	m.jobs = []storage.ReviewJob{job}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
+	job := makeJob(1)
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 1, Job: &job}),
+		withTestJobs(job),
+		withSelection(0, 1),
+	)
 
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
-	got := m2.(model)
+	got, _ := pressKey(m, 'F')
 
-	if !got.reviewFixPanelOpen {
-		t.Error("Expected reviewFixPanelOpen to be true")
-	}
-	if !got.reviewFixPanelFocused {
-		t.Error("Expected reviewFixPanelFocused to be true")
-	}
-	if got.fixPromptJobID != 1 {
-		t.Errorf("Expected fixPromptJobID=1, got %d", got.fixPromptJobID)
-	}
-	if got.currentView != viewReview {
-		t.Errorf("Expected to stay in viewReview, got %v", got.currentView)
-	}
+	assertFixPanelOpen(t, got, 1)
+	assertView(t, got, viewReview)
 }
 
 func TestReviewFixPanelTabTogglesReviewFocus(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = true
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withFixPanel(true, true),
+	)
 
 	// Tab shifts focus to review
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyTab})
-	got := m2.(model)
-	if got.reviewFixPanelFocused {
-		t.Error("Expected reviewFixPanelFocused to be false after Tab")
-	}
+	got, _ := pressSpecial(m, tea.KeyTab)
+	assertFixPanelState(t, got, true, false)
 
 	// Tab again shifts focus back to fix panel
-	m3, _ := got.handleKeyMsg(tea.KeyMsg{Type: tea.KeyTab})
-	got2 := m3.(model)
-	if !got2.reviewFixPanelFocused {
-		t.Error("Expected reviewFixPanelFocused to be true after second Tab")
-	}
+	got2, _ := pressSpecial(got, tea.KeyTab)
+	assertFixPanelState(t, got2, true, true)
 }
 
 func TestReviewFixPanelTextInput(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = true
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withFixPanel(true, true),
+	)
 
 	for _, ch := range "hello" {
-		m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
-		m = m2.(model)
+		m, _ = pressKey(m, ch)
 	}
 
 	if m.fixPromptText != "hello" {
-		t.Errorf("Expected fixPromptText='hello', got %q", m.fixPromptText)
+		t.Errorf("Expected fixPromptText='hello', got %q",
+			m.fixPromptText)
 	}
 }
 
 func TestReviewFixPanelTextNotCapturedWhenUnfocused(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = false // review has focus
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withFixPanel(true, false),
+	)
 
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	got := m2.(model)
+	got, _ := pressKey(m, 'x')
 	if got.fixPromptText != "" {
-		t.Errorf("Expected fixPromptText to remain empty, got %q", got.fixPromptText)
+		t.Errorf("Expected fixPromptText to remain empty, got %q",
+			got.fixPromptText)
 	}
 }
 
 func TestReviewFixPanelEscWhenFocusedClosesPanel(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = true
-	m.fixPromptText = "some text"
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withFixPanel(true, true),
+		withFixPrompt(0, "some text"),
+	)
 
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
-	got := m2.(model)
-	if got.reviewFixPanelOpen {
-		t.Error("Expected panel to close on Esc when focused")
-	}
-	if got.fixPromptText != "" {
-		t.Error("Expected fixPromptText to be cleared on Esc")
-	}
-	if got.currentView != viewReview {
-		t.Errorf("Expected to stay in viewReview, got %v", got.currentView)
-	}
+	got, _ := pressSpecial(m, tea.KeyEsc)
+
+	assertFixPanelClosed(t, got)
+	assertView(t, got, viewReview)
 }
 
 func TestReviewFixPanelEscWhenUnfocusedClosesPanel(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = false // review has focus
-	done := storage.JobStatusDone
-	m.currentReview = &storage.Review{Job: &storage.ReviewJob{Status: done}}
-	m.reviewFromView = viewQueue
+	job := makeJob(1)
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withReview(&storage.Review{Job: &job}),
+		withFixPanel(true, false),
+		withReviewFromView(viewQueue),
+	)
 
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
-	got := m2.(model)
-	if got.reviewFixPanelOpen {
-		t.Error("Expected panel to close on Esc when unfocused")
-	}
+	got, _ := pressSpecial(m, tea.KeyEsc)
+
+	assertFixPanelState(t, got, false, false)
 	// Should stay in review view (not navigate back to queue)
-	if got.currentView != viewReview {
-		t.Errorf("Expected to stay in viewReview, got %v", got.currentView)
-	}
+	assertView(t, got, viewReview)
 }
 
 func TestReviewFixPanelPendingConsumedOnLoad(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.reviewFixPanelPending = true
-	m.fixPromptJobID = 5
-	m.selectedJobID = 5
+	m := initTestModel(
+		withFixPanelPending(true),
+		withFixPrompt(5, ""),
+		withSelection(0, 5),
+	)
 
 	review := &storage.Review{ID: 1, JobID: 5}
-	msg := reviewMsg{review: review, jobID: 5}
-	m2, _ := m.Update(msg)
-	got := m2.(model)
+	got, _ := updateModel(t, m, reviewMsg{review: review, jobID: 5})
 
 	if got.reviewFixPanelPending {
 		t.Error("Expected reviewFixPanelPending to be cleared")
 	}
-	if !got.reviewFixPanelOpen {
-		t.Error("Expected reviewFixPanelOpen to be true")
-	}
-	if !got.reviewFixPanelFocused {
-		t.Error("Expected reviewFixPanelFocused to be true")
-	}
+	assertFixPanelOpen(t, got, 5)
 }
 
 func TestReviewFixPanelEnterSubmitsAndNavigatesToTasks(t *testing.T) {
@@ -2315,60 +2261,42 @@ func TestReviewFixPanelEnterSubmitsAndNavigatesToTasks(t *testing.T) {
 	m.fixPromptJobID = 1
 	m.fixPromptText = "fix the lint errors"
 
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEnter})
-	got := m2.(model)
+	got, _ := pressSpecial(m, tea.KeyEnter)
 
-	if got.reviewFixPanelOpen {
-		t.Error("Expected panel to close on Enter")
-	}
-	if got.fixPromptText != "" {
-		t.Error("Expected fixPromptText to be cleared on Enter")
-	}
-	if got.fixPromptJobID != 0 {
-		t.Errorf("Expected fixPromptJobID to be cleared, got %d", got.fixPromptJobID)
-	}
-	if got.currentView != viewTasks {
-		t.Errorf("Expected navigation to viewTasks, got %v", got.currentView)
-	}
+	assertFixPanelClosed(t, got)
+	assertView(t, got, viewTasks)
 }
 
 func TestReviewFixPanelBackspaceDeletesRune(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = true
-	m.fixPromptText = "hello"
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withFixPanel(true, true),
+		withFixPrompt(0, "hello"),
+	)
 
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyBackspace})
-	got := m2.(model)
+	got, _ := pressSpecial(m, tea.KeyBackspace)
 
 	if got.fixPromptText != "hell" {
-		t.Errorf("Expected fixPromptText='hell' after backspace, got %q", got.fixPromptText)
+		t.Errorf("Expected fixPromptText='hell' after backspace, got %q",
+			got.fixPromptText)
 	}
 }
 
 func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
-	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/review" {
-			review := storage.ReviewJob{ID: 42, Status: storage.JobStatusDone}
-			json.NewEncoder(w).Encode(storage.Review{ID: 1, JobID: 42, Job: &review})
-			return
-		}
-		if r.URL.Path == "/api/comments" {
-			json.NewEncoder(w).Encode(map[string]any{"responses": []storage.Response{}})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	})
-	done := storage.JobStatusDone
-	job := storage.ReviewJob{ID: 42, Status: done}
+	review := storage.Review{
+		ID: 1, JobID: 42,
+		Job: &storage.ReviewJob{ID: 42, Status: storage.JobStatusDone},
+	}
+	_, m := mockServerModel(t, mockReviewHandler(
+		review, []storage.Response{},
+	))
+	job := makeJob(42)
 	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{job}
 	m.selectedIdx = 0
 	m.selectedJobID = 42
 
-	m2, cmd := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
-	got := m2.(model)
+	got, cmd := pressKey(m, 'F')
 
 	if !got.reviewFixPanelPending {
 		t.Error("Expected reviewFixPanelPending to be true after F from queue")
@@ -2382,190 +2310,132 @@ func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
 }
 
 func TestFixPanelClosedOnReviewNavNext(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	done := storage.JobStatusDone
-	job1 := storage.ReviewJob{ID: 1, Status: done}
-	job2 := storage.ReviewJob{ID: 2, Status: done}
-	m.currentReview = &storage.Review{JobID: 1, Job: &job1}
-	m.jobs = []storage.ReviewJob{job1, job2}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
+	job1 := makeJob(1)
+	job2 := makeJob(2)
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 1, Job: &job1}),
+		withTestJobs(job1, job2),
+		withSelection(0, 1),
+		withFixPanel(true, false),
+		withFixPrompt(1, "some instructions"),
+	)
 
-	// Open fix panel for job 1
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = false
-	m.fixPromptJobID = 1
-	m.fixPromptText = "some instructions"
+	// Navigate to next review (j)
+	got, _ := pressKey(m, 'j')
 
-	// Navigate to next review (right/j)
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	got := m2.(model)
-
-	if got.reviewFixPanelOpen {
-		t.Error("Expected fix panel to be closed after navigating to next review")
-	}
-	if got.fixPromptJobID != 0 {
-		t.Errorf("Expected fixPromptJobID=0, got %d", got.fixPromptJobID)
-	}
-	if got.fixPromptText != "" {
-		t.Errorf("Expected fixPromptText cleared, got %q", got.fixPromptText)
-	}
+	assertFixPanelClosed(t, got)
 }
 
 func TestFixPanelClosedOnReviewNavPrev(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	done := storage.JobStatusDone
-	job1 := storage.ReviewJob{ID: 1, Status: done}
-	job2 := storage.ReviewJob{ID: 2, Status: done}
-	m.currentReview = &storage.Review{JobID: 2, Job: &job2}
-	m.jobs = []storage.ReviewJob{job1, job2}
-	m.selectedIdx = 1
-	m.selectedJobID = 2
+	job1 := makeJob(1)
+	job2 := makeJob(2)
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 2, Job: &job2}),
+		withTestJobs(job1, job2),
+		withSelection(1, 2),
+		withFixPanel(true, false),
+		withFixPrompt(2, "fix it"),
+	)
 
-	// Open fix panel for job 2
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = false
-	m.fixPromptJobID = 2
-	m.fixPromptText = "fix it"
+	// Navigate to previous review (k)
+	got, _ := pressKey(m, 'k')
 
-	// Navigate to previous review (left/k)
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	got := m2.(model)
-
-	if got.reviewFixPanelOpen {
-		t.Error("Expected fix panel to be closed after navigating to prev review")
-	}
-	if got.fixPromptJobID != 0 {
-		t.Errorf("Expected fixPromptJobID=0, got %d", got.fixPromptJobID)
-	}
+	assertFixPanelClosed(t, got)
 }
 
 func TestFixPanelClosedOnQuitFromReview(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	done := storage.JobStatusDone
-	job := storage.ReviewJob{ID: 1, Status: done}
-	m.currentReview = &storage.Review{JobID: 1, Job: &job}
-	m.jobs = []storage.ReviewJob{job}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
+	job := makeJob(1)
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 1, Job: &job}),
+		withTestJobs(job),
+		withSelection(0, 1),
+		withFixPanel(true, false),
+		withFixPrompt(1, "instructions"),
+	)
 
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = false
-	m.fixPromptJobID = 1
-	m.fixPromptText = "instructions"
+	got, _ := pressKey(m, 'q')
 
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
-	got := m2.(model)
-
-	if got.reviewFixPanelOpen {
-		t.Error("Expected fix panel to be closed after q from review")
-	}
-	if got.fixPromptJobID != 0 {
-		t.Errorf("Expected fixPromptJobID=0, got %d", got.fixPromptJobID)
-	}
+	assertFixPanelClosed(t, got)
 	if got.currentView == viewReview {
 		t.Error("Expected to leave review view")
 	}
 }
 
 func TestFixPanelPendingNotConsumedByWrongReview(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.reviewFixPanelPending = true
-	m.fixPromptJobID = 5
-	m.selectedJobID = 10
+	m := initTestModel(
+		withFixPanelPending(true),
+		withFixPrompt(5, ""),
+		withSelection(0, 10),
+	)
 
 	// A review for job 10 loads, but pending was for job 5
-	review := &storage.Review{ID: 2, JobID: 10}
-	msg := reviewMsg{review: review, jobID: 10}
-	m2, _ := m.Update(msg)
-	got := m2.(model)
+	got, _ := updateModel(t, m, reviewMsg{
+		review: &storage.Review{ID: 2, JobID: 10}, jobID: 10,
+	})
 
 	if got.reviewFixPanelOpen {
 		t.Error("Panel should not open for a different job than pending")
 	}
-	// Pending should remain since it wasn't consumed
 	if !got.reviewFixPanelPending {
 		t.Error("Expected reviewFixPanelPending to remain true")
 	}
 }
 
 func TestFixPanelPendingClearedOnStaleFetch(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.reviewFixPanelPending = true
-	m.fixPromptJobID = 5
-	m.selectedJobID = 10 // User navigated away
+	m := initTestModel(
+		withFixPanelPending(true),
+		withFixPrompt(5, ""),
+		withSelection(0, 10), // User navigated away
+	)
 
 	// Stale review for job 5 arrives after user moved to job 10
-	review := &storage.Review{ID: 1, JobID: 5}
-	msg := reviewMsg{review: review, jobID: 5}
-	m2, _ := m.Update(msg)
-	got := m2.(model)
+	got, _ := updateModel(t, m, reviewMsg{
+		review: &storage.Review{ID: 1, JobID: 5}, jobID: 5,
+	})
 
 	if got.reviewFixPanelPending {
 		t.Error("Stale fetch should clear pending flag")
 	}
-	if got.fixPromptJobID != 0 {
-		t.Errorf("Expected fixPromptJobID=0 after stale clear, got %d", got.fixPromptJobID)
-	}
-	if got.reviewFixPanelOpen {
-		t.Error("Panel should not open from stale fetch")
-	}
+	assertFixPanelClosed(t, got)
 }
 
 func TestFixPanelClosedOnPromptKey(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	done := storage.JobStatusDone
-	job := storage.ReviewJob{ID: 1, Status: done}
-	m.currentReview = &storage.Review{
-		JobID:  1,
-		Job:    &job,
-		Prompt: "review prompt text",
-	}
-	m.jobs = []storage.ReviewJob{job}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	// Open fix panel
-	m.reviewFixPanelOpen = true
-	m.reviewFixPanelFocused = false
-	m.fixPromptJobID = 1
-	m.fixPromptText = "fix instructions"
+	job := makeJob(1)
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withReview(&storage.Review{
+			JobID:  1,
+			Job:    &job,
+			Prompt: "review prompt text",
+		}),
+		withTestJobs(job),
+		withSelection(0, 1),
+		withFixPanel(true, false),
+		withFixPrompt(1, "fix instructions"),
+	)
 
 	// Press 'p' to switch to prompt view
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
-	got := m2.(model)
+	got, _ := pressKey(m, 'p')
 
-	if got.currentView != viewKindPrompt {
-		t.Errorf("Expected viewKindPrompt, got %v", got.currentView)
-	}
-	if got.reviewFixPanelOpen {
-		t.Error("Expected fix panel to be closed when switching to prompt view")
-	}
-	if got.fixPromptJobID != 0 {
-		t.Errorf("Expected fixPromptJobID=0, got %d", got.fixPromptJobID)
-	}
+	assertView(t, got, viewKindPrompt)
+	assertFixPanelClosed(t, got)
 }
 
 func TestFixPanelPendingClearedOnEscFromReview(t *testing.T) {
-	m := newModel("http://localhost", withExternalIODisabled())
-	m.currentView = viewReview
-	done := storage.JobStatusDone
-	job := storage.ReviewJob{ID: 1, Status: done}
-	m.currentReview = &storage.Review{JobID: 1, Job: &job}
-	m.jobs = []storage.ReviewJob{job}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
+	job := makeJob(1)
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 1, Job: &job}),
+		withTestJobs(job),
+		withSelection(0, 1),
+		withFixPanelPending(true),
+		withFixPrompt(1, ""),
+	)
 
-	// Pending fix panel (fetch in flight) but panel not yet open
-	m.reviewFixPanelPending = true
-	m.fixPromptJobID = 1
-
-	m2, _ := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyEsc})
-	got := m2.(model)
+	got, _ := pressSpecial(m, tea.KeyEsc)
 
 	if got.currentView == viewReview {
 		t.Error("Expected to leave review view on Esc")
@@ -2768,7 +2638,7 @@ func TestTUIRenderViews(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := setupRenderModel(tt.view, tt.review, withModelBranch(tt.branch))
+			m := setupRenderModel(tt.view, tt.review, withBranchName(tt.branch))
 			output := m.View()
 
 			for _, want := range tt.wantContains {
@@ -3163,7 +3033,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 				},
 			}
 
-			m := setupRenderModel(viewReview, review, withModelBranch(tt.branch))
+			m := setupRenderModel(viewReview, review, withBranchName(tt.branch))
 			m.width = tt.width
 			m.height = tt.height
 
