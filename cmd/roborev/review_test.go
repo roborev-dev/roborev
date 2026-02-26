@@ -51,18 +51,24 @@ type capturedEnqueue struct {
 
 func mockEnqueue(
 	t *testing.T, mux *http.ServeMux,
-) *capturedEnqueue {
+) <-chan capturedEnqueue {
 	t.Helper()
-	var captured capturedEnqueue
+	ch := make(chan capturedEnqueue, 1)
 	mux.HandleFunc("/api/enqueue", func(
 		w http.ResponseWriter, r *http.Request,
 	) {
-		json.NewDecoder(r.Body).Decode(&captured)
+		var req capturedEnqueue
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("mockEnqueue: decode body: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		ch <- req
 		respondJSON(w, http.StatusCreated, storage.ReviewJob{
-			ID: 1, GitRef: captured.GitRef, Agent: "test",
+			ID: 1, GitRef: req.GitRef, Agent: "test",
 		})
 	})
-	return &captured
+	return ch
 }
 
 func mockWaitableReview(
@@ -100,7 +106,7 @@ func mockWaitableReview(
 func TestEnqueueCmdPositionalArg(t *testing.T) {
 	t.Run("positional arg overrides default HEAD", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		req := mockEnqueue(t, mux)
+		reqCh := mockEnqueue(t, mux)
 
 		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
 		repo.CommitFile("file2.txt", "second", "second commit")
@@ -111,6 +117,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			t.Fatalf("enqueue failed: %v", err)
 		}
 
+		req := <-reqCh
 		if req.GitRef != shortFirstSHA {
 			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, req.GitRef)
 		}
@@ -121,7 +128,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 
 	t.Run("sha flag works", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		req := mockEnqueue(t, mux)
+		reqCh := mockEnqueue(t, mux)
 
 		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
 		repo.CommitFile("file2.txt", "second", "second commit")
@@ -132,6 +139,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			t.Fatalf("enqueue failed: %v", err)
 		}
 
+		req := <-reqCh
 		if req.GitRef != shortFirstSHA {
 			t.Errorf("Expected SHA %s, got %s", shortFirstSHA, req.GitRef)
 		}
@@ -139,7 +147,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 
 	t.Run("defaults to HEAD", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		req := mockEnqueue(t, mux)
+		reqCh := mockEnqueue(t, mux)
 
 		repo.CommitFile("file1.txt", "first", "first commit")
 
@@ -148,6 +156,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			t.Fatalf("enqueue failed: %v", err)
 		}
 
+		req := <-reqCh
 		if req.GitRef != "HEAD" {
 			t.Errorf("Expected HEAD, got %s", req.GitRef)
 		}
@@ -389,7 +398,7 @@ func TestReviewFlagValidation(t *testing.T) {
 func TestReviewSinceFlag(t *testing.T) {
 	t.Run("since with valid ref succeeds", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		req := mockEnqueue(t, mux)
+		reqCh := mockEnqueue(t, mux)
 
 		firstSHA := repo.CommitFile("file1.txt", "first", "first commit")
 		repo.CommitFile("file2.txt", "second", "second commit")
@@ -399,6 +408,7 @@ func TestReviewSinceFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
+		req := <-reqCh
 		if !strings.Contains(req.GitRef, firstSHA) {
 			t.Errorf("expected git_ref to contain first SHA %s, got %s", firstSHA, req.GitRef)
 		}
@@ -448,7 +458,7 @@ func TestReviewBranchFlag(t *testing.T) {
 
 	t.Run("branch review succeeds with commits", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		req := mockEnqueue(t, mux)
+		reqCh := mockEnqueue(t, mux)
 
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
@@ -461,6 +471,7 @@ func TestReviewBranchFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
+		req := <-reqCh
 		if !strings.Contains(req.GitRef, mainSHA) {
 			t.Errorf("expected git_ref to contain main SHA %s, got %s", mainSHA, req.GitRef)
 		}
@@ -473,7 +484,7 @@ func TestReviewBranchFlag(t *testing.T) {
 func TestReviewFastFlag(t *testing.T) {
 	t.Run("fast flag sets reasoning to fast", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		req := mockEnqueue(t, mux)
+		reqCh := mockEnqueue(t, mux)
 
 		repo.CommitFile("file.txt", "content", "initial")
 
@@ -482,6 +493,7 @@ func TestReviewFastFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
+		req := <-reqCh
 		if req.Reasoning != "fast" {
 			t.Errorf("expected reasoning 'fast', got %q", req.Reasoning)
 		}
@@ -489,7 +501,7 @@ func TestReviewFastFlag(t *testing.T) {
 
 	t.Run("explicit reasoning takes precedence over fast", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
-		req := mockEnqueue(t, mux)
+		reqCh := mockEnqueue(t, mux)
 
 		repo.CommitFile("file.txt", "content", "initial")
 
@@ -498,6 +510,7 @@ func TestReviewFastFlag(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
+		req := <-reqCh
 		if req.Reasoning != "thorough" {
 			t.Errorf("expected reasoning 'thorough' (explicit flag should win), got %q", req.Reasoning)
 		}
