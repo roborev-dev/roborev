@@ -1399,6 +1399,7 @@ func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 			return "", nil
 		},
 	})
+	t.Cleanup(func() { agent.Unregister("test-pass-skip") })
 
 	opts := fixOptions{agentName: "test-pass-skip"}
 
