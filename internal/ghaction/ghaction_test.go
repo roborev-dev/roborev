@@ -200,17 +200,33 @@ func TestGenerate(t *testing.T) {
 			},
 		},
 		{
-			name: "dedupes env vars",
+			name: "opencode uses ANTHROPIC_API_KEY",
 			cfg: WorkflowConfig{
-				Agents: []string{"codex", "opencode"},
+				Agents: []string{"opencode"},
 			},
 			wantStrs: []string{
-				"@openai/codex@latest",
+				"opencode-ai/opencode@latest",
+				"ANTHROPIC_API_KEY",
+				"different model provider",
+			},
+			envChecks: func(t *testing.T, env map[string]string) {
+				if _, ok := env["ANTHROPIC_API_KEY"]; !ok {
+					t.Error("expected ANTHROPIC_API_KEY in env")
+				}
+			},
+		},
+		{
+			name: "dedupes env vars",
+			cfg: WorkflowConfig{
+				Agents: []string{"claude-code", "opencode"},
+			},
+			wantStrs: []string{
+				"@anthropic-ai/claude-code@latest",
 				"opencode-ai/opencode@latest",
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
-				if _, ok := env["OPENAI_API_KEY"]; !ok {
-					t.Error("expected OPENAI_API_KEY in env")
+				if _, ok := env["ANTHROPIC_API_KEY"]; !ok {
+					t.Error("expected ANTHROPIC_API_KEY in env")
 				}
 			},
 		},
@@ -262,12 +278,12 @@ func TestGenerate(t *testing.T) {
 					lines := strings.Split(out, "\n")
 					envDefCount := 0
 					for _, line := range lines {
-						if strings.HasPrefix(strings.TrimSpace(line), "OPENAI_API_KEY:") {
+						if strings.HasPrefix(strings.TrimSpace(line), "ANTHROPIC_API_KEY:") {
 							envDefCount++
 						}
 					}
 					if envDefCount != 1 {
-						t.Errorf("expected 1 OPENAI_API_KEY: definition, got %d", envDefCount)
+						t.Errorf("expected 1 ANTHROPIC_API_KEY: definition, got %d", envDefCount)
 					}
 				}
 			}
@@ -453,7 +469,7 @@ func TestAgentEnvVar(t *testing.T) {
 		{"claude-code", "ANTHROPIC_API_KEY"},
 		{"gemini", "GOOGLE_API_KEY"},
 		{"copilot", "GITHUB_TOKEN"},
-		{"opencode", "OPENAI_API_KEY"},
+		{"opencode", "ANTHROPIC_API_KEY"},
 		{"droid", "OPENAI_API_KEY"},
 	}
 	for _, tt := range tests {
@@ -482,10 +498,16 @@ func TestAgentSecrets(t *testing.T) {
 			wantVars: []string{"OPENAI_API_KEY"},
 		},
 		{
-			name:     "dedupes by env var",
+			name:     "codex and opencode have separate keys",
 			agents:   []string{"codex", "opencode"},
+			wantLen:  2,
+			wantVars: []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY"},
+		},
+		{
+			name:     "dedupes by env var",
+			agents:   []string{"claude-code", "opencode"},
 			wantLen:  1,
-			wantVars: []string{"OPENAI_API_KEY"},
+			wantVars: []string{"ANTHROPIC_API_KEY"},
 		},
 		{
 			name:     "multi env var",

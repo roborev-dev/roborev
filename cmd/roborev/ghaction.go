@@ -65,10 +65,19 @@ After generating the workflow, add repository secrets ` +
 			// List required secrets per agent
 			infos := ghaction.AgentSecrets(cfg.Agents)
 			for i, info := range infos {
-				fmt.Printf(
-					"  %d. Add a repository secret "+
-						"named %q (%s API key)\n",
-					i+1, info.SecretName, info.Name)
+				if info.Name == "opencode" {
+					fmt.Printf(
+						"  %d. Add a repository secret "+
+							"named %q (default for "+
+							"opencode; change if using "+
+							"a different provider)\n",
+						i+1, info.SecretName)
+				} else {
+					fmt.Printf(
+						"  %d. Add a repository secret "+
+							"named %q (%s API key)\n",
+						i+1, info.SecretName, info.Name)
+				}
 				fmt.Printf(
 					"     gh secret set %s\n",
 					info.SecretName)

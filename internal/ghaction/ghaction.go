@@ -85,6 +85,8 @@ func AgentEnvVar(agentName string) string {
 	switch agentName {
 	case "claude-code":
 		return "ANTHROPIC_API_KEY"
+	case "opencode":
+		return "ANTHROPIC_API_KEY"
 	case "gemini":
 		return "GOOGLE_API_KEY"
 	case "copilot":
@@ -253,7 +255,13 @@ var workflowTemplate = `# roborev CI Review
 #
 # Required setup:
 {{- range .EnvEntries }}
+{{- if eq .Name "opencode" }}
+#   - Add a repository secret named "{{ .SecretName }}" (default for opencode).
+#     If you use a different model provider, replace with the appropriate key
+#     (e.g., OPENAI_API_KEY, GOOGLE_API_KEY) and update the env block below.
+{{- else }}
 #   - Add a repository secret named "{{ .SecretName }}" with your {{ .Name }} API key
+{{- end }}
 {{- end }}
 #
 # Review behavior (types, reasoning, severity) is configured in
