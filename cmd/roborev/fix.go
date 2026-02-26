@@ -612,6 +612,15 @@ func firstLine(s string) string {
 	return truncateString(s, 80)
 }
 
+// jobVerdict returns the verdict for a job. Uses the stored verdict
+// if available, otherwise parses from the review output.
+func jobVerdict(job *storage.ReviewJob, review *storage.Review) string {
+	if job.Verdict != nil && *job.Verdict != "" {
+		return *job.Verdict
+	}
+	return storage.ParseVerdict(review.Output)
+}
+
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions) error {
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -632,6 +641,17 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	review, err := fetchReview(ctx, serverAddr, jobID)
 	if err != nil {
 		return fmt.Errorf("fetch review: %w", err)
+	}
+
+	// Skip reviews that passed — no findings to fix
+	if jobVerdict(job, review) == "P" {
+		if !opts.quiet {
+			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)
+		}
+		if err := markJobAddressed(serverAddr, jobID); err != nil && !opts.quiet {
+			cmd.Printf("Warning: could not mark job %d as addressed: %v\n", jobID, err)
+		}
+		return nil
 	}
 
 	if !opts.quiet {
@@ -795,6 +815,15 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 		if err != nil {
 			if !opts.quiet {
 				cmd.Printf("Warning: skipping job %d: %v\n", id, err)
+			}
+			continue
+		}
+		if jobVerdict(job, review) == "P" {
+			if !opts.quiet {
+				cmd.Printf("Skipping job %d (review passed)\n", id)
+			}
+			if err := markJobAddressed(serverAddr, id); err != nil && !opts.quiet {
+				cmd.Printf("Warning: could not mark job %d as addressed: %v\n", id, err)
 			}
 			continue
 		}

@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1291,4 +1293,226 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 			t.Errorf("expected main repo path %q, got %q", repo.Dir, *receivedRepo)
 		}
 	})
+}
+
+func TestJobVerdict(t *testing.T) {
+	pass := "P"
+	fail := "F"
+	empty := ""
+
+	tests := []struct {
+		name    string
+		verdict *string
+		output  string
+		want    string
+	}{
+		{
+			name:    "stored PASS verdict",
+			verdict: &pass,
+			output:  "some output",
+			want:    "P",
+		},
+		{
+			name:    "stored FAIL verdict",
+			verdict: &fail,
+			output:  "No issues found.",
+			want:    "F",
+		},
+		{
+			name:    "nil verdict falls back to parse",
+			verdict: nil,
+			output:  "No issues found.",
+			want:    "P",
+		},
+		{
+			name:    "empty verdict falls back to parse",
+			verdict: &empty,
+			output:  "## Issues\n- Bug in foo.go",
+			want:    "F",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := &storage.ReviewJob{Verdict: tt.verdict}
+			review := &storage.Review{Output: tt.output}
+			got := jobVerdict(job, review)
+			if got != tt.want {
+				t.Errorf("jobVerdict() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{
+		"main.go": "package main\n",
+	})
+
+	var addressCalls atomic.Int32
+	var agentCalled atomic.Int32
+
+	ts, _ := newMockServer(t, MockServerOpts{
+		ReviewOutput: "No issues found.",
+		OnJobs: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]any{
+				"jobs": []storage.ReviewJob{{
+					ID:     99,
+					Status: storage.JobStatusDone,
+					Agent:  "test",
+				}},
+			})
+		},
+	})
+	// Wrap the server to track address calls
+	wrapper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/review/address" {
+			addressCalls.Add(1)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// Proxy to the original mock
+		proxy, err := http.NewRequest(r.Method, ts.URL+r.URL.String(), r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp, err := http.DefaultClient.Do(proxy)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(wrapper.Close)
+	patchServerAddr(t, wrapper.URL)
+
+	cmd, output := newTestCmd(t)
+
+	// Use a fake agent that tracks invocations
+	agent.Register(&agent.FakeAgent{
+		NameStr: "test-pass-skip",
+		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			agentCalled.Add(1)
+			return "", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister("test-pass-skip") })
+
+	opts := fixOptions{agentName: "test-pass-skip"}
+
+	err := fixSingleJob(cmd, repo.Dir, 99, opts)
+	if err != nil {
+		t.Fatalf("fixSingleJob: %v", err)
+	}
+
+	outputStr := output.String()
+	if !strings.Contains(outputStr, "review passed, skipping fix") {
+		t.Errorf("expected skip message, got:\n%s", outputStr)
+	}
+	if agentCalled.Load() != 0 {
+		t.Error("agent should not have been invoked for passing review")
+	}
+	if addressCalls.Load() != 1 {
+		t.Errorf("expected 1 address call, got %d", addressCalls.Load())
+	}
+}
+
+func TestFixBatchSkipsPassVerdict(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{
+		"main.go": "package main\n",
+	})
+
+	var mu sync.Mutex
+	var addressedJobIDs []int64
+
+	passVerdict := "P"
+
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if q.Get("id") == "10" {
+				writeJSON(w, map[string]any{
+					"jobs": []storage.ReviewJob{{
+						ID:      10,
+						Status:  storage.JobStatusDone,
+						Agent:   "test",
+						Verdict: &passVerdict,
+					}},
+				})
+			} else if q.Get("id") == "20" {
+				writeJSON(w, map[string]any{
+					"jobs": []storage.ReviewJob{{
+						ID:     20,
+						Status: storage.JobStatusDone,
+						Agent:  "test",
+					}},
+				})
+			} else {
+				writeJSON(w, map[string]any{
+					"jobs":     []storage.ReviewJob{},
+					"has_more": false,
+				})
+			}
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			jobID := r.URL.Query().Get("job_id")
+			if jobID == "10" {
+				writeJSON(w, storage.Review{
+					JobID:  10,
+					Output: "No issues found.",
+				})
+			} else {
+				writeJSON(w, storage.Review{
+					JobID:  20,
+					Output: "## Issues\n- Bug in foo.go",
+				})
+			}
+		}).
+		WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				JobID int64 `json:"job_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+				mu.Lock()
+				addressedJobIDs = append(addressedJobIDs, body.JobID)
+				mu.Unlock()
+			}
+			w.WriteHeader(http.StatusOK)
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+
+	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		return runFixBatch(
+			cmd,
+			[]int64{10, 20},
+			"",
+			false,
+			fixOptions{agentName: "test", reasoning: "fast"},
+		)
+	})
+	if err != nil {
+		t.Fatalf("runFixBatch: %v", err)
+	}
+
+	if !strings.Contains(out, "Skipping job 10 (review passed)") {
+		t.Errorf("expected skip message for job 10, got:\n%s", out)
+	}
+	// Job 20 (FAIL) should be processed — its findings should appear
+	if !strings.Contains(out, "Bug in foo.go") {
+		t.Errorf("expected FAIL job findings in output, got:\n%s", out)
+	}
+
+	// Verify PASS job 10 was marked addressed during the skip phase
+	mu.Lock()
+	ids := addressedJobIDs
+	mu.Unlock()
+	if !slices.Contains(ids, int64(10)) {
+		t.Errorf("expected job 10 to be marked addressed, got IDs: %v", ids)
+	}
 }
