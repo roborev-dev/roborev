@@ -1126,6 +1126,30 @@ func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
 	}
 }
 
+func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
+	stubRestartVars(t)
+
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return nil, nil
+	}
+	// Simulate PID reuse: old daemon runtime is gone and PID now belongs
+	// to a non-daemon process, so daemon liveness should not block exit.
+	isPIDAliveForUpdate = func(pid int) bool {
+		return false
+	}
+
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+	if !exited {
+		t.Fatalf("expected exit when previous PID is reused by non-daemon, got exited=false newPID=%d", newPID)
+	}
+	if newPID != 0 {
+		t.Fatalf("expected newPID=0 without manager handoff, got %d", newPID)
+	}
+}
+
 func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *testing.T) {
 	stubRestartVars(t)
 

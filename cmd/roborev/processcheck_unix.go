@@ -5,6 +5,8 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"strconv"
 	"syscall"
 )
 
@@ -21,5 +23,43 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 	if err := proc.Signal(syscall.Signal(0)); err != nil {
 		return errors.Is(err, syscall.EPERM)
 	}
-	return true
+	// PID exists. If it's clearly not a roborev daemon anymore, treat as exited
+	// (covers PID reuse after daemon shutdown).
+	switch identifyPIDForUpdate(pid) {
+	case updatePIDNotRoborev:
+		return false
+	case updatePIDRoborev:
+		return true
+	default:
+		// Unknown identity -> conservative (assume still alive).
+		return true
+	}
+}
+
+func identifyPIDForUpdate(pid int) updatePIDIdentity {
+	cmdline, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err == nil {
+		cmdStr := normalizeCommandLineForUpdate(string(cmdline))
+		if cmdStr == "" {
+			return updatePIDUnknown
+		}
+		if isRoborevDaemonCommandForUpdate(cmdStr) {
+			return updatePIDRoborev
+		}
+		return updatePIDNotRoborev
+	}
+
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	output, err := cmd.Output()
+	if err != nil {
+		return updatePIDUnknown
+	}
+	cmdStr := normalizeCommandLineForUpdate(string(output))
+	if cmdStr == "" {
+		return updatePIDUnknown
+	}
+	if isRoborevDaemonCommandForUpdate(cmdStr) {
+		return updatePIDRoborev
+	}
+	return updatePIDNotRoborev
 }
