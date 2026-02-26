@@ -50,6 +50,7 @@ var (
 	updateRestartPollInterval = 200 * time.Millisecond
 	getAnyRunningDaemon       = daemon.GetAnyRunningDaemon
 	listAllRuntimes           = daemon.ListAllRuntimes
+	isPIDAliveForUpdate       = isPIDAliveForUpdateDefault
 	stopDaemonForUpdate       = stopDaemon
 	killAllDaemonsForUpdate   = killAllDaemons
 	startUpdatedDaemon        = func(binDir string) error {
@@ -2650,7 +2651,8 @@ it only updates existing installations. Used by 'roborev update'.`,
 }
 
 // waitForDaemonExit polls until the daemon with previousPID no longer
-// appears in runtime files or the timeout expires. Returns (exited, newPID) where
+// appears in runtime files and the process is gone, or the timeout expires.
+// Returns (exited, newPID) where
 // newPID > 0 means an external manager already restarted the daemon
 // with a different PID.
 func waitForDaemonExit(
@@ -2660,14 +2662,14 @@ func waitForDaemonExit(
 	for {
 		info, err := getAnyRunningDaemon()
 		if err != nil {
-			if !runtimeHasPID(previousPID) {
+			if previousPIDExited(previousPID) {
 				return true, 0
 			}
 		} else if info.PID != previousPID {
 			// A new daemon PID can appear before the previous daemon has
 			// fully exited. Treat this as a successful handoff only after
 			// the previous PID disappears from runtime files.
-			if !runtimeHasPID(previousPID) {
+			if previousPIDExited(previousPID) {
 				return true, info.PID
 			}
 		}
@@ -2722,6 +2724,18 @@ func runtimeHasPID(pid int) bool {
 	}
 	_, ok := pids[pid]
 	return ok
+}
+
+// previousPIDExited returns true when previousPID no longer appears in
+// runtime files and the process no longer exists.
+func previousPIDExited(previousPID int) bool {
+	if previousPID <= 0 {
+		return true
+	}
+	if runtimeHasPID(previousPID) {
+		return false
+	}
+	return !isPIDAliveForUpdate(previousPID)
 }
 
 // runtimePIDSet returns all runtime PIDs currently on disk.

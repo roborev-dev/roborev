@@ -938,6 +938,7 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	t.Helper()
 	origGet := getAnyRunningDaemon
 	origList := listAllRuntimes
+	origPIDAlive := isPIDAliveForUpdate
 	origStop := stopDaemonForUpdate
 	origKill := killAllDaemonsForUpdate
 	origStart := startUpdatedDaemon
@@ -946,6 +947,7 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGet
 		listAllRuntimes = origList
+		isPIDAliveForUpdate = origPIDAlive
 		stopDaemonForUpdate = origStop
 		killAllDaemonsForUpdate = origKill
 		startUpdatedDaemon = origStart
@@ -958,6 +960,9 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	// Default: no runtimes on disk.
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return nil, nil
+	}
+	isPIDAliveForUpdate = func(int) bool {
+		return false
 	}
 
 	s := &restartStubs{}
@@ -1067,6 +1072,28 @@ func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
 	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	if exited {
 		t.Fatalf("expected timeout (daemon runtime still present), got exited=true newPID=%d", newPID)
+	}
+	if newPID != 0 {
+		t.Fatalf("expected newPID=0 on timeout, got %d", newPID)
+	}
+}
+
+func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
+	stubRestartVars(t)
+
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return nil, nil
+	}
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 100
+	}
+
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+	if exited {
+		t.Fatalf("expected timeout while pid is still alive, got exited=true newPID=%d", newPID)
 	}
 	if newPID != 0 {
 		t.Fatalf("expected newPID=0 on timeout, got %d", newPID)
