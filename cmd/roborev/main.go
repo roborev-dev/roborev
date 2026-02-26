@@ -2686,11 +2686,15 @@ func waitForNewDaemonReady(timeout time.Duration) bool {
 	}
 }
 
-// hasDaemonRuntimes returns true if daemon runtime files exist on
-// disk, even if the daemon is not currently responsive.
-func hasDaemonRuntimes() bool {
+// runtimePID returns the PID from the first daemon runtime file on
+// disk, or 0 if none exist. Used as a fallback when the daemon is not
+// responding to health probes.
+func runtimePID() int {
 	runtimes, err := listAllRuntimes()
-	return err == nil && len(runtimes) > 0
+	if err != nil || len(runtimes) == 0 {
+		return 0
+	}
+	return runtimes[0].PID
 }
 
 func restartDaemonAfterUpdate(binDir string, noRestart bool) {
@@ -2698,7 +2702,7 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 	// files so we don't silently skip when the daemon is running
 	// but temporarily unresponsive.
 	runningInfo, err := getAnyRunningDaemon()
-	if err != nil && !hasDaemonRuntimes() {
+	if err != nil && runtimePID() == 0 {
 		return
 	}
 
@@ -2712,26 +2716,31 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 	previousPID := 0
 	if runningInfo != nil {
 		previousPID = runningInfo.PID
+	} else {
+		previousPID = runtimePID()
 	}
 
 	if err := stopDaemonForUpdate(); err != nil && err != ErrDaemonNotRunning {
 		fmt.Printf("warning: failed to stop daemon: %v\n", err)
 	}
 
-	// When we know the previous PID, wait for it to exit. If an
-	// external manager (launchd/systemd) restarts it, we detect the
-	// new PID and skip manual start. When previousPID is 0 (probe
-	// failed but runtime files existed), skip detection and go
-	// straight to starting a new daemon.
-	if previousPID != 0 {
-		exited, newPID := waitForDaemonExit(
+	// Wait for the old daemon to exit. If an external service
+	// manager (launchd/systemd) restarts it, we detect the new
+	// PID and skip manual start.
+	exited, newPID := waitForDaemonExit(
+		previousPID, updateRestartWaitTimeout,
+	)
+	if newPID > 0 {
+		fmt.Println("OK")
+		return
+	}
+	if !exited {
+		// Forcefully kill orphaned/stuck daemon processes.
+		killAllDaemons()
+		exitedAfterKill, _ := waitForDaemonExit(
 			previousPID, updateRestartWaitTimeout,
 		)
-		if newPID > 0 {
-			fmt.Println("OK")
-			return
-		}
-		if !exited {
+		if !exitedAfterKill {
 			fmt.Printf(
 				"warning: daemon pid %d is still running;"+
 					" restart it manually\n", previousPID,
@@ -2739,6 +2748,7 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 			return
 		}
 	}
+
 	if err := startUpdatedDaemon(binDir); err != nil {
 		fmt.Printf("warning: failed to start daemon: %v\n", err)
 		return

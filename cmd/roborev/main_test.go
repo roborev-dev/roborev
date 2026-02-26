@@ -1048,21 +1048,22 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 	}
 }
 
-// Fix #2: Probe failure with runtime files should still attempt restart.
+// Fix #2: Probe failure with runtime files should use PID from
+// runtime files and still attempt stop/wait/start.
 func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
 	s := stubRestartVars(t)
 
 	var getCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
-		if getCalls <= 1 {
-			// Initial probe fails (daemon unresponsive).
+		if getCalls <= 2 {
+			// Initial probe + first waitForDaemonExit poll fail.
 			return nil, os.ErrNotExist
 		}
-		// After start, daemon responds.
+		// After manual start, daemon responds with new PID.
 		return &daemon.RuntimeInfo{PID: 300, Addr: "127.0.0.1:7373"}, nil
 	}
-	// But runtime files exist on disk.
+	// Runtime files exist with a known PID.
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return []*daemon.RuntimeInfo{
 			{PID: 100, Addr: "127.0.0.1:7373"},
