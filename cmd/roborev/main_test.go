@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -922,6 +923,144 @@ func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
 	}
 	if !strings.Contains(flag.Usage, "skip daemon restart") {
 		t.Fatalf("unexpected usage text: %q", flag.Usage)
+	}
+}
+
+func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
+	origGet := getAnyRunningDaemon
+	origStop := stopDaemonForUpdate
+	origStart := startUpdatedDaemon
+	origWait := updateRestartWaitTimeout
+	origPoll := updateRestartPollInterval
+	t.Cleanup(func() {
+		getAnyRunningDaemon = origGet
+		stopDaemonForUpdate = origStop
+		startUpdatedDaemon = origStart
+		updateRestartWaitTimeout = origWait
+		updateRestartPollInterval = origPoll
+	})
+
+	var stopCalls, startCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+	}
+	stopDaemonForUpdate = func() error {
+		stopCalls++
+		return nil
+	}
+	startUpdatedDaemon = func(binDir string) error {
+		startCalls++
+		return nil
+	}
+	updateRestartWaitTimeout = 5 * time.Millisecond
+	updateRestartPollInterval = 1 * time.Millisecond
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", true)
+	})
+
+	if !strings.Contains(output, "Skipping daemon restart (--no-restart)") {
+		t.Fatalf("expected no-restart message, got %q", output)
+	}
+	if stopCalls != 0 {
+		t.Fatalf("expected stopDaemonForUpdate not called, got %d", stopCalls)
+	}
+	if startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called, got %d", startCalls)
+	}
+}
+
+func TestRestartDaemonAfterUpdateManagerRestarted(t *testing.T) {
+	origGet := getAnyRunningDaemon
+	origStop := stopDaemonForUpdate
+	origStart := startUpdatedDaemon
+	origWait := updateRestartWaitTimeout
+	origPoll := updateRestartPollInterval
+	t.Cleanup(func() {
+		getAnyRunningDaemon = origGet
+		stopDaemonForUpdate = origStop
+		startUpdatedDaemon = origStart
+		updateRestartWaitTimeout = origWait
+		updateRestartPollInterval = origPoll
+	})
+
+	var getCalls, stopCalls, startCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		getCalls++
+		if getCalls == 1 {
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
+	}
+	stopDaemonForUpdate = func() error {
+		stopCalls++
+		return nil
+	}
+	startUpdatedDaemon = func(binDir string) error {
+		startCalls++
+		return nil
+	}
+	updateRestartWaitTimeout = 5 * time.Millisecond
+	updateRestartPollInterval = 1 * time.Millisecond
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if !strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("expected successful restart output, got %q", output)
+	}
+	if stopCalls != 1 {
+		t.Fatalf("expected stopDaemonForUpdate called once, got %d", stopCalls)
+	}
+	if startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called, got %d", startCalls)
+	}
+}
+
+func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
+	origGet := getAnyRunningDaemon
+	origStop := stopDaemonForUpdate
+	origStart := startUpdatedDaemon
+	origWait := updateRestartWaitTimeout
+	origPoll := updateRestartPollInterval
+	t.Cleanup(func() {
+		getAnyRunningDaemon = origGet
+		stopDaemonForUpdate = origStop
+		startUpdatedDaemon = origStart
+		updateRestartWaitTimeout = origWait
+		updateRestartPollInterval = origPoll
+	})
+
+	var startCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+	}
+	stopDaemonForUpdate = func() error {
+		return errors.New("cannot stop daemon")
+	}
+	startUpdatedDaemon = func(binDir string) error {
+		startCalls++
+		return nil
+	}
+	updateRestartWaitTimeout = 5 * time.Millisecond
+	updateRestartPollInterval = 1 * time.Millisecond
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if !strings.Contains(output, "warning: failed to stop daemon: cannot stop daemon") {
+		t.Fatalf("expected stop warning, got %q", output)
+	}
+	if !strings.Contains(output, "warning: daemon pid 100 is still running; restart it manually") {
+		t.Fatalf("expected same-pid warning, got %q", output)
+	}
+	if strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("unexpected success output: %q", output)
+	}
+	if startCalls != 1 {
+		t.Fatalf("expected startUpdatedDaemon called once, got %d", startCalls)
 	}
 }
 

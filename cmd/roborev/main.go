@@ -45,6 +45,21 @@ var (
 	pollStartInterval = 1 * time.Second
 	pollMaxInterval   = 5 * time.Second
 
+	// Update daemon restart controls - exposed for testing.
+	updateRestartWaitTimeout  = 2 * time.Second
+	updateRestartPollInterval = 200 * time.Millisecond
+	getAnyRunningDaemon       = daemon.GetAnyRunningDaemon
+	stopDaemonForUpdate       = stopDaemon
+	startUpdatedDaemon        = func(binDir string) error {
+		newBinary := filepath.Join(binDir, "roborev")
+		if runtime.GOOS == "windows" {
+			newBinary += ".exe"
+		}
+		startCmd := exec.Command(newBinary, "daemon", "run")
+		startCmd.Env = filterGitEnv(os.Environ())
+		return startCmd.Start()
+	}
+
 	// setupSignalHandler allows tests to mock signal handling
 	setupSignalHandler = func() (chan os.Signal, func()) {
 		sigCh := make(chan os.Signal, 1)
@@ -2632,6 +2647,67 @@ it only updates existing installations. Used by 'roborev update'.`,
 	return cmd
 }
 
+// waitForDaemonPIDChange polls for a responsive daemon with a PID different
+// from previousPID. Returns whether a PID change was observed and whether the
+// previous PID remained responsive during the wait window.
+func waitForDaemonPIDChange(previousPID int, timeout time.Duration) (changed bool, samePIDAlive bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if info, err := getAnyRunningDaemon(); err == nil {
+			if info.PID != previousPID {
+				return true, false
+			}
+			samePIDAlive = true
+		}
+
+		if time.Now().After(deadline) {
+			return false, samePIDAlive
+		}
+		time.Sleep(updateRestartPollInterval)
+	}
+}
+
+func restartDaemonAfterUpdate(binDir string, noRestart bool) {
+	runningInfo, err := getAnyRunningDaemon()
+	if err != nil {
+		return
+	}
+
+	if noRestart {
+		fmt.Println("Skipping daemon restart (--no-restart)")
+		return
+	}
+
+	fmt.Print("Restarting daemon... ")
+	previousPID := runningInfo.PID
+
+	if err := stopDaemonForUpdate(); err != nil && err != ErrDaemonNotRunning {
+		fmt.Printf("warning: failed to stop daemon: %v\n", err)
+	}
+
+	if changed, _ := waitForDaemonPIDChange(previousPID, updateRestartWaitTimeout); changed {
+		fmt.Println("OK")
+		return
+	}
+
+	if err := startUpdatedDaemon(binDir); err != nil {
+		fmt.Printf("warning: failed to start daemon: %v\n", err)
+		return
+	}
+
+	changed, samePIDAlive := waitForDaemonPIDChange(previousPID, updateRestartWaitTimeout)
+	if changed {
+		fmt.Println("OK")
+		return
+	}
+	if samePIDAlive {
+		fmt.Printf("warning: daemon pid %d is still running; restart it manually\n", previousPID)
+		return
+	}
+
+	fmt.Println("warning: daemon did not become ready after restart; restart it manually")
+}
+
 func updateCmd() *cobra.Command {
 	var checkOnly bool
 	var yes bool
@@ -2749,46 +2825,7 @@ launchd or systemd).`,
 				}
 			}
 
-			// Restart daemon only when one is actually responsive.
-			if _, err := daemon.GetAnyRunningDaemon(); err == nil {
-				if noRestart {
-					fmt.Println("Skipping daemon restart (--no-restart)")
-				} else {
-					fmt.Print("Restarting daemon... ")
-					// Stop all running daemons.
-					if err := stopDaemon(); err != nil && err != ErrDaemonNotRunning {
-						fmt.Printf("warning: failed to stop daemon: %v\n", err)
-					}
-
-					// Allow external service managers a short window to restart.
-					restartedByManager := false
-					deadline := time.Now().Add(2 * time.Second)
-					for time.Now().Before(deadline) {
-						if _, err := daemon.GetAnyRunningDaemon(); err == nil {
-							restartedByManager = true
-							break
-						}
-						time.Sleep(200 * time.Millisecond)
-					}
-
-					if restartedByManager {
-						fmt.Println("OK")
-					} else {
-						// Start new daemon using "roborev daemon run".
-						newBinary := filepath.Join(binDir, "roborev")
-						if runtime.GOOS == "windows" {
-							newBinary += ".exe"
-						}
-						startCmd := exec.Command(newBinary, "daemon", "run")
-						startCmd.Env = filterGitEnv(os.Environ())
-						if err := startCmd.Start(); err != nil {
-							fmt.Printf("warning: failed to start daemon: %v\n", err)
-						} else {
-							fmt.Println("OK")
-						}
-					}
-				}
-			}
+			restartDaemonAfterUpdate(binDir, noRestart)
 
 			// Update skills using the NEW binary (current process has old embedded skills)
 			// Use "skills update" to only update agents that already have skills installed
