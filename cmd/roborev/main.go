@@ -51,6 +51,7 @@ var (
 	getAnyRunningDaemon       = daemon.GetAnyRunningDaemon
 	listAllRuntimes           = daemon.ListAllRuntimes
 	stopDaemonForUpdate       = stopDaemon
+	killAllDaemonsForUpdate   = killAllDaemons
 	startUpdatedDaemon        = func(binDir string) error {
 		newBinary := filepath.Join(binDir, "roborev")
 		if runtime.GOOS == "windows" {
@@ -2648,8 +2649,8 @@ it only updates existing installations. Used by 'roborev update'.`,
 	return cmd
 }
 
-// waitForDaemonExit polls until the daemon with previousPID stops
-// responding or the timeout expires. Returns (exited, newPID) where
+// waitForDaemonExit polls until the daemon with previousPID no longer
+// appears in runtime files or the timeout expires. Returns (exited, newPID) where
 // newPID > 0 means an external manager already restarted the daemon
 // with a different PID.
 func waitForDaemonExit(
@@ -2659,10 +2660,16 @@ func waitForDaemonExit(
 	for {
 		info, err := getAnyRunningDaemon()
 		if err != nil {
-			return true, 0
-		}
-		if info.PID != previousPID {
-			return true, info.PID
+			if !runtimeHasPID(previousPID) {
+				return true, 0
+			}
+		} else if info.PID != previousPID {
+			// A new daemon PID can appear before the previous daemon has
+			// fully exited. Treat this as a successful handoff only after
+			// the previous PID disappears from runtime files.
+			if !runtimeHasPID(previousPID) {
+				return true, info.PID
+			}
 		}
 		if time.Now().After(deadline) {
 			return false, 0
@@ -2694,7 +2701,63 @@ func runtimePID() int {
 	if err != nil || len(runtimes) == 0 {
 		return 0
 	}
-	return runtimes[0].PID
+	for _, info := range runtimes {
+		if info != nil && info.PID > 0 {
+			return info.PID
+		}
+	}
+	return 0
+}
+
+// runtimeHasPID returns true when a runtime file for pid exists.
+// On read/list errors, it conservatively returns true so callers
+// continue waiting rather than treating the daemon as fully exited.
+func runtimeHasPID(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	pids, err := runtimePIDSet()
+	if err != nil {
+		return true
+	}
+	_, ok := pids[pid]
+	return ok
+}
+
+// runtimePIDSet returns all runtime PIDs currently on disk.
+func runtimePIDSet() (map[int]struct{}, error) {
+	runtimes, err := listAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	pids := make(map[int]struct{}, len(runtimes))
+	for _, info := range runtimes {
+		if info != nil && info.PID > 0 {
+			pids[info.PID] = struct{}{}
+		}
+	}
+	return pids, nil
+}
+
+// initialPIDsExited returns true when none of the initial runtime PIDs
+// remain on disk, excluding allowPID (typically the manager-restarted PID).
+func initialPIDsExited(initialPIDs map[int]struct{}, allowPID int) bool {
+	if len(initialPIDs) == 0 {
+		return true
+	}
+	currentPIDs, err := runtimePIDSet()
+	if err != nil {
+		return false
+	}
+	for pid := range initialPIDs {
+		if pid == allowPID {
+			continue
+		}
+		if _, exists := currentPIDs[pid]; exists {
+			return false
+		}
+	}
+	return true
 }
 
 func restartDaemonAfterUpdate(binDir string, noRestart bool) {
@@ -2720,8 +2783,18 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 		previousPID = runtimePID()
 	}
 
-	if err := stopDaemonForUpdate(); err != nil && err != ErrDaemonNotRunning {
-		fmt.Printf("warning: failed to stop daemon: %v\n", err)
+	initialRuntimePIDs, initialPIDsErr := runtimePIDSet()
+	if initialPIDsErr != nil {
+		initialRuntimePIDs = make(map[int]struct{})
+	}
+	if previousPID > 0 {
+		initialRuntimePIDs[previousPID] = struct{}{}
+	}
+
+	stopErr := stopDaemonForUpdate()
+	stopFailed := stopErr != nil && stopErr != ErrDaemonNotRunning
+	if stopFailed {
+		fmt.Printf("warning: failed to stop daemon: %v\n", stopErr)
 	}
 
 	// Wait for the old daemon to exit. If an external service
@@ -2731,12 +2804,19 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 		previousPID, updateRestartWaitTimeout,
 	)
 	if newPID > 0 {
-		fmt.Println("OK")
-		return
+		// If stop reported failure, require stronger evidence that
+		// all pre-update daemon PIDs are gone before accepting
+		// manager restart as success.
+		if !stopFailed || (initialPIDsErr == nil && initialPIDsExited(initialRuntimePIDs, newPID)) {
+			fmt.Println("OK")
+			return
+		}
+		// Treat as unresolved and continue to kill fallback.
+		exited = false
 	}
 	if !exited {
 		// Forcefully kill orphaned/stuck daemon processes.
-		killAllDaemons()
+		killAllDaemonsForUpdate()
 		exitedAfterKill, _ := waitForDaemonExit(
 			previousPID, updateRestartWaitTimeout,
 		)
