@@ -290,6 +290,66 @@ func TestFilterToolCallLines(t *testing.T) {
 	}
 }
 
+func TestKiloReviewStderrOnExitZero(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	// Kilo exits 0 but writes error to stderr and produces no stdout.
+	// The error must be surfaced, not hidden behind "No review output".
+	mock := mockAgentCLI(t, MockCLIOpts{
+		StderrLines: []string{"Error: Model not found: z-ai/glm-5:free"},
+		ExitCode:    0,
+	})
+
+	a := NewKiloAgent(mock.CmdPath)
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+	)
+	if err == nil {
+		t.Fatal("expected error when kilo writes to stderr with no stdout")
+	}
+	assertContains(t, err.Error(), "Model not found")
+}
+
+func TestKiloReviewNonZeroExitSurfacesStderr(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		StderrLines: []string{"Error: Model not found: z-ai/glm-5:free"},
+		ExitCode:    1,
+	})
+
+	a := NewKiloAgent(mock.CmdPath)
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+	)
+	if err == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	assertContains(t, err.Error(), "Model not found")
+}
+
+func TestKiloReviewNonZeroExitFallsBackToStdout(t *testing.T) {
+	t.Parallel()
+	skipIfWindows(t)
+
+	// Some CLIs print errors to stdout instead of stderr.
+	mock := mockAgentCLI(t, MockCLIOpts{
+		StdoutLines: []string{"fatal: something went wrong"},
+		ExitCode:    1,
+	})
+
+	a := NewKiloAgent(mock.CmdPath)
+	_, err := a.Review(
+		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+	)
+	if err == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	assertContains(t, err.Error(), "something went wrong")
+}
+
 func runKiloMockReview(t *testing.T, model, prompt string, stdoutLines []string) (output, args, stdin string) {
 	t.Helper()
 

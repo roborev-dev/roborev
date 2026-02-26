@@ -112,18 +112,34 @@ func (a *KiloAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf(
-			"kilo failed: %w\nstdout: %s\nstderr: %s",
-			err,
-			stdout.String(),
-			stderr.String(),
+			"kilo failed: %w\nstderr: %s",
+			err, stderrOrStdout(stderr, stdout),
 		)
 	}
 
 	result := filterToolCallLines(stdout.String())
 	if len(result) == 0 {
+		// No review text on stdout. If stderr has content, the
+		// agent likely printed an error (e.g. model not found)
+		// that should be surfaced instead of a generic message.
+		if errOut := strings.TrimSpace(stderr.String()); errOut != "" {
+			return "", fmt.Errorf(
+				"kilo produced no output: %s", errOut,
+			)
+		}
 		return "No review output generated", nil
 	}
 	return result, nil
+}
+
+// stderrOrStdout returns stderr content if non-empty, otherwise
+// stdout. Some CLIs (especially Node.js) print errors to stdout
+// instead of stderr; this ensures the error is always captured.
+func stderrOrStdout(stderr, stdout bytes.Buffer) string {
+	if s := strings.TrimSpace(stderr.String()); s != "" {
+		return s
+	}
+	return strings.TrimSpace(stdout.String())
 }
 
 // filterToolCallLines removes lines that look like JSON tool-call
