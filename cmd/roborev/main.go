@@ -2718,18 +2718,33 @@ func runtimePID() int {
 }
 
 // runtimeHasPID returns true when a runtime file for pid exists.
-// On read/list errors, it conservatively returns true so callers
-// continue waiting rather than treating the daemon as fully exited.
+// On read/list errors, it conservatively returns true so callers continue
+// waiting rather than treating the daemon as fully exited.
+//
+// Dead runtime entries are treated as stale and ignored (best-effort
+// cleanup) so they don't block shutdown/restart handoff.
 func runtimeHasPID(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	pids, err := runtimePIDSet()
+	runtimes, err := listAllRuntimes()
 	if err != nil {
 		return true
 	}
-	_, ok := pids[pid]
-	return ok
+	for _, info := range runtimes {
+		if info == nil || info.PID != pid {
+			continue
+		}
+		if isPIDAliveForUpdate(pid) {
+			return true
+		}
+		// Best-effort stale runtime cleanup.
+		if info.SourcePath != "" {
+			_ = os.Remove(info.SourcePath)
+		}
+		return false
+	}
+	return false
 }
 
 // previousPIDExited returns true when previousPID no longer appears in
@@ -2764,6 +2779,14 @@ func replacementRuntimePID(previousPID int) int {
 		}
 	}
 	return best
+}
+
+func pidInSet(pids map[int]struct{}, pid int) bool {
+	if len(pids) == 0 || pid <= 0 {
+		return false
+	}
+	_, ok := pids[pid]
+	return ok
 }
 
 // runtimePIDSet returns all runtime PIDs currently on disk.
@@ -2850,7 +2873,7 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 		// If stop reported failure, require stronger evidence that
 		// all pre-update daemon PIDs are gone before accepting
 		// manager restart as success.
-		if !stopFailed || (initialPIDsErr == nil && initialPIDsExited(initialRuntimePIDs, newPID)) {
+		if !stopFailed || (initialPIDsErr == nil && !pidInSet(initialRuntimePIDs, newPID) && initialPIDsExited(initialRuntimePIDs, newPID)) {
 			// Runtime-file handoff can race before the replacement daemon
 			// is actually serving; only accept success once responsive.
 			if waitForNewDaemonReady(updateRestartWaitTimeout) {
@@ -2871,7 +2894,7 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 			// Apply the same stop-failure safety gate here to avoid
 			// accepting a manager restart while other pre-update
 			// daemon runtimes are still present.
-			if stopFailed && (initialPIDsErr != nil || !initialPIDsExited(initialRuntimePIDs, newPIDAfterKill)) {
+			if stopFailed && (initialPIDsErr != nil || pidInSet(initialRuntimePIDs, newPIDAfterKill) || !initialPIDsExited(initialRuntimePIDs, newPIDAfterKill)) {
 				fmt.Println(
 					"warning: daemon restart detected but older daemon runtimes" +
 						" remain; restart it manually",

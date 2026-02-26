@@ -1068,6 +1068,9 @@ func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
 	}
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 100
+	}
 
 	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	if exited {
@@ -1075,6 +1078,29 @@ func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
 	}
 	if newPID != 0 {
 		t.Fatalf("expected newPID=0 on timeout, got %d", newPID)
+	}
+}
+
+func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
+	stubRestartVars(t)
+
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+	}
+	// PID is dead; runtime entry is stale.
+	isPIDAliveForUpdate = func(int) bool {
+		return false
+	}
+
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+	if !exited {
+		t.Fatalf("expected stale runtime not to block exit, got exited=false newPID=%d", newPID)
+	}
+	if newPID != 0 {
+		t.Fatalf("expected newPID=0 with stale runtime, got %d", newPID)
 	}
 }
 
@@ -1523,6 +1549,61 @@ func TestRestartDaemonAfterUpdateStopFailedHandoffNotReadyWarnsNoStart(t *testin
 	}
 	if !strings.Contains(output, "warning: daemon handoff detected but replacement is not ready; restart it manually") {
 		t.Fatalf("expected not-ready handoff warning, got %q", output)
+	}
+	if strings.Contains(output, "Restarting daemon... OK") {
+		t.Fatalf("unexpected success output: %q", output)
+	}
+}
+
+func TestRestartDaemonAfterUpdateStopFailedPreExistingPIDNotAcceptedAsHandoff(t *testing.T) {
+	s := stubRestartVars(t)
+
+	var getCalls int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		getCalls++
+		if getCalls == 1 {
+			// Initial probe sees previous PID.
+			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		}
+		// Existing daemon PID 200 remains responsive throughout.
+		return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
+	}
+
+	var listCalls int
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		listCalls++
+		if listCalls == 1 {
+			// Initial snapshot already includes PID 200.
+			return []*daemon.RuntimeInfo{
+				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 200, Addr: "127.0.0.1:7373"},
+			}, nil
+		}
+		// previousPID disappeared, but pre-existing PID 200 remains.
+		return []*daemon.RuntimeInfo{
+			{PID: 200, Addr: "127.0.0.1:7373"},
+		}, nil
+	}
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 200
+	}
+	stopDaemonForUpdate = func() error {
+		s.stopCalls++
+		return errors.New("cannot stop daemon")
+	}
+
+	output := captureStdout(t, func() {
+		restartDaemonAfterUpdate("/tmp/bin", false)
+	})
+
+	if s.killCalls != 1 {
+		t.Fatalf("expected kill fallback called once, got %d", s.killCalls)
+	}
+	if s.startCalls != 0 {
+		t.Fatalf("expected startUpdatedDaemon not called, got %d", s.startCalls)
+	}
+	if !strings.Contains(output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually") {
+		t.Fatalf("expected pre-existing handoff warning, got %q", output)
 	}
 	if strings.Contains(output, "Restarting daemon... OK") {
 		t.Fatalf("unexpected success output: %q", output)
