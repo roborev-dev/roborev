@@ -23,6 +23,23 @@ const (
 // branchNone is the sentinel value for jobs with no branch information.
 const branchNone = "(none)"
 
+// setFlash sets a flash message with the given duration and view.
+func (m *model) setFlash(msg string, d time.Duration, v viewKind) {
+	m.flashMessage = msg
+	m.flashExpiresAt = time.Now().Add(d)
+	m.flashView = v
+}
+
+// selectedJob returns a pointer to the currently selected job,
+// or nil and false if no valid selection exists.
+func (m *model) selectedJob() (*storage.ReviewJob, bool) {
+	if len(m.jobs) == 0 || m.selectedIdx < 0 ||
+		m.selectedIdx >= len(m.jobs) {
+		return nil, false
+	}
+	return &m.jobs[m.selectedIdx], true
+}
+
 // mutateJob finds a job by ID and applies the mutation function.
 // Returns true if the job was found and mutated.
 func (m *model) mutateJob(id int64, fn func(*storage.ReviewJob)) bool {
