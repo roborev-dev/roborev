@@ -910,6 +910,21 @@ func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
 	}
 }
 
+func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
+	cmd := updateCmd()
+
+	flag := cmd.Flags().Lookup("no-restart")
+	if flag == nil {
+		t.Fatal("expected --no-restart flag to be defined")
+	}
+	if flag.DefValue != "false" {
+		t.Fatalf("expected default false, got %q", flag.DefValue)
+	}
+	if !strings.Contains(flag.Usage, "skip daemon restart") {
+		t.Fatalf("unexpected usage text: %q", flag.Usage)
+	}
+}
+
 func TestShortJobRef(t *testing.T) {
 	commitID := int64(123)
 	diffContent := "some diff"

@@ -2636,6 +2636,7 @@ func updateCmd() *cobra.Command {
 	var checkOnly bool
 	var yes bool
 	var force bool
+	var noRestart bool
 
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -2646,7 +2647,10 @@ Shows exactly what will be downloaded and where it will be installed.
 Requires confirmation before making changes (use --yes to skip).
 
 Dev builds are not replaced by default. Use --force to install the latest
-official release over a dev build.`,
+official release over a dev build.
+
+Use --no-restart when daemon lifecycle is managed externally (for example,
+launchd or systemd).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("Checking for updates...")
 
@@ -2745,25 +2749,44 @@ official release over a dev build.`,
 				}
 			}
 
-			// Restart daemon if any are running
-			if runtimes, err := daemon.ListAllRuntimes(); err == nil && len(runtimes) > 0 {
-				fmt.Print("Restarting daemon... ")
-				// Stop all running daemons
-				_ = stopDaemon()
-				// Kill any orphaned daemon processes
-				killAllDaemons()
-
-				// Start new daemon using "roborev daemon run"
-				newBinary := filepath.Join(binDir, "roborev")
-				if runtime.GOOS == "windows" {
-					newBinary += ".exe"
-				}
-				startCmd := exec.Command(newBinary, "daemon", "run")
-				startCmd.Env = filterGitEnv(os.Environ())
-				if err := startCmd.Start(); err != nil {
-					fmt.Printf("warning: failed to start daemon: %v\n", err)
+			// Restart daemon only when one is actually responsive.
+			if _, err := daemon.GetAnyRunningDaemon(); err == nil {
+				if noRestart {
+					fmt.Println("Skipping daemon restart (--no-restart)")
 				} else {
-					fmt.Println("OK")
+					fmt.Print("Restarting daemon... ")
+					// Stop all running daemons.
+					if err := stopDaemon(); err != nil && err != ErrDaemonNotRunning {
+						fmt.Printf("warning: failed to stop daemon: %v\n", err)
+					}
+
+					// Allow external service managers a short window to restart.
+					restartedByManager := false
+					deadline := time.Now().Add(2 * time.Second)
+					for time.Now().Before(deadline) {
+						if _, err := daemon.GetAnyRunningDaemon(); err == nil {
+							restartedByManager = true
+							break
+						}
+						time.Sleep(200 * time.Millisecond)
+					}
+
+					if restartedByManager {
+						fmt.Println("OK")
+					} else {
+						// Start new daemon using "roborev daemon run".
+						newBinary := filepath.Join(binDir, "roborev")
+						if runtime.GOOS == "windows" {
+							newBinary += ".exe"
+						}
+						startCmd := exec.Command(newBinary, "daemon", "run")
+						startCmd.Env = filterGitEnv(os.Environ())
+						if err := startCmd.Start(); err != nil {
+							fmt.Printf("warning: failed to start daemon: %v\n", err)
+						} else {
+							fmt.Println("OK")
+						}
+					}
 				}
 			}
 
@@ -2799,6 +2822,7 @@ official release over a dev build.`,
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "only check for updates, don't install")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "replace dev build with latest official release")
+	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "skip daemon restart after update (for launchd/systemd-managed daemons)")
 
 	return cmd
 }
