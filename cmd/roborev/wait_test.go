@@ -377,6 +377,74 @@ func TestWaitMultipleJobIDsNotFoundReportsOutput(t *testing.T) {
 	}
 }
 
+func TestWaitMultipleGenericErrors(t *testing.T) {
+	setupFastPolling(t)
+
+	cases := []struct {
+		name    string
+		jobs    map[int64]mockJobResult
+		args    []string
+		wantMsg string // substring expected in stdout for the failing job
+	}{
+		{
+			name: "failed job reports error message",
+			jobs: map[int64]mockJobResult{
+				10: {
+					job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+					review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+				},
+				20: {
+					job: storage.ReviewJob{ID: 20, Agent: "test", Status: "failed", Error: "agent crashed"},
+				},
+			},
+			args:    []string{"--job", "10", "20"},
+			wantMsg: "Job 20: review failed: agent crashed",
+		},
+		{
+			name: "canceled job reports canceled",
+			jobs: map[int64]mockJobResult{
+				10: {
+					job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+					review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+				},
+				30: {
+					job: storage.ReviewJob{ID: 30, Agent: "test", Status: "canceled"},
+				},
+			},
+			args:    []string{"--job", "10", "30"},
+			wantMsg: "Job 30: review was canceled",
+		},
+		{
+			name: "review fetch error reports message",
+			jobs: map[int64]mockJobResult{
+				10: {
+					job:    storage.ReviewJob{ID: 10, Agent: "test", Status: "done"},
+					review: &storage.Review{ID: 1, JobID: 10, Agent: "test", Output: "No issues found."},
+				},
+				40: {
+					job: storage.ReviewJob{ID: 40, Agent: "test", Status: "done"},
+					// review is nil → /api/review returns 404
+				},
+			},
+			args:    []string{"--job", "10", "40"},
+			wantMsg: "Job 40: no review found",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := newMultiJobMockHandler(tc.jobs)
+			newWaitEnv(t, handler)
+
+			stdout, err := runWait(t, tc.args...)
+			requireExitCode(t, err, 1)
+			if !strings.Contains(stdout, tc.wantMsg) {
+				t.Errorf("expected stdout to contain %q, got: %q", tc.wantMsg, stdout)
+			}
+		})
+	}
+}
+
 func TestWaitMultipleValidationBeforeDaemon(t *testing.T) {
 	// Validation errors for --job should surface before contacting
 	// the daemon. This test does NOT start a mock daemon.
