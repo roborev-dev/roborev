@@ -63,7 +63,13 @@ func mockEnqueue(
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		ch <- req
+		select {
+		case ch <- req:
+		default:
+			t.Errorf("mockEnqueue: unexpected extra enqueue request")
+			http.Error(w, "duplicate request", http.StatusConflict)
+			return
+		}
 		respondJSON(w, http.StatusCreated, storage.ReviewJob{
 			ID: 1, GitRef: req.GitRef, Agent: "test",
 		})
