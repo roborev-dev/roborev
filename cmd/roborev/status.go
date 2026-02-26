@@ -1,0 +1,160 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"text/tabwriter"
+	"time"
+
+	"github.com/roborev-dev/roborev/internal/git"
+	"github.com/roborev-dev/roborev/internal/githook"
+	"github.com/roborev-dev/roborev/internal/storage"
+	"github.com/spf13/cobra"
+)
+
+func statusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show daemon and queue status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Ensure daemon is running (and restart if version mismatch)
+			if err := ensureDaemon(); err != nil {
+				fmt.Println("Daemon: not running")
+				fmt.Println()
+				fmt.Println("Start with: roborev daemon start")
+				return nil
+			}
+
+			addr := getDaemonAddr()
+			client := &http.Client{Timeout: 2 * time.Second}
+			resp, err := client.Get(addr + "/api/status")
+			if err != nil {
+				fmt.Println("Daemon: not running")
+				fmt.Println()
+				fmt.Println("Start with: roborev daemon start")
+				return nil
+			}
+			defer resp.Body.Close()
+
+			var status storage.DaemonStatus
+			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+				return fmt.Errorf("failed to parse response: %w", err)
+			}
+
+			// Get health status
+			healthResp, err := client.Get(addr + "/api/health")
+			var health storage.HealthStatus
+			if err == nil {
+				defer healthResp.Body.Close()
+				if err := json.NewDecoder(healthResp.Body).Decode(&health); err != nil {
+					log.Printf("failed to parse health response: %v", err)
+				}
+			}
+
+			// Display daemon info with uptime and version
+			daemonLine := "Daemon: running"
+			if health.Uptime != "" {
+				daemonLine += fmt.Sprintf(" (uptime: %s)", health.Uptime)
+			}
+			if status.Version != "" {
+				daemonLine += fmt.Sprintf(" [%s]", status.Version)
+			}
+			fmt.Println(daemonLine)
+			fmt.Printf("Workers: %d/%d active\n", status.ActiveWorkers, status.MaxWorkers)
+			fmt.Printf("Jobs:    %d queued, %d running, %d completed, %d failed\n",
+				status.QueuedJobs, status.RunningJobs, status.CompletedJobs, status.FailedJobs)
+			fmt.Println()
+
+			// Display health status
+			if health.Version != "" {
+				if health.Healthy {
+					fmt.Println("Health: OK")
+				} else {
+					fmt.Println("Health: DEGRADED")
+				}
+				for _, comp := range health.Components {
+					checkmark := "+"
+					if !comp.Healthy {
+						checkmark = "!"
+					}
+					if comp.Message != "" {
+						fmt.Printf("  %s %s: %s\n", checkmark, comp.Name, comp.Message)
+					} else {
+						fmt.Printf("  %s %s: healthy\n", checkmark, comp.Name)
+					}
+				}
+				fmt.Println()
+
+				// Display recent errors if any
+				if health.ErrorCount > 0 {
+					fmt.Printf("Recent Errors (last 24h): %d\n", health.ErrorCount)
+					for _, e := range health.RecentErrors {
+						ago := time.Since(e.Timestamp).Round(time.Minute)
+						if e.JobID > 0 {
+							fmt.Printf("  [%v ago] %s: job %d - %s\n", ago, e.Component, e.JobID, e.Message)
+						} else {
+							fmt.Printf("  [%v ago] %s: %s\n", ago, e.Component, e.Message)
+						}
+					}
+					fmt.Println()
+				}
+			}
+
+			// Get recent jobs
+			resp, err = client.Get(addr + "/api/jobs?limit=10")
+			if err != nil {
+				return nil
+			}
+			defer resp.Body.Close()
+
+			var jobsResp struct {
+				Jobs []storage.ReviewJob `json:"jobs"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+				return nil
+			}
+
+			if len(jobsResp.Jobs) > 0 {
+				fmt.Println("Recent Jobs:")
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintf(w, "  ID\tSHA\tRepo\tAgent\tStatus\tTime\n")
+				for _, j := range jobsResp.Jobs {
+					elapsed := ""
+					if j.StartedAt != nil {
+						if j.FinishedAt != nil {
+							elapsed = j.FinishedAt.Sub(*j.StartedAt).Round(time.Second).String()
+						} else {
+							elapsed = time.Since(*j.StartedAt).Round(time.Second).String() + "..."
+						}
+					}
+					// Show [remote] indicator for jobs from other machines
+					repoDisplay := j.RepoName
+					if status.MachineID != "" && j.SourceMachineID != "" && j.SourceMachineID != status.MachineID {
+						repoDisplay += " [remote]"
+					}
+					fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\n",
+						j.ID, shortRef(j.GitRef), repoDisplay, j.Agent, j.Status, elapsed)
+				}
+				w.Flush()
+			}
+
+			// Check for outdated hooks in current repo
+			if root, err := git.GetRepoRoot("."); err == nil {
+				if githook.NeedsUpgrade(root, "post-commit", githook.PostCommitVersionMarker) {
+					fmt.Println()
+					fmt.Println("Warning: post-commit hook is outdated -- run 'roborev init' to upgrade")
+				}
+				if githook.NeedsUpgrade(root, "post-rewrite", githook.PostRewriteVersionMarker) ||
+					githook.Missing(root, "post-rewrite") {
+					fmt.Println()
+					fmt.Println("Warning: post-rewrite hook is missing or outdated -- run 'roborev init' to install")
+				}
+			}
+
+			return nil
+		},
+	}
+}
