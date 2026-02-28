@@ -143,10 +143,17 @@ func ensureDaemon() error {
 			}
 			decodeErr := json.NewDecoder(resp.Body).Decode(&status)
 
-			// Fail closed: restart if decode fails, version empty, or mismatch
-			if !skipVersionCheck && (decodeErr != nil || status.Version == "" || status.Version != version.Version) {
+			// Always fail on decode errors (response is not a valid daemon)
+			if decodeErr != nil {
 				if verbose {
-					fmt.Printf("Daemon version mismatch or unreadable (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
+					fmt.Printf("Daemon response unreadable, restarting...\n")
+				}
+				return restartDaemon()
+			}
+			// Skip version mismatch check when env var is set
+			if !skipVersionCheck && (status.Version == "" || status.Version != version.Version) {
+				if verbose {
+					fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
 				}
 				return restartDaemon()
 			}
@@ -165,10 +172,17 @@ func ensureDaemon() error {
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&status)
 
-		// Fail closed: restart if decode fails, version empty, or mismatch
-		if !skipVersionCheck && (decodeErr != nil || status.Version == "" || status.Version != version.Version) {
+		// Always fail on decode errors (response is not a valid daemon)
+		if decodeErr != nil {
 			if verbose {
-				fmt.Printf("Daemon version mismatch or unreadable (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
+				fmt.Printf("Daemon response unreadable, restarting...\n")
+			}
+			return restartDaemon()
+		}
+		// Skip version mismatch check when env var is set
+		if !skipVersionCheck && (status.Version == "" || status.Version != version.Version) {
+			if verbose {
+				fmt.Printf("Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
 			}
 			return restartDaemon()
 		}

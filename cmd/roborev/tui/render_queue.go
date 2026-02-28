@@ -306,10 +306,16 @@ func (m model) renderQueueView() string {
 		b.WriteString(renderHelpTable(m.queueHelpRows(), m.width))
 	}
 
-	b.WriteString("\x1b[K") // Clear to end of line (no newline at end)
-	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
+	output := b.String()
+	if compact {
+		// Trim trailing newline to avoid layout overflow (compact has no
+		// help footer to consume the final line).
+		output = strings.TrimSuffix(output, "\n")
+	}
+	output += "\x1b[K" // Clear to end of line (no newline at end)
+	output += "\x1b[J" // Clear to end of screen to prevent artifacts
 
-	return b.String()
+	return output
 }
 func (m model) calculateColumnWidths(idWidth int) columnWidths {
 	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addressed (9)
