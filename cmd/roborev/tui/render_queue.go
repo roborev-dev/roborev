@@ -106,6 +106,12 @@ func (m model) renderQueueView() string {
 		title.WriteString(" [hiding addressed]")
 	}
 	b.WriteString(titleStyle.Render(title.String()))
+	// In compact mode, show version mismatch inline since the status area is hidden
+	if compact && m.versionMismatch {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true)
+		b.WriteString(" ")
+		b.WriteString(errorStyle.Render(fmt.Sprintf("MISMATCH: TUI %s != Daemon %s", version.Version, m.daemonVersion)))
+	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	if !compact {
