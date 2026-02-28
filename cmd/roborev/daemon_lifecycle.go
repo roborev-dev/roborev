@@ -190,11 +190,6 @@ func ensureDaemon() error {
 	}
 
 	// Start daemon in background
-	if skipVersionCheck {
-		// Don't try to start a daemon from an ephemeral binary;
-		// the user expects an existing daemon to be running.
-		return fmt.Errorf("no running daemon found (version check skipped, not auto-starting)")
-	}
 	return startDaemon()
 }
 
