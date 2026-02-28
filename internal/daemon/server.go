@@ -2158,11 +2158,21 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 
 // buildFixPrompt constructs a prompt for fixing review findings.
 func buildFixPrompt(reviewOutput string) string {
-	return "# Fix Request\n\n" +
+	return buildFixPromptWithInstructions(reviewOutput, "")
+}
+
+// buildFixPromptWithInstructions constructs a fix prompt that includes the review
+// findings and optional user-provided instructions.
+func buildFixPromptWithInstructions(reviewOutput, userInstructions string) string {
+	prompt := "# Fix Request\n\n" +
 		"An analysis was performed and produced the following findings:\n\n" +
 		"## Analysis Findings\n\n" +
-		reviewOutput +
-		"\n\n## Instructions\n\n" +
+		reviewOutput + "\n\n"
+	if userInstructions != "" {
+		prompt += "## Additional Instructions\n\n" +
+			userInstructions + "\n\n"
+	}
+	prompt += "## Instructions\n\n" +
 		"Please apply the suggested changes from the analysis above. " +
 		"Make the necessary edits to address each finding. " +
 		"Focus on the highest priority items first.\n\n" +
@@ -2170,26 +2180,7 @@ func buildFixPrompt(reviewOutput string) string {
 		"1. Verify the code still compiles/passes linting\n" +
 		"2. Run any relevant tests to ensure nothing is broken\n" +
 		"3. Stage the changes with git add but do NOT commit — the changes will be captured as a patch\n"
-}
-
-// buildFixPromptWithInstructions constructs a fix prompt that includes the review
-// findings AND additional user-provided instructions.
-func buildFixPromptWithInstructions(reviewOutput, userInstructions string) string {
-	return "# Fix Request\n\n" +
-		"An analysis was performed and produced the following findings:\n\n" +
-		"## Analysis Findings\n\n" +
-		reviewOutput +
-		"\n\n## Additional Instructions\n\n" +
-		userInstructions +
-		"\n\n## Instructions\n\n" +
-		"Please apply the suggested changes from the analysis above, " +
-		"taking into account the additional instructions provided. " +
-		"Make the necessary edits to address each finding. " +
-		"Focus on the highest priority items first.\n\n" +
-		"After making changes:\n" +
-		"1. Verify the code still compiles/passes linting\n" +
-		"2. Run any relevant tests to ensure nothing is broken\n" +
-		"3. Stage the changes with git add but do NOT commit — the changes will be captured as a patch\n"
+	return prompt
 }
 
 // buildRebasePrompt constructs a prompt for re-applying a stale patch to current HEAD.
