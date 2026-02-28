@@ -1901,8 +1901,8 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the fix prompt
-	fixPrompt := req.Prompt
-	if fixPrompt == "" && req.StaleJobID > 0 {
+	fixPrompt := ""
+	if req.StaleJobID > 0 {
 		// Server-side rebase: look up stale patch from DB and build rebase prompt
 		staleJob, err := s.db.GetJobByID(req.StaleJobID)
 		if err != nil {
@@ -1943,7 +1943,11 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "parent job has no review to fix")
 			return
 		}
-		fixPrompt = buildFixPrompt(review.Output)
+		if req.Prompt != "" {
+			fixPrompt = buildFixPromptWithInstructions(review.Output, req.Prompt)
+		} else {
+			fixPrompt = buildFixPrompt(review.Output)
+		}
 	}
 
 	// Resolve agent for fix workflow
@@ -2160,6 +2164,26 @@ func buildFixPrompt(reviewOutput string) string {
 		reviewOutput +
 		"\n\n## Instructions\n\n" +
 		"Please apply the suggested changes from the analysis above. " +
+		"Make the necessary edits to address each finding. " +
+		"Focus on the highest priority items first.\n\n" +
+		"After making changes:\n" +
+		"1. Verify the code still compiles/passes linting\n" +
+		"2. Run any relevant tests to ensure nothing is broken\n" +
+		"3. Stage the changes with git add but do NOT commit — the changes will be captured as a patch\n"
+}
+
+// buildFixPromptWithInstructions constructs a fix prompt that includes the review
+// findings AND additional user-provided instructions.
+func buildFixPromptWithInstructions(reviewOutput, userInstructions string) string {
+	return "# Fix Request\n\n" +
+		"An analysis was performed and produced the following findings:\n\n" +
+		"## Analysis Findings\n\n" +
+		reviewOutput +
+		"\n\n## Additional Instructions\n\n" +
+		userInstructions +
+		"\n\n## Instructions\n\n" +
+		"Please apply the suggested changes from the analysis above, " +
+		"taking into account the additional instructions provided. " +
 		"Make the necessary edits to address each finding. " +
 		"Focus on the highest priority items first.\n\n" +
 		"After making changes:\n" +

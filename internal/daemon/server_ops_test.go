@@ -505,6 +505,47 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("custom prompt includes review context", func(t *testing.T) {
+		req := testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix",
+			fixJobRequest{
+				ParentJobID: reviewJob.ID,
+				Prompt:      "Ignore the security concern, it's only a testing binary.",
+			},
+		)
+		w := httptest.NewRecorder()
+		server.handleFixJob(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf(
+				"Expected 201 for fix enqueue with custom prompt, got %d: %s",
+				w.Code, w.Body.String(),
+			)
+		}
+
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+
+		stored, err := db.GetJobByID(fixJob.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID(%d): %v", fixJob.ID, err)
+		}
+
+		// The stored prompt must contain both the review output AND the custom instructions
+		if !strings.Contains(stored.Prompt, "FAIL: issues found") {
+			t.Fatalf(
+				"Expected fix prompt to contain review output, got:\n%s",
+				stored.Prompt,
+			)
+		}
+		if !strings.Contains(stored.Prompt, "Ignore the security concern") {
+			t.Fatalf(
+				"Expected fix prompt to contain custom instructions, got:\n%s",
+				stored.Prompt,
+			)
+		}
+	})
+
 	t.Run("fix job as parent is rejected", func(t *testing.T) {
 		// Create a fix job and try to use it as a parent
 		fixJob, _ := db.EnqueueJob(storage.EnqueueOpts{
