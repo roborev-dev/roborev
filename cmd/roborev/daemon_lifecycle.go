@@ -122,9 +122,12 @@ func registerRepo(repoPath string) error {
 	return nil
 }
 
-// ensureDaemon checks if daemon is running, starts it if not
-// If daemon is running but has different version, restart it
+// ensureDaemon checks if daemon is running, starts it if not.
+// If daemon is running but has different version, restart it.
+// Set ROBOREV_SKIP_VERSION_CHECK=1 to accept any daemon version without
+// restarting (useful for development with go run).
 func ensureDaemon() error {
+	skipVersionCheck := os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1"
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 
 	// First check runtime files for any running daemon
@@ -141,7 +144,7 @@ func ensureDaemon() error {
 			decodeErr := json.NewDecoder(resp.Body).Decode(&status)
 
 			// Fail closed: restart if decode fails, version empty, or mismatch
-			if decodeErr != nil || status.Version == "" || status.Version != version.Version {
+			if !skipVersionCheck && (decodeErr != nil || status.Version == "" || status.Version != version.Version) {
 				if verbose {
 					fmt.Printf("Daemon version mismatch or unreadable (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
 				}
@@ -163,7 +166,7 @@ func ensureDaemon() error {
 		decodeErr := json.NewDecoder(resp.Body).Decode(&status)
 
 		// Fail closed: restart if decode fails, version empty, or mismatch
-		if decodeErr != nil || status.Version == "" || status.Version != version.Version {
+		if !skipVersionCheck && (decodeErr != nil || status.Version == "" || status.Version != version.Version) {
 			if verbose {
 				fmt.Printf("Daemon version mismatch or unreadable (daemon: %s, cli: %s), restarting...\n", status.Version, version.Version)
 			}
@@ -173,6 +176,11 @@ func ensureDaemon() error {
 	}
 
 	// Start daemon in background
+	if skipVersionCheck {
+		// Don't try to start a daemon from an ephemeral binary;
+		// the user expects an existing daemon to be running.
+		return fmt.Errorf("no running daemon found (version check skipped, not auto-starting)")
+	}
 	return startDaemon()
 }
 

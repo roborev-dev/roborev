@@ -352,7 +352,8 @@ type model struct {
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
 
-	clipboard ClipboardWriter
+	distractionFree bool // hide status line, headers, footer, scroll indicator
+	clipboard       ClipboardWriter
 
 	// Review view navigation
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)

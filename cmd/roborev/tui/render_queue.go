@@ -36,13 +36,25 @@ func (m model) queueHelpRows() [][]helpItem {
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
 	}
-	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
+	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"D", "focus"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
 	return [][]helpItem{row1, row2}
 }
 func (m model) queueHelpLines() int {
 	return len(reflowHelpRows(m.queueHelpRows(), m.width))
 }
+
+// queueCompact returns true when chrome should be hidden
+// (status line, table header, scroll indicator, flash, help footer).
+// Triggered automatically for short terminals or manually via distraction-free mode.
+func (m model) queueCompact() bool {
+	return m.height < 15 || m.distractionFree
+}
+
 func (m model) queueVisibleRows() int {
+	if m.queueCompact() {
+		// compact: title(1) only
+		return max(m.height-1, 1)
+	}
 	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
 	reserved := 7 + m.queueHelpLines()
 	visibleRows := max(m.height-reserved, 3)
@@ -72,6 +84,7 @@ func (m model) getVisibleSelectedIdx() int {
 }
 func (m model) renderQueueView() string {
 	var b strings.Builder
+	compact := m.queueCompact()
 
 	// Title with version, optional update notification, and filter indicators (in stack order)
 	var title strings.Builder
@@ -95,69 +108,66 @@ func (m model) renderQueueView() string {
 	b.WriteString(titleStyle.Render(title.String()))
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Status line - use server-side aggregate counts for paginated views,
-	// fall back to client-side counting for multi-repo filters (which load all jobs)
-	var statusLine string
-	var done, addressed, unaddressed int
-	if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == branchNone {
-		// Client-side filtered views load all jobs, so count locally
-		for _, job := range m.jobs {
-			if len(m.activeRepoFilter) > 0 && !m.repoMatchesFilter(job.RepoPath) {
-				continue
-			}
-			if m.activeBranchFilter == branchNone && job.Branch != "" {
-				continue
-			}
-			if job.Status == storage.JobStatusDone {
-				done++
-				if job.Addressed != nil {
-					if *job.Addressed {
-						addressed++
-					} else {
-						unaddressed++
+	if !compact {
+		// Status line - use server-side aggregate counts for paginated views,
+		// fall back to client-side counting for multi-repo filters (which load all jobs)
+		var statusLine string
+		var done, addressed, unaddressed int
+		if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == branchNone {
+			// Client-side filtered views load all jobs, so count locally
+			for _, job := range m.jobs {
+				if len(m.activeRepoFilter) > 0 && !m.repoMatchesFilter(job.RepoPath) {
+					continue
+				}
+				if m.activeBranchFilter == branchNone && job.Branch != "" {
+					continue
+				}
+				if job.Status == storage.JobStatusDone {
+					done++
+					if job.Addressed != nil {
+						if *job.Addressed {
+							addressed++
+						} else {
+							unaddressed++
+						}
 					}
 				}
 			}
-		}
-	} else {
-		done = m.jobStats.Done
-		addressed = m.jobStats.Addressed
-		unaddressed = m.jobStats.Unaddressed
-	}
-	if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-		statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addressed: %d | Unaddressed: %d",
-			m.daemonVersion, done, addressed, unaddressed)
-	} else {
-		statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Addressed: %d | Unaddressed: %d",
-			m.daemonVersion,
-			m.status.ActiveWorkers, m.status.MaxWorkers,
-			done, addressed, unaddressed)
-	}
-	b.WriteString(statusStyle.Render(statusLine))
-	b.WriteString("\x1b[K\n") // Clear status line
-
-	// Update notification on line 3 (above the table)
-	if m.updateAvailable != "" {
-		updateStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true)
-		var updateMsg string
-		if m.updateIsDevBuild {
-			updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update --force'", m.updateAvailable)
 		} else {
-			updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
+			done = m.jobStats.Done
+			addressed = m.jobStats.Addressed
+			unaddressed = m.jobStats.Unaddressed
 		}
-		b.WriteString(updateStyle.Render(updateMsg))
+		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
+			statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addressed: %d | Unaddressed: %d",
+				m.daemonVersion, done, addressed, unaddressed)
+		} else {
+			statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Addressed: %d | Unaddressed: %d",
+				m.daemonVersion,
+				m.status.ActiveWorkers, m.status.MaxWorkers,
+				done, addressed, unaddressed)
+		}
+		b.WriteString(statusStyle.Render(statusLine))
+		b.WriteString("\x1b[K\n") // Clear status line
+
+		// Update notification on line 3 (above the table)
+		if m.updateAvailable != "" {
+			updateStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true)
+			var updateMsg string
+			if m.updateIsDevBuild {
+				updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update --force'", m.updateAvailable)
+			} else {
+				updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
+			}
+			b.WriteString(updateStyle.Render(updateMsg))
+		}
+		b.WriteString("\x1b[K\n") // Clear line 3
 	}
-	b.WriteString("\x1b[K\n") // Clear line 3
 
 	visibleJobList := m.getVisibleJobs()
 	visibleSelectedIdx := m.getVisibleSelectedIdx()
 
-	// Calculate visible job range based on terminal height
-	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
-	reservedLines := 7 + m.queueHelpLines()
-	visibleRows := max(m.height-reservedLines,
-		// Show at least 3 jobs
-		3)
+	visibleRows := m.queueVisibleRows()
 
 	// Track scroll indicator state for later
 	var scrollInfo string
@@ -176,9 +186,13 @@ func (m model) renderQueueView() string {
 			b.WriteString("\x1b[K\n")
 		}
 		// Pad empty queue to fill visibleRows (minus 1 for the message we just wrote)
-		// Also need header lines (2) to match non-empty case
+		// Also need header lines (2) to match non-empty case (skip in compact)
 		linesWritten := 1
-		for linesWritten < visibleRows+2 { // +2 for header lines we skipped
+		padTarget := visibleRows
+		if !compact {
+			padTarget += 2 // +2 for header lines we skipped
+		}
+		for linesWritten < padTarget {
 			b.WriteString("\x1b[K\n")
 			linesWritten++
 		}
@@ -195,18 +209,20 @@ func (m model) renderQueueView() string {
 		// Calculate column widths dynamically based on terminal width
 		colWidths := m.calculateColumnWidths(idWidth)
 
-		// Header (with 2-char prefix to align with row selector)
-		header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-8s %-3s %-12s %-8s %s",
-			idWidth, "JobID",
-			colWidths.ref, "Ref",
-			colWidths.branch, "Branch",
-			colWidths.repo, "Repo",
-			colWidths.agent, "Agent",
-			"Status", "P/F", "Queued", "Elapsed", "Addressed")
-		b.WriteString(statusStyle.Render(header))
-		b.WriteString("\x1b[K\n") // Clear to end of line
-		b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
-		b.WriteString("\x1b[K\n") // Clear to end of line
+		if !compact {
+			// Header (with 2-char prefix to align with row selector)
+			header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-8s %-3s %-12s %-8s %s",
+				idWidth, "JobID",
+				colWidths.ref, "Ref",
+				colWidths.branch, "Branch",
+				colWidths.repo, "Repo",
+				colWidths.agent, "Agent",
+				"Status", "P/F", "Queued", "Elapsed", "Addressed")
+			b.WriteString(statusStyle.Render(header))
+			b.WriteString("\x1b[K\n") // Clear to end of line
+			b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
+			b.WriteString("\x1b[K\n") // Clear to end of line
+		}
 
 		// Determine which jobs to show, keeping selected item visible
 		start = 0
@@ -262,25 +278,28 @@ func (m model) renderQueueView() string {
 		}
 	}
 
-	// Always emit scroll indicator line (blank if no scroll info) to maintain consistent height
-	if scrollInfo != "" {
-		b.WriteString(statusStyle.Render(scrollInfo))
-	}
-	b.WriteString("\x1b[K\n") // Clear scroll indicator line
+	if !compact {
+		// Always emit scroll indicator line (blank if no scroll info) to maintain consistent height
+		if scrollInfo != "" {
+			b.WriteString(statusStyle.Render(scrollInfo))
+		}
+		b.WriteString("\x1b[K\n") // Clear scroll indicator line
 
-	// Status line: flash message (temporary)
-	// Version mismatch takes priority over flash messages (it's persistent and important)
-	if m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
-		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
-	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewQueue {
-		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
-		b.WriteString(flashStyle.Render(m.flashMessage))
-	}
-	b.WriteString("\x1b[K\n") // Clear to end of line
+		// Status line: flash message (temporary)
+		// Version mismatch takes priority over flash messages (it's persistent and important)
+		if m.versionMismatch {
+			errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
+			b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
+		} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewQueue {
+			flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
+			b.WriteString(flashStyle.Render(m.flashMessage))
+		}
+		b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Help
-	b.WriteString(renderHelpTable(m.queueHelpRows(), m.width))
+		// Help
+		b.WriteString(renderHelpTable(m.queueHelpRows(), m.width))
+	}
+
 	b.WriteString("\x1b[K") // Clear to end of line (no newline at end)
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 

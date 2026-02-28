@@ -131,6 +131,7 @@ func helpLines() []string {
 				{"r", "Re-run completed/failed job"},
 				{"F", "Trigger fix for selected review"},
 				{"T", "Open Tasks view"},
+				{"D", "Toggle distraction-free mode"},
 			},
 		},
 		{

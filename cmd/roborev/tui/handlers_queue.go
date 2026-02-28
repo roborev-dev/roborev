@@ -26,7 +26,11 @@ func (m *model) handleQueueMouseClick(_ int, y int) {
 			start = max(end-visibleRows, 0)
 		}
 	}
-	row := y - 5 // rows start after title, status, update, header, separator
+	headerRows := 5 // title, status, update, header, separator
+	if m.queueCompact() {
+		headerRows = 1 // title only
+	}
+	row := y - headerRows
 	if row < 0 || row >= visibleRows {
 		return
 	}
@@ -73,6 +77,14 @@ func (m *model) handleTasksMouseClick(y int) {
 		return
 	}
 	m.fixSelectedIdx = idx
+}
+
+func (m model) handleDistractionFreeKey() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue {
+		return m, nil
+	}
+	m.distractionFree = !m.distractionFree
+	return m, nil
 }
 
 func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
