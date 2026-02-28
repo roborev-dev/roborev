@@ -169,7 +169,7 @@ func TestTUIQueueMouseClickSelectsVisibleRow(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
-	m.height = 14
+	m.height = 20
 	m.jobs = []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2),
@@ -195,7 +195,7 @@ func TestTUIQueueMouseHeaderClickDoesNotSort(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
-	m.height = 14
+	m.height = 20
 	m.jobs = []storage.ReviewJob{
 		makeJob(3),
 		makeJob(1),
@@ -259,7 +259,7 @@ func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewQueue
 	m.width = 120
-	m.height = 12 // small terminal
+	m.height = 16 // small but not compact (compact hides headers, changing click offsets)
 
 	// Create more jobs than fit on screen.
 	for i := range 20 {
@@ -304,6 +304,94 @@ func TestTUIQueueMouseClickScrolledWindow(t *testing.T) {
 			"expected selectedIdx %d, got %d",
 			wantIdx, m2.selectedIdx,
 		)
+	}
+}
+
+func TestTUIQueueCompactMode(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.width = 80
+	m.height = 10 // compact mode (< 15)
+
+	for i := range 5 {
+		m.jobs = append(m.jobs, makeJob(int64(i+1)))
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.View()
+
+	// Should have the title line
+	if !strings.Contains(output, "roborev queue") {
+		t.Error("compact mode should show title")
+	}
+	// Should NOT have the table header
+	if strings.Contains(output, "JobID") {
+		t.Error("compact mode should hide table header")
+	}
+	// Should NOT have help footer keys
+	if strings.Contains(output, "navigate") {
+		t.Error("compact mode should hide help footer")
+	}
+	// Should NOT have daemon status line
+	if strings.Contains(output, "Daemon:") {
+		t.Error("compact mode should hide status line")
+	}
+
+	// Mouse click at y=1 (first data row in compact mode) should select first job
+	m.selectedIdx = 2
+	m.selectedJobID = 3
+	m2, _ := updateModel(t, m, mouseLeftClick(4, 1))
+	if m2.selectedJobID != 1 {
+		t.Errorf("compact mouse click at y=1: expected job 1, got %d", m2.selectedJobID)
+	}
+}
+
+func TestTUIQueueDistractionFreeToggle(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewQueue
+	m.width = 120
+	m.height = 30 // tall enough for normal mode
+
+	for i := range 5 {
+		m.jobs = append(m.jobs, makeJob(int64(i+1)))
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Normal mode: should show chrome
+	output := m.View()
+	if !strings.Contains(output, "JobID") {
+		t.Error("normal mode should show table header")
+	}
+	if !strings.Contains(output, "navigate") {
+		t.Error("normal mode should show help footer")
+	}
+
+	// Toggle distraction-free with 'D'
+	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	if !m2.distractionFree {
+		t.Fatal("D should toggle distraction-free on")
+	}
+	output = m2.View()
+	if strings.Contains(output, "JobID") {
+		t.Error("distraction-free should hide table header")
+	}
+	if strings.Contains(output, "navigate") {
+		t.Error("distraction-free should hide help footer")
+	}
+	if strings.Contains(output, "Daemon:") {
+		t.Error("distraction-free should hide status line")
+	}
+
+	// Toggle back off
+	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	if m3.distractionFree {
+		t.Fatal("D should toggle distraction-free off")
+	}
+	output = m3.View()
+	if !strings.Contains(output, "JobID") {
+		t.Error("should show table header after toggling off")
 	}
 }
 

@@ -121,6 +121,8 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFixKey()
 	case "T":
 		return m.handleToggleTasksKey()
+	case "D":
+		return m.handleDistractionFreeKey()
 	case "tab":
 		return m.handleTabKey()
 	}
