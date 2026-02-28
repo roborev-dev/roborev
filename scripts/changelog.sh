@@ -68,6 +68,7 @@ Please generate a concise, user-focused changelog. Group changes into sections l
 Focus on user-visible changes. Skip internal refactoring unless it affects users.
 Keep descriptions brief (one line each). Use present tense.
 Do NOT mention bugs that were introduced and fixed within this same release cycle.
+Do NOT mention routine nix flake updates (flake.lock, flake.nix bumps).
 ${EXTRA_INSTRUCTIONS:+
 
 When writing the changelog, look for these features or improvements in the commit log above: $EXTRA_INSTRUCTIONS
