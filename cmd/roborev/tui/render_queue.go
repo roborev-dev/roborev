@@ -342,6 +342,18 @@ func (m model) renderQueueView() string {
 				}
 				distributed += colWidths[c]
 			}
+
+			// Cap Branch at 3/2 of Repo to prevent Branch from
+			// starving Repo when branch names are long.
+			if !m.hiddenColumns[colBranch] && !m.hiddenColumns[colRepo] {
+				maxBranch := colWidths[colRepo] * 3 / 2
+				if colWidths[colBranch] > maxBranch {
+					excess := colWidths[colBranch] - maxBranch
+					colWidths[colBranch] = maxBranch
+					colWidths[colRepo] += excess
+				}
+			}
+
 			// Correct rounding: add leftover to first visible flex
 			// column on undershoot, drain overflow across visible
 			// flex columns (widest first) on overshoot from
