@@ -11,7 +11,10 @@ import (
 )
 
 // collectMsgs recursively extracts all tea.Msg values from a Cmd,
-// expanding BatchMsg into individual messages.
+// expanding BatchMsg into individual messages. Note: this executes
+// each Cmd function, so only use with side-effect-free commands
+// (e.g., mouse toggles, clear screen) or in tests with
+// withExternalIODisabled().
 func collectMsgs(cmd tea.Cmd) []tea.Msg {
 	if cmd == nil {
 		return nil
