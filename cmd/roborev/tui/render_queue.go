@@ -30,7 +30,7 @@ func (m model) getVisibleJobs() []storage.ReviewJob {
 func (m model) queueHelpRows() [][]helpItem {
 	row1 := []helpItem{
 		{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"},
-		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"},
+		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}, {"o", "options"},
 	}
 	row2 := []helpItem{
 		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "handled"},
@@ -38,7 +38,7 @@ func (m model) queueHelpRows() [][]helpItem {
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
 	}
-	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"o", "options"}, helpItem{"D", "focus"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
+	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"D", "focus"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
 	return [][]helpItem{row1, row2}
 }
 func (m model) queueHelpLines() int {
@@ -337,9 +337,9 @@ func (m model) renderQueueView() string {
 					continue
 				}
 				if flexContentTotal > 0 {
-					colWidths[c] = remaining * contentWidth[c] / flexContentTotal
+					colWidths[c] = max(remaining*contentWidth[c]/flexContentTotal, 1)
 				} else {
-					colWidths[c] = remaining / totalFlex
+					colWidths[c] = max(remaining/totalFlex, 1)
 				}
 				distributed += colWidths[c]
 			}

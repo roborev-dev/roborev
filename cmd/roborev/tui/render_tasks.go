@@ -164,7 +164,8 @@ func (m model) renderTasksView() string {
 
 	// Help row calculation for visible rows
 	tasksHelpRows := [][]helpItem{
-		{{"enter", "view"}, {"P", "parent"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}, {"x", "cancel"}, {"o", "options"}, {"?", "help"}, {"T/esc", "back"}},
+		{{"enter", "view"}, {"P", "parent"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}},
+		{{"x", "cancel"}, {"o", "options"}, {"?", "help"}, {"T/esc", "back"}},
 	}
 	tasksHelpLines := len(reflowHelpRows(tasksHelpRows, m.width))
 	visibleRows := m.height - (6 + tasksHelpLines) // title + header + separator + status + scroll + help(N)
@@ -247,9 +248,9 @@ func (m model) renderTasksView() string {
 		distributed := 0
 		for _, c := range flexCols {
 			if flexContentTotal > 0 {
-				colWidths[c] = remaining * contentWidth[c] / flexContentTotal
+				colWidths[c] = max(remaining*contentWidth[c]/flexContentTotal, 1)
 			} else {
-				colWidths[c] = remaining / totalFlex
+				colWidths[c] = max(remaining/totalFlex, 1)
 			}
 			distributed += colWidths[c]
 		}

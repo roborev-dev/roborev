@@ -474,11 +474,12 @@ func (m model) handlePageDownKey() (tea.Model, tea.Cmd) {
 			m.selectedIdx = nextIdx
 		}
 		m.updateSelectedJobID()
-		if m.canPaginate() {
-			if reachedEnd || m.countVisibleJobsAfter(m.selectedIdx) < queuePrefetchBuffer {
-				m.loadingMore = true
-				return m, m.fetchMoreJobs()
-			}
+		if reachedEnd && m.canPaginate() {
+			m.loadingMore = true
+			return m, m.fetchMoreJobs()
+		}
+		if cmd := m.maybePrefetch(m.selectedIdx); cmd != nil {
+			return m, cmd
 		}
 	case viewReview:
 		m.reviewScroll += pageSize
