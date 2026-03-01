@@ -851,8 +851,12 @@ func (m model) renderColumnOptionsView() string {
 	}
 
 	b.WriteString("\n")
+	toggleHelp := helpItem{"space", "toggle"}
+	if m.colOptionsReturnView == viewTasks {
+		toggleHelp = helpItem{"space", "borders"}
+	}
 	helpRows := [][]helpItem{
-		{{"↑/↓", "navigate"}, {"j/k", "reorder"}, {"space", "toggle"}, {"esc", "close"}},
+		{{"↑/↓", "navigate"}, {"j/k", "reorder"}, toggleHelp, {"esc", "close"}},
 	}
 	b.WriteString(renderHelpTable(helpRows, m.width))
 

@@ -661,6 +661,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case applyPatchResultMsg:
 		return m.handleApplyPatchResultMsg(msg)
 	case configSaveErrMsg:
+		m.colOptionsDirty = true
 		m.setFlash("Config save failed: "+msg.err.Error(), 5*time.Second, m.currentView)
 		return m, nil
 	}
