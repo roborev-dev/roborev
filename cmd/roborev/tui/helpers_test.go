@@ -779,6 +779,58 @@ func TestShortRef(t *testing.T) {
 	}
 }
 
+func TestShortJobRef(t *testing.T) {
+	fullSHA1 := "abc1234567890def1234567890abcdef12345678"
+	fullSHA2 := "fed9876543210abc9876543210fedcba98765432"
+	commitID := int64(1)
+	diffContent := "diff"
+
+	tests := []struct {
+		name string
+		job  storage.ReviewJob
+		want string
+	}{
+		{
+			name: "single commit",
+			job:  storage.ReviewJob{GitRef: fullSHA1, CommitID: &commitID},
+			want: "abc1234",
+		},
+		{
+			name: "range with nil CommitID",
+			job:  storage.ReviewJob{GitRef: fullSHA1 + ".." + fullSHA2},
+			want: "abc1234..fed9876",
+		},
+		{
+			name: "prompt job",
+			job:  storage.ReviewJob{GitRef: "prompt"},
+			want: "run",
+		},
+		{
+			name: "task ref without commit",
+			job:  storage.ReviewJob{GitRef: "analyze"},
+			want: "analyze",
+		},
+		{
+			name: "dirty review",
+			job: storage.ReviewJob{
+				GitRef:      fullSHA1,
+				DiffContent: &diffContent,
+			},
+			want: "abc1234",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shortJobRef(tt.job)
+			if got != tt.want {
+				t.Errorf("shortJobRef() = %q, want %q",
+					got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDirtyPatchFilesError(t *testing.T) {
 	// dirtyPatchFiles should return an error when git diff fails
 	// (e.g., invalid repo path), not silently return nil.

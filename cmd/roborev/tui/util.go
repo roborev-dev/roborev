@@ -20,7 +20,9 @@ func shortJobRef(job storage.ReviewJob) string {
 		if job.GitRef == "prompt" {
 			return "run"
 		}
-		return job.GitRef
+		if !strings.Contains(job.GitRef, "..") {
+			return job.GitRef
+		}
 	}
 	return shortRef(job.GitRef)
 }
