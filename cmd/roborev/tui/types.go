@@ -148,6 +148,7 @@ type rerunResultMsg struct {
 	err           error
 }
 type errMsg error
+type configSaveErrMsg struct{ err error }
 type jobsErrMsg struct {
 	err error
 	seq int // fetch sequence number for staleness check

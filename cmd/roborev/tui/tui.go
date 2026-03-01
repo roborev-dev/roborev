@@ -388,6 +388,7 @@ type model struct {
 	// Column options modal
 	colOptionsIdx        int            // Cursor in modal
 	colOptionsList       []columnOption // Items in modal (columns + borders toggle)
+	colOptionsDirty      bool           // True if options changed since modal opened
 	colBordersOn         bool           // Column borders enabled
 	hiddenColumns        map[int]bool   // Set of hidden column IDs
 	columnOrder          []int          // Ordered toggleable queue columns
@@ -659,6 +660,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePatchResultMsg(msg)
 	case applyPatchResultMsg:
 		return m.handleApplyPatchResultMsg(msg)
+	case configSaveErrMsg:
+		m.setFlash("Config save failed: "+msg.err.Error(), 5*time.Second, m.currentView)
+		return m, nil
 	}
 	return m, nil
 }

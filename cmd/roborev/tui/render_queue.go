@@ -777,13 +777,15 @@ func (m model) saveColumnOptions() tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := config.LoadGlobal()
 		if err != nil {
-			return nil
+			return configSaveErrMsg{err: fmt.Errorf("load config: %w", err)}
 		}
 		cfg.HiddenColumns = hidden
 		cfg.ColumnBorders = borders
 		cfg.ColumnOrder = colOrd
 		cfg.TaskColumnOrder = taskColOrd
-		config.SaveGlobal(cfg)
+		if err := config.SaveGlobal(cfg); err != nil {
+			return configSaveErrMsg{err: fmt.Errorf("save config: %w", err)}
+		}
 		return nil
 	}
 }

@@ -199,6 +199,10 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.currentView = m.colOptionsReturnView
+		if m.colOptionsDirty {
+			m.colOptionsDirty = false
+			return m, m.saveColumnOptions()
+		}
 		return m, nil
 	case "ctrl+c":
 		return m, tea.Quit
@@ -219,7 +223,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.colOptionsList[m.colOptionsIdx+1], m.colOptionsList[m.colOptionsIdx]
 			m.colOptionsIdx++
 			m.syncColumnOrderFromOptions()
-			return m, m.saveColumnOptions()
+			m.colOptionsDirty = true
 		}
 		return m, nil
 	case "k":
@@ -229,7 +233,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.colOptionsList[m.colOptionsIdx-1], m.colOptionsList[m.colOptionsIdx]
 			m.colOptionsIdx--
 			m.syncColumnOrderFromOptions()
-			return m, m.saveColumnOptions()
+			m.colOptionsDirty = true
 		}
 		return m, nil
 	case " ", "enter":
@@ -238,6 +242,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if opt.id == colOptionBorders {
 				opt.enabled = !opt.enabled
 				m.colBordersOn = opt.enabled
+				m.colOptionsDirty = true
 			} else if m.colOptionsReturnView == viewTasks {
 				// Tasks view: no visibility toggle (all columns always shown)
 				return m, nil
@@ -251,8 +256,8 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					m.hiddenColumns[opt.id] = true
 				}
+				m.colOptionsDirty = true
 			}
-			return m, m.saveColumnOptions()
 		}
 		return m, nil
 	}
