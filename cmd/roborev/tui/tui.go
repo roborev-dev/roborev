@@ -510,8 +510,8 @@ func newModel(serverAddr string, opts ...option) model {
 		hiddenColumns:          hiddenCols,
 		columnOrder:            colOrder,
 		taskColumnOrder:        taskColOrder,
-		queueColCache:          &colWidthCache{},
-		taskColCache:           &colWidthCache{},
+		queueColCache:          &colWidthCache{gen: -1},
+		taskColCache:           &colWidthCache{gen: -1},
 	}
 }
 

@@ -2037,3 +2037,138 @@ func TestColumnBordersRendered(t *testing.T) {
 		t.Errorf("expected more ▕ with borders on (%d) than off (%d)", bordersOnCount, bordersOffCount)
 	}
 }
+
+func TestQueueColWidthCacheColdStart(t *testing.T) {
+	// First render with pre-populated jobs must compute widths,
+	// not hit a stale cache with nil contentWidths.
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc1234"), withRepoName("myrepo"), withAgent("test")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := stripANSI(m.renderQueueView())
+	if !strings.Contains(output, "abc1234") {
+		t.Fatalf("first render should show job ref, got:\n%s", output)
+	}
+	// Cache should now be populated
+	if m.queueColCache.contentWidths == nil {
+		t.Fatal("cache contentWidths should be populated after first render")
+	}
+}
+
+func TestQueueColWidthCacheInvalidation(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("short"), withRepoName("r"), withAgent("t")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// First render populates cache
+	m.renderQueueView()
+	origGen := m.queueColCache.gen
+	origWidths := m.queueColCache.contentWidths
+
+	// Simulate new jobs arriving (bumps queueColGen)
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("a-much-longer-reference"), withRepoName("longer-repo-name"), withAgent("claude-code")),
+	}
+	m.queueColGen++
+
+	// Second render should recompute
+	m.renderQueueView()
+	if m.queueColCache.gen == origGen {
+		t.Fatal("cache gen should have advanced after invalidation")
+	}
+	// Widths should differ (longer content)
+	changed := false
+	for k, v := range m.queueColCache.contentWidths {
+		if ov, ok := origWidths[k]; ok && ov != v {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Fatal("content widths should differ after job data change")
+	}
+}
+
+func TestQueueColWidthCacheReuse(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc1234"), withRepoName("myrepo"), withAgent("test")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// First render populates cache
+	m.renderQueueView()
+	cachedWidths := m.queueColCache.contentWidths
+	cachedGen := m.queueColCache.gen
+
+	// Second render without gen bump should reuse cache
+	m.renderQueueView()
+	if m.queueColCache.gen != cachedGen {
+		t.Fatal("cache gen should not change on re-render without invalidation")
+	}
+	if !maps.Equal(m.queueColCache.contentWidths, cachedWidths) {
+		t.Fatal("cached contentWidths map should be identical on cache hit")
+	}
+}
+
+func TestTaskColWidthCacheColdStart(t *testing.T) {
+	parentID := int64(42)
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.fixJobs = []storage.ReviewJob{
+		{
+			ID:          101,
+			Status:      storage.JobStatusDone,
+			ParentJobID: &parentID,
+			RepoName:    "myrepo",
+			Branch:      "main",
+			GitRef:      "def5678",
+		},
+	}
+
+	output := stripANSI(m.renderTasksView())
+	if !strings.Contains(output, "def5678") {
+		t.Fatalf("first render should show job ref, got:\n%s", output)
+	}
+	if m.taskColCache.contentWidths == nil {
+		t.Fatal("task cache contentWidths should be populated after first render")
+	}
+}
+
+func TestTaskColWidthCacheInvalidation(t *testing.T) {
+	parentID := int64(42)
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusQueued, ParentJobID: &parentID, RepoName: "r"},
+	}
+
+	m.renderTasksView()
+	origGen := m.taskColCache.gen
+
+	// Simulate fix jobs update
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID, RepoName: "a-longer-repo-name"},
+	}
+	m.taskColGen++
+
+	m.renderTasksView()
+	if m.taskColCache.gen == origGen {
+		t.Fatal("task cache gen should have advanced after invalidation")
+	}
+}
