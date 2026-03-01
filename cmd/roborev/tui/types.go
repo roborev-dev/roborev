@@ -78,14 +78,6 @@ type helpItem struct {
 	desc string
 }
 
-// columnWidths stores pre-computed column widths for the queue view layout.
-type columnWidths struct {
-	ref    int
-	branch int
-	repo   int
-	agent  int
-}
-
 // logOutputMsg delivers output lines from the daemon
 type logOutputMsg struct {
 	lines     []logLine

@@ -614,212 +614,60 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 	}
 }
 
-func TestTUICalculateColumnWidths(t *testing.T) {
-	// Test that column widths fit within terminal for usable sizes (>= 80)
-	// Narrower terminals may overflow - users should widen their terminal
-	tests := []struct {
-		name           string
-		termWidth      int
-		idWidth        int
-		expectOverflow bool // true if overflow is acceptable for this width
-	}{
-		{
-			name:           "wide terminal",
-			termWidth:      200,
-			idWidth:        3,
-			expectOverflow: false,
-		},
-		{
-			name:           "medium terminal",
-			termWidth:      100,
-			idWidth:        3,
-			expectOverflow: false,
-		},
-		{
-			name:           "standard terminal",
-			termWidth:      80,
-			idWidth:        3,
-			expectOverflow: false,
-		},
-		{
-			name:           "narrow terminal - overflow acceptable",
-			termWidth:      60,
-			idWidth:        3,
-			expectOverflow: true, // Fixed columns alone need ~48 chars
-		},
-		{
-			name:           "very narrow terminal - overflow expected",
-			termWidth:      40,
-			idWidth:        3,
-			expectOverflow: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := model{width: tt.termWidth}
-			widths := m.calculateColumnWidths(tt.idWidth)
-
-			// All columns must have positive widths
-			if widths.ref < 1 {
-				t.Errorf("ref width %d < 1", widths.ref)
-			}
-			if widths.repo < 1 {
-				t.Errorf("repo width %d < 1", widths.repo)
-			}
-			if widths.agent < 1 {
-				t.Errorf("agent width %d < 1", widths.agent)
-			}
-
-			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addressed (9)
-			// Plus spacing: 2 (prefix) + 7 spaces between columns
-			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 9 + 7
-			flexibleTotal := widths.ref + widths.repo + widths.agent
-			totalWidth := fixedWidth + flexibleTotal
-
-			if !tt.expectOverflow && totalWidth > tt.termWidth {
-				t.Errorf("total width %d exceeds terminal width %d", totalWidth, tt.termWidth)
-			}
-
-			// Even with overflow, flexible columns should be minimal
-			if tt.expectOverflow && flexibleTotal > 15 {
-				t.Errorf("narrow terminal should minimize flexible columns, got %d", flexibleTotal)
-			}
-		})
-	}
-}
-
-func TestTUICalculateColumnWidthsProportions(t *testing.T) {
-	// On wide terminals, columns should use higher minimums
+func TestTUIJobCellsContent(t *testing.T) {
 	m := model{width: 200}
-	widths := m.calculateColumnWidths(3)
 
-	if widths.ref < 10 {
-		t.Errorf("wide terminal ref width %d < 10", widths.ref)
-	}
-	if widths.repo < 15 {
-		t.Errorf("wide terminal repo width %d < 15", widths.repo)
-	}
-	if widths.agent < 10 {
-		t.Errorf("wide terminal agent width %d < 10", widths.agent)
-	}
+	t.Run("basic cell values", func(t *testing.T) {
+		job := makeJob(1,
+			withRef("abc1234"),
+			withRepoName("myrepo"),
+			withAgent("test"),
+			withEnqueuedAt(time.Now()),
+		)
+		cells := m.jobCells(job)
+
+		// cells order: ref, branch, repo, agent, status, queued, elapsed, verdict, handled
+		if !strings.Contains(cells[0], "abc1234") {
+			t.Errorf("Expected ref to contain abc1234, got %q", cells[0])
+		}
+		if cells[2] != "myrepo" {
+			t.Errorf("Expected repo 'myrepo', got %q", cells[2])
+		}
+		if cells[3] != "test" {
+			t.Errorf("Expected agent 'test', got %q", cells[3])
+		}
+		if cells[4] != "done" {
+			t.Errorf("Expected status 'done', got %q", cells[4])
+		}
+	})
+
+	t.Run("claude-code normalizes to claude", func(t *testing.T) {
+		job := makeJob(1, withAgent("claude-code"))
+		cells := m.jobCells(job)
+		if cells[3] != "claude" {
+			t.Errorf("Expected agent 'claude', got %q", cells[3])
+		}
+	})
+
+	t.Run("verdict and handled values", func(t *testing.T) {
+		pass := "P"
+		handled := true
+		job := makeJob(1)
+		job.Verdict = &pass
+		job.Addressed = &handled
+
+		cells := m.jobCells(job)
+		if cells[7] != "P" {
+			t.Errorf("Expected verdict 'P', got %q", cells[7])
+		}
+		if cells[8] != "yes" {
+			t.Errorf("Expected handled 'yes', got %q", cells[8])
+		}
+	})
 }
 
-func TestTUIRenderJobLineTruncation(t *testing.T) {
+func TestTUIJobCellsReviewTypeTag(t *testing.T) {
 	m := model{width: 80}
-	// Use a git range - shortRef truncates ranges to 17 chars max, then renderJobLine
-	// truncates further based on colWidths.ref. Use a range longer than 17 chars.
-	job := makeJob(1,
-		withRef("abcdef1234567..ghijkl7890123"), // 28 char range, shortRef -> 17 chars
-		withRepoName("very-long-repository-name-that-exceeds-width"),
-		withAgent("super-long-agent-name"),
-		withEnqueuedAt(time.Now()),
-	)
-
-	// Use narrow column widths to force truncation
-	// ref=10 will truncate the 17-char shortRef output
-	colWidths := columnWidths{
-		ref:   10,
-		repo:  15,
-		agent: 10,
-	}
-
-	line := m.renderJobLine(job, false, 3, colWidths)
-
-	// Check that truncated values contain "..."
-	if !strings.Contains(line, "...") {
-		t.Errorf("Expected truncation with '...' in line: %s", line)
-	}
-
-	// The line should contain truncated versions, not full strings
-	// shortRef reduces "abcdef1234567..ghijkl7890123" to "abcdef1234567..gh" (17 chars)
-	// then renderJobLine truncates to colWidths.ref (10)
-	if strings.Contains(line, "abcdef1234567..gh") {
-		t.Error("Full git ref (after shortRef) should have been truncated")
-	}
-	if strings.Contains(line, "very-long-repository-name-that-exceeds-width") {
-		t.Error("Full repo name should have been truncated")
-	}
-	if strings.Contains(line, "super-long-agent-name") {
-		t.Error("Full agent name should have been truncated")
-	}
-}
-
-func TestTUIRenderJobLineLength(t *testing.T) {
-	// Test that rendered line length respects column widths
-	m := model{width: 100}
-	job := makeJob(123,
-		withRef("abc1234..def5678901234567890"), // Long range
-		withRepoName("my-very-long-repository-name-here"),
-		withAgent("claude-code-agent"),
-		withEnqueuedAt(time.Now()),
-	)
-
-	idWidth := 4
-	colWidths := columnWidths{
-		ref:   12,
-		repo:  15,
-		agent: 10,
-	}
-
-	line := m.renderJobLine(job, false, idWidth, colWidths)
-
-	// Fixed widths: ID (idWidth=4), Status (10), Queued (12), Elapsed (8), Addressed (varies)
-	// Plus spacing between columns
-	// The line should not be excessively long
-	// Note: line includes ANSI codes for status styling, so we check a reasonable max
-	maxExpectedLen := idWidth + colWidths.ref + colWidths.repo + colWidths.agent + 10 + 12 + 8 + 10 + 20 // generous margin for spacing and ANSI
-	if len(line) > maxExpectedLen {
-		t.Errorf("Line length %d exceeds expected max %d: %s", len(line), maxExpectedLen, line)
-	}
-
-	// Verify truncation happened - original values should not appear
-	if strings.Contains(line, "my-very-long-repository-name-here") {
-		t.Error("Repo name should have been truncated")
-	}
-	if strings.Contains(line, "claude-code-agent") {
-		t.Error("Agent name should have been truncated")
-	}
-}
-
-func TestTUIRenderJobLineNoTruncation(t *testing.T) {
-	m := model{width: 200}
-	job := makeJob(1,
-		withRef("abc1234"),
-		withRepoName("myrepo"),
-		withAgent("test"),
-		withEnqueuedAt(time.Now()),
-	)
-
-	// Use wide column widths - no truncation needed
-	colWidths := columnWidths{
-		ref:   20,
-		repo:  20,
-		agent: 15,
-	}
-
-	line := m.renderJobLine(job, false, 3, colWidths)
-
-	// Short values should not be truncated
-	if strings.Contains(line, "...") {
-		t.Errorf("Short values should not be truncated: %s", line)
-	}
-
-	// Original values should appear
-	if !strings.Contains(line, "abc1234") {
-		t.Error("Git ref should appear untruncated")
-	}
-	if !strings.Contains(line, "myrepo") {
-		t.Error("Repo name should appear untruncated")
-	}
-	if !strings.Contains(line, "test") {
-		t.Error("Agent name should appear untruncated")
-	}
-}
-
-func TestTUIRenderJobLineReviewTypeTag(t *testing.T) {
-	m := model{width: 80}
-	colWidths := columnWidths{ref: 30, repo: 15, agent: 10}
 
 	tests := []struct {
 		reviewType string
@@ -836,13 +684,49 @@ func TestTUIRenderJobLineReviewTypeTag(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.reviewType, func(t *testing.T) {
 			job := makeJob(1, withRef("abc1234"), withReviewType(tc.reviewType))
-			line := m.renderJobLine(job, false, 3, colWidths)
-			hasTag := strings.Contains(line, "["+tc.reviewType+"]")
+			cells := m.jobCells(job)
+			ref := cells[0] // ref is the first cell
+			hasTag := strings.Contains(ref, "["+tc.reviewType+"]")
 			if tc.wantTag && !hasTag {
-				t.Errorf("expected [%s] tag in line: %s", tc.reviewType, line)
+				t.Errorf("expected [%s] tag in ref cell: %s", tc.reviewType, ref)
 			}
 			if !tc.wantTag && tc.reviewType != "" && hasTag {
-				t.Errorf("unexpected [%s] tag in line: %s", tc.reviewType, line)
+				t.Errorf("unexpected [%s] tag in ref cell: %s", tc.reviewType, ref)
+			}
+		})
+	}
+}
+
+func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
+	// Verify that the rendered queue table fits within the terminal width.
+	// Only check the table lines (header + data rows), not the help bar
+	// which has its own width tests in TestRenderHelpTableLinesWithinWidth.
+	widths := []int{80, 100, 120, 200}
+	for _, w := range widths {
+		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
+			m := newModel("http://localhost", withExternalIODisabled())
+			m.width = w
+			m.height = 30
+			m.jobs = []storage.ReviewJob{
+				makeJob(1, withRef("abc1234"), withRepoName("myrepo"), withAgent("test")),
+				makeJob(2, withRef("def5678"), withRepoName("other-repo"), withAgent("claude-code")),
+			}
+			m.selectedIdx = 0
+			m.selectedJobID = 1
+
+			output := m.renderQueueView()
+			lines := strings.Split(output, "\n")
+			// Check table area: title(1) + status(1) + update(1) + header(1) + separator(1) + data rows
+			// Skip non-table lines (scroll indicator, flash, help bar)
+			tableEnd := min(len(lines), 4+1+1+len(m.jobs)) // title + status + update + header + sep + rows
+			for i := 0; i < tableEnd && i < len(lines); i++ {
+				stripped := stripTestANSI(lines[i])
+				stripped = strings.ReplaceAll(stripped, "\x1b[K", "")
+				stripped = strings.ReplaceAll(stripped, "\x1b[J", "")
+				stripped = strings.TrimRight(stripped, " ")
+				if len(stripped) > w+5 { // small tolerance
+					t.Errorf("line %d exceeds width %d: len=%d %q", i, w, len(stripped), stripped)
+				}
 			}
 		})
 	}

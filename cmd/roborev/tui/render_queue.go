@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -55,7 +56,7 @@ func (m model) queueVisibleRows() int {
 		// compact: title(1) only
 		return max(m.height-1, 1)
 	}
-	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
+	// title(1) + status(2) + header(1) + separator(1) + scroll(1) + flash(1) + help(dynamic)
 	reserved := 7 + m.queueHelpLines()
 	visibleRows := max(m.height-reserved, 3)
 	return visibleRows
@@ -82,6 +83,23 @@ func (m model) getVisibleSelectedIdx() int {
 	}
 	return -1
 }
+
+// Queue table column indices.
+const (
+	colSel     = iota // "> " selection indicator
+	colJobID          // Job ID
+	colRef            // Git ref (short SHA or range)
+	colBranch         // Branch name
+	colRepo           // Repository display name
+	colAgent          // Agent name
+	colStatus         // Job status
+	colQueued         // Enqueue timestamp
+	colElapsed        // Elapsed time
+	colPF             // Pass/Fail verdict
+	colHandled        // Addressed status
+	colCount          // total number of columns
+)
+
 func (m model) renderQueueView() string {
 	var b strings.Builder
 	compact := m.queueCompact()
@@ -212,24 +230,6 @@ func (m model) renderQueueView() string {
 			}
 		}
 
-		// Calculate column widths dynamically based on terminal width
-		colWidths := m.calculateColumnWidths(idWidth)
-
-		if !compact {
-			// Header (with 2-char prefix to align with row selector)
-			header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-8s %-12s %8s %-3s %s",
-				idWidth, "JobID",
-				colWidths.ref, "Ref",
-				colWidths.branch, "Branch",
-				colWidths.repo, "Repo",
-				colWidths.agent, "Agent",
-				"Status", "Queued", "Elapsed", "P/F", "Handled")
-			b.WriteString(statusStyle.Render(header))
-			b.WriteString("\x1b[K\n") // Clear to end of line
-			b.WriteString("  " + strings.Repeat("─", min(m.width-2, 200)))
-			b.WriteString("\x1b[K\n") // Clear to end of line
-		}
-
 		// Determine which jobs to show, keeping selected item visible
 		start = 0
 		end = len(visibleJobList)
@@ -244,29 +244,120 @@ func (m model) renderQueueView() string {
 			}
 		}
 
-		// Jobs
-		jobLinesWritten := 0
-		for i := start; i < end; i++ {
-			job := visibleJobList[i]
-			selected := i == visibleSelectedIdx
-			line := m.renderJobLine(job, selected, idWidth, colWidths)
-			if selected {
-				// Pad line to full terminal width for background styling
-				lineWidth := lipgloss.Width(line)
-				paddedLine := "> " + line
-				if padding := m.width - lineWidth - 2; padding > 0 {
-					paddedLine += strings.Repeat(" ", padding)
-				}
-				line = selectedStyle.Render(paddedLine)
-			} else {
-				line = "  " + line
+		// Build row data — each row is plain text cells, styling handled by StyleFunc
+		rows := make([][]string, 0, end-start)
+		windowJobs := visibleJobList[start:end] // jobs in the visible window
+		for i, job := range windowJobs {
+			sel := "  "
+			if start+i == visibleSelectedIdx {
+				sel = "> "
 			}
-			b.WriteString(line)
-			b.WriteString("\x1b[K\n") // Clear to end of line before newline
-			jobLinesWritten++
+			cells := m.jobCells(job)
+			row := make([]string, colCount)
+			row[colSel] = sel
+			row[colJobID] = fmt.Sprintf("%d", job.ID)
+			copy(row[colRef:], cells)
+			rows = append(rows, row)
 		}
 
+		// Compute the selected row index within the visible window
+		selectedWindowIdx := visibleSelectedIdx - start
+
+		t := table.New().
+			BorderTop(false).
+			BorderBottom(false).
+			BorderLeft(false).
+			BorderRight(false).
+			BorderColumn(false).
+			BorderRow(false).
+			BorderHeader(!compact).
+			Border(lipgloss.Border{Bottom: "─"}).
+			BorderStyle(lipgloss.NewStyle()).
+			Width(m.width).
+			Wrap(false).
+			StyleFunc(func(row, col int) lipgloss.Style {
+				s := lipgloss.NewStyle()
+
+				// Fixed-width columns
+				switch col {
+				case colSel:
+					s = s.Width(2)
+				case colJobID:
+					s = s.Width(idWidth)
+				case colStatus:
+					s = s.Width(8)
+				case colQueued:
+					s = s.Width(12)
+				case colElapsed:
+					s = s.Width(8).Align(lipgloss.Right)
+				case colPF:
+					s = s.Width(3)
+				}
+
+				// Header row styling
+				if row == table.HeaderRow {
+					return s.Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
+				}
+
+				// Selection highlighting — uniform background, no per-cell coloring
+				if row == selectedWindowIdx {
+					return s.Background(lipgloss.AdaptiveColor{Light: "153", Dark: "24"})
+				}
+
+				// Per-cell coloring for non-selected rows
+				if row >= 0 && row < len(windowJobs) {
+					job := windowJobs[row]
+					switch col {
+					case colStatus:
+						switch job.Status {
+						case storage.JobStatusQueued:
+							s = s.Foreground(queuedStyle.GetForeground())
+						case storage.JobStatusRunning:
+							s = s.Foreground(runningStyle.GetForeground())
+						case storage.JobStatusDone:
+							s = s.Foreground(doneStyle.GetForeground())
+						case storage.JobStatusFailed:
+							s = s.Foreground(failedStyle.GetForeground())
+						case storage.JobStatusCanceled:
+							s = s.Foreground(canceledStyle.GetForeground())
+						}
+					case colPF:
+						if job.Verdict != nil {
+							if *job.Verdict == "P" {
+								s = s.Foreground(passStyle.GetForeground())
+							} else {
+								s = s.Foreground(failStyle.GetForeground())
+							}
+						}
+					case colHandled:
+						if job.Addressed != nil {
+							if *job.Addressed {
+								s = s.Foreground(addressedStyle.GetForeground())
+							} else {
+								s = s.Foreground(queuedStyle.GetForeground())
+							}
+						}
+					}
+				}
+				return s
+			})
+
+		if !compact {
+			t = t.Headers("", "JobID", "Ref", "Branch", "Repo", "Agent", "Status", "Queued", "Elapsed", "P/F", "Handled")
+		}
+		t = t.Rows(rows...)
+
+		tableStr := t.Render()
+		b.WriteString(tableStr)
+		b.WriteString("\x1b[K\n")
+
 		// Pad with clear-to-end-of-line sequences to prevent ghost text
+		tableLines := strings.Count(tableStr, "\n") + 1
+		headerLines := 0
+		if !compact {
+			headerLines = 2 // header + separator
+		}
+		jobLinesWritten := tableLines - headerLines
 		for jobLinesWritten < visibleRows {
 			b.WriteString("\x1b[K\n")
 			jobLinesWritten++
@@ -317,88 +408,30 @@ func (m model) renderQueueView() string {
 
 	return output
 }
-func (m model) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8)
-	// Status width 8 accommodates "canceled" (longest status)
-	// Handled is last column — no budget needed since nothing follows it
-	// Plus spacing: 2 (prefix) + 9 spaces between columns
-	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 9
 
-	// Available width for flexible columns (ref, branch, repo, agent)
-	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
-	availableWidth := max(4, m.width-fixedWidth) // At least 4 chars total for columns
-
-	// Distribute available width: ref (20%), branch (32%), repo (33%), agent (15%)
-	refWidth := max(1, availableWidth*20/100)
-	branchWidth := max(1, availableWidth*32/100)
-	repoWidth := max(1, availableWidth*33/100)
-	agentWidth := max(1, availableWidth*15/100)
-
-	// Scale down if total exceeds available (can happen due to rounding with small values)
-	total := refWidth + branchWidth + repoWidth + agentWidth
-	if total > availableWidth && availableWidth > 0 {
-		refWidth = max(1, availableWidth*20/100)
-		branchWidth = max(1, availableWidth*32/100)
-		repoWidth = max(1, availableWidth*33/100)
-		agentWidth = max(
-			// Give remainder to agent
-			availableWidth-refWidth-branchWidth-repoWidth, 1)
-	}
-
-	// Apply higher minimums only when there's plenty of space
-	if availableWidth >= 45 {
-		refWidth = max(8, refWidth)
-		branchWidth = max(10, branchWidth)
-		repoWidth = max(10, repoWidth)
-		agentWidth = max(6, agentWidth)
-	}
-
-	return columnWidths{
-		ref:    refWidth,
-		branch: branchWidth,
-		repo:   repoWidth,
-		agent:  agentWidth,
-	}
-}
-func (m model) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, colWidths columnWidths) string {
+// jobCells returns plain text cell values for a job row.
+// Order: ref, branch, repo, agent, status, queued, elapsed, verdict, handled
+// (colRef through colHandled, 9 values).
+func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
-	// Show review type tag for non-standard review types (e.g., [security])
 	if !config.IsDefaultReviewType(job.ReviewType) {
 		ref = ref + " [" + job.ReviewType + "]"
 	}
-	if len(ref) > colWidths.ref {
-		ref = ref[:max(1, colWidths.ref-3)] + "..."
-	}
 
-	// Get branch name with fallback to git lookup
 	branch := m.getBranchForJob(job)
-	if len(branch) > colWidths.branch {
-		branch = branch[:max(1, colWidths.branch-3)] + "..."
-	}
 
-	// Use cached display name, falling back to RepoName
 	repo := m.getDisplayName(job.RepoPath, job.RepoName)
-	// Append [remote] indicator for jobs from other machines
 	if m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID {
 		repo += " [R]"
 	}
-	if len(repo) > colWidths.repo {
-		repo = repo[:max(1, colWidths.repo-3)] + "..."
+
+	agentName := job.Agent
+	if agentName == "claude-code" {
+		agentName = "claude"
 	}
 
-	agent := job.Agent
-	// Normalize agent display names for compactness
-	if agent == "claude-code" {
-		agent = "claude"
-	}
-	if len(agent) > colWidths.agent {
-		agent = agent[:max(1, colWidths.agent-3)] + "..."
-	}
-
-	// Format enqueue time as compact timestamp in local time
 	enqueued := job.EnqueuedAt.Local().Format("Jan 02 15:04")
 
-	// Format elapsed time (right-aligned so short values like "1s" don't bleed into the queued date)
 	elapsed := ""
 	if job.StartedAt != nil {
 		if job.FinishedAt != nil {
@@ -408,76 +441,23 @@ func (m model) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, 
 		}
 	}
 
-	// Color the status only when not selected (selection style should be uniform)
 	status := string(job.Status)
-	var styledStatus string
-	if selected {
-		styledStatus = status
-	} else {
-		switch job.Status {
-		case storage.JobStatusQueued:
-			styledStatus = queuedStyle.Render(status)
-		case storage.JobStatusRunning:
-			styledStatus = runningStyle.Render(status)
-		case storage.JobStatusDone:
-			styledStatus = doneStyle.Render(status)
-		case storage.JobStatusFailed:
-			styledStatus = failedStyle.Render(status)
-		case storage.JobStatusCanceled:
-			styledStatus = canceledStyle.Render(status)
-		default:
-			styledStatus = status
-		}
-	}
-	// Pad after coloring since lipgloss strips trailing spaces
-	// Width 8 accommodates "canceled" (longest status)
-	padding := 8 - len(status)
-	if padding > 0 {
-		styledStatus += strings.Repeat(" ", padding)
-	}
 
-	// Verdict: P (pass) or F (fail), styled with color
 	verdict := "-"
 	if job.Verdict != nil {
-		v := *job.Verdict
-		if selected {
-			verdict = v
-		} else if v == "P" {
-			verdict = passStyle.Render(v)
-		} else {
-			verdict = failStyle.Render(v)
-		}
-	}
-	// Pad to 3 chars
-	if job.Verdict == nil || len(*job.Verdict) < 3 {
-		verdict += strings.Repeat(" ", 3-1) // "-" or "P"/"F" is 1 char
+		verdict = *job.Verdict
 	}
 
-	// Handled status: nil means no review yet, yes/no for reviewed jobs
-	addr := ""
+	handled := ""
 	if job.Addressed != nil {
 		if *job.Addressed {
-			if selected {
-				addr = "yes"
-			} else {
-				addr = addressedStyle.Render("yes")
-			}
+			handled = "yes"
 		} else {
-			if selected {
-				addr = "no"
-			} else {
-				addr = queuedStyle.Render("no")
-			}
+			handled = "no"
 		}
 	}
 
-	return fmt.Sprintf("%-*d %-*s %-*s %-*s %-*s %s %-12s %8s %s %s",
-		idWidth, job.ID,
-		colWidths.ref, ref,
-		colWidths.branch, branch,
-		colWidths.repo, repo,
-		colWidths.agent, agent,
-		styledStatus, enqueued, elapsed, verdict, addr)
+	return []string{ref, branch, repo, agentName, status, enqueued, elapsed, verdict, handled}
 }
 
 // commandLineForJob computes the representative agent command line from job parameters.
