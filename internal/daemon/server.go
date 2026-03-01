@@ -600,12 +600,13 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve agent for workflow at this reasoning level
-	agentName := config.ResolveAgentForWorkflow(req.Agent, repoRoot, s.configWatcher.Config(), workflow, reasoning)
+	cfg := s.configWatcher.Config()
+	agentName := config.ResolveAgentForWorkflow(req.Agent, repoRoot, cfg, workflow, reasoning)
 
 	// Resolve to an installed agent: if the configured agent isn't available,
 	// fall back through the chain (codex -> claude-code -> gemini -> ...).
 	// Fail fast with 503 if nothing is installed at all.
-	if resolved, err := agent.GetAvailable(agentName); err != nil {
+	if resolved, err := agent.GetAvailableWithConfig(agentName, cfg); err != nil {
 		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("no review agent available: %v", err))
 		return
 	} else {
@@ -613,7 +614,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve model for workflow at this reasoning level
-	model := config.ResolveModelForWorkflow(req.Model, repoRoot, s.configWatcher.Config(), workflow, reasoning)
+	model := config.ResolveModelForWorkflow(req.Model, repoRoot, cfg, workflow, reasoning)
 
 	// Check if this is a custom prompt, dirty review, range, or single commit
 	// Note: isPrompt is determined by whether custom_prompt is provided, not git_ref value
@@ -1954,7 +1955,7 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	cfg := s.configWatcher.Config()
 	reasoning := "standard"
 	agentName := config.ResolveAgentForWorkflow("", parentJob.RepoPath, cfg, "fix", reasoning)
-	if resolved, err := agent.GetAvailable(agentName); err != nil {
+	if resolved, err := agent.GetAvailableWithConfig(agentName, cfg); err != nil {
 		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("no agent available: %v", err))
 		return
 	} else {

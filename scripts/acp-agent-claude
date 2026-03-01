@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+set -eu
+
+if command -v claude-agent-acp >/dev/null 2>&1; then
+	exec claude-agent-acp "$@"
+fi
+
+cat >&2 <<'EOF'
+error: no Claude ACP wrapper command was found.
+
+Checked:
+  1. claude-agent-acp on PATH
+
+Fix options:
+  - Install it:
+      npm install -g @zed-industries/claude-agent-acp
+  - Then rerun: make test-acp-integration-claude
+  - Or override directly:
+      make test-acp-integration ACP_TEST_COMMAND=/path/to/your/acp-wrapper
+  - Or set:
+      export ROBOREV_ACP_ADAPTER_COMMAND=/path/to/your/acp-wrapper
+EOF
+
+exit 127

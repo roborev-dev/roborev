@@ -107,7 +107,7 @@ func runSingle(
 			err = fmt.Errorf("no agents available (mock registry)")
 		}
 	} else {
-		resolvedAgent, err = agent.GetAvailable(resolvedName)
+		resolvedAgent, err = agent.GetAvailableWithConfig(resolvedName, cfg.GlobalConfig)
 	}
 
 	if err != nil {

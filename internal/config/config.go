@@ -131,6 +131,24 @@ type Config struct {
 	ColumnBorders          bool     `toml:"column_borders"`    // Show ▕ separators between columns
 	ColumnOrder            []string `toml:"column_order"`      // Custom queue column display order
 	TaskColumnOrder        []string `toml:"task_column_order"` // Custom task column display order
+
+	// ACP (Agent Client Protocol) configuration
+	ACP *ACPAgentConfig `toml:"acp"`
+}
+
+// ACPAgentConfig holds configuration for a single ACP agent
+type ACPAgentConfig struct {
+	Name            string   `toml:"name"`              // Agent name (required)
+	Command         string   `toml:"command"`           // ACP agent command (required)
+	Args            []string `toml:"args"`              // Additional arguments for the agent
+	ReadOnlyMode    string   `toml:"read_only_mode"`    // Read-only mode. Valid values depend on the underlying agent, e.g. "plan"
+	AutoApproveMode string   `toml:"auto_approve_mode"` // Auto-approve mode. Valid values depend on the underlying agent, e.g. "auto-approve"
+	Mode            string   `toml:"mode"`              // Default agent mode. Use read_only_mode for review flows unless explicitly opting in.
+	// DisableModeNegotiation skips ACP SetSessionMode while keeping
+	// authorization behavior based on agentic/read-only mode selection.
+	DisableModeNegotiation bool   `toml:"disable_mode_negotiation"`
+	Model                  string `toml:"model"`   // Default model to use
+	Timeout                int    `toml:"timeout"` // Command timeout in seconds (default: 600)
 }
 
 // GitHubAppConfig holds GitHub App authentication settings.

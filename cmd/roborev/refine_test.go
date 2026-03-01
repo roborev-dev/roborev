@@ -157,7 +157,7 @@ func TestSelectRefineAgentCodexFallback(t *testing.T) {
 	// is excluded from production fallback, so we expect an error.
 	t.Setenv("PATH", "")
 
-	_, err := selectRefineAgent("codex", agent.ReasoningFast, "")
+	_, err := selectRefineAgent(nil, "codex", agent.ReasoningFast, "")
 	if err == nil {
 		t.Fatal("expected error when no agents are available")
 	}
@@ -243,7 +243,7 @@ func TestResolveAllowUnsafeAgents(t *testing.T) {
 func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 
-	selected, err := selectRefineAgent("codex", agent.ReasoningFast, "")
+	selected, err := selectRefineAgent(nil, "codex", agent.ReasoningFast, "")
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
@@ -257,11 +257,36 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 	}
 }
 
+func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
+	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
+	t.Cleanup(testutil.MockExecutable(t, "acp-agent", 0))
+
+	cfg := &config.Config{
+		ACP: &config.ACPAgentConfig{
+			Name:    "codex",
+			Command: "acp-agent",
+		},
+	}
+
+	selected, err := selectRefineAgent(cfg, "codex", agent.ReasoningFast, "")
+	if err != nil {
+		t.Fatalf("selectRefineAgent failed: %v", err)
+	}
+
+	acpAgent, ok := selected.(*agent.ACPAgent)
+	if !ok {
+		t.Fatalf("expected ACP agent when codex is configured as ACP alias, got %T", selected)
+	}
+	if acpAgent.CommandName() != "acp-agent" {
+		t.Fatalf("expected configured ACP command, got %q", acpAgent.CommandName())
+	}
+}
+
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
 	// Request an unavailable agent, codex should be used as fallback
-	selected, err := selectRefineAgent("nonexistent-agent", agent.ReasoningThorough, "")
+	selected, err := selectRefineAgent(nil, "nonexistent-agent", agent.ReasoningThorough, "")
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
 )
 
@@ -15,6 +16,8 @@ import (
 // in the batch failed (excluding all-quota-skipped batches).
 var ErrAllFailed = errors.New(
 	"all review jobs failed")
+
+var getAvailableWithConfig = agent.GetAvailableWithConfig
 
 // SynthesizeOpts controls synthesis behavior.
 type SynthesizeOpts struct {
@@ -30,6 +33,8 @@ type SynthesizeOpts struct {
 	GitRef string
 	// HeadSHA is used for comment formatting headers.
 	HeadSHA string
+	// GlobalConfig allows runtime agent resolution to honor ACP naming/command overrides.
+	GlobalConfig *config.Config
 }
 
 // Synthesize combines multiple review results into a single
@@ -112,7 +117,7 @@ func runSynthesis(
 	results []ReviewResult,
 	opts SynthesizeOpts,
 ) (string, error) {
-	synthAgent, err := agent.GetAvailable(opts.Agent)
+	synthAgent, err := getAvailableWithConfig(opts.Agent, opts.GlobalConfig)
 	if err != nil {
 		return "", fmt.Errorf("get synthesis agent: %w", err)
 	}

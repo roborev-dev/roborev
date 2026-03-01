@@ -424,7 +424,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 					return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 				}
 				resolvedAgent = name
-			} else if resolved, err := agent.GetAvailable(resolvedAgent); err != nil {
+			} else if resolved, err := agent.GetAvailableWithConfig(resolvedAgent, cfg); err != nil {
 				rollback()
 				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 			} else {
@@ -1219,7 +1219,7 @@ func resolveMinSeverity(globalMinSeverity, repoPath, ghRepo string) string {
 
 // synthesizeBatchResults uses an LLM agent to combine multiple review outputs.
 func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []storage.BatchReviewResult, cfg *config.Config) (string, error) {
-	synthesisAgent, err := agent.GetAvailable(cfg.CI.SynthesisAgent)
+	synthesisAgent, err := agent.GetAvailableWithConfig(cfg.CI.SynthesisAgent, cfg)
 	if err != nil {
 		return "", fmt.Errorf("get synthesis agent: %w", err)
 	}

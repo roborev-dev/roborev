@@ -365,7 +365,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	resolvedModel := config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "refine", resolvedReasoning)
 
 	// Get the agent with configured reasoning level and model
-	addressAgent, err := selectRefineAgent(resolvedAgent, reasoningLevel, resolvedModel)
+	addressAgent, err := selectRefineAgent(cfg, resolvedAgent, reasoningLevel, resolvedModel)
 	if err != nil {
 		return fmt.Errorf("no agent available: %w", err)
 	}
@@ -1149,16 +1149,8 @@ func verifyRepoState(
 	return nil
 }
 
-func selectRefineAgent(resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string) (agent.Agent, error) {
-	if resolvedAgent == "codex" && agent.IsAvailable("codex") {
-		baseAgent, err := agent.Get("codex")
-		if err != nil {
-			return nil, err
-		}
-		return baseAgent.WithReasoning(reasoningLevel).WithModel(model), nil
-	}
-
-	baseAgent, err := agent.GetAvailable(resolvedAgent)
+func selectRefineAgent(cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string) (agent.Agent, error) {
+	baseAgent, err := agent.GetAvailableWithConfig(resolvedAgent, cfg)
 	if err != nil {
 		return nil, err
 	}

@@ -230,6 +230,14 @@ go test ./...
 make lint            # run full static lint checks locally
 make install
 make install-hooks   # install pre-commit hook to run lint before commit
+# optional ACP end-to-end smoke test (Codex adapter)
+make test-acp-integration
+# disable mode negotiation for adapters that do not support session modes yet
+make test-acp-integration ACP_TEST_DISABLE_MODE=1
+# optional adapter-specific smoke tests
+make test-acp-integration-codex   # codex target auto-disables mode negotiation
+make test-acp-integration-claude  # claude target auto-disables mode negotiation
+make test-acp-integration-gemini  # gemini target auto-disables mode negotiation
 ```
 
 ## License

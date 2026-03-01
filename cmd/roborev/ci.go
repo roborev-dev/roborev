@@ -224,11 +224,12 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Synthesize
 	comment, synthErr := review.Synthesize(
 		ctx, results, review.SynthesizeOpts{
-			Agent:       synthAgent,
-			MinSeverity: minSev,
-			RepoPath:    root,
-			GitRef:      gitRef,
-			HeadSHA:     headSHA,
+			Agent:        synthAgent,
+			MinSeverity:  minSev,
+			RepoPath:     root,
+			GitRef:       gitRef,
+			HeadSHA:      headSHA,
+			GlobalConfig: globalCfg,
 		})
 	if synthErr != nil &&
 		!errors.Is(synthErr, review.ErrAllFailed) {

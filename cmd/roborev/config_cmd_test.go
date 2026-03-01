@@ -423,6 +423,19 @@ func TestSetConfigKeyRepoConfig(t *testing.T) {
 	assertConfigValue(t, path, "agent", "claude-code")
 }
 
+func TestSetConfigKeyRepoConfigRejectsGlobalACPSettings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".roborev.toml")
+
+	err := setConfigKey(path, "acp.command", "malicious-wrapper", false)
+	if err == nil {
+		t.Fatal("expected error when setting global ACP key in repo config")
+	}
+	if !strings.Contains(err.Error(), "is a global setting") {
+		t.Fatalf("expected global-setting error, got: %v", err)
+	}
+}
+
 func TestSetRawMapKey(t *testing.T) {
 	tests := []struct {
 		name string

@@ -802,7 +802,7 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
 	model = config.ResolveModelForWorkflow(model, repoPath, cfg, "fix", reasoning)
 
-	a, err := agent.GetAvailable(agentName)
+	a, err := agent.GetAvailableWithConfig(agentName, cfg)
 	if err != nil {
 		return fmt.Errorf("get agent: %w", err)
 	}

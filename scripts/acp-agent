@@ -1,0 +1,32 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ -n "${ROBOREV_ACP_ADAPTER_COMMAND:-}" ]; then
+	exec "${ROBOREV_ACP_ADAPTER_COMMAND}" "$@"
+fi
+
+script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+adapter="${ROBOREV_ACP_ADAPTER:-codex}"
+
+case "$adapter" in
+codex)
+	exec "$script_dir/acp-agent-codex" "$@"
+	;;
+claude)
+	exec "$script_dir/acp-agent-claude" "$@"
+	;;
+gemini)
+	exec "$script_dir/acp-agent-gemini" "$@"
+	;;
+*)
+	cat >&2 <<EOF
+error: unsupported ACP adapter "$adapter"
+
+Supported values for ROBOREV_ACP_ADAPTER:
+  - codex
+  - claude
+  - gemini
+EOF
+	exit 2
+	;;
+esac

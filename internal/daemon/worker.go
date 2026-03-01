@@ -386,7 +386,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Get the agent (falls back to available agent if preferred not installed)
-	baseAgent, err := agent.GetAvailable(job.Agent)
+	baseAgent, err := agent.GetAvailableWithConfig(job.Agent, cfg)
 	if err != nil {
 		log.Printf("[%s] Error getting agent: %v", workerID, err)
 		wp.failOrRetryAgent(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))

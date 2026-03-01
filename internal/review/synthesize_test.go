@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/roborev-dev/roborev/internal/agent"
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 func assertContains(t *testing.T, s, substr string) {
@@ -242,4 +243,56 @@ func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
 			"gitRef = %q, want %q",
 			cap.capturedGitRef, "aaa111..bbb222")
 	}
+}
+
+func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
+	originalResolver := getAvailableWithConfig
+	t.Cleanup(func() { getAvailableWithConfig = originalResolver })
+
+	var seenAgent string
+	var seenCfg *config.Config
+	cap := newCapturingAgent()
+	getAvailableWithConfig = func(agentName string, cfg *config.Config) (agent.Agent, error) {
+		seenAgent = agentName
+		seenCfg = cfg
+		return cap, nil
+	}
+
+	cfg := &config.Config{
+		ACP: &config.ACPAgentConfig{
+			Name:    "custom-acp",
+			Command: "acp-agent",
+		},
+	}
+	results := []ReviewResult{
+		{
+			Agent:      "codex",
+			ReviewType: "security",
+			Status:     "done",
+			Output:     "issue A",
+		},
+		{
+			Agent:      "codex",
+			ReviewType: "design",
+			Status:     "done",
+			Output:     "issue B",
+		},
+	}
+
+	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+		Agent:        "custom-acp",
+		GlobalConfig: cfg,
+		HeadSHA:      "abc123",
+		GitRef:       "abc123..def456",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if seenAgent != "custom-acp" {
+		t.Fatalf("resolver agent = %q, want %q", seenAgent, "custom-acp")
+	}
+	if seenCfg != cfg {
+		t.Fatalf("resolver cfg pointer mismatch: got %p want %p", seenCfg, cfg)
+	}
+	assertContains(t, comment, "synthesized output")
 }

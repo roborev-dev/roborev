@@ -36,3 +36,4 @@ __pycache__/
 result
 tmp/
 REPORT.md
+.zed

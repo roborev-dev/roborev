@@ -365,7 +365,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, workflow, reasoning)
 
 	// Get the agent
-	a, err := agent.GetAvailable(agentName)
+	a, err := agent.GetAvailableWithConfig(agentName, cfg)
 	if err != nil {
 		return fmt.Errorf("get agent: %w", err)
 	}

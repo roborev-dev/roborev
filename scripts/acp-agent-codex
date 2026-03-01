@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+set -eu
+
+if command -v codex-acp >/dev/null 2>&1; then
+	exec codex-acp "$@"
+fi
+
+cat >&2 <<'EOF'
+error: no Codex ACP wrapper command was found.
+
+Checked:
+  1. codex-acp on PATH
+
+Fix options:
+  - Install codex-acp and rerun: make test-acp-integration-codex
+  - Or override directly:
+      make test-acp-integration ACP_TEST_COMMAND=/path/to/your/acp-wrapper
+  - Or set:
+      export ROBOREV_ACP_ADAPTER_COMMAND=/path/to/your/acp-wrapper
+EOF
+
+exit 127
