@@ -271,27 +271,35 @@ func (m model) renderQueueView() string {
 			BorderColumn(false).
 			BorderRow(false).
 			BorderHeader(!compact).
-			Border(lipgloss.Border{Bottom: "─"}).
-			BorderStyle(lipgloss.NewStyle()).
+			Border(lipgloss.Border{
+				Top:    "─",
+				Bottom: "─",
+				Middle: "─",
+			}).
 			Width(m.width).
 			Wrap(false).
 			StyleFunc(func(row, col int) lipgloss.Style {
 				s := lipgloss.NewStyle()
 
-				// Fixed-width columns
+				// Inter-column spacing (all columns except sel and last get right padding)
+				if col > colSel && col < colHandled {
+					s = s.PaddingRight(1)
+				}
+
+				// Fixed-width columns (width includes padding where applicable)
 				switch col {
 				case colSel:
-					s = s.Width(2)
+					s = s.Width(2) // "> " or "  ", no extra padding needed
 				case colJobID:
-					s = s.Width(idWidth)
+					s = s.Width(idWidth + 1) // +1 for padding
 				case colStatus:
-					s = s.Width(8)
+					s = s.Width(9) // 8 + 1 padding
 				case colQueued:
-					s = s.Width(12)
+					s = s.Width(13) // 12 + 1 padding
 				case colElapsed:
-					s = s.Width(8).Align(lipgloss.Right)
+					s = s.Width(9).Align(lipgloss.Right) // 8 + 1 padding
 				case colPF:
-					s = s.Width(3)
+					s = s.Width(4) // 3 + 1 padding
 				}
 
 				// Header row styling

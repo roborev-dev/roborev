@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -720,12 +721,11 @@ func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
 			// Skip non-table lines (scroll indicator, flash, help bar)
 			tableEnd := min(len(lines), 4+1+1+len(m.jobs)) // title + status + update + header + sep + rows
 			for i := 0; i < tableEnd && i < len(lines); i++ {
-				stripped := stripTestANSI(lines[i])
-				stripped = strings.ReplaceAll(stripped, "\x1b[K", "")
-				stripped = strings.ReplaceAll(stripped, "\x1b[J", "")
-				stripped = strings.TrimRight(stripped, " ")
-				if len(stripped) > w+5 { // small tolerance
-					t.Errorf("line %d exceeds width %d: len=%d %q", i, w, len(stripped), stripped)
+				line := strings.ReplaceAll(lines[i], "\x1b[K", "")
+				line = strings.ReplaceAll(line, "\x1b[J", "")
+				visW := lipgloss.Width(line)
+				if visW > w+5 { // small tolerance
+					t.Errorf("line %d exceeds width %d: visW=%d %q", i, w, visW, stripTestANSI(line))
 				}
 			}
 		})
