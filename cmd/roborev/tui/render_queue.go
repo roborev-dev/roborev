@@ -342,7 +342,12 @@ func (m model) renderQueueView() string {
 
 				// Selection highlighting — uniform background, no per-cell coloring
 				if row == selectedWindowIdx {
-					return s.Background(lipgloss.AdaptiveColor{Light: "153", Dark: "24"})
+					bg := lipgloss.AdaptiveColor{Light: "153", Dark: "24"}
+					s = s.Background(bg)
+					if bordersOn {
+						s = s.BorderBackground(bg)
+					}
+					return s
 				}
 
 				// Per-cell coloring for non-selected rows
