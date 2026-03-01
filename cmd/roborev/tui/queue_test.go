@@ -2073,7 +2073,7 @@ func TestQueueColWidthCacheInvalidation(t *testing.T) {
 	// First render populates cache
 	m.renderQueueView()
 	origGen := m.queueColCache.gen
-	origWidths := m.queueColCache.contentWidths
+	origWidths := maps.Clone(m.queueColCache.contentWidths)
 
 	// Simulate new jobs arriving (bumps queueColGen)
 	m.jobs = []storage.ReviewJob{
@@ -2111,16 +2111,16 @@ func TestQueueColWidthCacheReuse(t *testing.T) {
 
 	// First render populates cache
 	m.renderQueueView()
-	cachedWidths := m.queueColCache.contentWidths
+	cachedWidthsPtr := fmt.Sprintf("%p", m.queueColCache.contentWidths)
 	cachedGen := m.queueColCache.gen
 
-	// Second render without gen bump should reuse cache
+	// Second render without gen bump should reuse cached map (no reallocation)
 	m.renderQueueView()
 	if m.queueColCache.gen != cachedGen {
 		t.Fatal("cache gen should not change on re-render without invalidation")
 	}
-	if !maps.Equal(m.queueColCache.contentWidths, cachedWidths) {
-		t.Fatal("cached contentWidths map should be identical on cache hit")
+	if got := fmt.Sprintf("%p", m.queueColCache.contentWidths); got != cachedWidthsPtr {
+		t.Fatalf("cache hit should reuse same map pointer, got %s want %s", got, cachedWidthsPtr)
 	}
 }
 
@@ -2170,5 +2170,29 @@ func TestTaskColWidthCacheInvalidation(t *testing.T) {
 	m.renderTasksView()
 	if m.taskColCache.gen == origGen {
 		t.Fatal("task cache gen should have advanced after invalidation")
+	}
+}
+
+func TestTaskColWidthCacheReuse(t *testing.T) {
+	parentID := int64(42)
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID, RepoName: "myrepo", Branch: "main", GitRef: "def5678"},
+	}
+
+	// First render populates cache
+	m.renderTasksView()
+	cachedWidthsPtr := fmt.Sprintf("%p", m.taskColCache.contentWidths)
+	cachedGen := m.taskColCache.gen
+
+	// Second render without gen bump should reuse cached map
+	m.renderTasksView()
+	if m.taskColCache.gen != cachedGen {
+		t.Fatal("task cache gen should not change on re-render without invalidation")
+	}
+	if got := fmt.Sprintf("%p", m.taskColCache.contentWidths); got != cachedWidthsPtr {
+		t.Fatalf("task cache hit should reuse same map pointer, got %s want %s", got, cachedWidthsPtr)
 	}
 }
