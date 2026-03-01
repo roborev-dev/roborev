@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -330,7 +331,7 @@ func TestTUIQueueCompactMode(t *testing.T) {
 		t.Error("compact mode should hide table header")
 	}
 	// Should NOT have help footer keys
-	if strings.Contains(output, "navigate") {
+	if strings.Contains(output, "nav") {
 		t.Error("compact mode should hide help footer")
 	}
 	// Should NOT have daemon status line
@@ -364,7 +365,7 @@ func TestTUIQueueDistractionFreeToggle(t *testing.T) {
 	if !strings.Contains(output, "JobID") {
 		t.Error("normal mode should show table header")
 	}
-	if !strings.Contains(output, "navigate") {
+	if !strings.Contains(output, "nav") {
 		t.Error("normal mode should show help footer")
 	}
 
@@ -377,7 +378,7 @@ func TestTUIQueueDistractionFreeToggle(t *testing.T) {
 	if strings.Contains(output, "JobID") {
 		t.Error("distraction-free should hide table header")
 	}
-	if strings.Contains(output, "navigate") {
+	if strings.Contains(output, "nav") {
 		t.Error("distraction-free should hide help footer")
 	}
 	if strings.Contains(output, "Daemon:") {
@@ -614,212 +615,60 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 	}
 }
 
-func TestTUICalculateColumnWidths(t *testing.T) {
-	// Test that column widths fit within terminal for usable sizes (>= 80)
-	// Narrower terminals may overflow - users should widen their terminal
-	tests := []struct {
-		name           string
-		termWidth      int
-		idWidth        int
-		expectOverflow bool // true if overflow is acceptable for this width
-	}{
-		{
-			name:           "wide terminal",
-			termWidth:      200,
-			idWidth:        3,
-			expectOverflow: false,
-		},
-		{
-			name:           "medium terminal",
-			termWidth:      100,
-			idWidth:        3,
-			expectOverflow: false,
-		},
-		{
-			name:           "standard terminal",
-			termWidth:      80,
-			idWidth:        3,
-			expectOverflow: false,
-		},
-		{
-			name:           "narrow terminal - overflow acceptable",
-			termWidth:      60,
-			idWidth:        3,
-			expectOverflow: true, // Fixed columns alone need ~48 chars
-		},
-		{
-			name:           "very narrow terminal - overflow expected",
-			termWidth:      40,
-			idWidth:        3,
-			expectOverflow: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := model{width: tt.termWidth}
-			widths := m.calculateColumnWidths(tt.idWidth)
-
-			// All columns must have positive widths
-			if widths.ref < 1 {
-				t.Errorf("ref width %d < 1", widths.ref)
-			}
-			if widths.repo < 1 {
-				t.Errorf("repo width %d < 1", widths.repo)
-			}
-			if widths.agent < 1 {
-				t.Errorf("agent width %d < 1", widths.agent)
-			}
-
-			// Fixed widths: ID (idWidth), Status (10), Queued (12), Elapsed (8), Addressed (9)
-			// Plus spacing: 2 (prefix) + 7 spaces between columns
-			fixedWidth := 2 + tt.idWidth + 10 + 12 + 8 + 9 + 7
-			flexibleTotal := widths.ref + widths.repo + widths.agent
-			totalWidth := fixedWidth + flexibleTotal
-
-			if !tt.expectOverflow && totalWidth > tt.termWidth {
-				t.Errorf("total width %d exceeds terminal width %d", totalWidth, tt.termWidth)
-			}
-
-			// Even with overflow, flexible columns should be minimal
-			if tt.expectOverflow && flexibleTotal > 15 {
-				t.Errorf("narrow terminal should minimize flexible columns, got %d", flexibleTotal)
-			}
-		})
-	}
-}
-
-func TestTUICalculateColumnWidthsProportions(t *testing.T) {
-	// On wide terminals, columns should use higher minimums
+func TestTUIJobCellsContent(t *testing.T) {
 	m := model{width: 200}
-	widths := m.calculateColumnWidths(3)
 
-	if widths.ref < 10 {
-		t.Errorf("wide terminal ref width %d < 10", widths.ref)
-	}
-	if widths.repo < 15 {
-		t.Errorf("wide terminal repo width %d < 15", widths.repo)
-	}
-	if widths.agent < 10 {
-		t.Errorf("wide terminal agent width %d < 10", widths.agent)
-	}
+	t.Run("basic cell values", func(t *testing.T) {
+		job := makeJob(1,
+			withRef("abc1234"),
+			withRepoName("myrepo"),
+			withAgent("test"),
+			withEnqueuedAt(time.Now()),
+		)
+		cells := m.jobCells(job)
+
+		// cells order: ref, branch, repo, agent, status, queued, elapsed, verdict, handled
+		if !strings.Contains(cells[0], "abc1234") {
+			t.Errorf("Expected ref to contain abc1234, got %q", cells[0])
+		}
+		if cells[2] != "myrepo" {
+			t.Errorf("Expected repo 'myrepo', got %q", cells[2])
+		}
+		if cells[3] != "test" {
+			t.Errorf("Expected agent 'test', got %q", cells[3])
+		}
+		if cells[4] != "done" {
+			t.Errorf("Expected status 'done', got %q", cells[4])
+		}
+	})
+
+	t.Run("claude-code normalizes to claude", func(t *testing.T) {
+		job := makeJob(1, withAgent("claude-code"))
+		cells := m.jobCells(job)
+		if cells[3] != "claude" {
+			t.Errorf("Expected agent 'claude', got %q", cells[3])
+		}
+	})
+
+	t.Run("verdict and handled values", func(t *testing.T) {
+		pass := "P"
+		handled := true
+		job := makeJob(1)
+		job.Verdict = &pass
+		job.Addressed = &handled
+
+		cells := m.jobCells(job)
+		if cells[7] != "P" {
+			t.Errorf("Expected verdict 'P', got %q", cells[7])
+		}
+		if cells[8] != "yes" {
+			t.Errorf("Expected handled 'yes', got %q", cells[8])
+		}
+	})
 }
 
-func TestTUIRenderJobLineTruncation(t *testing.T) {
+func TestTUIJobCellsReviewTypeTag(t *testing.T) {
 	m := model{width: 80}
-	// Use a git range - shortRef truncates ranges to 17 chars max, then renderJobLine
-	// truncates further based on colWidths.ref. Use a range longer than 17 chars.
-	job := makeJob(1,
-		withRef("abcdef1234567..ghijkl7890123"), // 28 char range, shortRef -> 17 chars
-		withRepoName("very-long-repository-name-that-exceeds-width"),
-		withAgent("super-long-agent-name"),
-		withEnqueuedAt(time.Now()),
-	)
-
-	// Use narrow column widths to force truncation
-	// ref=10 will truncate the 17-char shortRef output
-	colWidths := columnWidths{
-		ref:   10,
-		repo:  15,
-		agent: 10,
-	}
-
-	line := m.renderJobLine(job, false, 3, colWidths)
-
-	// Check that truncated values contain "..."
-	if !strings.Contains(line, "...") {
-		t.Errorf("Expected truncation with '...' in line: %s", line)
-	}
-
-	// The line should contain truncated versions, not full strings
-	// shortRef reduces "abcdef1234567..ghijkl7890123" to "abcdef1234567..gh" (17 chars)
-	// then renderJobLine truncates to colWidths.ref (10)
-	if strings.Contains(line, "abcdef1234567..gh") {
-		t.Error("Full git ref (after shortRef) should have been truncated")
-	}
-	if strings.Contains(line, "very-long-repository-name-that-exceeds-width") {
-		t.Error("Full repo name should have been truncated")
-	}
-	if strings.Contains(line, "super-long-agent-name") {
-		t.Error("Full agent name should have been truncated")
-	}
-}
-
-func TestTUIRenderJobLineLength(t *testing.T) {
-	// Test that rendered line length respects column widths
-	m := model{width: 100}
-	job := makeJob(123,
-		withRef("abc1234..def5678901234567890"), // Long range
-		withRepoName("my-very-long-repository-name-here"),
-		withAgent("claude-code-agent"),
-		withEnqueuedAt(time.Now()),
-	)
-
-	idWidth := 4
-	colWidths := columnWidths{
-		ref:   12,
-		repo:  15,
-		agent: 10,
-	}
-
-	line := m.renderJobLine(job, false, idWidth, colWidths)
-
-	// Fixed widths: ID (idWidth=4), Status (10), Queued (12), Elapsed (8), Addressed (varies)
-	// Plus spacing between columns
-	// The line should not be excessively long
-	// Note: line includes ANSI codes for status styling, so we check a reasonable max
-	maxExpectedLen := idWidth + colWidths.ref + colWidths.repo + colWidths.agent + 10 + 12 + 8 + 10 + 20 // generous margin for spacing and ANSI
-	if len(line) > maxExpectedLen {
-		t.Errorf("Line length %d exceeds expected max %d: %s", len(line), maxExpectedLen, line)
-	}
-
-	// Verify truncation happened - original values should not appear
-	if strings.Contains(line, "my-very-long-repository-name-here") {
-		t.Error("Repo name should have been truncated")
-	}
-	if strings.Contains(line, "claude-code-agent") {
-		t.Error("Agent name should have been truncated")
-	}
-}
-
-func TestTUIRenderJobLineNoTruncation(t *testing.T) {
-	m := model{width: 200}
-	job := makeJob(1,
-		withRef("abc1234"),
-		withRepoName("myrepo"),
-		withAgent("test"),
-		withEnqueuedAt(time.Now()),
-	)
-
-	// Use wide column widths - no truncation needed
-	colWidths := columnWidths{
-		ref:   20,
-		repo:  20,
-		agent: 15,
-	}
-
-	line := m.renderJobLine(job, false, 3, colWidths)
-
-	// Short values should not be truncated
-	if strings.Contains(line, "...") {
-		t.Errorf("Short values should not be truncated: %s", line)
-	}
-
-	// Original values should appear
-	if !strings.Contains(line, "abc1234") {
-		t.Error("Git ref should appear untruncated")
-	}
-	if !strings.Contains(line, "myrepo") {
-		t.Error("Repo name should appear untruncated")
-	}
-	if !strings.Contains(line, "test") {
-		t.Error("Agent name should appear untruncated")
-	}
-}
-
-func TestTUIRenderJobLineReviewTypeTag(t *testing.T) {
-	m := model{width: 80}
-	colWidths := columnWidths{ref: 30, repo: 15, agent: 10}
 
 	tests := []struct {
 		reviewType string
@@ -836,13 +685,48 @@ func TestTUIRenderJobLineReviewTypeTag(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.reviewType, func(t *testing.T) {
 			job := makeJob(1, withRef("abc1234"), withReviewType(tc.reviewType))
-			line := m.renderJobLine(job, false, 3, colWidths)
-			hasTag := strings.Contains(line, "["+tc.reviewType+"]")
+			cells := m.jobCells(job)
+			ref := cells[0] // ref is the first cell
+			hasTag := strings.Contains(ref, "["+tc.reviewType+"]")
 			if tc.wantTag && !hasTag {
-				t.Errorf("expected [%s] tag in line: %s", tc.reviewType, line)
+				t.Errorf("expected [%s] tag in ref cell: %s", tc.reviewType, ref)
 			}
 			if !tc.wantTag && tc.reviewType != "" && hasTag {
-				t.Errorf("unexpected [%s] tag in line: %s", tc.reviewType, line)
+				t.Errorf("unexpected [%s] tag in ref cell: %s", tc.reviewType, ref)
+			}
+		})
+	}
+}
+
+func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
+	// Verify that the rendered queue table fits within the terminal width.
+	// Only check the table lines (header + data rows), not the help bar
+	// which has its own width tests in TestRenderHelpTableLinesWithinWidth.
+	widths := []int{80, 100, 120, 200}
+	for _, w := range widths {
+		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
+			m := newModel("http://localhost", withExternalIODisabled())
+			m.width = w
+			m.height = 30
+			m.jobs = []storage.ReviewJob{
+				makeJob(1, withRef("abc1234"), withRepoName("myrepo"), withAgent("test")),
+				makeJob(2, withRef("def5678"), withRepoName("other-repo"), withAgent("claude-code")),
+			}
+			m.selectedIdx = 0
+			m.selectedJobID = 1
+
+			output := m.renderQueueView()
+			lines := strings.Split(output, "\n")
+			// Check table area: title(1) + status(1) + update(1) + header(1) + separator(1) + data rows
+			// Skip non-table lines (scroll indicator, flash, help bar)
+			tableEnd := min(len(lines), 4+1+1+len(m.jobs)) // title + status + update + header + sep + rows
+			for i := 0; i < tableEnd && i < len(lines); i++ {
+				line := strings.ReplaceAll(lines[i], "\x1b[K", "")
+				line = strings.ReplaceAll(line, "\x1b[J", "")
+				visW := lipgloss.Width(line)
+				if visW > w+5 { // small tolerance
+					t.Errorf("line %d exceeds width %d: visW=%d %q", i, w, visW, stripTestANSI(line))
+				}
 			}
 		})
 	}
@@ -1737,5 +1621,578 @@ func assertFlashMessage(t *testing.T, m model, view viewKind, msg string) {
 	}
 	if m.flashExpiresAt.IsZero() || m.flashExpiresAt.Before(time.Now()) {
 		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m.flashExpiresAt)
+	}
+}
+
+func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
+	// Verify that very narrow terminal widths don't panic and the
+	// table rows fit within the given width. Non-table chrome (title,
+	// status line) may exceed width — only table lines are checked.
+	for _, w := range []int{20, 30, 40} {
+		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
+			m := newModel("http://localhost", withExternalIODisabled())
+			m.width = w
+			m.height = 20
+			m.jobs = []storage.ReviewJob{
+				makeJob(1, withRef("abc"), withRepoName("r"), withAgent("test")),
+			}
+			m.selectedIdx = 0
+			m.selectedJobID = 1
+
+			// Should not panic
+			_ = m.renderQueueView()
+		})
+	}
+}
+
+func TestTUIQueueLongCellContent(t *testing.T) {
+	// Long ref, repo, and branch values should not cause the table to
+	// overflow the terminal width.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 80
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef(strings.Repeat("a", 60)),
+			withRepoName(strings.Repeat("b", 60)),
+			withBranch(strings.Repeat("c", 60)),
+			withAgent("test"),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+	lines := strings.Split(output, "\n")
+	tableEnd := min(len(lines), 7+len(m.jobs))
+	for i := 0; i < tableEnd && i < len(lines); i++ {
+		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
+		line = strings.ReplaceAll(line, "\x1b[J", "")
+		visW := lipgloss.Width(line)
+		if visW > m.width+1 {
+			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
+		}
+	}
+}
+
+func TestTUIQueueLongAgentName(t *testing.T) {
+	// Long custom agent names should be capped and not overflow the table.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef("abc1234"),
+			withRepoName("myrepo"),
+			withAgent(strings.Repeat("x", 40)),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+	lines := strings.Split(output, "\n")
+	tableEnd := min(len(lines), 7+len(m.jobs))
+	for i := 0; i < tableEnd && i < len(lines); i++ {
+		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
+		line = strings.ReplaceAll(line, "\x1b[J", "")
+		visW := lipgloss.Width(line)
+		if visW > m.width+1 {
+			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
+		}
+	}
+}
+
+func TestTUIQueueWideCharacterWidth(t *testing.T) {
+	// CJK characters are double-width; lipgloss.Width() should measure
+	// them correctly and the table should not overflow.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef("abc1234"),
+			withRepoName("日本語リポ"),
+			withBranch("功能分支"),
+			withAgent("test"),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+	lines := strings.Split(output, "\n")
+	tableEnd := min(len(lines), 7+len(m.jobs))
+	for i := 0; i < tableEnd && i < len(lines); i++ {
+		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
+		line = strings.ReplaceAll(line, "\x1b[J", "")
+		visW := lipgloss.Width(line)
+		if visW > m.width+1 {
+			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
+		}
+	}
+}
+
+func TestTUIQueueAgentColumnCapped(t *testing.T) {
+	// The Agent column should be capped at 12 characters even when
+	// the agent name is longer.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 120
+	m.height = 20
+	longAgent := strings.Repeat("x", 30)
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc1234"), withRepoName("repo"), withAgent(longAgent)),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := stripANSI(m.renderQueueView())
+	if !strings.Contains(output, "Agent") {
+		t.Fatal("expected Agent header in output")
+	}
+	// Full 30-char agent name should be truncated.
+	if strings.Contains(output, longAgent) {
+		t.Error("expected agent name to be truncated, but full name found in output")
+	}
+	// Longest run of 'x' in the output should be at most 12 (the cap).
+	maxRun := 0
+	run := 0
+	for _, r := range output {
+		if r == 'x' {
+			run++
+			if run > maxRun {
+				maxRun = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	if maxRun > 12 {
+		t.Errorf("agent column exceeded cap: longest x-run = %d, want <= 12", maxRun)
+	}
+}
+
+func TestTUITasksFlexOvershootHandled(t *testing.T) {
+	// With highly skewed content (one flex column has content, others
+	// have none), max(...,1) can cause distributed > remaining. The
+	// overshoot correction should prevent layout overflow.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTasks
+	m.width = 50
+	m.height = 20
+	m.fixJobs = []storage.ReviewJob{
+		{
+			ID:            1,
+			Status:        storage.JobStatusDone,
+			Branch:        strings.Repeat("b", 40),
+			RepoName:      "",
+			CommitSubject: "",
+		},
+	}
+	m.fixSelectedIdx = 0
+
+	output := m.renderTasksView()
+	if !strings.Contains(output, "roborev tasks") {
+		t.Error("expected tasks view title in output")
+	}
+	// All lines must fit within width (tasks view has no
+	// wide chrome lines unlike queue's status bar).
+	for line := range strings.SplitSeq(output, "\n") {
+		clean := strings.ReplaceAll(line, "\x1b[K", "")
+		clean = strings.ReplaceAll(clean, "\x1b[J", "")
+		if lipgloss.Width(clean) > m.width+1 {
+			t.Errorf("line exceeds width %d: visW=%d",
+				m.width, lipgloss.Width(clean))
+		}
+	}
+}
+
+func TestTUIQueueFlexOvershootHandled(t *testing.T) {
+	// Overshoot test: skewed content and narrow terminals should not
+	// cause the table to overflow, including the edge case where
+	// remaining space is positive but smaller than the number of
+	// visible flex columns (max(...,1) inflation).
+	tests := []struct {
+		name   string
+		width  int
+		ref    string
+		repo   string
+		branch string
+	}{
+		{"skewed/w=50", 50, strings.Repeat("r", 40), "", ""},
+		{"tight/w=60", 60, "abc", "repo", "main"},
+		{"tight/w=61", 61, "abc", "repo", "main"},
+		{"tight/w=62", 62, "abc", "repo", "main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModel("http://localhost", withExternalIODisabled())
+			m.width = tt.width
+			m.height = 20
+			m.jobs = []storage.ReviewJob{
+				makeJob(1,
+					withRef(tt.ref),
+					withRepoName(tt.repo),
+					withBranch(tt.branch),
+					withAgent("test"),
+				),
+			}
+			m.selectedIdx = 0
+			m.selectedJobID = 1
+
+			output := m.renderQueueView()
+			lines := strings.Split(output, "\n")
+			// Skip chrome lines (title, status, update); check table.
+			for i := 3; i < len(lines); i++ {
+				clean := strings.ReplaceAll(lines[i], "\x1b[K", "")
+				clean = strings.ReplaceAll(clean, "\x1b[J", "")
+				if lipgloss.Width(clean) > m.width+1 {
+					t.Errorf("line %d exceeds width %d: visW=%d",
+						i, m.width, lipgloss.Width(clean))
+				}
+			}
+		})
+	}
+}
+
+func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
+	// Each flex column should get at least its content width when
+	// total content fits within remaining space, even if one column
+	// has much more content than the others.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 120
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef("abc1234"),
+			withRepoName("my-project-repo"),
+			withBranch("feature/very-long-branch-name-that-takes-space"),
+			withAgent("test"),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+
+	// Find the data row and verify repo name is not truncated.
+	found := false
+	for line := range strings.SplitSeq(output, "\n") {
+		stripped := stripTestANSI(line)
+		if strings.Contains(stripped, "my-project-repo") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Repo name 'my-project-repo' was truncated in output")
+	}
+}
+
+func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
+	// When fixSelectedIdx exceeds len(fixJobs) (stale after jobs shrink),
+	// rendering should not panic.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTasks
+	m.width = 120
+	m.height = 20
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusDone},
+	}
+	// Stale index: points beyond the single job
+	m.fixSelectedIdx = 5
+
+	// Should not panic
+	output := m.renderTasksView()
+	if !strings.Contains(output, "roborev tasks") {
+		t.Error("expected tasks view title in output")
+	}
+}
+
+func TestTUITasksNarrowWidthFlexAllocation(t *testing.T) {
+	// Same narrow-width test for the tasks view — verify no panic.
+	for _, w := range []int{20, 30, 40} {
+		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
+			m := newTuiModel("http://localhost")
+			m.currentView = tuiViewTasks
+			m.width = w
+			m.height = 20
+			m.fixJobs = []storage.ReviewJob{
+				{ID: 1, Status: storage.JobStatusDone, Branch: "main", RepoName: "r"},
+			}
+			m.fixSelectedIdx = 0
+
+			// Should not panic
+			_ = m.renderTasksView()
+		})
+	}
+}
+
+func TestColumnOptionsModalOpenClose(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+
+	// Press 'o' to open
+	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if m2.currentView != viewColumnOptions {
+		t.Fatalf("expected viewColumnOptions, got %d", m2.currentView)
+	}
+	if len(m2.colOptionsList) == 0 {
+		t.Fatal("expected non-empty colOptionsList")
+	}
+	// Last item should be "Column borders"
+	last := m2.colOptionsList[len(m2.colOptionsList)-1]
+	if last.id != -1 || last.name != "Column borders" {
+		t.Errorf("expected last item to be borders toggle, got id=%d name=%q", last.id, last.name)
+	}
+
+	// Press esc to close
+	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyEscape})
+	if m3.currentView != viewQueue {
+		t.Fatalf("expected viewQueue after esc, got %d", m3.currentView)
+	}
+}
+
+func TestColumnOptionsToggle(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+
+	// Open modal
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+
+	// First item should be Ref, enabled by default
+	if m.colOptionsList[0].id != colRef {
+		t.Fatalf("expected first item to be colRef, got %d", m.colOptionsList[0].id)
+	}
+	if !m.colOptionsList[0].enabled {
+		t.Fatal("expected Ref to be enabled initially")
+	}
+
+	// Toggle it off with space
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if m.colOptionsList[0].enabled {
+		t.Fatal("expected Ref to be disabled after toggle")
+	}
+	if !m.hiddenColumns[colRef] {
+		t.Fatal("expected colRef in hiddenColumns")
+	}
+
+	// Toggle it back on
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if !m.colOptionsList[0].enabled {
+		t.Fatal("expected Ref to be enabled after second toggle")
+	}
+	if m.hiddenColumns[colRef] {
+		t.Fatal("expected colRef removed from hiddenColumns")
+	}
+}
+
+func TestHiddenColumnNotRendered(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withBranch("main"), withAgent("codex")),
+	}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{colAgent: true}
+	m.width = 120
+	m.height = 30
+
+	output := m.renderQueueView()
+	// The header should not contain "Agent"
+	if strings.Contains(output, "Agent") {
+		t.Error("expected Agent column to be hidden from output")
+	}
+	// But should contain other headers
+	if !strings.Contains(output, "Branch") {
+		t.Error("expected Branch column to be visible")
+	}
+}
+
+func TestColumnBordersRendered(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withBranch("main"), withAgent("codex")),
+	}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+	m.colBordersOn = true
+	m.width = 120
+	m.height = 30
+
+	output := m.renderQueueView()
+	// Count ▕ occurrences — with borders on, the data table + help bar both have them,
+	// so count should be higher than just the help bar alone
+	bordersOnCount := strings.Count(output, "▕")
+
+	// Disable borders — help bar still has ▕ but the data table should not
+	m.colBordersOn = false
+	output2 := m.renderQueueView()
+	bordersOffCount := strings.Count(output2, "▕")
+
+	if bordersOnCount <= bordersOffCount {
+		t.Errorf("expected more ▕ with borders on (%d) than off (%d)", bordersOnCount, bordersOffCount)
+	}
+}
+
+func TestQueueColWidthCacheColdStart(t *testing.T) {
+	// First render with pre-populated jobs must compute widths,
+	// not hit a stale cache with nil contentWidths.
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc1234"), withRepoName("myrepo"), withAgent("test")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := stripANSI(m.renderQueueView())
+	if !strings.Contains(output, "abc1234") {
+		t.Fatalf("first render should show job ref, got:\n%s", output)
+	}
+	// Cache should now be populated
+	if m.queueColCache.contentWidths == nil {
+		t.Fatal("cache contentWidths should be populated after first render")
+	}
+}
+
+func TestQueueColWidthCacheInvalidation(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("short"), withRepoName("r"), withAgent("t")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// First render populates cache
+	m.renderQueueView()
+	origGen := m.queueColCache.gen
+	origWidths := maps.Clone(m.queueColCache.contentWidths)
+
+	// Simulate new jobs arriving (bumps queueColGen)
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("a-much-longer-reference"), withRepoName("longer-repo-name"), withAgent("claude-code")),
+	}
+	m.queueColGen++
+
+	// Second render should recompute
+	m.renderQueueView()
+	if m.queueColCache.gen == origGen {
+		t.Fatal("cache gen should have advanced after invalidation")
+	}
+	// Widths should differ (longer content)
+	changed := false
+	for k, v := range m.queueColCache.contentWidths {
+		if ov, ok := origWidths[k]; ok && ov != v {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Fatal("content widths should differ after job data change")
+	}
+}
+
+func TestQueueColWidthCacheReuse(t *testing.T) {
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc1234"), withRepoName("myrepo"), withAgent("test")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// First render populates cache
+	m.renderQueueView()
+	cachedWidthsPtr := fmt.Sprintf("%p", m.queueColCache.contentWidths)
+	cachedGen := m.queueColCache.gen
+
+	// Second render without gen bump should reuse cached map (no reallocation)
+	m.renderQueueView()
+	if m.queueColCache.gen != cachedGen {
+		t.Fatal("cache gen should not change on re-render without invalidation")
+	}
+	if got := fmt.Sprintf("%p", m.queueColCache.contentWidths); got != cachedWidthsPtr {
+		t.Fatalf("cache hit should reuse same map pointer, got %s want %s", got, cachedWidthsPtr)
+	}
+}
+
+func TestTaskColWidthCacheColdStart(t *testing.T) {
+	parentID := int64(42)
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.fixJobs = []storage.ReviewJob{
+		{
+			ID:          101,
+			Status:      storage.JobStatusDone,
+			ParentJobID: &parentID,
+			RepoName:    "myrepo",
+			Branch:      "main",
+			GitRef:      "def5678",
+		},
+	}
+
+	output := stripANSI(m.renderTasksView())
+	if !strings.Contains(output, "def5678") {
+		t.Fatalf("first render should show job ref, got:\n%s", output)
+	}
+	if m.taskColCache.contentWidths == nil {
+		t.Fatal("task cache contentWidths should be populated after first render")
+	}
+}
+
+func TestTaskColWidthCacheInvalidation(t *testing.T) {
+	parentID := int64(42)
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusQueued, ParentJobID: &parentID, RepoName: "r"},
+	}
+
+	m.renderTasksView()
+	origGen := m.taskColCache.gen
+
+	// Simulate fix jobs update
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID, RepoName: "a-longer-repo-name"},
+	}
+	m.taskColGen++
+
+	m.renderTasksView()
+	if m.taskColCache.gen == origGen {
+		t.Fatal("task cache gen should have advanced after invalidation")
+	}
+}
+
+func TestTaskColWidthCacheReuse(t *testing.T) {
+	parentID := int64(42)
+	m := newTuiModel("http://localhost")
+	m.width = 120
+	m.height = 24
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusDone, ParentJobID: &parentID, RepoName: "myrepo", Branch: "main", GitRef: "def5678"},
+	}
+
+	// First render populates cache
+	m.renderTasksView()
+	cachedWidthsPtr := fmt.Sprintf("%p", m.taskColCache.contentWidths)
+	cachedGen := m.taskColCache.gen
+
+	// Second render without gen bump should reuse cached map
+	m.renderTasksView()
+	if m.taskColCache.gen != cachedGen {
+		t.Fatal("task cache gen should not change on re-render without invalidation")
+	}
+	if got := fmt.Sprintf("%p", m.taskColCache.contentWidths); got != cachedWidthsPtr {
+		t.Fatalf("task cache hit should reuse same map pointer, got %s want %s", got, cachedWidthsPtr)
 	}
 }

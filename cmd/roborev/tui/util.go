@@ -9,11 +9,8 @@ import (
 )
 
 func shortRef(ref string) string {
-	if strings.Contains(ref, "..") {
-		if len(ref) > 17 {
-			return ref[:17]
-		}
-		return ref
+	if before, after, ok := strings.Cut(ref, ".."); ok {
+		return git.ShortSHA(before) + ".." + git.ShortSHA(after)
 	}
 	return git.ShortSHA(ref)
 }
@@ -23,7 +20,9 @@ func shortJobRef(job storage.ReviewJob) string {
 		if job.GitRef == "prompt" {
 			return "run"
 		}
-		return job.GitRef
+		if !strings.Contains(job.GitRef, "..") {
+			return job.GitRef
+		}
 	}
 	return shortRef(job.GitRef)
 }
@@ -33,18 +32,4 @@ func formatAgentLabel(agent string, model string) string {
 		return fmt.Sprintf("%s: %s", agent, model)
 	}
 	return agent
-}
-
-func truncateString(s string, maxLen int) string {
-	if maxLen <= 0 {
-		return ""
-	}
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return string(runes[:maxLen])
-	}
-	return string(runes[:maxLen-3]) + "..."
 }

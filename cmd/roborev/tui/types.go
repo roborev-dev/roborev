@@ -23,6 +23,7 @@ const (
 	viewTasks               // Background fix tasks view
 	viewKindWorktreeConfirm // Confirm creating a worktree to apply patch
 	viewPatch               // Patch viewer for fix jobs
+	viewColumnOptions       // Column toggle modal
 )
 
 // queuePrefetchBuffer is the number of extra rows to fetch beyond what's visible,
@@ -72,18 +73,28 @@ type logLine struct {
 	text string
 }
 
+// colWidthCache stores computed per-column max content widths alongside a
+// generation counter so renders can skip the full-scan when data hasn't changed.
+type colWidthCache struct {
+	gen           int
+	contentWidths map[int]int
+}
+
+// colOptionBorders is the sentinel ID for the borders toggle in the column options modal.
+const colOptionBorders = -1
+
+// columnOption represents an item in the column options modal.
+// id is a column constant (colRef..colHandled) or colOptionBorders.
+type columnOption struct {
+	id      int    // column constant or colOptionBorders
+	name    string // display label
+	enabled bool   // visible/on
+}
+
 // helpItem is a single help-bar entry with a key label and description.
 type helpItem struct {
 	key  string
 	desc string
-}
-
-// columnWidths stores pre-computed column widths for the queue view layout.
-type columnWidths struct {
-	ref    int
-	branch int
-	repo   int
-	agent  int
 }
 
 // logOutputMsg delivers output lines from the daemon
@@ -144,6 +155,7 @@ type rerunResultMsg struct {
 	err           error
 }
 type errMsg error
+type configSaveErrMsg struct{ err error }
 type jobsErrMsg struct {
 	err error
 	seq int // fetch sequence number for staleness check

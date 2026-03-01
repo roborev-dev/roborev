@@ -122,7 +122,7 @@ func (m model) renderReviewView() string {
 
 	// Help table rows
 	reviewHelpRows := [][]helpItem{
-		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "addressed"}, {"y", "copy"}, {"F", "fix"}},
+		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "handled"}, {"y", "copy"}, {"F", "fix"}},
 		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
 	}
 	helpLines := len(reflowHelpRows(reviewHelpRows, m.width))
@@ -236,10 +236,8 @@ func (m model) renderReviewView() string {
 
 	// Status line: version mismatch (persistent) takes priority, then flash message, then scroll indicator
 	if m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
 		b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
 	} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewReview {
-		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	} else if len(lines) > visibleLines {
 		scrollInfo := fmt.Sprintf("[%d-%d of %d lines]", start+1, end, len(lines))
@@ -352,7 +350,7 @@ func (m model) renderRespondView() string {
 	// Simple text box with border
 	boxWidth := max(m.width-4, 20)
 
-	b.WriteString("+-" + strings.Repeat("-", boxWidth-2) + "-+\n")
+	b.WriteString("┌─" + strings.Repeat("─", boxWidth-2) + "─┐\n")
 
 	// Wrap text display to box width
 	textLinesWritten := 0
@@ -364,7 +362,7 @@ func (m model) renderRespondView() string {
 		// Show placeholder (styled, but we pad manually to avoid ANSI issues)
 		placeholder := "Type your comment..."
 		padded := placeholder + strings.Repeat(" ", boxWidth-2-len(placeholder))
-		b.WriteString("| " + statusStyle.Render(padded) + " |\x1b[K\n")
+		b.WriteString("│ " + statusStyle.Render(padded) + " │\x1b[K\n")
 		textLinesWritten++
 	} else {
 		lines := strings.SplitSeq(m.commentText, "\n")
@@ -378,18 +376,18 @@ func (m model) renderRespondView() string {
 			line = runewidth.Truncate(line, boxWidth-2, "")
 			// Pad based on visual width, not rune count
 			padding := max(boxWidth-2-runewidth.StringWidth(line), 0)
-			fmt.Fprintf(&b, "| %s%s |\x1b[K\n", line, strings.Repeat(" ", padding))
+			fmt.Fprintf(&b, "│ %s%s │\x1b[K\n", line, strings.Repeat(" ", padding))
 			textLinesWritten++
 		}
 	}
 
 	// Pad with empty lines if needed
 	for textLinesWritten < 3 {
-		fmt.Fprintf(&b, "| %-*s |\x1b[K\n", boxWidth-2, "")
+		fmt.Fprintf(&b, "│ %-*s │\x1b[K\n", boxWidth-2, "")
 		textLinesWritten++
 	}
 
-	b.WriteString("+-" + strings.Repeat("-", boxWidth-2) + "-+\x1b[K\n")
+	b.WriteString("└─" + strings.Repeat("─", boxWidth-2) + "─┘\x1b[K\n")
 
 	// Pad remaining space
 	linesWritten := 6 + textLinesWritten // title, blank, help, blank, top border, bottom border

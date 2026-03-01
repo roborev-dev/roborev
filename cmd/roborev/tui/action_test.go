@@ -786,12 +786,12 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 		t.Error("Expected output to contain the first character")
 	}
 
-	// Verify visual width alignment: all content lines should end with "|"
+	// Verify visual width alignment: all content lines should end with "│"
 	// and have consistent visual width
 	lines := strings.Split(stripANSI(output), "\n")
 	var expectedWidth int
 	for _, line := range lines {
-		if strings.HasPrefix(line, "|") && strings.HasSuffix(line, "|") {
+		if strings.HasPrefix(line, "│") && strings.HasSuffix(line, "│") {
 			// This is a content line - verify right border alignment
 			// All content lines should have the same visual width
 			width := runewidth.StringWidth(line)

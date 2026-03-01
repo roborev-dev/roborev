@@ -518,14 +518,14 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 	helpSets := map[string][][]helpItem{
 		"queue": {
 			{{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"}, {"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}},
-			{{"↑/↓", "navigate"}, {"enter", "review"}, {"a", "addressed"}, {"f", "filter"}, {"h", "hide"}, {"T", "tasks"}, {"?", "help"}, {"q", "quit"}},
+			{{"↑/↓", "nav"}, {"enter", "review"}, {"a", "handled"}, {"f", "filter"}, {"h", "hide"}, {"T", "tasks"}, {"?", "help"}, {"q", "quit"}},
 		},
 		"review": {
-			{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "addressed"}, {"y", "copy"}, {"F", "fix"}},
+			{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "handled"}, {"y", "copy"}, {"F", "fix"}},
 			{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
 		},
 		"filter": {
-			{{"↑/↓", "navigate"}, {"→/←", "expand/collapse"}, {"↵", "select"}, {"esc", "cancel"}, {"type to search", ""}},
+			{{"↑/↓", "nav"}, {"→/←", "expand/collapse"}, {"↵", "select"}, {"esc", "cancel"}, {"type to search", ""}},
 		},
 		"tasks": {
 			{{"enter", "view"}, {"P", "parent"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}, {"x", "cancel"}, {"?", "help"}, {"T/esc", "back"}},
@@ -725,6 +725,107 @@ func TestPatchFiles(t *testing.T) {
 				if !wantSet[f] {
 					t.Errorf("unexpected file %q", f)
 				}
+			}
+		})
+	}
+}
+
+func TestShortRef(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{
+			name: "full SHA",
+			ref:  "abc1234567890def1234567890abcdef12345678",
+			want: "abc1234",
+		},
+		{
+			name: "already short",
+			ref:  "abc12",
+			want: "abc12",
+		},
+		{
+			name: "exactly 7 chars",
+			ref:  "abc1234",
+			want: "abc1234",
+		},
+		{
+			name: "range of full SHAs",
+			ref:  "abc1234567890def1234567890abcdef12345678..fed9876543210abc9876543210fedcba98765432",
+			want: "abc1234..fed9876",
+		},
+		{
+			name: "range of short SHAs",
+			ref:  "abc..def",
+			want: "abc..def",
+		},
+		{
+			name: "range with one long side",
+			ref:  "abc1234567890..def",
+			want: "abc1234..def",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shortRef(tt.ref)
+			if got != tt.want {
+				t.Errorf("shortRef(%q) = %q, want %q",
+					tt.ref, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShortJobRef(t *testing.T) {
+	fullSHA1 := "abc1234567890def1234567890abcdef12345678"
+	fullSHA2 := "fed9876543210abc9876543210fedcba98765432"
+	commitID := int64(1)
+	diffContent := "diff"
+
+	tests := []struct {
+		name string
+		job  storage.ReviewJob
+		want string
+	}{
+		{
+			name: "single commit",
+			job:  storage.ReviewJob{GitRef: fullSHA1, CommitID: &commitID},
+			want: "abc1234",
+		},
+		{
+			name: "range with nil CommitID",
+			job:  storage.ReviewJob{GitRef: fullSHA1 + ".." + fullSHA2},
+			want: "abc1234..fed9876",
+		},
+		{
+			name: "prompt job",
+			job:  storage.ReviewJob{GitRef: "prompt"},
+			want: "run",
+		},
+		{
+			name: "task ref without commit",
+			job:  storage.ReviewJob{GitRef: "analyze"},
+			want: "analyze",
+		},
+		{
+			name: "dirty review",
+			job: storage.ReviewJob{
+				GitRef:      fullSHA1,
+				DiffContent: &diffContent,
+			},
+			want: "abc1234",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shortJobRef(tt.job)
+			if got != tt.want {
+				t.Errorf("shortJobRef() = %q, want %q",
+					got, tt.want)
 			}
 		})
 	}

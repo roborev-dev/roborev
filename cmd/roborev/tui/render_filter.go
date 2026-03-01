@@ -39,7 +39,7 @@ func (m model) renderFilterView() string {
 
 	// Calculate visible rows
 	filterHelpRows := [][]helpItem{
-		{{"↑/↓", "navigate"}, {"→/←", "expand/collapse"}, {"↵", "select"}, {"esc", "cancel"}, {"type to search", ""}},
+		{{"↑/↓", "nav"}, {"→/←", "expand/collapse"}, {"↵", "select"}, {"esc", "cancel"}, {"type to search", ""}},
 	}
 	filterHelpLines := len(reflowHelpRows(filterHelpRows, m.width))
 	// Reserve: title(1) + blank(1) + search(1) + blank(1) + scroll-info(1) + blank(1) + help(N)

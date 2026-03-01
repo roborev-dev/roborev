@@ -52,9 +52,10 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 	if m2.loadingJobs {
 		t.Error("Should not trigger refresh when hideAddressed is not active")
 	}
-	if cmd != nil {
-		t.Error("Should not return a command when hideAddressed is not active")
-	}
+	// cmd may be non-nil (mouse re-enable on view transition) but
+	// the important assertion is that no job refresh was triggered
+	// (loadingJobs stays false above).
+	_ = cmd
 }
 
 func TestTUICommitMsgViewNavigationFromQueue(t *testing.T) {

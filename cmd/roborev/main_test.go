@@ -1690,6 +1690,11 @@ func TestRestartDaemonAfterUpdateStopFailedPreExistingPIDNotAcceptedAsHandoff(t 
 // runtime files and still attempt stop/wait/start.
 func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
 	s := stubRestartVars(t)
+	// This test needs 5 getAnyRunningDaemon calls to succeed. On
+	// Windows the default timer resolution is ~15ms, so the 5ms
+	// timeout from stubRestartVars expires before enough poll
+	// iterations run. Use a longer timeout.
+	updateRestartWaitTimeout = 200 * time.Millisecond
 
 	var getCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {

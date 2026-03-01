@@ -2,11 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
@@ -28,10 +31,10 @@ func (m model) getVisibleJobs() []storage.ReviewJob {
 func (m model) queueHelpRows() [][]helpItem {
 	row1 := []helpItem{
 		{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"},
-		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"},
+		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}, {"o", "options"},
 	}
 	row2 := []helpItem{
-		{"↑/↓", "navigate"}, {"↵", "review"}, {"a", "addressed"},
+		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "handled"},
 	}
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
@@ -55,7 +58,7 @@ func (m model) queueVisibleRows() int {
 		// compact: title(1) only
 		return max(m.height-1, 1)
 	}
-	// title(1) + status(2) + header(2) + scroll(1) + flash(1) + help(dynamic)
+	// title(1) + status(2) + header(1) + separator(1) + scroll(1) + flash(1) + help(dynamic)
 	reserved := 7 + m.queueHelpLines()
 	visibleRows := max(m.height-reserved, 3)
 	return visibleRows
@@ -82,6 +85,23 @@ func (m model) getVisibleSelectedIdx() int {
 	}
 	return -1
 }
+
+// Queue table column indices.
+const (
+	colSel     = iota // "> " selection indicator
+	colJobID          // Job ID
+	colRef            // Git ref (short SHA or range)
+	colBranch         // Branch name
+	colRepo           // Repository display name
+	colAgent          // Agent name
+	colStatus         // Job status
+	colQueued         // Enqueue timestamp
+	colElapsed        // Elapsed time
+	colPF             // Pass/Fail verdict
+	colHandled        // Addressed status
+	colCount          // total number of columns
+)
+
 func (m model) renderQueueView() string {
 	var b strings.Builder
 	compact := m.queueCompact()
@@ -108,7 +128,6 @@ func (m model) renderQueueView() string {
 	b.WriteString(titleStyle.Render(title.String()))
 	// In compact mode, show version mismatch inline since the status area is hidden
 	if compact && m.versionMismatch {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true)
 		b.WriteString(" ")
 		b.WriteString(errorStyle.Render(fmt.Sprintf("MISMATCH: TUI %s != Daemon %s", version.Version, m.daemonVersion)))
 	}
@@ -158,7 +177,6 @@ func (m model) renderQueueView() string {
 
 		// Update notification on line 3 (above the table)
 		if m.updateAvailable != "" {
-			updateStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true)
 			var updateMsg string
 			if m.updateIsDevBuild {
 				updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update --force'", m.updateAvailable)
@@ -212,24 +230,6 @@ func (m model) renderQueueView() string {
 			}
 		}
 
-		// Calculate column widths dynamically based on terminal width
-		colWidths := m.calculateColumnWidths(idWidth)
-
-		if !compact {
-			// Header (with 2-char prefix to align with row selector)
-			header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %-8s %-3s %-12s %-8s %s",
-				idWidth, "JobID",
-				colWidths.ref, "Ref",
-				colWidths.branch, "Branch",
-				colWidths.repo, "Repo",
-				colWidths.agent, "Agent",
-				"Status", "P/F", "Queued", "Elapsed", "Addressed")
-			b.WriteString(statusStyle.Render(header))
-			b.WriteString("\x1b[K\n") // Clear to end of line
-			b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
-			b.WriteString("\x1b[K\n") // Clear to end of line
-		}
-
 		// Determine which jobs to show, keeping selected item visible
 		start = 0
 		end = len(visibleJobList)
@@ -244,29 +244,307 @@ func (m model) renderQueueView() string {
 			}
 		}
 
-		// Jobs
-		jobLinesWritten := 0
-		for i := start; i < end; i++ {
-			job := visibleJobList[i]
-			selected := i == visibleSelectedIdx
-			line := m.renderJobLine(job, selected, idWidth, colWidths)
-			if selected {
-				// Pad line to full terminal width for background styling
-				lineWidth := lipgloss.Width(line)
-				paddedLine := "> " + line
-				if padding := m.width - lineWidth - 2; padding > 0 {
-					paddedLine += strings.Repeat(" ", padding)
-				}
-				line = selectedStyle.Render(paddedLine)
-			} else {
-				line = "  " + line
-			}
-			b.WriteString(line)
-			b.WriteString("\x1b[K\n") // Clear to end of line before newline
-			jobLinesWritten++
+		// Determine visible columns (respects hidden columns)
+		visCols := m.visibleColumns()
+
+		// Compute per-column max content widths, using cache when data hasn't changed.
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Status", "Queued", "Elapsed", "P/F", "Handled"}
+		allFullRows := make([][]string, len(visibleJobList))
+		for i, job := range visibleJobList {
+			cells := m.jobCells(job)
+			fullRow := make([]string, colCount)
+			fullRow[colSel] = "  "
+			fullRow[colJobID] = fmt.Sprintf("%d", job.ID)
+			copy(fullRow[colRef:], cells)
+			allFullRows[i] = fullRow
 		}
 
+		var contentWidth map[int]int
+		if m.queueColCache.gen == m.queueColGen {
+			contentWidth = m.queueColCache.contentWidths
+		} else {
+			contentWidth = make(map[int]int, len(visCols))
+			for _, c := range visCols {
+				w := lipgloss.Width(allHeaders[c])
+				for _, fullRow := range allFullRows {
+					if cw := lipgloss.Width(fullRow[c]); cw > w {
+						w = cw
+					}
+				}
+				contentWidth[c] = w
+			}
+			m.queueColCache.gen = m.queueColGen
+			m.queueColCache.contentWidths = contentWidth
+		}
+
+		// Compute column widths: fixed columns get their natural size,
+		// flexible columns (Ref, Branch, Repo) absorb excess space.
+		bordersOn := m.colBordersOn
+		borderColor := lipgloss.AdaptiveColor{Light: "248", Dark: "242"}
+
+		// Spacing per column: non-first, non-sel columns get 1 char of spacing
+		// (either PaddingRight or border ▕ + PaddingLeft = 2 chars)
+		spacing := func(tableCol int, logCol int) int {
+			if logCol == colSel || tableCol == 0 {
+				return 0
+			}
+			if bordersOn {
+				return 2 // ▕ + PaddingLeft(1)
+			}
+			return 1 // PaddingRight(1)
+		}
+
+		// Fixed-width columns: exact sizes (content + padding, not counting inter-column spacing)
+		fixedWidth := map[int]int{
+			colSel:     2,
+			colJobID:   idWidth,
+			colStatus:  8,
+			colQueued:  12,
+			colElapsed: 8,
+			colPF:      3,
+			colHandled: max(contentWidth[colHandled], 7),        // "Handled" header = 7
+			colAgent:   min(max(contentWidth[colAgent], 5), 12), // "Agent" header = 5, cap at 12
+		}
+
+		// Flexible columns absorb excess space
+		flexCols := []int{colRef, colBranch, colRepo}
+
+		// Compute total fixed consumption
+		totalFixed := 0
+		for ti, c := range visCols {
+			sp := spacing(ti, c)
+			if fw, ok := fixedWidth[c]; ok {
+				totalFixed += fw + sp
+			} else {
+				totalFixed += sp // spacing is always consumed
+			}
+		}
+
+		remaining := m.width - totalFixed
+		// Distribute remaining space among flex columns.
+		// colWidths stores content-only width; StyleFunc adds spacing via
+		// s.Width(w + spacing(col, logicalCol)) so the total column width
+		// on screen = content width + inter-column spacing.
+		colWidths := make(map[int]int, len(visCols))
+		maps.Copy(colWidths, fixedWidth)
+
+		// Build visible-only flex list once.
+		var visFlex []int
+		for _, c := range flexCols {
+			if !m.hiddenColumns[c] {
+				visFlex = append(visFlex, c)
+			}
+		}
+
+		if len(visFlex) > 0 && remaining > 0 {
+			// Two-phase distribution: first guarantee each flex
+			// column at least min(contentWidth, equalShare), then
+			// distribute surplus proportionally to remaining
+			// content headroom. This prevents a single wide column
+			// from starving narrower ones.
+			equalShare := remaining / len(visFlex)
+
+			// Phase 1: allocate floors.
+			distributed := 0
+			for _, c := range visFlex {
+				floor := min(contentWidth[c], equalShare)
+				colWidths[c] = max(floor, 1)
+				distributed += colWidths[c]
+			}
+
+			// Drain overshoot from max(...,1) inflation when
+			// remaining < len(visFlex).
+			if distributed > remaining {
+				drainFlexOverflow(visFlex, colWidths, distributed-remaining)
+				distributed = remaining
+			}
+
+			// Compute headroom from actual allocated widths.
+			totalHeadroom := 0
+			headroom := make(map[int]int, len(visFlex))
+			for _, c := range visFlex {
+				h := contentWidth[c] - colWidths[c]
+				if h > 0 {
+					headroom[c] = h
+					totalHeadroom += h
+				}
+			}
+
+			// Phase 2: distribute surplus proportionally to
+			// content headroom (columns already at content width
+			// have zero headroom and get nothing extra).
+			surplus := remaining - distributed
+			if surplus > 0 && totalHeadroom > 0 {
+				phase2 := 0
+				for i, c := range visFlex {
+					var extra int
+					if i == len(visFlex)-1 {
+						extra = surplus - phase2
+					} else {
+						extra = surplus * headroom[c] / totalHeadroom
+					}
+					colWidths[c] += extra
+					phase2 += extra
+				}
+			} else if surplus > 0 {
+				// All columns at content width — distribute
+				// remaining space equally.
+				for i, c := range visFlex {
+					extra := surplus / (len(visFlex) - i)
+					colWidths[c] += extra
+					surplus -= extra
+				}
+			}
+		} else if len(visFlex) > 0 {
+			// No remaining space: give flex columns 1 char each to
+			// avoid overflow at very narrow terminal widths.
+			for _, c := range visFlex {
+				colWidths[c] = 1
+			}
+		}
+
+		// Build visible rows for the window
+		windowJobs := visibleJobList[start:end]
+		rows := make([][]string, 0, end-start)
+		for i := range windowJobs {
+			sel := "  "
+			if start+i == visibleSelectedIdx {
+				sel = "> "
+			}
+			fullRow := allFullRows[start+i]
+			fullRow[colSel] = sel
+
+			row := make([]string, len(visCols))
+			for vi, c := range visCols {
+				row[vi] = fullRow[c]
+			}
+			rows = append(rows, row)
+		}
+
+		// Compute the selected row index within the visible window
+		selectedWindowIdx := visibleSelectedIdx - start
+
+		// Find the last visible table column index (for padding logic)
+		lastVisCol := len(visCols) - 1
+
+		t := table.New().
+			BorderTop(false).
+			BorderBottom(false).
+			BorderLeft(false).
+			BorderRight(false).
+			BorderColumn(false).
+			BorderRow(false).
+			BorderHeader(!compact).
+			Border(lipgloss.Border{
+				Top:    "─",
+				Bottom: "─",
+				Middle: "─",
+			}).
+			Width(m.width).
+			Wrap(false).
+			StyleFunc(func(row, col int) lipgloss.Style {
+				s := lipgloss.NewStyle()
+
+				// Map table col index to logical column
+				logicalCol := colSel
+				if col >= 0 && col < len(visCols) {
+					logicalCol = visCols[col]
+				}
+
+				// Inter-column spacing: non-sel, non-first columns get border or padding
+				if logicalCol != colSel && col > 0 {
+					if bordersOn {
+						s = s.Border(lipgloss.Border{Left: "▕"}, false, false, false, true).
+							BorderForeground(borderColor).PaddingLeft(1)
+					} else if col < lastVisCol {
+						s = s.PaddingRight(1)
+					}
+				}
+
+				// Set explicit width for all columns (includes spacing)
+				w := colWidths[logicalCol]
+				if w > 0 {
+					s = s.Width(w + spacing(col, logicalCol))
+				}
+
+				// Right-align elapsed column
+				if logicalCol == colElapsed {
+					s = s.Align(lipgloss.Right)
+				}
+
+				// Header row styling
+				if row == table.HeaderRow {
+					return s.Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
+				}
+
+				// Selection highlighting — uniform background, no per-cell coloring
+				if row == selectedWindowIdx {
+					bg := lipgloss.AdaptiveColor{Light: "153", Dark: "24"}
+					s = s.Background(bg)
+					if bordersOn {
+						s = s.BorderBackground(bg)
+					}
+					return s
+				}
+
+				// Per-cell coloring for non-selected rows
+				if row >= 0 && row < len(windowJobs) {
+					job := windowJobs[row]
+					switch logicalCol {
+					case colStatus:
+						switch job.Status {
+						case storage.JobStatusQueued:
+							s = s.Foreground(queuedStyle.GetForeground())
+						case storage.JobStatusRunning:
+							s = s.Foreground(runningStyle.GetForeground())
+						case storage.JobStatusDone:
+							s = s.Foreground(doneStyle.GetForeground())
+						case storage.JobStatusFailed:
+							s = s.Foreground(failedStyle.GetForeground())
+						case storage.JobStatusCanceled:
+							s = s.Foreground(canceledStyle.GetForeground())
+						}
+					case colPF:
+						if job.Verdict != nil {
+							if *job.Verdict == "P" {
+								s = s.Foreground(passStyle.GetForeground())
+							} else {
+								s = s.Foreground(failStyle.GetForeground())
+							}
+						}
+					case colHandled:
+						if job.Addressed != nil {
+							if *job.Addressed {
+								s = s.Foreground(addressedStyle.GetForeground())
+							} else {
+								s = s.Foreground(queuedStyle.GetForeground())
+							}
+						}
+					}
+				}
+				return s
+			})
+
+		if !compact {
+			headers := make([]string, len(visCols))
+			for vi, c := range visCols {
+				headers[vi] = allHeaders[c]
+			}
+			t = t.Headers(headers...)
+		}
+		t = t.Rows(rows...)
+
+		tableStr := t.Render()
+		b.WriteString(tableStr)
+		b.WriteString("\x1b[K\n")
+
 		// Pad with clear-to-end-of-line sequences to prevent ghost text
+		tableLines := strings.Count(tableStr, "\n") + 1
+		headerLines := 0
+		if !compact {
+			headerLines = 2 // header + separator
+		}
+		jobLinesWritten := tableLines - headerLines
 		for jobLinesWritten < visibleRows {
 			b.WriteString("\x1b[K\n")
 			jobLinesWritten++
@@ -294,10 +572,8 @@ func (m model) renderQueueView() string {
 		// Status line: flash message (temporary)
 		// Version mismatch takes priority over flash messages (it's persistent and important)
 		if m.versionMismatch {
-			errorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
 			b.WriteString(errorStyle.Render(fmt.Sprintf("VERSION MISMATCH: TUI %s != Daemon %s - restart TUI or daemon", version.Version, m.daemonVersion)))
 		} else if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewQueue {
-			flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
 			b.WriteString(flashStyle.Render(m.flashMessage))
 		}
 		b.WriteString("\x1b[K\n") // Clear to end of line
@@ -317,87 +593,30 @@ func (m model) renderQueueView() string {
 
 	return output
 }
-func (m model) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addressed (9)
-	// Status width 8 accommodates "canceled" (longest status)
-	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
-	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 9 + 9
 
-	// Available width for flexible columns (ref, branch, repo, agent)
-	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
-	availableWidth := max(4, m.width-fixedWidth) // At least 4 chars total for columns
-
-	// Distribute available width: ref (20%), branch (32%), repo (33%), agent (15%)
-	refWidth := max(1, availableWidth*20/100)
-	branchWidth := max(1, availableWidth*32/100)
-	repoWidth := max(1, availableWidth*33/100)
-	agentWidth := max(1, availableWidth*15/100)
-
-	// Scale down if total exceeds available (can happen due to rounding with small values)
-	total := refWidth + branchWidth + repoWidth + agentWidth
-	if total > availableWidth && availableWidth > 0 {
-		refWidth = max(1, availableWidth*20/100)
-		branchWidth = max(1, availableWidth*32/100)
-		repoWidth = max(1, availableWidth*33/100)
-		agentWidth = max(
-			// Give remainder to agent
-			availableWidth-refWidth-branchWidth-repoWidth, 1)
-	}
-
-	// Apply higher minimums only when there's plenty of space
-	if availableWidth >= 45 {
-		refWidth = max(8, refWidth)
-		branchWidth = max(10, branchWidth)
-		repoWidth = max(10, repoWidth)
-		agentWidth = max(6, agentWidth)
-	}
-
-	return columnWidths{
-		ref:    refWidth,
-		branch: branchWidth,
-		repo:   repoWidth,
-		agent:  agentWidth,
-	}
-}
-func (m model) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, colWidths columnWidths) string {
+// jobCells returns plain text cell values for a job row.
+// Order: ref, branch, repo, agent, status, queued, elapsed, verdict, handled
+// (colRef through colHandled, 9 values).
+func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
-	// Show review type tag for non-standard review types (e.g., [security])
 	if !config.IsDefaultReviewType(job.ReviewType) {
 		ref = ref + " [" + job.ReviewType + "]"
 	}
-	if len(ref) > colWidths.ref {
-		ref = ref[:max(1, colWidths.ref-3)] + "..."
-	}
 
-	// Get branch name with fallback to git lookup
 	branch := m.getBranchForJob(job)
-	if len(branch) > colWidths.branch {
-		branch = branch[:max(1, colWidths.branch-3)] + "..."
-	}
 
-	// Use cached display name, falling back to RepoName
 	repo := m.getDisplayName(job.RepoPath, job.RepoName)
-	// Append [remote] indicator for jobs from other machines
 	if m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID {
 		repo += " [R]"
 	}
-	if len(repo) > colWidths.repo {
-		repo = repo[:max(1, colWidths.repo-3)] + "..."
+
+	agentName := job.Agent
+	if agentName == "claude-code" {
+		agentName = "claude"
 	}
 
-	agent := job.Agent
-	// Normalize agent display names for compactness
-	if agent == "claude-code" {
-		agent = "claude"
-	}
-	if len(agent) > colWidths.agent {
-		agent = agent[:max(1, colWidths.agent-3)] + "..."
-	}
-
-	// Format enqueue time as compact timestamp in local time
 	enqueued := job.EnqueuedAt.Local().Format("Jan 02 15:04")
 
-	// Format elapsed time
 	elapsed := ""
 	if job.StartedAt != nil {
 		if job.FinishedAt != nil {
@@ -407,76 +626,23 @@ func (m model) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, 
 		}
 	}
 
-	// Color the status only when not selected (selection style should be uniform)
 	status := string(job.Status)
-	var styledStatus string
-	if selected {
-		styledStatus = status
-	} else {
-		switch job.Status {
-		case storage.JobStatusQueued:
-			styledStatus = queuedStyle.Render(status)
-		case storage.JobStatusRunning:
-			styledStatus = runningStyle.Render(status)
-		case storage.JobStatusDone:
-			styledStatus = doneStyle.Render(status)
-		case storage.JobStatusFailed:
-			styledStatus = failedStyle.Render(status)
-		case storage.JobStatusCanceled:
-			styledStatus = canceledStyle.Render(status)
-		default:
-			styledStatus = status
-		}
-	}
-	// Pad after coloring since lipgloss strips trailing spaces
-	// Width 8 accommodates "canceled" (longest status)
-	padding := 8 - len(status)
-	if padding > 0 {
-		styledStatus += strings.Repeat(" ", padding)
-	}
 
-	// Verdict: P (pass) or F (fail), styled with color
 	verdict := "-"
 	if job.Verdict != nil {
-		v := *job.Verdict
-		if selected {
-			verdict = v
-		} else if v == "P" {
-			verdict = passStyle.Render(v)
-		} else {
-			verdict = failStyle.Render(v)
-		}
-	}
-	// Pad to 3 chars
-	if job.Verdict == nil || len(*job.Verdict) < 3 {
-		verdict += strings.Repeat(" ", 3-1) // "-" or "P"/"F" is 1 char
+		verdict = *job.Verdict
 	}
 
-	// Addressed status: nil means no review yet, true/false for reviewed jobs
-	addr := ""
+	handled := ""
 	if job.Addressed != nil {
 		if *job.Addressed {
-			if selected {
-				addr = "true"
-			} else {
-				addr = addressedStyle.Render("true")
-			}
+			handled = "yes"
 		} else {
-			if selected {
-				addr = "false"
-			} else {
-				addr = queuedStyle.Render("false")
-			}
+			handled = "no"
 		}
 	}
 
-	return fmt.Sprintf("%-*d %-*s %-*s %-*s %-*s %s %s %-12s %-8s %s",
-		idWidth, job.ID,
-		colWidths.ref, ref,
-		colWidths.branch, branch,
-		colWidths.repo, repo,
-		colWidths.agent, agent,
-		styledStatus, verdict, enqueued, elapsed, addr)
+	return []string{ref, branch, repo, agentName, status, enqueued, elapsed, verdict, handled}
 }
 
 // commandLineForJob computes the representative agent command line from job parameters.
@@ -509,5 +675,220 @@ func stripControlChars(s string) string {
 		}
 		b.WriteRune(r)
 	}
+	return b.String()
+}
+
+// toggleableColumns is the ordered list of columns the user can show/hide.
+// colSel and colJobID are always visible and not included here.
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colStatus, colQueued, colElapsed, colPF, colHandled}
+
+// columnNames maps column constants to display names.
+var columnNames = map[int]string{
+	colRef:     "Ref",
+	colBranch:  "Branch",
+	colRepo:    "Repo",
+	colAgent:   "Agent",
+	colStatus:  "Status",
+	colQueued:  "Queued",
+	colElapsed: "Elapsed",
+	colPF:      "P/F",
+	colHandled: "Handled",
+}
+
+// columnConfigNames maps column constants to config file names (lowercase).
+var columnConfigNames = map[int]string{
+	colRef:     "ref",
+	colBranch:  "branch",
+	colRepo:    "repo",
+	colAgent:   "agent",
+	colStatus:  "status",
+	colQueued:  "queued",
+	colElapsed: "elapsed",
+	colPF:      "pf",
+	colHandled: "handled",
+}
+
+// drainFlexOverflow reduces flex column widths to absorb overflow,
+// shrinking the widest column first, repeating until overflow is zero
+// or all columns are at minimum width 1.
+func drainFlexOverflow(
+	cols []int, widths map[int]int, overflow int,
+) {
+	for overflow > 0 {
+		widest := -1
+		for _, c := range cols {
+			if widths[c] > 1 && (widest < 0 || widths[c] > widths[widest]) {
+				widest = c
+			}
+		}
+		if widest < 0 {
+			break
+		}
+		reduce := min(overflow, widths[widest]-1)
+		widths[widest] -= reduce
+		overflow -= reduce
+	}
+}
+
+// lookupDisplayName returns the display name for a column constant from the given map.
+func lookupDisplayName(col int, displayNames map[int]string) string {
+	if name, ok := displayNames[col]; ok {
+		return name
+	}
+	return "?"
+}
+
+// columnDisplayName returns the display name for a queue column constant.
+func columnDisplayName(col int) string {
+	return lookupDisplayName(col, columnNames)
+}
+
+// parseHiddenColumns converts config hidden_columns strings to column ID set.
+func parseHiddenColumns(names []string) map[int]bool {
+	result := map[int]bool{}
+	lookup := map[string]int{}
+	for id, name := range columnConfigNames {
+		lookup[name] = id
+	}
+	for _, n := range names {
+		if id, ok := lookup[strings.ToLower(n)]; ok {
+			result[id] = true
+		}
+	}
+	return result
+}
+
+// hiddenColumnsToNames converts a hidden column ID set to config names.
+func hiddenColumnsToNames(hidden map[int]bool) []string {
+	var names []string
+	// Maintain stable order
+	for _, col := range toggleableColumns {
+		if hidden[col] {
+			names = append(names, columnConfigNames[col])
+		}
+	}
+	return names
+}
+
+// resolveColumnOrder converts config names to ordered column IDs using the given
+// configNames map. Any columns from defaults not in names are appended at the end.
+func resolveColumnOrder(names []string, configNames map[int]string, defaults []int) []int {
+	if len(names) == 0 {
+		result := make([]int, len(defaults))
+		copy(result, defaults)
+		return result
+	}
+	lookup := map[string]int{}
+	for id, name := range configNames {
+		lookup[name] = id
+	}
+	seen := map[int]bool{}
+	var order []int
+	for _, n := range names {
+		if id, ok := lookup[strings.ToLower(n)]; ok && !seen[id] {
+			order = append(order, id)
+			seen[id] = true
+		}
+	}
+	for _, col := range defaults {
+		if !seen[col] {
+			order = append(order, col)
+		}
+	}
+	return order
+}
+
+// serializeColumnOrder converts ordered column IDs to config names.
+func serializeColumnOrder(order []int, configNames map[int]string) []string {
+	names := make([]string, 0, len(order))
+	for _, col := range order {
+		if name, ok := configNames[col]; ok {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// parseColumnOrder converts config names to ordered queue column IDs.
+func parseColumnOrder(names []string) []int {
+	return resolveColumnOrder(names, columnConfigNames, toggleableColumns)
+}
+
+// columnOrderToNames converts ordered queue column IDs to config names.
+func columnOrderToNames(order []int) []string {
+	return serializeColumnOrder(order, columnConfigNames)
+}
+
+// visibleColumns returns the ordered list of column indices to display,
+// always including colSel and colJobID, plus any non-hidden toggleable columns.
+func (m model) visibleColumns() []int {
+	cols := []int{colSel, colJobID}
+	for _, c := range m.columnOrder {
+		if !m.hiddenColumns[c] {
+			cols = append(cols, c)
+		}
+	}
+	return cols
+}
+
+// saveColumnOptions persists hidden columns, border settings, and column order to config.
+func (m model) saveColumnOptions() tea.Cmd {
+	hidden := hiddenColumnsToNames(m.hiddenColumns)
+	borders := m.colBordersOn
+	colOrd := columnOrderToNames(m.columnOrder)
+	taskColOrd := taskColumnOrderToNames(m.taskColumnOrder)
+	return func() tea.Msg {
+		cfg, err := config.LoadGlobal()
+		if err != nil {
+			return configSaveErrMsg{err: fmt.Errorf("load config: %w", err)}
+		}
+		cfg.HiddenColumns = hidden
+		cfg.ColumnBorders = borders
+		cfg.ColumnOrder = colOrd
+		cfg.TaskColumnOrder = taskColOrd
+		if err := config.SaveGlobal(cfg); err != nil {
+			return configSaveErrMsg{err: fmt.Errorf("save config: %w", err)}
+		}
+		return nil
+	}
+}
+
+// renderColumnOptionsView renders the column toggle modal.
+func (m model) renderColumnOptionsView() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Table Options"))
+	b.WriteString("\n\n")
+
+	for i, opt := range m.colOptionsList {
+		check := "[ ]"
+		if opt.enabled {
+			check = "[x]"
+		}
+		prefix := "  "
+		line := fmt.Sprintf("%s %s", check, opt.name)
+		if i == m.colOptionsIdx {
+			prefix = "> "
+			line = selectedStyle.Render(line)
+		}
+		// Separator before "Column borders" item
+		if opt.id == colOptionBorders && i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(prefix)
+		b.WriteString(line)
+		b.WriteString("\x1b[K\n")
+	}
+
+	b.WriteString("\n")
+	toggleHelp := helpItem{"space", "toggle"}
+	if m.colOptionsReturnView == viewTasks {
+		toggleHelp = helpItem{"space", "borders"}
+	}
+	helpRows := [][]helpItem{
+		{{"↑/↓", "navigate"}, {"j/k", "reorder"}, toggleHelp, {"esc", "close"}},
+	}
+	b.WriteString(renderHelpTable(helpRows, m.width))
+
 	return b.String()
 }

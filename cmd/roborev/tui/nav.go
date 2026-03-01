@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/roborev-dev/roborev/internal/storage"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/roborev-dev/roborev/internal/storage"
+)
 
 // updateSelectedJobID updates the tracked job ID after navigation
 func (m *model) updateSelectedJobID() {
@@ -190,6 +193,32 @@ func (m model) findPrevVisibleJob(currentIdx int) int {
 		}
 	}
 	return -1
+}
+
+// countVisibleJobsAfter returns the number of visible jobs after currentIdx,
+// short-circuiting once the count reaches queuePrefetchBuffer since callers
+// only need to know whether the count is below that threshold.
+func (m model) countVisibleJobsAfter(currentIdx int) int {
+	count := 0
+	for i := currentIdx + 1; i < len(m.jobs); i++ {
+		if m.isJobVisible(m.jobs[i]) {
+			count++
+			if count >= queuePrefetchBuffer {
+				return count
+			}
+		}
+	}
+	return count
+}
+
+// maybePrefetch triggers a page fetch if the cursor is near the end of loaded
+// data. Returns a tea.Cmd if a fetch was started, nil otherwise.
+func (m *model) maybePrefetch(idx int) tea.Cmd {
+	if m.canPaginate() && m.countVisibleJobsAfter(idx) < queuePrefetchBuffer {
+		m.loadingMore = true
+		return m.fetchMoreJobs()
+	}
+	return nil
 }
 
 // findFirstVisibleJob returns the index of the first visible job.

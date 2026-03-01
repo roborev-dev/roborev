@@ -2,13 +2,145 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
+
+// Task view column constants (prefixed tcol to avoid collision with queue's col constants).
+const (
+	tcolSel        = iota // "> " selection indicator
+	tcolStatus            // Job status
+	tcolJobID             // Job ID
+	tcolParent            // Parent job reference
+	tcolQueued            // Enqueue timestamp
+	tcolElapsed           // Elapsed time
+	tcolBranch            // Branch name
+	tcolRepo              // Repository display name
+	tcolRefSubject        // Git ref + commit subject
+	tcolCount             // total number of task columns
+)
+
+// taskToggleableColumns is the ordered list of task columns the user can show/hide/reorder.
+// tcolSel is always visible and not included here.
+var taskToggleableColumns = []int{tcolStatus, tcolJobID, tcolParent, tcolQueued, tcolElapsed, tcolBranch, tcolRepo, tcolRefSubject}
+
+// taskColumnNames maps task column constants to display names.
+var taskColumnNames = map[int]string{
+	tcolStatus:     "Status",
+	tcolJobID:      "Job",
+	tcolParent:     "Parent",
+	tcolQueued:     "Queued",
+	tcolElapsed:    "Elapsed",
+	tcolBranch:     "Branch",
+	tcolRepo:       "Repo",
+	tcolRefSubject: "Ref/Subject",
+}
+
+// taskColumnConfigNames maps task column constants to config file names.
+var taskColumnConfigNames = map[int]string{
+	tcolStatus:     "status",
+	tcolJobID:      "job",
+	tcolParent:     "parent",
+	tcolQueued:     "queued",
+	tcolElapsed:    "elapsed",
+	tcolBranch:     "branch",
+	tcolRepo:       "repo",
+	tcolRefSubject: "ref_subject",
+}
+
+// taskColumnDisplayName returns the display name for a task column constant.
+func taskColumnDisplayName(col int) string {
+	return lookupDisplayName(col, taskColumnNames)
+}
+
+// parseTaskColumnOrder converts config names to ordered task column IDs.
+func parseTaskColumnOrder(names []string) []int {
+	return resolveColumnOrder(names, taskColumnConfigNames, taskToggleableColumns)
+}
+
+// taskColumnOrderToNames converts ordered task column IDs to config names.
+func taskColumnOrderToNames(order []int) []string {
+	return serializeColumnOrder(order, taskColumnConfigNames)
+}
+
+// visibleTaskColumns returns the ordered list of task column indices to display.
+func (m model) visibleTaskColumns() []int {
+	cols := make([]int, 0, 1+len(m.taskColumnOrder))
+	cols = append(cols, tcolSel)
+	cols = append(cols, m.taskColumnOrder...)
+	return cols
+}
+
+// taskCells returns plain text cell values for a fix job row.
+// Order: status, jobID, parent, queued, elapsed, branch, repo, refSubject
+// (tcolStatus through tcolRefSubject, 8 values).
+func (m model) taskCells(job storage.ReviewJob) []string {
+	var statusLabel string
+	switch job.Status {
+	case storage.JobStatusQueued:
+		statusLabel = "queued"
+	case storage.JobStatusRunning:
+		statusLabel = "running"
+	case storage.JobStatusDone:
+		statusLabel = "ready"
+	case storage.JobStatusFailed:
+		statusLabel = "failed"
+	case storage.JobStatusCanceled:
+		statusLabel = "canceled"
+	case storage.JobStatusApplied:
+		statusLabel = "applied"
+	case storage.JobStatusRebased:
+		statusLabel = "rebased"
+	}
+
+	jobID := fmt.Sprintf("#%d", job.ID)
+
+	parentRef := ""
+	if job.ParentJobID != nil {
+		parentRef = fmt.Sprintf("fixes #%d", *job.ParentJobID)
+	}
+
+	queued := ""
+	if !job.EnqueuedAt.IsZero() {
+		queued = job.EnqueuedAt.Local().Format("Jan 02 15:04")
+	}
+
+	elapsed := ""
+	if job.StartedAt != nil {
+		if job.FinishedAt != nil {
+			elapsed = job.FinishedAt.Sub(*job.StartedAt).Round(time.Second).String()
+		} else {
+			elapsed = time.Since(*job.StartedAt).Round(time.Second).String()
+		}
+	}
+
+	branch := job.Branch
+
+	defaultRepoName := job.RepoName
+	if defaultRepoName == "" && job.RepoPath != "" {
+		defaultRepoName = filepath.Base(job.RepoPath)
+	}
+	repo := m.getDisplayName(job.RepoPath, defaultRepoName)
+	if m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID {
+		repo += " [R]"
+	}
+
+	refSubject := job.GitRef
+	if job.CommitSubject != "" {
+		if refSubject != "" {
+			refSubject += " "
+		}
+		refSubject += job.CommitSubject
+	}
+
+	return []string{statusLabel, jobID, parentRef, queued, elapsed, branch, repo, refSubject}
+}
 
 func (m model) renderTasksView() string {
 	var b strings.Builder
@@ -31,127 +163,244 @@ func (m model) renderTasksView() string {
 		return b.String()
 	}
 
-	// Column layout: status, job, parent, queued, elapsed are fixed.
-	// Branch/repo/ref+subject split remaining space.
-	const statusW = 8                                                                  // "canceled" is the longest
-	const idW = 5                                                                      // "#" + 4-digit number
-	const parentW = 11                                                                 // "fixes #NNNN"
-	const queuedW = 12                                                                 // "Jan 02 15:04"
-	const elapsedW = 8                                                                 // "59m59s"
-	fixedW := 2 + statusW + 1 + idW + 1 + parentW + 1 + queuedW + 1 + elapsedW + 1 + 1 // prefix + inter-column spaces
-	flexW := max(m.width-fixedW, 20)
-	branchW := max(1, flexW*20/100)
-	repoW := max(1, flexW*24/100)
-	refSubjectW := max(1, flexW-branchW-repoW-2)
-
-	// Header
-	header := fmt.Sprintf("  %-*s %-*s %-*s %-*s %*s %-*s %-*s %-*s",
-		statusW, "Status", idW, "Job", parentW, "Parent",
-		queuedW, "Queued", elapsedW, "Elapsed",
-		branchW, "Branch", repoW, "Repo", refSubjectW, "Ref/Subject")
-	b.WriteString(statusStyle.Render(header))
-	b.WriteString("\x1b[K\n")
-	b.WriteString("  " + strings.Repeat("-", min(m.width-4, 200)))
-	b.WriteString("\x1b[K\n")
-
-	// Render each fix job
+	// Help row calculation for visible rows
 	tasksHelpRows := [][]helpItem{
-		{{"enter", "view"}, {"P", "parent"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}, {"x", "cancel"}, {"?", "help"}, {"T/esc", "back"}},
+		{{"enter", "view"}, {"P", "parent"}, {"p", "patch"}, {"A", "apply"}, {"l", "log"}},
+		{{"x", "cancel"}, {"o", "options"}, {"?", "help"}, {"T/esc", "back"}},
 	}
 	tasksHelpLines := len(reflowHelpRows(tasksHelpRows, m.width))
 	visibleRows := m.height - (6 + tasksHelpLines) // title + header + separator + status + scroll + help(N)
 	visibleRows = max(visibleRows, 1)
+
+	// Columns in user-configured order.
+	visCols := m.visibleTaskColumns()
+
+	// Compute per-column max content widths, using cache when data hasn't changed.
+	allHeaders := [tcolCount]string{tcolSel: "", tcolStatus: "Status", tcolJobID: "Job", tcolParent: "Parent", tcolQueued: "Queued", tcolElapsed: "Elapsed", tcolBranch: "Branch", tcolRepo: "Repo", tcolRefSubject: "Ref/Subject"}
+	allFullRows := make([][]string, len(m.fixJobs))
+	for i, job := range m.fixJobs {
+		cells := m.taskCells(job)
+		fullRow := make([]string, tcolCount)
+		fullRow[tcolSel] = "  "
+		copy(fullRow[tcolStatus:], cells)
+		allFullRows[i] = fullRow
+	}
+
+	var contentWidth map[int]int
+	if m.taskColCache.gen == m.taskColGen {
+		contentWidth = m.taskColCache.contentWidths
+	} else {
+		contentWidth = make(map[int]int, tcolCount)
+		for _, c := range visCols {
+			w := lipgloss.Width(allHeaders[c])
+			for _, fullRow := range allFullRows {
+				if cw := lipgloss.Width(fullRow[c]); cw > w {
+					w = cw
+				}
+			}
+			contentWidth[c] = w
+		}
+		m.taskColCache.gen = m.taskColGen
+		m.taskColCache.contentWidths = contentWidth
+	}
+
+	// Column widths: fixed columns get their natural size,
+	// flexible columns (Branch, Repo, Ref/Subject) absorb excess space.
+	bordersOn := m.colBordersOn
+	borderColor := lipgloss.AdaptiveColor{Light: "248", Dark: "242"}
+
+	spacing := func(tableCol int, logCol int) int {
+		if logCol == tcolSel || tableCol == 0 {
+			return 0
+		}
+		if bordersOn {
+			return 2 // ▕ + PaddingLeft(1)
+		}
+		return 1 // PaddingRight(1)
+	}
+
+	fixedWidth := map[int]int{
+		tcolSel:     2,
+		tcolStatus:  8,
+		tcolJobID:   5,
+		tcolParent:  11,
+		tcolQueued:  12,
+		tcolElapsed: 8,
+	}
+
+	flexCols := []int{tcolBranch, tcolRepo, tcolRefSubject}
+
+	// Compute total fixed consumption
+	totalFixed := 0
+	totalFlex := 0
+	flexContentTotal := 0
+	for ti, c := range visCols {
+		sp := spacing(ti, c)
+		if fw, ok := fixedWidth[c]; ok {
+			totalFixed += fw + sp
+		} else {
+			totalFlex++
+			flexContentTotal += contentWidth[c]
+			totalFixed += sp
+		}
+	}
+
+	remaining := m.width - totalFixed
+	colWidths := make(map[int]int, tcolCount)
+	maps.Copy(colWidths, fixedWidth)
+
+	if totalFlex > 0 && remaining > 0 {
+		distributed := 0
+		for _, c := range flexCols {
+			if flexContentTotal > 0 {
+				colWidths[c] = max(remaining*contentWidth[c]/flexContentTotal, 1)
+			} else {
+				colWidths[c] = max(remaining/totalFlex, 1)
+			}
+			distributed += colWidths[c]
+		}
+		// Correct rounding: add leftover to first flex column on
+		// undershoot, drain overflow across flex columns (widest
+		// first) on overshoot from max(...,1) inflation.
+		if distributed < remaining {
+			colWidths[flexCols[0]] += remaining - distributed
+		} else {
+			drainFlexOverflow(flexCols, colWidths, distributed-remaining)
+		}
+	} else if totalFlex > 0 {
+		for _, c := range flexCols {
+			colWidths[c] = 1
+		}
+	}
+
+	// Determine scroll window
 	startIdx := 0
 	if m.fixSelectedIdx >= visibleRows {
 		startIdx = m.fixSelectedIdx - visibleRows + 1
 	}
+	startIdx = min(startIdx, max(len(m.fixJobs)-1, 0))
+	endIdx := min(len(m.fixJobs), startIdx+visibleRows)
 
-	for i := startIdx; i < len(m.fixJobs) && i < startIdx+visibleRows; i++ {
-		job := m.fixJobs[i]
+	// Build visible rows for the window
+	windowJobs := m.fixJobs[startIdx:endIdx]
+	rows := make([][]string, 0, endIdx-startIdx)
+	for i := range windowJobs {
+		sel := "  "
+		if startIdx+i == m.fixSelectedIdx {
+			sel = "> "
+		}
+		fullRow := allFullRows[startIdx+i]
+		fullRow[tcolSel] = sel
 
-		// Status label
-		var statusLabel string
-		var statusStyle lipgloss.Style
-		switch job.Status {
-		case storage.JobStatusQueued:
-			statusLabel = "queued"
-			statusStyle = queuedStyle
-		case storage.JobStatusRunning:
-			statusLabel = "running"
-			statusStyle = runningStyle
-		case storage.JobStatusDone:
-			statusLabel = "ready"
-			statusStyle = doneStyle
-		case storage.JobStatusFailed:
-			statusLabel = "failed"
-			statusStyle = failedStyle
-		case storage.JobStatusCanceled:
-			statusLabel = "canceled"
-			statusStyle = canceledStyle
-		case storage.JobStatusApplied:
-			statusLabel = "applied"
-			statusStyle = doneStyle
-		case storage.JobStatusRebased:
-			statusLabel = "rebased"
-			statusStyle = canceledStyle
+		row := make([]string, len(visCols))
+		for vi, c := range visCols {
+			row[vi] = fullRow[c]
 		}
+		rows = append(rows, row)
+	}
 
-		parentRef := ""
-		if job.ParentJobID != nil {
-			parentRef = fmt.Sprintf("fixes #%d", *job.ParentJobID)
-		}
-		queued := ""
-		if !job.EnqueuedAt.IsZero() {
-			queued = job.EnqueuedAt.Local().Format("Jan 02 15:04")
-		}
-		elapsed := ""
-		if job.StartedAt != nil {
-			if job.FinishedAt != nil {
-				elapsed = job.FinishedAt.Sub(*job.StartedAt).Round(time.Second).String()
-			} else {
-				elapsed = time.Since(*job.StartedAt).Round(time.Second).String()
+	selectedWindowIdx := m.fixSelectedIdx - startIdx
+	lastVisCol := len(visCols) - 1
+
+	t := table.New().
+		BorderTop(false).
+		BorderBottom(false).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderColumn(false).
+		BorderRow(false).
+		BorderHeader(true).
+		Border(lipgloss.Border{
+			Top:    "─",
+			Bottom: "─",
+			Middle: "─",
+		}).
+		Width(m.width).
+		Wrap(false).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			s := lipgloss.NewStyle()
+
+			logicalCol := tcolSel
+			if col >= 0 && col < len(visCols) {
+				logicalCol = visCols[col]
 			}
-		}
-		branch := truncateString(job.Branch, branchW)
-		defaultRepoName := job.RepoName
-		if defaultRepoName == "" && job.RepoPath != "" {
-			defaultRepoName = filepath.Base(job.RepoPath)
-		}
-		repo := m.getDisplayName(job.RepoPath, defaultRepoName)
-		if m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID {
-			repo += " [R]"
-		}
-		repo = truncateString(repo, repoW)
 
-		refSubject := job.GitRef
-		if job.CommitSubject != "" {
-			if refSubject != "" {
-				refSubject += " "
+			// Inter-column spacing
+			if logicalCol != tcolSel && col > 0 {
+				if bordersOn {
+					s = s.Border(lipgloss.Border{Left: "▕"}, false, false, false, true).
+						BorderForeground(borderColor).PaddingLeft(1)
+				} else if col < lastVisCol {
+					s = s.PaddingRight(1)
+				}
 			}
-			refSubject += job.CommitSubject
-		}
-		refSubject = truncateString(refSubject, refSubjectW)
 
-		if i == m.fixSelectedIdx {
-			line := fmt.Sprintf("  %-*s #%-4d %-*s %-*s %*s %-*s %-*s %-*s",
-				statusW, statusLabel, job.ID, parentW, parentRef,
-				queuedW, queued, elapsedW, elapsed,
-				branchW, branch, repoW, repo, refSubjectW, refSubject)
-			b.WriteString(selectedStyle.Render(line))
-		} else {
-			styledStatus := statusStyle.Render(fmt.Sprintf("%-*s", statusW, statusLabel))
-			rest := fmt.Sprintf(" #%-4d %-*s %-*s %*s %-*s %-*s %-*s",
-				job.ID, parentW, parentRef,
-				queuedW, queued, elapsedW, elapsed,
-				branchW, branch, repoW, repo, refSubjectW, refSubject)
-			b.WriteString("  " + styledStatus + rest)
-		}
+			// Set explicit width
+			w := colWidths[logicalCol]
+			if w > 0 {
+				s = s.Width(w + spacing(col, logicalCol))
+			}
+
+			// Right-align elapsed column
+			if logicalCol == tcolElapsed {
+				s = s.Align(lipgloss.Right)
+			}
+
+			// Header row styling
+			if row == table.HeaderRow {
+				return s.Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
+			}
+
+			// Selection highlighting
+			if row == selectedWindowIdx {
+				bg := lipgloss.AdaptiveColor{Light: "153", Dark: "24"}
+				s = s.Background(bg)
+				if bordersOn {
+					s = s.BorderBackground(bg)
+				}
+				return s
+			}
+
+			// Per-cell coloring for non-selected rows: status column
+			if logicalCol == tcolStatus && row >= 0 && row < len(windowJobs) {
+				job := windowJobs[row]
+				switch job.Status {
+				case storage.JobStatusQueued:
+					s = s.Foreground(queuedStyle.GetForeground())
+				case storage.JobStatusRunning:
+					s = s.Foreground(runningStyle.GetForeground())
+				case storage.JobStatusDone, storage.JobStatusApplied:
+					s = s.Foreground(doneStyle.GetForeground())
+				case storage.JobStatusFailed:
+					s = s.Foreground(failedStyle.GetForeground())
+				case storage.JobStatusCanceled, storage.JobStatusRebased:
+					s = s.Foreground(canceledStyle.GetForeground())
+				}
+			}
+			return s
+		})
+
+	headers := make([]string, len(visCols))
+	for vi, c := range visCols {
+		headers[vi] = allHeaders[c]
+	}
+	t = t.Headers(headers...).Rows(rows...)
+
+	tableStr := t.Render()
+	b.WriteString(tableStr)
+	b.WriteString("\x1b[K\n")
+
+	// Pad to fill visibleRows
+	tableLines := strings.Count(tableStr, "\n") + 1
+	headerLines := 2 // header + separator
+	jobLinesWritten := tableLines - headerLines
+	for jobLinesWritten < visibleRows {
 		b.WriteString("\x1b[K\n")
+		jobLinesWritten++
 	}
 
 	// Flash message
 	if m.flashMessage != "" && time.Now().Before(m.flashExpiresAt) && m.flashView == viewTasks {
-		flashStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})
 		b.WriteString(flashStyle.Render(m.flashMessage))
 	}
 	b.WriteString("\x1b[K\n")

@@ -59,6 +59,15 @@ var (
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray (matches status/scroll text)
 	helpDescStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "240"}) // Dimmer gray for descriptions
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
+
+	flashStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
+
+	updateStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true) // Yellow/Gold
 )
 
 // reflowHelpRows redistributes items across rows so that when rendered
@@ -375,6 +384,22 @@ type model struct {
 
 	worktreeConfirmJobID  int64  // Job ID pending worktree-apply confirmation
 	worktreeConfirmBranch string // Branch name for worktree confirmation prompt
+
+	// Column options modal
+	colOptionsIdx        int            // Cursor in modal
+	colOptionsList       []columnOption // Items in modal (columns + borders toggle)
+	colOptionsDirty      bool           // True if options changed since modal opened
+	colBordersOn         bool           // Column borders enabled
+	hiddenColumns        map[int]bool   // Set of hidden column IDs
+	columnOrder          []int          // Ordered toggleable queue columns
+	taskColumnOrder      []int          // Ordered task columns
+	colOptionsReturnView viewKind       // Return-to view from column options
+
+	// Column width caches (avoid full-scan on every render)
+	queueColCache *colWidthCache // cached per-column max widths for queue
+	queueColGen   int            // bumped when queue data/filters/columns change
+	taskColCache  *colWidthCache // cached per-column max widths for tasks
+	taskColGen    int            // bumped when fixJobs/columns change
 }
 
 // isConnectionError checks if an error indicates a network/connection failure
@@ -404,6 +429,10 @@ func newModel(serverAddr string, opts ...option) model {
 	hideAddressed := false
 	autoFilterRepo := false
 	tabWidth := 2
+	columnBorders := false
+	hiddenCols := map[int]bool{}
+	colOrder := parseColumnOrder(nil)
+	taskColOrder := parseTaskColumnOrder(nil)
 	var cwdRepoRoot, cwdBranch string
 
 	if !opt.disableExternalIO {
@@ -419,6 +448,10 @@ func newModel(serverAddr string, opts ...option) model {
 			if cfg.TabWidth > 0 {
 				tabWidth = cfg.TabWidth
 			}
+			columnBorders = cfg.ColumnBorders
+			hiddenCols = parseHiddenColumns(cfg.HiddenColumns)
+			colOrder = parseColumnOrder(cfg.ColumnOrder)
+			taskColOrder = parseTaskColumnOrder(cfg.TaskColumnOrder)
 		}
 
 		// Detect current repo/branch for filter sort priority
@@ -473,6 +506,12 @@ func newModel(serverAddr string, opts ...option) model {
 		pendingReviewAddressed: make(map[int64]pendingState), // Track pending addressed changes (by review ID)
 		clipboard:              &realClipboard{},
 		mdCache:                newMarkdownCache(tabWidth),
+		colBordersOn:           columnBorders,
+		hiddenColumns:          hiddenCols,
+		columnOrder:            colOrder,
+		taskColumnOrder:        taskColOrder,
+		queueColCache:          &colWidthCache{gen: -1},
+		taskColCache:           &colWidthCache{gen: -1},
 	}
 }
 
@@ -569,68 +608,102 @@ func (m *model) getBranchForJob(job storage.ReviewJob) string {
 	return branch
 }
 
+// isTextView reports whether v is a text-reading view where
+// mouse capture should be disabled to allow native text selection.
+func isTextView(v viewKind) bool {
+	return v == viewReview || v == viewKindPrompt
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	prevView := m.currentView
+
+	var result tea.Model
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		return m.handleKeyMsg(msg)
+		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
-		return m.handleMouseMsg(msg)
+		result, cmd = m.handleMouseMsg(msg)
 	case tea.WindowSizeMsg:
-		return m.handleWindowSizeMsg(msg)
+		result, cmd = m.handleWindowSizeMsg(msg)
 	case tickMsg:
-		return m.handleTickMsg(msg)
+		result, cmd = m.handleTickMsg(msg)
 	case logTickMsg:
-		return m.handleLogTickMsg(msg)
+		result, cmd = m.handleLogTickMsg(msg)
 	case jobsMsg:
-		return m.handleJobsMsg(msg)
+		result, cmd = m.handleJobsMsg(msg)
 	case statusMsg:
-		return m.handleStatusMsg(msg)
+		result, cmd = m.handleStatusMsg(msg)
 	case updateCheckMsg:
-		return m.handleUpdateCheckMsg(msg)
+		result, cmd = m.handleUpdateCheckMsg(msg)
 	case reviewMsg:
-		return m.handleReviewMsg(msg)
+		result, cmd = m.handleReviewMsg(msg)
 	case promptMsg:
-		return m.handlePromptMsg(msg)
+		result, cmd = m.handlePromptMsg(msg)
 	case logOutputMsg:
-		return m.handleLogOutputMsg(msg)
+		result, cmd = m.handleLogOutputMsg(msg)
 	case addressedMsg:
-		return m.handleAddressedToggleMsg(msg)
+		result, cmd = m.handleAddressedToggleMsg(msg)
 	case addressedResultMsg:
-		return m.handleAddressedResultMsg(msg)
+		result, cmd = m.handleAddressedResultMsg(msg)
 	case cancelResultMsg:
-		return m.handleCancelResultMsg(msg)
+		result, cmd = m.handleCancelResultMsg(msg)
 	case rerunResultMsg:
-		return m.handleRerunResultMsg(msg)
+		result, cmd = m.handleRerunResultMsg(msg)
 	case reposMsg:
-		return m.handleReposMsg(msg)
+		result, cmd = m.handleReposMsg(msg)
 	case repoBranchesMsg:
-		return m.handleRepoBranchesMsg(msg)
+		result, cmd = m.handleRepoBranchesMsg(msg)
 	case branchesMsg:
-		return m.handleBranchesMsg(msg)
+		result, cmd = m.handleBranchesMsg(msg)
 	case commentResultMsg:
-		return m.handleCommentResultMsg(msg)
+		result, cmd = m.handleCommentResultMsg(msg)
 	case clipboardResultMsg:
-		return m.handleClipboardResultMsg(msg)
+		result, cmd = m.handleClipboardResultMsg(msg)
 	case commitMsgMsg:
-		return m.handleCommitMsgMsg(msg)
+		result, cmd = m.handleCommitMsgMsg(msg)
 	case jobsErrMsg:
-		return m.handleJobsErrMsg(msg)
+		result, cmd = m.handleJobsErrMsg(msg)
 	case paginationErrMsg:
-		return m.handlePaginationErrMsg(msg)
+		result, cmd = m.handlePaginationErrMsg(msg)
 	case errMsg:
-		return m.handleErrMsg(msg)
+		result, cmd = m.handleErrMsg(msg)
 	case reconnectMsg:
-		return m.handleReconnectMsg(msg)
+		result, cmd = m.handleReconnectMsg(msg)
 	case fixJobsMsg:
-		return m.handleFixJobsMsg(msg)
+		result, cmd = m.handleFixJobsMsg(msg)
 	case fixTriggerResultMsg:
-		return m.handleFixTriggerResultMsg(msg)
+		result, cmd = m.handleFixTriggerResultMsg(msg)
 	case patchMsg:
-		return m.handlePatchResultMsg(msg)
+		result, cmd = m.handlePatchResultMsg(msg)
 	case applyPatchResultMsg:
-		return m.handleApplyPatchResultMsg(msg)
+		result, cmd = m.handleApplyPatchResultMsg(msg)
+	case configSaveErrMsg:
+		m.colOptionsDirty = true
+		m.setFlash(
+			"Config save failed: "+msg.err.Error(),
+			5*time.Second, m.currentView,
+		)
+		result = m
+	default:
+		result = m
 	}
-	return m, nil
+
+	// Toggle mouse capture on view transitions: disable in
+	// text-reading views so the terminal handles selection,
+	// re-enable when returning to interactive views.
+	newM := result.(model)
+	if newM.currentView != prevView {
+		switch {
+		case isTextView(newM.currentView) && !isTextView(prevView):
+			cmd = tea.Batch(cmd, tea.DisableMouse)
+		case !isTextView(newM.currentView) && isTextView(prevView):
+			cmd = tea.Batch(cmd, tea.EnableMouseCellMotion)
+		}
+	}
+
+	return result, cmd
 }
 
 func (m model) View() string {
@@ -657,6 +730,9 @@ func (m model) View() string {
 	}
 	if m.currentView == viewPatch {
 		return m.renderPatchView()
+	}
+	if m.currentView == viewColumnOptions {
+		return m.renderColumnOptionsView()
 	}
 	if m.currentView == viewKindPrompt && m.currentReview != nil {
 		return m.renderPromptView()

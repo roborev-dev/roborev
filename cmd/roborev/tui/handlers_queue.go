@@ -155,11 +155,144 @@ func (m model) handleBranchFilterOpenKey() (tea.Model, tea.Cmd) {
 	return m.handleFilterOpenKey()
 }
 
+func (m model) handleColumnOptionsKey() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue && m.currentView != viewTasks {
+		return m, nil
+	}
+	m.colOptionsReturnView = m.currentView
+
+	var opts []columnOption
+	if m.currentView == viewTasks {
+		for _, col := range m.taskColumnOrder {
+			opts = append(opts, columnOption{
+				id:      col,
+				name:    taskColumnDisplayName(col),
+				enabled: true,
+			})
+		}
+	} else {
+		for _, col := range m.columnOrder {
+			opts = append(opts, columnOption{
+				id:      col,
+				name:    columnDisplayName(col),
+				enabled: !m.hiddenColumns[col],
+			})
+		}
+	}
+	// Add borders toggle
+	opts = append(opts, columnOption{
+		id:      colOptionBorders,
+		name:    "Column borders",
+		enabled: m.colBordersOn,
+	})
+	m.colOptionsList = opts
+	m.colOptionsIdx = 0
+	m.currentView = viewColumnOptions
+	return m, nil
+}
+
+func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	isColumn := func(idx int) bool {
+		return idx >= 0 && idx < len(m.colOptionsList) && m.colOptionsList[idx].id != colOptionBorders
+	}
+
+	switch msg.String() {
+	case "esc":
+		m.currentView = m.colOptionsReturnView
+		if m.colOptionsDirty {
+			m.colOptionsDirty = false
+			return m, m.saveColumnOptions()
+		}
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	case "down":
+		if m.colOptionsIdx < len(m.colOptionsList)-1 {
+			m.colOptionsIdx++
+		}
+		return m, nil
+	case "up":
+		if m.colOptionsIdx > 0 {
+			m.colOptionsIdx--
+		}
+		return m, nil
+	case "j":
+		// Move current column down in order
+		if isColumn(m.colOptionsIdx) && isColumn(m.colOptionsIdx+1) {
+			m.colOptionsList[m.colOptionsIdx], m.colOptionsList[m.colOptionsIdx+1] =
+				m.colOptionsList[m.colOptionsIdx+1], m.colOptionsList[m.colOptionsIdx]
+			m.colOptionsIdx++
+			m.syncColumnOrderFromOptions()
+			m.colOptionsDirty = true
+			m.queueColGen++
+			m.taskColGen++
+		}
+		return m, nil
+	case "k":
+		// Move current column up in order
+		if isColumn(m.colOptionsIdx) && isColumn(m.colOptionsIdx-1) {
+			m.colOptionsList[m.colOptionsIdx], m.colOptionsList[m.colOptionsIdx-1] =
+				m.colOptionsList[m.colOptionsIdx-1], m.colOptionsList[m.colOptionsIdx]
+			m.colOptionsIdx--
+			m.syncColumnOrderFromOptions()
+			m.colOptionsDirty = true
+			m.queueColGen++
+			m.taskColGen++
+		}
+		return m, nil
+	case " ", "enter":
+		if m.colOptionsIdx >= 0 && m.colOptionsIdx < len(m.colOptionsList) {
+			opt := &m.colOptionsList[m.colOptionsIdx]
+			if opt.id == colOptionBorders {
+				opt.enabled = !opt.enabled
+				m.colBordersOn = opt.enabled
+				m.colOptionsDirty = true
+				m.queueColGen++
+				m.taskColGen++
+			} else if m.colOptionsReturnView == viewTasks {
+				// Tasks view: no visibility toggle (all columns always shown)
+				return m, nil
+			} else {
+				opt.enabled = !opt.enabled
+				if opt.enabled {
+					delete(m.hiddenColumns, opt.id)
+				} else {
+					if m.hiddenColumns == nil {
+						m.hiddenColumns = map[int]bool{}
+					}
+					m.hiddenColumns[opt.id] = true
+				}
+				m.colOptionsDirty = true
+				m.queueColGen++
+			}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// syncColumnOrderFromOptions updates m.columnOrder or m.taskColumnOrder
+// from the current colOptionsList (excluding the borders toggle).
+func (m *model) syncColumnOrderFromOptions() {
+	order := make([]int, 0, len(m.colOptionsList))
+	for _, opt := range m.colOptionsList {
+		if opt.id != colOptionBorders {
+			order = append(order, opt.id)
+		}
+	}
+	if m.colOptionsReturnView == viewTasks {
+		m.taskColumnOrder = order
+	} else {
+		m.columnOrder = order
+	}
+}
+
 func (m model) handleHideAddressedKey() (tea.Model, tea.Cmd) {
 	if m.currentView != viewQueue {
 		return m, nil
 	}
 	m.hideAddressed = !m.hideAddressed
+	m.queueColGen++
 	if len(m.jobs) > 0 {
 		if m.selectedIdx < 0 || m.selectedIdx >= len(m.jobs) || !m.isJobVisible(m.jobs[m.selectedIdx]) {
 			m.selectedIdx = m.findFirstVisibleJob()

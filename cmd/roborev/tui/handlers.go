@@ -30,6 +30,8 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleTasksKey(msg)
 	case viewPatch:
 		return m.handlePatchKey(msg)
+	case viewColumnOptions:
+		return m.handleColumnOptionsInput(msg)
 	}
 
 	// Global keys shared across queue/review/prompt/commitMsg/help views
@@ -121,6 +123,8 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFixKey()
 	case "T":
 		return m.handleToggleTasksKey()
+	case "o":
+		return m.handleColumnOptionsKey()
 	case "D":
 		return m.handleDistractionFreeKey()
 	case "tab":
@@ -304,6 +308,9 @@ func (m model) handleDownKey() (tea.Model, tea.Cmd) {
 		if nextIdx >= 0 {
 			m.selectedIdx = nextIdx
 			m.updateSelectedJobID()
+			if cmd := m.maybePrefetch(nextIdx); cmd != nil {
+				return m, cmd
+			}
 		} else if m.canPaginate() {
 			m.loadingMore = true
 			return m, m.fetchMoreJobs()
@@ -335,6 +342,9 @@ func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 		if nextIdx >= 0 {
 			m.selectedIdx = nextIdx
 			m.updateSelectedJobID()
+			if cmd := m.maybePrefetch(nextIdx); cmd != nil {
+				return m, cmd
+			}
 		} else if m.canPaginate() {
 			m.loadingMore = true
 			return m, m.fetchMoreJobs()
@@ -468,6 +478,9 @@ func (m model) handlePageDownKey() (tea.Model, tea.Cmd) {
 			m.loadingMore = true
 			return m, m.fetchMoreJobs()
 		}
+		if cmd := m.maybePrefetch(m.selectedIdx); cmd != nil {
+			return m, cmd
+		}
 	case viewReview:
 		m.reviewScroll += pageSize
 		if m.mdCache != nil && m.reviewScroll > m.mdCache.lastReviewMaxScroll {
@@ -514,6 +527,7 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	} else if m.currentView == viewQueue && m.hideAddressed {
 		m.hideAddressed = false
+		m.queueColGen++
 		m.hasMore = false
 		m.selectedIdx = -1
 		m.selectedJobID = 0
