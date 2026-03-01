@@ -39,6 +39,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.jobs = msg.jobs
 	}
+	m.queueColGen++
 
 	// Clear pending addressed states that server has confirmed
 	for jobID, pending := range m.pendingAddressed {
@@ -404,6 +405,7 @@ func (m model) handleFixJobsMsg(
 		m.err = msg.err
 	} else {
 		m.fixJobs = msg.jobs
+		m.taskColGen++
 		if m.fixSelectedIdx >= len(m.fixJobs) &&
 			len(m.fixJobs) > 0 {
 			m.fixSelectedIdx = len(m.fixJobs) - 1

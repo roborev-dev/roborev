@@ -73,6 +73,13 @@ type logLine struct {
 	text string
 }
 
+// colWidthCache stores computed per-column max content widths alongside a
+// generation counter so renders can skip the full-scan when data hasn't changed.
+type colWidthCache struct {
+	gen           int
+	contentWidths map[int]int
+}
+
 // colOptionBorders is the sentinel ID for the borders toggle in the column options modal.
 const colOptionBorders = -1
 

@@ -175,7 +175,7 @@ func (m model) renderTasksView() string {
 	// Columns in user-configured order.
 	visCols := m.visibleTaskColumns()
 
-	// Build full row data for ALL fixJobs (stable widths across scroll).
+	// Compute per-column max content widths, using cache when data hasn't changed.
 	allHeaders := [tcolCount]string{tcolSel: "", tcolStatus: "Status", tcolJobID: "Job", tcolParent: "Parent", tcolQueued: "Queued", tcolElapsed: "Elapsed", tcolBranch: "Branch", tcolRepo: "Repo", tcolRefSubject: "Ref/Subject"}
 	allFullRows := make([][]string, len(m.fixJobs))
 	for i, job := range m.fixJobs {
@@ -186,16 +186,22 @@ func (m model) renderTasksView() string {
 		allFullRows[i] = fullRow
 	}
 
-	// Compute max content width for each column across ALL jobs.
-	contentWidth := make(map[int]int, tcolCount)
-	for _, c := range visCols {
-		w := lipgloss.Width(allHeaders[c])
-		for _, fullRow := range allFullRows {
-			if cw := lipgloss.Width(fullRow[c]); cw > w {
-				w = cw
+	var contentWidth map[int]int
+	if m.taskColCache.gen == m.taskColGen {
+		contentWidth = m.taskColCache.contentWidths
+	} else {
+		contentWidth = make(map[int]int, tcolCount)
+		for _, c := range visCols {
+			w := lipgloss.Width(allHeaders[c])
+			for _, fullRow := range allFullRows {
+				if cw := lipgloss.Width(fullRow[c]); cw > w {
+					w = cw
+				}
 			}
+			contentWidth[c] = w
 		}
-		contentWidth[c] = w
+		m.taskColCache.gen = m.taskColGen
+		m.taskColCache.contentWidths = contentWidth
 	}
 
 	// Column widths: fixed columns get their natural size,

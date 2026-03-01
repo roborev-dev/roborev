@@ -394,6 +394,12 @@ type model struct {
 	columnOrder          []int          // Ordered toggleable queue columns
 	taskColumnOrder      []int          // Ordered task columns
 	colOptionsReturnView viewKind       // Return-to view from column options
+
+	// Column width caches (avoid full-scan on every render)
+	queueColCache *colWidthCache // cached per-column max widths for queue
+	queueColGen   int            // bumped when queue data/filters/columns change
+	taskColCache  *colWidthCache // cached per-column max widths for tasks
+	taskColGen    int            // bumped when fixJobs/columns change
 }
 
 // isConnectionError checks if an error indicates a network/connection failure
@@ -504,6 +510,8 @@ func newModel(serverAddr string, opts ...option) model {
 		hiddenColumns:          hiddenCols,
 		columnOrder:            colOrder,
 		taskColumnOrder:        taskColOrder,
+		queueColCache:          &colWidthCache{},
+		taskColCache:           &colWidthCache{},
 	}
 }
 

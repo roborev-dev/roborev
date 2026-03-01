@@ -222,6 +222,7 @@ func (m *model) popFilter() string {
 		case filterTypeBranch:
 			m.activeBranchFilter = ""
 		}
+		m.queueColGen++
 		return ft
 	}
 	return ""

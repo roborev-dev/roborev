@@ -224,6 +224,8 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.colOptionsIdx++
 			m.syncColumnOrderFromOptions()
 			m.colOptionsDirty = true
+			m.queueColGen++
+			m.taskColGen++
 		}
 		return m, nil
 	case "k":
@@ -234,6 +236,8 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.colOptionsIdx--
 			m.syncColumnOrderFromOptions()
 			m.colOptionsDirty = true
+			m.queueColGen++
+			m.taskColGen++
 		}
 		return m, nil
 	case " ", "enter":
@@ -243,6 +247,8 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				opt.enabled = !opt.enabled
 				m.colBordersOn = opt.enabled
 				m.colOptionsDirty = true
+				m.queueColGen++
+				m.taskColGen++
 			} else if m.colOptionsReturnView == viewTasks {
 				// Tasks view: no visibility toggle (all columns always shown)
 				return m, nil
@@ -257,6 +263,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.hiddenColumns[opt.id] = true
 				}
 				m.colOptionsDirty = true
+				m.queueColGen++
 			}
 		}
 		return m, nil
@@ -285,6 +292,7 @@ func (m model) handleHideAddressedKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.hideAddressed = !m.hideAddressed
+	m.queueColGen++
 	if len(m.jobs) > 0 {
 		if m.selectedIdx < 0 || m.selectedIdx >= len(m.jobs) || !m.isJobVisible(m.jobs[m.selectedIdx]) {
 			m.selectedIdx = m.findFirstVisibleJob()

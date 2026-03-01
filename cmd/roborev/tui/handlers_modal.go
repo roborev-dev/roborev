@@ -164,6 +164,7 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectedIdx = -1
 		m.selectedJobID = 0
 		m.fetchSeq++
+		m.queueColGen++
 		m.loadingJobs = true
 		return m, m.fetchJobs()
 	case "backspace":

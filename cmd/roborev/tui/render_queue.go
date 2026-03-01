@@ -247,7 +247,7 @@ func (m model) renderQueueView() string {
 		// Determine visible columns (respects hidden columns)
 		visCols := m.visibleColumns()
 
-		// Build full row data for ALL visible jobs (for width computation)
+		// Compute per-column max content widths, using cache when data hasn't changed.
 		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Status", "Queued", "Elapsed", "P/F", "Handled"}
 		allFullRows := make([][]string, len(visibleJobList))
 		for i, job := range visibleJobList {
@@ -259,18 +259,22 @@ func (m model) renderQueueView() string {
 			allFullRows[i] = fullRow
 		}
 
-		// Compute max content width for each visible column across ALL visible jobs.
-		// This prevents columns from resizing when the scroll window changes.
-		contentWidth := make(map[int]int, len(visCols))
-		for _, c := range visCols {
-			// Start with header width
-			w := lipgloss.Width(allHeaders[c])
-			for _, fullRow := range allFullRows {
-				if cw := lipgloss.Width(fullRow[c]); cw > w {
-					w = cw
+		var contentWidth map[int]int
+		if m.queueColCache.gen == m.queueColGen {
+			contentWidth = m.queueColCache.contentWidths
+		} else {
+			contentWidth = make(map[int]int, len(visCols))
+			for _, c := range visCols {
+				w := lipgloss.Width(allHeaders[c])
+				for _, fullRow := range allFullRows {
+					if cw := lipgloss.Width(fullRow[c]); cw > w {
+						w = cw
+					}
 				}
+				contentWidth[c] = w
 			}
-			contentWidth[c] = w
+			m.queueColCache.gen = m.queueColGen
+			m.queueColCache.contentWidths = contentWidth
 		}
 
 		// Compute column widths: fixed columns get their natural size,

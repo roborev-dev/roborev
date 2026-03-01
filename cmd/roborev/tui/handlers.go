@@ -527,6 +527,7 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	} else if m.currentView == viewQueue && m.hideAddressed {
 		m.hideAddressed = false
+		m.queueColGen++
 		m.hasMore = false
 		m.selectedIdx = -1
 		m.selectedJobID = 0
