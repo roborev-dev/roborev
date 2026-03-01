@@ -318,11 +318,11 @@ func (m model) renderQueueView() string {
 	return output
 }
 func (m model) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Handled (3)
+	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8)
 	// Status width 8 accommodates "canceled" (longest status)
-	// Handled is 3 ("yes") — last column so header "Handled" extending past is fine
-	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
-	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 3 + 9
+	// Handled is last column — no budget needed since nothing follows it
+	// Plus spacing: 2 (prefix) + 9 spaces between columns
+	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 9
 
 	// Available width for flexible columns (ref, branch, repo, agent)
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
