@@ -1669,8 +1669,66 @@ func TestTUIQueueLongCellContent(t *testing.T) {
 		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
 		line = strings.ReplaceAll(line, "\x1b[J", "")
 		visW := lipgloss.Width(line)
-		if visW > 85 {
-			t.Errorf("line %d exceeds width 80: visW=%d", i, visW)
+		if visW > m.width+1 {
+			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
+		}
+	}
+}
+
+func TestTUIQueueLongAgentName(t *testing.T) {
+	// Long custom agent names should be capped and not overflow the table.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef("abc1234"),
+			withRepoName("myrepo"),
+			withAgent(strings.Repeat("x", 40)),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+	lines := strings.Split(output, "\n")
+	tableEnd := min(len(lines), 7+len(m.jobs))
+	for i := 0; i < tableEnd && i < len(lines); i++ {
+		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
+		line = strings.ReplaceAll(line, "\x1b[J", "")
+		visW := lipgloss.Width(line)
+		if visW > m.width+1 {
+			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
+		}
+	}
+}
+
+func TestTUIQueueWideCharacterWidth(t *testing.T) {
+	// CJK characters are double-width; lipgloss.Width() should measure
+	// them correctly and the table should not overflow.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 100
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef("abc1234"),
+			withRepoName("日本語リポ"),
+			withBranch("功能分支"),
+			withAgent("test"),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+	lines := strings.Split(output, "\n")
+	tableEnd := min(len(lines), 7+len(m.jobs))
+	for i := 0; i < tableEnd && i < len(lines); i++ {
+		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
+		line = strings.ReplaceAll(line, "\x1b[J", "")
+		visW := lipgloss.Width(line)
+		if visW > m.width+1 {
+			t.Errorf("line %d exceeds width %d: visW=%d", i, m.width, visW)
 		}
 	}
 }

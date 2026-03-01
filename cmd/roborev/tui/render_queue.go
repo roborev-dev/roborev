@@ -298,8 +298,8 @@ func (m model) renderQueueView() string {
 			colQueued:  12,
 			colElapsed: 8,
 			colPF:      3,
-			colHandled: max(contentWidth[colHandled], 7), // "Handled" header = 7
-			colAgent:   max(contentWidth[colAgent], 5),   // "Agent" header = 5
+			colHandled: max(contentWidth[colHandled], 7),        // "Handled" header = 7
+			colAgent:   min(max(contentWidth[colAgent], 5), 12), // "Agent" header = 5, cap at 12
 		}
 
 		// Flexible columns absorb excess space
@@ -342,11 +342,13 @@ func (m model) renderQueueView() string {
 				}
 				distributed += colWidths[c]
 			}
-			// Give remainder to first flex column to avoid off-by-one
-			if distributed != remaining {
+			// Give remainder to first visible flex column (only when
+			// distributed undershot; when max(...,1) caused overshoot
+			// there is no spare space to hand out).
+			if distributed < remaining {
 				for _, c := range flexCols {
 					if !m.hiddenColumns[c] {
-						colWidths[c] = max(colWidths[c]+remaining-distributed, 1)
+						colWidths[c] += remaining - distributed
 						break
 					}
 				}
