@@ -639,8 +639,9 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 	contentViews := []struct {
 		name     string
 		view     viewKind
+		exitTo   viewKind       // expected view after exit (0 = viewQueue)
 		enterKey rune           // key to enter the view from queue (0 = use special key)
-		exitKey  rune           // key to exit back to queue (0 = use esc)
+		exitKey  rune           // key to exit back (0 = use esc)
 		setup    func(m *model) // additional setup needed
 	}{
 		{
@@ -672,39 +673,62 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:   "patch view",
+			view:   viewPatch,
+			exitTo: viewTasks,
+			setup: func(m *model) {
+				m.patchText = "diff --git a/f.go b/f.go"
+				m.patchJobID = 1
+			},
+		},
+		{
+			name: "commit message view",
+			view: viewCommitMsg,
+			setup: func(m *model) {
+				m.commitMsgContent = "feat: test"
+				m.commitMsgJobID = 1
+				m.commitMsgFromView = viewQueue
+			},
+		},
 	}
 
 	for _, tc := range contentViews {
-		t.Run(tc.name+" enter disables mouse", func(t *testing.T) {
-			m := newModel("http://localhost", withExternalIODisabled())
-			m.currentView = viewQueue
-			m.height = 30
-			m.width = 80
-			if tc.setup != nil {
-				tc.setup(&m)
-			}
-
-			var updated model
-			var cmd tea.Cmd
-			if tc.enterKey != 0 {
-				updated, cmd = pressKey(m, tc.enterKey)
-			} else {
-				updated, cmd = pressSpecial(m, tea.KeyEnter)
-			}
-
-			if updated.currentView == viewQueue {
-				t.Skip("view did not change (may need HTTP)")
-			}
-
-			msgs := collectMsgs(cmd)
-			if !hasMsgType(msgs, "tea.disableMouseMsg") {
-				types := make([]string, len(msgs))
-				for i, msg := range msgs {
-					types[i] = fmt.Sprintf("%T", msg)
+		// Enter subtest: only run for views that can be entered
+		// synchronously via keypress. Review, patch, and commitMsg
+		// require async HTTP fetches that complete later.
+		if tc.enterKey != 0 {
+			t.Run(tc.name+" enter disables mouse", func(t *testing.T) {
+				m := newModel("http://localhost", withExternalIODisabled())
+				m.currentView = viewQueue
+				m.height = 30
+				m.width = 80
+				if tc.setup != nil {
+					tc.setup(&m)
 				}
-				t.Errorf("expected disableMouseMsg in cmd, got types: %v", types)
-			}
-		})
+
+				var updated model
+				var cmd tea.Cmd
+				if tc.enterKey != 0 {
+					updated, cmd = pressKey(m, tc.enterKey)
+				} else {
+					updated, cmd = pressSpecial(m, tea.KeyEnter)
+				}
+
+				if updated.currentView == viewQueue {
+					t.Fatalf("view did not change from queue (setup may be incomplete)")
+				}
+
+				msgs := collectMsgs(cmd)
+				if !hasMsgType(msgs, "tea.disableMouseMsg") {
+					types := make([]string, len(msgs))
+					for i, msg := range msgs {
+						types[i] = fmt.Sprintf("%T", msg)
+					}
+					t.Errorf("expected disableMouseMsg in cmd, got types: %v", types)
+				}
+			})
+		}
 
 		t.Run(tc.name+" exit enables mouse", func(t *testing.T) {
 			m := newModel("http://localhost", withExternalIODisabled())
@@ -723,10 +747,20 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 				m.reviewFromView = viewQueue
 			}
 
-			updated, cmd := pressSpecial(m, tea.KeyEscape)
+			var updated model
+			var cmd tea.Cmd
+			if tc.exitKey != 0 {
+				updated, cmd = pressKey(m, tc.exitKey)
+			} else {
+				updated, cmd = pressSpecial(m, tea.KeyEscape)
+			}
 
-			if updated.currentView != viewQueue {
-				t.Skipf("did not return to queue, got view %d", updated.currentView)
+			expectedView := tc.exitTo
+			if expectedView == 0 {
+				expectedView = viewQueue
+			}
+			if updated.currentView != expectedView {
+				t.Fatalf("expected view %d after exit, got %d", expectedView, updated.currentView)
 			}
 
 			msgs := collectMsgs(cmd)
