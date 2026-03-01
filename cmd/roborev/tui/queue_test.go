@@ -1733,6 +1733,78 @@ func TestTUIQueueWideCharacterWidth(t *testing.T) {
 	}
 }
 
+func TestTUIQueueAgentColumnCapped(t *testing.T) {
+	// The Agent column should be capped at 12 characters even when
+	// the agent name is longer.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 120
+	m.height = 20
+	longAgent := strings.Repeat("x", 30)
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRef("abc1234"), withRepoName("repo"), withAgent(longAgent)),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := stripANSI(m.renderQueueView())
+	// The full 30-char agent name should be truncated in the table.
+	// Find the header line to confirm "Agent" is present, then check
+	// the data row does not contain the full untruncated name.
+	if !strings.Contains(output, "Agent") {
+		t.Fatal("expected Agent header in output")
+	}
+	if strings.Contains(output, longAgent) {
+		t.Error("expected agent name to be truncated, but full name found in output")
+	}
+}
+
+func TestTUITasksFlexOvershootHandled(t *testing.T) {
+	// With highly skewed content (one flex column has content, others
+	// have none), max(...,1) can cause distributed > remaining. The
+	// overshoot correction should prevent layout overflow.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTasks
+	m.width = 50
+	m.height = 20
+	m.fixJobs = []storage.ReviewJob{
+		{
+			ID:            1,
+			Status:        storage.JobStatusDone,
+			Branch:        strings.Repeat("b", 40),
+			RepoName:      "",
+			CommitSubject: "",
+		},
+	}
+	m.fixSelectedIdx = 0
+
+	// Should not panic and should render
+	output := m.renderTasksView()
+	if !strings.Contains(output, "roborev tasks") {
+		t.Error("expected tasks view title in output")
+	}
+}
+
+func TestTUIQueueFlexOvershootHandled(t *testing.T) {
+	// Same overshoot test for the queue view: skewed content with a
+	// narrow terminal should not overflow.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 50
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef(strings.Repeat("r", 40)),
+			withRepoName(""),
+			withBranch(""),
+			withAgent("test"),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	// Should not panic
+	_ = m.renderQueueView()
+}
+
 func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
 	// When fixSelectedIdx exceeds len(fixJobs) (stale after jobs shrink),
 	// rendering should not panic.

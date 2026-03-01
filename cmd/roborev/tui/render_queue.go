@@ -342,15 +342,29 @@ func (m model) renderQueueView() string {
 				}
 				distributed += colWidths[c]
 			}
-			// Give remainder to first visible flex column (only when
-			// distributed undershot; when max(...,1) caused overshoot
-			// there is no spare space to hand out).
+			// Correct rounding: add leftover to first visible flex
+			// column on undershoot, subtract overflow from widest
+			// visible flex column on overshoot (which can happen when
+			// max(...,1) inflates small shares).
 			if distributed < remaining {
 				for _, c := range flexCols {
 					if !m.hiddenColumns[c] {
 						colWidths[c] += remaining - distributed
 						break
 					}
+				}
+			} else if distributed > remaining {
+				overflow := distributed - remaining
+				widest := -1
+				for _, c := range flexCols {
+					if !m.hiddenColumns[c] {
+						if widest < 0 || colWidths[c] > colWidths[widest] {
+							widest = c
+						}
+					}
+				}
+				if widest >= 0 {
+					colWidths[widest] = max(colWidths[widest]-overflow, 1)
 				}
 			}
 		} else if totalFlex > 0 {
