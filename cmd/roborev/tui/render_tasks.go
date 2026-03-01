@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
@@ -188,9 +189,9 @@ func (m model) renderTasksView() string {
 	// Compute max content width for each column across ALL jobs.
 	contentWidth := make(map[int]int, tcolCount)
 	for _, c := range visCols {
-		w := len(allHeaders[c])
+		w := lipgloss.Width(allHeaders[c])
 		for _, fullRow := range allFullRows {
-			if cw := len(fullRow[c]); cw > w {
+			if cw := lipgloss.Width(fullRow[c]); cw > w {
 				w = cw
 			}
 		}
@@ -240,9 +241,7 @@ func (m model) renderTasksView() string {
 
 	remaining := m.width - totalFixed
 	colWidths := make(map[int]int, tcolCount)
-	for c, fw := range fixedWidth {
-		colWidths[c] = fw
-	}
+	maps.Copy(colWidths, fixedWidth)
 
 	if totalFlex > 0 && remaining > 0 {
 		distributed := 0
@@ -256,7 +255,7 @@ func (m model) renderTasksView() string {
 		}
 		// Give remainder to first flex column
 		if distributed != remaining {
-			colWidths[flexCols[0]] += remaining - distributed
+			colWidths[flexCols[0]] = max(colWidths[flexCols[0]]+remaining-distributed, 1)
 		}
 	} else if totalFlex > 0 {
 		for _, c := range flexCols {
@@ -269,6 +268,7 @@ func (m model) renderTasksView() string {
 	if m.fixSelectedIdx >= visibleRows {
 		startIdx = m.fixSelectedIdx - visibleRows + 1
 	}
+	startIdx = min(startIdx, max(len(m.fixJobs)-1, 0))
 	endIdx := min(len(m.fixJobs), startIdx+visibleRows)
 
 	// Build visible rows for the window

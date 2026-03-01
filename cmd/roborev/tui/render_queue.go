@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
@@ -263,9 +264,9 @@ func (m model) renderQueueView() string {
 		contentWidth := make(map[int]int, len(visCols))
 		for _, c := range visCols {
 			// Start with header width
-			w := len(allHeaders[c])
+			w := lipgloss.Width(allHeaders[c])
 			for _, fullRow := range allFullRows {
-				if cw := len(fullRow[c]); cw > w {
+				if cw := lipgloss.Width(fullRow[c]); cw > w {
 					w = cw
 				}
 			}
@@ -325,9 +326,7 @@ func (m model) renderQueueView() string {
 		// s.Width(w + spacing(col, logicalCol)) so the total column width
 		// on screen = content width + inter-column spacing.
 		colWidths := make(map[int]int, len(visCols))
-		for c, fw := range fixedWidth {
-			colWidths[c] = fw
-		}
+		maps.Copy(colWidths, fixedWidth)
 
 		if totalFlex > 0 && remaining > 0 {
 			// Distribute proportionally to content width
@@ -347,7 +346,7 @@ func (m model) renderQueueView() string {
 			if distributed != remaining {
 				for _, c := range flexCols {
 					if !m.hiddenColumns[c] {
-						colWidths[c] += remaining - distributed
+						colWidths[c] = max(colWidths[c]+remaining-distributed, 1)
 						break
 					}
 				}

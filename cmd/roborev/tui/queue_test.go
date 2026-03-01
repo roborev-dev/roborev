@@ -1624,6 +1624,96 @@ func assertFlashMessage(t *testing.T, m model, view viewKind, msg string) {
 	}
 }
 
+func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
+	// Verify that very narrow terminal widths don't panic and the
+	// table rows fit within the given width. Non-table chrome (title,
+	// status line) may exceed width — only table lines are checked.
+	for _, w := range []int{20, 30, 40} {
+		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
+			m := newModel("http://localhost", withExternalIODisabled())
+			m.width = w
+			m.height = 20
+			m.jobs = []storage.ReviewJob{
+				makeJob(1, withRef("abc"), withRepoName("r"), withAgent("test")),
+			}
+			m.selectedIdx = 0
+			m.selectedJobID = 1
+
+			// Should not panic
+			_ = m.renderQueueView()
+		})
+	}
+}
+
+func TestTUIQueueLongCellContent(t *testing.T) {
+	// Long ref, repo, and branch values should not cause the table to
+	// overflow the terminal width.
+	m := newModel("http://localhost", withExternalIODisabled())
+	m.width = 80
+	m.height = 20
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef(strings.Repeat("a", 60)),
+			withRepoName(strings.Repeat("b", 60)),
+			withBranch(strings.Repeat("c", 60)),
+			withAgent("test"),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	output := m.renderQueueView()
+	lines := strings.Split(output, "\n")
+	tableEnd := min(len(lines), 7+len(m.jobs))
+	for i := 0; i < tableEnd && i < len(lines); i++ {
+		line := strings.ReplaceAll(lines[i], "\x1b[K", "")
+		line = strings.ReplaceAll(line, "\x1b[J", "")
+		visW := lipgloss.Width(line)
+		if visW > 85 {
+			t.Errorf("line %d exceeds width 80: visW=%d", i, visW)
+		}
+	}
+}
+
+func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
+	// When fixSelectedIdx exceeds len(fixJobs) (stale after jobs shrink),
+	// rendering should not panic.
+	m := newTuiModel("http://localhost")
+	m.currentView = tuiViewTasks
+	m.width = 120
+	m.height = 20
+	m.fixJobs = []storage.ReviewJob{
+		{ID: 101, Status: storage.JobStatusDone},
+	}
+	// Stale index: points beyond the single job
+	m.fixSelectedIdx = 5
+
+	// Should not panic
+	output := m.renderTasksView()
+	if !strings.Contains(output, "roborev tasks") {
+		t.Error("expected tasks view title in output")
+	}
+}
+
+func TestTUITasksNarrowWidthFlexAllocation(t *testing.T) {
+	// Same narrow-width test for the tasks view — verify no panic.
+	for _, w := range []int{20, 30, 40} {
+		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
+			m := newTuiModel("http://localhost")
+			m.currentView = tuiViewTasks
+			m.width = w
+			m.height = 20
+			m.fixJobs = []storage.ReviewJob{
+				{ID: 1, Status: storage.JobStatusDone, Branch: "main", RepoName: "r"},
+			}
+			m.fixSelectedIdx = 0
+
+			// Should not panic
+			_ = m.renderTasksView()
+		})
+	}
+}
+
 func TestColumnOptionsModalOpenClose(t *testing.T) {
 	m := newTuiModel("localhost:7373")
 	m.jobs = []storage.ReviewJob{makeJob(1)}
