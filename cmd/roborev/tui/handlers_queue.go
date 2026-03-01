@@ -155,6 +155,73 @@ func (m model) handleBranchFilterOpenKey() (tea.Model, tea.Cmd) {
 	return m.handleFilterOpenKey()
 }
 
+func (m model) handleColumnOptionsKey() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue {
+		return m, nil
+	}
+	// Build option list from toggleable columns
+	var opts []columnOption
+	for _, col := range []int{colRef, colBranch, colRepo, colAgent, colStatus, colQueued, colElapsed, colPF, colHandled} {
+		opts = append(opts, columnOption{
+			id:      col,
+			name:    columnDisplayName(col),
+			enabled: !m.hiddenColumns[col],
+		})
+	}
+	// Add borders toggle
+	opts = append(opts, columnOption{
+		id:      -1,
+		name:    "Column borders",
+		enabled: m.colBordersOn,
+	})
+	m.colOptionsList = opts
+	m.colOptionsIdx = 0
+	m.colOptionsFrom = m.currentView
+	m.currentView = viewColumnOptions
+	return m, nil
+}
+
+func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.currentView = m.colOptionsFrom
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		if m.colOptionsIdx < len(m.colOptionsList)-1 {
+			m.colOptionsIdx++
+		}
+		return m, nil
+	case "k", "up":
+		if m.colOptionsIdx > 0 {
+			m.colOptionsIdx--
+		}
+		return m, nil
+	case " ", "enter":
+		if m.colOptionsIdx >= 0 && m.colOptionsIdx < len(m.colOptionsList) {
+			opt := &m.colOptionsList[m.colOptionsIdx]
+			opt.enabled = !opt.enabled
+			if opt.id == -1 {
+				// Borders toggle
+				m.colBordersOn = opt.enabled
+			} else {
+				if opt.enabled {
+					delete(m.hiddenColumns, opt.id)
+				} else {
+					if m.hiddenColumns == nil {
+						m.hiddenColumns = map[int]bool{}
+					}
+					m.hiddenColumns[opt.id] = true
+				}
+			}
+			return m, m.saveColumnOptions()
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) handleHideAddressedKey() (tea.Model, tea.Cmd) {
 	if m.currentView != viewQueue {
 		return m, nil

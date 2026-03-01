@@ -375,6 +375,13 @@ type model struct {
 
 	worktreeConfirmJobID  int64  // Job ID pending worktree-apply confirmation
 	worktreeConfirmBranch string // Branch name for worktree confirmation prompt
+
+	// Column options modal
+	colOptionsIdx  int            // Cursor in modal
+	colOptionsList []columnOption // Items in modal (columns + borders toggle)
+	colOptionsFrom viewKind       // Return view
+	colBordersOn   bool           // Column borders enabled
+	hiddenColumns  map[int]bool   // Set of hidden column IDs
 }
 
 // isConnectionError checks if an error indicates a network/connection failure
@@ -404,6 +411,8 @@ func newModel(serverAddr string, opts ...option) model {
 	hideAddressed := false
 	autoFilterRepo := false
 	tabWidth := 2
+	columnBorders := false
+	hiddenCols := map[int]bool{}
 	var cwdRepoRoot, cwdBranch string
 
 	if !opt.disableExternalIO {
@@ -419,6 +428,8 @@ func newModel(serverAddr string, opts ...option) model {
 			if cfg.TabWidth > 0 {
 				tabWidth = cfg.TabWidth
 			}
+			columnBorders = cfg.ColumnBorders
+			hiddenCols = parseHiddenColumns(cfg.HiddenColumns)
 		}
 
 		// Detect current repo/branch for filter sort priority
@@ -473,6 +484,8 @@ func newModel(serverAddr string, opts ...option) model {
 		pendingReviewAddressed: make(map[int64]pendingState), // Track pending addressed changes (by review ID)
 		clipboard:              &realClipboard{},
 		mdCache:                newMarkdownCache(tabWidth),
+		colBordersOn:           columnBorders,
+		hiddenColumns:          hiddenCols,
 	}
 }
 
@@ -657,6 +670,9 @@ func (m model) View() string {
 	}
 	if m.currentView == viewPatch {
 		return m.renderPatchView()
+	}
+	if m.currentView == viewColumnOptions {
+		return m.renderColumnOptionsView()
 	}
 	if m.currentView == viewKindPrompt && m.currentReview != nil {
 		return m.renderPromptView()

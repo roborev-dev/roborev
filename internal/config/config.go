@@ -124,9 +124,11 @@ type Config struct {
 	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
 
 	// UI preferences
-	HideAddressedByDefault bool `toml:"hide_addressed_by_default"`
-	AutoFilterRepo         bool `toml:"auto_filter_repo"`
-	TabWidth               int  `toml:"tab_width"` // Tab expansion width for TUI rendering (default: 2)
+	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"`
+	AutoFilterRepo         bool     `toml:"auto_filter_repo"`
+	TabWidth               int      `toml:"tab_width"`      // Tab expansion width for TUI rendering (default: 2)
+	HiddenColumns          []string `toml:"hidden_columns"` // Column names to hide in queue table (e.g. ["branch", "agent"])
+	ColumnBorders          bool     `toml:"column_borders"` // Show ▕ separators between columns
 }
 
 // GitHubAppConfig holds GitHub App authentication settings.

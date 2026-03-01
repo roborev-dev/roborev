@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/roborev-dev/roborev/internal/agent"
@@ -37,7 +38,7 @@ func (m model) queueHelpRows() [][]helpItem {
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
 	}
-	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"D", "focus"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
+	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"o", "options"}, helpItem{"D", "focus"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
 	return [][]helpItem{row1, row2}
 }
 func (m model) queueHelpLines() int {
@@ -244,7 +245,11 @@ func (m model) renderQueueView() string {
 			}
 		}
 
-		// Build row data — each row is plain text cells, styling handled by StyleFunc
+		// Determine visible columns (respects hidden columns)
+		visCols := m.visibleColumns()
+
+		// Build row data — only include visible columns
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Status", "Queued", "Elapsed", "P/F", "Handled"}
 		rows := make([][]string, 0, end-start)
 		windowJobs := visibleJobList[start:end] // jobs in the visible window
 		for i, job := range windowJobs {
@@ -253,15 +258,27 @@ func (m model) renderQueueView() string {
 				sel = "> "
 			}
 			cells := m.jobCells(job)
-			row := make([]string, colCount)
-			row[colSel] = sel
-			row[colJobID] = fmt.Sprintf("%d", job.ID)
-			copy(row[colRef:], cells)
+			fullRow := make([]string, colCount)
+			fullRow[colSel] = sel
+			fullRow[colJobID] = fmt.Sprintf("%d", job.ID)
+			copy(fullRow[colRef:], cells)
+
+			row := make([]string, len(visCols))
+			for vi, c := range visCols {
+				row[vi] = fullRow[c]
+			}
 			rows = append(rows, row)
 		}
 
 		// Compute the selected row index within the visible window
 		selectedWindowIdx := visibleSelectedIdx - start
+
+		// Map table column index to logical column for styling
+		borderColor := lipgloss.AdaptiveColor{Light: "248", Dark: "242"}
+		bordersOn := m.colBordersOn
+
+		// Find the last visible table column index (for padding logic)
+		lastVisCol := len(visCols) - 1
 
 		t := table.New().
 			BorderTop(false).
@@ -281,13 +298,29 @@ func (m model) renderQueueView() string {
 			StyleFunc(func(row, col int) lipgloss.Style {
 				s := lipgloss.NewStyle()
 
-				// Inter-column spacing (all columns except sel and last get right padding)
-				if col > colSel && col < colHandled {
-					s = s.PaddingRight(1)
+				// Map table col index to logical column
+				logicalCol := colSel
+				if col >= 0 && col < len(visCols) {
+					logicalCol = visCols[col]
+				}
+
+				// Inter-column spacing: non-sel, non-last columns get right padding
+				if logicalCol != colSel && col < lastVisCol {
+					if bordersOn && col > 0 {
+						// Border provides the separator; use left border + padding instead of right padding
+						s = s.Border(lipgloss.Border{Left: "▕"}, false, false, false, true).
+							BorderForeground(borderColor).PaddingLeft(1)
+					} else {
+						s = s.PaddingRight(1)
+					}
+				} else if bordersOn && col > 0 && logicalCol != colSel {
+					// Last column still gets a left border when borders are on
+					s = s.Border(lipgloss.Border{Left: "▕"}, false, false, false, true).
+						BorderForeground(borderColor).PaddingLeft(1)
 				}
 
 				// Fixed-width columns (width includes padding where applicable)
-				switch col {
+				switch logicalCol {
 				case colSel:
 					s = s.Width(2) // "> " or "  ", no extra padding needed
 				case colJobID:
@@ -315,7 +348,7 @@ func (m model) renderQueueView() string {
 				// Per-cell coloring for non-selected rows
 				if row >= 0 && row < len(windowJobs) {
 					job := windowJobs[row]
-					switch col {
+					switch logicalCol {
 					case colStatus:
 						switch job.Status {
 						case storage.JobStatusQueued:
@@ -351,7 +384,11 @@ func (m model) renderQueueView() string {
 			})
 
 		if !compact {
-			t = t.Headers("", "JobID", "Ref", "Branch", "Repo", "Agent", "Status", "Queued", "Elapsed", "P/F", "Handled")
+			headers := make([]string, len(visCols))
+			for vi, c := range visCols {
+				headers[vi] = allHeaders[c]
+			}
+			t = t.Headers(headers...)
 		}
 		t = t.Rows(rows...)
 
@@ -498,5 +535,130 @@ func stripControlChars(s string) string {
 		}
 		b.WriteRune(r)
 	}
+	return b.String()
+}
+
+// columnNames maps column constants to display names.
+var columnNames = map[int]string{
+	colRef:     "Ref",
+	colBranch:  "Branch",
+	colRepo:    "Repo",
+	colAgent:   "Agent",
+	colStatus:  "Status",
+	colQueued:  "Queued",
+	colElapsed: "Elapsed",
+	colPF:      "P/F",
+	colHandled: "Handled",
+}
+
+// columnConfigNames maps column constants to config file names (lowercase).
+var columnConfigNames = map[int]string{
+	colRef:     "ref",
+	colBranch:  "branch",
+	colRepo:    "repo",
+	colAgent:   "agent",
+	colStatus:  "status",
+	colQueued:  "queued",
+	colElapsed: "elapsed",
+	colPF:      "pf",
+	colHandled: "handled",
+}
+
+// columnDisplayName returns the display name for a column constant.
+func columnDisplayName(col int) string {
+	if name, ok := columnNames[col]; ok {
+		return name
+	}
+	return "?"
+}
+
+// parseHiddenColumns converts config hidden_columns strings to column ID set.
+func parseHiddenColumns(names []string) map[int]bool {
+	result := map[int]bool{}
+	lookup := map[string]int{}
+	for id, name := range columnConfigNames {
+		lookup[name] = id
+	}
+	for _, n := range names {
+		if id, ok := lookup[strings.ToLower(n)]; ok {
+			result[id] = true
+		}
+	}
+	return result
+}
+
+// hiddenColumnsToNames converts a hidden column ID set to config names.
+func hiddenColumnsToNames(hidden map[int]bool) []string {
+	var names []string
+	// Maintain stable order
+	for _, col := range []int{colRef, colBranch, colRepo, colAgent, colStatus, colQueued, colElapsed, colPF, colHandled} {
+		if hidden[col] {
+			names = append(names, columnConfigNames[col])
+		}
+	}
+	return names
+}
+
+// visibleColumns returns the ordered list of column indices to display,
+// always including colSel and colJobID, plus any non-hidden toggleable columns.
+func (m model) visibleColumns() []int {
+	cols := []int{colSel, colJobID}
+	for _, c := range []int{colRef, colBranch, colRepo, colAgent, colStatus, colQueued, colElapsed, colPF, colHandled} {
+		if !m.hiddenColumns[c] {
+			cols = append(cols, c)
+		}
+	}
+	return cols
+}
+
+// saveColumnOptions persists hidden columns and border settings to config.
+func (m model) saveColumnOptions() tea.Cmd {
+	hidden := hiddenColumnsToNames(m.hiddenColumns)
+	borders := m.colBordersOn
+	return func() tea.Msg {
+		cfg, err := config.LoadGlobal()
+		if err != nil {
+			return nil
+		}
+		cfg.HiddenColumns = hidden
+		cfg.ColumnBorders = borders
+		config.SaveGlobal(cfg)
+		return nil
+	}
+}
+
+// renderColumnOptionsView renders the column toggle modal.
+func (m model) renderColumnOptionsView() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Table Options"))
+	b.WriteString("\n\n")
+
+	for i, opt := range m.colOptionsList {
+		check := "[ ]"
+		if opt.enabled {
+			check = "[x]"
+		}
+		prefix := "  "
+		line := fmt.Sprintf("%s %s", check, opt.name)
+		if i == m.colOptionsIdx {
+			prefix = "> "
+			line = selectedStyle.Render(line)
+		}
+		// Separator before "Column borders" item
+		if opt.id == -1 && i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(prefix)
+		b.WriteString(line)
+		b.WriteString("\x1b[K\n")
+	}
+
+	b.WriteString("\n")
+	helpRows := [][]helpItem{
+		{{"space", "toggle"}, {"esc", "close"}},
+	}
+	b.WriteString(renderHelpTable(helpRows, m.width))
+
 	return b.String()
 }

@@ -23,6 +23,7 @@ const (
 	viewTasks               // Background fix tasks view
 	viewKindWorktreeConfirm // Confirm creating a worktree to apply patch
 	viewPatch               // Patch viewer for fix jobs
+	viewColumnOptions       // Column toggle modal
 )
 
 // queuePrefetchBuffer is the number of extra rows to fetch beyond what's visible,
@@ -70,6 +71,14 @@ type pendingState struct {
 // Text is already styled via streamFormatter (ANSI codes included).
 type logLine struct {
 	text string
+}
+
+// columnOption represents an item in the column options modal.
+// id is the column constant (colRef..colHandled) or -1 for the borders toggle.
+type columnOption struct {
+	id      int    // column constant or -1 for borders toggle
+	name    string // display label
+	enabled bool   // visible/on
 }
 
 // helpItem is a single help-bar entry with a key label and description.

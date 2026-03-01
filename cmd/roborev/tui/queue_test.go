@@ -1623,3 +1623,113 @@ func assertFlashMessage(t *testing.T, m model, view viewKind, msg string) {
 		t.Errorf("Expected flashExpiresAt to be set in the future, got %v", m.flashExpiresAt)
 	}
 }
+
+func TestColumnOptionsModalOpenClose(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+
+	// Press 'o' to open
+	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if m2.currentView != viewColumnOptions {
+		t.Fatalf("expected viewColumnOptions, got %d", m2.currentView)
+	}
+	if len(m2.colOptionsList) == 0 {
+		t.Fatal("expected non-empty colOptionsList")
+	}
+	// Last item should be "Column borders"
+	last := m2.colOptionsList[len(m2.colOptionsList)-1]
+	if last.id != -1 || last.name != "Column borders" {
+		t.Errorf("expected last item to be borders toggle, got id=%d name=%q", last.id, last.name)
+	}
+
+	// Press esc to close
+	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyEscape})
+	if m3.currentView != viewQueue {
+		t.Fatalf("expected viewQueue after esc, got %d", m3.currentView)
+	}
+}
+
+func TestColumnOptionsToggle(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+
+	// Open modal
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+
+	// First item should be Ref, enabled by default
+	if m.colOptionsList[0].id != colRef {
+		t.Fatalf("expected first item to be colRef, got %d", m.colOptionsList[0].id)
+	}
+	if !m.colOptionsList[0].enabled {
+		t.Fatal("expected Ref to be enabled initially")
+	}
+
+	// Toggle it off with space
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if m.colOptionsList[0].enabled {
+		t.Fatal("expected Ref to be disabled after toggle")
+	}
+	if !m.hiddenColumns[colRef] {
+		t.Fatal("expected colRef in hiddenColumns")
+	}
+
+	// Toggle it back on
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if !m.colOptionsList[0].enabled {
+		t.Fatal("expected Ref to be enabled after second toggle")
+	}
+	if m.hiddenColumns[colRef] {
+		t.Fatal("expected colRef removed from hiddenColumns")
+	}
+}
+
+func TestHiddenColumnNotRendered(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withBranch("main"), withAgent("codex")),
+	}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{colAgent: true}
+	m.width = 120
+	m.height = 30
+
+	output := m.renderQueueView()
+	// The header should not contain "Agent"
+	if strings.Contains(output, "Agent") {
+		t.Error("expected Agent column to be hidden from output")
+	}
+	// But should contain other headers
+	if !strings.Contains(output, "Branch") {
+		t.Error("expected Branch column to be visible")
+	}
+}
+
+func TestColumnBordersRendered(t *testing.T) {
+	m := newTuiModel("localhost:7373")
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withBranch("main"), withAgent("codex")),
+	}
+	m.currentView = viewQueue
+	m.hiddenColumns = map[int]bool{}
+	m.colBordersOn = true
+	m.width = 120
+	m.height = 30
+
+	output := m.renderQueueView()
+	// Count ▕ occurrences — with borders on, the data table + help bar both have them,
+	// so count should be higher than just the help bar alone
+	bordersOnCount := strings.Count(output, "▕")
+
+	// Disable borders — help bar still has ▕ but the data table should not
+	m.colBordersOn = false
+	output2 := m.renderQueueView()
+	bordersOffCount := strings.Count(output2, "▕")
+
+	if bordersOnCount <= bordersOffCount {
+		t.Errorf("expected more ▕ with borders on (%d) than off (%d)", bordersOnCount, bordersOffCount)
+	}
+}
