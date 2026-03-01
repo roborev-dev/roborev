@@ -880,3 +880,37 @@ func TestSanitizeControlKeepNewlines(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderLogWithWrapsStderr(t *testing.T) {
+	// Non-JSON lines (stderr from agent process) should be word-wrapped
+	// to the formatter's width, not passed through verbatim.
+	width := 40
+	longStderr := strings.Repeat("x", 80) // 80 chars, double the width
+
+	input := strings.NewReader(longStderr + "\n")
+	var buf bytes.Buffer
+	fmtr := NewWithWidth(&buf, width, GlamourStyle())
+
+	if err := RenderLogWith(input, fmtr, &buf); err != nil {
+		t.Fatalf("RenderLogWith: %v", err)
+	}
+
+	output := buf.String()
+	for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
+		stripped := StripANSI(line)
+		if len(stripped) > width {
+			t.Errorf(
+				"stderr line exceeds width %d: len=%d %q",
+				width, len(stripped), stripped,
+			)
+		}
+	}
+}
+
+func TestFormatterWidth(t *testing.T) {
+	// Width() should return the configured terminal width.
+	fmtr := NewWithWidth(io.Discard, 42, GlamourStyle())
+	if got := fmtr.Width(); got != 42 {
+		t.Errorf("Width() = %d, want 42", got)
+	}
+}

@@ -608,10 +608,14 @@ func (m *model) getBranchForJob(job storage.ReviewJob) string {
 	return branch
 }
 
-// isTextView reports whether v is a text-reading view where
-// mouse capture should be disabled to allow native text selection.
-func isTextView(v viewKind) bool {
-	return v == viewReview || v == viewKindPrompt
+// mouseDisabledView returns true for views where mouse capture should be
+// released to allow native terminal text selection (copy/paste).
+func mouseDisabledView(v viewKind) bool {
+	switch v {
+	case viewLog, viewReview, viewKindPrompt, viewPatch, viewCommitMsg:
+		return true
+	}
+	return false
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -696,9 +700,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	newM := result.(model)
 	if newM.currentView != prevView {
 		switch {
-		case isTextView(newM.currentView) && !isTextView(prevView):
+		case mouseDisabledView(newM.currentView) && !mouseDisabledView(prevView):
 			cmd = tea.Batch(cmd, tea.DisableMouse)
-		case !isTextView(newM.currentView) && isTextView(prevView):
+		case !mouseDisabledView(newM.currentView) && mouseDisabledView(prevView):
 			cmd = tea.Batch(cmd, tea.EnableMouseCellMotion)
 		}
 	}

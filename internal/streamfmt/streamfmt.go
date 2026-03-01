@@ -120,6 +120,11 @@ func GlamourStyle() gansi.StyleConfig {
 	return style
 }
 
+// Width returns the configured terminal width.
+func (f *Formatter) Width() int {
+	return f.width
+}
+
 // SetWriter replaces the underlying writer. Used to redirect a
 // persistent formatter's output to a fresh buffer for incremental
 // rendering.
@@ -739,11 +744,20 @@ func RenderLogWith(
 			} else {
 				// Non-JSON lines: sanitize ANSI/control sequences
 				// to prevent terminal spoofing from agent stderr,
-				// then print.
+				// then word-wrap to the formatter's width.
 				line = SanitizeControlKeepNewlines(line)
-				if _, werr := fmt.Fprintln(plainW, line); werr != nil {
-					return werr
+				if w := fmtr.Width(); w > 0 {
+					for _, wrapped := range WrapText(line, w) {
+						if _, werr := fmt.Fprintln(plainW, wrapped); werr != nil {
+							return werr
+						}
+					}
+				} else {
+					if _, werr := fmt.Fprintln(plainW, line); werr != nil {
+						return werr
+					}
 				}
+
 			}
 		} else if err != io.EOF {
 			// Preserve blank lines for spacing in rendered output.
