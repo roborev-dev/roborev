@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -260,7 +261,11 @@ func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 
 func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissing(t *testing.T) {
 	fakeBin := t.TempDir()
-	acpPath := filepath.Join(fakeBin, "acp-agent")
+	binName := "acp-agent"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	acpPath := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("failed to create fake acp-agent binary: %v", err)
 	}
@@ -295,7 +300,11 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 	t.Cleanup(func() { registry = originalRegistry })
 
 	fakeBin := t.TempDir()
-	acpPath := filepath.Join(fakeBin, defaultACPCommand)
+	binName := defaultACPCommand
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	acpPath := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("failed to create fake acp-agent binary: %v", err)
 	}

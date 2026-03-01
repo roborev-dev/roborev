@@ -618,6 +618,12 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
+	// On Windows, t.TempDir() may return an 8.3 short path (e.g.
+	// RUNNER~1) while filepath.EvalSymlinks resolves to the long
+	// form (runneradmin). Normalize so substring checks match.
+	if resolved, err := filepath.EvalSymlinks(tempDir); err == nil {
+		tempDir = resolved
+	}
 
 	agent := &ACPAgent{
 		agentName:       "test-acp",
