@@ -229,7 +229,11 @@ func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
 
 func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 	fakeBin := t.TempDir()
-	acpPath := filepath.Join(fakeBin, defaultACPCommand)
+	binName := defaultACPCommand
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	acpPath := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("failed to create fake acp-agent binary: %v", err)
 	}
