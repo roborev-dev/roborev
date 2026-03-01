@@ -318,10 +318,10 @@ func (m model) renderQueueView() string {
 	return output
 }
 func (m model) calculateColumnWidths(idWidth int) columnWidths {
-	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Addressed (9)
+	// Fixed widths: ID (idWidth), Status (8), P/F (3), Queued (12), Elapsed (8), Handled (8)
 	// Status width 8 accommodates "canceled" (longest status)
 	// Plus spacing: 2 (prefix) + 9 spaces between columns (one more for branch)
-	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 9 + 9
+	fixedWidth := 2 + idWidth + 8 + 3 + 12 + 8 + 8 + 9
 
 	// Available width for flexible columns (ref, branch, repo, agent)
 	// Don't artificially inflate - if terminal is too narrow, columns will be tiny
@@ -452,20 +452,20 @@ func (m model) renderJobLine(job storage.ReviewJob, selected bool, idWidth int, 
 		verdict += strings.Repeat(" ", 3-1) // "-" or "P"/"F" is 1 char
 	}
 
-	// Addressed status: nil means no review yet, true/false for reviewed jobs
+	// Handled status: nil means no review yet, yes/no for reviewed jobs
 	addr := ""
 	if job.Addressed != nil {
 		if *job.Addressed {
 			if selected {
-				addr = "true"
+				addr = "yes"
 			} else {
-				addr = addressedStyle.Render("true")
+				addr = addressedStyle.Render("yes")
 			}
 		} else {
 			if selected {
-				addr = "false"
+				addr = "no"
 			} else {
-				addr = queuedStyle.Render("false")
+				addr = queuedStyle.Render("no")
 			}
 		}
 	}
