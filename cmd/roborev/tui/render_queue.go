@@ -667,12 +667,17 @@ var columnConfigNames = map[int]string{
 	colHandled: "handled",
 }
 
-// columnDisplayName returns the display name for a column constant.
-func columnDisplayName(col int) string {
-	if name, ok := columnNames[col]; ok {
+// lookupDisplayName returns the display name for a column constant from the given map.
+func lookupDisplayName(col int, displayNames map[int]string) string {
+	if name, ok := displayNames[col]; ok {
 		return name
 	}
 	return "?"
+}
+
+// columnDisplayName returns the display name for a queue column constant.
+func columnDisplayName(col int) string {
+	return lookupDisplayName(col, columnNames)
 }
 
 // parseHiddenColumns converts config hidden_columns strings to column ID set.
@@ -702,16 +707,16 @@ func hiddenColumnsToNames(hidden map[int]bool) []string {
 	return names
 }
 
-// parseColumnOrder converts config names to ordered queue column IDs.
-// Any toggleable columns not in the config list are appended at the end in default order.
-func parseColumnOrder(names []string) []int {
+// resolveColumnOrder converts config names to ordered column IDs using the given
+// configNames map. Any columns from defaults not in names are appended at the end.
+func resolveColumnOrder(names []string, configNames map[int]string, defaults []int) []int {
 	if len(names) == 0 {
-		result := make([]int, len(toggleableColumns))
-		copy(result, toggleableColumns)
+		result := make([]int, len(defaults))
+		copy(result, defaults)
 		return result
 	}
 	lookup := map[string]int{}
-	for id, name := range columnConfigNames {
+	for id, name := range configNames {
 		lookup[name] = id
 	}
 	seen := map[int]bool{}
@@ -722,8 +727,7 @@ func parseColumnOrder(names []string) []int {
 			seen[id] = true
 		}
 	}
-	// Append any missing toggleable columns
-	for _, col := range toggleableColumns {
+	for _, col := range defaults {
 		if !seen[col] {
 			order = append(order, col)
 		}
@@ -731,15 +735,25 @@ func parseColumnOrder(names []string) []int {
 	return order
 }
 
-// columnOrderToNames converts ordered queue column IDs to config names.
-func columnOrderToNames(order []int) []string {
+// serializeColumnOrder converts ordered column IDs to config names.
+func serializeColumnOrder(order []int, configNames map[int]string) []string {
 	names := make([]string, 0, len(order))
 	for _, col := range order {
-		if name, ok := columnConfigNames[col]; ok {
+		if name, ok := configNames[col]; ok {
 			names = append(names, name)
 		}
 	}
 	return names
+}
+
+// parseColumnOrder converts config names to ordered queue column IDs.
+func parseColumnOrder(names []string) []int {
+	return resolveColumnOrder(names, columnConfigNames, toggleableColumns)
+}
+
+// columnOrderToNames converts ordered queue column IDs to config names.
+func columnOrderToNames(order []int) []string {
+	return serializeColumnOrder(order, columnConfigNames)
 }
 
 // visibleColumns returns the ordered list of column indices to display,
@@ -803,7 +817,7 @@ func (m model) renderColumnOptionsView() string {
 
 	b.WriteString("\n")
 	helpRows := [][]helpItem{
-		{{"j/k", "move"}, {"space", "toggle"}, {"esc", "close"}},
+		{{"↑/↓", "navigate"}, {"j/k", "reorder"}, {"space", "toggle"}, {"esc", "close"}},
 	}
 	b.WriteString(renderHelpTable(helpRows, m.width))
 

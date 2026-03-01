@@ -55,55 +55,23 @@ var taskColumnConfigNames = map[int]string{
 
 // taskColumnDisplayName returns the display name for a task column constant.
 func taskColumnDisplayName(col int) string {
-	if name, ok := taskColumnNames[col]; ok {
-		return name
-	}
-	return "?"
+	return lookupDisplayName(col, taskColumnNames)
 }
 
 // parseTaskColumnOrder converts config names to ordered task column IDs.
-// Any columns not in the config list are appended at the end in default order.
 func parseTaskColumnOrder(names []string) []int {
-	if len(names) == 0 {
-		result := make([]int, len(taskToggleableColumns))
-		copy(result, taskToggleableColumns)
-		return result
-	}
-	lookup := map[string]int{}
-	for id, name := range taskColumnConfigNames {
-		lookup[name] = id
-	}
-	seen := map[int]bool{}
-	var order []int
-	for _, n := range names {
-		if id, ok := lookup[strings.ToLower(n)]; ok && !seen[id] {
-			order = append(order, id)
-			seen[id] = true
-		}
-	}
-	// Append any missing toggleable columns
-	for _, col := range taskToggleableColumns {
-		if !seen[col] {
-			order = append(order, col)
-		}
-	}
-	return order
+	return resolveColumnOrder(names, taskColumnConfigNames, taskToggleableColumns)
 }
 
 // taskColumnOrderToNames converts ordered task column IDs to config names.
 func taskColumnOrderToNames(order []int) []string {
-	names := make([]string, 0, len(order))
-	for _, col := range order {
-		if name, ok := taskColumnConfigNames[col]; ok {
-			names = append(names, name)
-		}
-	}
-	return names
+	return serializeColumnOrder(order, taskColumnConfigNames)
 }
 
 // visibleTaskColumns returns the ordered list of task column indices to display.
 func (m model) visibleTaskColumns() []int {
-	cols := []int{tcolSel}
+	cols := make([]int, 0, 1+len(m.taskColumnOrder))
+	cols = append(cols, tcolSel)
 	cols = append(cols, m.taskColumnOrder...)
 	return cols
 }
@@ -206,11 +174,7 @@ func (m model) renderTasksView() string {
 	visCols := m.visibleTaskColumns()
 
 	// Build full row data for ALL fixJobs (stable widths across scroll).
-	allHeaders := make(map[int]string, tcolCount)
-	allHeaders[tcolSel] = ""
-	for col, name := range taskColumnNames {
-		allHeaders[col] = name
-	}
+	allHeaders := [tcolCount]string{tcolSel: "", tcolStatus: "Status", tcolJobID: "Job", tcolParent: "Parent", tcolQueued: "Queued", tcolElapsed: "Elapsed", tcolBranch: "Branch", tcolRepo: "Repo", tcolRefSubject: "Ref/Subject"}
 	allFullRows := make([][]string, len(m.fixJobs))
 	for i, job := range m.fixJobs {
 		cells := m.taskCells(job)

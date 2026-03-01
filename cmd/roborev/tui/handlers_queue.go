@@ -192,7 +192,9 @@ func (m model) handleColumnOptionsKey() (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	lastColumnIdx := len(m.colOptionsList) - 2 // last column item (before borders)
+	isColumn := func(idx int) bool {
+		return idx >= 0 && idx < len(m.colOptionsList) && m.colOptionsList[idx].id != colOptionBorders
+	}
 
 	switch msg.String() {
 	case "esc":
@@ -200,20 +202,19 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+c":
 		return m, tea.Quit
-	case "down", "up":
-		if msg.String() == "down" {
-			if m.colOptionsIdx < len(m.colOptionsList)-1 {
-				m.colOptionsIdx++
-			}
-		} else {
-			if m.colOptionsIdx > 0 {
-				m.colOptionsIdx--
-			}
+	case "down":
+		if m.colOptionsIdx < len(m.colOptionsList)-1 {
+			m.colOptionsIdx++
+		}
+		return m, nil
+	case "up":
+		if m.colOptionsIdx > 0 {
+			m.colOptionsIdx--
 		}
 		return m, nil
 	case "j":
 		// Move current column down in order
-		if m.colOptionsIdx >= 0 && m.colOptionsIdx < lastColumnIdx {
+		if isColumn(m.colOptionsIdx) && isColumn(m.colOptionsIdx+1) {
 			m.colOptionsList[m.colOptionsIdx], m.colOptionsList[m.colOptionsIdx+1] =
 				m.colOptionsList[m.colOptionsIdx+1], m.colOptionsList[m.colOptionsIdx]
 			m.colOptionsIdx++
@@ -223,7 +224,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "k":
 		// Move current column up in order
-		if m.colOptionsIdx > 0 && m.colOptionsIdx <= lastColumnIdx {
+		if isColumn(m.colOptionsIdx) && isColumn(m.colOptionsIdx-1) {
 			m.colOptionsList[m.colOptionsIdx], m.colOptionsList[m.colOptionsIdx-1] =
 				m.colOptionsList[m.colOptionsIdx-1], m.colOptionsList[m.colOptionsIdx]
 			m.colOptionsIdx--
@@ -234,16 +235,14 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case " ", "enter":
 		if m.colOptionsIdx >= 0 && m.colOptionsIdx < len(m.colOptionsList) {
 			opt := &m.colOptionsList[m.colOptionsIdx]
-			opt.enabled = !opt.enabled
 			if opt.id == colOptionBorders {
-				// Borders toggle
+				opt.enabled = !opt.enabled
 				m.colBordersOn = opt.enabled
+			} else if m.colOptionsReturnView == viewTasks {
+				// Tasks view: no visibility toggle (all columns always shown)
+				return m, nil
 			} else {
-				if m.colOptionsReturnView == viewTasks {
-					// Tasks view: no visibility toggle (all columns always shown)
-					opt.enabled = true
-					return m, nil
-				}
+				opt.enabled = !opt.enabled
 				if opt.enabled {
 					delete(m.hiddenColumns, opt.id)
 				} else {
@@ -263,7 +262,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // syncColumnOrderFromOptions updates m.columnOrder or m.taskColumnOrder
 // from the current colOptionsList (excluding the borders toggle).
 func (m *model) syncColumnOrderFromOptions() {
-	var order []int
+	order := make([]int, 0, len(m.colOptionsList))
 	for _, opt := range m.colOptionsList {
 		if opt.id != colOptionBorders {
 			order = append(order, opt.id)
