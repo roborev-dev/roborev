@@ -1747,14 +1747,28 @@ func TestTUIQueueAgentColumnCapped(t *testing.T) {
 	m.selectedJobID = 1
 
 	output := stripANSI(m.renderQueueView())
-	// The full 30-char agent name should be truncated in the table.
-	// Find the header line to confirm "Agent" is present, then check
-	// the data row does not contain the full untruncated name.
 	if !strings.Contains(output, "Agent") {
 		t.Fatal("expected Agent header in output")
 	}
+	// Full 30-char agent name should be truncated.
 	if strings.Contains(output, longAgent) {
 		t.Error("expected agent name to be truncated, but full name found in output")
+	}
+	// Longest run of 'x' in the output should be at most 12 (the cap).
+	maxRun := 0
+	run := 0
+	for _, r := range output {
+		if r == 'x' {
+			run++
+			if run > maxRun {
+				maxRun = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	if maxRun > 12 {
+		t.Errorf("agent column exceeded cap: longest x-run = %d, want <= 12", maxRun)
 	}
 }
 
@@ -1777,10 +1791,19 @@ func TestTUITasksFlexOvershootHandled(t *testing.T) {
 	}
 	m.fixSelectedIdx = 0
 
-	// Should not panic and should render
 	output := m.renderTasksView()
 	if !strings.Contains(output, "roborev tasks") {
 		t.Error("expected tasks view title in output")
+	}
+	// All lines must fit within width (tasks view has no
+	// wide chrome lines unlike queue's status bar).
+	for line := range strings.SplitSeq(output, "\n") {
+		clean := strings.ReplaceAll(line, "\x1b[K", "")
+		clean = strings.ReplaceAll(clean, "\x1b[J", "")
+		if lipgloss.Width(clean) > m.width+1 {
+			t.Errorf("line exceeds width %d: visW=%d",
+				m.width, lipgloss.Width(clean))
+		}
 	}
 }
 
@@ -1801,8 +1824,17 @@ func TestTUIQueueFlexOvershootHandled(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	// Should not panic
-	_ = m.renderQueueView()
+	output := m.renderQueueView()
+	lines := strings.Split(output, "\n")
+	// Skip title(1) + status(1) + update(1) chrome lines; check table area.
+	for i := 3; i < len(lines); i++ {
+		clean := strings.ReplaceAll(lines[i], "\x1b[K", "")
+		clean = strings.ReplaceAll(clean, "\x1b[J", "")
+		if lipgloss.Width(clean) > m.width+1 {
+			t.Errorf("line %d exceeds width %d: visW=%d",
+				i, m.width, lipgloss.Width(clean))
+		}
+	}
 }
 
 func TestTUITasksStaleSelectionNoPanic(t *testing.T) {

@@ -254,20 +254,12 @@ func (m model) renderTasksView() string {
 			distributed += colWidths[c]
 		}
 		// Correct rounding: add leftover to first flex column on
-		// undershoot, subtract overflow from widest flex column on
-		// overshoot (which can happen when max(...,1) inflates small
-		// shares).
+		// undershoot, drain overflow across flex columns (widest
+		// first) on overshoot from max(...,1) inflation.
 		if distributed < remaining {
 			colWidths[flexCols[0]] += remaining - distributed
-		} else if distributed > remaining {
-			overflow := distributed - remaining
-			widest := flexCols[0]
-			for _, c := range flexCols[1:] {
-				if colWidths[c] > colWidths[widest] {
-					widest = c
-				}
-			}
-			colWidths[widest] = max(colWidths[widest]-overflow, 1)
+		} else {
+			drainFlexOverflow(flexCols, colWidths, distributed-remaining)
 		}
 	} else if totalFlex > 0 {
 		for _, c := range flexCols {

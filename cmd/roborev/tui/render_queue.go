@@ -343,9 +343,9 @@ func (m model) renderQueueView() string {
 				distributed += colWidths[c]
 			}
 			// Correct rounding: add leftover to first visible flex
-			// column on undershoot, subtract overflow from widest
-			// visible flex column on overshoot (which can happen when
-			// max(...,1) inflates small shares).
+			// column on undershoot, drain overflow across visible
+			// flex columns (widest first) on overshoot from
+			// max(...,1) inflation.
 			if distributed < remaining {
 				for _, c := range flexCols {
 					if !m.hiddenColumns[c] {
@@ -353,19 +353,15 @@ func (m model) renderQueueView() string {
 						break
 					}
 				}
-			} else if distributed > remaining {
-				overflow := distributed - remaining
-				widest := -1
+			} else {
+				// Build visible-only flex list for overflow drain.
+				var visFlex []int
 				for _, c := range flexCols {
 					if !m.hiddenColumns[c] {
-						if widest < 0 || colWidths[c] > colWidths[widest] {
-							widest = c
-						}
+						visFlex = append(visFlex, c)
 					}
 				}
-				if widest >= 0 {
-					colWidths[widest] = max(colWidths[widest]-overflow, 1)
-				}
+				drainFlexOverflow(visFlex, colWidths, distributed-remaining)
 			}
 		} else if totalFlex > 0 {
 			// No remaining space: give flex columns 1 char each to avoid
@@ -680,6 +676,28 @@ var columnConfigNames = map[int]string{
 	colElapsed: "elapsed",
 	colPF:      "pf",
 	colHandled: "handled",
+}
+
+// drainFlexOverflow reduces flex column widths to absorb overflow,
+// shrinking the widest column first, repeating until overflow is zero
+// or all columns are at minimum width 1.
+func drainFlexOverflow(
+	cols []int, widths map[int]int, overflow int,
+) {
+	for overflow > 0 {
+		widest := -1
+		for _, c := range cols {
+			if widths[c] > 1 && (widest < 0 || widths[c] > widths[widest]) {
+				widest = c
+			}
+		}
+		if widest < 0 {
+			break
+		}
+		reduce := min(overflow, widths[widest]-1)
+		widths[widest] -= reduce
+		overflow -= reduce
+	}
 }
 
 // lookupDisplayName returns the display name for a column constant from the given map.
