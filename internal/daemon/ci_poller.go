@@ -249,11 +249,6 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 			canceledIDs, cancelErr := p.db.CancelClosedPRBatches(
 				ghRepo, ref.PRNumber,
 			)
-			if cancelErr != nil {
-				log.Printf("CI poller: error canceling closed-PR batches for %s#%d: %v",
-					ghRepo, ref.PRNumber, cancelErr)
-				continue
-			}
 			if len(canceledIDs) > 0 {
 				log.Printf("CI poller: canceled %d jobs for closed PR %s#%d",
 					len(canceledIDs), ghRepo, ref.PRNumber)
@@ -262,6 +257,10 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 						p.jobCancelFn(jid)
 					}
 				}
+			}
+			if cancelErr != nil {
+				log.Printf("CI poller: error canceling closed-PR batches for %s#%d: %v",
+					ghRepo, ref.PRNumber, cancelErr)
 			}
 		}
 	}
@@ -1382,12 +1381,12 @@ func (p *CIPoller) synthesizeBatchResults(
 	minSeverity := resolveMinSeverity(
 		cfg.CI.MinSeverity, repoPath, batch.GithubRepo,
 	)
+	results := toReviewResults(reviews)
 	prompt := reviewpkg.BuildSynthesisPrompt(
-		toReviewResults(reviews), minSeverity,
+		results, minSeverity,
 	)
 
 	model := cfg.CI.SynthesisModel
-	results := toReviewResults(reviews)
 
 	// Try primary synthesis agent.
 	output, err := runSynthesisAgent(
