@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/roborev-dev/roborev/internal/testenv"
 )
@@ -1804,5 +1806,199 @@ func TestValidateReviewTypes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestResolvedReviewMatrix(t *testing.T) {
+	t.Run("falls back to cross-product", func(t *testing.T) {
+		ci := CIConfig{
+			Agents:      []string{"codex", "gemini"},
+			ReviewTypes: []string{"security", "default"},
+		}
+		matrix := ci.ResolvedReviewMatrix()
+		if len(matrix) != 4 {
+			t.Fatalf("got %d entries, want 4", len(matrix))
+		}
+		// Cross-product: reviewTypes outer, agents inner
+		want := []AgentReviewType{
+			{"codex", "security"},
+			{"gemini", "security"},
+			{"codex", "default"},
+			{"gemini", "default"},
+		}
+		for i, got := range matrix {
+			if got != want[i] {
+				t.Errorf(
+					"matrix[%d] = %v, want %v",
+					i, got, want[i],
+				)
+			}
+		}
+	})
+
+	t.Run("uses reviews map when set", func(t *testing.T) {
+		ci := CIConfig{
+			Reviews: map[string][]string{
+				"codex":  {"security", "default"},
+				"gemini": {"default"},
+			},
+			// These should be ignored when Reviews is set
+			Agents:      []string{"ignored"},
+			ReviewTypes: []string{"ignored"},
+		}
+		matrix := ci.ResolvedReviewMatrix()
+		if len(matrix) != 3 {
+			t.Fatalf("got %d entries, want 3", len(matrix))
+		}
+		// Sort for deterministic comparison (map iteration order)
+		sort.Slice(matrix, func(i, j int) bool {
+			if matrix[i].Agent != matrix[j].Agent {
+				return matrix[i].Agent < matrix[j].Agent
+			}
+			return matrix[i].ReviewType < matrix[j].ReviewType
+		})
+		want := []AgentReviewType{
+			{"codex", "default"},
+			{"codex", "security"},
+			{"gemini", "default"},
+		}
+		for i, got := range matrix {
+			if got != want[i] {
+				t.Errorf(
+					"matrix[%d] = %v, want %v",
+					i, got, want[i],
+				)
+			}
+		}
+	})
+
+	t.Run("defaults when empty", func(t *testing.T) {
+		ci := CIConfig{}
+		matrix := ci.ResolvedReviewMatrix()
+		// Default: [""] x ["security"]
+		if len(matrix) != 1 {
+			t.Fatalf("got %d entries, want 1", len(matrix))
+		}
+		if matrix[0].Agent != "" || matrix[0].ReviewType != "security" {
+			t.Errorf("got %v, want {\"\" security}", matrix[0])
+		}
+	})
+}
+
+func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
+	t.Run("returns nil when Reviews not set", func(t *testing.T) {
+		ci := RepoCIConfig{
+			Agents:      []string{"codex"},
+			ReviewTypes: []string{"security"},
+		}
+		if matrix := ci.ResolvedReviewMatrix(); matrix != nil {
+			t.Errorf("expected nil, got %v", matrix)
+		}
+	})
+
+	t.Run("returns matrix from Reviews", func(t *testing.T) {
+		ci := RepoCIConfig{
+			Reviews: map[string][]string{
+				"codex": {"security"},
+			},
+		}
+		matrix := ci.ResolvedReviewMatrix()
+		if len(matrix) != 1 {
+			t.Fatalf("got %d entries, want 1", len(matrix))
+		}
+		if matrix[0].Agent != "codex" ||
+			matrix[0].ReviewType != "security" {
+			t.Errorf("got %v", matrix[0])
+		}
+	})
+}
+
+func TestResolvedThrottleInterval(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{"empty defaults to 1h", "", time.Hour},
+		{"zero disables", "0", 0},
+		{"valid duration", "30m", 30 * time.Minute},
+		{"valid seconds", "3600s", time.Hour},
+		{"invalid falls back to 1h", "not-a-duration", time.Hour},
+		{"negative falls back to 1h", "-5m", time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ci := CIConfig{ThrottleInterval: tt.value}
+			got := ci.ResolvedThrottleInterval()
+			if got != tt.want {
+				t.Errorf(
+					"ResolvedThrottleInterval() = %v, want %v",
+					got, tt.want,
+				)
+			}
+		})
+	}
+}
+
+func TestCIConfigReviewsFieldParsing(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(`
+[ci]
+enabled = true
+throttle_interval = "30m"
+
+[ci.reviews]
+codex = ["security", "default"]
+gemini = ["default"]
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadGlobalFrom(configPath)
+	if err != nil {
+		t.Fatalf("LoadGlobalFrom: %v", err)
+	}
+
+	if cfg.CI.ThrottleInterval != "30m" {
+		t.Errorf(
+			"got throttle_interval %q, want %q",
+			cfg.CI.ThrottleInterval, "30m",
+		)
+	}
+	if len(cfg.CI.Reviews) != 2 {
+		t.Fatalf(
+			"got %d review entries, want 2",
+			len(cfg.CI.Reviews),
+		)
+	}
+	codexTypes := cfg.CI.Reviews["codex"]
+	if len(codexTypes) != 2 ||
+		codexTypes[0] != "security" ||
+		codexTypes[1] != "default" {
+		t.Errorf("got codex types %v", codexTypes)
+	}
+}
+
+func TestRepoCIConfigReviewsFieldParsing(t *testing.T) {
+	tmpDir := newTempRepo(t, `
+agent = "codex"
+
+[ci]
+agents = ["codex"]
+
+[ci.reviews]
+codex = ["security"]
+gemini = ["default"]
+`)
+	cfg, err := LoadRepoConfig(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadRepoConfig: %v", err)
+	}
+	if len(cfg.CI.Reviews) != 2 {
+		t.Fatalf(
+			"got %d review entries, want 2",
+			len(cfg.CI.Reviews),
+		)
 	}
 }

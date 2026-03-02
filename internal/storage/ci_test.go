@@ -679,3 +679,68 @@ func TestCancelSupersededBatches(t *testing.T) {
 		t.Errorf("expected 0 canceled on no-op, got %d", len(canceledIDs))
 	}
 }
+
+func TestLatestBatchTimeForPR(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	t.Run("no batches returns zero time", func(t *testing.T) {
+		ts, err := db.LatestBatchTimeForPR(testRepo, 99)
+		if err != nil {
+			t.Fatalf("LatestBatchTimeForPR: %v", err)
+		}
+		if !ts.IsZero() {
+			t.Errorf("expected zero time, got %v", ts)
+		}
+	})
+
+	t.Run("returns latest batch time", func(t *testing.T) {
+		before := time.Now().UTC().Truncate(time.Second)
+
+		repo, err := db.GetOrCreateRepo("/tmp/test-throttle")
+		if err != nil {
+			t.Fatalf("GetOrCreateRepo: %v", err)
+		}
+
+		batchA := mustCreateCIBatch(
+			t, db, testRepo, 42, "sha-a", 1,
+		)
+		jobA := mustEnqueueReviewJob(
+			t, db, repo.ID, "a..b", "codex", "security",
+		)
+		mustRecordBatchJob(t, db, batchA.ID, jobA.ID)
+
+		batchB := mustCreateCIBatch(
+			t, db, testRepo, 42, "sha-b", 1,
+		)
+		jobB := mustEnqueueReviewJob(
+			t, db, repo.ID, "c..d", "codex", "security",
+		)
+		mustRecordBatchJob(t, db, batchB.ID, jobB.ID)
+
+		ts, err := db.LatestBatchTimeForPR(testRepo, 42)
+		if err != nil {
+			t.Fatalf("LatestBatchTimeForPR: %v", err)
+		}
+		if ts.IsZero() {
+			t.Fatal("expected non-zero time")
+		}
+		// The latest batch time should be at or after our "before" marker
+		if ts.Before(before.Add(-1 * time.Second)) {
+			t.Errorf(
+				"expected time >= %v, got %v",
+				before, ts,
+			)
+		}
+	})
+
+	t.Run("different PR returns zero", func(t *testing.T) {
+		ts, err := db.LatestBatchTimeForPR(testRepo, 999)
+		if err != nil {
+			t.Fatalf("LatestBatchTimeForPR: %v", err)
+		}
+		if !ts.IsZero() {
+			t.Errorf("expected zero time for different PR, got %v", ts)
+		}
+	})
+}

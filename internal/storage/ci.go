@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // CIPRReview tracks which PRs have been reviewed at which HEAD SHA
@@ -84,6 +85,27 @@ func (db *DB) HasCIBatch(githubRepo string, prNumber int, headSHA string) (bool,
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// LatestBatchTimeForPR returns the created_at timestamp of the most
+// recent batch for the given PR, regardless of HEAD SHA.
+// Returns zero time if no batch exists.
+func (db *DB) LatestBatchTimeForPR(
+	githubRepo string, prNumber int,
+) (time.Time, error) {
+	var ts sql.NullString
+	err := db.QueryRow(`
+		SELECT MAX(b.created_at) FROM ci_pr_batches b
+		WHERE b.github_repo = ? AND b.pr_number = ?
+		AND EXISTS (
+			SELECT 1 FROM ci_pr_batch_jobs bj
+			WHERE bj.batch_id = b.id
+		)`,
+		githubRepo, prNumber).Scan(&ts)
+	if err != nil || !ts.Valid {
+		return time.Time{}, err
+	}
+	return time.Parse("2006-01-02 15:04:05", ts.String)
 }
 
 // CreateCIBatch creates a new batch record for a PR. Uses INSERT OR IGNORE to

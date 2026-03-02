@@ -259,6 +259,34 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return nil
 	}
 
+	// Throttle: skip if this PR was reviewed recently (any SHA)
+	throttle := cfg.CI.ResolvedThrottleInterval()
+	if throttle > 0 {
+		lastReview, err := p.db.LatestBatchTimeForPR(
+			ghRepo, pr.Number,
+		)
+		if err != nil {
+			return fmt.Errorf("check PR throttle: %w", err)
+		}
+		if !lastReview.IsZero() &&
+			time.Since(lastReview) < throttle {
+			nextReview := lastReview.Add(throttle)
+			desc := fmt.Sprintf(
+				"Review deferred — next eligible at %s",
+				nextReview.UTC().Format("15:04 UTC"),
+			)
+			if err := p.callSetCommitStatus(
+				ghRepo, pr.HeadRefOid, "pending", desc,
+			); err != nil {
+				log.Printf(
+					"CI poller: failed to set throttle status: %v",
+					err,
+				)
+			}
+			return nil
+		}
+	}
+
 	// Find local repo matching this GitHub repo (auto-clones if needed)
 	repo, err := p.findOrCloneRepo(ctx, ghRepo)
 	if err != nil {
@@ -285,10 +313,9 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	// Build git ref for range review
 	gitRef := mergeBase + ".." + pr.HeadRefOid
 
-	// Resolve review types, agents, and reasoning from config.
+	// Resolve review matrix and reasoning from config.
 	// Per-repo CI overrides take priority over global CI config.
-	reviewTypes := cfg.CI.ResolvedReviewTypes()
-	agents := cfg.CI.ResolvedAgents()
+	matrix := cfg.CI.ResolvedReviewMatrix()
 	reasoning := "thorough"
 
 	repoCfg, repoCfgErr := loadCIRepoConfig(repo.RootPath)
@@ -296,11 +323,30 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, repoCfgErr)
 	}
 	if repoCfg != nil {
-		if len(repoCfg.CI.ReviewTypes) > 0 {
-			reviewTypes = repoCfg.CI.ReviewTypes
-		}
-		if len(repoCfg.CI.Agents) > 0 {
-			agents = repoCfg.CI.Agents
+		if repoMatrix := repoCfg.CI.ResolvedReviewMatrix(); len(repoMatrix) > 0 {
+			matrix = repoMatrix
+		} else if len(repoCfg.CI.Agents) > 0 || len(repoCfg.CI.ReviewTypes) > 0 {
+			// Fall back to flat overrides for agents/review_types
+			reviewTypes := cfg.CI.ResolvedReviewTypes()
+			agents := cfg.CI.ResolvedAgents()
+			if len(repoCfg.CI.ReviewTypes) > 0 {
+				reviewTypes = repoCfg.CI.ReviewTypes
+			}
+			if len(repoCfg.CI.Agents) > 0 {
+				agents = repoCfg.CI.Agents
+			}
+			matrix = make(
+				[]config.AgentReviewType,
+				0, len(reviewTypes)*len(agents),
+			)
+			for _, rt := range reviewTypes {
+				for _, ag := range agents {
+					matrix = append(matrix, config.AgentReviewType{
+						Agent:      ag,
+						ReviewType: rt,
+					})
+				}
+			}
 		}
 		if strings.TrimSpace(repoCfg.CI.Reasoning) != "" {
 			if r, err := config.NormalizeReasoning(repoCfg.CI.Reasoning); err == nil && r != "" {
@@ -311,12 +357,46 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 	}
 
-	reviewTypes, err = config.ValidateReviewTypes(reviewTypes)
-	if err != nil {
+	// Canonicalize review types (e.g. "review" → "default")
+	// and deduplicate entries that collapse to the same pair.
+	{
+		seen := make(map[string]bool, len(matrix))
+		canonical := matrix[:0]
+		for _, m := range matrix {
+			rt := m.ReviewType
+			if rt != "" && config.IsDefaultReviewType(rt) {
+				rt = config.ReviewTypeDefault
+			}
+			key := m.Agent + "|" + rt
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			canonical = append(
+				canonical,
+				config.AgentReviewType{
+					Agent:      m.Agent,
+					ReviewType: rt,
+				},
+			)
+		}
+		matrix = canonical
+	}
+
+	// Validate review types in the matrix
+	rtSet := make(map[string]bool, len(matrix))
+	for _, m := range matrix {
+		rtSet[m.ReviewType] = true
+	}
+	rtList := make([]string, 0, len(rtSet))
+	for rt := range rtSet {
+		rtList = append(rtList, rt)
+	}
+	if _, err = config.ValidateReviewTypes(rtList); err != nil {
 		return err
 	}
 
-	totalJobs := len(reviewTypes) * len(agents)
+	totalJobs := len(matrix)
 
 	// Cancel any in-progress batches for this PR at an older HEAD SHA.
 	// When a PR gets a new push, work on the old HEAD is wasted.
@@ -392,7 +472,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 	}
 
-	// Enqueue jobs for each review_type x agent combination.
+	// Enqueue jobs for each entry in the review matrix.
 	// If any enqueue fails, cancel already-created jobs and delete the batch
 	// so the next poll can retry cleanly.
 	var createdJobIDs []int64
@@ -407,55 +487,56 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 	}
 
-	for _, rt := range reviewTypes {
+	for _, entry := range matrix {
+		rt := entry.ReviewType
+		ag := entry.Agent
+
 		// Map review_type to workflow name (same as handleEnqueue).
 		workflow := "review"
 		if !config.IsDefaultReviewType(rt) {
 			workflow = rt
 		}
 
-		for _, ag := range agents {
-			// Resolve agent through workflow config when not explicitly set
-			resolvedAgent := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, reasoning)
-			if p.agentResolverFn != nil {
-				name, err := p.agentResolverFn(resolvedAgent)
-				if err != nil {
-					rollback()
-					return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
-				}
-				resolvedAgent = name
-			} else if resolved, err := agent.GetAvailableWithConfig(resolvedAgent, cfg); err != nil {
-				rollback()
-				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
-			} else {
-				resolvedAgent = resolved.Name()
-			}
-
-			// Resolve model through workflow config
-			resolvedModel := config.ResolveModelForWorkflow(cfg.CI.Model, repo.RootPath, cfg, workflow, reasoning)
-
-			job, err := p.db.EnqueueJob(storage.EnqueueOpts{
-				RepoID:     repo.ID,
-				GitRef:     gitRef,
-				Agent:      resolvedAgent,
-				Model:      resolvedModel,
-				Reasoning:  reasoning,
-				ReviewType: rt,
-			})
+		// Resolve agent through workflow config when not explicitly set
+		resolvedAgent := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, reasoning)
+		if p.agentResolverFn != nil {
+			name, err := p.agentResolverFn(resolvedAgent)
 			if err != nil {
 				rollback()
-				return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, resolvedAgent, err)
+				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 			}
-			createdJobIDs = append(createdJobIDs, job.ID)
-
-			if err := p.db.RecordBatchJob(batch.ID, job.ID); err != nil {
-				rollback()
-				return fmt.Errorf("record batch job: %w", err)
-			}
-
-			log.Printf("CI poller: enqueued job %d for %s#%d (type=%s, agent=%s, range=%s)",
-				job.ID, ghRepo, pr.Number, rt, resolvedAgent, gitRef)
+			resolvedAgent = name
+		} else if resolved, err := agent.GetAvailableWithConfig(resolvedAgent, cfg); err != nil {
+			rollback()
+			return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
+		} else {
+			resolvedAgent = resolved.Name()
 		}
+
+		// Resolve model through workflow config
+		resolvedModel := config.ResolveModelForWorkflow(cfg.CI.Model, repo.RootPath, cfg, workflow, reasoning)
+
+		job, err := p.db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:     repo.ID,
+			GitRef:     gitRef,
+			Agent:      resolvedAgent,
+			Model:      resolvedModel,
+			Reasoning:  reasoning,
+			ReviewType: rt,
+		})
+		if err != nil {
+			rollback()
+			return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, resolvedAgent, err)
+		}
+		createdJobIDs = append(createdJobIDs, job.ID)
+
+		if err := p.db.RecordBatchJob(batch.ID, job.ID); err != nil {
+			rollback()
+			return fmt.Errorf("record batch job: %w", err)
+		}
+
+		log.Printf("CI poller: enqueued job %d for %s#%d (type=%s, agent=%s, range=%s)",
+			job.ID, ghRepo, pr.Number, rt, resolvedAgent, gitRef)
 	}
 
 	headShort := gitpkg.ShortSHA(pr.HeadRefOid)

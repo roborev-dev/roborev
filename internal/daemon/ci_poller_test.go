@@ -270,12 +270,17 @@ func TestFormatRawBatchComment(t *testing.T) {
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Combined Review (`abc123d`)",
 		"Synthesis unavailable",
-		"<details>",
-		"Agent: codex | Type: security | Status: done",
+		"### codex — security (done)",
 		"Finding A",
-		"Agent: gemini | Type: review | Status: failed",
+		"### gemini — review (failed)",
 		"**Error:** Review failed. Check CI logs for details.",
+		"---",
 	)
+
+	if strings.Contains(comment, "<details>") {
+		t.Error(
+			"raw batch comment should not use <details> blocks")
+	}
 }
 
 func TestFormatSynthesizedComment(t *testing.T) {
@@ -2310,5 +2315,247 @@ func TestCIPollerPostBatchResults_SetsErrorStatusOnCommentPostFailure(t *testing
 	}
 	if sc.Desc != "Review failed to post" {
 		t.Errorf("desc=%q, want 'Review failed to post'", sc.Desc)
+	}
+}
+
+func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "1h"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// First push — should be reviewed (no prior batch)
+	captured := h.CaptureCommitStatuses()
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      70,
+			HeadRefOid:  "first-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("first processPR: %v", err)
+	}
+
+	hasBatch, err := h.DB.HasCIBatch(
+		"acme/api", 70, "first-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !hasBatch {
+		t.Fatal("expected batch for first push")
+	}
+
+	// Second push within throttle window — should be
+	// deferred
+	*captured = nil
+	err = h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      70,
+			HeadRefOid:  "second-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("second processPR: %v", err)
+	}
+
+	hasBatch, err = h.DB.HasCIBatch(
+		"acme/api", 70, "second-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if hasBatch {
+		t.Fatal(
+			"expected no batch for throttled second push")
+	}
+
+	// Verify pending status was set with deferred message
+	if len(*captured) != 1 {
+		t.Fatalf(
+			"expected 1 status call, got %d",
+			len(*captured))
+	}
+	sc := (*captured)[0]
+	if sc.State != "pending" {
+		t.Errorf("state=%q, want pending", sc.State)
+	}
+	if !strings.Contains(sc.Desc, "Review deferred") {
+		t.Errorf(
+			"desc=%q, want 'Review deferred' substring",
+			sc.Desc)
+	}
+}
+
+func TestCIPollerProcessPR_ThrottleDisabled(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// First push
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      71,
+			HeadRefOid:  "first-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("first processPR: %v", err)
+	}
+
+	// Second push — should NOT be throttled
+	err = h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      71,
+			HeadRefOid:  "second-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("second processPR: %v", err)
+	}
+
+	hasBatch, err := h.DB.HasCIBatch(
+		"acme/api", 71, "second-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !hasBatch {
+		t.Fatal(
+			"expected batch for second push " +
+				"when throttle disabled")
+	}
+}
+
+func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.Reviews = map[string][]string{
+		"codex":  {"security"},
+		"gemini": {"security", "review"},
+	}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      72,
+			HeadRefOid:  "matrix-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	jobs, err := h.DB.ListJobs(
+		"", h.RepoPath, 0, 0,
+		storage.WithGitRef("base-sha..matrix-sha"),
+	)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 3 {
+		t.Fatalf("expected 3 jobs, got %d", len(jobs))
+	}
+
+	got := make(map[string]bool)
+	for _, j := range jobs {
+		got[j.Agent+"|"+j.ReviewType] = true
+	}
+	want := []string{
+		"codex|security",
+		"gemini|security",
+		"gemini|default",
+	}
+	for _, key := range want {
+		if !got[key] {
+			t.Errorf("missing job combination %q", key)
+		}
+	}
+}
+
+func TestCIPollerProcessPR_RepoReviewsMapOverride(
+	t *testing.T,
+) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security", "review"}
+	h.Cfg.CI.Agents = []string{"codex", "gemini"}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// Write repo config with reviews map override
+	repoConfig := "[ci]\n" +
+		"[ci.reviews]\n" +
+		"codex = [\"security\"]\n"
+	if err := os.WriteFile(
+		filepath.Join(h.RepoPath, ".roborev.toml"),
+		[]byte(repoConfig), 0644,
+	); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
+
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      73,
+			HeadRefOid:  "repo-matrix-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	jobs, err := h.DB.ListJobs(
+		"", h.RepoPath, 0, 0,
+		storage.WithGitRef("base-sha..repo-matrix-sha"),
+	)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	// Repo reviews map: codex→[security] only
+	if len(jobs) != 1 {
+		t.Fatalf(
+			"expected 1 job (repo reviews override), "+
+				"got %d", len(jobs))
+	}
+	j := jobs[0]
+	if j.Agent != "codex" {
+		t.Errorf("agent=%q, want codex", j.Agent)
+	}
+	if j.ReviewType != "security" {
+		t.Errorf(
+			"review_type=%q, want security",
+			j.ReviewType)
 	}
 }

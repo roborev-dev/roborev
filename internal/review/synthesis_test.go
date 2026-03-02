@@ -223,10 +223,16 @@ func TestFormatRawBatchComment(t *testing.T) {
 	assertContainsAll(t, comment, []string{
 		"## roborev: Combined Review (`def4567`)",
 		"Synthesis unavailable",
-		"<details>",
+		"### codex — security (done)",
 		"Found issue X",
+		"### gemini — security (failed)",
 		"Review failed",
+		"---",
 	})
+
+	if strings.Contains(comment, "<details>") {
+		t.Error("raw batch comment should not use <details> blocks")
+	}
 }
 
 func TestFormatAllFailedComment(t *testing.T) {

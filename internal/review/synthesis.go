@@ -116,8 +116,8 @@ func FormatSynthesizedComment(
 	return b.String()
 }
 
-// FormatRawBatchComment formats all review outputs as separate
-// details blocks. Used as a fallback when synthesis fails.
+// FormatRawBatchComment formats all review outputs as expanded
+// inline sections. Used as a fallback when synthesis fails.
 func FormatRawBatchComment(
 	reviews []ReviewResult,
 	headSHA string,
@@ -127,25 +127,27 @@ func FormatRawBatchComment(
 		"## roborev: Combined Review (`%s`)\n\n",
 		git.ShortSHA(headSHA))
 	b.WriteString(
-		"> Synthesis unavailable. Showing raw review outputs.\n\n")
+		"> Synthesis unavailable. " +
+			"Showing individual review outputs.\n\n")
 
-	for _, r := range reviews {
+	for i, r := range reviews {
+		if i > 0 {
+			b.WriteString("---\n\n")
+		}
 		status := r.Status
 		if IsQuotaFailure(r) {
 			status = "skipped (quota)"
 		}
-		summary := fmt.Sprintf(
-			"Agent: %s | Type: %s | Status: %s",
+		fmt.Fprintf(&b, "### %s — %s (%s)\n\n",
 			r.Agent, r.ReviewType, status)
-		fmt.Fprintf(&b,
-			"<details>\n<summary>%s</summary>\n\n", summary)
+
 		if IsQuotaFailure(r) {
 			b.WriteString(
-				"Review skipped — agent quota exhausted.\n")
+				"Review skipped — agent quota exhausted.\n\n")
 		} else if r.Status == ResultFailed {
 			b.WriteString(
 				"**Error:** Review failed. " +
-					"Check CI logs for details.\n")
+					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
 			output := r.Output
 			const maxLen = 15000
@@ -154,10 +156,10 @@ func FormatRawBatchComment(
 					"\n\n...(truncated)"
 			}
 			b.WriteString(output)
+			b.WriteString("\n\n")
 		} else {
-			b.WriteString("(no output)")
+			b.WriteString("(no output)\n\n")
 		}
-		b.WriteString("\n\n</details>\n\n")
 	}
 
 	if note := SkippedAgentNote(reviews); note != "" {
