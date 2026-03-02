@@ -20,6 +20,7 @@ import (
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
+	ghpkg "github.com/roborev-dev/roborev/internal/github"
 	reviewpkg "github.com/roborev-dev/roborev/internal/review"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
@@ -1648,28 +1649,11 @@ func formatPRComment(review *storage.Review, verdict string) string {
 	return b.String()
 }
 
-// postPRComment posts a comment on a GitHub PR using the gh CLI.
-// Truncates the body to stay within GitHub's ~65536 character limit.
+// postPRComment posts or updates a roborev comment on a GitHub PR.
+// It delegates to github.UpsertPRComment which embeds a marker to
+// find and update existing comments instead of creating duplicates.
 func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error {
-	if len(body) > reviewpkg.MaxCommentLen {
-		body = body[:reviewpkg.MaxCommentLen] +
-			"\n\n...(truncated — comment exceeded " +
-			"size limit)"
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "pr", "comment",
-		"--repo", ghRepo,
-		fmt.Sprintf("%d", prNumber),
-		"--body-file", "-",
-	)
-	cmd.Stdin = strings.NewReader(body)
-	if env := p.ghEnvForRepo(ghRepo); env != nil {
-		cmd.Env = env
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("gh pr comment: %s: %s", err, string(out))
-	}
-	return nil
+	return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, p.ghEnvForRepo(ghRepo))
 }

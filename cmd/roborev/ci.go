@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/git"
+	ghpkg "github.com/roborev-dev/roborev/internal/github"
 	"github.com/roborev-dev/roborev/internal/review"
 	"github.com/spf13/cobra"
 )
@@ -477,30 +477,14 @@ func extractHeadSHA(gitRef string) string {
 	return gitRef
 }
 
-// postCIComment posts a comment on a GitHub PR using gh CLI.
-// Truncates the body to stay within GitHub's comment limit.
+// postCIComment posts or updates a roborev comment on a GitHub PR.
+// It delegates to github.UpsertPRComment which embeds a marker to
+// find and update existing comments instead of creating duplicates.
 func postCIComment(
 	ghRepo string,
 	prNumber int,
 	body string,
 ) error {
-	if len(body) > review.MaxCommentLen {
-		body = body[:review.MaxCommentLen] +
-			"\n\n...(truncated — comment exceeded " +
-			"size limit)"
-	}
-
-	ghCmd := exec.Command("gh", "pr", "comment",
-		"--repo", ghRepo,
-		strconv.Itoa(prNumber),
-		"--body-file", "-")
-	ghCmd.Stdin = strings.NewReader(body)
-	ghCmd.Stderr = os.Stderr
-
-	if out, err := ghCmd.Output(); err != nil {
-		return fmt.Errorf(
-			"gh pr comment: %v (output: %s)",
-			err, string(out))
-	}
-	return nil
+	ctx := context.Background()
+	return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, nil)
 }
