@@ -34,7 +34,7 @@ func (m model) queueHelpRows() [][]helpItem {
 		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}, {"o", "options"},
 	}
 	row2 := []helpItem{
-		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "closed"},
+		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "close"},
 	}
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
