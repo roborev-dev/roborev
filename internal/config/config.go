@@ -125,7 +125,8 @@ type Config struct {
 	DefaultMaxPromptSize int `toml:"default_max_prompt_size"` // Max prompt size in bytes before falling back to paths (default: 200KB)
 
 	// UI preferences
-	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"`
+	HideClosedByDefault    bool     `toml:"hide_closed_by_default"`
+	HideAddressedByDefault bool     `toml:"hide_addressed_by_default"` // deprecated: use hide_closed_by_default
 	AutoFilterRepo         bool     `toml:"auto_filter_repo"`
 	TabWidth               int      `toml:"tab_width"`         // Tab expansion width for TUI rendering (default: 2)
 	HiddenColumns          []string `toml:"hidden_columns"`    // Column names to hide in queue table (e.g. ["branch", "agent"])
@@ -639,11 +640,38 @@ func LoadGlobalFrom(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Migrate deprecated config keys
+	cfg.migrateDeprecated()
+
 	if err := cfg.CI.NormalizeInstallations(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 
 	return cfg, nil
+}
+
+// migrateDeprecated promotes deprecated config keys to their
+// replacements so the rest of the codebase only reads the new names.
+func (c *Config) migrateDeprecated() {
+	// hide_addressed_by_default → hide_closed_by_default
+	if c.HideAddressedByDefault && !c.HideClosedByDefault {
+		c.HideClosedByDefault = true
+	}
+	c.HideAddressedByDefault = false
+
+	// hidden_columns: "handled"/"done" → "closed", remove defunct "pf"
+	filtered := c.HiddenColumns[:0]
+	for _, name := range c.HiddenColumns {
+		switch name {
+		case "handled", "done":
+			filtered = append(filtered, "closed")
+		case "pf":
+			// column removed; drop from config
+		default:
+			filtered = append(filtered, name)
+		}
+	}
+	c.HiddenColumns = filtered
 }
 
 // LoadRepoConfig loads per-repo config from .roborev.toml

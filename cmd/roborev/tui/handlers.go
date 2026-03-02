@@ -95,7 +95,7 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEnterKey()
 	case "p":
 		return m.handlePromptKey()
-	case "a":
+	case "d", "a":
 		return m.handleAddressedKey()
 	case "x":
 		return m.handleCancelKey()

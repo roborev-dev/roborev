@@ -117,14 +117,14 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 
 	output := m.renderQueueView()
 
-	if !strings.Contains(output, "Done: 3") {
-		t.Errorf("Expected status to show 'Done: 3' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Completed: 3") {
+		t.Errorf("Expected status to show 'Completed: 3' for filtered repos, got: %s", output)
 	}
-	if !strings.Contains(output, "Addressed: 1") {
-		t.Errorf("Expected status to show 'Addressed: 1' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Closed: 1") {
+		t.Errorf("Expected status to show 'Closed: 1' for filtered repos, got: %s", output)
 	}
-	if !strings.Contains(output, "Unaddressed: 2") {
-		t.Errorf("Expected status to show 'Unaddressed: 2' for filtered repos, got: %s", output)
+	if !strings.Contains(output, "Open: 2") {
+		t.Errorf("Expected status to show 'Open: 2' for filtered repos, got: %s", output)
 	}
 }
 

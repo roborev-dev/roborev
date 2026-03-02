@@ -34,7 +34,7 @@ func (m model) queueHelpRows() [][]helpItem {
 		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}, {"o", "options"},
 	}
 	row2 := []helpItem{
-		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "handled"},
+		{"↑/↓", "nav"}, {"↵", "review"}, {"d", "closed"},
 	}
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
@@ -94,11 +94,10 @@ const (
 	colBranch         // Branch name
 	colRepo           // Repository display name
 	colAgent          // Agent name
-	colStatus         // Job status
+	colStatus         // Job status (combined with verdict)
 	colQueued         // Enqueue timestamp
 	colElapsed        // Elapsed time
-	colPF             // Pass/Fail verdict
-	colHandled        // Addressed status
+	colHandled        // Done status
 	colCount          // total number of columns
 )
 
@@ -123,7 +122,7 @@ func (m model) renderQueueView() string {
 		}
 	}
 	if m.hideAddressed {
-		title.WriteString(" [hiding addressed]")
+		title.WriteString(" [hiding closed]")
 	}
 	b.WriteString(titleStyle.Render(title.String()))
 	// In compact mode, show version mismatch inline since the status area is hidden
@@ -164,10 +163,10 @@ func (m model) renderQueueView() string {
 			unaddressed = m.jobStats.Unaddressed
 		}
 		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-			statusLine = fmt.Sprintf("Daemon: %s | Done: %d | Addressed: %d | Unaddressed: %d",
+			statusLine = fmt.Sprintf("Daemon: %s | Completed: %d | Closed: %d | Open: %d",
 				m.daemonVersion, done, addressed, unaddressed)
 		} else {
-			statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Done: %d | Addressed: %d | Unaddressed: %d",
+			statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Completed: %d | Closed: %d | Open: %d",
 				m.daemonVersion,
 				m.status.ActiveWorkers, m.status.MaxWorkers,
 				done, addressed, unaddressed)
@@ -248,7 +247,7 @@ func (m model) renderQueueView() string {
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
-		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Status", "Queued", "Elapsed", "P/F", "Handled"}
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Status", "Queued", "Elapsed", "Closed"}
 		allFullRows := make([][]string, len(visibleJobList))
 		for i, job := range visibleJobList {
 			cells := m.jobCells(job)
@@ -298,11 +297,10 @@ func (m model) renderQueueView() string {
 		fixedWidth := map[int]int{
 			colSel:     2,
 			colJobID:   idWidth,
-			colStatus:  8,
+			colStatus:  8, // fits "Canceled" (8), "Running" (7), etc.
 			colQueued:  12,
 			colElapsed: 8,
-			colPF:      3,
-			colHandled: max(contentWidth[colHandled], 7),        // "Handled" header = 7
+			colHandled: max(contentWidth[colHandled], 6),        // "Closed" header = 6
 			colAgent:   min(max(contentWidth[colAgent], 5), 12), // "Agent" header = 5, cap at 12
 		}
 
@@ -492,26 +490,7 @@ func (m model) renderQueueView() string {
 					job := windowJobs[row]
 					switch logicalCol {
 					case colStatus:
-						switch job.Status {
-						case storage.JobStatusQueued:
-							s = s.Foreground(queuedStyle.GetForeground())
-						case storage.JobStatusRunning:
-							s = s.Foreground(runningStyle.GetForeground())
-						case storage.JobStatusDone:
-							s = s.Foreground(doneStyle.GetForeground())
-						case storage.JobStatusFailed:
-							s = s.Foreground(failedStyle.GetForeground())
-						case storage.JobStatusCanceled:
-							s = s.Foreground(canceledStyle.GetForeground())
-						}
-					case colPF:
-						if job.Verdict != nil {
-							if *job.Verdict == "P" {
-								s = s.Foreground(passStyle.GetForeground())
-							} else {
-								s = s.Foreground(failStyle.GetForeground())
-							}
-						}
+						s = s.Foreground(combinedStatusColor(job))
 					case colHandled:
 						if job.Addressed != nil {
 							if *job.Addressed {
@@ -595,8 +574,8 @@ func (m model) renderQueueView() string {
 }
 
 // jobCells returns plain text cell values for a job row.
-// Order: ref, branch, repo, agent, status, queued, elapsed, verdict, handled
-// (colRef through colHandled, 9 values).
+// Order: ref, branch, repo, agent, status, queued, elapsed, handled
+// (colRef through colHandled, 8 values).
 func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
 	if !config.IsDefaultReviewType(job.ReviewType) {
@@ -626,12 +605,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		}
 	}
 
-	status := string(job.Status)
-
-	verdict := "-"
-	if job.Verdict != nil {
-		verdict = *job.Verdict
-	}
+	status := combinedStatus(job)
 
 	handled := ""
 	if job.Addressed != nil {
@@ -642,7 +616,59 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		}
 	}
 
-	return []string{ref, branch, repo, agentName, status, enqueued, elapsed, verdict, handled}
+	return []string{ref, branch, repo, agentName, status, enqueued, elapsed, handled}
+}
+
+// combinedStatus returns a display string that merges job status
+// with verdict: Queued, Running, Error, Canceled, Pass, Fail, or
+// Ready (for task/fix jobs that have no verdict).
+func combinedStatus(job storage.ReviewJob) string {
+	switch job.Status {
+	case storage.JobStatusQueued:
+		return "Queued"
+	case storage.JobStatusRunning:
+		return "Running"
+	case storage.JobStatusFailed:
+		return "Error"
+	case storage.JobStatusCanceled:
+		return "Canceled"
+	case storage.JobStatusDone, storage.JobStatusApplied,
+		storage.JobStatusRebased:
+		if job.Verdict != nil {
+			if *job.Verdict == "P" {
+				return "Pass"
+			}
+			return "Fail"
+		}
+		return "Ready"
+	default:
+		return string(job.Status)
+	}
+}
+
+// combinedStatusColor returns the foreground color for the
+// combined status column based on job state and verdict.
+func combinedStatusColor(
+	job storage.ReviewJob,
+) lipgloss.TerminalColor {
+	switch job.Status {
+	case storage.JobStatusQueued:
+		return queuedStyle.GetForeground()
+	case storage.JobStatusRunning:
+		return runningStyle.GetForeground()
+	case storage.JobStatusFailed:
+		return failedStyle.GetForeground()
+	case storage.JobStatusCanceled:
+		return canceledStyle.GetForeground()
+	case storage.JobStatusDone, storage.JobStatusApplied,
+		storage.JobStatusRebased:
+		if job.Verdict != nil && *job.Verdict == "F" {
+			return failStyle.GetForeground()
+		}
+		return passStyle.GetForeground()
+	default:
+		return queuedStyle.GetForeground()
+	}
 }
 
 // commandLineForJob computes the representative agent command line from job parameters.
@@ -680,7 +706,7 @@ func stripControlChars(s string) string {
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colStatus, colQueued, colElapsed, colPF, colHandled}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colStatus, colQueued, colElapsed, colHandled}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
@@ -691,8 +717,7 @@ var columnNames = map[int]string{
 	colStatus:  "Status",
 	colQueued:  "Queued",
 	colElapsed: "Elapsed",
-	colPF:      "P/F",
-	colHandled: "Handled",
+	colHandled: "Closed",
 }
 
 // columnConfigNames maps column constants to config file names (lowercase).
@@ -704,8 +729,7 @@ var columnConfigNames = map[int]string{
 	colStatus:  "status",
 	colQueued:  "queued",
 	colElapsed: "elapsed",
-	colPF:      "pf",
-	colHandled: "handled",
+	colHandled: "closed",
 }
 
 // drainFlexOverflow reduces flex column widths to absorb overflow,

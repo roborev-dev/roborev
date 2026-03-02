@@ -90,7 +90,7 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 	case storage.JobStatusDone:
 		statusLabel = "ready"
 	case storage.JobStatusFailed:
-		statusLabel = "failed"
+		statusLabel = "error"
 	case storage.JobStatusCanceled:
 		statusLabel = "canceled"
 	case storage.JobStatusApplied:

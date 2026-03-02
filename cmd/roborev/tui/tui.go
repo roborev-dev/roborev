@@ -444,7 +444,7 @@ func newModel(serverAddr string, opts ...option) model {
 
 		// Load preferences from config
 		if cfg, err := config.LoadGlobal(); err == nil {
-			hideAddressed = cfg.HideAddressedByDefault
+			hideAddressed = cfg.HideClosedByDefault
 			autoFilterRepo = cfg.AutoFilterRepo
 			if cfg.TabWidth > 0 {
 				tabWidth = cfg.TabWidth

@@ -419,7 +419,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 					currentFailedReview = review
 				} else if verdict == "P" {
 					if err := client.MarkReviewAddressed(review.JobID); err != nil {
-						fmt.Printf("Warning: failed to mark review (job %d) as addressed: %v\n", review.JobID, err)
+						fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 					}
 					continue // Loop back to check for more
 				}
@@ -614,7 +614,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 		// Mark old review as addressed
 		if err := client.MarkReviewAddressed(currentFailedReview.JobID); err != nil {
-			fmt.Printf("Warning: failed to mark review (job %d) as addressed: %v\n", currentFailedReview.JobID, err)
+			fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
 		}
 
 		// Wait for new commit to be reviewed
@@ -638,7 +638,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		if verdict == "P" {
 			fmt.Println("New commit passed review!")
 			if err := client.MarkReviewAddressed(review.JobID); err != nil {
-				fmt.Printf("Warning: failed to mark review (job %d) as addressed: %v\n", review.JobID, err)
+				fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 			}
 			currentFailedReview = nil
 		} else {
@@ -981,7 +981,7 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 		// Mark passing reviews as addressed so they don't need to be checked again
 		if verdict == "P" {
 			if err := client.MarkReviewAddressed(review.JobID); err != nil {
-				return nil, fmt.Errorf("marking review (job %d) as addressed: %w", review.JobID, err)
+				return nil, fmt.Errorf("closing review (job %d): %w", review.JobID, err)
 			}
 		}
 	}

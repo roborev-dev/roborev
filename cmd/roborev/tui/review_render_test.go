@@ -65,7 +65,7 @@ func TestTUIRenderViews(t *testing.T) {
 					Agent:    "codex",
 				},
 			},
-			wantContains: []string{"on feature/test", "[ADDRESSED]", "myrepo", "abc1234"},
+			wantContains: []string{"on feature/test", "[CLOSED]", "myrepo", "abc1234"},
 		},
 		{
 			name: "review view with model",
@@ -201,7 +201,7 @@ func TestTUIRenderViews(t *testing.T) {
 					Verdict:  nil,
 				},
 			},
-			wantContains:              []string{"Review", "abc1234", "[ADDRESSED]"},
+			wantContains:              []string{"Review", "abc1234", "[CLOSED]"},
 			checkContentStartsOnLine4: true,
 			checkNoVerdictOnLine3:     true,
 		},
@@ -342,7 +342,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			jobVerdict:       nil,
 			addressed:        true,
 			wantVisibleLines: 3, // height 12 - 9 non-content = 3
-			wantContains:     []string{"very-long-repository-name-here", "feature/very-long-branch-name", "[ADDRESSED]"},
+			wantContains:     []string{"very-long-repository-name-here", "feature/very-long-branch-name", "[CLOSED]"},
 		},
 	}
 

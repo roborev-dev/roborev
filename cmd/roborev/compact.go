@@ -37,17 +37,17 @@ func compactCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "compact",
-		Short: "Verify and consolidate unaddressed review findings",
-		Long: `Verify and consolidate unaddressed review findings.
+		Short: "Verify and consolidate open review findings",
+		Long: `Verify and consolidate open review findings.
 
-Discovers all unaddressed completed review jobs, sends them to an agent
+Discovers all completed review jobs still open, sends them to an agent
 for verification against the current codebase, consolidates related findings,
 and creates a new consolidated review job.
 
 By default, compact runs in the background. Use --wait to block until complete.
 
-When consolidation finishes successfully, original jobs are automatically marked
-as addressed. Check progress with 'roborev status' or 'roborev tui'.
+When consolidation finishes successfully, original jobs are automatically
+closed. Check progress with 'roborev status' or 'roborev tui'.
 
 This adds a quality layer between 'review' and 'fix' to reduce false positives
 and consolidate findings from multiple reviews.
@@ -318,7 +318,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 
 	if len(jobs) == 0 {
 		if !opts.quiet {
-			cmd.Println("No unaddressed jobs found.")
+			cmd.Println("No open jobs found.")
 		}
 		return nil
 	}
@@ -326,7 +326,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	// Apply limit
 	if opts.limit > 0 && len(jobs) > opts.limit {
 		if !opts.quiet {
-			cmd.Printf("Found %d unaddressed jobs, limiting to %d (use --limit to adjust)\n\n",
+			cmd.Printf("Found %d open jobs, limiting to %d (use --limit to adjust)\n\n",
 				len(jobs), opts.limit)
 		}
 		jobs = jobs[:opts.limit]
@@ -335,7 +335,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		if branchFilter != "" {
 			branchMsg = fmt.Sprintf(" on branch %s", branchFilter)
 		}
-		cmd.Printf("Found %d unaddressed job(s)%s\n\n", len(jobs), branchMsg)
+		cmd.Printf("Found %d open job(s)%s\n\n", len(jobs), branchMsg)
 	}
 
 	// Warn about very large limits
@@ -353,7 +353,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	if opts.dryRun {
 		cmd.Println("Would verify and consolidate these reviews")
 		cmd.Println("Would create 1 consolidated review job")
-		cmd.Printf("Would mark %d jobs as addressed\n\n", len(jobIDs))
+		cmd.Printf("Would close %d jobs\n\n", len(jobIDs))
 		cmd.Println("Run without --dry-run to execute.")
 		return nil
 	}
@@ -463,12 +463,12 @@ func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot string) string 
 	sb.WriteString("   - Include file and line references where possible\n")
 	sb.WriteString("   - Explain what the issue is and why it matters\n\n")
 
-	sb.WriteString("## Unaddressed Review Findings\n\n")
+	sb.WriteString("## Open Review Findings\n\n")
 	reviewWord := "review"
 	if len(jobReviews) != 1 {
 		reviewWord = "reviews"
 	}
-	fmt.Fprintf(&sb, "Below are %d unaddressed %s", len(jobReviews), reviewWord)
+	fmt.Fprintf(&sb, "Below are %d open %s", len(jobReviews), reviewWord)
 	if branch != "" {
 		fmt.Fprintf(&sb, " from branch %s", branch)
 	}
@@ -502,7 +502,7 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 	if jobCount != 1 {
 		reviewWord = "reviews"
 	}
-	fmt.Fprintf(&sb, "Verified and consolidated %d unaddressed %s", jobCount, reviewWord)
+	fmt.Fprintf(&sb, "Verified and consolidated %d open %s", jobCount, reviewWord)
 	if branch != "" {
 		fmt.Fprintf(&sb, " from branch %s", branch)
 	}

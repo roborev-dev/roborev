@@ -266,7 +266,7 @@ func TestFixSingleJob(t *testing.T) {
 	if !strings.Contains(outputStr, "Issues") {
 		t.Error("output should show analysis findings")
 	}
-	if !strings.Contains(outputStr, "marked as addressed") {
+	if !strings.Contains(outputStr, "closed") {
 		t.Error("output should confirm job addressed")
 	}
 }
@@ -304,24 +304,24 @@ func TestFixCmdFlagValidation(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "--branch without --unaddressed",
+			name:    "--branch without --open",
 			args:    []string{"--branch", "main"},
-			wantErr: "--branch requires --unaddressed",
+			wantErr: "--branch requires --open",
 		},
 		{
 			name:    "--all-branches with positional args",
 			args:    []string{"--all-branches", "123"},
-			wantErr: "--unaddressed cannot be used with positional job IDs",
+			wantErr: "--open cannot be used with positional job IDs",
 		},
 		{
-			name:    "--unaddressed with positional args",
+			name:    "--open with positional args",
 			args:    []string{"--unaddressed", "123"},
-			wantErr: "--unaddressed cannot be used with positional job IDs",
+			wantErr: "--open cannot be used with positional job IDs",
 		},
 		{
-			name:    "--newest-first without --unaddressed",
+			name:    "--newest-first without --open",
 			args:    []string{"--newest-first", "123"},
-			wantErr: "--newest-first requires --unaddressed",
+			wantErr: "--newest-first requires --open",
 		},
 		{
 			name:    "--all-branches with --branch (no explicit --unaddressed)",
@@ -329,9 +329,9 @@ func TestFixCmdFlagValidation(t *testing.T) {
 			wantErr: "--all-branches and --branch are mutually exclusive",
 		},
 		{
-			name:    "--batch with --unaddressed",
+			name:    "--batch with --open",
 			args:    []string{"--batch", "--unaddressed"},
-			wantErr: "--batch and --unaddressed are mutually exclusive",
+			wantErr: "--batch and --open are mutually exclusive",
 		},
 		{
 			name:    "--batch with explicit IDs and --branch",
@@ -427,7 +427,7 @@ func TestFixAllBranchesImpliesUnaddressed(t *testing.T) {
 func TestRunFixUnaddressed(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
-	t.Run("no unaddressed jobs", func(t *testing.T) {
+	t.Run("no open jobs", func(t *testing.T) {
 		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
@@ -450,12 +450,12 @@ func TestRunFixUnaddressed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(out, "No unaddressed jobs found") {
-			t.Errorf("expected 'No unaddressed jobs found' message, got %q", out)
+		if !strings.Contains(out, "No open jobs found") {
+			t.Errorf("expected 'No open jobs found' message, got %q", out)
 		}
 	})
 
-	t.Run("finds and processes unaddressed jobs", func(t *testing.T) {
+	t.Run("finds and processes open jobs", func(t *testing.T) {
 		var reviewCalls, addressCalls atomic.Int32
 		var unaddressedCalls atomic.Int32
 
@@ -505,7 +505,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(out, "Found 2 unaddressed job(s)") {
+		if !strings.Contains(out, "Found 2 open job(s)") {
 			t.Errorf("expected count message, got %q", out)
 		}
 		if rc := reviewCalls.Load(); rc != 2 {
@@ -704,10 +704,10 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out, "Found 1 unaddressed job(s)") {
+	if !strings.Contains(out, "Found 1 open job(s)") {
 		t.Errorf("expected first batch message, got %q", out)
 	}
-	if !strings.Contains(out, "Found 1 new unaddressed job(s)") {
+	if !strings.Contains(out, "Found 1 new open job(s)") {
 		t.Errorf("expected second batch message, got %q", out)
 	}
 	if int(queryCount.Load()) != 3 {
@@ -1036,7 +1036,7 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 func TestRunFixList(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
-	t.Run("lists unaddressed jobs with details", func(t *testing.T) {
+	t.Run("lists open jobs with details", func(t *testing.T) {
 		finishedAt := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 		verdict := "FAIL"
 
@@ -1064,7 +1064,7 @@ func TestRunFixList(t *testing.T) {
 		}
 
 		// Check header
-		if !strings.Contains(out, "Found 1 unaddressed fix(es):") {
+		if !strings.Contains(out, "Found 1 open job(s):") {
 			t.Errorf("expected header message, got:\n%s", out)
 		}
 
@@ -1098,12 +1098,12 @@ func TestRunFixList(t *testing.T) {
 		if !strings.Contains(out, "roborev fix <job_id>") {
 			t.Errorf("expected usage hint, got:\n%s", out)
 		}
-		if !strings.Contains(out, "roborev fix --unaddressed") {
-			t.Errorf("expected unaddressed hint, got:\n%s", out)
+		if !strings.Contains(out, "roborev fix --open") {
+			t.Errorf("expected open hint, got:\n%s", out)
 		}
 	})
 
-	t.Run("no unaddressed jobs", func(t *testing.T) {
+	t.Run("no open jobs", func(t *testing.T) {
 		_ = newMockDaemonBuilder(t).
 			WithJobs([]storage.ReviewJob{}).
 			Build()
@@ -1115,7 +1115,7 @@ func TestRunFixList(t *testing.T) {
 			t.Fatalf("runFixList: %v", err)
 		}
 
-		if !strings.Contains(out, "No unaddressed jobs found") {
+		if !strings.Contains(out, "No open jobs found") {
 			t.Errorf("expected no jobs message, got:\n%s", out)
 		}
 	})

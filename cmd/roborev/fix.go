@@ -29,7 +29,8 @@ func fixCmd() *cobra.Command {
 		model       string
 		reasoning   string
 		quiet       bool
-		unaddressed bool
+		open        bool
+		unaddressed bool // deprecated alias for open
 		allBranches bool
 		newestFirst bool
 		branch      string
@@ -48,42 +49,46 @@ loop that re-reviews fixes and retries until reviews pass.
 
 The agent runs synchronously in your terminal, streaming output as it
 works. The review output is printed first so you can see what needs
-fixing. When complete, the job is marked as addressed.
+fixing. When complete, the job is closed.
 
-Use --unaddressed to automatically discover and fix all unaddressed
-completed jobs for the current repo.
+Use --open to automatically discover and fix all open completed jobs
+for the current repo.
 
 Examples:
   roborev fix 123                        # Fix a single job
   roborev fix 123 124 125                # Fix multiple jobs sequentially
   roborev fix --agent claude-code 123    # Use a specific agent
-  roborev fix --unaddressed              # Fix all unaddressed on current branch
-  roborev fix --unaddressed --branch main
-  roborev fix --all-branches              # Fix all unaddressed across all branches
+  roborev fix --open                     # Fix all open jobs on current branch
+  roborev fix --open --branch main
+  roborev fix --all-branches             # Fix all open jobs across all branches
   roborev fix --batch 123 124 125        # Batch multiple jobs into one prompt
-  roborev fix --batch                    # Batch all unaddressed on current branch
-  roborev fix --list                     # List unaddressed jobs without fixing
-  roborev fix --unaddressed --list       # Same as above
+  roborev fix --batch                    # Batch all open jobs on current branch
+  roborev fix --list                     # List open jobs without fixing
+  roborev fix --open --list              # Same as above
 `,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if allBranches && !unaddressed && !batch && !list {
-				unaddressed = true
+			// Support deprecated --unaddressed as alias for --open
+			if unaddressed {
+				open = true
 			}
-			if branch != "" && !unaddressed && !batch && !list {
-				return fmt.Errorf("--branch requires --unaddressed, --batch, or --list")
+			if allBranches && !open && !batch && !list {
+				open = true
+			}
+			if branch != "" && !open && !batch && !list {
+				return fmt.Errorf("--branch requires --open, --batch, or --list")
 			}
 			if allBranches && branch != "" {
 				return fmt.Errorf("--all-branches and --branch are mutually exclusive")
 			}
-			if newestFirst && !unaddressed && !batch && !list {
-				return fmt.Errorf("--newest-first requires --unaddressed, --batch, or --list")
+			if newestFirst && !open && !batch && !list {
+				return fmt.Errorf("--newest-first requires --open, --batch, or --list")
 			}
-			if unaddressed && len(args) > 0 {
-				return fmt.Errorf("--unaddressed cannot be used with positional job IDs")
+			if open && len(args) > 0 {
+				return fmt.Errorf("--open cannot be used with positional job IDs")
 			}
-			if batch && unaddressed {
-				return fmt.Errorf("--batch and --unaddressed are mutually exclusive (--batch without args already discovers unaddressed jobs)")
+			if batch && open {
+				return fmt.Errorf("--batch and --open are mutually exclusive (--batch without args already discovers open jobs)")
 			}
 			if list && len(args) > 0 {
 				return fmt.Errorf("--list cannot be used with positional job IDs")
@@ -146,7 +151,7 @@ Examples:
 				return runFixBatch(cmd, jobIDs, "", false, opts)
 			}
 
-			if unaddressed || len(args) == 0 {
+			if open || len(args) == 0 {
 				// Default to current branch unless --branch or --all-branches is set
 				effectiveBranch := branch
 				if !allBranches && effectiveBranch == "" {
@@ -181,12 +186,14 @@ Examples:
 	cmd.Flags().StringVar(&model, "model", "", "model for agent")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, or thorough")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress progress output")
-	cmd.Flags().BoolVar(&unaddressed, "unaddressed", false, "fix all unaddressed completed jobs for the current repo")
-	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch; requires --unaddressed)")
-	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include unaddressed jobs from all branches (implies --unaddressed)")
-	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first (requires --unaddressed)")
+	cmd.Flags().BoolVar(&open, "open", false, "fix all open completed jobs for the current repo")
+	cmd.Flags().BoolVar(&unaddressed, "unaddressed", false, "deprecated: use --open")
+	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch; requires --open)")
+	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include open jobs from all branches (implies --open)")
+	cmd.Flags().BoolVar(&newestFirst, "newest-first", false, "process jobs newest first instead of oldest first (requires --open)")
 	cmd.Flags().BoolVar(&batch, "batch", false, "concatenate reviews into a single prompt for the agent")
-	cmd.Flags().BoolVar(&list, "list", false, "list unaddressed jobs without fixing (implies --unaddressed)")
+	cmd.Flags().BoolVar(&list, "list", false, "list open jobs without fixing (implies --open)")
+	_ = cmd.Flags().MarkHidden("unaddressed")
 	registerAgentCompletion(cmd)
 	registerReasoningCompletion(cmd)
 
@@ -414,7 +421,7 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 
 		if len(newIDs) == 0 {
 			if len(seen) == 0 && !opts.quiet {
-				cmd.Println("No unaddressed jobs found.")
+				cmd.Println("No open jobs found.")
 			}
 			return nil
 		}
@@ -428,9 +435,9 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 
 		if !opts.quiet {
 			if len(seen) > 0 {
-				cmd.Printf("\nFound %d new unaddressed job(s): %v\n", len(newIDs), newIDs)
+				cmd.Printf("\nFound %d new open job(s): %v\n", len(newIDs), newIDs)
 			} else {
-				cmd.Printf("Found %d unaddressed job(s): %v\n", len(newIDs), newIDs)
+				cmd.Printf("Found %d open job(s): %v\n", len(newIDs), newIDs)
 			}
 		}
 
@@ -516,7 +523,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	}
 
 	if len(jobIDs) == 0 {
-		cmd.Println("No unaddressed jobs found.")
+		cmd.Println("No open jobs found.")
 		return nil
 	}
 
@@ -525,7 +532,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		ctx = context.Background()
 	}
 
-	cmd.Printf("Found %d unaddressed fix(es):\n\n", len(jobIDs))
+	cmd.Printf("Found %d open job(s):\n\n", len(jobIDs))
 
 	for _, id := range jobIDs {
 		job, err := fetchJob(ctx, serverAddr, id)
@@ -566,7 +573,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	}
 
 	cmd.Printf("To apply a fix: roborev fix <job_id>\n")
-	cmd.Printf("To apply all:   roborev fix --unaddressed\n")
+	cmd.Printf("To apply all:   roborev fix --open\n")
 
 	return nil
 }
@@ -649,7 +656,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)
 		}
 		if err := markJobAddressed(serverAddr, jobID); err != nil && !opts.quiet {
-			cmd.Printf("Warning: could not mark job %d as addressed: %v\n", jobID, err)
+			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
 		}
 		return nil
 	}
@@ -733,10 +740,10 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 
 	if err := markJobAddressed(serverAddr, jobID); err != nil {
 		if !opts.quiet {
-			cmd.Printf("Warning: could not mark job as addressed: %v\n", err)
+			cmd.Printf("Warning: could not close job: %v\n", err)
 		}
 	} else if !opts.quiet {
-		cmd.Printf("Job %d marked as addressed\n", jobID)
+		cmd.Printf("Job %d closed\n", jobID)
 	}
 
 	return nil
@@ -785,7 +792,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 
 	if len(jobIDs) == 0 {
 		if !opts.quiet {
-			cmd.Println("No unaddressed jobs found.")
+			cmd.Println("No open jobs found.")
 		}
 		return nil
 	}
@@ -823,7 +830,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 				cmd.Printf("Skipping job %d (review passed)\n", id)
 			}
 			if err := markJobAddressed(serverAddr, id); err != nil && !opts.quiet {
-				cmd.Printf("Warning: could not mark job %d as addressed: %v\n", id, err)
+				cmd.Printf("Warning: could not close job %d: %v\n", id, err)
 			}
 			continue
 		}
@@ -924,10 +931,10 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			}
 			if markErr := markJobAddressed(serverAddr, e.jobID); markErr != nil {
 				if !opts.quiet {
-					cmd.Printf("Warning: could not mark job %d as addressed: %v\n", e.jobID, markErr)
+					cmd.Printf("Warning: could not close job %d: %v\n", e.jobID, markErr)
 				}
 			} else if !opts.quiet {
-				cmd.Printf("Job %d marked as addressed\n", e.jobID)
+				cmd.Printf("Job %d closed\n", e.jobID)
 			}
 		}
 	}

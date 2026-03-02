@@ -124,7 +124,7 @@ func helpLines() []string {
 		{
 			group: "Actions",
 			keys: []struct{ key, desc string }{
-				{"a", "Toggle addressed"},
+				{"d", "Toggle closed"},
 				{"c", "Add comment"},
 				{"y", "Copy review to clipboard"},
 				{"x", "Cancel running/queued job"},
@@ -139,7 +139,7 @@ func helpLines() []string {
 			group: "Filtering",
 			keys: []struct{ key, desc string }{
 				{"f", "Filter by repository/branch"},
-				{"h", "Toggle hide addressed/failed"},
+				{"h", "Toggle hide closed/failed"},
 				{"esc", "Clear filters (one at a time)"},
 			},
 		},
@@ -150,7 +150,7 @@ func helpLines() []string {
 				{"←/→", "Previous / next review"},
 				{"PgUp/PgDn", "Page through content"},
 				{"p", "Switch to prompt view"},
-				{"a", "Toggle addressed"},
+				{"d", "Toggle closed"},
 				{"c", "Add comment"},
 				{"y", "Copy review to clipboard"},
 				{"m", "View commit message"},

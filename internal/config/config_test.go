@@ -1630,11 +1630,11 @@ func TestStripURLCredentials(t *testing.T) {
 	}
 }
 
-func TestHideAddressedDefaultPersistence(t *testing.T) {
+func TestHideClosedDefaultPersistence(t *testing.T) {
 	testenv.SetDataDir(t)
 
-	// Test saving preference as true
-	cfg := &Config{HideAddressedByDefault: true}
+	// Test saving hide_closed_by_default as true
+	cfg := &Config{HideClosedByDefault: true}
 	err := SaveGlobal(cfg)
 	if err != nil {
 		t.Fatalf("SaveGlobal failed: %v", err)
@@ -1645,12 +1645,12 @@ func TestHideAddressedDefaultPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal failed: %v", err)
 	}
-	if !loaded.HideAddressedByDefault {
-		t.Error("Expected HideAddressedByDefault to be true")
+	if !loaded.HideClosedByDefault {
+		t.Error("Expected HideClosedByDefault to be true")
 	}
 
 	// Toggle to false and verify
-	loaded.HideAddressedByDefault = false
+	loaded.HideClosedByDefault = false
 	err = SaveGlobal(loaded)
 	if err != nil {
 		t.Fatalf("SaveGlobal failed: %v", err)
@@ -1660,8 +1660,33 @@ func TestHideAddressedDefaultPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal failed: %v", err)
 	}
-	if reloaded.HideAddressedByDefault {
-		t.Error("Expected HideAddressedByDefault to be false")
+	if reloaded.HideClosedByDefault {
+		t.Error("Expected HideClosedByDefault to be false")
+	}
+}
+
+func TestHideAddressedDeprecatedMigration(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	// Write a config using the deprecated hide_addressed_by_default key
+	cfgPath := GlobalConfigPath()
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Load should migrate to HideClosedByDefault
+	loaded, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+	if !loaded.HideClosedByDefault {
+		t.Error("Expected deprecated hide_addressed_by_default to migrate to HideClosedByDefault")
+	}
+	if loaded.HideAddressedByDefault {
+		t.Error("Expected HideAddressedByDefault to be cleared after migration")
 	}
 }
 

@@ -427,7 +427,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 				c.markAddressedErr = fmt.Errorf("daemon connection failed")
 			},
 			commits:  []string{"commit1"},
-			wantErrs: []string{"marking review (job 100) as addressed"},
+			wantErrs: []string{"closing review (job 100)"},
 		},
 		{
 			name: "get review by sha error",

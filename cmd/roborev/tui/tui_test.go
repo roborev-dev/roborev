@@ -888,7 +888,7 @@ func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 	}
 
 	// Verify all status strings appear in output
-	for _, status := range []string{"running", "queued", "done", "failed", "canceled"} {
+	for _, status := range []string{"Running", "Queued", "Ready", "Error", "Canceled"} {
 		if !strings.Contains(output, status) {
 			t.Errorf("Expected output to contain status '%s'", status)
 		}

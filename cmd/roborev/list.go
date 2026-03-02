@@ -24,6 +24,8 @@ func listCmd() *cobra.Command {
 		limit      int
 		status     string
 		jsonOutput bool
+		closed     bool
+		open       bool
 	)
 
 	cmd := &cobra.Command{
@@ -38,6 +40,8 @@ Examples:
   roborev list --json                 # Output as JSON
   roborev list --branch main          # Jobs for main branch
   roborev list --status done          # Only completed jobs
+  roborev list --open                 # Only open (unresolved) reviews
+  roborev list --closed               # Only closed reviews
   roborev list --limit 5              # Show at most 5 jobs`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := ensureDaemon(); err != nil {
@@ -82,6 +86,11 @@ Examples:
 			}
 			if status != "" {
 				params.Set("status", status)
+			}
+			if closed {
+				params.Set("addressed", "true")
+			} else if open {
+				params.Set("addressed", "false")
 			}
 			params.Set("limit", strconv.Itoa(limit))
 
@@ -145,5 +154,8 @@ Examples:
 	cmd.Flags().IntVar(&limit, "limit", 50, "max number of jobs to return")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (queued, running, done, failed)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().BoolVar(&closed, "closed", false, "show only closed reviews")
+	cmd.Flags().BoolVar(&open, "open", false, "show only open reviews")
+	cmd.MarkFlagsMutuallyExclusive("closed", "open")
 	return cmd
 }

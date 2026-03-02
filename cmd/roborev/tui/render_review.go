@@ -75,7 +75,7 @@ func (m model) renderReviewView() string {
 				if hasVerdict {
 					b.WriteString(" ")
 				}
-				b.WriteString(addressedStyle.Render("[ADDRESSED]"))
+				b.WriteString(addressedStyle.Render("[CLOSED]"))
 			}
 			b.WriteString("\x1b[K") // Clear to end of line
 		}
@@ -122,7 +122,7 @@ func (m model) renderReviewView() string {
 
 	// Help table rows
 	reviewHelpRows := [][]helpItem{
-		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "handled"}, {"y", "copy"}, {"F", "fix"}},
+		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"d", "closed"}, {"y", "copy"}, {"F", "fix"}},
 		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
 	}
 	helpLines := len(reflowHelpRows(reviewHelpRows, m.width))
