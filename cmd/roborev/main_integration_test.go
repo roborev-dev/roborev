@@ -24,7 +24,7 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	defer md.Close()
 
 	md.State.reviews[headSHA] = &storage.Review{
-		ID: 1, JobID: 7, Output: "**Bug found**: fail", Addressed: false,
+		ID: 1, JobID: 7, Output: "**Bug found**: fail", Closed: false,
 	}
 
 	// Use 2 iterations so we can verify retry behavior
@@ -149,10 +149,10 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 
 	md.State.nextJobID = 100
 	md.State.reviews[oldestCommit] = &storage.Review{
-		ID: 1, JobID: 1, Output: "**Bug**: old failure", Addressed: false,
+		ID: 1, JobID: 1, Output: "**Bug**: old failure", Closed: false,
 	}
 	md.State.reviews[newestCommit] = &storage.Review{
-		ID: 2, JobID: 2, Output: "**Bug**: new failure", Addressed: false,
+		ID: 2, JobID: 2, Output: "**Bug**: new failure", Closed: false,
 	}
 
 	var changeCount int

@@ -108,7 +108,7 @@ Branch mode (--branch):
 
 Fix mode (--fix):
   Runs analysis, then invokes an agentic agent to apply the suggested changes.
-  The analysis is saved to the database and marked as addressed when complete.
+  The analysis is saved to the database and marked as closed when complete.
 
   roborev analyze refactor --fix ./...
   roborev analyze duplication --fix --fix-agent claude-code *.go
@@ -360,7 +360,7 @@ func runSingleAnalysis(cmd *cobra.Command, serverAddr string, repoRoot string, a
 		cmd.Printf("Enqueued analysis job %d (agent: %s)\n", job.ID, job.Agent)
 	}
 
-	// If --fix, we need to wait for analysis, run fixer, then mark addressed
+	// If --fix, we need to wait for analysis, run fixer, then mark closed
 	if opts.fix {
 		return runAnalyzeAndFix(cmd, serverAddr, repoRoot, job.ID, analysisType, opts)
 	}
@@ -536,7 +536,7 @@ func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label
 	return &job, nil
 }
 
-// runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks addressed
+// runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed
 func runAnalyzeAndFix(cmd *cobra.Command, serverAddr, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) error {
 	ctx := cmd.Context()
 	if ctx == nil {

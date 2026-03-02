@@ -1,5 +1,5 @@
 // ABOUTME: Compact job metadata handling for tracking source job IDs.
-// ABOUTME: Used by worker to mark source jobs as addressed when compact jobs complete.
+// ABOUTME: Used by worker to mark source jobs as closed when compact jobs complete.
 
 package daemon
 

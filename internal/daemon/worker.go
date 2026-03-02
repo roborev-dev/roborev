@@ -525,7 +525,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// For compact jobs, verify the job actually completed (not
 	// silently skipped due to cancel race) before marking source
-	// jobs as addressed. CompleteJob no-ops when status != running.
+	// jobs as closed. CompleteJob no-ops when status != running.
 	if job.JobType == "compact" {
 		j, err := wp.db.GetJobByID(job.ID)
 		if err != nil {

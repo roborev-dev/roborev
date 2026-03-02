@@ -335,9 +335,9 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		}
 	})
 
-	t.Run("returns nil when review is already addressed", func(t *testing.T) {
+	t.Run("returns nil when review is already closed", func(t *testing.T) {
 		client := newMockDaemonClient()
-		// Failed but already addressed
+		// Failed but already closed
 		client.reviews["commit1sha"] = &storage.Review{
 			ID: 1, JobID: 1, Output: "**Bug**: error", Closed: true,
 		}
@@ -349,7 +349,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if review != nil {
-			t.Error("expected nil - addressed reviews should be skipped")
+			t.Error("expected nil - closed reviews should be skipped")
 		}
 	})
 }

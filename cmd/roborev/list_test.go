@@ -191,22 +191,22 @@ func TestListCommand(t *testing.T) {
 			},
 		},
 		{
-			name:      "--open sends addressed=false query param",
+			name:      "--open sends closed=false query param",
 			args:      []string{"--open"},
 			handler:   jobsHandler([]storage.ReviewJob{}, false),
-			wantQuery: []string{"addressed=false"},
+			wantQuery: []string{"closed=false"},
 		},
 		{
-			name:      "--closed sends addressed=true query param",
+			name:      "--closed sends closed=true query param",
 			args:      []string{"--closed"},
 			handler:   jobsHandler([]storage.ReviewJob{}, false),
-			wantQuery: []string{"addressed=true"},
+			wantQuery: []string{"closed=true"},
 		},
 		{
-			name:      "--unaddressed alias sends addressed=false query param",
+			name:      "--unaddressed alias sends closed=false query param",
 			args:      []string{"--unaddressed"},
 			handler:   jobsHandler([]storage.ReviewJob{}, false),
-			wantQuery: []string{"addressed=false"},
+			wantQuery: []string{"closed=false"},
 		},
 		{
 			name:      "--closed and --open conflict",

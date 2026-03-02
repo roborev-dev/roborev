@@ -198,7 +198,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 		t.Error("should have fetched the review")
 	}
 	if atomic.LoadInt32(&state.AddressCount) == 0 {
-		t.Error("should have marked job as addressed")
+		t.Error("should have marked job as closed")
 	}
 
 	// Verify output contains analysis result
@@ -206,7 +206,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	if !strings.Contains(outputStr, "CODE SMELLS") {
 		t.Error("output should contain analysis result")
 	}
-	if !strings.Contains(outputStr, "marked as addressed") {
-		t.Error("output should confirm job was addressed")
+	if !strings.Contains(outputStr, "marked as closed") {
+		t.Error("output should confirm job was closed")
 	}
 }

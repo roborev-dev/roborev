@@ -726,7 +726,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		}
 	}
 
-	// Add response and mark as addressed
+	// Add response and mark as closed
 	responseText := "Fix applied via `roborev fix` command"
 	if result.CommitCreated {
 		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", git.ShortSHA(result.NewCommitSHA))
@@ -920,7 +920,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			}
 		}
 
-		// Mark all jobs in this batch as addressed
+		// Mark all jobs in this batch as closed
 		responseText := "Fix applied via `roborev fix --batch`"
 		if result.CommitCreated {
 			responseText = fmt.Sprintf("Fix applied via `roborev fix --batch` (commit: %s)", git.ShortSHA(result.NewCommitSHA))

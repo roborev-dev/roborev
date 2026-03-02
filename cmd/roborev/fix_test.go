@@ -267,7 +267,7 @@ func TestFixSingleJob(t *testing.T) {
 		t.Error("output should show analysis findings")
 	}
 	if !strings.Contains(outputStr, "closed") {
-		t.Error("output should confirm job addressed")
+		t.Error("output should confirm job closed")
 	}
 }
 
