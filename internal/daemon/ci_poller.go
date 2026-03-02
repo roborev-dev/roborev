@@ -255,7 +255,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 			// The PR is missing from gh pr list, which may be
 			// truncated at 100 results. Verify it's actually
 			// closed before canceling work.
-			if p.callIsPROpen(ghRepo, ref.PRNumber) {
+			if p.callIsPROpen(ctx, ghRepo, ref.PRNumber) {
 				continue
 			}
 			canceledIDs, cancelErr := p.db.CancelClosedPRBatches(
@@ -442,18 +442,10 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return err
 	}
 
-	if len(matrix) == 0 {
-		log.Printf(
-			"CI poller: empty review matrix for %s#%d, skipping",
-			ghRepo, pr.Number,
-		)
-		return nil
-	}
-
-	totalJobs := len(matrix)
-
 	// Cancel any in-progress batches for this PR at an older HEAD SHA.
 	// When a PR gets a new push, work on the old HEAD is wasted.
+	// This runs before the empty-matrix guard so superseded work is
+	// always cleaned up, even when config changes remove all reviews.
 	if canceledIDs, err := p.db.CancelSupersededBatches(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
 		log.Printf("CI poller: error canceling superseded batches for %s#%d: %v", ghRepo, pr.Number, err)
 	} else if len(canceledIDs) > 0 {
@@ -467,6 +459,16 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			}
 		}
 	}
+
+	if len(matrix) == 0 {
+		log.Printf(
+			"CI poller: empty review matrix for %s#%d, skipping",
+			ghRepo, pr.Number,
+		)
+		return nil
+	}
+
+	totalJobs := len(matrix)
 
 	// Create batch — only the creator proceeds to enqueue (prevents race)
 	batch, created, err := p.db.CreateCIBatch(ghRepo, pr.Number, pr.HeadRefOid, totalJobs)
@@ -1184,7 +1186,7 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 
 	// Check if the target PR is still open. If closed/merged, finalize
 	// the batch (mark done) instead of posting and retrying forever.
-	if !p.callIsPROpen(batch.GithubRepo, batch.PRNumber) {
+	if !p.callIsPROpen(context.Background(), batch.GithubRepo, batch.PRNumber) {
 		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning batch %d",
 			batch.GithubRepo, batch.PRNumber, batch.ID)
 		if err := p.db.FinalizeBatch(batch.ID); err != nil {
@@ -1505,23 +1507,21 @@ func (p *CIPoller) callSetCommitStatus(ghRepo, sha, state, description string) e
 // callIsPROpen checks whether a PR is still open. Uses the test seam
 // if set, otherwise calls isPROpen.
 func (p *CIPoller) callIsPROpen(
-	ghRepo string, prNumber int,
+	ctx context.Context, ghRepo string, prNumber int,
 ) bool {
 	if p.isPROpenFn != nil {
 		return p.isPROpenFn(ghRepo, prNumber)
 	}
-	return p.isPROpen(ghRepo, prNumber)
+	return p.isPROpen(ctx, ghRepo, prNumber)
 }
 
 // isPROpen checks whether a GitHub PR is still open by running
 // `gh pr view`. Returns true on any error (fail-open) to avoid
 // dropping legitimate batches on transient failures.
 func (p *CIPoller) isPROpen(
-	ghRepo string, prNumber int,
+	ctx context.Context, ghRepo string, prNumber int,
 ) bool {
-	ctx, cancel := context.WithTimeout(
-		context.Background(), 30*time.Second,
-	)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "gh", "pr", "view",

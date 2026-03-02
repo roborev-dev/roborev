@@ -2889,6 +2889,91 @@ func TestCIPollerProcessPR_EmptyMatrixSkipsBatch(t *testing.T) {
 	}
 }
 
+func TestCIPollerProcessPR_EmptyMatrixStillCancelsSuperseded(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+
+	// Start with a real matrix so the first push creates a batch
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// First push creates a batch with a real job
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      95,
+			HeadRefOid:  "old-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("first processPR: %v", err)
+	}
+
+	hasBatch, err := h.DB.HasCIBatch("acme/api", 95, "old-sha")
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !hasBatch {
+		t.Fatal("expected batch for first push")
+	}
+
+	// Now switch to empty matrix (config change removes all reviews)
+	h.Cfg.CI.Reviews = map[string][]string{"codex": {}}
+	h.Cfg.CI.Agents = nil
+	h.Cfg.CI.ReviewTypes = nil
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha-2", nil
+	}
+
+	var canceledJobs []int64
+	h.Poller.jobCancelFn = func(jobID int64) {
+		canceledJobs = append(canceledJobs, jobID)
+	}
+
+	// Second push with empty matrix — should cancel superseded
+	// batch but not create a new one
+	err = h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      95,
+			HeadRefOid:  "new-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("second processPR: %v", err)
+	}
+
+	// Old batch should have been canceled
+	if len(canceledJobs) != 1 {
+		t.Errorf(
+			"expected 1 superseded job canceled, got %d",
+			len(canceledJobs),
+		)
+	}
+
+	// No new batch should have been created
+	hasBatch, err = h.DB.HasCIBatch("acme/api", 95, "new-sha")
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if hasBatch {
+		t.Fatal(
+			"expected no batch for empty matrix after supersede",
+		)
+	}
+}
+
 func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}
