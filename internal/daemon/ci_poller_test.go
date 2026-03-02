@@ -2710,6 +2710,11 @@ func TestCIPollerPollRepo_CancelsClosedPRBatches(t *testing.T) {
 		}, nil
 	}
 
+	// Confirm PR #5 is actually closed before canceling
+	h.Poller.isPROpenFn = func(_ string, pr int) bool {
+		return pr != 5
+	}
+
 	var canceledJobs []int64
 	h.Poller.jobCancelFn = func(jobID int64) {
 		canceledJobs = append(canceledJobs, jobID)
@@ -2794,4 +2799,154 @@ func TestCIPollerPostBatchResults_PostsOpenPR(t *testing.T) {
 
 	// Batch should be finalized normally
 	h.AssertBatchState(t, batch.ID, 1, false)
+}
+
+func TestCIPollerPollRepo_SkipsCancelWhenPRStillOpen(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+
+	// Seed a batch for PR #99 (not returned by list, but still open)
+	batch99, _ := h.seedBatchJob(
+		t, "acme/api", 99, "sha99", "a..b", "codex", "security",
+	)
+
+	// gh pr list returns empty (simulates >100 PR truncation)
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
+		return nil, nil
+	}
+
+	// isPROpen confirms PR #99 is still open
+	h.Poller.isPROpenFn = func(_ string, pr int) bool {
+		return pr == 99
+	}
+
+	var canceledJobs []int64
+	h.Poller.jobCancelFn = func(jobID int64) {
+		canceledJobs = append(canceledJobs, jobID)
+	}
+
+	if err := h.Poller.pollRepo(
+		context.Background(), "acme/api", h.Cfg,
+	); err != nil {
+		t.Fatalf("pollRepo: %v", err)
+	}
+
+	// Batch should NOT have been canceled
+	has, err := h.DB.HasCIBatch("acme/api", 99, "sha99")
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !has {
+		t.Error(
+			"batch for still-open PR #99 should not be canceled",
+		)
+	}
+	if len(canceledJobs) != 0 {
+		t.Errorf(
+			"expected 0 jobs canceled, got %d", len(canceledJobs),
+		)
+	}
+
+	_ = batch99
+}
+
+func TestCIPollerProcessPR_EmptyMatrixSkipsBatch(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	// Configure reviews map with all empty lists → empty matrix
+	h.Cfg.CI.Reviews = map[string][]string{
+		"codex": {},
+	}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      90,
+			HeadRefOid:  "head-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	// No batch should have been created
+	hasBatch, err := h.DB.HasCIBatch("acme/api", 90, "head-sha")
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if hasBatch {
+		t.Fatal("expected no batch for empty review matrix")
+	}
+}
+
+func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// Agent resolution always fails (simulates quota/unavailable)
+	h.Poller.agentResolverFn = func(string) (string, error) {
+		return "", errors.New("agent quota exceeded")
+	}
+
+	statuses := h.CaptureCommitStatuses()
+
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      91,
+			HeadRefOid:  "head-sha-91",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err == nil {
+		t.Fatal("expected error from processPR")
+	}
+
+	// No batch should remain (rolled back)
+	hasBatch, dbErr := h.DB.HasCIBatch(
+		"acme/api", 91, "head-sha-91",
+	)
+	if dbErr != nil {
+		t.Fatalf("HasCIBatch: %v", dbErr)
+	}
+	if hasBatch {
+		t.Fatal("expected batch to be rolled back")
+	}
+
+	// Error commit status should have been set
+	if len(*statuses) != 1 {
+		t.Fatalf(
+			"expected 1 status call, got %d", len(*statuses),
+		)
+	}
+	sc := (*statuses)[0]
+	if sc.State != "error" {
+		t.Errorf("state=%q, want error", sc.State)
+	}
+	if sc.SHA != "head-sha-91" {
+		t.Errorf("SHA=%q, want head-sha-91", sc.SHA)
+	}
+	if !strings.Contains(sc.Desc, "agent") {
+		t.Errorf(
+			"desc=%q, want substring 'agent'", sc.Desc,
+		)
+	}
 }

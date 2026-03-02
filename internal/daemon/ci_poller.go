@@ -252,6 +252,12 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 			if openPRs[ref.PRNumber] {
 				continue
 			}
+			// The PR is missing from gh pr list, which may be
+			// truncated at 100 results. Verify it's actually
+			// closed before canceling work.
+			if p.callIsPROpen(ghRepo, ref.PRNumber) {
+				continue
+			}
 			canceledIDs, cancelErr := p.db.CancelClosedPRBatches(
 				ghRepo, ref.PRNumber,
 			)
@@ -436,6 +442,14 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return err
 	}
 
+	if len(matrix) == 0 {
+		log.Printf(
+			"CI poller: empty review matrix for %s#%d, skipping",
+			ghRepo, pr.Number,
+		)
+		return nil
+	}
+
 	totalJobs := len(matrix)
 
 	// Cancel any in-progress batches for this PR at an older HEAD SHA.
@@ -514,9 +528,10 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 	// Enqueue jobs for each entry in the review matrix.
 	// If any enqueue fails, cancel already-created jobs and delete the batch
-	// so the next poll can retry cleanly.
+	// so the next poll can retry cleanly. Sets an error commit status so the
+	// PR author knows the review didn't start.
 	var createdJobIDs []int64
-	rollback := func() {
+	rollback := func(reason string) {
 		for _, jid := range createdJobIDs {
 			if err := p.db.CancelJob(jid); err != nil {
 				log.Printf("CI poller: failed to cancel orphan job %d: %v", jid, err)
@@ -524,6 +539,11 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		}
 		if err := p.db.DeleteCIBatch(batch.ID); err != nil {
 			log.Printf("CI poller: failed to clean up batch %d: %v", batch.ID, err)
+		}
+		if err := p.callSetCommitStatus(
+			ghRepo, pr.HeadRefOid, "error", reason,
+		); err != nil {
+			log.Printf("CI poller: failed to set error status: %v", err)
 		}
 	}
 
@@ -542,12 +562,12 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		if p.agentResolverFn != nil {
 			name, err := p.agentResolverFn(resolvedAgent)
 			if err != nil {
-				rollback()
+				rollback("No agent available — check agent config or quota")
 				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 			}
 			resolvedAgent = name
 		} else if resolved, err := agent.GetAvailableWithConfig(resolvedAgent, cfg); err != nil {
-			rollback()
+			rollback("No agent available — check agent config or quota")
 			return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 		} else {
 			resolvedAgent = resolved.Name()
@@ -565,13 +585,13 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 			ReviewType: rt,
 		})
 		if err != nil {
-			rollback()
+			rollback("Review enqueue failed")
 			return fmt.Errorf("enqueue job (type=%s, agent=%s): %w", rt, resolvedAgent, err)
 		}
 		createdJobIDs = append(createdJobIDs, job.ID)
 
 		if err := p.db.RecordBatchJob(batch.ID, job.ID); err != nil {
-			rollback()
+			rollback("Review enqueue failed")
 			return fmt.Errorf("record batch job: %w", err)
 		}
 
