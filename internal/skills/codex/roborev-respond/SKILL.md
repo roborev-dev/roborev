@@ -1,11 +1,11 @@
 ---
 name: roborev:respond
-description: Add a comment to a roborev code review and mark it as addressed
+description: Add a comment to a roborev code review and close it
 ---
 
 # roborev:respond
 
-Record a comment on a roborev code review and mark it as addressed.
+Record a comment on a roborev code review and close it.
 
 ## Usage
 
@@ -15,7 +15,7 @@ $roborev:respond <job_id> [message]
 
 ## IMPORTANT
 
-This skill requires you to **execute bash commands** to record the comment and mark the review addressed. The task is not complete until you run both commands and see confirmation output.
+This skill requires you to **execute bash commands** to record the comment and close the review. The task is not complete until you run both commands and see confirmation output.
 
 ## Instructions
 
@@ -23,9 +23,9 @@ When the user invokes `$roborev:respond <job_id> [message]`:
 
 ### 1. Validate input
 
-If no job_id is provided, inform the user that a job ID is required. Suggest `roborev status` or `roborev fix --unaddressed --list` to find job IDs.
+If no job_id is provided, inform the user that a job ID is required. Suggest `roborev status` or `roborev fix --open --list` to find job IDs.
 
-### 2. Record the comment and mark addressed
+### 2. Record the comment and close the review
 
 **If a message is provided**, immediately execute:
 ```bash
@@ -42,9 +42,9 @@ Both commands will output confirmation. If either fails, report the error to the
 - The daemon is not running
 - The job ID does not exist
 - The repo is not initialized (suggest `roborev init`)
-- The review is already addressed (not an error, but worth noting to the user)
+- The review is already closed (not an error, but worth noting to the user)
 
-The comment is recorded in roborev's database and the review is marked as addressed. View results with `roborev show`.
+The comment is recorded in roborev's database and the review is closed. View results with `roborev show`.
 
 ## Examples
 
@@ -56,7 +56,7 @@ Agent action:
 ```bash
 roborev comment --job 1019 "Fixed all issues" && roborev address 1019
 ```
-Then confirm: "Comment recorded and review #1019 marked as addressed."
+Then confirm: "Comment recorded and review #1019 closed."
 
 ---
 
@@ -72,8 +72,8 @@ Agent action:
 ```bash
 roborev comment --job 1019 "The null check was a false positive" && roborev address 1019
 ```
-Then confirm: "Comment recorded and review #1019 marked as addressed."
+Then confirm: "Comment recorded and review #1019 closed."
 
 ## See also
 
-- `$roborev:address` — fix a review's findings in code, then comment and mark addressed
+- `$roborev:address` — fix a review's findings in code, then comment and close it

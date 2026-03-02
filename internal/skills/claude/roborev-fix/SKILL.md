@@ -1,11 +1,11 @@
 ---
 name: roborev:fix
-description: Fix multiple review findings in one pass by discovering unaddressed reviews and addressing them all
+description: Fix multiple review findings in one pass by discovering open reviews and fixing them all
 ---
 
 # roborev:fix
 
-Fix all unaddressed review findings in one pass.
+Fix all open review findings in one pass.
 
 ## Usage
 
@@ -15,7 +15,7 @@ Fix all unaddressed review findings in one pass.
 
 ## IMPORTANT
 
-This skill requires you to **execute bash commands** to discover reviews, fetch them, fix code, record comments, and mark reviews as addressed. The task is not complete until you run all commands and see confirmation output.
+This skill requires you to **execute bash commands** to discover reviews, fetch them, fix code, record comments, and close reviews. The task is not complete until you run all commands and see confirmation output.
 
 ## Instructions
 
@@ -23,17 +23,17 @@ When the user invokes `/roborev:fix [job_id...]`:
 
 ### 1. Discover reviews
 
-If job IDs are provided, use those. Otherwise, discover unaddressed reviews:
+If job IDs are provided, use those. Otherwise, discover open reviews:
 
 ```bash
-roborev fix --unaddressed --list
+roborev fix --open --list
 ```
 
-This prints one line per unaddressed job with its ID, commit SHA, agent, and summary. Collect the job IDs from the output.
+This prints one line per open job with its ID, commit SHA, agent, and summary. Collect the job IDs from the output.
 
 If the command fails, report the error to the user. Common causes: the daemon is not running, or the repo is not initialized (suggest `roborev init`).
 
-If no unaddressed reviews are found, inform the user there is nothing to fix.
+If no open reviews are found, inform the user there is nothing to fix.
 
 ### 2. Fetch all reviews
 
@@ -50,7 +50,7 @@ The JSON output has this structure:
 - `output`: the review text containing findings
 - `job.verdict`: `"P"` for pass, `"F"` for fail (may be empty if the review errored)
 - `job.git_ref`: the reviewed git ref (SHA, range, or synthetic ref)
-- `addressed`: whether this review has already been addressed
+- `addressed`: whether this review has already been closed
 
 Skip any reviews where `job.verdict` is `"P"` (passing reviews have no findings to fix).
 Skip any reviews where `job.verdict` is empty or missing (the review may have errored and is not actionable).
@@ -79,9 +79,9 @@ go test ./...
 
 Or whatever test command the project uses. If tests fail, fix the regressions before proceeding.
 
-### 5. Record comments and mark addressed
+### 5. Record comments and close reviews
 
-For each job that was addressed, record a summary comment and mark it as addressed:
+For each job that was fixed, record a summary comment and close it:
 
 ```bash
 roborev comment --job <job_id> "<summary of changes>" && roborev address <job_id>
@@ -100,15 +100,15 @@ Ask the user if they want to commit all the changes together.
 User: `/roborev:fix`
 
 Agent:
-1. Runs `roborev fix --unaddressed --list` and finds 2 unaddressed reviews: job 1019 and job 1021
+1. Runs `roborev fix --open --list` and finds 2 open reviews: job 1019 and job 1021
 2. Fetches both reviews with `roborev show --job 1019 --json` and `roborev show --job 1021 --json`
 3. Runs `git show <git_ref>` for each to see the reviewed diffs
 4. Fixes all 3 findings across both reviews, grouped by file, prioritized by severity
 5. Runs `go test ./...` to verify
-6. Records comments and marks addressed:
+6. Records comments and closes reviews:
    - `roborev comment --job 1019 "Fixed null check and added error handling" && roborev address 1019`
    - `roborev comment --job 1021 "Fixed missing validation" && roborev address 1021`
-7. Asks: "I've addressed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"
+7. Asks: "I've fixed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"
 
 **Explicit job IDs:**
 
@@ -120,9 +120,9 @@ Agent:
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
 5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go" && roborev address 1019`
-6. Asks: "I've addressed 2 findings from 1 review (skipped job 1021 — already passing). Tests pass. Would you like me to commit?"
+6. Asks: "I've fixed 2 findings from 1 review (skipped job 1021 — already passing). Tests pass. Would you like me to commit?"
 
 ## See also
 
 - `/roborev:address` — address a single review's findings
-- `/roborev:respond` — comment on a review and mark addressed without fixing code
+- `/roborev:respond` — comment on a review and close it without fixing code

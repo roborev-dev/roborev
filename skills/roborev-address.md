@@ -10,7 +10,7 @@ Address findings from a roborev code review.
 
 ## Description
 
-Fetches a code review by job ID and addresses the findings. The job ID is shown in review notifications (e.g., "Review #1019").
+Fetches a code review by job ID and fixes the findings. The job ID is shown in review notifications (e.g., "Review #1019").
 
 ## Instructions
 
@@ -46,7 +46,7 @@ When the user invokes `/roborev:address <job_id>`:
 
 8. **Summarize what was done** and ask the user if they want to:
    - Commit the changes
-   - Respond to the review with a summary using `/roborev:respond <job_id> <message>`
+   - Close the review with a summary using `/roborev:respond <job_id> <message>`
 
 ## Example
 
@@ -58,4 +58,4 @@ Agent:
 3. Reads the files mentioned in the findings
 4. Addresses the high severity finding first, then the low ones
 5. Runs tests to verify the fixes
-6. Reports: "I've addressed the 3 findings: fixed the null check in foo.go:42 (high), added error handling in bar.go:15 (low), and updated the test (low). All tests pass. Would you like me to commit these changes?"
+6. Reports: "I've fixed the 3 findings: fixed the null check in foo.go:42 (high), added error handling in bar.go:15 (low), and updated the test (low). All tests pass. Would you like me to commit these changes?"

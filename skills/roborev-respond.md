@@ -10,8 +10,8 @@ Add a response to a roborev code review.
 
 ## Description
 
-Adds a response or note to a code review. Common use cases:
-- Documenting how findings were addressed
+Adds a response or note to a code review and closes it. Common use cases:
+- Documenting how findings were fixed
 - Explaining why a finding is a false positive
 - Noting that a suggestion won't be implemented (and why)
 

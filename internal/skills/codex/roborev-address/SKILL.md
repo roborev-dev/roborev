@@ -15,7 +15,7 @@ $roborev:address <job_id>
 
 ## IMPORTANT
 
-This skill requires you to **execute bash commands** to fetch the review, fix code, record comments, and mark the review as addressed. The task is not complete until you run all commands and see confirmation output.
+This skill requires you to **execute bash commands** to fetch the review, fix code, record comments, and close the review. The task is not complete until you run all commands and see confirmation output.
 
 ## Instructions
 
@@ -23,7 +23,7 @@ When the user invokes `$roborev:address <job_id>`:
 
 ### 1. Validate input
 
-If no job_id is provided, inform the user that a job ID is required. Suggest `roborev status` or `roborev fix --unaddressed --list` to find job IDs.
+If no job_id is provided, inform the user that a job ID is required. Suggest `roborev status` or `roborev fix --open --list` to find job IDs.
 
 ### 2. Fetch the review
 
@@ -39,13 +39,13 @@ The JSON output has this structure:
 - `output`: the review text containing findings
 - `job.verdict`: `"P"` for pass, `"F"` for fail (may be empty if the review errored)
 - `job.git_ref`: the reviewed git ref (SHA, range, or synthetic ref)
-- `addressed`: whether this review has already been addressed
+- `addressed`: whether this review has already been closed
 
 ### 3. Check the verdict
 
 - If `job.verdict` is `"P"`: Inform the user no action is needed (passing review has no findings to fix). Stop here.
 - If `job.verdict` is empty or missing: Inform the user the review is not actionable (it may have errored). Do not proceed.
-- If `addressed` is `true`: Inform the user this review was already addressed. Ask if they want to proceed anyway.
+- If `addressed` is `true`: Inform the user this review is already closed. Ask if they want to proceed anyway.
 - If `job.verdict` is `"F"`: Continue to address the findings.
 
 ### 4. Fix the findings
@@ -68,7 +68,7 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 
 ### 6. Complete the workflow
 
-After fixing, **record what was done and mark the review addressed** by executing:
+After fixing, **record what was done and close the review** by executing:
 ```bash
 roborev comment --job <job_id> "<summary of changes>" && roborev address <job_id>
 ```
@@ -83,13 +83,13 @@ User: `$roborev:address 1019`
 
 Agent:
 1. Executes `roborev show --job 1019 --json`
-2. Sees verdict is Fail with 2 findings, not yet addressed
+2. Sees verdict is Fail with 2 findings, not yet closed
 3. Runs `git show <git_ref>` to see the reviewed diff
 4. Reads files, fixes the issues, runs `go test ./...`
 5. Executes `roborev comment --job 1019 "Fixed null check in foo.go and added error handling in bar.go" && roborev address 1019`
-6. Asks: "I've addressed both findings and recorded a comment. Tests pass. Would you like me to commit these changes?"
+6. Asks: "I've fixed both findings and closed the review. Tests pass. Would you like me to commit these changes?"
 
 ## See also
 
-- `$roborev:respond` — comment on a review and mark addressed without fixing code
-- `$roborev:fix` — batch-fix all unaddressed reviews in one pass
+- `$roborev:respond` — comment on a review and close it without fixing code
+- `$roborev:fix` — batch-fix all open reviews in one pass

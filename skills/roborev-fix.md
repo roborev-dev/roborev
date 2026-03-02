@@ -1,6 +1,6 @@
 # /roborev:fix
 
-Fix all unaddressed review findings in one pass.
+Fix all open review findings in one pass.
 
 ## Usage
 
@@ -10,9 +10,9 @@ Fix all unaddressed review findings in one pass.
 
 ## Description
 
-Discovers unaddressed code reviews and fixes all their findings in a single pass. Unlike `/roborev:address` which handles one review at a time, this skill batches all outstanding findings together, groups them by file, and fixes them by severity priority.
+Discovers open code reviews and fixes all their findings in a single pass. Unlike `/roborev:address` which handles one review at a time, this skill batches all outstanding findings together, groups them by file, and fixes them by severity priority.
 
-If job IDs are provided, only those reviews are addressed. Otherwise, the skill checks recent commits (HEAD, HEAD~1) for failed reviews that have not been commented on.
+If job IDs are provided, only those reviews are fixed. Otherwise, the skill checks recent commits (HEAD, HEAD~1) for failed reviews that have not been closed.
 
 ## Instructions
 
@@ -20,7 +20,7 @@ When the user invokes `/roborev:fix [job_id...]`:
 
 1. **Discover reviews** to address:
    - If job IDs given, use those
-   - Otherwise, run `roborev show HEAD` and `roborev show HEAD~1` to find failed, unaddressed reviews
+   - Otherwise, run `roborev show HEAD` and `roborev show HEAD~1` to find failed, open reviews
    - If no failed reviews found, inform the user
 
 2. **Fetch all reviews** using `roborev show --job <id>` for each job.
@@ -34,7 +34,7 @@ When the user invokes `/roborev:fix [job_id...]`:
 
 5. **Run tests** to verify the fixes work.
 
-6. **Record comments** for each addressed job:
+6. **Record comments** for each fixed job:
    ```bash
    roborev comment --job <job_id> "<summary of changes>"
    ```
@@ -52,4 +52,4 @@ Agent:
 4. Fixes all 3 findings across both reviews, prioritizing by severity
 5. Runs tests to verify
 6. Records comments on both jobs
-7. Asks: "I've addressed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"
+7. Asks: "I've fixed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"

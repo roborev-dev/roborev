@@ -83,7 +83,7 @@ https://github.com/user-attachments/assets/c72d7189-9a31-4c1a-a43f-c788cbd97182
 When reviews find issues, fix them with a single command:
 
 ```bash
-roborev fix                     # Fix all unaddressed reviews
+roborev fix                     # Fix all open reviews
 roborev fix 123                 # Fix a specific job
 ```
 
@@ -118,7 +118,7 @@ apply findings later, or pass `--fix` to apply immediately.
 
 ## Review Verification
 
-When committing frequently, reviews can accumulate unaddressed findings - some valid, some false positives due to limited context. `compact` automates verification and consolidation:
+When committing frequently, reviews can accumulate open findings - some valid, some false positives due to limited context. `compact` automates verification and consolidation:
 
 ```bash
 roborev compact                      # Verify and consolidate findings (background)
@@ -126,7 +126,7 @@ roborev compact --wait               # Wait for completion
 roborev compact --branch main        # Compact jobs on main branch
 ```
 
-`compact` uses an agent to verify each finding against the current codebase. The agent searches code, filters out false positives and already-fixed issues, consolidates related findings across multiple reviews, and creates a single consolidated review. roborev automatically marks original jobs as addressed when consolidation succeeds.
+`compact` uses an agent to verify each finding against the current codebase. The agent searches code, filters out false positives and already-fixed issues, consolidates related findings across multiple reviews, and creates a single consolidated review. roborev automatically closes original jobs when consolidation succeeds.
 
 This adds a quality layer between `review` and `fix`, reducing noise and making human review easier. Check progress with `roborev status` or `roborev tui`.
 
@@ -140,13 +140,13 @@ This adds a quality layer between `review` and `fix`, reducing noise and making 
 | `roborev review <sha>` | Queue a commit for review |
 | `roborev review --branch` | Review all commits on current branch |
 | `roborev review --dirty` | Review uncommitted changes |
-| `roborev fix` | Fix unaddressed reviews (or specify job IDs) |
+| `roborev fix` | Fix open reviews (or specify job IDs) |
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
-| `roborev compact` | Verify and consolidate unaddressed review findings |
+| `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |
-| `roborev address <id>` | Mark review as addressed |
+| `roborev address <id>` | Close a review |
 | `roborev skills install` | Install agent skills for Claude/Codex |
 
 See [full command reference](https://roborev.io/commands/) for all options.
