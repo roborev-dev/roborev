@@ -275,6 +275,10 @@ type CIConfig struct {
 	// Default: "1h". Set to "0" to disable throttling.
 	ThrottleInterval string `toml:"throttle_interval"`
 
+	// ThrottleBypassUsers is a list of GitHub usernames whose PRs
+	// bypass the throttle interval and are always reviewed immediately.
+	ThrottleBypassUsers []string `toml:"throttle_bypass_users"`
+
 	// Model overrides the model for CI reviews (empty = use workflow resolution)
 	Model string `toml:"model"`
 
@@ -389,6 +393,18 @@ func (c *CIConfig) ResolvedThrottleInterval() time.Duration {
 		return time.Hour
 	}
 	return d
+}
+
+// IsThrottleBypassed reports whether the given GitHub login is in
+// the ThrottleBypassUsers list. Comparison is case-insensitive.
+func (c *CIConfig) IsThrottleBypassed(login string) bool {
+	lower := strings.ToLower(login)
+	for _, u := range c.ThrottleBypassUsers {
+		if strings.ToLower(u) == lower {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolvedMaxRepos returns the maximum number of repos to poll.
@@ -569,7 +585,7 @@ type RepoConfig struct {
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
-	return &Config{
+	cfg := &Config{
 		ServerAddr:         "127.0.0.1:7373",
 		MaxWorkers:         4,
 		ReviewContextCount: 3,
@@ -579,6 +595,10 @@ func DefaultConfig() *Config {
 		ClaudeCodeCmd:      "claude",
 		CursorCmd:          "agent",
 	}
+	cfg.CI.ThrottleBypassUsers = []string{
+		"wesm", "mariusvniekerk",
+	}
+	return cfg
 }
 
 // DataDir returns the roborev data directory.

@@ -28,13 +28,19 @@ import (
 // repo matches the given GitHub "owner/repo" identifier.
 var errLocalRepoNotFound = errors.New("no local repo found")
 
+// ghPRAuthor represents the author of a GitHub pull request.
+type ghPRAuthor struct {
+	Login string `json:"login"`
+}
+
 // ghPR represents a GitHub pull request from `gh pr list --json`
 type ghPR struct {
-	Number      int    `json:"number"`
-	HeadRefOid  string `json:"headRefOid"`
-	BaseRefName string `json:"baseRefName"`
-	HeadRefName string `json:"headRefName"`
-	Title       string `json:"title"`
+	Number      int        `json:"number"`
+	HeadRefOid  string     `json:"headRefOid"`
+	BaseRefName string     `json:"baseRefName"`
+	HeadRefName string     `json:"headRefName"`
+	Title       string     `json:"title"`
+	Author      ghPRAuthor `json:"author"`
 }
 
 // CIPoller polls GitHub for open PRs and enqueues security reviews.
@@ -292,9 +298,10 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return nil
 	}
 
-	// Throttle: skip if this PR was reviewed recently (any SHA)
+	// Throttle: skip if this PR was reviewed recently (any SHA).
+	// Bypass users are never throttled.
 	throttle := cfg.CI.ResolvedThrottleInterval()
-	if throttle > 0 {
+	if throttle > 0 && !cfg.CI.IsThrottleBypassed(pr.Author.Login) {
 		lastReview, err := p.db.LatestBatchTimeForPR(
 			ghRepo, pr.Number,
 		)
@@ -943,7 +950,7 @@ func (p *CIPoller) ghEnvForRepo(ghRepo string) []string {
 func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
 	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
 		"--repo", ghRepo,
-		"--json", "number,headRefOid,baseRefName,headRefName,title",
+		"--json", "number,headRefOid,baseRefName,headRefName,title,author",
 		"--state", "open",
 		"--limit", "100",
 	)

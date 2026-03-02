@@ -2463,6 +2463,69 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	}
 }
 
+func TestCIPollerProcessPR_ThrottleBypassUser(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "1h"
+	h.Cfg.CI.ThrottleBypassUsers = []string{"wesm"}
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// First push — reviewed normally
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      80,
+			HeadRefOid:  "first-sha",
+			BaseRefName: "main",
+			Author:      ghPRAuthor{Login: "wesm"},
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("first processPR: %v", err)
+	}
+
+	hasBatch, err := h.DB.HasCIBatch(
+		"acme/api", 80, "first-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !hasBatch {
+		t.Fatal("expected batch for first push")
+	}
+
+	// Second push within throttle window — bypass user should
+	// still get reviewed immediately
+	err = h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      80,
+			HeadRefOid:  "second-sha",
+			BaseRefName: "main",
+			Author:      ghPRAuthor{Login: "wesm"},
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("second processPR: %v", err)
+	}
+
+	hasBatch, err = h.DB.HasCIBatch(
+		"acme/api", 80, "second-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !hasBatch {
+		t.Fatal(
+			"expected batch for bypass user's second push")
+	}
+}
+
 func TestCIPollerProcessPR_ThrottleDisabled(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}

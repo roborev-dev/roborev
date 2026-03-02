@@ -1980,6 +1980,43 @@ gemini = ["default"]
 	}
 }
 
+func TestIsThrottleBypassed(t *testing.T) {
+	ci := CIConfig{
+		ThrottleBypassUsers: []string{"wesm", "mariusvniekerk"},
+	}
+
+	tests := []struct {
+		login string
+		want  bool
+	}{
+		{"wesm", true},
+		{"mariusvniekerk", true},
+		{"Wesm", true}, // case-insensitive
+		{"WESM", true}, // all caps
+		{"MariusVNiekerk", true},
+		{"someone-else", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.login, func(t *testing.T) {
+			got := ci.IsThrottleBypassed(tt.login)
+			if got != tt.want {
+				t.Errorf(
+					"IsThrottleBypassed(%q) = %v, want %v",
+					tt.login, got, tt.want,
+				)
+			}
+		})
+	}
+
+	t.Run("empty list", func(t *testing.T) {
+		empty := CIConfig{}
+		if empty.IsThrottleBypassed("wesm") {
+			t.Error("expected false for empty bypass list")
+		}
+	})
+}
+
 func TestRepoCIConfigReviewsFieldParsing(t *testing.T) {
 	tmpDir := newTempRepo(t, `
 agent = "codex"
