@@ -191,6 +191,36 @@ func TestListCommand(t *testing.T) {
 			},
 		},
 		{
+			name:      "--open sends addressed=false query param",
+			args:      []string{"--open"},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantQuery: []string{"addressed=false"},
+		},
+		{
+			name:      "--closed sends addressed=true query param",
+			args:      []string{"--closed"},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantQuery: []string{"addressed=true"},
+		},
+		{
+			name:      "--unaddressed alias sends addressed=false query param",
+			args:      []string{"--unaddressed"},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantQuery: []string{"addressed=false"},
+		},
+		{
+			name:      "--closed and --open conflict",
+			args:      []string{"--closed", "--open"},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantError: "if any flags in the group",
+		},
+		{
+			name:      "--closed and --unaddressed conflict",
+			args:      []string{"--closed", "--unaddressed"},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantError: "if any flags in the group",
+		},
+		{
 			name: "explicit --repo with worktree path normalizes to main repo",
 			repoSetup: func(t *testing.T) repoSetupResult {
 				repo := newTestGitRepo(t)
