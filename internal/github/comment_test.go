@@ -226,6 +226,16 @@ func TestUpsertPRComment_Truncation(t *testing.T) {
 	if !strings.Contains(body, "truncated") {
 		t.Fatal("expected truncation suffix")
 	}
+	// Verify truncation boundary: the portion before the suffix must be
+	// exactly review.MaxCommentLen characters.
+	parts := strings.SplitN(body, "\n\n...(truncated", 2)
+	if len(parts) != 2 {
+		t.Fatal("could not split on truncation suffix")
+	}
+	if len(parts[0]) != review.MaxCommentLen {
+		t.Fatalf("expected truncated body len %d, got %d",
+			review.MaxCommentLen, len(parts[0]))
+	}
 }
 
 func TestUpsertPRComment_FindError(t *testing.T) {
@@ -280,7 +290,10 @@ func TestUpsertPRComment_PATCHPayloadIsValidJSON(t *testing.T) {
 		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
 	})
 
-	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body with\nnewlines\tand\ttabs", nil)
+	// Include control characters (\v, \a) that strconv.Quote would escape
+	// with Go-specific sequences invalid in JSON.
+	inputBody := "body with\nnewlines\tand\ttabs\vvertical-tab\abell"
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, inputBody, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -300,5 +313,10 @@ func TestUpsertPRComment_PATCHPayloadIsValidJSON(t *testing.T) {
 	}
 	if !strings.HasPrefix(body, CommentMarker) {
 		t.Fatalf("PATCH body missing marker: %q", body[:min(80, len(body))])
+	}
+	// Verify control characters round-tripped through JSON correctly.
+	expectedBody := CommentMarker + "\n" + inputBody
+	if body != expectedBody {
+		t.Fatalf("body round-trip mismatch:\n got: %q\nwant: %q", body, expectedBody)
 	}
 }
