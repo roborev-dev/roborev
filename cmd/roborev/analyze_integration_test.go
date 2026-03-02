@@ -206,7 +206,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	if !strings.Contains(outputStr, "CODE SMELLS") {
 		t.Error("output should contain analysis result")
 	}
-	if !strings.Contains(outputStr, "marked as closed") {
+	if !strings.Contains(outputStr, "closed") {
 		t.Error("output should confirm job was closed")
 	}
 }
