@@ -1690,6 +1690,31 @@ func TestHideAddressedDeprecatedMigration(t *testing.T) {
 	}
 }
 
+func TestHideAddressedDoesNotOverrideExplicitNewKey(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	// Both deprecated and new key set — explicit new key should win
+	cfgPath := GlobalConfigPath()
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	content := "hide_addressed_by_default = true\nhide_closed_by_default = false\n"
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	loaded, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+	if loaded.HideClosedByDefault {
+		t.Error("Deprecated key should not override explicit hide_closed_by_default = false")
+	}
+	if loaded.HideAddressedByDefault {
+		t.Error("Expected HideAddressedByDefault to be cleared after migration")
+	}
+}
+
 func TestIsDefaultReviewType(t *testing.T) {
 	defaults := []string{"", "default", "general", "review"}
 	for _, rt := range defaults {

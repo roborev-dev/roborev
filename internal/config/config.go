@@ -636,12 +636,13 @@ func LoadGlobalFrom(path string) (*Config, error) {
 		return cfg, nil
 	}
 
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
+	md, err := toml.DecodeFile(path, cfg)
+	if err != nil {
 		return nil, err
 	}
 
 	// Migrate deprecated config keys
-	cfg.migrateDeprecated()
+	cfg.migrateDeprecated(md)
 
 	if err := cfg.CI.NormalizeInstallations(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -652,9 +653,11 @@ func LoadGlobalFrom(path string) (*Config, error) {
 
 // migrateDeprecated promotes deprecated config keys to their
 // replacements so the rest of the codebase only reads the new names.
-func (c *Config) migrateDeprecated() {
+// Uses TOML metadata to avoid overriding explicitly-set new keys.
+func (c *Config) migrateDeprecated(md toml.MetaData) {
 	// hide_addressed_by_default → hide_closed_by_default
-	if c.HideAddressedByDefault && !c.HideClosedByDefault {
+	// Only promote if the new key wasn't explicitly set in the file.
+	if c.HideAddressedByDefault && !md.IsDefined("hide_closed_by_default") {
 		c.HideClosedByDefault = true
 	}
 	c.HideAddressedByDefault = false

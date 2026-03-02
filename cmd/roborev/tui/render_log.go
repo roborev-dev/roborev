@@ -124,7 +124,7 @@ func helpLines() []string {
 		{
 			group: "Actions",
 			keys: []struct{ key, desc string }{
-				{"d", "Toggle closed"},
+				{"a", "Toggle closed"},
 				{"c", "Add comment"},
 				{"y", "Copy review to clipboard"},
 				{"x", "Cancel running/queued job"},
@@ -150,7 +150,7 @@ func helpLines() []string {
 				{"←/→", "Previous / next review"},
 				{"PgUp/PgDn", "Page through content"},
 				{"p", "Switch to prompt view"},
-				{"d", "Toggle closed"},
+				{"a", "Toggle closed"},
 				{"c", "Add comment"},
 				{"y", "Copy review to clipboard"},
 				{"m", "View commit message"},

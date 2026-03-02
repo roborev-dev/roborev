@@ -34,7 +34,7 @@ func (m model) queueHelpRows() [][]helpItem {
 		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}, {"o", "options"},
 	}
 	row2 := []helpItem{
-		{"↑/↓", "nav"}, {"↵", "review"}, {"d", "closed"},
+		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "closed"},
 	}
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
@@ -662,7 +662,7 @@ func combinedStatusColor(
 		return canceledStyle.GetForeground()
 	case storage.JobStatusDone, storage.JobStatusApplied,
 		storage.JobStatusRebased:
-		if job.Verdict != nil && *job.Verdict == "F" {
+		if job.Verdict != nil && *job.Verdict != "P" {
 			return failStyle.GetForeground()
 		}
 		return passStyle.GetForeground()

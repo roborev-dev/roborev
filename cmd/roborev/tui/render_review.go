@@ -122,7 +122,7 @@ func (m model) renderReviewView() string {
 
 	// Help table rows
 	reviewHelpRows := [][]helpItem{
-		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"d", "closed"}, {"y", "copy"}, {"F", "fix"}},
+		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "closed"}, {"y", "copy"}, {"F", "fix"}},
 		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
 	}
 	helpLines := len(reflowHelpRows(reviewHelpRows, m.width))
