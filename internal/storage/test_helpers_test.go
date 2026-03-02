@@ -244,7 +244,7 @@ type TestReviewOpts struct {
 	Agent              string
 	Prompt             string
 	Output             string
-	Addressed          bool
+	Closed             bool
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	UpdatedByMachineID string
@@ -274,9 +274,9 @@ func createTestReview(t *testing.T, pool *pgxpool.Pool, opts TestReviewOpts) {
 	opts.applyDefaults()
 
 	_, err := pool.Exec(t.Context(), `
-		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, addressed, created_at, updated_at, updated_by_machine_id)
+		INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, created_at, updated_at, updated_by_machine_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, opts.UUID, opts.JobUUID, opts.Agent, opts.Prompt, opts.Output, opts.Addressed, opts.CreatedAt, opts.UpdatedAt, opts.UpdatedByMachineID)
+	`, opts.UUID, opts.JobUUID, opts.Agent, opts.Prompt, opts.Output, opts.Closed, opts.CreatedAt, opts.UpdatedAt, opts.UpdatedByMachineID)
 	if err != nil {
 		t.Fatalf("Failed to create review %s: %v", opts.UUID, err)
 	}

@@ -560,16 +560,16 @@ func TestGetRepoStats(t *testing.T) {
 		if stats.FailedReviews != 1 {
 			t.Errorf("Expected 1 failed review, got %d", stats.FailedReviews)
 		}
-		// Both reviews should be unaddressed by default
-		if stats.AddressedReviews != 0 {
-			t.Errorf("Expected 0 addressed reviews, got %d", stats.AddressedReviews)
+		// Both reviews should be open by default
+		if stats.ClosedReviews != 0 {
+			t.Errorf("Expected 0 closed reviews, got %d", stats.ClosedReviews)
 		}
-		if stats.UnaddressedReviews != 2 {
-			t.Errorf("Expected 2 unaddressed reviews, got %d", stats.UnaddressedReviews)
+		if stats.OpenReviews != 2 {
+			t.Errorf("Expected 2 open reviews, got %d", stats.OpenReviews)
 		}
 	})
 
-	t.Run("addressed reviews counted", func(t *testing.T) {
+	t.Run("closed reviews counted", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "stats-addressed-test")
 		commit1 := createCommit(t, db, repo.ID, "stats-sha1")
 		job1 := enqueueJob(t, db, repo.ID, commit1.ID, "stats-sha1")
@@ -577,16 +577,16 @@ func TestGetRepoStats(t *testing.T) {
 		// Complete job1
 		completeTestJob(t, db, job1.ID, "**Verdict: PASS**\nLooks good!")
 
-		// Mark job1's review as addressed
+		// Mark job1's review as closed
 		review, err := db.GetReviewByJobID(job1.ID)
 		if err != nil {
 			t.Fatalf("GetReviewByJobID failed: %v", err)
 		}
-		if err := db.MarkReviewAddressed(review.ID, true); err != nil {
-			t.Fatalf("MarkReviewAddressed failed: %v", err)
+		if err := db.MarkReviewClosed(review.ID, true); err != nil {
+			t.Fatalf("MarkReviewClosed failed: %v", err)
 		}
 
-		// Create a second job that will be unaddressed
+		// Create a second job that will be open
 		commit2 := createCommit(t, db, repo.ID, "stats-sha2")
 		job2 := enqueueJob(t, db, repo.ID, commit2.ID, "stats-sha2")
 
@@ -597,11 +597,11 @@ func TestGetRepoStats(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetRepoStats failed: %v", err)
 		}
-		if stats.AddressedReviews != 1 {
-			t.Errorf("Expected 1 addressed review, got %d", stats.AddressedReviews)
+		if stats.ClosedReviews != 1 {
+			t.Errorf("Expected 1 closed review, got %d", stats.ClosedReviews)
 		}
-		if stats.UnaddressedReviews != 1 {
-			t.Errorf("Expected 1 unaddressed review, got %d", stats.UnaddressedReviews)
+		if stats.OpenReviews != 1 {
+			t.Errorf("Expected 1 open review, got %d", stats.OpenReviews)
 		}
 	})
 

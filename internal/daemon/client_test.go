@@ -111,26 +111,26 @@ func TestHTTPClientAddComment(t *testing.T) {
 	}
 }
 
-func TestHTTPClientMarkReviewAddressed(t *testing.T) {
+func TestHTTPClientMarkReviewClosed(t *testing.T) {
 	var received struct {
-		JobID     int  `json:"job_id"`
-		Addressed bool `json:"addressed"`
+		JobID  int  `json:"job_id"`
+		Closed bool `json:"closed"`
 	}
 
 	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		assertRequest(t, r, http.MethodPost, "/api/review/address")
+		assertRequest(t, r, http.MethodPost, "/api/review/close")
 		decodeJSON(t, r, &received)
 		w.WriteHeader(http.StatusOK)
 	})
-	if err := client.MarkReviewAddressed(99); err != nil {
-		t.Fatalf("MarkReviewAddressed failed: %v", err)
+	if err := client.MarkReviewClosed(99); err != nil {
+		t.Fatalf("MarkReviewClosed failed: %v", err)
 	}
 
 	if received.JobID != 99 {
 		t.Errorf("expected job_id 99, got %v", received.JobID)
 	}
-	if received.Addressed != true {
-		t.Errorf("expected addressed true, got %v", received.Addressed)
+	if received.Closed != true {
+		t.Errorf("expected closed true, got %v", received.Closed)
 	}
 }
 

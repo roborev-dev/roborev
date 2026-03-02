@@ -439,7 +439,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 }
 
-func TestListJobsWithBranchAndAddressedFilters(t *testing.T) {
+func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -464,9 +464,9 @@ func TestListJobsWithBranchAndAddressedFilters(t *testing.T) {
 		db.ClaimJob("w")
 		db.CompleteJob(job.ID, "codex", "", fmt.Sprintf("output %d", i))
 
-		// Mark first job as addressed
+		// Mark first job as closed
 		if i == 0 {
-			db.MarkReviewAddressedByJobID(job.ID, true)
+			db.MarkReviewClosedByJobID(job.ID, true)
 		}
 	}
 
@@ -480,33 +480,33 @@ func TestListJobsWithBranchAndAddressedFilters(t *testing.T) {
 		}
 	})
 
-	t.Run("addressed=false filter", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithAddressed(false))
+	t.Run("closed=false filter", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(false))
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
 		if len(jobs) != 2 {
-			t.Errorf("Expected 2 unaddressed jobs, got %d", len(jobs))
+			t.Errorf("Expected 2 open jobs, got %d", len(jobs))
 		}
 	})
 
-	t.Run("addressed=true filter", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithAddressed(true))
+	t.Run("closed=true filter", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(true))
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
 		if len(jobs) != 1 {
-			t.Errorf("Expected 1 addressed job, got %d", len(jobs))
+			t.Errorf("Expected 1 closed job, got %d", len(jobs))
 		}
 	})
 
-	t.Run("branch + addressed combined", func(t *testing.T) {
-		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"), WithAddressed(false))
+	t.Run("branch + closed combined", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithBranch("main"), WithClosed(false))
 		if err != nil {
 			t.Fatalf("ListJobs failed: %v", err)
 		}
 		if len(jobs) != 1 {
-			t.Errorf("Expected 1 unaddressed job on main, got %d", len(jobs))
+			t.Errorf("Expected 1 open job on main, got %d", len(jobs))
 		}
 	})
 }

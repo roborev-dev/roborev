@@ -290,7 +290,7 @@ func TestResponseOperations(t *testing.T) {
 	}
 }
 
-func TestMarkReviewAddressed(t *testing.T) {
+func TestMarkReviewClosed(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -304,41 +304,41 @@ func TestMarkReviewAddressed(t *testing.T) {
 		t.Fatalf("GetReviewByJobID failed: %v", err)
 	}
 
-	// Initially not addressed
-	if review.Addressed {
-		t.Error("Review should not be addressed initially")
+	// Initially not closed
+	if review.Closed {
+		t.Error("Review should not be closed initially")
 	}
 
-	// Mark as addressed
-	err = db.MarkReviewAddressed(review.ID, true)
+	// Mark as closed
+	err = db.MarkReviewClosed(review.ID, true)
 	if err != nil {
-		t.Fatalf("MarkReviewAddressed failed: %v", err)
+		t.Fatalf("MarkReviewClosed failed: %v", err)
 	}
 
-	// Verify it's addressed
+	// Verify it's closed
 	updated, _ := db.GetReviewByID(review.ID)
-	if !updated.Addressed {
-		t.Error("Review should be addressed after MarkReviewAddressed(true)")
+	if !updated.Closed {
+		t.Error("Review should be closed after MarkReviewClosed(true)")
 	}
 
-	// Mark as unaddressed
-	err = db.MarkReviewAddressed(review.ID, false)
+	// Mark as open
+	err = db.MarkReviewClosed(review.ID, false)
 	if err != nil {
-		t.Fatalf("MarkReviewAddressed(false) failed: %v", err)
+		t.Fatalf("MarkReviewClosed(false) failed: %v", err)
 	}
 
 	updated2, _ := db.GetReviewByID(review.ID)
-	if updated2.Addressed {
-		t.Error("Review should not be addressed after MarkReviewAddressed(false)")
+	if updated2.Closed {
+		t.Error("Review should not be closed after MarkReviewClosed(false)")
 	}
 }
 
-func TestMarkReviewAddressedNotFound(t *testing.T) {
+func TestMarkReviewClosedNotFound(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
 	// Try to mark a non-existent review
-	err := db.MarkReviewAddressed(999999, true)
+	err := db.MarkReviewClosed(999999, true)
 	if err == nil {
 		t.Fatal("Expected error for non-existent review")
 	}
@@ -349,7 +349,7 @@ func TestMarkReviewAddressedNotFound(t *testing.T) {
 	}
 }
 
-func TestMarkReviewAddressedByJobID(t *testing.T) {
+func TestMarkReviewClosedByJobID(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -363,41 +363,41 @@ func TestMarkReviewAddressedByJobID(t *testing.T) {
 		t.Fatalf("GetReviewByJobID failed: %v", err)
 	}
 
-	// Initially not addressed
-	if review.Addressed {
-		t.Error("Review should not be addressed initially")
+	// Initially not closed
+	if review.Closed {
+		t.Error("Review should not be closed initially")
 	}
 
-	// Mark as addressed using job ID
-	err = db.MarkReviewAddressedByJobID(job.ID, true)
+	// Mark as closed using job ID
+	err = db.MarkReviewClosedByJobID(job.ID, true)
 	if err != nil {
-		t.Fatalf("MarkReviewAddressedByJobID failed: %v", err)
+		t.Fatalf("MarkReviewClosedByJobID failed: %v", err)
 	}
 
-	// Verify it's addressed
+	// Verify it's closed
 	updated, _ := db.GetReviewByJobID(job.ID)
-	if !updated.Addressed {
-		t.Error("Review should be addressed after MarkReviewAddressedByJobID(true)")
+	if !updated.Closed {
+		t.Error("Review should be closed after MarkReviewClosedByJobID(true)")
 	}
 
-	// Mark as unaddressed using job ID
-	err = db.MarkReviewAddressedByJobID(job.ID, false)
+	// Mark as open using job ID
+	err = db.MarkReviewClosedByJobID(job.ID, false)
 	if err != nil {
-		t.Fatalf("MarkReviewAddressedByJobID(false) failed: %v", err)
+		t.Fatalf("MarkReviewClosedByJobID(false) failed: %v", err)
 	}
 
 	updated2, _ := db.GetReviewByJobID(job.ID)
-	if updated2.Addressed {
-		t.Error("Review should not be addressed after MarkReviewAddressedByJobID(false)")
+	if updated2.Closed {
+		t.Error("Review should not be closed after MarkReviewClosedByJobID(false)")
 	}
 }
 
-func TestMarkReviewAddressedByJobIDNotFound(t *testing.T) {
+func TestMarkReviewClosedByJobIDNotFound(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
 	// Try to mark a non-existent job
-	err := db.MarkReviewAddressedByJobID(999999, true)
+	err := db.MarkReviewClosedByJobID(999999, true)
 	if err == nil {
 		t.Fatal("Expected error for non-existent job")
 	}

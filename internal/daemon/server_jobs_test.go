@@ -377,7 +377,7 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 }
 
-func TestHandleListJobsAddressedFilter(t *testing.T) {
+func TestHandleListJobsClosedFilter(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
@@ -392,10 +392,10 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 	job2, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit2.ID, GitRef: "bbb", Branch: "main", Agent: "codex"})
 	db.ClaimJob("w")
 	db.CompleteJob(job2.ID, "codex", "", "output2")
-	db.MarkReviewAddressedByJobID(job2.ID, true)
+	db.MarkReviewClosedByJobID(job2.ID, true)
 
-	t.Run("addressed=false", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/jobs?addressed=false", nil)
+	t.Run("closed=false", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/jobs?closed=false", nil)
 		w := httptest.NewRecorder()
 		server.handleListJobs(w, req)
 
@@ -404,7 +404,7 @@ func TestHandleListJobsAddressedFilter(t *testing.T) {
 		}
 		testutil.DecodeJSON(t, w, &result)
 		if len(result.Jobs) != 1 {
-			t.Errorf("Expected 1 unaddressed job, got %d", len(result.Jobs))
+			t.Errorf("Expected 1 open job, got %d", len(result.Jobs))
 		}
 	})
 
