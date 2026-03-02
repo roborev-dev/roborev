@@ -91,7 +91,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 	mux.HandleFunc("/api/repos/register", s.handleRegisterRepo)
 	mux.HandleFunc("/api/branches", s.handleListBranches)
 	mux.HandleFunc("/api/review", s.handleGetReview)
-	mux.HandleFunc("/api/review/address", s.handleAddressReview)
+	mux.HandleFunc("/api/review/close", s.handleCloseReview)
 	mux.HandleFunc("/api/comment", s.handleAddComment)
 	mux.HandleFunc("/api/comments", s.handleListComments)
 	mux.HandleFunc("/api/status", s.handleStatus)
@@ -861,8 +861,8 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 			listOpts = append(listOpts, storage.WithBranch(branch))
 		}
 	}
-	if addrStr := r.URL.Query().Get("addressed"); addrStr == "true" || addrStr == "false" {
-		listOpts = append(listOpts, storage.WithAddressed(addrStr == "true"))
+	if closedStr := r.URL.Query().Get("closed"); closedStr == "true" || closedStr == "false" {
+		listOpts = append(listOpts, storage.WithClosed(closedStr == "true"))
 	}
 	if jobType := r.URL.Query().Get("job_type"); jobType != "" {
 		listOpts = append(listOpts, storage.WithJobType(jobType))
@@ -884,7 +884,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		jobs = jobs[:limit] // Trim to requested limit
 	}
 
-	// Compute aggregate stats using same repo/branch filters (ignoring addressed filter and pagination)
+	// Compute aggregate stats using same repo/branch filters (ignoring closed filter and pagination)
 	var statsOpts []storage.ListJobsOption
 	if branch := r.URL.Query().Get("branch"); branch != "" {
 		if r.URL.Query().Get("branch_include_empty") == "true" {
@@ -1587,18 +1587,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status)
 }
 
-type AddressReviewRequest struct {
-	JobID     int64 `json:"job_id"`
-	Addressed bool  `json:"addressed"`
+type CloseReviewRequest struct {
+	JobID  int64 `json:"job_id"`
+	Closed bool  `json:"closed"`
 }
 
-func (s *Server) handleAddressReview(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCloseReview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	var req AddressReviewRequest
+	var req CloseReviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -1609,12 +1609,12 @@ func (s *Server) handleAddressReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.db.MarkReviewAddressedByJobID(req.JobID, req.Addressed); err != nil {
+	if err := s.db.MarkReviewClosedByJobID(req.JobID, req.Closed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "review not found for job")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("mark addressed: %v", err))
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("mark closed: %v", err))
 		return
 	}
 

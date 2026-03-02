@@ -22,7 +22,7 @@ type mockDaemonClient struct {
 	responses map[int64][]storage.Response
 
 	// Track calls for assertions
-	addressedJobIDs []int64
+	closedJobIDs    []int64
 	addedComments   []addedComment
 	enqueuedReviews []enqueuedReview
 
@@ -30,7 +30,7 @@ type mockDaemonClient struct {
 	nextReviewID int64
 
 	// Configurable errors for testing error paths
-	markAddressedErr  error
+	markClosedErr     error
 	getReviewBySHAErr error
 }
 
@@ -73,11 +73,11 @@ func (m *mockDaemonClient) GetReviewByJobID(jobID int64) (*storage.Review, error
 	return m.reviews[job.GitRef], nil
 }
 
-func (m *mockDaemonClient) MarkReviewAddressed(jobID int64) error {
-	if m.markAddressedErr != nil {
-		return m.markAddressedErr
+func (m *mockDaemonClient) MarkReviewClosed(jobID int64) error {
+	if m.markClosedErr != nil {
+		return m.markClosedErr
 	}
-	m.addressedJobIDs = append(m.addressedJobIDs, jobID)
+	m.closedJobIDs = append(m.closedJobIDs, jobID)
 	return nil
 }
 
@@ -128,13 +128,13 @@ func (m *mockDaemonClient) Remap(req daemon.RemapRequest) (*daemon.RemapResult, 
 }
 
 // WithReview adds a review to the mock client, returning the client for chaining.
-func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, addressed bool) *mockDaemonClient {
+func (m *mockDaemonClient) WithReview(sha string, jobID int64, output string, closed bool) *mockDaemonClient {
 	m.nextReviewID++
 	m.reviews[sha] = &storage.Review{
-		ID:        m.nextReviewID,
-		JobID:     jobID,
-		Output:    output,
-		Addressed: addressed,
+		ID:     m.nextReviewID,
+		JobID:  jobID,
+		Output: output,
+		Closed: closed,
 	}
 	return m
 }
@@ -302,13 +302,13 @@ func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 
 func TestFindFailedReviewForBranch(t *testing.T) {
 	tests := []struct {
-		name             string
-		setup            func(*mockDaemonClient)
-		commits          []string
-		skip             map[int64]bool
-		wantJobID        int64 // 0 if nil expected
-		wantErrs         []string
-		wantAddressedIDs []int64
+		name          string
+		setup         func(*mockDaemonClient)
+		commits       []string
+		skip          map[int64]bool
+		wantJobID     int64 // 0 if nil expected
+		wantErrs      []string
+		wantClosedIDs []int64
 	}{
 		{
 			name: "oldest first",
@@ -317,9 +317,9 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 					WithReview("middle456", 200, "Found a bug in the code.", false).
 					WithReview("newest789", 300, "Security vulnerability detected.", false)
 			},
-			commits:          []string{"oldest123", "middle456", "newest789"},
-			wantJobID:        200,
-			wantAddressedIDs: []int64{100},
+			commits:       []string{"oldest123", "middle456", "newest789"},
+			wantJobID:     200,
+			wantClosedIDs: []int64{100},
 		},
 		{
 			name: "skips addressed",
@@ -358,9 +358,9 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 				c.WithReview("commit1", 100, "No issues found.", false).
 					WithReview("commit2", 200, "No findings.", false)
 			},
-			commits:          []string{"commit1", "commit2"},
-			wantJobID:        0,
-			wantAddressedIDs: []int64{100, 200},
+			commits:       []string{"commit1", "commit2"},
+			wantJobID:     0,
+			wantClosedIDs: []int64{100, 200},
 		},
 		{
 			name:      "no reviews",
@@ -374,9 +374,9 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 				c.WithReview("commit1", 100, "No issues found.", false).
 					WithReview("commit2", 200, "No findings.", false)
 			},
-			commits:          []string{"commit1", "commit2"},
-			wantJobID:        0,
-			wantAddressedIDs: []int64{100, 200},
+			commits:       []string{"commit1", "commit2"},
+			wantJobID:     0,
+			wantClosedIDs: []int64{100, 200},
 		},
 		{
 			name: "marks passing before failure",
@@ -384,9 +384,9 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 				c.WithReview("commit1", 100, "No issues found.", false).
 					WithReview("commit2", 200, "Bug found.", false)
 			},
-			commits:          []string{"commit1", "commit2"},
-			wantJobID:        200,
-			wantAddressedIDs: []int64{100},
+			commits:       []string{"commit1", "commit2"},
+			wantJobID:     200,
+			wantClosedIDs: []int64{100},
 		},
 		{
 			name: "does not mark already addressed",
@@ -406,9 +406,9 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 					WithReview("commit4", 400, "No findings detected.", false).
 					WithReview("commit5", 500, "Critical error.", false)
 			},
-			commits:          []string{"commit1", "commit2", "commit3", "commit4", "commit5"},
-			wantJobID:        500,
-			wantAddressedIDs: []int64{100, 400},
+			commits:       []string{"commit1", "commit2", "commit3", "commit4", "commit5"},
+			wantJobID:     500,
+			wantClosedIDs: []int64{100, 400},
 		},
 		{
 			name: "stops at first failure",
@@ -424,7 +424,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			name: "mark addressed error",
 			setup: func(c *mockDaemonClient) {
 				c.WithReview("commit1", 100, "No issues found.", false)
-				c.markAddressedErr = fmt.Errorf("daemon connection failed")
+				c.markClosedErr = fmt.Errorf("daemon connection failed")
 			},
 			commits:  []string{"commit1"},
 			wantErrs: []string{"closing review (job 100)"},
@@ -478,21 +478,21 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 				}
 			}
 
-			if len(tt.wantAddressedIDs) > 0 {
-				if len(client.addressedJobIDs) != len(tt.wantAddressedIDs) {
-					t.Errorf("expected %d reviews to be marked addressed, got %d", len(tt.wantAddressedIDs), len(client.addressedJobIDs))
+			if len(tt.wantClosedIDs) > 0 {
+				if len(client.closedJobIDs) != len(tt.wantClosedIDs) {
+					t.Errorf("expected %d reviews to be closed, got %d", len(tt.wantClosedIDs), len(client.closedJobIDs))
 				}
 				addressed := make(map[int64]bool)
-				for _, id := range client.addressedJobIDs {
+				for _, id := range client.closedJobIDs {
 					addressed[id] = true
 				}
-				for _, id := range tt.wantAddressedIDs {
+				for _, id := range tt.wantClosedIDs {
 					if !addressed[id] {
-						t.Errorf("expected job %d to be marked addressed, got %v", id, client.addressedJobIDs)
+						t.Errorf("expected job %d to be closed, got %v", id, client.closedJobIDs)
 					}
 				}
-			} else if len(client.addressedJobIDs) > 0 {
-				t.Errorf("expected no reviews to be marked addressed, got %v", client.addressedJobIDs)
+			} else if len(client.closedJobIDs) > 0 {
+				t.Errorf("expected no reviews to be closed, got %v", client.closedJobIDs)
 			}
 		})
 	}

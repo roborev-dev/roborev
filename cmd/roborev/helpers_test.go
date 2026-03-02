@@ -315,7 +315,7 @@ func (h *mockServerHandler) handleAddress(w http.ResponseWriter, r *http.Request
 }
 
 // newMockServer creates an httptest.Server that mimics the roborev daemon API.
-// It handles /api/enqueue, /api/jobs, /api/review, and /api/review/address.
+// It handles /api/enqueue, /api/jobs, /api/review, and /api/review/close.
 func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockServerState) {
 	t.Helper()
 	state := &MockServerState{}
@@ -343,7 +343,7 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	mux.HandleFunc("/api/jobs", h.handleJobs)
 	mux.HandleFunc("/api/review", h.handleReview)
 	mux.HandleFunc("/api/comment", h.handleComment)
-	mux.HandleFunc("/api/review/address", h.handleAddress)
+	mux.HandleFunc("/api/review/close", h.handleAddress)
 
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)

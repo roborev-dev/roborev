@@ -11,7 +11,7 @@ import (
 func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var r Review
 	var createdAt string
-	var addressed int
+	var closed int
 	var job ReviewJob
 	var enqueuedAt string
 	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
@@ -20,7 +20,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 
 	var verdictBool sql.NullInt64
 	err := db.QueryRow(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid, rv.verdict_bool,
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject
@@ -29,14 +29,14 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		JOIN repos rp ON rp.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
-	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID, &verdictBool,
+	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
 		return nil, err
 	}
-	r.Addressed = addressed != 0
+	r.Closed = closed != 0
 	if reviewUUID.Valid {
 		r.UUID = reviewUUID.String
 	}
@@ -95,7 +95,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	var r Review
 	var createdAt string
-	var addressed int
+	var closed int
 	var job ReviewJob
 	var enqueuedAt string
 	var startedAt, finishedAt, workerID, errMsg, reviewUUID, model, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
@@ -105,7 +105,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 	// Search by git_ref which contains the SHA for single commits
 	var verdictBool sql.NullInt64
 	err := db.QueryRow(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.uuid, rv.verdict_bool,
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject
@@ -116,14 +116,14 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		WHERE j.git_ref = ?
 		ORDER BY rv.created_at DESC
 		LIMIT 1
-	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &reviewUUID, &verdictBool,
+	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &reviewUUID, &verdictBool,
 		&job.ID, &job.RepoID, &commitID, &job.GitRef, &job.Agent, &job.Reasoning, &job.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 		&job.RepoPath, &job.RepoName, &commitSubject)
 	if err != nil {
 		return nil, err
 	}
-	r.Addressed = addressed != 0
+	r.Closed = closed != 0
 	if reviewUUID.Valid {
 		r.UUID = reviewUUID.String
 	}
@@ -182,7 +182,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 // GetAllReviewsForGitRef returns all reviews for a git ref (commit SHA or range) for re-review context
 func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 	rows, err := db.Query(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE j.git_ref = ?
@@ -197,12 +197,12 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 	for rows.Next() {
 		var r Review
 		var createdAt string
-		var addressed int
-		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed); err != nil {
+		var closed int
+		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = parseSQLiteTime(createdAt)
-		r.Addressed = addressed != 0
+		r.Closed = closed != 0
 		reviews = append(reviews, r)
 	}
 
@@ -212,7 +212,7 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 // GetRecentReviewsForRepo returns the N most recent reviews for a repo
 func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error) {
 	rows, err := db.Query(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE j.repo_id = ?
@@ -228,28 +228,28 @@ func (db *DB) GetRecentReviewsForRepo(repoID int64, limit int) ([]Review, error)
 	for rows.Next() {
 		var r Review
 		var createdAt string
-		var addressed int
-		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed); err != nil {
+		var closed int
+		if err := rows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = parseSQLiteTime(createdAt)
-		r.Addressed = addressed != 0
+		r.Closed = closed != 0
 		reviews = append(reviews, r)
 	}
 
 	return reviews, rows.Err()
 }
 
-// MarkReviewAddressed marks a review as addressed (or unaddressed) by review ID
-func (db *DB) MarkReviewAddressed(reviewID int64, addressed bool) error {
+// MarkReviewClosed marks a review as closed (or reopened) by review ID
+func (db *DB) MarkReviewClosed(reviewID int64, closed bool) error {
 	val := 0
-	if addressed {
+	if closed {
 		val = 1
 	}
 	now := time.Now().Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 
-	result, err := db.Exec(`UPDATE reviews SET addressed = ?, updated_by_machine_id = ?, updated_at = ? WHERE id = ?`, val, machineID, now, reviewID)
+	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ? WHERE id = ?`, val, machineID, now, reviewID)
 	if err != nil {
 		return err
 	}
@@ -263,16 +263,16 @@ func (db *DB) MarkReviewAddressed(reviewID int64, addressed bool) error {
 	return nil
 }
 
-// MarkReviewAddressedByJobID marks a review as addressed (or unaddressed) by job ID
-func (db *DB) MarkReviewAddressedByJobID(jobID int64, addressed bool) error {
+// MarkReviewClosedByJobID marks a review as closed (or reopened) by job ID
+func (db *DB) MarkReviewClosedByJobID(jobID int64, closed bool) error {
 	val := 0
-	if addressed {
+	if closed {
 		val = 1
 	}
 	now := time.Now().Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 
-	result, err := db.Exec(`UPDATE reviews SET addressed = ?, updated_by_machine_id = ?, updated_at = ? WHERE job_id = ?`, val, machineID, now, jobID)
+	result, err := db.Exec(`UPDATE reviews SET closed = ?, updated_by_machine_id = ?, updated_at = ? WHERE job_id = ?`, val, machineID, now, jobID)
 	if err != nil {
 		return err
 	}
@@ -382,7 +382,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 
 	// Fetch reviews for these jobs
 	reviewQuery := fmt.Sprintf(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.addressed, rv.verdict_bool
+		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.verdict_bool
 		FROM reviews rv
 		WHERE rv.job_id IN (%s)
 	`, inClause)
@@ -396,13 +396,13 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 	for reviewRows.Next() {
 		var r Review
 		var createdAt string
-		var addressed int
+		var closed int
 		var verdictBool sql.NullInt64
-		if err := reviewRows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed, &verdictBool); err != nil {
+		if err := reviewRows.Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed, &verdictBool); err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
 		}
 		r.CreatedAt = parseSQLiteTime(createdAt)
-		r.Addressed = addressed != 0
+		r.Closed = closed != 0
 		if verdictBool.Valid {
 			v := int(verdictBool.Int64)
 			r.VerdictBool = &v
@@ -429,17 +429,17 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 func (db *DB) GetReviewByID(reviewID int64) (*Review, error) {
 	var r Review
 	var createdAt string
-	var addressed int
+	var closed int
 
 	err := db.QueryRow(`
-		SELECT id, job_id, agent, prompt, output, created_at, addressed
+		SELECT id, job_id, agent, prompt, output, created_at, closed
 		FROM reviews WHERE id = ?
-	`, reviewID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &addressed)
+	`, reviewID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &createdAt, &closed)
 	if err != nil {
 		return nil, err
 	}
 	r.CreatedAt = parseSQLiteTime(createdAt)
-	r.Addressed = addressed != 0
+	r.Closed = closed != 0
 
 	return &r, nil
 }

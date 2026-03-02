@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   prompt TEXT NOT NULL,
   output TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  addressed INTEGER NOT NULL DEFAULT 0
+  closed INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS responses (
@@ -170,15 +170,22 @@ func (db *DB) migrate() error {
 		}
 	}
 
-	// Migration: add addressed column to reviews if missing
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'addressed'`).Scan(&count)
+	// Migration: add closed column to reviews if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'closed'`).Scan(&count)
 	if err != nil {
-		return fmt.Errorf("check addressed column: %w", err)
+		return fmt.Errorf("check closed column: %w", err)
 	}
 	if count == 0 {
-		_, err = db.Exec(`ALTER TABLE reviews ADD COLUMN addressed INTEGER NOT NULL DEFAULT 0`)
+		// Check if old 'addressed' column exists and rename it
+		var hasAddressed int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'addressed'`).Scan(&hasAddressed)
+		if hasAddressed > 0 {
+			_, err = db.Exec(`ALTER TABLE reviews RENAME COLUMN addressed TO closed`)
+		} else {
+			_, err = db.Exec(`ALTER TABLE reviews ADD COLUMN closed INTEGER NOT NULL DEFAULT 0`)
+		}
 		if err != nil {
-			return fmt.Errorf("add addressed column: %w", err)
+			return fmt.Errorf("add closed column: %w", err)
 		}
 	}
 
@@ -609,10 +616,11 @@ func (db *DB) migrate() error {
 		}
 	}
 
-	// Migration: add index on reviews.addressed for server-side filtering
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reviews_addressed ON reviews(addressed)`)
+	// Migration: rename addressed index to closed
+	_, _ = db.Exec(`DROP INDEX IF EXISTS idx_reviews_addressed`)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reviews_closed ON reviews(closed)`)
 	if err != nil {
-		return fmt.Errorf("create idx_reviews_addressed: %w", err)
+		return fmt.Errorf("create idx_reviews_closed: %w", err)
 	}
 
 	// Migration: add parent_job_id column to review_jobs if missing

@@ -166,13 +166,14 @@ func respondCmd() *cobra.Command {
 	return cmd
 }
 
-func addressCmd() *cobra.Command {
-	var unaddress bool
+func closeCmd() *cobra.Command {
+	var reopen bool
 
 	cmd := &cobra.Command{
-		Use:   "address <job_id>",
-		Short: "Mark a review as addressed",
-		Args:  cobra.ExactArgs(1),
+		Use:     "close <job_id>",
+		Short:   "Close a review (mark as resolved)",
+		Aliases: []string{"address"},
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running
 			if err := ensureDaemon(); err != nil {
@@ -184,14 +185,14 @@ func addressCmd() *cobra.Command {
 				return fmt.Errorf("invalid job_id: %s", args[0])
 			}
 
-			addressed := !unaddress
+			closed := !reopen
 			reqBody, _ := json.Marshal(map[string]any{
-				"job_id":    jobID,
-				"addressed": addressed,
+				"job_id": jobID,
+				"closed": closed,
 			})
 
 			addr := getDaemonAddr()
-			resp, err := http.Post(addr+"/api/review/address", "application/json", bytes.NewReader(reqBody))
+			resp, err := http.Post(addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
@@ -202,16 +203,19 @@ func addressCmd() *cobra.Command {
 				return fmt.Errorf("failed to mark review: %s", body)
 			}
 
-			if addressed {
-				fmt.Printf("Job %d marked as addressed\n", jobID)
+			if closed {
+				fmt.Printf("Job %d closed\n", jobID)
 			} else {
-				fmt.Printf("Job %d marked as unaddressed\n", jobID)
+				fmt.Printf("Job %d reopened\n", jobID)
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().BoolVar(&unaddress, "unaddress", false, "mark as unaddressed instead")
+	cmd.Flags().BoolVar(&reopen, "reopen", false, "reopen a closed review")
+	// Deprecated alias for --reopen
+	cmd.Flags().BoolVar(&reopen, "unaddress", false, "deprecated: use --reopen")
+	_ = cmd.Flags().MarkHidden("unaddress")
 
 	return cmd
 }

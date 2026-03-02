@@ -848,7 +848,7 @@ func (wp *WorkerPool) logJobFailed(
 	)
 }
 
-// markCompactSourceJobs marks all source jobs as addressed for a completed compact job
+// markCompactSourceJobs marks all source jobs as closed for a completed compact job
 func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error {
 	// Read metadata file, retrying briefly in case the CLI hasn't finished
 	// writing it yet (the file is written after enqueue returns the job ID).
@@ -873,20 +873,20 @@ func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error 
 		return nil
 	}
 
-	log.Printf("[%s] Marking %d source jobs as addressed for compact job %d", workerID, len(metadata.SourceJobIDs), jobID)
+	log.Printf("[%s] Marking %d source jobs as closed for compact job %d", workerID, len(metadata.SourceJobIDs), jobID)
 
-	// Mark each source job as addressed
+	// Mark each source job as closed
 	var failedIDs []int64
 	for _, srcJobID := range metadata.SourceJobIDs {
-		if err := wp.db.MarkReviewAddressedByJobID(srcJobID, true); err != nil {
-			log.Printf("[%s] Failed to mark job %d as addressed: %v", workerID, srcJobID, err)
+		if err := wp.db.MarkReviewClosedByJobID(srcJobID, true); err != nil {
+			log.Printf("[%s] Failed to mark job %d as closed: %v", workerID, srcJobID, err)
 			failedIDs = append(failedIDs, srcJobID)
 		}
 	}
 
 	successCount := len(metadata.SourceJobIDs) - len(failedIDs)
 	if successCount > 0 {
-		log.Printf("[%s] Marked %d/%d source jobs as addressed", workerID, successCount, len(metadata.SourceJobIDs))
+		log.Printf("[%s] Marked %d/%d source jobs as closed", workerID, successCount, len(metadata.SourceJobIDs))
 	}
 
 	// Only delete metadata when all source jobs were marked.

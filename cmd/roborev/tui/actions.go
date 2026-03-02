@@ -19,7 +19,7 @@ import (
 
 // tui_actions.go contains action/mutation functions extracted from tui.go.
 // These are TUI commands that perform side effects: clipboard operations,
-// server API calls (addressed, cancel, rerun, comment, fix, apply patch),
+// server API calls (close, cancel, rerun, comment, fix, apply patch),
 // and git operations (commit, worktree management).
 
 func formatClipboardContent(review *storage.Review) string {
@@ -69,12 +69,12 @@ func (m model) copyToClipboard(review *storage.Review) tea.Cmd {
 	}
 }
 
-// postAddressed sends an addressed state change to the server.
+// postClosed sends a closed state change to the server.
 // Translates "not found" to a context-specific error message.
-func (m model) postAddressed(jobID int64, newState bool, notFoundMsg string) error {
-	err := m.postJSON("/api/review/address", map[string]any{
-		"job_id":    jobID,
-		"addressed": newState,
+func (m model) postClosed(jobID int64, newState bool, notFoundMsg string) error {
+	err := m.postJSON("/api/review/close", map[string]any{
+		"job_id": jobID,
+		"closed": newState,
 	}, nil)
 	if errors.Is(err, errNotFound) {
 		return fmt.Errorf("%s", notFoundMsg)
@@ -85,38 +85,38 @@ func (m model) postAddressed(jobID int64, newState bool, notFoundMsg string) err
 	return nil
 }
 
-func (m model) addressReview(reviewID, jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
+func (m model) closeReview(reviewID, jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postAddressed(jobID, newState, "review not found")
-		return addressedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, seq: seq, err: err}
+		err := m.postClosed(jobID, newState, "review not found")
+		return closedResultMsg{reviewID: reviewID, jobID: jobID, reviewView: true, oldState: oldState, newState: newState, seq: seq, err: err}
 	}
 }
 
-// addressReviewInBackground updates addressed status by job ID.
+// closeReviewInBackground updates closed status by job ID.
 // Used for optimistic updates from queue view - UI already updated, this syncs to server.
-// On error, returns addressedResultMsg with oldState for rollback.
-func (m model) addressReviewInBackground(jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
+// On error, returns closedResultMsg with oldState for rollback.
+func (m model) closeReviewInBackground(jobID int64, newState, oldState bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postAddressed(jobID, newState, "no review for this job")
-		return addressedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
+		err := m.postClosed(jobID, newState, "no review for this job")
+		return closedResultMsg{jobID: jobID, oldState: oldState, newState: newState, seq: seq, err: err}
 	}
 }
 
-func (m model) toggleAddressedForJob(jobID int64, currentState *bool) tea.Cmd {
+func (m model) toggleClosedForJob(jobID int64, currentState *bool) tea.Cmd {
 	return func() tea.Msg {
 		newState := currentState == nil || !*currentState
 
-		if err := m.postAddressed(jobID, newState, "no review for this job"); err != nil {
+		if err := m.postClosed(jobID, newState, "no review for this job"); err != nil {
 			return errMsg(err)
 		}
-		return addressedMsg(newState)
+		return closedMsg(newState)
 	}
 }
 
-// markParentAddressed marks the parent review job as addressed after a fix is applied.
-func (m model) markParentAddressed(parentJobID int64) tea.Cmd {
+// markParentClosed marks the parent review job as closed after a fix is applied.
+func (m model) markParentClosed(parentJobID int64) tea.Cmd {
 	return func() tea.Msg {
-		err := m.postAddressed(parentJobID, true, "parent review not found")
+		err := m.postClosed(parentJobID, true, "parent review not found")
 		if err != nil {
 			return errMsg(err)
 		}

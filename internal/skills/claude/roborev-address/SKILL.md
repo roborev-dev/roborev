@@ -39,13 +39,13 @@ The JSON output has this structure:
 - `output`: the review text containing findings
 - `job.verdict`: `"P"` for pass, `"F"` for fail (may be empty if the review errored)
 - `job.git_ref`: the reviewed git ref (SHA, range, or synthetic ref)
-- `addressed`: whether this review has already been closed
+- `closed`: whether this review has already been closed
 
 ### 3. Check the verdict
 
 - If `job.verdict` is `"P"`: Inform the user no action is needed (passing review has no findings to fix). Stop here.
 - If `job.verdict` is empty or missing: Inform the user the review is not actionable (it may have errored). Do not proceed.
-- If `addressed` is `true`: Inform the user this review is already closed. Ask if they want to proceed anyway.
+- If `closed` is `true`: Inform the user this review is already closed. Ask if they want to proceed anyway.
 - If `job.verdict` is `"F"`: Continue to address the findings.
 
 ### 4. Fix the findings
@@ -70,7 +70,7 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 
 After fixing, **record what was done and close the review** by executing:
 ```bash
-roborev comment --job <job_id> "<summary of changes>" && roborev address <job_id>
+roborev comment --job <job_id> "<summary of changes>" && roborev close <job_id>
 ```
 
 The comment should briefly describe what was changed and why, referencing specific files. Keep it under 2-3 sentences. If the message contains quotes or special characters, escape them properly in the bash command.
@@ -86,7 +86,7 @@ Agent:
 2. Sees verdict is Fail with 2 findings, not yet closed
 3. Runs `git show <git_ref>` to see the reviewed diff
 4. Reads files, fixes the issues, runs `go test ./...`
-5. Executes `roborev comment --job 1019 "Fixed null check in foo.go and added error handling in bar.go" && roborev address 1019`
+5. Executes `roborev comment --job 1019 "Fixed null check in foo.go and added error handling in bar.go" && roborev close 1019`
 6. Asks: "I've fixed both findings and closed the review. Tests pass. Would you like me to commit these changes?"
 
 ## See also

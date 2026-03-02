@@ -29,7 +29,7 @@ func main() {
 	rootCmd.AddCommand(showCmd())
 	rootCmd.AddCommand(commentCmd())
 	rootCmd.AddCommand(respondCmd()) // hidden alias for backward compatibility
-	rootCmd.AddCommand(addressCmd())
+	rootCmd.AddCommand(closeCmd())
 	rootCmd.AddCommand(installHookCmd())
 	rootCmd.AddCommand(uninstallHookCmd())
 	rootCmd.AddCommand(daemonCmd())

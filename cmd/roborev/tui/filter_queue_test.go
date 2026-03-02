@@ -106,11 +106,11 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 	addrFalse := false
 
 	m.jobs = []storage.ReviewJob{
-		{ID: 1, RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone, Addressed: &addrTrue},
-		{ID: 2, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Addressed: &addrFalse},
-		{ID: 3, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Addressed: &addrFalse},
-		{ID: 4, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Addressed: &addrTrue},
-		{ID: 5, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Addressed: &addrTrue},
+		{ID: 1, RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone, Closed: &addrTrue},
+		{ID: 2, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Closed: &addrFalse},
+		{ID: 3, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Closed: &addrFalse},
+		{ID: 4, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Closed: &addrTrue},
+		{ID: 5, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Closed: &addrTrue},
 	}
 
 	m.activeRepoFilter = []string{"/path/to/backend-dev", "/path/to/backend-prod"}

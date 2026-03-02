@@ -96,7 +96,7 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "p":
 		return m.handlePromptKey()
 	case "a":
-		return m.handleAddressedKey()
+		return m.handleCloseKey()
 	case "x":
 		return m.handleCancelKey()
 	case "r":
@@ -108,7 +108,7 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "b":
 		return m.handleBranchFilterOpenKey()
 	case "h":
-		return m.handleHideAddressedKey()
+		return m.handleHideClosedKey()
 	case "c":
 		return m.handleCommentOpenKey()
 	case "y":
@@ -525,8 +525,8 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 			return m, m.fetchJobs()
 		}
 		return m, nil
-	} else if m.currentView == viewQueue && m.hideAddressed {
-		m.hideAddressed = false
+	} else if m.currentView == viewQueue && m.hideClosed {
+		m.hideClosed = false
 		m.queueColGen++
 		m.hasMore = false
 		m.selectedIdx = -1
@@ -551,7 +551,7 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 		m.paginateNav = 0
 		if returnTo == viewQueue {
 			m.normalizeSelectionIfHidden()
-			if m.hideAddressed && !m.loadingJobs {
+			if m.hideClosed && !m.loadingJobs {
 				m.loadingJobs = true
 				return m, m.fetchJobs()
 			}

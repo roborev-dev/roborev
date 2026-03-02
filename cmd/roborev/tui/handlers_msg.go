@@ -41,25 +41,25 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 	}
 	m.queueColGen++
 
-	// Clear pending addressed states that server has confirmed
-	for jobID, pending := range m.pendingAddressed {
+	// Clear pending closed states that server has confirmed
+	for jobID, pending := range m.pendingClosed {
 		found := false
 		for i := range m.jobs {
 			if m.jobs[i].ID == jobID {
 				found = true
-				serverState := m.jobs[i].Addressed != nil && *m.jobs[i].Addressed
+				serverState := m.jobs[i].Closed != nil && *m.jobs[i].Closed
 				if serverState == pending.newState {
-					delete(m.pendingAddressed, jobID)
+					delete(m.pendingClosed, jobID)
 				}
 				break
 			}
 		}
-		// When hideAddressed is active, addressed jobs are filtered
-		// out of the response. If a pending "mark addressed" job is
+		// When hideClosed is active, closed jobs are filtered
+		// out of the response. If a pending "mark closed" job is
 		// absent from the response, that confirms the server absorbed
 		// the change — clear it to prevent delta double-counting.
-		if !found && m.hideAddressed && pending.newState {
-			delete(m.pendingAddressed, jobID)
+		if !found && m.hideClosed && pending.newState {
+			delete(m.pendingClosed, jobID)
 		}
 	}
 
@@ -68,16 +68,16 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 		// Re-apply only unconfirmed pending deltas so that
 		// rollback math stays correct without double-counting
 		// entries the server has already absorbed.
-		for _, pending := range m.pendingAddressed {
+		for _, pending := range m.pendingClosed {
 			m.applyStatsDelta(pending.newState)
 		}
 	}
 
-	// Apply any remaining pending addressed changes to prevent flash
+	// Apply any remaining pending closed changes to prevent flash
 	for i := range m.jobs {
-		if pending, ok := m.pendingAddressed[m.jobs[i].ID]; ok {
+		if pending, ok := m.pendingClosed[m.jobs[i].ID]; ok {
 			newState := pending.newState
-			m.jobs[i].Addressed = &newState
+			m.jobs[i].Closed = &newState
 		}
 	}
 
@@ -99,7 +99,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 
 		if !found {
 			m.selectedIdx = max(0, min(len(m.jobs)-1, m.selectedIdx))
-			if len(m.activeRepoFilter) > 0 || m.hideAddressed {
+			if len(m.activeRepoFilter) > 0 || m.hideClosed {
 				firstVisible := m.findFirstVisibleJob()
 				if firstVisible >= 0 {
 					m.selectedIdx = firstVisible
@@ -148,9 +148,9 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Auto-paginate when hide-addressed hides too many jobs
+	// Auto-paginate when hide-closed hides too many jobs
 	if m.currentView == viewQueue &&
-		m.hideAddressed &&
+		m.hideClosed &&
 		m.canPaginate() &&
 		len(m.getVisibleJobs()) < m.queueVisibleRows() {
 		m.loadingMore = true
@@ -547,15 +547,15 @@ func (m model) handleCommitMsgMsg(
 	return m, nil
 }
 
-// handleAddressedResultMsg processes the result of an addressed toggle API call.
-func (m model) handleAddressedResultMsg(msg addressedResultMsg) (tea.Model, tea.Cmd) {
+// handleClosedResultMsg processes the result of a closed toggle API call.
+func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 	isCurrentRequest := false
 	if msg.jobID > 0 {
-		if pending, ok := m.pendingAddressed[msg.jobID]; ok && pending.seq == msg.seq {
+		if pending, ok := m.pendingClosed[msg.jobID]; ok && pending.seq == msg.seq {
 			isCurrentRequest = true
 		}
 	} else if msg.reviewView && msg.reviewID > 0 {
-		if pending, ok := m.pendingReviewAddressed[msg.reviewID]; ok && pending.seq == msg.seq {
+		if pending, ok := m.pendingReviewClosed[msg.reviewID]; ok && pending.seq == msg.seq {
 			isCurrentRequest = true
 		}
 	}
@@ -564,33 +564,33 @@ func (m model) handleAddressedResultMsg(msg addressedResultMsg) (tea.Model, tea.
 		if isCurrentRequest {
 			if msg.reviewView {
 				if m.currentReview != nil && m.currentReview.ID == msg.reviewID {
-					m.currentReview.Addressed = msg.oldState
+					m.currentReview.Closed = msg.oldState
 				}
 			}
 			if msg.jobID > 0 {
-				m.setJobAddressed(msg.jobID, msg.oldState)
-				delete(m.pendingAddressed, msg.jobID)
+				m.setJobClosed(msg.jobID, msg.oldState)
+				delete(m.pendingClosed, msg.jobID)
 				// Reverse the optimistic stats delta
 				m.applyStatsDelta(msg.oldState)
 			} else if msg.reviewID > 0 {
-				delete(m.pendingReviewAddressed, msg.reviewID)
+				delete(m.pendingReviewClosed, msg.reviewID)
 			}
 			m.err = msg.err
 		}
 	} else {
 		if isCurrentRequest && msg.jobID == 0 && msg.reviewID > 0 {
-			delete(m.pendingReviewAddressed, msg.reviewID)
+			delete(m.pendingReviewClosed, msg.reviewID)
 		}
 	}
 	return m, nil
 }
 
-// handleAddressedToggleMsg processes addressed state toggle messages.
-func (m model) handleAddressedToggleMsg(
-	msg addressedMsg,
+// handleClosedToggleMsg processes closed state toggle messages.
+func (m model) handleClosedToggleMsg(
+	msg closedMsg,
 ) (tea.Model, tea.Cmd) {
 	if m.currentReview != nil {
-		m.currentReview.Addressed = bool(msg)
+		m.currentReview.Closed = bool(msg)
 	}
 	return m, nil
 }
@@ -867,7 +867,7 @@ func (m model) handleApplyPatchResultMsg(
 		if msg.parentJobID > 0 {
 			cmds = append(
 				cmds,
-				m.markParentAddressed(msg.parentJobID),
+				m.markParentClosed(msg.parentJobID),
 			)
 		}
 		return m, tea.Batch(cmds...)

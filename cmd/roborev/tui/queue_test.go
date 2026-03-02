@@ -655,7 +655,7 @@ func TestTUIJobCellsContent(t *testing.T) {
 		handled := true
 		job := makeJob(1)
 		job.Verdict = &pass
-		job.Addressed = &handled
+		job.Closed = &handled
 
 		cells := m.jobCells(job)
 		if cells[4] != "Pass" {
@@ -1064,18 +1064,18 @@ func TestTUIResizeBehavior(t *testing.T) {
 	}
 }
 
-func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
+func TestTUIJobsMsgHideClosedUnderfilledViewportAutoPaginates(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewQueue
-	m.hideAddressed = true
+	m.hideClosed = true
 	m.height = 29 // queueVisibleRows = 20
 	m.loadingJobs = true
 
-	// 13 visible (done + unaddressed), 12 hidden (failed) in this page.
+	// 13 visible (done + open), 12 hidden (failed) in this page.
 	jobs := make([]storage.ReviewJob, 0, 25)
 	var id int64 = 200
 	for range 13 {
-		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))))
+		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))))
 		id--
 	}
 	for range 12 {
@@ -1093,17 +1093,17 @@ func TestTUIJobsMsgHideAddressedUnderfilledViewportAutoPaginates(t *testing.T) {
 		t.Fatalf("Expected 13 visible jobs in first page, got %d", got)
 	}
 	if !m2.loadingMore {
-		t.Error("loadingMore should be true when hide-addressed page underfills viewport")
+		t.Error("loadingMore should be true when hide-closed page underfills viewport")
 	}
 	if cmd == nil {
-		t.Error("Expected auto-pagination command when hide-addressed page underfills viewport")
+		t.Error("Expected auto-pagination command when hide-closed page underfills viewport")
 	}
 }
 
-func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) {
+func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewQueue
-	m.hideAddressed = true
+	m.hideClosed = true
 	m.height = 29 // queueVisibleRows = 21
 	m.loadingJobs = true
 
@@ -1111,7 +1111,7 @@ func TestTUIJobsMsgHideAddressedFilledViewportDoesNotAutoPaginate(t *testing.T) 
 	jobs := make([]storage.ReviewJob, 0, 26)
 	var id int64 = 300
 	for range 21 {
-		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))))
+		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))))
 		id--
 	}
 	for range 5 {
@@ -1250,7 +1250,7 @@ func setupQueue(jobs []storage.ReviewJob, selectedIdx int) model {
 	return m
 }
 
-func TestTUIJobAddressedTransitions(t *testing.T) {
+func TestTUIJobClosedTransitions(t *testing.T) {
 	tests := []struct {
 		name             string
 		initialJobs      []storage.ReviewJob
@@ -1258,55 +1258,55 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 		msg              tea.Msg
 		wantPending      bool  // Is pending state expected to remain?
 		wantPendingState *bool // If remaining, expected newState? (nil to skip value check)
-		wantAddressed    *bool // Expected job.Addressed state (nil to skip)
+		wantClosed       *bool // Expected job.Closed state (nil to skip)
 		wantError        bool  // Expected error in model
 	}{
 		{
 			name:           "Late error ignored (same state, diff seq)",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 3}},
-			msg: addressedResultMsg{
+			msg: closedResultMsg{
 				jobID: 1, oldState: false, newState: true, seq: 1,
 				err: fmt.Errorf("late error"),
 			},
 			wantPending:      true,
 			wantPendingState: boolPtr(true),
-			wantAddressed:    boolPtr(true), // Optimistically true
+			wantClosed:       boolPtr(true), // Optimistically true
 			wantError:        false,
 		},
 		{
 			name:           "Stale error response ignored",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(true)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg: addressedResultMsg{
+			msg: closedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 0,
 				err: fmt.Errorf("network error"),
 			},
 			wantPending:      true,
 			wantPendingState: boolPtr(true),
-			wantAddressed:    boolPtr(true),
+			wantClosed:       boolPtr(true),
 			wantError:        false,
 		},
 		{
 			name:           "Cleared when server nil matches pending false",
 			initialJobs:    []storage.ReviewJob{makeJob(1)},
 			initialPending: map[int64]pendingState{1: {newState: false, seq: 1}},
-			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Addressed is nil
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Closed is nil
 			wantPending:    false,
 		},
 		{
 			name:           "Not cleared when server nil mismatches pending true",
 			initialJobs:    []storage.ReviewJob{makeJob(1)},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Addressed is nil
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}}, // Closed is nil
 			wantPending:    true,
-			wantAddressed:  boolPtr(true),
+			wantClosed:     boolPtr(true),
 		},
 		{
 			name:           "Not cleared by stale response (mismatched newState)",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg: addressedResultMsg{
+			msg: closedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 0,
 			},
 			wantPending:      true,
@@ -1314,40 +1314,40 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 		},
 		{
 			name:           "Not cleared on success (waits for refresh)",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg: addressedResultMsg{
+			msg: closedResultMsg{
 				jobID: 1, oldState: false, newState: true, seq: 1,
 			},
 			wantPending: true,
 		},
 		{
 			name:           "Cleared by jobs refresh",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))}},
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withClosed(boolPtr(true)))}},
 			wantPending:    false,
-			wantAddressed:  boolPtr(true),
+			wantClosed:     boolPtr(true),
 		},
 		{
 			name:           "Not cleared by stale jobs refresh",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}},
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))}},
 			wantPending:    true,
-			wantAddressed:  boolPtr(true),
+			wantClosed:     boolPtr(true),
 		},
 		{
 			name:           "Cleared on current error",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(true)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(true)))},
 			initialPending: map[int64]pendingState{1: {newState: false, seq: 1}},
-			msg: addressedResultMsg{
+			msg: closedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 1,
 				err: fmt.Errorf("server error"),
 			},
-			wantPending:   false,
-			wantAddressed: boolPtr(true), // Rolled back to oldState (true)
-			wantError:     true,
+			wantPending: false,
+			wantClosed:  boolPtr(true), // Rolled back to oldState (true)
+			wantError:   true,
 		},
 	}
 
@@ -1355,13 +1355,13 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := setupQueue(tt.initialJobs, 0)
 			if tt.initialPending != nil {
-				m.pendingAddressed = make(map[int64]pendingState, len(tt.initialPending))
-				maps.Copy(m.pendingAddressed, tt.initialPending)
+				m.pendingClosed = make(map[int64]pendingState, len(tt.initialPending))
+				maps.Copy(m.pendingClosed, tt.initialPending)
 				for id, p := range tt.initialPending {
 					for i := range m.jobs {
 						if m.jobs[i].ID == id {
 							val := p.newState
-							m.jobs[i].Addressed = &val
+							m.jobs[i].Closed = &val
 						}
 					}
 				}
@@ -1370,7 +1370,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 			m2, _ := updateModel(t, m, tt.msg)
 
 			for id, p := range tt.initialPending {
-				val, exists := m2.pendingAddressed[id]
+				val, exists := m2.pendingClosed[id]
 				if tt.wantPending && !exists {
 					t.Errorf("expected pending state for job %d to remain", id)
 				}
@@ -1387,14 +1387,14 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 				}
 			}
 
-			if tt.wantAddressed != nil && len(m2.jobs) > 0 {
-				got := m2.jobs[0].Addressed
+			if tt.wantClosed != nil && len(m2.jobs) > 0 {
+				got := m2.jobs[0].Closed
 				if got == nil {
-					if *tt.wantAddressed {
-						t.Error("expected addressed to be true, got nil")
+					if *tt.wantClosed {
+						t.Error("expected closed to be true, got nil")
 					}
-				} else if *got != *tt.wantAddressed {
-					t.Errorf("expected addressed %v, got %v", *tt.wantAddressed, *got)
+				} else if *got != *tt.wantClosed {
+					t.Errorf("expected closed %v, got %v", *tt.wantClosed, *got)
 				}
 			}
 
@@ -1408,7 +1408,7 @@ func TestTUIJobAddressedTransitions(t *testing.T) {
 	}
 }
 
-func TestTUIReviewAddressedTransitions(t *testing.T) {
+func TestTUIReviewClosedTransitions(t *testing.T) {
 	tests := []struct {
 		name                 string
 		initialReviewPending map[int64]pendingState // map[ReviewID]state for review-only cases
@@ -1418,10 +1418,10 @@ func TestTUIReviewAddressedTransitions(t *testing.T) {
 		{
 			name:                 "Pending review-only cleared on success",
 			initialReviewPending: map[int64]pendingState{42: {newState: true, seq: 1}},
-			msg: addressedResultMsg{
+			msg: closedResultMsg{
 				jobID: 0, reviewID: 42, reviewView: true, oldState: false, newState: true, seq: 1,
 			},
-			wantPending: false, // Should be cleared from pendingReviewAddressed
+			wantPending: false, // Should be cleared from pendingReviewClosed
 		},
 	}
 
@@ -1429,14 +1429,14 @@ func TestTUIReviewAddressedTransitions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := setupQueue(nil, 0)
 			if tt.initialReviewPending != nil {
-				m.pendingReviewAddressed = make(map[int64]pendingState, len(tt.initialReviewPending))
-				maps.Copy(m.pendingReviewAddressed, tt.initialReviewPending)
+				m.pendingReviewClosed = make(map[int64]pendingState, len(tt.initialReviewPending))
+				maps.Copy(m.pendingReviewClosed, tt.initialReviewPending)
 			}
 
 			m2, _ := updateModel(t, m, tt.msg)
 
 			for id := range tt.initialReviewPending {
-				_, exists := m2.pendingReviewAddressed[id]
+				_, exists := m2.pendingReviewClosed[id]
 				if tt.wantPending && !exists {
 					t.Errorf("expected pending state for review %d to remain", id)
 				}
@@ -1448,7 +1448,7 @@ func TestTUIReviewAddressedTransitions(t *testing.T) {
 	}
 }
 
-func TestTUIAddressedHideAddressedStats(t *testing.T) {
+func TestTUIClosedHideClosedStats(t *testing.T) {
 	tests := []struct {
 		name           string
 		initialJobs    []storage.ReviewJob
@@ -1459,43 +1459,43 @@ func TestTUIAddressedHideAddressedStats(t *testing.T) {
 		wantStats      *storage.JobStats
 	}{
 		{
-			name:           "HideAddressed stats not double counted",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
-			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
+			name:           "HideClosed stats not double counted",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialStats:   storage.JobStats{Done: 10, Closed: 6, Open: 4}, // Pre-optimistic
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: jobsMsg{
-				jobs:  []storage.ReviewJob{},                                    // Filtered out
-				stats: storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Server matches optimistic
+				jobs:  []storage.ReviewJob{},                          // Filtered out
+				stats: storage.JobStats{Done: 10, Closed: 6, Open: 4}, // Server matches optimistic
 			},
 			wantPending: false,
-			wantStats:   &storage.JobStats{Addressed: 6, Unaddressed: 4},
+			wantStats:   &storage.JobStats{Closed: 6, Open: 4},
 		},
 		{
-			name:           "HideAddressed pending not cleared when server lags",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))},
-			initialStats:   storage.JobStats{Done: 10, Addressed: 6, Unaddressed: 4}, // Pre-optimistic
+			name:           "HideClosed pending not cleared when server lags",
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialStats:   storage.JobStats{Done: 10, Closed: 6, Open: 4}, // Pre-optimistic
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: jobsMsg{
-				jobs:  []storage.ReviewJob{makeJob(1, withAddressed(boolPtr(false)))}, // Server still old
-				stats: storage.JobStats{Done: 10, Addressed: 5, Unaddressed: 5},
+				jobs:  []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))}, // Server still old
+				stats: storage.JobStats{Done: 10, Closed: 5, Open: 5},
 			},
 			wantPending: true,
-			wantStats:   &storage.JobStats{Addressed: 6, Unaddressed: 4}, // Re-applied delta
+			wantStats:   &storage.JobStats{Closed: 6, Open: 4}, // Re-applied delta
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := setupQueue(tt.initialJobs, 0)
-			m.hideAddressed = true
+			m.hideClosed = true
 			if tt.initialPending != nil {
-				m.pendingAddressed = make(map[int64]pendingState, len(tt.initialPending))
-				maps.Copy(m.pendingAddressed, tt.initialPending)
+				m.pendingClosed = make(map[int64]pendingState, len(tt.initialPending))
+				maps.Copy(m.pendingClosed, tt.initialPending)
 				for id, p := range tt.initialPending {
 					for i := range m.jobs {
 						if m.jobs[i].ID == id {
 							val := p.newState
-							m.jobs[i].Addressed = &val
+							m.jobs[i].Closed = &val
 						}
 					}
 				}
@@ -1505,7 +1505,7 @@ func TestTUIAddressedHideAddressedStats(t *testing.T) {
 			m2, _ := updateModel(t, m, tt.msg)
 
 			for id := range tt.initialPending {
-				_, exists := m2.pendingAddressed[id]
+				_, exists := m2.pendingClosed[id]
 				if tt.wantPending && !exists {
 					t.Errorf("expected pending state for job %d to remain", id)
 				}
@@ -1515,11 +1515,11 @@ func TestTUIAddressedHideAddressedStats(t *testing.T) {
 			}
 
 			if tt.wantStats != nil {
-				if m2.jobStats.Addressed != tt.wantStats.Addressed {
-					t.Errorf("stats.Addressed = %d, want %d", m2.jobStats.Addressed, tt.wantStats.Addressed)
+				if m2.jobStats.Closed != tt.wantStats.Closed {
+					t.Errorf("stats.Closed = %d, want %d", m2.jobStats.Closed, tt.wantStats.Closed)
 				}
-				if m2.jobStats.Unaddressed != tt.wantStats.Unaddressed {
-					t.Errorf("stats.Unaddressed = %d, want %d", m2.jobStats.Unaddressed, tt.wantStats.Unaddressed)
+				if m2.jobStats.Open != tt.wantStats.Open {
+					t.Errorf("stats.Open = %d, want %d", m2.jobStats.Open, tt.wantStats.Open)
 				}
 			}
 		})
@@ -2269,12 +2269,12 @@ func TestClosedKeyShortcut(t *testing.T) {
 
 	newTestModel := func() model {
 		return setupTestModel([]storage.ReviewJob{
-			makeJob(1, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+			makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 		}, func(m *model) {
 			m.currentView = viewQueue
 			m.selectedIdx = 0
 			m.selectedJobID = 1
-			m.pendingAddressed = make(map[int64]pendingState)
+			m.pendingClosed = make(map[int64]pendingState)
 		})
 	}
 
@@ -2284,9 +2284,9 @@ func TestClosedKeyShortcut(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Expected command from 'a' key press")
 	}
-	pending, ok := m2.pendingAddressed[1]
+	pending, ok := m2.pendingClosed[1]
 	if !ok {
-		t.Fatal("Expected pending addressed state for job 1 after 'a'")
+		t.Fatal("Expected pending closed state for job 1 after 'a'")
 	}
 	if !pending.newState {
 		t.Error("Expected pending newState=true (toggled from false)")
@@ -2298,7 +2298,7 @@ func TestClosedKeyShortcut(t *testing.T) {
 	if cmd2 != nil {
 		t.Error("'d' key should not trigger any command (shortcut removed)")
 	}
-	if len(m4.pendingAddressed) != 0 {
-		t.Error("'d' should not modify pendingAddressed state")
+	if len(m4.pendingClosed) != 0 {
+		t.Error("'d' should not modify pendingClosed state")
 	}
 }

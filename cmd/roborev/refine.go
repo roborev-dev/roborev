@@ -415,10 +415,10 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 					continue // Loop back, will re-check
 				}
 				verdict := storage.ParseVerdict(review.Output)
-				if verdict == "F" && !review.Addressed {
+				if verdict == "F" && !review.Closed {
 					currentFailedReview = review
 				} else if verdict == "P" {
-					if err := client.MarkReviewAddressed(review.JobID); err != nil {
+					if err := client.MarkReviewClosed(review.JobID); err != nil {
 						fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 					}
 					continue // Loop back to check for more
@@ -612,8 +612,8 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
 
-		// Mark old review as addressed
-		if err := client.MarkReviewAddressed(currentFailedReview.JobID); err != nil {
+		// Close old review
+		if err := client.MarkReviewClosed(currentFailedReview.JobID); err != nil {
 			fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
 		}
 
@@ -637,7 +637,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		verdict := storage.ParseVerdict(review.Output)
 		if verdict == "P" {
 			fmt.Println("New commit passed review!")
-			if err := client.MarkReviewAddressed(review.JobID); err != nil {
+			if err := client.MarkReviewClosed(review.JobID); err != nil {
 				fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 			}
 			currentFailedReview = nil
@@ -689,7 +689,7 @@ func runRefineList(
 		queryBranch = ""
 	}
 
-	jobs, err := queryUnaddressedJobs(apiRoot, queryBranch)
+	jobs, err := queryOpenJobs(apiRoot, queryBranch)
 	if err != nil {
 		return err
 	}
@@ -814,8 +814,8 @@ func runRefineAllBranches(
 		}
 	}
 
-	// Query all unaddressed jobs (no branch filter)
-	jobs, err := queryUnaddressedJobs(apiRepoRoot, "")
+	// Query all open jobs (no branch filter)
+	jobs, err := queryOpenJobs(apiRepoRoot, "")
 	if err != nil {
 		return err
 	}
@@ -948,9 +948,9 @@ func resolveAllowUnsafeAgents(flag bool, flagChanged bool, cfg *config.Config) b
 	return true
 }
 
-// findFailedReviewForBranch finds an unaddressed failed review for any of the given commits.
+// findFailedReviewForBranch finds an open failed review for any of the given commits.
 // Iterates oldest to newest so earlier commits are fixed before later ones.
-// Passing reviews are marked as addressed automatically.
+// Passing reviews are closed automatically.
 // Reviews in the skip set are ignored (used for reviews we've given up on this run).
 func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[int64]bool) (*storage.Review, error) {
 	// Iterate oldest to newest (commits are in chronological order)
@@ -963,8 +963,8 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 			continue
 		}
 
-		// Skip already addressed reviews
-		if review.Addressed {
+		// Skip already closed reviews
+		if review.Closed {
 			continue
 		}
 
@@ -978,9 +978,9 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 			return review, nil
 		}
 
-		// Mark passing reviews as addressed so they don't need to be checked again
+		// Close passing reviews so they don't need to be checked again
 		if verdict == "P" {
-			if err := client.MarkReviewAddressed(review.JobID); err != nil {
+			if err := client.MarkReviewClosed(review.JobID); err != nil {
 				return nil, fmt.Errorf("closing review (job %d): %w", review.JobID, err)
 			}
 		}

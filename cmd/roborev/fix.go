@@ -98,7 +98,7 @@ Examples:
 			}
 			if list {
 				// When --all-branches, effectiveBranch stays "" so
-				// queryUnaddressedJobs omits the branch filter.
+				// queryOpenJobs omits the branch filter.
 				effectiveBranch := branch
 				if !allBranches && effectiveBranch == "" {
 					workDir, err := os.Getwd()
@@ -165,7 +165,7 @@ Examples:
 					}
 					effectiveBranch = git.GetCurrentBranch(repoRoot)
 				}
-				return runFixUnaddressed(cmd, effectiveBranch, newestFirst, opts)
+				return runFixOpen(cmd, effectiveBranch, newestFirst, opts)
 			}
 
 			// Parse job IDs
@@ -387,7 +387,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 	return nil
 }
 
-func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts fixOptions) error {
+func runFixOpen(cmd *cobra.Command, branch string, newestFirst bool, opts fixOptions) error {
 	// Ensure daemon is running
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -406,7 +406,7 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 	seen := make(map[int64]bool)
 
 	for {
-		jobIDs, err := queryUnaddressedJobIDs(repoRoot, branch)
+		jobIDs, err := queryOpenJobIDs(repoRoot, branch)
 		if err != nil {
 			return err
 		}
@@ -447,11 +447,11 @@ func runFixUnaddressed(cmd *cobra.Command, branch string, newestFirst bool, opts
 	}
 }
 
-func queryUnaddressedJobs(
+func queryOpenJobs(
 	repoRoot, branch string,
 ) ([]storage.ReviewJob, error) {
 	queryURL := fmt.Sprintf(
-		"%s/api/jobs?status=done&repo=%s&addressed=false&limit=0",
+		"%s/api/jobs?status=done&repo=%s&closed=false&limit=0",
 		serverAddr, url.QueryEscape(repoRoot),
 	)
 	if branch != "" {
@@ -482,10 +482,10 @@ func queryUnaddressedJobs(
 	return jobsResp.Jobs, nil
 }
 
-func queryUnaddressedJobIDs(
+func queryOpenJobIDs(
 	repoRoot, branch string,
 ) ([]int64, error) {
-	jobs, err := queryUnaddressedJobs(repoRoot, branch)
+	jobs, err := queryOpenJobs(repoRoot, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +496,7 @@ func queryUnaddressedJobIDs(
 	return ids, nil
 }
 
-// runFixList prints unaddressed jobs with detailed information without running any agent.
+// runFixList prints open jobs with detailed information without running any agent.
 func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -511,7 +511,7 @@ func runFixList(cmd *cobra.Command, branch string, newestFirst bool) error {
 		repoRoot = root
 	}
 
-	jobIDs, err := queryUnaddressedJobIDs(repoRoot, branch)
+	jobIDs, err := queryOpenJobIDs(repoRoot, branch)
 	if err != nil {
 		return err
 	}
@@ -655,7 +655,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		if !opts.quiet {
 			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)
 		}
-		if err := markJobAddressed(serverAddr, jobID); err != nil && !opts.quiet {
+		if err := markJobClosed(serverAddr, jobID); err != nil && !opts.quiet {
 			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
 		}
 		return nil
@@ -738,7 +738,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		}
 	}
 
-	if err := markJobAddressed(serverAddr, jobID); err != nil {
+	if err := markJobClosed(serverAddr, jobID); err != nil {
 		if !opts.quiet {
 			cmd.Printf("Warning: could not close job: %v\n", err)
 		}
@@ -779,7 +779,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 
 	// Discover jobs if none provided
 	if len(jobIDs) == 0 {
-		jobIDs, err = queryUnaddressedJobIDs(apiRepoRoot, branch)
+		jobIDs, err = queryOpenJobIDs(apiRepoRoot, branch)
 		if err != nil {
 			return err
 		}
@@ -829,7 +829,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			if !opts.quiet {
 				cmd.Printf("Skipping job %d (review passed)\n", id)
 			}
-			if err := markJobAddressed(serverAddr, id); err != nil && !opts.quiet {
+			if err := markJobClosed(serverAddr, id); err != nil && !opts.quiet {
 				cmd.Printf("Warning: could not close job %d: %v\n", id, err)
 			}
 			continue
@@ -929,7 +929,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, newestFirst 
 			if addErr := addJobResponse(serverAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
 				cmd.Printf("Warning: could not add response to job %d: %v\n", e.jobID, addErr)
 			}
-			if markErr := markJobAddressed(serverAddr, e.jobID); markErr != nil {
+			if markErr := markJobClosed(serverAddr, e.jobID); markErr != nil {
 				if !opts.quiet {
 					cmd.Printf("Warning: could not close job %d: %v\n", e.jobID, markErr)
 				}

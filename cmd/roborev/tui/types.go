@@ -61,7 +61,7 @@ type flatFilterEntry struct {
 	branchIdx int // Index into children (-1 for repo-level)
 }
 
-// pendingState tracks a pending addressed toggle with sequence number
+// pendingState tracks a pending closed toggle with sequence number
 type pendingState struct {
 	newState bool
 	seq      uint64
@@ -130,13 +130,13 @@ type promptMsg struct {
 	review *storage.Review
 	jobID  int64 // The job ID that was requested (for stale response detection)
 }
-type addressedMsg bool
-type addressedResultMsg struct {
+type closedMsg bool
+type closedResultMsg struct {
 	jobID      int64 // job ID for queue view rollback
 	reviewID   int64 // review ID for review view rollback
 	reviewView bool  // true if from review view (rollback currentReview)
 	oldState   bool
-	newState   bool   // the requested state (for pendingAddressed validation)
+	newState   bool   // the requested state (for pendingClosed validation)
 	seq        uint64 // request sequence number (for distinguishing same-state rapid toggles)
 	err        error
 }
@@ -214,7 +214,7 @@ type fixTriggerResultMsg struct {
 
 type applyPatchResultMsg struct {
 	jobID        int64
-	parentJobID  int64 // Parent review job (to mark addressed on success)
+	parentJobID  int64 // Parent review job (to mark closed on success)
 	success      bool
 	commitFailed bool // True only when patch applied but git commit failed (working tree is dirty)
 	err          error

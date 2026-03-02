@@ -58,9 +58,9 @@ func (m model) renderReviewView() string {
 		b.WriteString(statusStyle.Render(locationLine))
 		b.WriteString("\x1b[K") // Clear to end of line
 
-		// Show verdict and addressed status on next line (skip verdict for fix jobs)
+		// Show verdict and closed status on next line (skip verdict for fix jobs)
 		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
-		if hasVerdict || review.Addressed {
+		if hasVerdict || review.Closed {
 			b.WriteString("\n")
 			if hasVerdict {
 				v := *review.Job.Verdict
@@ -70,12 +70,12 @@ func (m model) renderReviewView() string {
 					b.WriteString(failStyle.Render("Verdict: Fail"))
 				}
 			}
-			// Show [ADDRESSED] with distinct color (after verdict if present)
-			if review.Addressed {
+			// Show [CLOSED] with distinct color (after verdict if present)
+			if review.Closed {
 				if hasVerdict {
 					b.WriteString(" ")
 				}
-				b.WriteString(addressedStyle.Render("[CLOSED]"))
+				b.WriteString(closedStyle.Render("[CLOSED]"))
 			}
 			b.WriteString("\x1b[K") // Clear to end of line
 		}
@@ -136,11 +136,11 @@ func (m model) renderReviewView() string {
 		}
 	}
 
-	// headerHeight = title + location line + status line (1) + help + verdict/addressed (0|1)
+	// headerHeight = title + location line + status line (1) + help + verdict/closed (0|1)
 	headerHeight := titleLines + locationLines + 1 + helpLines
 	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
-	if hasVerdict || review.Addressed {
-		headerHeight++ // Add 1 for verdict/addressed line
+	if hasVerdict || review.Closed {
+		headerHeight++ // Add 1 for verdict/closed line
 	}
 	panelReserve := 0
 	if m.reviewFixPanelOpen {

@@ -21,7 +21,7 @@ var (
 	sfToolStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{
 			Light: "30", Dark: "51",
-		}) // Cyan — matches tuiAddressedStyle
+		}) // Cyan — matches tuiClosedStyle
 	sfArgStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{
 			Light: "242", Dark: "246",

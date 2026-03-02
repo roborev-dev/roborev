@@ -17,7 +17,7 @@ import (
 )
 
 func (m model) getVisibleJobs() []storage.ReviewJob {
-	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideAddressed {
+	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideClosed {
 		return m.jobs
 	}
 	var visible []storage.ReviewJob
@@ -71,7 +71,7 @@ func (m model) getVisibleSelectedIdx() int {
 	if m.selectedIdx < 0 {
 		return -1
 	}
-	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideAddressed {
+	if len(m.activeRepoFilter) == 0 && m.activeBranchFilter == "" && !m.hideClosed {
 		return m.selectedIdx
 	}
 	count := 0
@@ -121,7 +121,7 @@ func (m model) renderQueueView() string {
 			}
 		}
 	}
-	if m.hideAddressed {
+	if m.hideClosed {
 		title.WriteString(" [hiding closed]")
 	}
 	b.WriteString(titleStyle.Render(title.String()))
@@ -136,7 +136,7 @@ func (m model) renderQueueView() string {
 		// Status line - use server-side aggregate counts for paginated views,
 		// fall back to client-side counting for multi-repo filters (which load all jobs)
 		var statusLine string
-		var done, addressed, unaddressed int
+		var done, closed, open int
 		if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == branchNone {
 			// Client-side filtered views load all jobs, so count locally
 			for _, job := range m.jobs {
@@ -148,28 +148,28 @@ func (m model) renderQueueView() string {
 				}
 				if job.Status == storage.JobStatusDone {
 					done++
-					if job.Addressed != nil {
-						if *job.Addressed {
-							addressed++
+					if job.Closed != nil {
+						if *job.Closed {
+							closed++
 						} else {
-							unaddressed++
+							open++
 						}
 					}
 				}
 			}
 		} else {
 			done = m.jobStats.Done
-			addressed = m.jobStats.Addressed
-			unaddressed = m.jobStats.Unaddressed
+			closed = m.jobStats.Closed
+			open = m.jobStats.Open
 		}
 		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
 			statusLine = fmt.Sprintf("Daemon: %s | Completed: %d | Closed: %d | Open: %d",
-				m.daemonVersion, done, addressed, unaddressed)
+				m.daemonVersion, done, closed, open)
 		} else {
 			statusLine = fmt.Sprintf("Daemon: %s | Workers: %d/%d | Completed: %d | Closed: %d | Open: %d",
 				m.daemonVersion,
 				m.status.ActiveWorkers, m.status.MaxWorkers,
-				done, addressed, unaddressed)
+				done, closed, open)
 		}
 		b.WriteString(statusStyle.Render(statusLine))
 		b.WriteString("\x1b[K\n") // Clear status line
@@ -201,7 +201,7 @@ func (m model) renderQueueView() string {
 		if m.loadingJobs || m.loadingMore {
 			b.WriteString("Loading...")
 			b.WriteString("\x1b[K\n")
-		} else if len(m.activeRepoFilter) > 0 || m.hideAddressed {
+		} else if len(m.activeRepoFilter) > 0 || m.hideClosed {
 			b.WriteString("No jobs matching filters")
 			b.WriteString("\x1b[K\n")
 		} else {
@@ -492,9 +492,9 @@ func (m model) renderQueueView() string {
 					case colStatus:
 						s = s.Foreground(combinedStatusColor(job))
 					case colHandled:
-						if job.Addressed != nil {
-							if *job.Addressed {
-								s = s.Foreground(addressedStyle.GetForeground())
+						if job.Closed != nil {
+							if *job.Closed {
+								s = s.Foreground(closedStyle.GetForeground())
 							} else {
 								s = s.Foreground(queuedStyle.GetForeground())
 							}
@@ -608,8 +608,8 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	status := combinedStatus(job)
 
 	handled := ""
-	if job.Addressed != nil {
-		if *job.Addressed {
+	if job.Closed != nil {
+		if *job.Closed {
 			handled = "yes"
 		} else {
 			handled = "no"

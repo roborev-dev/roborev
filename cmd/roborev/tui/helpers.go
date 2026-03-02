@@ -52,26 +52,26 @@ func (m *model) mutateJob(id int64, fn func(*storage.ReviewJob)) bool {
 	return false
 }
 
-// applyStatsDelta adjusts jobStats for an addressed state change.
-// addressed=true means marking as addressed (+Addressed, -Unaddressed).
-func (m *model) applyStatsDelta(addressed bool) {
-	if addressed {
-		m.jobStats.Addressed++
-		m.jobStats.Unaddressed--
+// applyStatsDelta adjusts jobStats for a closed state change.
+// closed=true means marking as closed (+Closed, -Open).
+func (m *model) applyStatsDelta(closed bool) {
+	if closed {
+		m.jobStats.Closed++
+		m.jobStats.Open--
 	} else {
-		m.jobStats.Addressed--
-		m.jobStats.Unaddressed++
+		m.jobStats.Closed--
+		m.jobStats.Open++
 	}
 }
 
-// setJobAddressed updates the addressed state for a job by ID.
+// setJobClosed updates the closed state for a job by ID.
 // Handles nil pointer by allocating if necessary.
-func (m *model) setJobAddressed(jobID int64, state bool) {
+func (m *model) setJobClosed(jobID int64, state bool) {
 	m.mutateJob(jobID, func(job *storage.ReviewJob) {
-		if job.Addressed == nil {
-			job.Addressed = new(bool)
+		if job.Closed == nil {
+			job.Closed = new(bool)
 		}
-		*job.Addressed = state
+		*job.Closed = state
 	})
 }
 

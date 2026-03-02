@@ -219,7 +219,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	md := NewMockDaemon(t, MockRefineHooks{
 		OnReview: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			json.NewEncoder(w).Encode(storage.Review{
-				ID: 1, JobID: 1, Output: "**Bug found**: fail", Addressed: false,
+				ID: 1, JobID: 1, Output: "**Bug found**: fail", Closed: false,
 			})
 			return true
 		},
@@ -244,7 +244,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	defer md.Close()
 
 	md.State.reviews[headSHA] = &storage.Review{
-		ID: 1, JobID: 42, Output: "**Bug found**: fail", Addressed: false,
+		ID: 1, JobID: 42, Output: "**Bug found**: fail", Closed: false,
 	}
 
 	origIsTerminal := isTerminal
@@ -274,7 +274,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	defer md.Close()
 
 	md.State.reviews[headSHA] = &storage.Review{
-		ID: 1, JobID: 7, Output: "**Bug found**: fail", Addressed: false,
+		ID: 1, JobID: 7, Output: "**Bug found**: fail", Closed: false,
 	}
 
 	origIsTerminal := isTerminal
@@ -339,7 +339,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		client := newMockDaemonClient()
 		// Failed but already addressed
 		client.reviews["commit1sha"] = &storage.Review{
-			ID: 1, JobID: 1, Output: "**Bug**: error", Addressed: true,
+			ID: 1, JobID: 1, Output: "**Bug**: error", Closed: true,
 		}
 
 		commits := []string{"commit1sha"}
@@ -413,8 +413,8 @@ func TestRefineLoopBranchReviewPath(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if review != nil {
-			t.Errorf("expected nil when all commits pass, got review ID=%d JobID=%d Output=%q Addressed=%v",
-				review.ID, review.JobID, review.Output, review.Addressed)
+			t.Errorf("expected nil when all commits pass, got review ID=%d JobID=%d Output=%q Closed=%v",
+				review.ID, review.JobID, review.Output, review.Closed)
 		}
 
 		// In actual refine loop, this would trigger branch review
@@ -456,7 +456,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 
 		md.State.jobs[42] = &storage.ReviewJob{ID: 42, GitRef: "abc123", Status: storage.JobStatusDone}
 		md.State.reviews["abc123"] = &storage.Review{
-			ID: 1, JobID: 42, Output: "All tests pass. No issues found.", Addressed: false,
+			ID: 1, JobID: 42, Output: "All tests pass. No issues found.", Closed: false,
 		}
 
 		review, err := waitForReviewWithInterval(42, 1*time.Millisecond)
@@ -586,7 +586,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	}
 	// Passing review (will be returned once job is Done)
 	md.State.reviews[commitSHA] = &storage.Review{
-		ID: 1, JobID: 1, Output: "No issues found. LGTM!", Addressed: false,
+		ID: 1, JobID: 1, Output: "No issues found. LGTM!", Closed: false,
 	}
 	md.State.nextJobID = 2
 

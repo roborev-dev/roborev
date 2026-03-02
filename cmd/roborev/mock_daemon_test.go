@@ -486,7 +486,7 @@ func (b *MockDaemonBuilder) Build() *httptest.Server {
 		switch r.URL.Path {
 		case "/api/comment":
 			w.WriteHeader(http.StatusCreated)
-		case "/api/review/address":
+		case "/api/review/close":
 			w.WriteHeader(http.StatusOK)
 		default:
 			w.WriteHeader(http.StatusNotFound)

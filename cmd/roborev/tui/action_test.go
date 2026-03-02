@@ -15,12 +15,12 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func TestTUIAddressReviewSuccess(t *testing.T) {
-	_, m := mockServerModel(t, expectJSONPost(t, "", addressRequest{JobID: 100, Addressed: true}, map[string]bool{"success": true}))
-	cmd := m.addressReview(42, 100, true, false, 1) // reviewID=42, jobID=100, newState=true, oldState=false
+func TestTUICloseReviewSuccess(t *testing.T) {
+	_, m := mockServerModel(t, expectJSONPost(t, "", closeRequest{JobID: 100, Closed: true}, map[string]bool{"success": true}))
+	cmd := m.closeReview(42, 100, true, false, 1) // reviewID=42, jobID=100, newState=true, oldState=false
 	msg := cmd()
 
-	result := assertMsgType[addressedResultMsg](t, msg)
+	result := assertMsgType[closedResultMsg](t, msg)
 	if result.err != nil {
 		t.Errorf("Expected no error, got %v", result.err)
 	}
@@ -32,36 +32,36 @@ func TestTUIAddressReviewSuccess(t *testing.T) {
 	}
 }
 
-func TestTUIAddressReviewNotFound(t *testing.T) {
+func TestTUICloseReviewNotFound(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.addressReview(999, 100, true, false, 1) // reviewID=999, jobID=100, newState=true, oldState=false
+	cmd := m.closeReview(999, 100, true, false, 1) // reviewID=999, jobID=100, newState=true, oldState=false
 	msg := cmd()
 
-	result := assertMsgType[addressedResultMsg](t, msg)
+	result := assertMsgType[closedResultMsg](t, msg)
 	if result.err == nil || result.err.Error() != "review not found" {
 		t.Errorf("Expected 'review not found' error, got: %v", result.err)
 	}
 }
 
-func TestTUIToggleAddressedForJobSuccess(t *testing.T) {
-	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/address", addressRequest{JobID: 1, Addressed: true}, map[string]bool{"success": true}))
+func TestTUIToggleClosedForJobSuccess(t *testing.T) {
+	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/close", closeRequest{JobID: 1, Closed: true}, map[string]bool{"success": true}))
 	currentState := false
-	cmd := m.toggleAddressedForJob(1, &currentState)
+	cmd := m.toggleClosedForJob(1, &currentState)
 	msg := cmd()
 
-	addressed := assertMsgType[addressedMsg](t, msg)
-	if !bool(addressed) {
+	closed := assertMsgType[closedMsg](t, msg)
+	if !bool(closed) {
 		t.Error("Expected toggled state to be true (was false)")
 	}
 }
 
-func TestTUIToggleAddressedNoReview(t *testing.T) {
+func TestTUIToggleClosedNoReview(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.toggleAddressedForJob(999, nil)
+	cmd := m.toggleClosedForJob(999, nil)
 	msg := cmd()
 
 	errMsg := assertMsgType[errMsg](t, msg)
@@ -70,7 +70,7 @@ func TestTUIToggleAddressedNoReview(t *testing.T) {
 	}
 }
 
-func TestTUIAddressFromReviewView_Navigation(t *testing.T) {
+func TestTUICloseFromReviewView_Navigation(t *testing.T) {
 	cases := []struct {
 		name         string
 		initialIdx   int
@@ -85,7 +85,7 @@ func TestTUIAddressFromReviewView_Navigation(t *testing.T) {
 			initialIdx:   1, // Viewing job 2
 			initialJobID: 2,
 			actions: func(m model) model {
-				// Press 'a' to mark as addressed
+				// Press 'a' to mark as closed
 				m2, _ := pressKey(m, 'a')
 				// Selection stays at index 1 so left/right navigation works correctly from current position
 				assertSelection(t, m2, 1, 2)
@@ -143,14 +143,14 @@ func TestTUIAddressFromReviewView_Navigation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			jobs := []storage.ReviewJob{
-				makeJob(1, withAddressed(boolPtr(false))),
-				makeJob(2, withAddressed(boolPtr(false))),
-				makeJob(3, withAddressed(boolPtr(false))),
+				makeJob(1, withClosed(boolPtr(false))),
+				makeJob(2, withClosed(boolPtr(false))),
+				makeJob(3, withClosed(boolPtr(false))),
 			}
 
 			m := setupTestModel(jobs, func(m *model) {
 				m.currentView = viewReview
-				m.hideAddressed = true
+				m.hideClosed = true
 				m.selectedIdx = tc.initialIdx
 				m.selectedJobID = tc.initialJobID
 				m.currentReview = makeReview(10, &m.jobs[tc.initialIdx])
@@ -164,18 +164,18 @@ func TestTUIAddressFromReviewView_Navigation(t *testing.T) {
 	}
 }
 
-// addressRequest is used to decode and validate POST body in tests
-type addressRequest struct {
-	JobID     int64 `json:"job_id"`
-	Addressed bool  `json:"addressed"`
+// closeRequest is used to decode and validate POST body in tests
+type closeRequest struct {
+	JobID  int64 `json:"job_id"`
+	Closed bool  `json:"closed"`
 }
 
-func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
-	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/address", addressRequest{JobID: 42, Addressed: true}, map[string]bool{"success": true}))
-	cmd := m.addressReviewInBackground(42, true, false, 1) // jobID=42, newState=true, oldState=false
+func TestTUICloseReviewInBackgroundSuccess(t *testing.T) {
+	_, m := mockServerModel(t, expectJSONPost(t, "/api/review/close", closeRequest{JobID: 42, Closed: true}, map[string]bool{"success": true}))
+	cmd := m.closeReviewInBackground(42, true, false, 1) // jobID=42, newState=true, oldState=false
 	msg := cmd()
 
-	result := assertMsgType[addressedResultMsg](t, msg)
+	result := assertMsgType[closedResultMsg](t, msg)
 	if result.err != nil {
 		t.Errorf("Expected no error, got %v", result.err)
 	}
@@ -190,19 +190,19 @@ func TestTUIAddressReviewInBackgroundSuccess(t *testing.T) {
 	}
 }
 
-func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
+func TestTUICloseReviewInBackgroundNotFound(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/review/close" || r.Method != http.MethodPost {
 			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.addressReviewInBackground(42, true, false, 1)
+	cmd := m.closeReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
-	result := assertMsgType[addressedResultMsg](t, msg)
+	result := assertMsgType[closedResultMsg](t, msg)
 	if result.err == nil || !strings.Contains(result.err.Error(), "no review") {
 		t.Errorf("Expected error containing 'no review', got: %v", result.err)
 	}
@@ -214,19 +214,19 @@ func TestTUIAddressReviewInBackgroundNotFound(t *testing.T) {
 	}
 }
 
-func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
+func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/review/address" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/review/close" || r.Method != http.MethodPost {
 			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	cmd := m.addressReviewInBackground(42, true, false, 1)
+	cmd := m.closeReviewInBackground(42, true, false, 1)
 	msg := cmd()
 
-	result := assertMsgType[addressedResultMsg](t, msg)
+	result := assertMsgType[closedResultMsg](t, msg)
 	if result.err == nil {
 		t.Error("Expected error for address 500 response")
 	}
@@ -238,25 +238,25 @@ func TestTUIAddressReviewInBackgroundServerError(t *testing.T) {
 	}
 }
 
-func TestTUIAddressedRollbackOnError(t *testing.T) {
+func TestTUIClosedRollbackOnError(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 	}, func(m *model) {
 		m.selectedIdx = 0
 		m.selectedJobID = 42
-		m.jobStats = storage.JobStats{Done: 1, Addressed: 1, Unaddressed: 0}
+		m.jobStats = storage.JobStats{Done: 1, Closed: 1, Open: 0}
 	})
 
 	// First, simulate the optimistic update (what happens when 'a' is pressed)
-	*m.jobs[0].Addressed = true
-	m.pendingAddressed[42] = pendingState{newState: true, seq: 1} // Track pending state
+	*m.jobs[0].Closed = true
+	m.pendingClosed[42] = pendingState{newState: true, seq: 1} // Track pending state
 
 	// Simulate error result from background update
 	// This would happen if server returned error after optimistic update
-	errMsg := addressedResultMsg{
+	errMsg := closedResultMsg{
 		jobID:    42,
 		oldState: false, // Was false before optimistic update
-		newState: true,  // The requested state (matches pendingAddressed)
+		newState: true,  // The requested state (matches pendingClosed)
 		seq:      1,     // Must match pending seq to be treated as current
 		err:      fmt.Errorf("server error"),
 	}
@@ -265,8 +265,8 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 	m, _ = updateModel(t, m, errMsg)
 
 	// Should have rolled back to false
-	if m.jobs[0].Addressed == nil || *m.jobs[0].Addressed != false {
-		t.Errorf("Expected addressed=false after rollback, got %v", m.jobs[0].Addressed)
+	if m.jobs[0].Closed == nil || *m.jobs[0].Closed != false {
+		t.Errorf("Expected closed=false after rollback, got %v", m.jobs[0].Closed)
 	}
 	if m.err == nil {
 		t.Error("Expected error to be set")
@@ -275,36 +275,36 @@ func TestTUIAddressedRollbackOnError(t *testing.T) {
 	assertJobStats(t, m, 0, 1)
 }
 
-func TestTUIAddressedRollbackAfterPollRefresh(t *testing.T) {
+func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.selectedIdx = 0
 		m.selectedJobID = 42
-		m.jobStats = storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1}
-		m.pendingAddressed = make(map[int64]pendingState)
+		m.jobStats = storage.JobStats{Done: 1, Closed: 0, Open: 1}
+		m.pendingClosed = make(map[int64]pendingState)
 	})
 
-	// Step 1: optimistic toggle → addressed
-	result, _ := m.handleAddressedKey()
+	// Step 1: optimistic toggle → closed
+	result, _ := m.handleCloseKey()
 	m = result.(model)
 	assertJobStats(t, m, 1, 0)
 
-	// Step 2: poll arrives with server truth (still unaddressed)
+	// Step 2: poll arrives with server truth (still open)
 	pollMsg := jobsMsg{
 		jobs: []storage.ReviewJob{
 			makeJob(42, withStatus(storage.JobStatusDone),
-				withAddressed(boolPtr(false))),
+				withClosed(boolPtr(false))),
 		},
-		stats: storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1},
+		stats: storage.JobStats{Done: 1, Closed: 0, Open: 1},
 	}
 	m, _ = updateModel(t, m, pollMsg)
 	// Pending delta should be re-applied on top of server stats
 	assertJobStats(t, m, 1, 0)
 
 	// Step 3: error arrives → rollback
-	errMsg := addressedResultMsg{
+	errMsg := closedResultMsg{
 		jobID:    42,
 		oldState: false,
 		newState: true,
@@ -315,19 +315,19 @@ func TestTUIAddressedRollbackAfterPollRefresh(t *testing.T) {
 	assertJobStats(t, m, 0, 1)
 }
 
-func TestTUIAddressedPollConfirmsNoDoubleCount(t *testing.T) {
+func TestTUIClosedPollConfirmsNoDoubleCount(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.selectedIdx = 0
 		m.selectedJobID = 42
-		m.jobStats = storage.JobStats{Done: 1, Addressed: 0, Unaddressed: 1}
-		m.pendingAddressed = make(map[int64]pendingState)
+		m.jobStats = storage.JobStats{Done: 1, Closed: 0, Open: 1}
+		m.pendingClosed = make(map[int64]pendingState)
 	})
 
-	// Step 1: optimistic toggle → addressed
-	result, _ := m.handleAddressedKey()
+	// Step 1: optimistic toggle → closed
+	result, _ := m.handleCloseKey()
 	m = result.(model)
 	assertJobStats(t, m, 1, 0)
 
@@ -335,25 +335,25 @@ func TestTUIAddressedPollConfirmsNoDoubleCount(t *testing.T) {
 	pollMsg := jobsMsg{
 		jobs: []storage.ReviewJob{
 			makeJob(42, withStatus(storage.JobStatusDone),
-				withAddressed(boolPtr(true))),
+				withClosed(boolPtr(true))),
 		},
-		stats: storage.JobStats{Done: 1, Addressed: 1, Unaddressed: 0},
+		stats: storage.JobStats{Done: 1, Closed: 1, Open: 0},
 	}
 	m, _ = updateModel(t, m, pollMsg)
 	// Pending should be cleared (server confirmed), no double-counting
 	assertJobStats(t, m, 1, 0)
 }
 
-func TestTUIAddressedSuccessNoRollback(t *testing.T) {
+func TestTUIClosedSuccessNoRollback(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 	})
 
 	// Simulate optimistic update
-	*m.jobs[0].Addressed = true
+	*m.jobs[0].Closed = true
 
 	// Success result (err is nil)
-	successMsg := addressedResultMsg{
+	successMsg := closedResultMsg{
 		jobID:    42,
 		oldState: false,
 		seq:      1, // Not strictly needed for success (no rollback) but included for consistency
@@ -363,33 +363,33 @@ func TestTUIAddressedSuccessNoRollback(t *testing.T) {
 	m, _ = updateModel(t, m, successMsg)
 
 	// Should stay true (no rollback on success)
-	if m.jobs[0].Addressed == nil || *m.jobs[0].Addressed != true {
-		t.Errorf("Expected addressed=true after success, got %v", m.jobs[0].Addressed)
+	if m.jobs[0].Closed == nil || *m.jobs[0].Closed != true {
+		t.Errorf("Expected closed=true after success, got %v", m.jobs[0].Closed)
 	}
 	if m.err != nil {
 		t.Errorf("Expected no error, got %v", m.err)
 	}
 }
 
-func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
+func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
-		makeJob(2, withAddressed(boolPtr(false))),
-		makeJob(3, withAddressed(boolPtr(false))),
+		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(2, withClosed(boolPtr(false))),
+		makeJob(3, withClosed(boolPtr(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
-		m.hideAddressed = true
+		m.hideClosed = true
 		m.selectedIdx = 1
 		m.selectedJobID = 2
 	})
 
-	// Simulate marking job 2 as addressed
+	// Simulate marking job 2 as closed
 
-	m.jobs[1].Addressed = boolPtr(true)
+	m.jobs[1].Closed = boolPtr(true)
 
 	// Verify job 2 is now hidden
 	if m.isJobVisible(m.jobs[1]) {
-		t.Error("Job 2 should be hidden after marking as addressed")
+		t.Error("Job 2 should be hidden after marking as closed")
 	}
 
 	// Simulate what happens in 'a' handler - selection should move
@@ -400,32 +400,32 @@ func TestTUIAddressedToggleMovesSelectionWithHideActive(t *testing.T) {
 	}
 }
 
-func TestTUISetJobAddressedHelper(t *testing.T) {
+func TestTUISetJobClosedHelper(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
-	// Test with nil Addressed pointer - should allocate
+	// Test with nil Closed pointer - should allocate
 	m.jobs = []storage.ReviewJob{
 		makeJob(100),
 	}
 
-	m.setJobAddressed(100, true)
+	m.setJobClosed(100, true)
 
-	if m.jobs[0].Addressed == nil {
-		t.Fatal("Expected Addressed to be allocated")
+	if m.jobs[0].Closed == nil {
+		t.Fatal("Expected Closed to be allocated")
 	}
-	if *m.jobs[0].Addressed != true {
-		t.Errorf("Expected Addressed=true, got %v", *m.jobs[0].Addressed)
+	if *m.jobs[0].Closed != true {
+		t.Errorf("Expected Closed=true, got %v", *m.jobs[0].Closed)
 	}
 
 	// Test toggle back
-	m.setJobAddressed(100, false)
-	if *m.jobs[0].Addressed != false {
-		t.Errorf("Expected Addressed=false, got %v", *m.jobs[0].Addressed)
+	m.setJobClosed(100, false)
+	if *m.jobs[0].Closed != false {
+		t.Errorf("Expected Closed=false, got %v", *m.jobs[0].Closed)
 	}
 
 	// Test with non-existent job ID - should be no-op
-	m.setJobAddressed(999, true)
-	if *m.jobs[0].Addressed != false {
+	m.setJobClosed(999, true)
+	if *m.jobs[0].Closed != false {
 		t.Errorf("Non-existent job should not affect existing job")
 	}
 }
@@ -833,14 +833,14 @@ func TestTUIRespondViewTabExpansion(t *testing.T) {
 	}
 }
 
-func TestCancelKeyMovesSelectionWithHideAddressed(t *testing.T) {
+func TestCancelKeyMovesSelectionWithHideClosed(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 		makeJob(2, withStatus(storage.JobStatusRunning)),
-		makeJob(3, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
-		m.hideAddressed = true
+		m.hideClosed = true
 		m.selectedIdx = 1
 		m.selectedJobID = 2
 	})
@@ -861,51 +861,51 @@ func TestCancelKeyMovesSelectionWithHideAddressed(t *testing.T) {
 	}
 }
 
-func TestAddressedKeyUpdatesStatsOptimistically(t *testing.T) {
+func TestClosedKeyUpdatesStatsOptimistically(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone),
-			withAddressed(boolPtr(false))),
+			withClosed(boolPtr(false))),
 		makeJob(2, withStatus(storage.JobStatusDone),
-			withAddressed(boolPtr(false))),
+			withClosed(boolPtr(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.selectedIdx = 0
 		m.selectedJobID = 1
 		m.jobStats = storage.JobStats{
-			Done: 2, Addressed: 0, Unaddressed: 2,
+			Done: 2, Closed: 0, Open: 2,
 		}
-		m.pendingAddressed = make(map[int64]pendingState)
+		m.pendingClosed = make(map[int64]pendingState)
 	})
 
-	// Mark job 1 as addressed
-	result, _ := m.handleAddressedKey()
+	// Mark job 1 as closed
+	result, _ := m.handleCloseKey()
 	m2 := result.(model)
 
 	assertJobStats(t, m2, 1, 1)
 }
 
-func TestAddressedKeyUpdatesStatsFromReviewView(t *testing.T) {
+func TestClosedKeyUpdatesStatsFromReviewView(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone),
-			withAddressed(boolPtr(false))),
+			withClosed(boolPtr(false))),
 	}, func(m *model) {
 		m.currentView = viewReview
 		m.currentReview = &storage.Review{
-			ID:        42,
-			Addressed: false,
+			ID:     42,
+			Closed: false,
 			Job: &storage.ReviewJob{
 				ID:     1,
 				Status: storage.JobStatusDone,
 			},
 		}
 		m.jobStats = storage.JobStats{
-			Done: 1, Addressed: 0, Unaddressed: 1,
+			Done: 1, Closed: 0, Open: 1,
 		}
-		m.pendingAddressed = make(map[int64]pendingState)
-		m.pendingReviewAddressed = make(map[int64]pendingState)
+		m.pendingClosed = make(map[int64]pendingState)
+		m.pendingReviewClosed = make(map[int64]pendingState)
 	})
 
-	result, _ := m.handleAddressedKey()
+	result, _ := m.handleCloseKey()
 	m2 := result.(model)
 
 	assertJobStats(t, m2, 1, 0)
@@ -981,12 +981,12 @@ func assertMsgType[T any](t *testing.T, msg tea.Msg) T {
 }
 
 // assertJobStats is a helper to assert the jobStats of a model.
-func assertJobStats(t *testing.T, m model, addressed, unaddressed int) {
+func assertJobStats(t *testing.T, m model, closed, open int) {
 	t.Helper()
-	if m.jobStats.Addressed != addressed {
-		t.Fatalf("expected Addressed=%d, got %d", addressed, m.jobStats.Addressed)
+	if m.jobStats.Closed != closed {
+		t.Fatalf("expected Closed=%d, got %d", closed, m.jobStats.Closed)
 	}
-	if m.jobStats.Unaddressed != unaddressed {
-		t.Fatalf("expected Unaddressed=%d, got %d", unaddressed, m.jobStats.Unaddressed)
+	if m.jobStats.Open != open {
+		t.Fatalf("expected Open=%d, got %d", open, m.jobStats.Open)
 	}
 }

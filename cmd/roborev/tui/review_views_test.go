@@ -7,14 +7,14 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
+func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewReview
-	m.hideAddressed = true
+	m.hideClosed = true
 	m.loadingJobs = false
 
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(1, withClosed(boolPtr(false))),
 	}
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1})
 
@@ -25,21 +25,21 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideAddressed(t *testing.T) {
 		t.Error("Expected to return to queue view")
 	}
 	if !m2.loadingJobs {
-		t.Error("Expected loadingJobs to be true when escaping with hideAddressed active")
+		t.Error("Expected loadingJobs to be true when escaping with hideClosed active")
 	}
 	if cmd == nil {
 		t.Error("Expected a command to be returned for refresh")
 	}
 }
 
-func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
+func TestTUIEscapeFromReviewNoRefreshWithoutHideClosed(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 	m.currentView = viewReview
-	m.hideAddressed = false
+	m.hideClosed = false
 	m.loadingJobs = false
 
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(1, withClosed(boolPtr(false))),
 	}
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1})
 
@@ -50,7 +50,7 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideAddressed(t *testing.T) {
 		t.Error("Expected to return to queue view")
 	}
 	if m2.loadingJobs {
-		t.Error("Should not trigger refresh when hideAddressed is not active")
+		t.Error("Should not trigger refresh when hideClosed is not active")
 	}
 	// cmd may be non-nil (mouse re-enable on view transition) but
 	// the important assertion is that no job refresh was triggered

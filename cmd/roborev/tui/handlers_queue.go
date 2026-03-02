@@ -287,11 +287,11 @@ func (m *model) syncColumnOrderFromOptions() {
 	}
 }
 
-func (m model) handleHideAddressedKey() (tea.Model, tea.Cmd) {
+func (m model) handleHideClosedKey() (tea.Model, tea.Cmd) {
 	if m.currentView != viewQueue {
 		return m, nil
 	}
-	m.hideAddressed = !m.hideAddressed
+	m.hideClosed = !m.hideClosed
 	m.queueColGen++
 	if len(m.jobs) > 0 {
 		if m.selectedIdx < 0 || m.selectedIdx >= len(m.jobs) || !m.isJobVisible(m.jobs[m.selectedIdx]) {

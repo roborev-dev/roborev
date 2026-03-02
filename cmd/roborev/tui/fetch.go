@@ -74,11 +74,11 @@ func (m model) fetchJobs() tea.Cmd {
 			needsAllJobs = true
 		}
 
-		// Addressed filter: use server-side to avoid fetching all jobs.
+		// Closed filter: use server-side to avoid fetching all jobs.
 		// Skip for client-side filtered views (needsAllJobs) so we get
 		// all jobs for accurate client-side metrics counting.
-		if m.hideAddressed && !needsAllJobs {
-			params.Set("addressed", "false")
+		if m.hideClosed && !needsAllJobs {
+			params.Set("closed", "false")
 		}
 
 		// Exclude fix jobs — they belong in the Tasks view, not the queue
@@ -134,8 +134,8 @@ func (m model) fetchMoreJobs() tea.Cmd {
 		if m.activeBranchFilter != "" && m.activeBranchFilter != branchNone {
 			params.Set("branch", m.activeBranchFilter)
 		}
-		if m.hideAddressed {
-			params.Set("addressed", "false")
+		if m.hideClosed {
+			params.Set("closed", "false")
 		}
 		params.Set("exclude_job_type", "fix")
 		url := fmt.Sprintf("%s/api/jobs?%s", m.serverAddr, params.Encode())

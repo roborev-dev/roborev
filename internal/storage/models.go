@@ -80,7 +80,7 @@ type ReviewJob struct {
 	RepoPath      string  `json:"repo_path,omitempty"`
 	RepoName      string  `json:"repo_name,omitempty"`
 	CommitSubject string  `json:"commit_subject,omitempty"` // empty for ranges
-	Addressed     *bool   `json:"addressed,omitempty"`      // nil if no review yet
+	Closed        *bool   `json:"closed,omitempty"`         // nil if no review yet
 	Verdict       *string `json:"verdict,omitempty"`        // P/F parsed from review output
 }
 
@@ -150,7 +150,7 @@ type Review struct {
 	Prompt    string    `json:"prompt"`
 	Output    string    `json:"output"`
 	CreatedAt time.Time `json:"created_at"`
-	Addressed bool      `json:"addressed"`
+	Closed    bool      `json:"closed"`
 
 	// Sync fields
 	UUID               string     `json:"uuid,omitempty"`                  // Globally unique identifier for sync

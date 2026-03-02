@@ -281,10 +281,10 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 	return nil
 }
 
-// runCompact verifies and consolidates unaddressed review findings.
+// runCompact verifies and consolidates open review findings.
 //
-// Known limitation: This is not an atomic operation. If another process marks jobs
-// as addressed or modifies them between the initial query and the final marking step,
+// Known limitation: This is not an atomic operation. If another process closes jobs
+// or modifies them between the initial query and the final marking step,
 // there could be inconsistent state. This is acceptable since compact is typically
 // run manually by a single user. For concurrent operations, users should coordinate
 // to avoid running multiple compact commands simultaneously on the same branch.
@@ -310,7 +310,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 
 	// Query and limit jobs, excluding non-review types (compact, task)
 	// to prevent recursive self-compaction loops
-	allJobs, err := queryUnaddressedJobs(repoRoot, branchFilter)
+	allJobs, err := queryOpenJobs(repoRoot, branchFilter)
 	if err != nil {
 		return err
 	}
@@ -380,7 +380,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	}
 
 	// Store source job IDs for automatic marking when job completes
-	// CRITICAL: This must succeed or source jobs will never be marked as addressed
+	// CRITICAL: This must succeed or source jobs will never be closed
 	if err := writeCompactMetadata(consolidatedJobID, successfulJobIDs); err != nil {
 		// Try to cancel the job we just created
 		if cancelErr := cancelJob(serverAddr, consolidatedJobID); cancelErr != nil {
@@ -420,7 +420,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		cmd.Printf("\nConsolidated review created: job %d\n", consolidatedJobID)
 	}
 
-	// Note: source jobs are automatically marked as addressed by the daemon worker
+	// Note: source jobs are automatically closed by the daemon worker
 	// when the compact job completes (see worker.go markCompactSourceJobs).
 
 	// Show next steps

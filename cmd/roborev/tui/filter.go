@@ -167,14 +167,14 @@ func (m model) isJobVisible(job storage.ReviewJob) bool {
 	if m.activeBranchFilter != "" && !m.branchMatchesFilter(job) {
 		return false
 	}
-	if m.hideAddressed {
-		// Hide addressed reviews, failed jobs, and canceled jobs
-		// Check pendingAddressed first for optimistic updates (avoids flash on filter)
-		if pending, ok := m.pendingAddressed[job.ID]; ok {
+	if m.hideClosed {
+		// Hide closed reviews, failed jobs, and canceled jobs
+		// Check pendingClosed first for optimistic updates (avoids flash on filter)
+		if pending, ok := m.pendingClosed[job.ID]; ok {
 			if pending.newState {
 				return false
 			}
-		} else if job.Addressed != nil && *job.Addressed {
+		} else if job.Closed != nil && *job.Closed {
 			return false
 		}
 		if job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {

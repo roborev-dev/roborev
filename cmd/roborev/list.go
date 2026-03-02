@@ -88,9 +88,9 @@ Examples:
 				params.Set("status", status)
 			}
 			if closed {
-				params.Set("addressed", "true")
+				params.Set("closed", "true")
 			} else if open {
-				params.Set("addressed", "false")
+				params.Set("closed", "false")
 			}
 			params.Set("limit", strconv.Itoa(limit))
 

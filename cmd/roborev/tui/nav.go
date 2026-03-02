@@ -157,7 +157,7 @@ func (m *model) logHelpRows() [][]helpItem {
 }
 
 // normalizeSelectionIfHidden adjusts selectedIdx/selectedJobID if the current
-// selection is hidden (e.g., marked addressed with hideAddressed filter active).
+// selection is hidden (e.g., marked closed with hideClosed filter active).
 // Call this when returning to queue view from review view.
 func (m *model) normalizeSelectionIfHidden() {
 	if m.selectedIdx >= 0 && m.selectedIdx < len(m.jobs) && !m.isJobVisible(m.jobs[m.selectedIdx]) {

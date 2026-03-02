@@ -23,8 +23,8 @@ type Client interface {
 	// GetReviewByJobID retrieves a review by job ID
 	GetReviewByJobID(jobID int64) (*storage.Review, error)
 
-	// MarkReviewAddressed marks a review as addressed by job ID
-	MarkReviewAddressed(jobID int64) error
+	// MarkReviewClosed marks a review as closed by job ID
+	MarkReviewClosed(jobID int64) error
 
 	// AddComment adds a comment to a job
 	AddComment(jobID int64, commenter, comment string) error
@@ -133,13 +133,13 @@ func (c *HTTPClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
 	return &review, nil
 }
 
-func (c *HTTPClient) MarkReviewAddressed(jobID int64) error {
+func (c *HTTPClient) MarkReviewClosed(jobID int64) error {
 	reqBody, _ := json.Marshal(map[string]any{
-		"job_id":    jobID,
-		"addressed": true,
+		"job_id": jobID,
+		"closed": true,
 	})
 
-	resp, err := c.httpClient.Post(c.addr+"/api/review/address", "application/json", bytes.NewReader(reqBody))
+	resp, err := c.httpClient.Post(c.addr+"/api/review/close", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func (c *HTTPClient) MarkReviewAddressed(jobID int64) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("mark addressed: %s: %s", resp.Status, body)
+		return fmt.Errorf("mark closed: %s: %s", resp.Status, body)
 	}
 
 	return nil

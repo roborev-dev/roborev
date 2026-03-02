@@ -273,10 +273,10 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 	}
 }
 
-func mockAddressServer(t *testing.T, expectedID int64, statusCode int) *httptest.Server {
+func mockCloseServer(t *testing.T, expectedID int64, statusCode int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/review/address" {
+		if r.URL.Path != "/api/review/close" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
@@ -288,13 +288,13 @@ func mockAddressServer(t *testing.T, expectedID int64, statusCode int) *httptest
 			t.Errorf("failed to decode body: %v", err)
 		}
 		gotJobID := int64(req["job_id"].(float64))
-		gotAddressed := req["addressed"].(bool)
+		gotClosed := req["closed"].(bool)
 
 		if gotJobID != expectedID {
 			t.Errorf("job_id = %d, want %d", gotJobID, expectedID)
 		}
-		if !gotAddressed {
-			t.Error("addressed should be true")
+		if !gotClosed {
+			t.Error("closed should be true")
 		}
 
 		w.WriteHeader(statusCode)
@@ -314,10 +314,10 @@ func TestMarkJobAddressed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts := mockAddressServer(t, 123, tt.statusCode)
+			ts := mockCloseServer(t, 123, tt.statusCode)
 			defer ts.Close()
 
-			err := markJobAddressed(ts.URL, 123)
+			err := markJobClosed(ts.URL, 123)
 
 			if tt.wantErr {
 				if err == nil {

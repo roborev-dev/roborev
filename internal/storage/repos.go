@@ -357,16 +357,16 @@ func (db *DB) FindRepo(identifier string) (*Repo, error) {
 
 // RepoStats contains statistics for a single repo
 type RepoStats struct {
-	Repo               *Repo
-	TotalJobs          int
-	QueuedJobs         int
-	RunningJobs        int
-	CompletedJobs      int
-	FailedJobs         int
-	PassedReviews      int
-	FailedReviews      int
-	AddressedReviews   int
-	UnaddressedReviews int
+	Repo          *Repo
+	TotalJobs     int
+	QueuedJobs    int
+	RunningJobs   int
+	CompletedJobs int
+	FailedJobs    int
+	PassedReviews int
+	FailedReviews int
+	ClosedReviews int
+	OpenReviews   int
 }
 
 // GetRepoStats returns detailed statistics for a repo
@@ -412,13 +412,13 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 		SELECT
 			COALESCE(SUM(CASE WHEN r.output LIKE '%**Verdict: PASS%' OR r.output LIKE '%Verdict: PASS%' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN r.output LIKE '%**Verdict: FAIL%' OR r.output LIKE '%Verdict: FAIL%' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN r.addressed = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN r.addressed = 0 THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN r.closed = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN r.closed = 0 THEN 1 ELSE 0 END), 0)
 		FROM reviews r
 		JOIN review_jobs rj ON r.job_id = rj.id
 		WHERE rj.repo_id = ?
 		  AND NOT (rj.commit_id IS NULL AND rj.git_ref = 'prompt')
-	`, repoID).Scan(&stats.PassedReviews, &stats.FailedReviews, &stats.AddressedReviews, &stats.UnaddressedReviews)
+	`, repoID).Scan(&stats.PassedReviews, &stats.FailedReviews, &stats.ClosedReviews, &stats.OpenReviews)
 	if err != nil {
 		return nil, err
 	}

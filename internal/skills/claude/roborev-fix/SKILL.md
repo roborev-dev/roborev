@@ -50,11 +50,11 @@ The JSON output has this structure:
 - `output`: the review text containing findings
 - `job.verdict`: `"P"` for pass, `"F"` for fail (may be empty if the review errored)
 - `job.git_ref`: the reviewed git ref (SHA, range, or synthetic ref)
-- `addressed`: whether this review has already been closed
+- `closed`: whether this review has already been closed
 
 Skip any reviews where `job.verdict` is `"P"` (passing reviews have no findings to fix).
 Skip any reviews where `job.verdict` is empty or missing (the review may have errored and is not actionable).
-Skip any reviews where `addressed` is `true`, unless the user explicitly provided that job ID (in which case, warn them and ask to confirm).
+Skip any reviews where `closed` is `true`, unless the user explicitly provided that job ID (in which case, warn them and ask to confirm).
 
 If all reviews are skipped, inform the user there is nothing to fix.
 
@@ -84,7 +84,7 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 For each job that was fixed, record a summary comment and close it:
 
 ```bash
-roborev comment --job <job_id> "<summary of changes>" && roborev address <job_id>
+roborev comment --job <job_id> "<summary of changes>" && roborev close <job_id>
 ```
 
 The comment should briefly describe what was changed and why, referencing specific files and findings. Keep it under 2-3 sentences per review. If the message contains quotes or special characters, escape them properly in the bash command.
@@ -106,8 +106,8 @@ Agent:
 4. Fixes all 3 findings across both reviews, grouped by file, prioritized by severity
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
-   - `roborev comment --job 1019 "Fixed null check and added error handling" && roborev address 1019`
-   - `roborev comment --job 1021 "Fixed missing validation" && roborev address 1021`
+   - `roborev comment --job 1019 "Fixed null check and added error handling" && roborev close 1019`
+   - `roborev comment --job 1021 "Fixed missing validation" && roborev close 1021`
 7. Asks: "I've fixed 3 findings across 2 reviews. Tests pass. Would you like me to commit these changes?"
 
 **Explicit job IDs:**
@@ -119,7 +119,7 @@ Agent:
 2. Job 1019 is verdict Fail with 2 findings; job 1021 is verdict Pass — skips 1021, informs user
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
-5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go" && roborev address 1019`
+5. Records: `roborev comment --job 1019 "Fixed null check in foo.go and error handling in bar.go" && roborev close 1019`
 6. Asks: "I've fixed 2 findings from 1 review (skipped job 1021 — already passing). Tests pass. Would you like me to commit?"
 
 ## See also

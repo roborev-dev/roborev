@@ -403,7 +403,7 @@ type SyncableReview struct {
 	Agent              string
 	Prompt             string
 	Output             string
-	Addressed          bool
+	Closed             bool
 	UpdatedByMachineID string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -415,7 +415,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
-			r.agent, r.prompt, r.output, r.addressed,
+			r.agent, r.prompt, r.output, r.closed,
 			r.updated_by_machine_id, r.created_at, r.updated_at
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
@@ -445,7 +445,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 
 		err := rows.Scan(
 			&r.ID, &r.UUID, &r.JobID, &r.JobUUID,
-			&r.Agent, &r.Prompt, &r.Output, &r.Addressed,
+			&r.Agent, &r.Prompt, &r.Output, &r.Closed,
 			&r.UpdatedByMachineID, &createdAt, &updatedAt,
 		)
 		if err != nil {
@@ -612,15 +612,15 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = db.Exec(`
 		INSERT INTO reviews (
-			uuid, job_id, agent, prompt, output, addressed,
+			uuid, job_id, agent, prompt, output, closed,
 			updated_by_machine_id, created_at, updated_at, synced_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
-			addressed = excluded.addressed,
+			closed = excluded.closed,
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
 			synced_at = ?
-	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Addressed,
+	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
 	return err
 }

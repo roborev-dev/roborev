@@ -45,25 +45,25 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 	m.currentView = viewQueue
 	m.activeRepoFilter = []string{"/path/to/repo-a"}
 	m.filterStack = []string{"repo"}
-	m.hideAddressed = true
+	m.hideClosed = true
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
 	if len(m2.activeRepoFilter) != 0 {
 		t.Errorf("Expected activeRepoFilter to be cleared, got %v", m2.activeRepoFilter)
 	}
-	if !m2.hideAddressed {
-		t.Error("Expected hideAddressed to remain true after first escape")
+	if !m2.hideClosed {
+		t.Error("Expected hideClosed to remain true after first escape")
 	}
 
 	m3, _ := pressSpecial(m2, tea.KeyEscape)
 
-	if m3.hideAddressed {
-		t.Error("Expected hideAddressed to be false after second escape")
+	if m3.hideClosed {
+		t.Error("Expected hideClosed to be false after second escape")
 	}
 }
 
-func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
+func TestTUIFilterClearHideClosedOnly(t *testing.T) {
 
 	m := newModel("http://localhost", withExternalIODisabled())
 
@@ -73,12 +73,12 @@ func TestTUIFilterClearHideAddressedOnly(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 	m.currentView = viewQueue
-	m.hideAddressed = true
+	m.hideClosed = true
 
 	m2, _ := pressSpecial(m, tea.KeyEscape)
 
-	if m2.hideAddressed {
-		t.Error("Expected hideAddressed to be false after escape")
+	if m2.hideClosed {
+		t.Error("Expected hideClosed to be false after escape")
 	}
 	if m2.selectedIdx != -1 {
 		t.Errorf("Expected selectedIdx=-1 (invalidated pending refetch), got %d", m2.selectedIdx)

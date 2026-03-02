@@ -120,8 +120,8 @@ func withBranch(branch string) func(*storage.ReviewJob) {
 	return func(j *storage.ReviewJob) { j.Branch = branch }
 }
 
-func withAddressed(b *bool) func(*storage.ReviewJob) {
-	return func(j *storage.ReviewJob) { j.Addressed = b }
+func withClosed(b *bool) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { j.Closed = b }
 }
 
 func withRepoPath(path string) func(*storage.ReviewJob) {
@@ -417,7 +417,7 @@ func TestTUIJobsErrMsgClearsLoadingJobs(t *testing.T) {
 	}
 }
 
-func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
+func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 	tmpDir := setupTuiTestEnv(t)
 
 	// Write malformed TOML that LoadGlobal will fail to parse
@@ -430,12 +430,12 @@ func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 	m := newModel(testServerAddr)
 	m.currentView = viewQueue
 
-	// Toggle hide addressed ON
+	// Toggle hide closed ON
 	m2, _ := pressKey(m, 'h')
 
 	// In-session toggle should still work
-	if !m2.hideAddressed {
-		t.Error("hideAddressed should be true after pressing 'h'")
+	if !m2.hideClosed {
+		t.Error("hideClosed should be true after pressing 'h'")
 	}
 
 	// Malformed config file must not have been overwritten
@@ -449,43 +449,43 @@ func TestTUIHideAddressedMalformedConfigNotOverwritten(t *testing.T) {
 
 	// Toggle back OFF — still works in-session
 	m3, _ := pressKey(m2, 'h')
-	if m3.hideAddressed {
-		t.Error("hideAddressed should be false after pressing 'h' again")
+	if m3.hideClosed {
+		t.Error("hideClosed should be false after pressing 'h' again")
 	}
 }
 
-func TestTUIIsJobVisibleRespectsPendingAddressed(t *testing.T) {
+func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
-	m.hideAddressed = true
+	m.hideClosed = true
 
-	// Job with Addressed=false but pendingAddressed=true should be hidden
+	// Job with Closed=false but pendingClosed=true should be hidden
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withAddressed(boolPtr(false))),
+		makeJob(1, withClosed(boolPtr(false))),
 	}
-	m.pendingAddressed[1] = pendingState{newState: true, seq: 1}
+	m.pendingClosed[1] = pendingState{newState: true, seq: 1}
 
 	if m.isJobVisible(m.jobs[0]) {
-		t.Error("Job with pendingAddressed=true should be hidden when hideAddressed is active")
+		t.Error("Job with pendingClosed=true should be hidden when hideClosed is active")
 	}
 
-	// Job with Addressed=true but pendingAddressed=false should be visible
+	// Job with Closed=true but pendingClosed=false should be visible
 	m.jobs = []storage.ReviewJob{
-		makeJob(2, withAddressed(boolPtr(true))),
+		makeJob(2, withClosed(boolPtr(true))),
 	}
-	m.pendingAddressed[2] = pendingState{newState: false, seq: 1}
+	m.pendingClosed[2] = pendingState{newState: false, seq: 1}
 
 	if !m.isJobVisible(m.jobs[0]) {
-		t.Error("Job with pendingAddressed=false should be visible even if job.Addressed is true")
+		t.Error("Job with pendingClosed=false should be visible even if job.Closed is true")
 	}
 
-	// Job with no pendingAddressed entry falls back to job.Addressed
+	// Job with no pendingClosed entry falls back to job.Closed
 	m.jobs = []storage.ReviewJob{
-		makeJob(3, withAddressed(boolPtr(true))),
+		makeJob(3, withClosed(boolPtr(true))),
 	}
-	delete(m.pendingAddressed, 3)
+	delete(m.pendingClosed, 3)
 
 	if m.isJobVisible(m.jobs[0]) {
-		t.Error("Job with Addressed=true and no pending entry should be hidden")
+		t.Error("Job with Closed=true and no pending entry should be hidden")
 	}
 }
 
@@ -1096,7 +1096,7 @@ func TestTUISelection(t *testing.T) {
 	})
 }
 
-func TestTUIHideAddressed(t *testing.T) {
+func TestTUIHideClosed(t *testing.T) {
 	t.Run("DefaultFromConfig", func(t *testing.T) {
 		tmpDir := setupTuiTestEnv(t)
 
@@ -1106,8 +1106,8 @@ func TestTUIHideAddressed(t *testing.T) {
 		}
 
 		m := newModel(testServerAddr)
-		if !m.hideAddressed {
-			t.Error("hideAddressed should be true when config sets hide_addressed_by_default = true")
+		if !m.hideClosed {
+			t.Error("hideClosed should be true when config sets hide_addressed_by_default = true")
 		}
 
 	})
@@ -1115,45 +1115,45 @@ func TestTUIHideAddressed(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.currentView = viewQueue
 
-		// Initial state: hideAddressed is false (TestMain isolates from real config)
-		if m.hideAddressed {
-			t.Error("hideAddressed should be false initially")
+		// Initial state: hideClosed is false (TestMain isolates from real config)
+		if m.hideClosed {
+			t.Error("hideClosed should be false initially")
 		}
 
 		// Press 'h' to toggle
 		m2, _ := pressKey(m, 'h')
 
-		if !m2.hideAddressed {
-			t.Error("hideAddressed should be true after pressing 'h'")
+		if !m2.hideClosed {
+			t.Error("hideClosed should be true after pressing 'h'")
 		}
 
 		// Press 'h' again to toggle back
 		m3, _ := pressKey(m2, 'h')
 
-		if m3.hideAddressed {
-			t.Error("hideAddressed should be false after pressing 'h' again")
+		if m3.hideClosed {
+			t.Error("hideClosed should be false after pressing 'h' again")
 		}
 
 	})
 	t.Run("FiltersJobs", func(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.currentView = viewQueue
-		m.hideAddressed = true
+		m.hideClosed = true
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(true))),          // hidden: addressed
-			makeJob(2, withAddressed(boolPtr(false))),         // visible
+			makeJob(1, withClosed(boolPtr(true))),             // hidden: closed
+			makeJob(2, withClosed(boolPtr(false))),            // visible
 			makeJob(3, withStatus(storage.JobStatusFailed)),   // hidden: failed
 			makeJob(4, withStatus(storage.JobStatusCanceled)), // hidden: canceled
-			makeJob(5, withAddressed(boolPtr(false))),         // visible
+			makeJob(5, withClosed(boolPtr(false))),            // visible
 		}
 
 		// Check visibility
 		if m.isJobVisible(m.jobs[0]) {
-			t.Error("Addressed job should be hidden")
+			t.Error("Closed job should be hidden")
 		}
 		if !m.isJobVisible(m.jobs[1]) {
-			t.Error("Non-addressed job should be visible")
+			t.Error("Open job should be visible")
 		}
 		if m.isJobVisible(m.jobs[2]) {
 			t.Error("Failed job should be hidden")
@@ -1162,7 +1162,7 @@ func TestTUIHideAddressed(t *testing.T) {
 			t.Error("Canceled job should be hidden")
 		}
 		if !m.isJobVisible(m.jobs[4]) {
-			t.Error("Non-addressed job should be visible")
+			t.Error("Open job should be visible")
 		}
 
 		// getVisibleJobs should only return 2 jobs
@@ -1180,16 +1180,16 @@ func TestTUIHideAddressed(t *testing.T) {
 		m.currentView = viewQueue
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(true))),  // will be hidden
-			makeJob(2, withAddressed(boolPtr(false))), // will be visible
-			makeJob(3, withAddressed(boolPtr(false))), // will be visible
+			makeJob(1, withClosed(boolPtr(true))),  // will be hidden
+			makeJob(2, withClosed(boolPtr(false))), // will be visible
+			makeJob(3, withClosed(boolPtr(false))), // will be visible
 		}
 
-		// Select the first job (addressed)
+		// Select the first job (closed)
 		m.selectedIdx = 0
 		m.selectedJobID = 1
 
-		// Toggle hide addressed
+		// Toggle hide closed
 		m2, _ := pressKey(m, 'h')
 
 		// Selection should move to first visible job (ID=2)
@@ -1199,21 +1199,21 @@ func TestTUIHideAddressed(t *testing.T) {
 	t.Run("RefreshRevalidatesSelection", func(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.currentView = viewQueue
-		m.hideAddressed = true
+		m.hideClosed = true
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(false))),
-			makeJob(2, withAddressed(boolPtr(false))),
+			makeJob(1, withClosed(boolPtr(false))),
+			makeJob(2, withClosed(boolPtr(false))),
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
 
-		// Simulate jobs refresh where job 1 is now addressed
+		// Simulate jobs refresh where job 1 is now closed
 
 		m2, _ := updateModel(t, m, jobsMsg{
 			jobs: []storage.ReviewJob{
-				makeJob(1, withAddressed(boolPtr(true))),  // now addressed (hidden)
-				makeJob(2, withAddressed(boolPtr(false))), // still visible
+				makeJob(1, withClosed(boolPtr(true))),  // now closed (hidden)
+				makeJob(2, withClosed(boolPtr(false))), // still visible
 			},
 			hasMore: false,
 		})
@@ -1225,13 +1225,13 @@ func TestTUIHideAddressed(t *testing.T) {
 	t.Run("NavigationSkipsHidden", func(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.currentView = viewQueue
-		m.hideAddressed = true
+		m.hideClosed = true
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(false))),       // visible
-			makeJob(2, withAddressed(boolPtr(true))),        // hidden
+			makeJob(1, withClosed(boolPtr(false))),          // visible
+			makeJob(2, withClosed(boolPtr(true))),           // hidden
 			makeJob(3, withStatus(storage.JobStatusFailed)), // hidden
-			makeJob(4, withAddressed(boolPtr(false))),       // visible
+			makeJob(4, withClosed(boolPtr(false))),          // visible
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
@@ -1245,13 +1245,13 @@ func TestTUIHideAddressed(t *testing.T) {
 	t.Run("withRepoFilter", func(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.currentView = viewQueue
-		m.hideAddressed = true
+		m.hideClosed = true
 		m.activeRepoFilter = []string{"/repo/a"}
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))),       // visible: matches repo, not addressed
-			makeJob(2, withRepoPath("/repo/b"), withAddressed(boolPtr(false))),       // hidden: wrong repo
-			makeJob(3, withRepoPath("/repo/a"), withAddressed(boolPtr(true))),        // hidden: addressed
+			makeJob(1, withRepoPath("/repo/a"), withClosed(boolPtr(false))),          // visible: matches repo, not closed
+			makeJob(2, withRepoPath("/repo/b"), withClosed(boolPtr(false))),          // hidden: wrong repo
+			makeJob(3, withRepoPath("/repo/a"), withClosed(boolPtr(true))),           // hidden: closed
 			makeJob(4, withRepoPath("/repo/a"), withStatus(storage.JobStatusFailed)), // hidden: failed
 		}
 
@@ -1266,17 +1266,17 @@ func TestTUIHideAddressed(t *testing.T) {
 
 	})
 	t.Run("ClearRepoFilterRefetches", func(t *testing.T) {
-		// Scenario: hide addressed enabled, then filter by repo, then press escape
-		// to clear the repo filter. Should trigger a refetch to show all unaddressed reviews.
+		// Scenario: hide closed enabled, then filter by repo, then press escape
+		// to clear the repo filter. Should trigger a refetch to show all open reviews.
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.currentView = viewQueue
-		m.hideAddressed = true
+		m.hideClosed = true
 		m.activeRepoFilter = []string{"/repo/a"}
 		m.filterStack = []string{"repo"}
 		m.loadingJobs = false // Simulate that initial load has completed
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withRepoPath("/repo/a"), withAddressed(boolPtr(false))),
+			makeJob(1, withRepoPath("/repo/a"), withClosed(boolPtr(false))),
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
@@ -1289,9 +1289,9 @@ func TestTUIHideAddressed(t *testing.T) {
 			t.Errorf("Expected activeRepoFilter to be nil, got %v", m2.activeRepoFilter)
 		}
 
-		// hideAddressed should still be true
-		if !m2.hideAddressed {
-			t.Error("hideAddressed should still be true after clearing repo filter")
+		// hideClosed should still be true
+		if !m2.hideClosed {
+			t.Error("hideClosed should still be true after clearing repo filter")
 		}
 
 		// Filter stack should be empty
@@ -1306,7 +1306,7 @@ func TestTUIHideAddressed(t *testing.T) {
 
 		// A refetch command should be returned
 		if cmd == nil {
-			t.Error("Expected a refetch command when clearing repo filter with hide-addressed active")
+			t.Error("Expected a refetch command when clearing repo filter with hide-closed active")
 		}
 
 		// loadingJobs should be set
@@ -1318,57 +1318,57 @@ func TestTUIHideAddressed(t *testing.T) {
 	t.Run("EnableTriggersRefetch", func(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.currentView = viewQueue
-		m.hideAddressed = false
+		m.hideClosed = false
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(false))),
+			makeJob(1, withClosed(boolPtr(false))),
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
 
-		// Toggle hide addressed ON
+		// Toggle hide closed ON
 		m2, cmd := pressKey(m, 'h')
 
-		// hideAddressed should be enabled
-		if !m2.hideAddressed {
-			t.Error("hideAddressed should be true after pressing 'h'")
+		// hideClosed should be enabled
+		if !m2.hideClosed {
+			t.Error("hideClosed should be true after pressing 'h'")
 		}
 
 		// A command should be returned to fetch all jobs
 		if cmd == nil {
-			t.Error("Command should be returned to fetch all jobs when enabling hideAddressed")
+			t.Error("Command should be returned to fetch all jobs when enabling hideClosed")
 		}
 
 	})
 	t.Run("DisableRefetches", func(t *testing.T) {
 		m := newModel(testServerAddr, withExternalIODisabled())
 		m.currentView = viewQueue
-		m.hideAddressed = true // Already enabled
+		m.hideClosed = true // Already enabled
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withAddressed(boolPtr(false))),
+			makeJob(1, withClosed(boolPtr(false))),
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
 
-		// Toggle hide addressed OFF
+		// Toggle hide closed OFF
 		m2, cmd := pressKey(m, 'h')
 
-		// hideAddressed should be disabled
-		if m2.hideAddressed {
-			t.Error("hideAddressed should be false after pressing 'h' to disable")
+		// hideClosed should be disabled
+		if m2.hideClosed {
+			t.Error("hideClosed should be false after pressing 'h' to disable")
 		}
 
-		// Disabling triggers a refetch to get previously-filtered addressed jobs
+		// Disabling triggers a refetch to get previously-filtered closed jobs
 		if cmd == nil {
-			t.Error("Expected a refetch command when disabling hideAddressed")
+			t.Error("Expected a refetch command when disabling hideClosed")
 		}
 
 	})
 	t.Run("ValidConfigNotMutated", func(t *testing.T) {
 		tmpDir := setupTuiTestEnv(t)
 
-		// Write a valid config with the hide-addressed default enabled
+		// Write a valid config with the hide-closed default enabled
 		validConfig := []byte("hide_addressed_by_default = true\n")
 		configPath := filepath.Join(tmpDir, "config.toml")
 		if err := os.WriteFile(configPath, validConfig, 0644); err != nil {
@@ -1379,20 +1379,20 @@ func TestTUIHideAddressed(t *testing.T) {
 		m.currentView = viewQueue
 
 		// Verify the default was loaded
-		if !m.hideAddressed {
-			t.Fatal("hideAddressed should be true from config")
+		if !m.hideClosed {
+			t.Fatal("hideClosed should be true from config")
 		}
 
-		// Toggle hide addressed OFF
+		// Toggle hide closed OFF
 		m2, _ := pressKey(m, 'h')
-		if m2.hideAddressed {
-			t.Error("hideAddressed should be false after pressing 'h'")
+		if m2.hideClosed {
+			t.Error("hideClosed should be false after pressing 'h'")
 		}
 
-		// Toggle hide addressed back ON
+		// Toggle hide closed back ON
 		m3, _ := pressKey(m2, 'h')
-		if !m3.hideAddressed {
-			t.Error("hideAddressed should be true after pressing 'h' again")
+		if !m3.hideClosed {
+			t.Error("hideClosed should be true after pressing 'h' again")
 		}
 
 		// Valid config file must not have been mutated by either toggle

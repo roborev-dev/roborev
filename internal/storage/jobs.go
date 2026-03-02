@@ -1337,7 +1337,7 @@ type listJobsOptions struct {
 	gitRef             string
 	branch             string
 	branchIncludeEmpty bool
-	addressed          *bool
+	closed             *bool
 	jobType            string
 	excludeJobType     string
 }
@@ -1361,9 +1361,9 @@ func WithBranchOrEmpty(branch string) ListJobsOption {
 	}
 }
 
-// WithAddressed filters jobs by addressed state (true/false).
-func WithAddressed(addressed bool) ListJobsOption {
-	return func(o *listJobsOptions) { o.addressed = &addressed }
+// WithClosed filters jobs by closed state (true/false).
+func WithClosed(closed bool) ListJobsOption {
+	return func(o *listJobsOptions) { o.closed = &closed }
 }
 
 // WithJobType filters jobs by job_type (e.g. "fix", "review").
@@ -1376,13 +1376,12 @@ func WithExcludeJobType(jobType string) ListJobsOption {
 	return func(o *listJobsOptions) { o.excludeJobType = jobType }
 }
 
-// ListJobs returns jobs with optional status, repo, branch, and addressed filters.
-// addressedFilter: nil = no filter, non-nil bool = filter by addressed state.
+// ListJobs returns jobs with optional status, repo, branch, and closed filters.
 func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
-		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.addressed, rv.output,
+		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id
 		FROM review_jobs j
@@ -1417,11 +1416,11 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		args = append(args, o.branch)
 	}
-	if o.addressed != nil {
-		if *o.addressed {
-			conditions = append(conditions, "rv.addressed = 1")
+	if o.closed != nil {
+		if *o.closed {
+			conditions = append(conditions, "rv.closed = 1")
 		} else {
-			conditions = append(conditions, "(rv.addressed IS NULL OR rv.addressed = 0)")
+			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
 		}
 	}
 	if o.jobType != "" {
@@ -1462,13 +1461,13 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
-		var addressed sql.NullInt64
+		var closed sql.NullInt64
 		var agentic int
 		var parentJobID sql.NullInt64
 
 		err := rows.Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
-			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &addressed, &output,
+			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &closed, &output,
 			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 			&parentJobID)
 		if err != nil {
@@ -1521,9 +1520,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		if branch.Valid {
 			j.Branch = branch.String
 		}
-		if addressed.Valid {
-			val := addressed.Int64 != 0
-			j.Addressed = &val
+		if closed.Valid {
+			val := closed.Int64 != 0
+			j.Closed = &val
 		}
 		if parentJobID.Valid {
 			j.ParentJobID = &parentJobID.Int64
@@ -1544,19 +1543,19 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 // GetJobByID returns a job by ID with joined fields
 // JobStats holds aggregate counts for the queue status line.
 type JobStats struct {
-	Done        int `json:"done"`
-	Addressed   int `json:"addressed"`
-	Unaddressed int `json:"unaddressed"`
+	Done   int `json:"done"`
+	Closed int `json:"closed"`
+	Open   int `json:"open"`
 }
 
-// CountJobStats returns aggregate done/addressed/unaddressed counts
-// using the same filter logic as ListJobs (repo, branch, addressed).
+// CountJobStats returns aggregate done/closed/open counts
+// using the same filter logic as ListJobs (repo, branch, closed).
 func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats, error) {
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.addressed = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.addressed IS NULL OR rv.addressed = 0) THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
@@ -1586,7 +1585,7 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 	}
 
 	var stats JobStats
-	err := db.QueryRow(query, args...).Scan(&stats.Done, &stats.Addressed, &stats.Unaddressed)
+	err := db.QueryRow(query, args...).Scan(&stats.Done, &stats.Closed, &stats.Open)
 	return stats, err
 }
 

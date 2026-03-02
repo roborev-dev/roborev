@@ -145,11 +145,11 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 		state.handleComment(w, r)
 	})
 
-	mux.HandleFunc("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
-		if hooks.OnReviewAddress != nil && hooks.OnReviewAddress(w, r, state) {
+	mux.HandleFunc("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+		if hooks.OnReviewClose != nil && hooks.OnReviewClose(w, r, state) {
 			return
 		}
-		state.handleReviewAddress(w, r)
+		state.handleReviewClose(w, r)
 	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -226,14 +226,14 @@ func (f *functionalMockAgent) CommandLine() string                              
 
 // MockRefineHooks allows overriding specific endpoints in the mock refine handler.
 type MockRefineHooks struct {
-	OnGetJobs       func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool // Return true if handled
-	OnEnqueue       func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnReview        func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnComments      func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnStatus        func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnComment       func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnReviewAddress func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
-	OnUnhandled     func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnGetJobs     func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool // Return true if handled
+	OnEnqueue     func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnReview      func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnComments    func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnStatus      func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnComment     func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnReviewClose func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
+	OnUnhandled   func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool
 }
 
 // mockRefineState tracks state for simulating the full refine loop
@@ -242,7 +242,7 @@ type mockRefineState struct {
 	reviews       map[string]*storage.Review   // SHA -> review
 	jobs          map[int64]*storage.ReviewJob // jobID -> job
 	responses     map[int64][]storage.Response // jobID -> responses
-	addressedIDs  []int64                      // review IDs that were marked addressed
+	closedIDs     []int64                      // job IDs that were closed
 	nextJobID     int64
 	enqueuedRefs  []string // git refs that were enqueued for review
 	respondCalled []struct {
@@ -367,23 +367,23 @@ func (state *mockRefineState) handleComment(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (state *mockRefineState) handleReviewAddress(w http.ResponseWriter, r *http.Request) {
+func (state *mockRefineState) handleReviewClose(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		mockMethodNotAllowed(w)
 		return
 	}
 	var req struct {
-		ReviewID  int64 `json:"review_id"`
-		Addressed bool  `json:"addressed"`
+		JobID  int64 `json:"job_id"`
+		Closed bool  `json:"closed"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	state.mu.Lock()
-	if req.Addressed {
-		state.addressedIDs = append(state.addressedIDs, req.ReviewID)
+	if req.Closed {
+		state.closedIDs = append(state.closedIDs, req.JobID)
 		// Update the review in state
 		for _, rev := range state.reviews {
-			if rev.ID == req.ReviewID {
-				rev.Addressed = true
+			if rev.JobID == req.JobID {
+				rev.Closed = true
 				break
 			}
 		}
@@ -444,7 +444,7 @@ func createMockRefineHandler(state *mockRefineState) http.Handler {
 	mux.HandleFunc("/api/review", state.handleReview)
 	mux.HandleFunc("/api/comments", state.handleComments)
 	mux.HandleFunc("/api/comment", state.handleComment)
-	mux.HandleFunc("/api/review/address", state.handleReviewAddress)
+	mux.HandleFunc("/api/review/close", state.handleReviewClose)
 	mux.HandleFunc("/api/enqueue", state.handleEnqueue)
 	mux.HandleFunc("/api/jobs", state.handleJobs)
 	return mux
@@ -474,7 +474,7 @@ func daemonFromHandler(t *testing.T, handler http.Handler) *MockDaemon {
 			handler.ServeHTTP(w, r)
 			return true
 		},
-		OnReviewAddress: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+		OnReviewClose: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			handler.ServeHTTP(w, r)
 			return true
 		},

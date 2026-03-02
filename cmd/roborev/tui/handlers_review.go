@@ -45,33 +45,33 @@ func (m model) handlePromptKey() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleAddressedKey() (tea.Model, tea.Cmd) {
+func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 	if m.currentView == viewReview && m.currentReview != nil && m.currentReview.ID > 0 {
-		oldState := m.currentReview.Addressed
+		oldState := m.currentReview.Closed
 		newState := !oldState
-		m.addressedSeq++
-		seq := m.addressedSeq
-		m.currentReview.Addressed = newState
+		m.closedSeq++
+		seq := m.closedSeq
+		m.currentReview.Closed = newState
 		var jobID int64
 		if m.currentReview.Job != nil {
 			jobID = m.currentReview.Job.ID
-			m.setJobAddressed(jobID, newState)
-			m.pendingAddressed[jobID] = pendingState{newState: newState, seq: seq}
+			m.setJobClosed(jobID, newState)
+			m.pendingClosed[jobID] = pendingState{newState: newState, seq: seq}
 			m.applyStatsDelta(newState)
 		} else {
-			m.pendingReviewAddressed[m.currentReview.ID] = pendingState{newState: newState, seq: seq}
+			m.pendingReviewClosed[m.currentReview.ID] = pendingState{newState: newState, seq: seq}
 		}
-		return m, m.addressReview(m.currentReview.ID, jobID, newState, oldState, seq)
+		return m, m.closeReview(m.currentReview.ID, jobID, newState, oldState, seq)
 	} else if job, ok := m.selectedJob(); m.currentView == viewQueue && ok {
-		if job.Status == storage.JobStatusDone && job.Addressed != nil {
-			oldState := *job.Addressed
+		if job.Status == storage.JobStatusDone && job.Closed != nil {
+			oldState := *job.Closed
 			newState := !oldState
-			m.addressedSeq++
-			seq := m.addressedSeq
-			*job.Addressed = newState
-			m.pendingAddressed[job.ID] = pendingState{newState: newState, seq: seq}
+			m.closedSeq++
+			seq := m.closedSeq
+			*job.Closed = newState
+			m.pendingClosed[job.ID] = pendingState{newState: newState, seq: seq}
 			m.applyStatsDelta(newState)
-			if m.hideAddressed && newState {
+			if m.hideClosed && newState {
 				nextIdx := m.findNextVisibleJob(m.selectedIdx)
 				if nextIdx < 0 {
 					nextIdx = m.findPrevVisibleJob(m.selectedIdx)
@@ -84,7 +84,7 @@ func (m model) handleAddressedKey() (tea.Model, tea.Cmd) {
 					m.updateSelectedJobID()
 				}
 			}
-			return m, m.addressReviewInBackground(job.ID, newState, oldState, seq)
+			return m, m.closeReviewInBackground(job.ID, newState, oldState, seq)
 		}
 	}
 	return m, nil
@@ -101,8 +101,8 @@ func (m model) handleCancelKey() (tea.Model, tea.Cmd) {
 		job.Status = storage.JobStatusCanceled
 		now := time.Now()
 		job.FinishedAt = &now
-		// Canceled jobs are hidden when hideAddressed is active
-		if m.hideAddressed {
+		// Canceled jobs are hidden when hideClosed is active
+		if m.hideClosed {
 			nextIdx := m.findNextVisibleJob(m.selectedIdx)
 			if nextIdx < 0 {
 				nextIdx = m.findPrevVisibleJob(m.selectedIdx)

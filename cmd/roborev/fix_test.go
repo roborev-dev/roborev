@@ -434,8 +434,8 @@ func TestRunFixUnaddressed(t *testing.T) {
 				if q.Get("status") != "done" {
 					t.Errorf("expected status=done, got %q", q.Get("status"))
 				}
-				if q.Get("addressed") != "false" {
-					t.Errorf("expected addressed=false, got %q", q.Get("addressed"))
+				if q.Get("closed") != "false" {
+					t.Errorf("expected closed=false, got %q", q.Get("closed"))
 				}
 				writeJSON(w, map[string]any{
 					"jobs":     []storage.ReviewJob{},
@@ -445,7 +445,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
+			return runFixOpen(cmd, "", false, fixOptions{agentName: "test"})
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -456,14 +456,14 @@ func TestRunFixUnaddressed(t *testing.T) {
 	})
 
 	t.Run("finds and processes open jobs", func(t *testing.T) {
-		var reviewCalls, addressCalls atomic.Int32
-		var unaddressedCalls atomic.Int32
+		var reviewCalls, closeCalls atomic.Int32
+		var openQueryCalls atomic.Int32
 
 		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
-				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
-					if unaddressedCalls.Add(1) == 1 {
+				if q.Get("closed") == "false" && q.Get("limit") == "0" {
+					if openQueryCalls.Add(1) == 1 {
 						writeJSON(w, map[string]any{
 							"jobs": []storage.ReviewJob{
 								{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
@@ -490,8 +490,8 @@ func TestRunFixUnaddressed(t *testing.T) {
 				reviewCalls.Add(1)
 				writeJSON(w, storage.Review{Output: "findings"})
 			}).
-			WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
-				addressCalls.Add(1)
+			WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
+				closeCalls.Add(1)
 				w.WriteHeader(http.StatusOK)
 			}).
 			WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
@@ -500,7 +500,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 			Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+			return runFixOpen(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -511,8 +511,8 @@ func TestRunFixUnaddressed(t *testing.T) {
 		if rc := reviewCalls.Load(); rc != 2 {
 			t.Errorf("expected 2 review fetches, got %d", rc)
 		}
-		if ac := addressCalls.Load(); ac != 2 {
-			t.Errorf("expected 2 address calls, got %d", ac)
+		if ac := closeCalls.Load(); ac != 2 {
+			t.Errorf("expected 2 close calls, got %d", ac)
 		}
 	})
 
@@ -520,7 +520,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		var gotBranch string
 		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Query().Get("addressed") == "false" {
+				if r.URL.Query().Get("closed") == "false" {
 					gotBranch = r.URL.Query().Get("branch")
 				}
 				writeJSON(w, map[string]any{
@@ -531,10 +531,10 @@ func TestRunFixUnaddressed(t *testing.T) {
 			Build()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixUnaddressed(cmd, "feature-branch", false, fixOptions{agentName: "test"})
+			return runFixOpen(cmd, "feature-branch", false, fixOptions{agentName: "test"})
 		})
 		if err != nil {
-			t.Fatalf("runFixUnaddressed returned unexpected error: %v", err)
+			t.Fatalf("runFixOpen returned unexpected error: %v", err)
 		}
 		if gotBranch != "feature-branch" {
 			t.Errorf("expected branch=feature-branch, got %q", gotBranch)
@@ -550,7 +550,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 			Build()
 
 		_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test"})
+			return runFixOpen(cmd, "", false, fixOptions{agentName: "test"})
 		})
 		if err == nil {
 			t.Fatal("expected error on server failure")
@@ -564,12 +564,12 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	makeBuilder := func() (*MockDaemonBuilder, *atomic.Int32) {
-		var unaddressedCalls atomic.Int32
+		var openQueryCalls atomic.Int32
 		b := newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
-				if q.Get("addressed") == "false" {
-					if unaddressedCalls.Add(1) == 1 {
+				if q.Get("closed") == "false" {
+					if openQueryCalls.Add(1) == 1 {
 						// Return newest first (as the API does)
 						writeJSON(w, map[string]any{
 							"jobs": []storage.ReviewJob{
@@ -600,13 +600,13 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 			WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusCreated)
 			}).
-			WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
+			WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}).
 			WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})
-		return b, &unaddressedCalls
+		return b, &openQueryCalls
 	}
 
 	t.Run("oldest first by default", func(t *testing.T) {
@@ -614,7 +614,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+			return runFixOpen(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -629,7 +629,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		b.Build()
 
 		out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-			return runFixUnaddressed(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
+			return runFixOpen(cmd, "", true, fixOptions{agentName: "test", reasoning: "fast"})
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -646,7 +646,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
-			if q.Get("addressed") == "false" && q.Get("limit") == "0" {
+			if q.Get("closed") == "false" && q.Get("limit") == "0" {
 				n := queryCount.Add(1)
 				switch n {
 				case 1:
@@ -689,7 +689,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
 		}).
-		WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
+		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}).
 		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
@@ -698,7 +698,7 @@ func TestRunFixUnaddressedRequery(t *testing.T) {
 		Build()
 
 	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-		return runFixUnaddressed(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
+		return runFixOpen(cmd, "", false, fixOptions{agentName: "test", reasoning: "fast"})
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1125,7 +1125,7 @@ func TestRunFixList(t *testing.T) {
 		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 				q := r.URL.Query()
-				if q.Get("addressed") == "false" && q.Get("limit") == "0" {
+				if q.Get("closed") == "false" && q.Get("limit") == "0" {
 					// API returns newest first
 					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
@@ -1251,7 +1251,7 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		}
 	})
 
-	t.Run("runFixUnaddressed sends main repo path", func(t *testing.T) {
+	t.Run("runFixOpen sends main repo path", func(t *testing.T) {
 		receivedRepo := setupWorktreeMockDaemon(t)
 		repo, worktreeDir := setupWorktree(t)
 		chdir(t, worktreeDir)
@@ -1260,8 +1260,8 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
-		if err := runFixUnaddressed(cmd, "", false, opts); err != nil {
-			t.Fatalf("runFixUnaddressed: %v", err)
+		if err := runFixOpen(cmd, "", false, opts); err != nil {
+			t.Fatalf("runFixOpen: %v", err)
 		}
 
 		if *receivedRepo == "" {
@@ -1281,7 +1281,7 @@ func TestFixWorktreeRepoResolution(t *testing.T) {
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		opts := fixOptions{quiet: true}
-		// nil jobIDs triggers discovery via queryUnaddressedJobs
+		// nil jobIDs triggers discovery via queryOpenJobs
 		if err := runFixBatch(cmd, nil, "", false, opts); err != nil {
 			t.Fatalf("runFixBatch: %v", err)
 		}
@@ -1349,7 +1349,7 @@ func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 		"main.go": "package main\n",
 	})
 
-	var addressCalls atomic.Int32
+	var closeCalls atomic.Int32
 	var agentCalled atomic.Int32
 
 	ts, _ := newMockServer(t, MockServerOpts{
@@ -1364,10 +1364,10 @@ func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 			})
 		},
 	})
-	// Wrap the server to track address calls
+	// Wrap the server to track close calls
 	wrapper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/review/address" {
-			addressCalls.Add(1)
+		if r.URL.Path == "/api/review/close" {
+			closeCalls.Add(1)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -1415,8 +1415,8 @@ func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 	if agentCalled.Load() != 0 {
 		t.Error("agent should not have been invoked for passing review")
 	}
-	if addressCalls.Load() != 1 {
-		t.Errorf("expected 1 address call, got %d", addressCalls.Load())
+	if closeCalls.Load() != 1 {
+		t.Errorf("expected 1 close call, got %d", closeCalls.Load())
 	}
 }
 
@@ -1426,7 +1426,7 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 	})
 
 	var mu sync.Mutex
-	var addressedJobIDs []int64
+	var closedJobIDs []int64
 
 	passVerdict := "P"
 
@@ -1471,13 +1471,13 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 				})
 			}
 		}).
-		WithHandler("/api/review/address", func(w http.ResponseWriter, r *http.Request) {
+		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				JobID int64 `json:"job_id"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
 				mu.Lock()
-				addressedJobIDs = append(addressedJobIDs, body.JobID)
+				closedJobIDs = append(closedJobIDs, body.JobID)
 				mu.Unlock()
 			}
 			w.WriteHeader(http.StatusOK)
@@ -1508,11 +1508,11 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 		t.Errorf("expected FAIL job findings in output, got:\n%s", out)
 	}
 
-	// Verify PASS job 10 was marked addressed during the skip phase
+	// Verify PASS job 10 was closed during the skip phase
 	mu.Lock()
-	ids := addressedJobIDs
+	ids := closedJobIDs
 	mu.Unlock()
 	if !slices.Contains(ids, int64(10)) {
-		t.Errorf("expected job 10 to be marked addressed, got IDs: %v", ids)
+		t.Errorf("expected job 10 to be closed, got IDs: %v", ids)
 	}
 }

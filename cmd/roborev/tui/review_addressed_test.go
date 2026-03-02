@@ -7,24 +7,24 @@ import (
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
-func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
+func TestTUIReviewViewClosedRollbackOnError(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
-	// Initial state with review view showing an unaddressed review
+	// Initial state with review view showing an open review
 	m.currentView = viewReview
 	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
 
 	// Simulate optimistic update (what happens when 'a' is pressed in review view)
-	m.currentReview.Addressed = true
-	m.pendingAddressed[100] = pendingState{newState: true, seq: 1} // Track pending state
+	m.currentReview.Closed = true
+	m.pendingClosed[100] = pendingState{newState: true, seq: 1} // Track pending state
 
 	// Error result from server (reviewID must match currentReview.ID for rollback)
-	errMsg := addressedResultMsg{
+	errMsg := closedResultMsg{
 		reviewID:   42,  // Must match currentReview.ID
 		jobID:      100, // Must match for isCurrentRequest check
 		reviewView: true,
 		oldState:   false, // Was false before optimistic update
-		newState:   true,  // The requested state (matches pendingAddressed)
+		newState:   true,  // The requested state (matches pendingClosed)
 		seq:        1,     // Must match pending seq to be treated as current
 		err:        fmt.Errorf("server error"),
 	}
@@ -32,15 +32,15 @@ func TestTUIReviewViewAddressedRollbackOnError(t *testing.T) {
 	m, _ = updateModel(t, m, errMsg)
 
 	// Should have rolled back to false
-	if m.currentReview.Addressed != false {
-		t.Errorf("Expected currentReview.Addressed=false after rollback, got %v", m.currentReview.Addressed)
+	if m.currentReview.Closed != false {
+		t.Errorf("Expected currentReview.Closed=false after rollback, got %v", m.currentReview.Closed)
 	}
 	if m.err == nil {
 		t.Error("Expected error to be set")
 	}
 }
 
-func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
+func TestTUIReviewViewClosedSuccessNoRollback(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Initial state with review view
@@ -48,10 +48,10 @@ func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
 	m.currentReview = makeReview(42, &storage.ReviewJob{})
 
 	// Simulate optimistic update
-	m.currentReview.Addressed = true
+	m.currentReview.Closed = true
 
 	// Success result (err is nil)
-	successMsg := addressedResultMsg{
+	successMsg := closedResultMsg{
 		reviewView: true,
 		oldState:   false,
 		seq:        1, // Not strictly needed for success but included for consistency
@@ -61,8 +61,8 @@ func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
 	m, _ = updateModel(t, m, successMsg)
 
 	// Should stay true (no rollback on success)
-	if m.currentReview.Addressed != true {
-		t.Errorf("Expected currentReview.Addressed=true after success, got %v", m.currentReview.Addressed)
+	if m.currentReview.Closed != true {
+		t.Errorf("Expected currentReview.Closed=true after success, got %v", m.currentReview.Closed)
 	}
 	if m.err != nil {
 		t.Errorf("Expected no error, got %v", m.err)
@@ -72,31 +72,31 @@ func TestTUIReviewViewAddressedSuccessNoRollback(t *testing.T) {
 func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
-	// Setup: jobs in queue with addressed=false
+	// Setup: jobs in queue with closed=false
 	addrA := false
 	addrB := false
 	m.jobs = []storage.ReviewJob{
-		{ID: 100, Status: storage.JobStatusDone, Addressed: &addrA}, // Job for review A
-		{ID: 200, Status: storage.JobStatusDone, Addressed: &addrB}, // Job for review B
+		{ID: 100, Status: storage.JobStatusDone, Closed: &addrA}, // Job for review A
+		{ID: 200, Status: storage.JobStatusDone, Closed: &addrB}, // Job for review B
 	}
 
-	// User views review A, toggles addressed (optimistic update)
+	// User views review A, toggles closed (optimistic update)
 	m.currentView = viewReview
 	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
-	m.currentReview.Addressed = true                               // Optimistic update to review
-	*m.jobs[0].Addressed = true                                    // Optimistic update to job in queue
-	m.pendingAddressed[100] = pendingState{newState: true, seq: 1} // Track pending state for job A
+	m.currentReview.Closed = true                               // Optimistic update to review
+	*m.jobs[0].Closed = true                                    // Optimistic update to job in queue
+	m.pendingClosed[100] = pendingState{newState: true, seq: 1} // Track pending state for job A
 
 	// User navigates to review B before error response arrives
 	m.currentReview = makeReview(99, &storage.ReviewJob{ID: 200})
 
 	// Error arrives for review A's toggle
-	errMsg := addressedResultMsg{
+	errMsg := closedResultMsg{
 		reviewID:   42,  // Review A
 		jobID:      100, // Job A
 		reviewView: true,
 		oldState:   false,
-		newState:   true, // The requested state (matches pendingAddressed)
+		newState:   true, // The requested state (matches pendingClosed)
 		seq:        1,    // Must match pending seq to be treated as current
 		err:        fmt.Errorf("server error"),
 	}
@@ -104,28 +104,28 @@ func TestTUIReviewViewNavigateAwayBeforeError(t *testing.T) {
 	m, _ = updateModel(t, m, errMsg)
 
 	// Review B should be unchanged (still false)
-	if m.currentReview.Addressed != false {
-		t.Errorf("Review B should be unchanged, got Addressed=%v", m.currentReview.Addressed)
+	if m.currentReview.Closed != false {
+		t.Errorf("Review B should be unchanged, got Closed=%v", m.currentReview.Closed)
 	}
 
 	// Job A in queue should be rolled back to false
-	if *m.jobs[0].Addressed != false {
-		t.Errorf("Job A should be rolled back, got Addressed=%v", *m.jobs[0].Addressed)
+	if *m.jobs[0].Closed != false {
+		t.Errorf("Job A should be rolled back, got Closed=%v", *m.jobs[0].Closed)
 	}
 
 	// Job B in queue should be unchanged
-	if *m.jobs[1].Addressed != false {
-		t.Errorf("Job B should be unchanged, got Addressed=%v", *m.jobs[1].Addressed)
+	if *m.jobs[1].Closed != false {
+		t.Errorf("Job B should be unchanged, got Closed=%v", *m.jobs[1].Closed)
 	}
 }
 
 func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
-	// Setup: job in queue with addressed=false
+	// Setup: job in queue with closed=false
 	addr := false
 	m.jobs = []storage.ReviewJob{
-		{ID: 100, Status: storage.JobStatusDone, Addressed: &addr},
+		{ID: 100, Status: storage.JobStatusDone, Closed: &addr},
 	}
 
 	// User views review for job 100 and presses 'a'
@@ -133,23 +133,23 @@ func TestTUIReviewViewToggleSyncsQueueJob(t *testing.T) {
 	m.currentReview = makeReview(42, &storage.ReviewJob{ID: 100})
 
 	// Simulate the optimistic update that happens when 'a' is pressed
-	oldState := m.currentReview.Addressed
+	oldState := m.currentReview.Closed
 	newState := !oldState
-	m.currentReview.Addressed = newState
-	m.setJobAddressed(100, newState)
+	m.currentReview.Closed = newState
+	m.setJobClosed(100, newState)
 
 	// Both should be updated
-	if m.currentReview.Addressed != true {
-		t.Errorf("Expected currentReview.Addressed=true, got %v", m.currentReview.Addressed)
+	if m.currentReview.Closed != true {
+		t.Errorf("Expected currentReview.Closed=true, got %v", m.currentReview.Closed)
 	}
-	if *m.jobs[0].Addressed != true {
-		t.Errorf("Expected job.Addressed=true, got %v", *m.jobs[0].Addressed)
+	if *m.jobs[0].Closed != true {
+		t.Errorf("Expected job.Closed=true, got %v", *m.jobs[0].Closed)
 	}
 }
 
 func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	// Test that review-view errors without jobID are still handled if
-	// pendingReviewAddressed matches
+	// pendingReviewClosed matches
 	m := newModel("http://localhost", withExternalIODisabled())
 
 	// Review without an associated job (Job is nil)
@@ -157,16 +157,16 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 42}
 
 	// Simulate optimistic update (what happens when 'a' is pressed)
-	m.currentReview.Addressed = true
-	m.pendingReviewAddressed[42] = pendingState{newState: true, seq: 1} // Track pending state by review ID
+	m.currentReview.Closed = true
+	m.pendingReviewClosed[42] = pendingState{newState: true, seq: 1} // Track pending state by review ID
 
 	// Error arrives for this toggle (no jobID since Job was nil)
-	errMsg := addressedResultMsg{
+	errMsg := closedResultMsg{
 		reviewID:   42,
 		jobID:      0, // No job
 		reviewView: true,
 		oldState:   false,
-		newState:   true, // Matches pendingReviewAddressed
+		newState:   true, // Matches pendingReviewClosed
 		seq:        1,    // Matches pending seq
 		err:        fmt.Errorf("server error"),
 	}
@@ -174,8 +174,8 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 	m2, _ := updateModel(t, m, errMsg)
 
 	// Should have rolled back to false
-	if m2.currentReview.Addressed != false {
-		t.Errorf("Expected currentReview.Addressed=false after rollback, got %v", m2.currentReview.Addressed)
+	if m2.currentReview.Closed != false {
+		t.Errorf("Expected currentReview.Closed=false after rollback, got %v", m2.currentReview.Closed)
 	}
 
 	// Error should be set
@@ -183,9 +183,9 @@ func TestTUIReviewViewErrorWithoutJobID(t *testing.T) {
 		t.Error("Expected error to be set")
 	}
 
-	// pendingReviewAddressed should be cleared
-	if _, ok := m2.pendingReviewAddressed[42]; ok {
-		t.Error("pendingReviewAddressed should be cleared after error")
+	// pendingReviewClosed should be cleared
+	if _, ok := m2.pendingReviewClosed[42]; ok {
+		t.Error("pendingReviewClosed should be cleared after error")
 	}
 }
 
@@ -198,17 +198,17 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 42}
 
 	// User toggled to true, then back to false
-	// pendingReviewAddressed is now false (from the second toggle)
-	m.currentReview.Addressed = false
-	m.pendingReviewAddressed[42] = pendingState{newState: false, seq: 1}
+	// pendingReviewClosed is now false (from the second toggle)
+	m.currentReview.Closed = false
+	m.pendingReviewClosed[42] = pendingState{newState: false, seq: 1}
 
 	// A stale error arrives from the earlier toggle to true
-	staleErrorMsg := addressedResultMsg{
+	staleErrorMsg := closedResultMsg{
 		reviewID:   42,
 		jobID:      0, // No job
 		reviewView: true,
 		oldState:   false, // What it was before the stale toggle
-		newState:   true,  // Stale: pendingReviewAddressed is false, not true
+		newState:   true,  // Stale: pendingReviewClosed is false, not true
 		seq:        0,     // Stale: doesn't match pending seq (1)
 		err:        fmt.Errorf("network error"),
 	}
@@ -216,8 +216,8 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 	m2, _ := updateModel(t, m, staleErrorMsg)
 
 	// State should NOT be rolled back (stale error)
-	if m2.currentReview.Addressed != false {
-		t.Errorf("Expected addressed to remain false, got %v", m2.currentReview.Addressed)
+	if m2.currentReview.Closed != false {
+		t.Errorf("Expected closed to remain false, got %v", m2.currentReview.Closed)
 	}
 
 	// Error should NOT be set (stale error)
@@ -225,9 +225,9 @@ func TestTUIReviewViewStaleErrorWithoutJobID(t *testing.T) {
 		t.Error("Error should not be set for stale error response")
 	}
 
-	// pendingReviewAddressed should still be set (not cleared by stale response)
-	if _, ok := m2.pendingReviewAddressed[42]; !ok {
-		t.Error("pendingReviewAddressed should not be cleared by stale response")
+	// pendingReviewClosed should still be set (not cleared by stale response)
+	if _, ok := m2.pendingReviewClosed[42]; !ok {
+		t.Error("pendingReviewClosed should not be cleared by stale response")
 	}
 }
 
@@ -242,14 +242,14 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 	m.currentReview = &storage.Review{ID: 42}
 
 	// Sequence: toggle true (seq 1) -> toggle false (seq 2) -> toggle true (seq 3)
-	// After third toggle, state is true and pendingReviewAddressed has seq 3
-	m.currentReview.Addressed = true
-	m.pendingReviewAddressed[42] = pendingState{newState: true, seq: 3} // Third toggle
+	// After third toggle, state is true and pendingReviewClosed has seq 3
+	m.currentReview.Closed = true
+	m.pendingReviewClosed[42] = pendingState{newState: true, seq: 3} // Third toggle
 
 	// A late error arrives from the FIRST toggle (seq 1)
 	// This error has newState=true which matches current pending newState,
 	// but seq doesn't match, so it should be treated as stale and ignored.
-	lateErrorMsg := addressedResultMsg{
+	lateErrorMsg := closedResultMsg{
 		reviewID:   42,
 		jobID:      0,
 		reviewView: true,
@@ -263,8 +263,8 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 
 	// With sequence numbers, the late error should be IGNORED (not rolled back)
 	// because seq: 1 != pending seq: 3
-	if m2.currentReview.Addressed != true {
-		t.Errorf("Expected addressed to stay true (late error should be ignored), got %v", m2.currentReview.Addressed)
+	if m2.currentReview.Closed != true {
+		t.Errorf("Expected closed to stay true (late error should be ignored), got %v", m2.currentReview.Closed)
 	}
 
 	// Error should NOT be set (stale error)
@@ -272,8 +272,8 @@ func TestTUIReviewViewSameStateLateError(t *testing.T) {
 		t.Errorf("Error should not be set for stale error response, got %v", m2.err)
 	}
 
-	// pendingReviewAddressed should still be set (not cleared by stale response)
-	if _, ok := m2.pendingReviewAddressed[42]; !ok {
-		t.Error("pendingReviewAddressed should not be cleared by stale response")
+	// pendingReviewClosed should still be set (not cleared by stale response)
+	if _, ok := m2.pendingReviewClosed[42]; !ok {
+		t.Error("pendingReviewClosed should not be cleared by stale response")
 	}
 }
