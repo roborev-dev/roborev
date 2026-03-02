@@ -2,9 +2,12 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,6 +46,18 @@ func TestHelperProcess(t *testing.T) {
 	case "patch_fail":
 		fmt.Fprint(os.Stderr, "gh api PATCH failed")
 		os.Exit(1)
+	case "find_multi_line":
+		// Simulate --paginate producing multiple IDs across pages.
+		fmt.Print("10\n20\n30\n")
+		os.Exit(0)
+	case "capture_stdin":
+		// Read stdin and write it to a temp file so the test can inspect it.
+		data, _ := io.ReadAll(os.Stdin)
+		path := os.Getenv("GH_CAPTURE_FILE")
+		if path != "" {
+			_ = os.WriteFile(path, data, 0o644)
+		}
+		os.Exit(0)
 	case "check_env":
 		token := os.Getenv("GH_TOKEN")
 		if token == "" {
@@ -156,33 +171,60 @@ func TestUpsertPRComment_Update(t *testing.T) {
 }
 
 func TestUpsertPRComment_MarkerPrepended(t *testing.T) {
-	body := "test review"
-	result := CommentMarker + "\n" + body
-	if !strings.HasPrefix(result, CommentMarker) {
-		t.Fatal("marker not at start")
+	// Exercise UpsertPRComment and capture the stdin sent to "gh pr comment"
+	// to verify the marker is prepended.
+	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		if callCount == 1 {
+			return helperCmd("find_none")(ctx, name, args...)
+		}
+		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
+	})
+
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, "test review", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("read capture file: %v", err)
+	}
+	body := string(data)
+	if !strings.HasPrefix(body, CommentMarker+"\n") {
+		t.Fatalf("marker not at start of body: %q", body[:min(80, len(body))])
 	}
 }
 
 func TestUpsertPRComment_Truncation(t *testing.T) {
-	// Build a body that exceeds MaxCommentLen after marker prepend.
+	// Exercise UpsertPRComment with an oversized body and verify the
+	// marker survives and the body is truncated.
+	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		if callCount == 1 {
+			return helperCmd("find_none")(ctx, name, args...)
+		}
+		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
+	})
+
 	bigBody := strings.Repeat("x", review.MaxCommentLen+1000)
-	markedBody := CommentMarker + "\n" + bigBody
-
-	// Simulate what UpsertPRComment does.
-	if len(markedBody) > review.MaxCommentLen {
-		markedBody = markedBody[:review.MaxCommentLen] +
-			"\n\n...(truncated — comment exceeded size limit)"
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, bigBody, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	// Marker must survive truncation.
-	if !strings.HasPrefix(markedBody, CommentMarker) {
+	data, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("read capture file: %v", err)
+	}
+	body := string(data)
+	if !strings.HasPrefix(body, CommentMarker) {
 		t.Fatal("marker lost after truncation")
 	}
-	// The truncated portion should be exactly MaxCommentLen.
-	lines := strings.SplitN(markedBody, "\n\n...(truncated", 2)
-	if len(lines[0]) != review.MaxCommentLen {
-		t.Fatalf("expected truncated body len %d, got %d",
-			review.MaxCommentLen, len(lines[0]))
+	if !strings.Contains(body, "truncated") {
+		t.Fatal("expected truncation suffix")
 	}
 }
 
@@ -208,5 +250,55 @@ func TestUpsertPRComment_EnvPassthrough(t *testing.T) {
 	_ = id
 	if err != nil && strings.Contains(err.Error(), "GH_TOKEN not set") {
 		t.Fatal("env was not passed through to subprocess")
+	}
+}
+
+func TestFindExistingComment_MultiLineOutput(t *testing.T) {
+	// When --paginate produces multiple IDs across pages, only the first
+	// non-empty line should be used.
+	setExecCommand(t, helperCmd("find_multi_line"))
+
+	id, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != 10 {
+		t.Fatalf("expected first ID 10, got %d", id)
+	}
+}
+
+func TestUpsertPRComment_PATCHPayloadIsValidJSON(t *testing.T) {
+	// Exercise the update path and verify the PATCH stdin is valid JSON
+	// with a "body" key containing the marker.
+	captureFile := filepath.Join(t.TempDir(), "patch.json")
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		if callCount == 1 {
+			return helperCmd("find_existing")(ctx, name, args...)
+		}
+		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
+	})
+
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body with\nnewlines\tand\ttabs", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("read capture file: %v", err)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("PATCH payload is not valid JSON: %v\npayload: %s", err, string(data))
+	}
+	body, ok := payload["body"]
+	if !ok {
+		t.Fatal("PATCH payload missing 'body' key")
+	}
+	if !strings.HasPrefix(body, CommentMarker) {
+		t.Fatalf("PATCH body missing marker: %q", body[:min(80, len(body))])
 	}
 }

@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -16,11 +17,8 @@ import (
 // instead of creating duplicates.
 const CommentMarker = "<!-- roborev-pr-comment -->"
 
-// Test seams for subprocess creation.
-var (
-	execCommand  = exec.CommandContext
-	execLookPath = exec.LookPath
-)
+// Test seam for subprocess creation.
+var execCommand = exec.CommandContext
 
 // FindExistingComment searches for an existing roborev comment on the
 // given PR. It returns the comment ID if found, or 0 if no match exists.
@@ -47,14 +45,23 @@ func FindExistingComment(ctx context.Context, ghRepo string, prNumber int, env [
 		return 0, fmt.Errorf("gh api list comments: %w: %s", err, stderr.String())
 	}
 
-	output := strings.TrimSpace(stdout.String())
-	if output == "" {
+	// With --paginate, --jq runs per page so stdout may contain
+	// multiple lines when several pages match. Use the first non-empty
+	// line (the oldest matching comment).
+	firstLine := ""
+	for line := range strings.SplitSeq(stdout.String(), "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			firstLine = s
+			break
+		}
+	}
+	if firstLine == "" {
 		return 0, nil
 	}
 
-	id, err := strconv.ParseInt(output, 10, 64)
+	id, err := strconv.ParseInt(firstLine, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("parse comment ID %q: %w", output, err)
+		return 0, fmt.Errorf("parse comment ID %q: %w", firstLine, err)
 	}
 	return id, nil
 }
@@ -83,12 +90,16 @@ func UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body stri
 }
 
 func patchComment(ctx context.Context, ghRepo string, commentID int64, body string, env []string) error {
+	payload, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return fmt.Errorf("marshal PATCH payload: %w", err)
+	}
 	cmd := execCommand(ctx, "gh", "api",
 		"-X", "PATCH",
 		fmt.Sprintf("repos/%s/issues/comments/%d", ghRepo, commentID),
 		"--input", "-",
 	)
-	cmd.Stdin = strings.NewReader(fmt.Sprintf(`{"body":%s}`, jsonString(body)))
+	cmd.Stdin = bytes.NewReader(payload)
 	if env != nil {
 		cmd.Env = env
 	}
@@ -112,11 +123,4 @@ func createComment(ctx context.Context, ghRepo string, prNumber int, body string
 		return fmt.Errorf("gh pr comment: %w: %s", err, string(out))
 	}
 	return nil
-}
-
-// jsonString returns a JSON-encoded string value (with surrounding quotes).
-func jsonString(s string) string {
-	// Use strconv.Quote which produces a valid JSON string literal
-	// for ASCII and escapes everything else correctly.
-	return strconv.Quote(s)
 }
