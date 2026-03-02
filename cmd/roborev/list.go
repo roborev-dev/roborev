@@ -159,5 +159,6 @@ Examples:
 	cmd.Flags().BoolVar(&open, "unaddressed", false, "show only open reviews")
 	_ = cmd.Flags().MarkHidden("unaddressed")
 	cmd.MarkFlagsMutuallyExclusive("closed", "open")
+	cmd.MarkFlagsMutuallyExclusive("closed", "unaddressed")
 	return cmd
 }

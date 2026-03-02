@@ -2267,34 +2267,38 @@ func TestCombinedStatusColor(t *testing.T) {
 func TestClosedKeyShortcut(t *testing.T) {
 	boolPtr := func(b bool) *bool { return &b }
 
-	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
-	}, func(m *model) {
-		m.currentView = viewQueue
-		m.selectedIdx = 0
-		m.selectedJobID = 1
-		m.pendingAddressed = make(map[int64]pendingState)
-	})
+	newTestModel := func() model {
+		return setupTestModel([]storage.ReviewJob{
+			makeJob(1, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+		}, func(m *model) {
+			m.currentView = viewQueue
+			m.selectedIdx = 0
+			m.selectedJobID = 1
+			m.pendingAddressed = make(map[int64]pendingState)
+		})
+	}
 
-	// 'a' should trigger addressed toggle
+	// 'a' should trigger close toggle with optimistic state update
+	m := newTestModel()
 	m2, cmd := pressKey(m, 'a')
 	if cmd == nil {
-		t.Error("Expected command from 'a' key press")
+		t.Fatal("Expected command from 'a' key press")
 	}
-	_ = m2
+	pending, ok := m2.pendingAddressed[1]
+	if !ok {
+		t.Fatal("Expected pending addressed state for job 1 after 'a'")
+	}
+	if !pending.newState {
+		t.Error("Expected pending newState=true (toggled from false)")
+	}
 
-	// 'd' should NOT trigger addressed toggle (removed shortcut)
-	m3 := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
-	}, func(m *model) {
-		m.currentView = viewQueue
-		m.selectedIdx = 0
-		m.selectedJobID = 1
-		m.pendingAddressed = make(map[int64]pendingState)
-	})
+	// 'd' should NOT trigger close toggle (removed shortcut)
+	m3 := newTestModel()
 	m4, cmd2 := pressKey(m3, 'd')
 	if cmd2 != nil {
 		t.Error("'d' key should not trigger any command (shortcut removed)")
 	}
-	_ = m4
+	if len(m4.pendingAddressed) != 0 {
+		t.Error("'d' should not modify pendingAddressed state")
+	}
 }
