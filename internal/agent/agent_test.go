@@ -31,6 +31,33 @@ func TestAgentRegistry(t *testing.T) {
 	}
 }
 
+func TestCanonicalNameAliases(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "claude", want: "claude-code"},
+		{input: "agent", want: "cursor"},
+		{input: "cursor", want: "cursor"},
+	}
+
+	for _, tt := range tests {
+		if got := CanonicalName(tt.input); got != tt.want {
+			t.Errorf("CanonicalName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestGetSupportsAgentAlias(t *testing.T) {
+	a, err := Get("agent")
+	if err != nil {
+		t.Fatalf("Get(agent) returned error: %v", err)
+	}
+	if a.Name() != "cursor" {
+		t.Fatalf("Get(agent) resolved to %q, want %q", a.Name(), "cursor")
+	}
+}
+
 func TestAvailableAgents(t *testing.T) {
 	agents := Available()
 	if len(agents) < len(expectedAgents) {

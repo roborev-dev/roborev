@@ -106,6 +106,7 @@ func SetAnthropicAPIKey(key string) {
 // aliases maps short names to full agent names
 var aliases = map[string]string{
 	"claude": "claude-code",
+	"agent":  "cursor",
 }
 
 // resolveAlias returns the canonical agent name, resolving aliases
