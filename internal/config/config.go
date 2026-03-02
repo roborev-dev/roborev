@@ -316,16 +316,7 @@ func (c *CIConfig) ResolvedAgents() []string {
 // the cross-product of ResolvedAgents() x ResolvedReviewTypes().
 func (c *CIConfig) ResolvedReviewMatrix() []AgentReviewType {
 	if len(c.Reviews) > 0 {
-		var matrix []AgentReviewType
-		for agent, types := range c.Reviews {
-			for _, rt := range types {
-				matrix = append(matrix, AgentReviewType{
-					Agent:      agent,
-					ReviewType: rt,
-				})
-			}
-		}
-		return matrix
+		return reviewsMapToMatrix(c.Reviews)
 	}
 	agents := c.ResolvedAgents()
 	reviewTypes := c.ResolvedReviewTypes()
@@ -349,18 +340,33 @@ func (c *CIConfig) ResolvedReviewMatrix() []AgentReviewType {
 // meaning "use global").
 func (c *RepoCIConfig) ResolvedReviewMatrix() []AgentReviewType {
 	if len(c.Reviews) > 0 {
-		var matrix []AgentReviewType
-		for agent, types := range c.Reviews {
-			for _, rt := range types {
-				matrix = append(matrix, AgentReviewType{
-					Agent:      agent,
-					ReviewType: rt,
-				})
-			}
-		}
-		return matrix
+		return reviewsMapToMatrix(c.Reviews)
 	}
 	return nil
+}
+
+// reviewsMapToMatrix converts a Reviews map to a sorted slice of
+// AgentReviewType pairs. Agents are sorted alphabetically; review
+// types preserve their declared order within each agent.
+func reviewsMapToMatrix(
+	reviews map[string][]string,
+) []AgentReviewType {
+	agents := make([]string, 0, len(reviews))
+	for agent := range reviews {
+		agents = append(agents, agent)
+	}
+	slices.Sort(agents)
+
+	var matrix []AgentReviewType
+	for _, agent := range agents {
+		for _, rt := range reviews[agent] {
+			matrix = append(matrix, AgentReviewType{
+				Agent:      agent,
+				ReviewType: rt,
+			})
+		}
+	}
+	return matrix
 }
 
 // ResolvedThrottleInterval returns the minimum time between reviews
