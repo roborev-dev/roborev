@@ -156,6 +156,8 @@ Examples:
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	cmd.Flags().BoolVar(&closed, "closed", false, "show only closed reviews")
 	cmd.Flags().BoolVar(&open, "open", false, "show only open reviews")
+	cmd.Flags().BoolVar(&open, "unaddressed", false, "show only open reviews")
+	_ = cmd.Flags().MarkHidden("unaddressed")
 	cmd.MarkFlagsMutuallyExclusive("closed", "open")
 	return cmd
 }

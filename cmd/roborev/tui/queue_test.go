@@ -2196,3 +2196,105 @@ func TestTaskColWidthCacheReuse(t *testing.T) {
 		t.Fatalf("task cache hit should reuse same map pointer, got %s want %s", got, cachedWidthsPtr)
 	}
 }
+
+func TestCombinedStatus(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+
+	tests := []struct {
+		name string
+		job  storage.ReviewJob
+		want string
+	}{
+		{"queued", storage.ReviewJob{Status: storage.JobStatusQueued}, "Queued"},
+		{"running", storage.ReviewJob{Status: storage.JobStatusRunning}, "Running"},
+		{"failed", storage.ReviewJob{Status: storage.JobStatusFailed}, "Error"},
+		{"canceled", storage.ReviewJob{Status: storage.JobStatusCanceled}, "Canceled"},
+		{"done pass", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("P")}, "Pass"},
+		{"done fail", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("F")}, "Fail"},
+		{"done unexpected verdict", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("X")}, "Fail"},
+		{"done nil verdict", storage.ReviewJob{Status: storage.JobStatusDone}, "Ready"},
+		{"applied pass", storage.ReviewJob{Status: storage.JobStatusApplied, Verdict: strPtr("P")}, "Pass"},
+		{"rebased fail", storage.ReviewJob{Status: storage.JobStatusRebased, Verdict: strPtr("F")}, "Fail"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := combinedStatus(tt.job)
+			if got != tt.want {
+				t.Errorf("combinedStatus() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCombinedStatusColor(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+
+	tests := []struct {
+		name      string
+		job       storage.ReviewJob
+		wantStyle lipgloss.Style
+	}{
+		{"queued", storage.ReviewJob{Status: storage.JobStatusQueued}, queuedStyle},
+		{"running", storage.ReviewJob{Status: storage.JobStatusRunning}, runningStyle},
+		{"failed", storage.ReviewJob{Status: storage.JobStatusFailed}, failedStyle},
+		{"canceled", storage.ReviewJob{Status: storage.JobStatusCanceled}, canceledStyle},
+		{"done pass", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("P")}, passStyle},
+		{"done fail", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("F")}, failStyle},
+		{"done unexpected verdict", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("X")}, failStyle},
+		{"done nil verdict", storage.ReviewJob{Status: storage.JobStatusDone}, passStyle},
+		{"unknown status", storage.ReviewJob{Status: "unknown"}, queuedStyle},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := combinedStatusColor(tt.job)
+			want := tt.wantStyle.GetForeground()
+			if got != want {
+				t.Errorf("combinedStatusColor() = %v, want %v", got, want)
+			}
+		})
+	}
+
+	// Verify Error (failedStyle) and Fail (failStyle) use different colors
+	errorColor := failedStyle.GetForeground()
+	failColor := failStyle.GetForeground()
+	if errorColor == failColor {
+		t.Errorf("Error and Fail should have distinct colors, both are %v", errorColor)
+	}
+}
+
+func TestClosedKeyShortcut(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+
+	m := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewQueue
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+		m.pendingAddressed = make(map[int64]pendingState)
+	})
+
+	// 'a' should trigger addressed toggle
+	m2, cmd := pressKey(m, 'a')
+	if cmd == nil {
+		t.Error("Expected command from 'a' key press")
+	}
+	_ = m2
+
+	// 'd' should NOT trigger addressed toggle (removed shortcut)
+	m3 := setupTestModel([]storage.ReviewJob{
+		makeJob(1, withStatus(storage.JobStatusDone), withAddressed(boolPtr(false))),
+	}, func(m *model) {
+		m.currentView = viewQueue
+		m.selectedIdx = 0
+		m.selectedJobID = 1
+		m.pendingAddressed = make(map[int64]pendingState)
+	})
+	m4, cmd2 := pressKey(m3, 'd')
+	if cmd2 != nil {
+		t.Error("'d' key should not trigger any command (shortcut removed)")
+	}
+	_ = m4
+}
