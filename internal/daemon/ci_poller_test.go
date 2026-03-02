@@ -2690,6 +2690,58 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 	}
 }
 
+func TestCIPollerProcessPR_RepoEmptyReviewsDisables(
+	t *testing.T,
+) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	// Global config has reviews
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// Repo config with empty [ci.reviews] disables reviews
+	repoConfig := "[ci]\n" +
+		"[ci.reviews]\n"
+	if err := os.WriteFile(
+		filepath.Join(h.RepoPath, ".roborev.toml"),
+		[]byte(repoConfig), 0644,
+	); err != nil {
+		t.Fatalf("write .roborev.toml: %v", err)
+	}
+
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{
+			Number:      74,
+			HeadRefOid:  "empty-reviews-sha",
+			BaseRefName: "main",
+		}, h.Cfg)
+	if err != nil {
+		t.Fatalf("processPR: %v", err)
+	}
+
+	// No batch should have been created (repo disabled reviews)
+	hasBatch, err := h.DB.HasCIBatch(
+		"acme/api", 74, "empty-reviews-sha",
+	)
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if hasBatch {
+		t.Fatal(
+			"expected no batch when repo disables reviews " +
+				"via empty [ci.reviews]",
+		)
+	}
+}
+
 func TestCIPollerPollRepo_CancelsClosedPRBatches(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}

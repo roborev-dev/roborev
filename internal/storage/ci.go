@@ -471,16 +471,19 @@ func (db *DB) GetPendingBatchPRs(
 	return refs, rows.Err()
 }
 
-// CancelClosedPRBatches cancels all pending batches (and their
+// CancelClosedPRBatches cancels unclaimed pending batches (and their
 // linked jobs) for a specific PR. Used when the PR is closed or
-// merged. Returns the IDs of jobs that were canceled.
+// merged. Skips batches that are currently claimed for synthesis to
+// avoid racing with the posting flow. Returns the IDs of jobs that
+// were canceled.
 func (db *DB) CancelClosedPRBatches(
 	githubRepo string, prNumber int,
 ) ([]int64, error) {
 	rows, err := db.Query(`
 		SELECT id FROM ci_pr_batches
 		WHERE github_repo = ? AND pr_number = ?
-		  AND synthesized = 0`,
+		  AND synthesized = 0
+		  AND claimed_at IS NULL`,
 		githubRepo, prNumber)
 	if err != nil {
 		return nil, err

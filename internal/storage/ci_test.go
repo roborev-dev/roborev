@@ -868,3 +868,69 @@ func TestCancelClosedPRBatches(t *testing.T) {
 		t.Errorf("expected 0 canceled on no-op, got %d", len(canceledIDs))
 	}
 }
+
+func TestCancelClosedPRBatches_SkipsClaimedBatch(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-skip-claimed")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	// Create a batch and claim it (mid-synthesis)
+	batch := mustCreateCIBatch(t, db, testRepo, 15, "sha15", 1)
+	job := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	mustRecordBatchJob(t, db, batch.ID, job.ID)
+
+	// Mark job done so batch is eligible for synthesis
+	if _, err := db.Exec(
+		`UPDATE review_jobs SET status='done' WHERE id = ?`, job.ID,
+	); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+
+	// Claim the batch (synthesized=0, claimed_at IS NOT NULL)
+	claimed, err := db.ClaimBatchForSynthesis(batch.ID)
+	if err != nil {
+		t.Fatalf("ClaimBatchForSynthesis: %v", err)
+	}
+	if !claimed {
+		t.Fatal("expected successful claim")
+	}
+
+	// Unclaim to get back to synthesized=0 but claimed_at set
+	// Actually, ClaimBatchForSynthesis sets synthesized=1.
+	// We need synthesized=0, claimed_at IS NOT NULL to test the
+	// race window. Simulate by unclaiming (sets synthesized=0,
+	// claimed_at=NULL) then re-claiming.
+	// Instead, just set claimed_at directly for the test scenario.
+	if _, err := db.Exec(
+		`UPDATE ci_pr_batches SET synthesized = 0, claimed_at = datetime('now') WHERE id = ?`,
+		batch.ID,
+	); err != nil {
+		t.Fatalf("set claimed state: %v", err)
+	}
+
+	// CancelClosedPRBatches should skip this claimed batch
+	canceledIDs, err := db.CancelClosedPRBatches(testRepo, 15)
+	if err != nil {
+		t.Fatalf("CancelClosedPRBatches: %v", err)
+	}
+	if len(canceledIDs) != 0 {
+		t.Errorf(
+			"expected 0 canceled for claimed batch, got %d",
+			len(canceledIDs),
+		)
+	}
+
+	// Batch should still exist
+	var count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM ci_pr_batches WHERE id = ?`,
+		batch.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count batch: %v", err)
+	}
+	assertEq(t, "claimed batch should survive", count, 1)
+}

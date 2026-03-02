@@ -1911,6 +1911,32 @@ func TestRepoCIConfigResolvedReviewMatrix(t *testing.T) {
 			t.Errorf("got %v", matrix[0])
 		}
 	})
+
+	t.Run("empty Reviews disables reviews", func(t *testing.T) {
+		ci := RepoCIConfig{
+			Reviews: map[string][]string{},
+		}
+		matrix := ci.ResolvedReviewMatrix()
+		if matrix == nil {
+			t.Fatal("expected non-nil empty slice, got nil")
+		}
+		if len(matrix) != 0 {
+			t.Errorf("expected 0 entries, got %d", len(matrix))
+		}
+	})
+
+	t.Run("Reviews with all empty lists disables reviews", func(t *testing.T) {
+		ci := RepoCIConfig{
+			Reviews: map[string][]string{"codex": {}},
+		}
+		matrix := ci.ResolvedReviewMatrix()
+		if matrix == nil {
+			t.Fatal("expected non-nil empty slice, got nil")
+		}
+		if len(matrix) != 0 {
+			t.Errorf("expected 0 entries, got %d", len(matrix))
+		}
+	})
 }
 
 func TestResolvedThrottleInterval(t *testing.T) {

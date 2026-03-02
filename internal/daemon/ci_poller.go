@@ -369,7 +369,9 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, repoCfgErr)
 	}
 	if repoCfg != nil {
-		if repoMatrix := repoCfg.CI.ResolvedReviewMatrix(); len(repoMatrix) > 0 {
+		if repoMatrix := repoCfg.CI.ResolvedReviewMatrix(); repoMatrix != nil {
+			// Repo [ci.reviews] is authoritative — even an empty
+			// matrix means "disable reviews for this repo".
 			matrix = repoMatrix
 		} else if len(repoCfg.CI.Agents) > 0 || len(repoCfg.CI.ReviewTypes) > 0 {
 			// Fall back to flat overrides for agents/review_types

@@ -348,8 +348,14 @@ func (c *CIConfig) ResolvedReviewMatrix() []AgentReviewType {
 // the cross-product of Agents x ReviewTypes (which may be empty,
 // meaning "use global").
 func (c *RepoCIConfig) ResolvedReviewMatrix() []AgentReviewType {
-	if len(c.Reviews) > 0 {
-		return reviewsMapToMatrix(c.Reviews)
+	if c.Reviews != nil {
+		// Reviews map is configured — return the resolved matrix
+		// even when empty (signals "disable reviews for this repo").
+		m := reviewsMapToMatrix(c.Reviews)
+		if m == nil {
+			return []AgentReviewType{}
+		}
+		return m
 	}
 	return nil
 }
