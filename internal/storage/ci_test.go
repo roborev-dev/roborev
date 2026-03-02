@@ -744,3 +744,127 @@ func TestLatestBatchTimeForPR(t *testing.T) {
 		}
 	})
 }
+
+func TestGetPendingBatchPRs(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-pending")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	// Batch for PR #5 (unsynthesized, unclaimed)
+	batch5 := mustCreateCIBatch(t, db, testRepo, 5, "sha5", 1)
+	job5 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	mustRecordBatchJob(t, db, batch5.ID, job5.ID)
+
+	// Batch for PR #7 (unsynthesized, unclaimed)
+	batch7 := mustCreateCIBatch(t, db, testRepo, 7, "sha7", 1)
+	job7 := mustEnqueueReviewJob(t, db, repo.ID, "c..d", testAgent, testReview)
+	mustRecordBatchJob(t, db, batch7.ID, job7.ID)
+
+	// Batch for PR #9 — synthesized (should NOT appear)
+	batch9 := mustCreateCIBatch(t, db, testRepo, 9, "sha9", 1)
+	job9 := mustEnqueueReviewJob(t, db, repo.ID, "e..f", testAgent, testReview)
+	mustRecordBatchJob(t, db, batch9.ID, job9.ID)
+	if _, err := db.ClaimBatchForSynthesis(batch9.ID); err != nil {
+		t.Fatalf("ClaimBatchForSynthesis: %v", err)
+	}
+
+	// Batch for a different repo (should NOT appear)
+	batchOther := mustCreateCIBatch(t, db, "other/repo", 5, "sha-other", 1)
+	jobOther := mustEnqueueReviewJob(t, db, repo.ID, "g..h", testAgent, testReview)
+	mustRecordBatchJob(t, db, batchOther.ID, jobOther.ID)
+
+	refs, err := db.GetPendingBatchPRs(testRepo)
+	if err != nil {
+		t.Fatalf("GetPendingBatchPRs: %v", err)
+	}
+
+	prNums := make(map[int]bool)
+	for _, r := range refs {
+		prNums[r.PRNumber] = true
+		assertEq(t, "GithubRepo", r.GithubRepo, testRepo)
+	}
+	if !prNums[5] || !prNums[7] {
+		t.Errorf("expected PRs 5 and 7, got %v", prNums)
+	}
+	if prNums[9] {
+		t.Error("synthesized PR #9 should not appear")
+	}
+	if len(refs) != 2 {
+		t.Errorf("expected 2 refs, got %d", len(refs))
+	}
+}
+
+func TestCancelClosedPRBatches(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-cancel-closed")
+	if err != nil {
+		t.Fatalf("GetOrCreateRepo: %v", err)
+	}
+
+	// Create a batch with 2 queued jobs for PR #5
+	batch := mustCreateCIBatch(t, db, testRepo, 5, "sha5", 2)
+	job1 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", testAgent, testReview)
+	job2 := mustEnqueueReviewJob(t, db, repo.ID, "a..b", "gemini", "review")
+	mustRecordBatchJob(t, db, batch.ID, job1.ID)
+	mustRecordBatchJob(t, db, batch.ID, job2.ID)
+
+	// Create a synthesized batch for PR #5 (should NOT be canceled)
+	doneBatch := mustCreateCIBatch(t, db, testRepo, 5, "sha5-done", 1)
+	doneJob := mustEnqueueReviewJob(t, db, repo.ID, "c..d", testAgent, testReview)
+	mustRecordBatchJob(t, db, doneBatch.ID, doneJob.ID)
+	if _, err := db.ClaimBatchForSynthesis(doneBatch.ID); err != nil {
+		t.Fatalf("ClaimBatchForSynthesis: %v", err)
+	}
+
+	canceledIDs, err := db.CancelClosedPRBatches(testRepo, 5)
+	if err != nil {
+		t.Fatalf("CancelClosedPRBatches: %v", err)
+	}
+	if len(canceledIDs) != 2 {
+		t.Errorf("expected 2 canceled jobs, got %d", len(canceledIDs))
+	}
+
+	// Unsynthesized batch should be deleted
+	var count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM ci_pr_batches WHERE id = ?`,
+		batch.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count deleted batch: %v", err)
+	}
+	assertEq(t, "deleted batch count", count, 0)
+
+	// Jobs should be canceled
+	var status string
+	if err := db.QueryRow(
+		`SELECT status FROM review_jobs WHERE id = ?`, job1.ID,
+	).Scan(&status); err != nil {
+		t.Fatalf("query job1 status: %v", err)
+	}
+	assertEq(t, "job1 status", status, "canceled")
+
+	// Synthesized batch should still exist
+	var doneCount int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM ci_pr_batches WHERE id = ?`,
+		doneBatch.ID,
+	).Scan(&doneCount); err != nil {
+		t.Fatalf("count done batch: %v", err)
+	}
+	assertEq(t, "done batch count", doneCount, 1)
+
+	// No-op when no pending batches
+	canceledIDs, err = db.CancelClosedPRBatches(testRepo, 5)
+	if err != nil {
+		t.Fatalf("CancelClosedPRBatches no-op: %v", err)
+	}
+	if len(canceledIDs) != 0 {
+		t.Errorf("expected 0 canceled on no-op, got %d", len(canceledIDs))
+	}
+}

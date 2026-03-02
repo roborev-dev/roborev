@@ -55,8 +55,9 @@ type CIPoller struct {
 	postPRCommentFn   func(string, int, string) error
 	setCommitStatusFn func(ghRepo, sha, state, description string) error
 	synthesizeFn      func(*storage.CIPRBatch, []storage.BatchReviewResult, *config.Config) (string, error)
-	agentResolverFn   func(name string) (string, error) // returns resolved agent name
-	jobCancelFn       func(jobID int64)                 // kills running worker process (optional)
+	agentResolverFn   func(name string) (string, error)      // returns resolved agent name
+	jobCancelFn       func(jobID int64)                      // kills running worker process (optional)
+	isPROpenFn        func(ghRepo string, prNumber int) bool // checks if a PR is still open
 
 	repoResolver *RepoResolver
 
@@ -230,6 +231,39 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	prs, err := p.callListOpenPRs(ctx, ghRepo)
 	if err != nil {
 		return fmt.Errorf("list PRs: %w", err)
+	}
+
+	// Cancel batches for PRs that are no longer open
+	openPRs := make(map[int]bool, len(prs))
+	for _, pr := range prs {
+		openPRs[pr.Number] = true
+	}
+	pendingRefs, err := p.db.GetPendingBatchPRs(ghRepo)
+	if err != nil {
+		log.Printf("CI poller: error getting pending batch PRs for %s: %v", ghRepo, err)
+	} else {
+		for _, ref := range pendingRefs {
+			if openPRs[ref.PRNumber] {
+				continue
+			}
+			canceledIDs, cancelErr := p.db.CancelClosedPRBatches(
+				ghRepo, ref.PRNumber,
+			)
+			if cancelErr != nil {
+				log.Printf("CI poller: error canceling closed-PR batches for %s#%d: %v",
+					ghRepo, ref.PRNumber, cancelErr)
+				continue
+			}
+			if len(canceledIDs) > 0 {
+				log.Printf("CI poller: canceled %d jobs for closed PR %s#%d",
+					len(canceledIDs), ghRepo, ref.PRNumber)
+				if p.jobCancelFn != nil {
+					for _, jid := range canceledIDs {
+						p.jobCancelFn(jid)
+					}
+				}
+			}
+		}
 	}
 
 	for _, pr := range prs {
@@ -1122,6 +1156,17 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 		return
 	}
 
+	// Check if the target PR is still open. If closed/merged, finalize
+	// the batch (mark done) instead of posting and retrying forever.
+	if !p.callIsPROpen(batch.GithubRepo, batch.PRNumber) {
+		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning batch %d",
+			batch.GithubRepo, batch.PRNumber, batch.ID)
+		if err := p.db.FinalizeBatch(batch.ID); err != nil {
+			log.Printf("CI poller: error finalizing batch %d: %v", batch.ID, err)
+		}
+		return
+	}
+
 	reviews, err := p.db.GetBatchReviews(batch.ID)
 	if err != nil {
 		log.Printf("CI poller: error getting batch reviews for batch %d: %v", batch.ID, err)
@@ -1429,6 +1474,45 @@ func (p *CIPoller) callSetCommitStatus(ghRepo, sha, state, description string) e
 		return p.setCommitStatusFn(ghRepo, sha, state, description)
 	}
 	return p.setCommitStatus(ghRepo, sha, state, description)
+}
+
+// callIsPROpen checks whether a PR is still open. Uses the test seam
+// if set, otherwise calls isPROpen.
+func (p *CIPoller) callIsPROpen(
+	ghRepo string, prNumber int,
+) bool {
+	if p.isPROpenFn != nil {
+		return p.isPROpenFn(ghRepo, prNumber)
+	}
+	return p.isPROpen(ghRepo, prNumber)
+}
+
+// isPROpen checks whether a GitHub PR is still open by running
+// `gh pr view`. Returns true on any error (fail-open) to avoid
+// dropping legitimate batches on transient failures.
+func (p *CIPoller) isPROpen(
+	ghRepo string, prNumber int,
+) bool {
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 30*time.Second,
+	)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view",
+		"--repo", ghRepo,
+		fmt.Sprintf("%d", prNumber),
+		"--json", "state",
+		"--jq", ".state",
+	)
+	if env := p.ghEnvForRepo(ghRepo); env != nil {
+		cmd.Env = env
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		// Fail-open: assume PR is open on errors
+		return true
+	}
+	return strings.TrimSpace(string(out)) == "OPEN"
 }
 
 // setCommitStatus posts a commit status check via the GitHub API.

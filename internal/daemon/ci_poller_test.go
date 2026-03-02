@@ -2626,3 +2626,109 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 			j.ReviewType)
 	}
 }
+
+func TestCIPollerPollRepo_CancelsClosedPRBatches(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+
+	// Seed a batch for PR #5 (will be closed)
+	batch5, _ := h.seedBatchJob(t, "acme/api", 5, "sha5", "a..b", "codex", "security")
+
+	// Seed a batch for PR #3 (will be open)
+	batch3, _ := h.seedBatchJob(t, "acme/api", 3, "sha3", "c..d", "codex", "security")
+
+	// Only PR #3 is open
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
+		return []ghPR{
+			{Number: 3, HeadRefOid: "sha3", BaseRefName: "main"},
+		}, nil
+	}
+
+	var canceledJobs []int64
+	h.Poller.jobCancelFn = func(jobID int64) {
+		canceledJobs = append(canceledJobs, jobID)
+	}
+
+	if err := h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg); err != nil {
+		t.Fatalf("pollRepo: %v", err)
+	}
+
+	// Batch for closed PR #5 should be deleted
+	var count int
+	if err := h.DB.QueryRow(
+		`SELECT COUNT(*) FROM ci_pr_batches WHERE id = ?`,
+		batch5.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count batch5: %v", err)
+	}
+	if count != 0 {
+		t.Error("batch for closed PR #5 should have been deleted")
+	}
+
+	// jobCancelFn should have been called
+	if len(canceledJobs) != 1 {
+		t.Errorf("expected 1 job canceled, got %d", len(canceledJobs))
+	}
+
+	// Batch for open PR #3 should still exist
+	has, err := h.DB.HasCIBatch("acme/api", 3, "sha3")
+	if err != nil {
+		t.Fatalf("HasCIBatch: %v", err)
+	}
+	if !has {
+		t.Error("batch for open PR #3 should still exist")
+	}
+
+	_ = batch3 // used for setup
+}
+
+func TestCIPollerPostBatchResults_SkipsClosedPR(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+
+	batch, _ := h.seedBatchWithJobs(t, 10, "head-sha",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "finding"},
+	)
+
+	// PR is closed
+	h.Poller.isPROpenFn = func(string, int) bool { return false }
+	captured := h.CaptureComments()
+
+	h.Poller.postBatchResults(batch)
+
+	// No comment should have been posted
+	if len(*captured) != 0 {
+		t.Errorf("expected no comments, got %d", len(*captured))
+	}
+
+	// Batch should be finalized (synthesized=1, claimed_at=NULL)
+	h.AssertBatchState(t, batch.ID, 1, false)
+}
+
+func TestCIPollerPostBatchResults_PostsOpenPR(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+
+	batch, _ := h.seedBatchWithJobs(t, 11, "head-sha",
+		jobSpec{Agent: "codex", ReviewType: "security", Status: "done", Output: "finding"},
+	)
+
+	// PR is open
+	h.Poller.isPROpenFn = func(string, int) bool { return true }
+	captured := h.CaptureComments()
+	h.CaptureCommitStatuses()
+
+	h.Poller.postBatchResults(batch)
+
+	// Comment should have been posted
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(*captured))
+	}
+	if (*captured)[0].PR != 11 {
+		t.Errorf("comment PR=%d, want 11", (*captured)[0].PR)
+	}
+
+	// Batch should be finalized normally
+	h.AssertBatchState(t, batch.ID, 1, false)
+}
