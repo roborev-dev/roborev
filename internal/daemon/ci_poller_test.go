@@ -892,6 +892,73 @@ func TestCIPollerSynthesizeBatchResults_UsesRepoPath(t *testing.T) {
 	}
 }
 
+func TestSynthesizeBatchResults_BackupOnPrimaryFailure(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.CI.SynthesisAgent = "nonexistent-primary-xyz"
+	cfg.CI.SynthesisBackupAgent = "test"
+
+	p := &CIPoller{}
+	out, err := p.synthesizeBatchResults(
+		&storage.CIPRBatch{ID: 1, HeadSHA: "deadbeef12345678"},
+		[]storage.BatchReviewResult{
+			{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues.", Status: "done"},
+			{JobID: 2, Agent: "gemini", ReviewType: "review", Output: "Bug in x.go:10", Status: "done"},
+		},
+		cfg,
+	)
+	if err != nil {
+		t.Fatalf("expected backup to succeed, got: %v", err)
+	}
+	if !strings.Contains(out, "## roborev: Combined Review") {
+		t.Fatalf("expected combined review header, got: %q", out)
+	}
+}
+
+func TestSynthesizeBatchResults_BothAgentsFail(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.CI.SynthesisAgent = "nonexistent-primary-xyz"
+	cfg.CI.SynthesisBackupAgent = "nonexistent-backup-xyz"
+
+	p := &CIPoller{}
+	_, err := p.synthesizeBatchResults(
+		&storage.CIPRBatch{ID: 1, HeadSHA: "deadbeef12345678"},
+		[]storage.BatchReviewResult{
+			{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues.", Status: "done"},
+		},
+		cfg,
+	)
+	if err == nil {
+		t.Fatal("expected error when both agents fail")
+	}
+	if !strings.Contains(err.Error(), "backup") {
+		t.Fatalf("expected error to mention backup, got: %v", err)
+	}
+}
+
+func TestSynthesizeBatchResults_NoBackupConfigured(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.CI.SynthesisAgent = "nonexistent-primary-xyz"
+	// No backup configured (empty string).
+
+	p := &CIPoller{}
+	_, err := p.synthesizeBatchResults(
+		&storage.CIPRBatch{ID: 1, HeadSHA: "deadbeef12345678"},
+		[]storage.BatchReviewResult{
+			{JobID: 1, Agent: "codex", ReviewType: "security", Output: "No issues.", Status: "done"},
+		},
+		cfg,
+	)
+	if err == nil {
+		t.Fatal("expected error when primary fails with no backup")
+	}
+	if !strings.Contains(err.Error(), "primary") {
+		t.Fatalf("expected error to mention primary, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "backup") {
+		t.Fatalf("error should not mention backup when none configured, got: %v", err)
+	}
+}
+
 func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security", "typo-type"}

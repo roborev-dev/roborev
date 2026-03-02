@@ -1298,38 +1298,88 @@ func resolveMinSeverity(globalMinSeverity, repoPath, ghRepo string) string {
 	return ""
 }
 
-// synthesizeBatchResults uses an LLM agent to combine multiple review outputs.
-func (p *CIPoller) synthesizeBatchResults(batch *storage.CIPRBatch, reviews []storage.BatchReviewResult, cfg *config.Config) (string, error) {
-	synthesisAgent, err := agent.GetAvailableWithConfig(cfg.CI.SynthesisAgent, cfg)
+// runSynthesisAgent resolves the named agent, applies the model
+// override, and runs the synthesis prompt with a 5-minute timeout.
+func runSynthesisAgent(
+	agentName, model, repoPath, prompt string,
+	cfg *config.Config,
+) (string, error) {
+	a, err := agent.GetAvailableWithConfig(agentName, cfg)
 	if err != nil {
-		return "", fmt.Errorf("get synthesis agent: %w", err)
+		return "", fmt.Errorf("get agent %q: %w", agentName, err)
 	}
-
-	if cfg.CI.SynthesisModel != "" {
-		synthesisAgent = synthesisAgent.WithModel(cfg.CI.SynthesisModel)
+	if model != "" {
+		a = a.WithModel(model)
 	}
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 5*time.Minute,
+	)
+	defer cancel()
+	return a.Review(ctx, repoPath, "", prompt, nil)
+}
 
-	// Resolve repo for per-repo overrides and as the working directory
-	// for the synthesis agent (agents like codex require a git repo).
+// synthesizeBatchResults uses an LLM agent to combine multiple
+// review outputs. If the primary synthesis agent fails and a
+// backup is configured, it retries with the backup before
+// returning an error.
+func (p *CIPoller) synthesizeBatchResults(
+	batch *storage.CIPRBatch,
+	reviews []storage.BatchReviewResult,
+	cfg *config.Config,
+) (string, error) {
+	// Resolve repo for per-repo overrides and as the working
+	// directory for the synthesis agent.
 	var repoPath string
 	if repo := p.resolveRepoForBatch(batch); repo != nil {
 		repoPath = repo.RootPath
 	}
 
-	minSeverity := resolveMinSeverity(cfg.CI.MinSeverity, repoPath, batch.GithubRepo)
-	prompt := reviewpkg.BuildSynthesisPrompt(toReviewResults(reviews), minSeverity)
+	minSeverity := resolveMinSeverity(
+		cfg.CI.MinSeverity, repoPath, batch.GithubRepo,
+	)
+	prompt := reviewpkg.BuildSynthesisPrompt(
+		toReviewResults(reviews), minSeverity,
+	)
 
-	// Run synthesis from the repo's checkout directory so agents that
-	// require a git working tree (e.g. codex) don't fail.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+	model := cfg.CI.SynthesisModel
+	results := toReviewResults(reviews)
 
-	output, err := synthesisAgent.Review(ctx, repoPath, "", prompt, nil)
-	if err != nil {
-		return "", fmt.Errorf("synthesis review: %w", err)
+	// Try primary synthesis agent.
+	output, err := runSynthesisAgent(
+		cfg.CI.SynthesisAgent, model, repoPath, prompt, cfg,
+	)
+	if err == nil {
+		return reviewpkg.FormatSynthesizedComment(
+			output, results, batch.HeadSHA,
+		), nil
 	}
 
-	return reviewpkg.FormatSynthesizedComment(output, toReviewResults(reviews), batch.HeadSHA), nil
+	primaryErr := err
+	backup := cfg.CI.SynthesisBackupAgent
+	if backup == "" {
+		return "", fmt.Errorf(
+			"primary synthesis failed: %w", primaryErr,
+		)
+	}
+
+	log.Printf(
+		"CI poller: primary synthesis agent failed: %v, "+
+			"trying backup %q", primaryErr, backup,
+	)
+
+	output, err = runSynthesisAgent(
+		backup, model, repoPath, prompt, cfg,
+	)
+	if err != nil {
+		return "", fmt.Errorf(
+			"backup synthesis failed (%w) after primary "+
+				"failed (%v)", err, primaryErr,
+		)
+	}
+
+	return reviewpkg.FormatSynthesizedComment(
+		output, results, batch.HeadSHA,
+	), nil
 }
 
 func (p *CIPoller) callListOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {

@@ -282,6 +282,11 @@ type CIConfig struct {
 	// Defaults to the first available agent.
 	SynthesisAgent string `toml:"synthesis_agent"`
 
+	// SynthesisBackupAgent is tried when the primary synthesis
+	// agent fails. Empty means no backup — failures fall through
+	// to raw formatting.
+	SynthesisBackupAgent string `toml:"synthesis_backup_agent"`
+
 	// SynthesisModel overrides the model used for synthesis.
 	SynthesisModel string `toml:"synthesis_model"`
 
