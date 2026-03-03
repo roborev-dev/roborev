@@ -203,14 +203,18 @@ func TestFormatSingleResult_Truncation(t *testing.T) {
 }
 
 func TestFormatSingleResult_TruncationUTF8Safe(t *testing.T) {
-	// Build output that would split a 4-byte emoji at the cut point.
-	emoji := "😀"
-	padding := strings.Repeat("x", MaxCommentLen-2)
+	// Place a 4-byte emoji so it straddles the actual cut boundary.
+	// The cut point is maxLen = MaxCommentLen - len("\n\n...(truncated)")
+	// applied to r.Output. Put the emoji starting 2 bytes before that
+	// so a naive byte slice would land inside the 4-byte character.
+	const truncSuffix = "\n\n...(truncated)"
+	maxLen := MaxCommentLen - len(truncSuffix)
+	paddingLen := maxLen - 2
 	r := ReviewResult{
 		Agent:      "codex",
 		ReviewType: "security",
 		Status:     ResultDone,
-		Output:     padding + emoji,
+		Output:     strings.Repeat("x", paddingLen) + "😀" + strings.Repeat("y", 100),
 	}
 	comment := formatSingleResult(r, "abc123456789")
 

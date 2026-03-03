@@ -47,6 +47,9 @@ func TestHelperProcess(t *testing.T) {
 	case "patch_fail":
 		fmt.Fprint(os.Stderr, "gh api PATCH failed")
 		os.Exit(1)
+	case "patch_fail_403":
+		fmt.Fprint(os.Stderr, "HTTP 403: Resource not accessible by integration")
+		os.Exit(1)
 	case "find_multi_line":
 		// Simulate --paginate producing multiple IDs across pages.
 		fmt.Print("10\n20\n30\n")
@@ -339,8 +342,8 @@ func TestUpsertPRComment_CreateFail(t *testing.T) {
 	}
 }
 
-func TestUpsertPRComment_PatchFailFallsBackToCreate(t *testing.T) {
-	// When PATCH fails (e.g. 403), UpsertPRComment should fall back
+func TestUpsertPRComment_PatchFail403FallsBackToCreate(t *testing.T) {
+	// When PATCH fails with 403, UpsertPRComment should fall back
 	// to creating a new comment.
 	callCount := 0
 	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -349,7 +352,7 @@ func TestUpsertPRComment_PatchFailFallsBackToCreate(t *testing.T) {
 		case 1:
 			return helperCmd("find_existing")(ctx, name, args...)
 		case 2:
-			return helperCmd("patch_fail")(ctx, name, args...)
+			return helperCmd("patch_fail_403")(ctx, name, args...)
 		default:
 			return helperCmd("create_ok")(ctx, name, args...)
 		}
@@ -364,16 +367,43 @@ func TestUpsertPRComment_PatchFailFallsBackToCreate(t *testing.T) {
 	}
 }
 
+func TestUpsertPRComment_PatchFailNon403ReturnsError(t *testing.T) {
+	// Non-ownership PATCH errors (e.g. network/rate-limit) should
+	// propagate instead of silently creating a duplicate.
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		if callCount == 1 {
+			return helperCmd("find_existing")(ctx, name, args...)
+		}
+		return helperCmd("patch_fail")(ctx, name, args...)
+	})
+
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "patch comment") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("expected 2 gh calls (find+patch), got %d", callCount)
+	}
+}
+
 func TestUpsertPRComment_TruncationUTF8Safe(t *testing.T) {
-	// Build a body that would split a multibyte character at the
-	// truncation boundary without rune-safe handling.
-	// U+1F600 (😀) is 4 bytes in UTF-8.
-	emoji := "😀"
-	padding := strings.Repeat("x", review.MaxCommentLen-len(CommentMarker)-1-2)
-	// body after marker prepend: marker + "\n" + padding + emoji
-	// len = len(marker)+1+len(padding)+4, which exceeds MaxCommentLen
-	// and the naive byte slice would cut inside the emoji.
-	input := padding + emoji
+	// Place a 4-byte emoji (😀) so it straddles the actual cut
+	// boundary (maxBody = MaxCommentLen - len(truncSuffix)).
+	// After marker prepend the full body is:
+	//   CommentMarker + "\n" + input
+	// The cut point in the full body is at byte offset maxBody.
+	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
+	maxBody := review.MaxCommentLen - len(truncSuffix)
+	markerOverhead := len(CommentMarker) + 1 // marker + "\n"
+	// We want the emoji to start 2 bytes before the cut point
+	// so a naive byte slice would land inside the 4-byte emoji.
+	paddingLen := maxBody - markerOverhead - 2
+	input := strings.Repeat("x", paddingLen) + "😀" + strings.Repeat("y", 100)
 
 	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
 	callCount := 0
@@ -400,5 +430,8 @@ func TestUpsertPRComment_TruncationUTF8Safe(t *testing.T) {
 	if len(body) > review.MaxCommentLen {
 		t.Fatalf("truncated body len %d exceeds MaxCommentLen %d",
 			len(body), review.MaxCommentLen)
+	}
+	if !strings.Contains(body, "truncated") {
+		t.Fatal("expected truncation suffix")
 	}
 }

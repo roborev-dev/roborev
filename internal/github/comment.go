@@ -93,10 +93,19 @@ func UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body stri
 
 	if existingID > 0 {
 		if err := patchComment(ctx, ghRepo, existingID, body, env); err != nil {
-			// PATCH can fail if the comment belongs to a different
-			// actor/token (403/404). Fall back to creating a new one.
-			log.Printf("warning: patch comment %d failed, creating new: %v",
-				existingID, err)
+			msg := err.Error()
+			if strings.Contains(msg, "HTTP 403") ||
+				strings.Contains(msg, "HTTP 404") {
+				// Comment belongs to a different actor/token.
+				// Fall back to creating a new one.
+				log.Printf(
+					"warning: patch comment %d: %v "+
+						"(falling back to new comment)",
+					existingID, err)
+			} else {
+				return fmt.Errorf("patch comment %d: %w",
+					existingID, err)
+			}
 		} else {
 			return nil
 		}
