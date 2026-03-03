@@ -264,7 +264,8 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 			prNumber = detected
 		}
 
-		upsert := globalCfg != nil && globalCfg.CI.UpsertComments
+		upsert := resolveCIUpsertComments(
+			repoCfg, globalCfg)
 		if err := postCIComment(
 			ghRepo, prNumber, comment, upsert,
 		); err != nil {
@@ -379,6 +380,21 @@ func resolveCISynthesisAgent(
 		return globalCfg.CI.SynthesisAgent
 	}
 	return ""
+}
+
+// resolveCIUpsertComments determines whether to upsert PR comments.
+// Priority: repo config > global config > false.
+func resolveCIUpsertComments(
+	repoCfg *config.RepoConfig,
+	globalCfg *config.Config,
+) bool {
+	if repoCfg != nil && repoCfg.CI.UpsertComments != nil {
+		return *repoCfg.CI.UpsertComments
+	}
+	if globalCfg != nil {
+		return globalCfg.CI.UpsertComments
+	}
+	return false
 }
 
 func splitTrimmed(s string) []string {

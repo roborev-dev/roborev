@@ -3087,3 +3087,54 @@ func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 		)
 	}
 }
+
+func TestResolveUpsertComments_DefaultFalse(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	if h.Poller.resolveUpsertComments("acme/api") {
+		t.Fatal("expected false by default")
+	}
+}
+
+func TestResolveUpsertComments_GlobalTrue(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.UpsertComments = true
+	if !h.Poller.resolveUpsertComments("acme/api") {
+		t.Fatal("expected true from global config")
+	}
+}
+
+func TestResolveUpsertComments_RepoOverridesGlobal(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.UpsertComments = true
+
+	// Write a .roborev.toml in the repo that disables upsert.
+	tomlPath := filepath.Join(h.RepoPath, ".roborev.toml")
+	err := os.WriteFile(tomlPath, []byte(
+		"[ci]\nupsert_comments = false\n",
+	), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if h.Poller.resolveUpsertComments("acme/api") {
+		t.Fatal("expected repo config (false) to override global (true)")
+	}
+}
+
+func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	// Global default is false.
+
+	// Write a .roborev.toml in the repo that enables upsert.
+	tomlPath := filepath.Join(h.RepoPath, ".roborev.toml")
+	err := os.WriteFile(tomlPath, []byte(
+		"[ci]\nupsert_comments = true\n",
+	), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !h.Poller.resolveUpsertComments("acme/api") {
+		t.Fatal("expected repo config (true) to override global (false)")
+	}
+}

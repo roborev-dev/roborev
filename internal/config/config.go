@@ -520,6 +520,10 @@ type RepoCIConfig struct {
 
 	// MinSeverity overrides the minimum severity filter for CI synthesis.
 	MinSeverity string `toml:"min_severity"`
+
+	// UpsertComments overrides the global ci.upsert_comments setting.
+	// Use a pointer so we can distinguish "not set" from "explicitly false".
+	UpsertComments *bool `toml:"upsert_comments"`
 }
 
 // RepoConfig holds per-repo overrides

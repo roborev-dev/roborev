@@ -1650,14 +1650,29 @@ func formatPRComment(review *storage.Review, verdict string) string {
 }
 
 // postPRComment posts a roborev comment on a GitHub PR.
-// When ci.upsert_comments is true, it finds and patches an existing
-// marker comment; otherwise it always creates a new comment.
+// When upsert_comments is enabled (per-repo > global > false),
+// it finds and patches an existing marker comment; otherwise it
+// always creates a new comment.
 func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	env := p.ghEnvForRepo(ghRepo)
-	if p.cfgGetter.Config().CI.UpsertComments {
+	if p.resolveUpsertComments(ghRepo) {
 		return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, env)
 	}
 	return ghpkg.CreatePRComment(ctx, ghRepo, prNumber, body, env)
+}
+
+// resolveUpsertComments determines whether to upsert PR comments
+// for the given repo. Per-repo config takes priority over global.
+func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
+	repo, err := p.findLocalRepo(ghRepo)
+	if err == nil && repo != nil {
+		repoCfg, err := loadCIRepoConfig(repo.RootPath)
+		if err == nil && repoCfg != nil &&
+			repoCfg.CI.UpsertComments != nil {
+			return *repoCfg.CI.UpsertComments
+		}
+	}
+	return p.cfgGetter.Config().CI.UpsertComments
 }
