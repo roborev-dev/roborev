@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/review"
 )
@@ -73,9 +75,15 @@ func UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body stri
 	// Prepend marker before truncation so it always survives.
 	body = CommentMarker + "\n" + body
 
+	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
+	maxBody := review.MaxCommentLen - len(truncSuffix)
 	if len(body) > review.MaxCommentLen {
-		body = body[:review.MaxCommentLen] +
-			"\n\n...(truncated — comment exceeded size limit)"
+		// Slice to maxBody, then back up to a valid UTF-8 boundary.
+		cut := body[:maxBody]
+		for len(cut) > 0 && !utf8.ValidString(cut) {
+			cut = cut[:len(cut)-1]
+		}
+		body = cut + truncSuffix
 	}
 
 	existingID, err := FindExistingComment(ctx, ghRepo, prNumber, env)
@@ -84,7 +92,14 @@ func UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body stri
 	}
 
 	if existingID > 0 {
-		return patchComment(ctx, ghRepo, existingID, body, env)
+		if err := patchComment(ctx, ghRepo, existingID, body, env); err != nil {
+			// PATCH can fail if the comment belongs to a different
+			// actor/token (403/404). Fall back to creating a new one.
+			log.Printf("warning: patch comment %d failed, creating new: %v",
+				existingID, err)
+		} else {
+			return nil
+		}
 	}
 	return createComment(ctx, ghRepo, prNumber, body, env)
 }

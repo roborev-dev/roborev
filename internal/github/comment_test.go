@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/review"
 )
@@ -226,15 +227,13 @@ func TestUpsertPRComment_Truncation(t *testing.T) {
 	if !strings.Contains(body, "truncated") {
 		t.Fatal("expected truncation suffix")
 	}
-	// Verify truncation boundary: the portion before the suffix must be
-	// exactly review.MaxCommentLen characters.
-	parts := strings.SplitN(body, "\n\n...(truncated", 2)
-	if len(parts) != 2 {
-		t.Fatal("could not split on truncation suffix")
+	// Verify total length does not exceed MaxCommentLen.
+	if len(body) > review.MaxCommentLen {
+		t.Fatalf("truncated body len %d exceeds MaxCommentLen %d",
+			len(body), review.MaxCommentLen)
 	}
-	if len(parts[0]) != review.MaxCommentLen {
-		t.Fatalf("expected truncated body len %d, got %d",
-			review.MaxCommentLen, len(parts[0]))
+	if !strings.Contains(body, "truncated") {
+		t.Fatal("expected truncation suffix in body")
 	}
 }
 
@@ -318,5 +317,88 @@ func TestUpsertPRComment_PATCHPayloadIsValidJSON(t *testing.T) {
 	expectedBody := CommentMarker + "\n" + inputBody
 	if body != expectedBody {
 		t.Fatalf("body round-trip mismatch:\n got: %q\nwant: %q", body, expectedBody)
+	}
+}
+
+func TestUpsertPRComment_CreateFail(t *testing.T) {
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		if callCount == 1 {
+			return helperCmd("find_none")(ctx, name, args...)
+		}
+		return helperCmd("create_fail")(ctx, name, args...)
+	})
+
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "gh pr comment") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUpsertPRComment_PatchFailFallsBackToCreate(t *testing.T) {
+	// When PATCH fails (e.g. 403), UpsertPRComment should fall back
+	// to creating a new comment.
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		switch callCount {
+		case 1:
+			return helperCmd("find_existing")(ctx, name, args...)
+		case 2:
+			return helperCmd("patch_fail")(ctx, name, args...)
+		default:
+			return helperCmd("create_ok")(ctx, name, args...)
+		}
+	})
+
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("expected 3 gh calls (find+patch+create), got %d", callCount)
+	}
+}
+
+func TestUpsertPRComment_TruncationUTF8Safe(t *testing.T) {
+	// Build a body that would split a multibyte character at the
+	// truncation boundary without rune-safe handling.
+	// U+1F600 (😀) is 4 bytes in UTF-8.
+	emoji := "😀"
+	padding := strings.Repeat("x", review.MaxCommentLen-len(CommentMarker)-1-2)
+	// body after marker prepend: marker + "\n" + padding + emoji
+	// len = len(marker)+1+len(padding)+4, which exceeds MaxCommentLen
+	// and the naive byte slice would cut inside the emoji.
+	input := padding + emoji
+
+	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		if callCount == 1 {
+			return helperCmd("find_none")(ctx, name, args...)
+		}
+		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
+	})
+
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, input, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("read capture file: %v", err)
+	}
+	body := string(data)
+	if !utf8.ValidString(body) {
+		t.Fatal("truncated body is not valid UTF-8")
+	}
+	if len(body) > review.MaxCommentLen {
+		t.Fatalf("truncated body len %d exceeds MaxCommentLen %d",
+			len(body), review.MaxCommentLen)
 	}
 }

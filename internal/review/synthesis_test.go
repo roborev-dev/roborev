@@ -3,6 +3,7 @@ package review
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func assertContainsAll(t *testing.T, got string, wants []string) {
@@ -179,6 +180,45 @@ func TestBuildSynthesisPrompt_Truncation(t *testing.T) {
 		t.Errorf(
 			"prompt should be truncated, got %d chars",
 			len(prompt))
+	}
+}
+
+func TestFormatSingleResult_Truncation(t *testing.T) {
+	r := ReviewResult{
+		Agent:      "codex",
+		ReviewType: "security",
+		Status:     ResultDone,
+		Output:     strings.Repeat("x", MaxCommentLen+500),
+	}
+	comment := formatSingleResult(r, "abc123456789")
+
+	if len(comment) > MaxCommentLen+200 {
+		// The header and footer add some overhead, but the output
+		// portion must not exceed MaxCommentLen.
+		t.Fatalf("comment too long: %d", len(comment))
+	}
+	if !strings.Contains(comment, "truncated") {
+		t.Fatal("expected truncation suffix")
+	}
+}
+
+func TestFormatSingleResult_TruncationUTF8Safe(t *testing.T) {
+	// Build output that would split a 4-byte emoji at the cut point.
+	emoji := "😀"
+	padding := strings.Repeat("x", MaxCommentLen-2)
+	r := ReviewResult{
+		Agent:      "codex",
+		ReviewType: "security",
+		Status:     ResultDone,
+		Output:     padding + emoji,
+	}
+	comment := formatSingleResult(r, "abc123456789")
+
+	if !utf8.ValidString(comment) {
+		t.Fatal("truncated comment is not valid UTF-8")
+	}
+	if !strings.Contains(comment, "truncated") {
+		t.Fatal("expected truncation suffix")
 	}
 }
 

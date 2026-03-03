@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
@@ -102,9 +103,14 @@ func formatSingleResult(
 	}
 
 	output := r.Output
+	const truncSuffix = "\n\n...(truncated)"
+	maxLen := MaxCommentLen - len(truncSuffix)
 	if len(output) > MaxCommentLen {
-		output = output[:MaxCommentLen] +
-			"\n\n...(truncated)"
+		cut := output[:maxLen]
+		for len(cut) > 0 && !utf8.ValidString(cut) {
+			cut = cut[:len(cut)-1]
+		}
+		output = cut + truncSuffix
 	}
 
 	return header + output + fmt.Sprintf(
