@@ -639,7 +639,7 @@ func TestTUIJobCellsContent(t *testing.T) {
 			t.Errorf("Expected agent 'test', got %q", cells[3])
 		}
 		if cells[6] != "Done" {
-			t.Errorf("Expected status 'Ready', got %q", cells[6])
+			t.Errorf("Expected status 'Done', got %q", cells[6])
 		}
 	})
 
@@ -2244,6 +2244,8 @@ func TestCombinedStatusColor(t *testing.T) {
 		{"done fail", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("F")}, failStyle},
 		{"done unexpected verdict", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("X")}, failStyle},
 		{"done nil verdict", storage.ReviewJob{Status: storage.JobStatusDone}, readyStyle},
+		{"applied nil verdict", storage.ReviewJob{Status: storage.JobStatusApplied}, readyStyle},
+		{"rebased nil verdict", storage.ReviewJob{Status: storage.JobStatusRebased}, readyStyle},
 		{"unknown status", storage.ReviewJob{Status: "unknown"}, queuedStyle},
 	}
 
