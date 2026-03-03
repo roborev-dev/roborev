@@ -204,15 +204,15 @@ type MockServerState struct {
 	EnqueueCount int32
 	JobsCount    int32
 	ReviewCount  int32
-	AddressCount int32
+	CloseCount   int32
 	CommentCount int32
 }
 
-func (s *MockServerState) Enqueues() int32  { return atomic.LoadInt32(&s.EnqueueCount) }
-func (s *MockServerState) Jobs() int32      { return atomic.LoadInt32(&s.JobsCount) }
-func (s *MockServerState) Reviews() int32   { return atomic.LoadInt32(&s.ReviewCount) }
-func (s *MockServerState) Addresses() int32 { return atomic.LoadInt32(&s.AddressCount) }
-func (s *MockServerState) Comments() int32  { return atomic.LoadInt32(&s.CommentCount) }
+func (s *MockServerState) Enqueues() int32 { return atomic.LoadInt32(&s.EnqueueCount) }
+func (s *MockServerState) Jobs() int32     { return atomic.LoadInt32(&s.JobsCount) }
+func (s *MockServerState) Reviews() int32  { return atomic.LoadInt32(&s.ReviewCount) }
+func (s *MockServerState) Closes() int32   { return atomic.LoadInt32(&s.CloseCount) }
+func (s *MockServerState) Comments() int32 { return atomic.LoadInt32(&s.CommentCount) }
 
 // MockServerOpts configures the behavior of a mock roborev server.
 type MockServerOpts struct {
@@ -305,12 +305,12 @@ func (h *mockServerHandler) handleComment(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (h *mockServerHandler) handleAddress(w http.ResponseWriter, r *http.Request) {
+func (h *mockServerHandler) handleClose(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	atomic.AddInt32(&h.state.AddressCount, 1)
+	atomic.AddInt32(&h.state.CloseCount, 1)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -343,7 +343,7 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	mux.HandleFunc("/api/jobs", h.handleJobs)
 	mux.HandleFunc("/api/review", h.handleReview)
 	mux.HandleFunc("/api/comment", h.handleComment)
-	mux.HandleFunc("/api/review/close", h.handleAddress)
+	mux.HandleFunc("/api/review/close", h.handleClose)
 
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)

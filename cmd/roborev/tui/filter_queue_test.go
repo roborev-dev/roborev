@@ -429,7 +429,7 @@ func TestTUIActionsNoOpWithZeroVisibleJobs(t *testing.T) {
 
 	_, cmd = pressKey(m, 'a')
 	if cmd != nil {
-		t.Error("Expected no command for address with no visible jobs")
+		t.Error("Expected no command for close with no visible jobs")
 	}
 }
 

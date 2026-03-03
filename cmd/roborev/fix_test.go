@@ -377,9 +377,9 @@ func TestFixCmdFlagValidation(t *testing.T) {
 	}
 }
 
-func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
+func TestFixNoArgsDefaultsToOpen(t *testing.T) {
 	// Running fix with no args should not produce a validation error —
-	// it should enter the unaddressed path (which will fail at daemon
+	// it should enter the open path (which will fail at daemon
 	// connection, not at argument validation).
 	//
 	// Use a mock daemon so ensureDaemon doesn't try to spawn a real
@@ -400,13 +400,13 @@ func TestFixNoArgsDefaultsToUnaddressed(t *testing.T) {
 	// Should NOT be a validation/args error; any other error (e.g. daemon
 	// not running) is acceptable.
 	if err != nil && strings.Contains(err.Error(), "requires at least") {
-		t.Errorf("no-args should default to --unaddressed, got validation error: %v", err)
+		t.Errorf("no-args should default to --open, got validation error: %v", err)
 	}
 }
 
-func TestFixAllBranchesImpliesUnaddressed(t *testing.T) {
-	// --all-branches alone should imply --unaddressed and pass
-	// validation, routing through unaddressed discovery.
+func TestFixAllBranchesImpliesOpen(t *testing.T) {
+	// --all-branches alone should imply --open and pass
+	// validation, routing through open discovery.
 	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"jobs":     []any{},
@@ -424,7 +424,7 @@ func TestFixAllBranchesImpliesUnaddressed(t *testing.T) {
 	}
 }
 
-func TestRunFixUnaddressed(t *testing.T) {
+func TestRunFixOpen(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	t.Run("no open jobs", func(t *testing.T) {
@@ -560,7 +560,7 @@ func TestRunFixUnaddressed(t *testing.T) {
 		}
 	})
 }
-func TestRunFixUnaddressedOrdering(t *testing.T) {
+func TestRunFixOpenOrdering(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	makeBuilder := func() (*MockDaemonBuilder, *atomic.Int32) {
@@ -639,7 +639,7 @@ func TestRunFixUnaddressedOrdering(t *testing.T) {
 		}
 	})
 }
-func TestRunFixUnaddressedRequery(t *testing.T) {
+func TestRunFixOpenRequery(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	var queryCount atomic.Int32

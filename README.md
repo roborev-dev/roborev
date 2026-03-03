@@ -146,7 +146,7 @@ This adds a quality layer between `review` and `fix`, reducing noise and making 
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |
-| `roborev address <id>` | Close a review |
+| `roborev close <id>` | Close a review |
 | `roborev skills install` | Install agent skills for Claude/Codex |
 
 See [full command reference](https://roborev.io/commands/) for all options.

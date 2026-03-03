@@ -29,7 +29,7 @@ If no job_id is provided, inform the user that a job ID is required. Suggest `ro
 
 **If a message is provided**, immediately execute:
 ```bash
-roborev comment --job <job_id> "<message>" && roborev address <job_id>
+roborev comment --job <job_id> "<message>" && roborev close <job_id>
 ```
 
 If the message contains quotes or special characters, escape them properly in the bash command.
@@ -54,7 +54,7 @@ User: `/roborev:respond 1019 Fixed all issues`
 
 Agent action:
 ```bash
-roborev comment --job 1019 "Fixed all issues" && roborev address 1019
+roborev comment --job 1019 "Fixed all issues" && roborev close 1019
 ```
 Then confirm: "Comment recorded and review #1019 closed."
 
@@ -70,7 +70,7 @@ User: "The null check was a false positive"
 
 Agent action:
 ```bash
-roborev comment --job 1019 "The null check was a false positive" && roborev address 1019
+roborev comment --job 1019 "The null check was a false positive" && roborev close 1019
 ```
 Then confirm: "Comment recorded and review #1019 closed."
 

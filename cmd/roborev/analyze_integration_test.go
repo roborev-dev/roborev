@@ -197,7 +197,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	if atomic.LoadInt32(&state.ReviewCount) == 0 {
 		t.Error("should have fetched the review")
 	}
-	if atomic.LoadInt32(&state.AddressCount) == 0 {
+	if atomic.LoadInt32(&state.CloseCount) == 0 {
 		t.Error("should have marked job as closed")
 	}
 

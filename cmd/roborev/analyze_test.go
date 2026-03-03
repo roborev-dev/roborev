@@ -301,7 +301,7 @@ func mockCloseServer(t *testing.T, expectedID int64, statusCode int) *httptest.S
 	}))
 }
 
-func TestMarkJobAddressed(t *testing.T) {
+func TestMarkJobClosed(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode int

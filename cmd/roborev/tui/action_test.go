@@ -228,7 +228,7 @@ func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
 
 	result := assertMsgType[closedResultMsg](t, msg)
 	if result.err == nil {
-		t.Error("Expected error for address 500 response")
+		t.Error("Expected error for close 500 response")
 	}
 	if result.jobID != 42 {
 		t.Errorf("Expected jobID=42 for rollback, got %d", result.jobID)
