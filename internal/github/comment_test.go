@@ -50,6 +50,9 @@ func TestHelperProcess(t *testing.T) {
 	case "patch_fail_403":
 		fmt.Fprint(os.Stderr, "HTTP 403: Resource not accessible by integration")
 		os.Exit(1)
+	case "patch_fail_404":
+		fmt.Fprint(os.Stderr, "HTTP 404: Not Found")
+		os.Exit(1)
 	case "find_multi_line":
 		// Simulate --paginate producing multiple IDs across pages.
 		fmt.Print("10\n20\n30\n")
@@ -353,6 +356,29 @@ func TestUpsertPRComment_PatchFail403FallsBackToCreate(t *testing.T) {
 			return helperCmd("find_existing")(ctx, name, args...)
 		case 2:
 			return helperCmd("patch_fail_403")(ctx, name, args...)
+		default:
+			return helperCmd("create_ok")(ctx, name, args...)
+		}
+	})
+
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("expected 3 gh calls (find+patch+create), got %d", callCount)
+	}
+}
+
+func TestUpsertPRComment_PatchFail404FallsBackToCreate(t *testing.T) {
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		switch callCount {
+		case 1:
+			return helperCmd("find_existing")(ctx, name, args...)
+		case 2:
+			return helperCmd("patch_fail_404")(ctx, name, args...)
 		default:
 			return helperCmd("create_ok")(ctx, name, args...)
 		}
