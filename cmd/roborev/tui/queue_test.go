@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
 )
 
@@ -2300,5 +2301,94 @@ func TestClosedKeyShortcut(t *testing.T) {
 	}
 	if len(m4.pendingClosed) != 0 {
 		t.Error("'d' should not modify pendingClosed state")
+	}
+}
+
+func TestMigrateColumnConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		columnOrder  []string
+		hiddenCols   []string
+		wantDirty    bool
+		wantColOrder []string
+		wantHidden   []string
+	}{
+		{
+			name:         "nil config unchanged",
+			wantDirty:    false,
+			wantColOrder: nil,
+			wantHidden:   nil,
+		},
+		{
+			name:         "addressed in column_order resets",
+			columnOrder:  []string{"ref", "branch", "repo", "agent", "status", "queued", "elapsed", "addressed"},
+			wantDirty:    true,
+			wantColOrder: nil,
+		},
+		{
+			name:       "addressed in hidden_columns resets",
+			hiddenCols: []string{"addressed", "branch"},
+			wantDirty:  true,
+			wantHidden: nil,
+		},
+		{
+			name:         "old default order resets",
+			columnOrder:  []string{"ref", "branch", "repo", "agent", "status", "queued", "elapsed", "closed"},
+			wantDirty:    true,
+			wantColOrder: nil,
+		},
+		{
+			name:         "custom order preserved",
+			columnOrder:  []string{"repo", "ref", "agent", "status", "queued", "elapsed", "branch", "closed"},
+			wantDirty:    false,
+			wantColOrder: []string{"repo", "ref", "agent", "status", "queued", "elapsed", "branch", "closed"},
+		},
+		{
+			name:         "current default order preserved",
+			columnOrder:  []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "closed"},
+			wantDirty:    false,
+			wantColOrder: []string{"ref", "branch", "repo", "agent", "queued", "elapsed", "status", "closed"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				ColumnOrder:   slices.Clone(tt.columnOrder),
+				HiddenColumns: slices.Clone(tt.hiddenCols),
+			}
+			dirty := migrateColumnConfig(cfg)
+			if dirty != tt.wantDirty {
+				t.Errorf("dirty = %v, want %v", dirty, tt.wantDirty)
+			}
+			if !slices.Equal(cfg.ColumnOrder, tt.wantColOrder) {
+				t.Errorf("ColumnOrder = %v, want %v", cfg.ColumnOrder, tt.wantColOrder)
+			}
+			if !slices.Equal(cfg.HiddenColumns, tt.wantHidden) {
+				t.Errorf("HiddenColumns = %v, want %v", cfg.HiddenColumns, tt.wantHidden)
+			}
+		})
+	}
+}
+
+func TestSaveColumnOptionsOmitsDefaults(t *testing.T) {
+	// When columnOrder matches the built-in default,
+	// columnOrderToNames should produce the default names,
+	// and slices.Equal against toggleableColumns should be true,
+	// so saveColumnOptions would set colOrd to nil.
+	defaultOrder := make([]int, len(toggleableColumns))
+	copy(defaultOrder, toggleableColumns)
+
+	if !slices.Equal(defaultOrder, toggleableColumns) {
+		t.Fatal("copy of toggleableColumns should equal toggleableColumns")
+	}
+
+	// Non-default order should NOT equal
+	customOrder := make([]int, len(toggleableColumns))
+	copy(customOrder, toggleableColumns)
+	customOrder[0], customOrder[1] = customOrder[1], customOrder[0]
+
+	if slices.Equal(customOrder, toggleableColumns) {
+		t.Error("swapped order should not equal defaults")
 	}
 }

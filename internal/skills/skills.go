@@ -71,6 +71,7 @@ func IsInstalled(agent Agent) bool {
 	case AgentClaude:
 		skillsDir := filepath.Join(home, ".claude", "skills")
 		checkFiles = []string{
+			filepath.Join(skillsDir, "roborev-address", "SKILL.md"), // deprecated fallback
 			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
 			filepath.Join(skillsDir, "roborev-fix", "SKILL.md"),
 			filepath.Join(skillsDir, "roborev-design-review", "SKILL.md"),
@@ -81,6 +82,7 @@ func IsInstalled(agent Agent) bool {
 	case AgentCodex:
 		skillsDir := filepath.Join(home, ".codex", "skills")
 		checkFiles = []string{
+			filepath.Join(skillsDir, "roborev-address", "SKILL.md"), // deprecated fallback
 			filepath.Join(skillsDir, "roborev-respond", "SKILL.md"),
 			filepath.Join(skillsDir, "roborev-fix", "SKILL.md"),
 			filepath.Join(skillsDir, "roborev-design-review", "SKILL.md"),

@@ -705,6 +705,32 @@ func stripControlChars(s string) string {
 	return b.String()
 }
 
+// migrateColumnConfig resets stale column_order and hidden_columns
+// entries so users pick up the current default layout. Returns true
+// if the config was modified and should be saved.
+func migrateColumnConfig(cfg *config.Config) bool {
+	dirty := false
+	// Pre-rename config: "addressed" → reset
+	if slices.Contains(cfg.ColumnOrder, "addressed") {
+		cfg.ColumnOrder = nil
+		dirty = true
+	}
+	if slices.Contains(cfg.HiddenColumns, "addressed") {
+		cfg.HiddenColumns = nil
+		dirty = true
+	}
+	// Old default order (status before queued) → reset
+	oldDefault := []string{
+		"ref", "branch", "repo", "agent",
+		"status", "queued", "elapsed", "closed",
+	}
+	if slices.Equal(cfg.ColumnOrder, oldDefault) {
+		cfg.ColumnOrder = nil
+		dirty = true
+	}
+	return dirty
+}
+
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
 var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colHandled}

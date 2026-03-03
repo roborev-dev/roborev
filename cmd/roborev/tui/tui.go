@@ -8,7 +8,6 @@ import (
 	neturl "net/url"
 	"os"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -452,19 +451,7 @@ func newModel(serverAddr string, opts ...option) model {
 			}
 			columnBorders = cfg.ColumnBorders
 
-			// Reset stale column config from before the
-			// addressed→closed rename so users pick up the
-			// new default layout.
-			dirty := false
-			if slices.Contains(cfg.ColumnOrder, "addressed") {
-				cfg.ColumnOrder = nil
-				dirty = true
-			}
-			if slices.Contains(cfg.HiddenColumns, "addressed") {
-				cfg.HiddenColumns = nil
-				dirty = true
-			}
-			if dirty {
+			if migrateColumnConfig(cfg) {
 				_ = config.SaveGlobal(cfg)
 			}
 

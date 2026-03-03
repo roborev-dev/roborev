@@ -16,17 +16,6 @@ var expectedSkills = []string{
 	"roborev-review-branch",
 }
 
-// detectedSkills lists skills that IsInstalled checks for.
-// roborev-address is deprecated and excluded from detection.
-var detectedSkills = []string{
-	"roborev-design-review",
-	"roborev-design-review-branch",
-	"roborev-fix",
-	"roborev-respond",
-	"roborev-review",
-	"roborev-review-branch",
-}
-
 // setupTestEnv sets all home directory environment variables for cross-platform
 // compatibility and returns the temp home directory path. Cleanup is automatic.
 func setupTestEnv(t *testing.T) string {
@@ -207,7 +196,7 @@ func TestIsInstalled(t *testing.T) {
 		},
 	}
 
-	for _, skill := range detectedSkills {
+	for _, skill := range expectedSkills {
 		// Capture variable for closure
 		s := skill
 		tests = append(tests, testCase{
@@ -224,20 +213,6 @@ func TestIsInstalled(t *testing.T) {
 		})
 	}
 
-	// Deprecated address skill alone should not trigger IsInstalled.
-	tests = append(tests, testCase{
-		name:        "Claude with deprecated address only",
-		agent:       AgentClaude,
-		setup:       func(t *testing.T, h string) { createMockSkill(t, h, AgentClaude, "roborev-address") },
-		shouldExist: false,
-	})
-	tests = append(tests, testCase{
-		name:        "Codex with deprecated address only",
-		agent:       AgentCodex,
-		setup:       func(t *testing.T, h string) { createMockSkill(t, h, AgentCodex, "roborev-address") },
-		shouldExist: false,
-	})
-
 	// Unsupported agent should always return false.
 	tests = append(tests, testCase{
 		name:  "unsupported agent",
@@ -245,8 +220,8 @@ func TestIsInstalled(t *testing.T) {
 		setup: func(t *testing.T, h string) {
 			// Install skills for both known agents to ensure
 			// the unknown agent still returns false.
-			createMockSkill(t, h, AgentClaude, "roborev-fix")
-			createMockSkill(t, h, AgentCodex, "roborev-fix")
+			createMockSkill(t, h, AgentClaude, "roborev-address")
+			createMockSkill(t, h, AgentCodex, "roborev-address")
 		},
 		shouldExist: false,
 	})

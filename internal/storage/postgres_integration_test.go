@@ -348,6 +348,60 @@ func waitCondition(t *testing.T, timeout time.Duration, msg string, condition fu
 	t.Fatalf("Timeout waiting for: %s", msg)
 }
 
+// TestIntegration_MigrationV6Idempotent verifies the v5→v6 migration
+// (addressed→closed rename) succeeds when the reviews table already
+// has the closed column. This happens when legacy schema_version
+// exists at an old version but data tables were created fresh.
+func TestIntegration_MigrationV6Idempotent(t *testing.T) {
+	url := getIntegrationPostgresURL()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer pool.Close()
+
+	// Start clean
+	_, _ = pool.pool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
+
+	// Create schema and run EnsureSchema to get fresh tables
+	// (with closed column, not addressed)
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("Initial EnsureSchema failed: %v", err)
+	}
+
+	// Simulate legacy state: downgrade version to 5 so the
+	// v5→v6 migration will run again, but the table already
+	// has closed (not addressed).
+	_, err = pool.pool.Exec(ctx, `DELETE FROM schema_version`)
+	if err != nil {
+		t.Fatalf("Failed to clear schema_version: %v", err)
+	}
+	_, err = pool.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES (5)`)
+	if err != nil {
+		t.Fatalf("Failed to insert version 5: %v", err)
+	}
+
+	// This should succeed — the migration must be idempotent
+	if err := pool.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema with v5→v6 on fresh table failed: %v", err)
+	}
+
+	// Verify the column is named closed
+	var colName string
+	err = pool.pool.QueryRow(ctx, `
+		SELECT column_name FROM information_schema.columns
+		WHERE table_schema = 'roborev'
+		AND table_name = 'reviews'
+		AND column_name = 'closed'
+	`).Scan(&colName)
+	if err != nil {
+		t.Fatalf("closed column not found: %v", err)
+	}
+}
+
 func TestIntegration_SyncFullCycle(t *testing.T) {
 	env := newIntegrationEnv(t, 30*time.Second)
 	db := env.openDB("test.db")
