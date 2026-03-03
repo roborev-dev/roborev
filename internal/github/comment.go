@@ -68,23 +68,35 @@ func FindExistingComment(ctx context.Context, ghRepo string, prNumber int, env [
 	return id, nil
 }
 
-// UpsertPRComment creates or updates a roborev PR comment. It prepends
-// the CommentMarker, truncates to review.MaxCommentLen, and either
-// patches an existing comment or creates a new one.
-func UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string, env []string) error {
-	// Prepend marker before truncation so it always survives.
+// prepareBody prepends the CommentMarker and truncates to
+// review.MaxCommentLen, preserving UTF-8 safety.
+func prepareBody(body string) string {
 	body = CommentMarker + "\n" + body
 
 	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
 	maxBody := review.MaxCommentLen - len(truncSuffix)
 	if len(body) > review.MaxCommentLen {
-		// Slice to maxBody, then back up to a valid UTF-8 boundary.
 		cut := body[:maxBody]
 		for len(cut) > 0 && !utf8.ValidString(cut) {
 			cut = cut[:len(cut)-1]
 		}
 		body = cut + truncSuffix
 	}
+	return body
+}
+
+// CreatePRComment posts a new roborev PR comment. It prepends the
+// CommentMarker and truncates to review.MaxCommentLen, then always
+// creates a new comment (no find/patch).
+func CreatePRComment(ctx context.Context, ghRepo string, prNumber int, body string, env []string) error {
+	return createComment(ctx, ghRepo, prNumber, prepareBody(body), env)
+}
+
+// UpsertPRComment creates or updates a roborev PR comment. It prepends
+// the CommentMarker, truncates to review.MaxCommentLen, and either
+// patches an existing comment or creates a new one.
+func UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string, env []string) error {
+	body = prepareBody(body)
 
 	existingID, err := FindExistingComment(ctx, ghRepo, prNumber, env)
 	if err != nil {

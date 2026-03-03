@@ -264,8 +264,9 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 			prNumber = detected
 		}
 
+		upsert := globalCfg != nil && globalCfg.CI.UpsertComments
 		if err := postCIComment(
-			ghRepo, prNumber, comment,
+			ghRepo, prNumber, comment, upsert,
 		); err != nil {
 			return fmt.Errorf(
 				"post PR comment: %w", err)
@@ -477,14 +478,18 @@ func extractHeadSHA(gitRef string) string {
 	return gitRef
 }
 
-// postCIComment posts or updates a roborev comment on a GitHub PR.
-// It delegates to github.UpsertPRComment which embeds a marker to
-// find and update existing comments instead of creating duplicates.
+// postCIComment posts a roborev comment on a GitHub PR.
+// When upsert is true, it finds and patches an existing marker comment;
+// otherwise it always creates a new comment.
 func postCIComment(
 	ghRepo string,
 	prNumber int,
 	body string,
+	upsert bool,
 ) error {
 	ctx := context.Background()
-	return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, nil)
+	if upsert {
+		return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, nil)
+	}
+	return ghpkg.CreatePRComment(ctx, ghRepo, prNumber, body, nil)
 }

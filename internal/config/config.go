@@ -299,6 +299,11 @@ type CIConfig struct {
 	// Valid values: critical, high, medium, low. Empty means no filter (include all).
 	MinSeverity string `toml:"min_severity"`
 
+	// UpsertComments enables updating existing PR comments instead of
+	// creating new ones. When true, roborev searches for its marker
+	// comment and patches it. Default: false (create a new comment each run).
+	UpsertComments bool `toml:"upsert_comments"`
+
 	// GitHub App authentication (optional — comments appear as bot instead of personal account)
 	GitHubAppConfig
 }

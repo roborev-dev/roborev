@@ -1649,11 +1649,15 @@ func formatPRComment(review *storage.Review, verdict string) string {
 	return b.String()
 }
 
-// postPRComment posts or updates a roborev comment on a GitHub PR.
-// It delegates to github.UpsertPRComment which embeds a marker to
-// find and update existing comments instead of creating duplicates.
+// postPRComment posts a roborev comment on a GitHub PR.
+// When ci.upsert_comments is true, it finds and patches an existing
+// marker comment; otherwise it always creates a new comment.
 func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, p.ghEnvForRepo(ghRepo))
+	env := p.ghEnvForRepo(ghRepo)
+	if p.cfgGetter.Config().CI.UpsertComments {
+		return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, env)
+	}
+	return ghpkg.CreatePRComment(ctx, ghRepo, prNumber, body, env)
 }

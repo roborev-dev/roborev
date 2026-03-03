@@ -417,6 +417,65 @@ func TestUpsertPRComment_PatchFailNon403ReturnsError(t *testing.T) {
 	}
 }
 
+func TestCreatePRComment_AlwaysCreates(t *testing.T) {
+	// CreatePRComment should always call create (never find/patch).
+	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
+	})
+
+	err := CreatePRComment(context.Background(), "owner/repo", 1, "test body", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected 1 gh call (create only), got %d", callCount)
+	}
+	data, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("read capture file: %v", err)
+	}
+	body := string(data)
+	if !strings.HasPrefix(body, CommentMarker+"\n") {
+		t.Fatalf("marker not at start of body: %q", body[:min(80, len(body))])
+	}
+	if !strings.Contains(body, "test body") {
+		t.Fatal("body content missing")
+	}
+}
+
+func TestCreatePRComment_Truncation(t *testing.T) {
+	captureFile := filepath.Join(t.TempDir(), "stdin.txt")
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		return helperCmd("capture_stdin", "GH_CAPTURE_FILE="+captureFile)(ctx, name, args...)
+	})
+
+	bigBody := strings.Repeat("x", review.MaxCommentLen+1000)
+	err := CreatePRComment(context.Background(), "owner/repo", 1, bigBody, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("read capture file: %v", err)
+	}
+	body := string(data)
+	if !strings.HasPrefix(body, CommentMarker) {
+		t.Fatal("marker lost after truncation")
+	}
+	if !strings.Contains(body, "truncated") {
+		t.Fatal("expected truncation suffix")
+	}
+	if len(body) > review.MaxCommentLen {
+		t.Fatalf("truncated body len %d exceeds MaxCommentLen %d",
+			len(body), review.MaxCommentLen)
+	}
+}
+
 func TestUpsertPRComment_TruncationUTF8Safe(t *testing.T) {
 	// Place a 4-byte emoji (😀) so it straddles the actual cut
 	// boundary (maxBody = MaxCommentLen - len(truncSuffix)).
