@@ -19,11 +19,20 @@ const maxPromptArgLen = 512 * 1024
 // stripKiroOutput removes Kiro's UI chrome (logo, tip box, model line, timing footer)
 // and terminal control sequences, returning only the review text.
 func stripKiroOutput(raw string) string {
+	text, _ := stripKiroReview(raw)
+	return text
+}
+
+// stripKiroReview strips Kiro chrome and returns the cleaned text
+// plus a bool indicating whether a "> " review marker was found.
+// When no marker is found the full ANSI-stripped text is returned
+// (hasMarker == false), which may be non-review noise.
+func stripKiroReview(raw string) (string, bool) {
 	s := stripTerminalControls(raw)
 
 	// Kiro prepends a splash screen and tip box before the response.
-	// The "> " prompt marker appears near the top; limit the search to avoid
-	// mistaking markdown blockquotes in review content for the start marker.
+	// The "> " prompt marker appears near the top; limit the search
+	// to avoid mistaking markdown blockquotes for the start marker.
 	lines := strings.Split(s, "\n")
 	limit := min(30, len(lines))
 	start := -1
@@ -34,7 +43,7 @@ func stripKiroOutput(raw string) string {
 		}
 	}
 	if start == -1 {
-		return strings.TrimSpace(s)
+		return strings.TrimSpace(s), false
 	}
 
 	// Strip the prompt marker from the first content line.
@@ -42,7 +51,7 @@ func stripKiroOutput(raw string) string {
 	if lines[start] == ">" {
 		start++
 		if start >= len(lines) {
-			return ""
+			return "", true
 		}
 	} else {
 		lines[start] = strings.TrimPrefix(lines[start], "> ")
@@ -65,7 +74,7 @@ func stripKiroOutput(raw string) string {
 		}
 	}
 
-	return strings.TrimSpace(strings.Join(lines[start:end], "\n"))
+	return strings.TrimSpace(strings.Join(lines[start:end], "\n")), true
 }
 
 // KiroAgent runs code reviews using the Kiro CLI (kiro-cli)
@@ -156,10 +165,14 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		)
 	}
 
-	result := stripKiroOutput(stdout.String())
-	if len(result) == 0 {
-		// Some CLI tools emit review text on stderr.
-		result = stripKiroOutput(stderr.String())
+	// Prefer the stream that contains a "> " review marker.
+	// Stdout noise without a marker should not block the
+	// stderr fallback.
+	result, hasMarker := stripKiroReview(stdout.String())
+	if !hasMarker || len(result) == 0 {
+		if alt, ok := stripKiroReview(stderr.String()); ok && len(alt) > 0 {
+			result = alt
+		}
 	}
 	if len(result) == 0 {
 		return "No review output generated", nil

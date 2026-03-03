@@ -379,6 +379,38 @@ func TestKiroReviewStderrFallback(t *testing.T) {
 	}
 }
 
+func TestKiroReviewStderrPreferredOverStdoutNoise(t *testing.T) {
+	skipIfWindows(t)
+
+	// stdout has status noise without a "> " marker;
+	// stderr has the actual review with a marker.
+	// The fallback should prefer stderr.
+	script := NewScriptBuilder().
+		AddRaw(`echo "Model: auto"`).
+		AddRaw(`echo "Loading..."`).
+		AddRaw(`echo "> actual review content" >&2`).
+		Build()
+	cmdPath := writeTempCommand(t, script)
+	a := NewKiroAgent(cmdPath)
+
+	result, err := a.Review(
+		context.Background(), t.TempDir(),
+		"deadbeef", "review", nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "actual review content") {
+		t.Fatalf(
+			"expected stderr review over stdout noise, got: %q",
+			result,
+		)
+	}
+	if strings.Contains(result, "Loading") {
+		t.Error("stdout noise should not appear in result")
+	}
+}
+
 func TestKiroReviewPromptTooLarge(t *testing.T) {
 	a := NewKiroAgent("kiro-cli")
 	bigPrompt := strings.Repeat("x", maxPromptArgLen+1)
