@@ -37,12 +37,23 @@ func stripKiroOutput(raw string) string {
 		return strings.TrimSpace(s)
 	}
 
-	// Strip the "> " chat-prompt prefix from the first content line.
-	lines[start] = strings.TrimPrefix(lines[start], "> ")
+	// Strip the prompt marker from the first content line.
+	// A bare ">" (no trailing content) is skipped entirely.
+	if lines[start] == ">" {
+		start++
+		if start >= len(lines) {
+			return ""
+		}
+	} else {
+		lines[start] = strings.TrimPrefix(lines[start], "> ")
+	}
 
 	// Drop the timing footer ("▸ Time: Xs") and anything after it.
+	// Only scan the last 5 lines to avoid truncating review content
+	// that happens to contain "▸ Time:" in a code snippet.
 	end := len(lines)
-	for i := start; i < len(lines); i++ {
+	scanFrom := max(start, end-5)
+	for i := scanFrom; i < end; i++ {
 		if strings.HasPrefix(strings.TrimSpace(lines[i]), "▸ Time:") {
 			end = i
 			break
@@ -120,7 +131,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	// The prompt is passed as a positional argument
 	// (kiro-cli does not support stdin).
 	args := a.buildArgs(agenticMode)
-	args = append(args, prompt)
+	args = append(args, "--", prompt)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -143,9 +154,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	result := stripKiroOutput(stdout.String())
 	if len(result) == 0 {
 		// Some CLI tools emit review text on stderr.
-		result = strings.TrimSpace(
-			stripTerminalControls(stderr.String()),
-		)
+		result = stripKiroOutput(stderr.String())
 	}
 	if len(result) == 0 {
 		return "No review output generated", nil

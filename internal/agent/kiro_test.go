@@ -67,6 +67,30 @@ func TestStripKiroOutputBareMarker(t *testing.T) {
 	if strings.Contains(got, "chrome") {
 		t.Error("chrome should be stripped before the bare > marker")
 	}
+	if strings.HasPrefix(got, ">") {
+		t.Error("bare > marker should not appear in output")
+	}
+}
+
+func TestStripKiroOutputFooterInContent(t *testing.T) {
+	// "▸ Time:" appearing in review content (not in the last 5 lines)
+	// should not be treated as a footer.
+	var lines []string
+	lines = append(lines, "> ## Review")
+	lines = append(lines, "some content")
+	lines = append(lines, "▸ Time: 10s") // looks like footer but is in content
+	for range 10 {
+		lines = append(lines, "more content")
+	}
+	raw := strings.Join(lines, "\n")
+
+	got := stripKiroOutput(raw)
+	if !strings.Contains(got, "▸ Time: 10s") {
+		t.Errorf(
+			"'▸ Time:' in content body should be preserved, got: %q",
+			got,
+		)
+	}
 }
 
 func TestStripKiroOutputBlockquoteNotStripped(t *testing.T) {
@@ -245,6 +269,10 @@ func TestKiroPassesPromptAsArg(t *testing.T) {
 	if !strings.Contains(string(args), "--no-interactive") {
 		t.Errorf("expected --no-interactive in args, got: %s", string(args))
 	}
+	if !strings.Contains(string(args), " -- ") {
+		t.Errorf("expected -- separator before prompt, got: %s",
+			string(args))
+	}
 }
 
 func TestKiroReviewAgenticMode(t *testing.T) {
@@ -298,9 +326,13 @@ func TestKiroReviewAgenticModeFromGlobal(t *testing.T) {
 func TestKiroReviewStderrFallback(t *testing.T) {
 	skipIfWindows(t)
 
-	// kiro-cli exits 0 with review text on stderr, nothing on stdout.
+	// kiro-cli exits 0 with Kiro chrome + review text on stderr,
+	// nothing on stdout. Validates that stripKiroOutput (not just
+	// stripTerminalControls) is applied to stderr.
 	script := NewScriptBuilder().
-		AddRaw(`echo "review on stderr" >&2`).
+		AddRaw(`echo "Model: auto" >&2`).
+		AddRaw(`echo "> review on stderr" >&2`).
+		AddRaw(`echo " ▸ Time: 5s" >&2`).
 		Build()
 	cmdPath := writeTempCommand(t, script)
 	a := NewKiroAgent(cmdPath)
@@ -311,6 +343,12 @@ func TestKiroReviewStderrFallback(t *testing.T) {
 	}
 	if !strings.Contains(result, "review on stderr") {
 		t.Fatalf("expected stderr fallback, got: %q", result)
+	}
+	if strings.Contains(result, "Model:") {
+		t.Error("Kiro chrome should be stripped from stderr")
+	}
+	if strings.Contains(result, "Time:") {
+		t.Error("timing footer should be stripped from stderr")
 	}
 }
 
