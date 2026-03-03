@@ -43,6 +43,16 @@ func TestTrimPartialRune(t *testing.T) {
 			"a" + string([]byte{0xFF}) + "b",
 			"a" + string([]byte{0xFF}) + "b",
 		},
+		{
+			"orphan continuation byte",
+			"abc" + string([]byte{0x80}),
+			"abc",
+		},
+		{
+			"two orphan continuation bytes",
+			"abc" + string([]byte{0x80, 0x80}),
+			"abc",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

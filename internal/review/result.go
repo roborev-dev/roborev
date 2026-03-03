@@ -40,6 +40,15 @@ func TrimPartialRune(s string) string {
 		for i > 0 && !utf8.RuneStart(s[i]) {
 			i--
 		}
+		// i now points at a rune-start byte. If it decodes to a
+		// valid rune, the trailing bytes are orphan continuation
+		// bytes — trim only those, keeping the valid rune.
+		if r2, sz := utf8.DecodeRuneInString(s[i:]); r2 != utf8.RuneError || sz > 1 {
+			return s[:i+sz]
+		}
+		// The rune-start byte itself is part of the broken
+		// sequence (e.g., a multi-byte lead with too few
+		// continuation bytes). Trim from i.
 		return s[:i]
 	}
 	return s
