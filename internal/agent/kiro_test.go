@@ -379,6 +379,33 @@ func TestKiroReviewStderrFallback(t *testing.T) {
 	}
 }
 
+func TestKiroReviewStderrFallbackMarkerOnlyStdout(t *testing.T) {
+	skipIfWindows(t)
+
+	// stdout has only a bare ">" marker with no review body;
+	// stderr has the actual review. stderr should be used.
+	script := NewScriptBuilder().
+		AddRaw(`echo ">"`).
+		AddRaw(`echo "> review from stderr" >&2`).
+		Build()
+	cmdPath := writeTempCommand(t, script)
+	a := NewKiroAgent(cmdPath)
+
+	result, err := a.Review(
+		context.Background(), t.TempDir(),
+		"deadbeef", "review", nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "review from stderr") {
+		t.Fatalf(
+			"expected stderr when stdout is marker-only, got: %q",
+			result,
+		)
+	}
+}
+
 func TestKiroReviewStderrPreferredOverStdoutNoise(t *testing.T) {
 	skipIfWindows(t)
 
