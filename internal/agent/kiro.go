@@ -166,11 +166,14 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	}
 
 	// Prefer the stream that contains a "> " review marker.
-	// When stdout has no marker (noise-only) or is empty,
-	// fall back to stderr unconditionally.
-	result, hasMarker := stripKiroReview(stdout.String())
-	if !hasMarker || len(result) == 0 {
-		if alt, _ := stripKiroReview(stderr.String()); len(alt) > 0 {
+	// - stdout with marker → use stdout
+	// - stdout empty → try stderr (marker or not)
+	// - stdout has content but no marker → use stderr only
+	//   if stderr has a marker (otherwise keep stdout)
+	result, stdoutMarker := stripKiroReview(stdout.String())
+	if !stdoutMarker {
+		alt, stderrMarker := stripKiroReview(stderr.String())
+		if len(alt) > 0 && (len(result) == 0 || stderrMarker) {
 			result = alt
 		}
 	}

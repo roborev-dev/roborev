@@ -414,11 +414,9 @@ func TestKiroReviewStderrPreferredOverStdoutNoise(t *testing.T) {
 func TestKiroReviewStderrFallbackNoMarker(t *testing.T) {
 	skipIfWindows(t)
 
-	// stdout has noise without a marker; stderr has plain
-	// review text also without a marker. stderr should still
-	// be preferred over stdout noise.
+	// stdout is empty; stderr has plain review text without
+	// a marker. stderr should be used as fallback.
 	script := NewScriptBuilder().
-		AddRaw(`echo "Loading model..."`).
 		AddRaw(`echo "review text without marker" >&2`).
 		Build()
 	cmdPath := writeTempCommand(t, script)
@@ -436,6 +434,35 @@ func TestKiroReviewStderrFallbackNoMarker(t *testing.T) {
 			"expected stderr fallback even without marker, got: %q",
 			result,
 		)
+	}
+}
+
+func TestKiroReviewStdoutPreservedOverStderrNoise(t *testing.T) {
+	skipIfWindows(t)
+
+	// Both streams have content, neither has a marker.
+	// Stdout (primary stream) should be kept.
+	script := NewScriptBuilder().
+		AddRaw(`echo "plain review on stdout"`).
+		AddRaw(`echo "warning: something" >&2`).
+		Build()
+	cmdPath := writeTempCommand(t, script)
+	a := NewKiroAgent(cmdPath)
+
+	result, err := a.Review(
+		context.Background(), t.TempDir(),
+		"deadbeef", "review", nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "plain review on stdout") {
+		t.Fatalf(
+			"expected stdout to be kept, got: %q", result,
+		)
+	}
+	if strings.Contains(result, "warning") {
+		t.Error("stderr noise should not replace stdout content")
 	}
 }
 
