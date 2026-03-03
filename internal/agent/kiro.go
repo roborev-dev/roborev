@@ -49,9 +49,14 @@ func stripKiroOutput(raw string) string {
 	}
 
 	// Drop the timing footer ("▸ Time: Xs") and anything after it.
-	// Only scan the last 5 lines to avoid truncating review content
-	// that happens to contain "▸ Time:" in a code snippet.
+	// Trim trailing blank lines first so they don't push the real
+	// footer outside the scan window, then scan the last 5 non-blank
+	// lines to avoid truncating review content that happens to
+	// contain "▸ Time:" in a code snippet.
 	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
 	scanFrom := max(start, end-5)
 	for i := scanFrom; i < end; i++ {
 		if strings.HasPrefix(strings.TrimSpace(lines[i]), "▸ Time:") {
@@ -114,7 +119,7 @@ func (a *KiroAgent) buildArgs(agenticMode bool) []string {
 func (a *KiroAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 	args := a.buildArgs(agenticMode)
-	return a.Command + " " + strings.Join(args, " ") + " <prompt>"
+	return a.Command + " " + strings.Join(args, " ") + " -- <prompt>"
 }
 
 func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {

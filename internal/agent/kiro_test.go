@@ -93,6 +93,18 @@ func TestStripKiroOutputFooterInContent(t *testing.T) {
 	}
 }
 
+func TestStripKiroOutputFooterWithTrailingBlanks(t *testing.T) {
+	// Footer followed by trailing blank lines should still be stripped.
+	raw := "> ## Review\ncontent\n ▸ Time: 12s\n\n\n\n\n\n\n\n"
+	got := stripKiroOutput(raw)
+	if strings.Contains(got, "Time:") {
+		t.Errorf("footer should be stripped despite trailing blanks, got: %q", got)
+	}
+	if !strings.Contains(got, "content") {
+		t.Errorf("review content should be preserved, got: %q", got)
+	}
+}
+
 func TestStripKiroOutputBlockquoteNotStripped(t *testing.T) {
 	// A "> " blockquote deep in review content should not be treated as the start marker.
 	// Build output where "> " only appears after line 30.
@@ -133,6 +145,21 @@ func TestKiroName(t *testing.T) {
 	}
 	if a.CommandName() != "kiro-cli" {
 		t.Fatalf("expected command name 'kiro-cli', got %s", a.CommandName())
+	}
+}
+
+func TestKiroCommandLine(t *testing.T) {
+	a := NewKiroAgent("kiro-cli")
+	cl := a.CommandLine()
+	if !strings.Contains(cl, "-- <prompt>") {
+		t.Errorf(
+			"CommandLine should include -- separator, got: %q", cl,
+		)
+	}
+	if !strings.Contains(cl, "--no-interactive") {
+		t.Errorf(
+			"CommandLine should include --no-interactive, got: %q", cl,
+		)
 	}
 }
 
