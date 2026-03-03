@@ -267,7 +267,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		upsert := resolveCIUpsertComments(
 			repoCfg, globalCfg)
 		if err := postCIComment(
-			ghRepo, prNumber, comment, upsert,
+			ctx, ghRepo, prNumber, comment, upsert,
 		); err != nil {
 			return fmt.Errorf(
 				"post PR comment: %w", err)
@@ -498,12 +498,12 @@ func extractHeadSHA(gitRef string) string {
 // When upsert is true, it finds and patches an existing marker comment;
 // otherwise it always creates a new comment.
 func postCIComment(
+	ctx context.Context,
 	ghRepo string,
 	prNumber int,
 	body string,
 	upsert bool,
 ) error {
-	ctx := context.Background()
 	if upsert {
 		return ghpkg.UpsertPRComment(ctx, ghRepo, prNumber, body, nil)
 	}
