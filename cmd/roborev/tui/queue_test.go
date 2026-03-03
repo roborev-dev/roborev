@@ -2371,11 +2371,10 @@ func TestMigrateColumnConfig(t *testing.T) {
 	}
 }
 
-func TestSaveColumnOptionsOmitsDefaults(t *testing.T) {
-	// When columnOrder matches the built-in default,
-	// columnOrderToNames should produce the default names,
-	// and slices.Equal against toggleableColumns should be true,
-	// so saveColumnOptions would set colOrd to nil.
+func TestDefaultColumnOrderDetection(t *testing.T) {
+	// Verify the slices.Equal check that saveColumnOptions uses
+	// to decide whether to persist column order: default order
+	// should match toggleableColumns, swapped order should not.
 	defaultOrder := make([]int, len(toggleableColumns))
 	copy(defaultOrder, toggleableColumns)
 
@@ -2383,7 +2382,6 @@ func TestSaveColumnOptionsOmitsDefaults(t *testing.T) {
 		t.Fatal("copy of toggleableColumns should equal toggleableColumns")
 	}
 
-	// Non-default order should NOT equal
 	customOrder := make([]int, len(toggleableColumns))
 	copy(customOrder, toggleableColumns)
 	customOrder[0], customOrder[1] = customOrder[1], customOrder[0]
