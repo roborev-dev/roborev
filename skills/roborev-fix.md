@@ -10,7 +10,7 @@ Fix all open review findings in one pass.
 
 ## Description
 
-Discovers open code reviews and fixes all their findings in a single pass. Unlike `/roborev:address` which handles one review at a time, this skill batches all outstanding findings together, groups them by file, and fixes them by severity priority.
+Discovers open code reviews and fixes all their findings in a single pass. This skill batches all outstanding findings together, groups them by file, and fixes them by severity priority. It also handles single reviews when given a specific job ID.
 
 If job IDs are provided, only those reviews are fixed. Otherwise, the skill checks recent commits (HEAD, HEAD~1) for failed reviews that have not been closed.
 

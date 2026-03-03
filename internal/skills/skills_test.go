@@ -16,6 +16,17 @@ var expectedSkills = []string{
 	"roborev-review-branch",
 }
 
+// detectedSkills lists skills that IsInstalled checks for.
+// roborev-address is deprecated and excluded from detection.
+var detectedSkills = []string{
+	"roborev-design-review",
+	"roborev-design-review-branch",
+	"roborev-fix",
+	"roborev-respond",
+	"roborev-review",
+	"roborev-review-branch",
+}
+
 // setupTestEnv sets all home directory environment variables for cross-platform
 // compatibility and returns the temp home directory path. Cleanup is automatic.
 func setupTestEnv(t *testing.T) string {
@@ -196,7 +207,7 @@ func TestIsInstalled(t *testing.T) {
 		},
 	}
 
-	for _, skill := range expectedSkills {
+	for _, skill := range detectedSkills {
 		// Capture variable for closure
 		s := skill
 		tests = append(tests, testCase{
@@ -213,6 +224,20 @@ func TestIsInstalled(t *testing.T) {
 		})
 	}
 
+	// Deprecated address skill alone should not trigger IsInstalled.
+	tests = append(tests, testCase{
+		name:        "Claude with deprecated address only",
+		agent:       AgentClaude,
+		setup:       func(t *testing.T, h string) { createMockSkill(t, h, AgentClaude, "roborev-address") },
+		shouldExist: false,
+	})
+	tests = append(tests, testCase{
+		name:        "Codex with deprecated address only",
+		agent:       AgentCodex,
+		setup:       func(t *testing.T, h string) { createMockSkill(t, h, AgentCodex, "roborev-address") },
+		shouldExist: false,
+	})
+
 	// Unsupported agent should always return false.
 	tests = append(tests, testCase{
 		name:  "unsupported agent",
@@ -220,8 +245,8 @@ func TestIsInstalled(t *testing.T) {
 		setup: func(t *testing.T, h string) {
 			// Install skills for both known agents to ensure
 			// the unknown agent still returns false.
-			createMockSkill(t, h, AgentClaude, "roborev-address")
-			createMockSkill(t, h, AgentCodex, "roborev-address")
+			createMockSkill(t, h, AgentClaude, "roborev-fix")
+			createMockSkill(t, h, AgentCodex, "roborev-fix")
 		},
 		shouldExist: false,
 	})
@@ -248,9 +273,9 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		wantInstalled int
 	}{
 		{
-			name: "updates Claude with address skill only",
+			name: "updates Claude with fix skill only",
 			setup: func(t *testing.T, homeDir string) {
-				createMockSkill(t, homeDir, AgentClaude, "roborev-address")
+				createMockSkill(t, homeDir, AgentClaude, "roborev-fix")
 				// Create .codex but NO skills installed
 				if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0755); err != nil {
 					t.Fatal(err)
@@ -272,9 +297,9 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 			wantInstalled: len(expectedSkills) - 1,
 		},
 		{
-			name: "updates Codex with skills installed",
+			name: "updates Codex with fix skill only",
 			setup: func(t *testing.T, homeDir string) {
-				createMockSkill(t, homeDir, AgentCodex, "roborev-address")
+				createMockSkill(t, homeDir, AgentCodex, "roborev-fix")
 			},
 			wantResults:   1,
 			wantAgents:    []Agent{AgentCodex},
@@ -294,7 +319,7 @@ func TestUpdateOnlyUpdatesInstalled(t *testing.T) {
 		{
 			name: "updates both agents when both have skills",
 			setup: func(t *testing.T, homeDir string) {
-				createMockSkill(t, homeDir, AgentClaude, "roborev-address")
+				createMockSkill(t, homeDir, AgentClaude, "roborev-fix")
 				createMockSkill(t, homeDir, AgentCodex, "roborev-respond")
 			},
 			wantResults:   2,

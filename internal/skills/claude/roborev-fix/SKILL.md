@@ -124,5 +124,4 @@ Agent:
 
 ## See also
 
-- `/roborev:address` — address a single review's findings
 - `/roborev:respond` — comment on a review and close it without fixing code

@@ -14,9 +14,10 @@ Skills are updated automatically when you run `roborev update`.
 
 | Skill | Description |
 |-------|-------------|
-| `/roborev:address <job_id>` | Fetch a review and fix its findings |
+| `/roborev:fix [job_id...]` | Fix all open review findings (or specific jobs) in one pass |
 | `/roborev:design-review <path-or-job-id>` | Review a design proposal for completeness and feasibility |
 | `/roborev:respond <job_id> [message]` | Add a response to a review |
+| ~`/roborev:address <job_id>`~ | Deprecated: use `/roborev:fix` |
 
 ## Example Workflow
 
@@ -31,7 +32,7 @@ Review #1019: Fail
 Ask your agent to fix it:
 
 ```
-/roborev:address 1019
+/roborev:fix 1019
 ```
 
 The agent will:
@@ -51,5 +52,5 @@ After fixing, document what was done:
 
 | Agent | Invocation |
 |-------|------------|
-| Claude Code | `/roborev:address`, `/roborev:design-review`, `/roborev:respond` |
-| Codex | `$roborev:address`, `$roborev:design-review`, `$roborev:respond` |
+| Claude Code | `/roborev:fix`, `/roborev:design-review`, `/roborev:respond` |
+| Codex | `$roborev:fix`, `$roborev:design-review`, `$roborev:respond` |

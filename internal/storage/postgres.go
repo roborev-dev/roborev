@@ -251,8 +251,21 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			}
 		}
 		if currentVersion < 6 {
-			// Migration 5->6: Rename addressed to closed in reviews
-			_, err = p.pool.Exec(ctx, `ALTER TABLE reviews RENAME COLUMN addressed TO closed`)
+			// Migration 5->6: Rename addressed to closed in reviews.
+			// Idempotent: skip if addressed column doesn't exist
+			// (fresh installs create the table with closed directly).
+			_, err = p.pool.Exec(ctx, `
+				DO $$ BEGIN
+					IF EXISTS (
+						SELECT 1 FROM information_schema.columns
+						WHERE table_schema = 'roborev'
+						AND table_name = 'reviews'
+						AND column_name = 'addressed'
+					) THEN
+						ALTER TABLE reviews
+							RENAME COLUMN addressed TO closed;
+					END IF;
+				END $$`)
 			if err != nil {
 				return fmt.Errorf("migrate to v6 (rename addressed to closed): %w", err)
 			}

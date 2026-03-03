@@ -160,9 +160,9 @@ This command is idempotent - running it multiple times is safe.`,
 				for _, agent := range installedAgents {
 					switch agent {
 					case skills.AgentClaude:
-						fmt.Println("  Claude Code: /roborev:review, /roborev:review-branch, /roborev:design-review, /roborev:design-review-branch, /roborev:address, /roborev:respond, /roborev:fix")
+						fmt.Println("  Claude Code: /roborev:review, /roborev:review-branch, /roborev:design-review, /roborev:design-review-branch, /roborev:fix, /roborev:respond")
 					case skills.AgentCodex:
-						fmt.Println("  Codex: $roborev:review, $roborev:review-branch, $roborev:design-review, $roborev:design-review-branch, $roborev:address, $roborev:respond, $roborev:fix")
+						fmt.Println("  Codex: $roborev:review, $roborev:review-branch, $roborev:design-review, $roborev:design-review-branch, $roborev:fix, $roborev:respond")
 					}
 				}
 			}

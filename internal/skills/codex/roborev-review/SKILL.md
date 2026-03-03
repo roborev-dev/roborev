@@ -57,11 +57,11 @@ Otherwise, present the review to the user:
 
 If the review has findings (verdict is Fail), offer to address them:
 
-- "Would you like me to address these findings? You can run `$roborev:address <job_id>`"
+- "Would you like me to fix these findings? You can run `$roborev:fix <job_id>`"
 
 Extract the job ID from the review output to include in the suggestion. Look for it in the `Enqueued job <id> for ...` line or in the review header.
 
-If the review passed, confirm the result and do not offer `$roborev:address`.
+If the review passed, confirm the result and do not offer `$roborev:fix`.
 
 ## Examples
 
@@ -72,7 +72,7 @@ User: `$roborev:review`
 Agent:
 1. Executes `roborev review --wait`
 2. Presents the verdict and findings grouped by severity
-3. If findings exist: "Would you like me to address these findings? Run `$roborev:address 1042`"
+3. If findings exist: "Would you like me to address these findings? Run `$roborev:fix 1042`"
 4. If passed: "Review passed with no findings."
 
 **Security review of a specific commit:**
@@ -83,10 +83,10 @@ Agent:
 1. Validates: `git rev-parse --verify -- abc123^{commit}`
 2. Executes `roborev review abc123 --wait --type security`
 3. Presents the verdict and findings
-4. If findings exist: "Would you like me to address these findings? Run `$roborev:address 1043`"
+4. If findings exist: "Would you like me to address these findings? Run `$roborev:fix 1043`"
 
 ## See also
 
 - `$roborev:design-review` — shorthand for `$roborev:review --type design`
-- `$roborev:address` — fix a review's findings in code
+- `$roborev:fix` — fix a review's findings in code
 - `$roborev:review-branch` — review all commits on the current branch

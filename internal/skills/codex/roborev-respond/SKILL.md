@@ -76,4 +76,4 @@ Then confirm: "Comment recorded and review #1019 closed."
 
 ## See also
 
-- `$roborev:address` — fix a review's findings in code, then comment and close it
+- `$roborev:fix` — fix a review's findings in code, then comment and close it
