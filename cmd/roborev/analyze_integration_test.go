@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -206,7 +207,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 	if !strings.Contains(outputStr, "CODE SMELLS") {
 		t.Error("output should contain analysis result")
 	}
-	if !strings.Contains(outputStr, "Analysis job") || !strings.Contains(outputStr, "closed") {
-		t.Errorf("output should contain 'Analysis job N closed', got: %s", outputStr)
+	if !regexp.MustCompile(`Analysis job \d+ closed`).MatchString(outputStr) {
+		t.Errorf("output should match 'Analysis job N closed', got: %s", outputStr)
 	}
 }
