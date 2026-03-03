@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/roborev-dev/roborev/internal/config"
 )
 
 func TestCIReviewCmd_Help(t *testing.T) {
@@ -232,6 +234,66 @@ func TestResolveReviewTypes_EmptyFlag(t *testing.T) {
 		t.Errorf(
 			"resolveReviewTypes(\" , \") = %v, want empty",
 			types)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+func TestResolveCIUpsertComments(t *testing.T) {
+	tests := []struct {
+		name   string
+		repo   *config.RepoConfig
+		global *config.Config
+		want   bool
+	}{
+		{
+			name: "nil/nil defaults to false",
+			repo: nil, global: nil, want: false,
+		},
+		{
+			name:   "global true",
+			repo:   nil,
+			global: &config.Config{CI: config.CIConfig{UpsertComments: true}},
+			want:   true,
+		},
+		{
+			name:   "global false",
+			repo:   nil,
+			global: &config.Config{CI: config.CIConfig{UpsertComments: false}},
+			want:   false,
+		},
+		{
+			name: "repo true overrides global false",
+			repo: &config.RepoConfig{
+				CI: config.RepoCIConfig{UpsertComments: boolPtr(true)},
+			},
+			global: &config.Config{CI: config.CIConfig{UpsertComments: false}},
+			want:   true,
+		},
+		{
+			name: "repo false overrides global true",
+			repo: &config.RepoConfig{
+				CI: config.RepoCIConfig{UpsertComments: boolPtr(false)},
+			},
+			global: &config.Config{CI: config.CIConfig{UpsertComments: true}},
+			want:   false,
+		},
+		{
+			name: "repo nil falls through to global",
+			repo: &config.RepoConfig{
+				CI: config.RepoCIConfig{UpsertComments: nil},
+			},
+			global: &config.Config{CI: config.CIConfig{UpsertComments: true}},
+			want:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveCIUpsertComments(tt.repo, tt.global)
+			if got != tt.want {
+				t.Errorf("resolveCIUpsertComments() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
