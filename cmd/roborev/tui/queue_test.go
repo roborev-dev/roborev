@@ -638,7 +638,7 @@ func TestTUIJobCellsContent(t *testing.T) {
 		if cells[3] != "test" {
 			t.Errorf("Expected agent 'test', got %q", cells[3])
 		}
-		if cells[6] != "Ready" {
+		if cells[6] != "Done" {
 			t.Errorf("Expected status 'Ready', got %q", cells[6])
 		}
 	})
@@ -2213,7 +2213,7 @@ func TestCombinedStatus(t *testing.T) {
 		{"done pass", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("P")}, "Pass"},
 		{"done fail", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("F")}, "Fail"},
 		{"done unexpected verdict", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("X")}, "Fail"},
-		{"done nil verdict", storage.ReviewJob{Status: storage.JobStatusDone}, "Ready"},
+		{"done nil verdict", storage.ReviewJob{Status: storage.JobStatusDone}, "Done"},
 		{"applied pass", storage.ReviewJob{Status: storage.JobStatusApplied, Verdict: strPtr("P")}, "Pass"},
 		{"rebased fail", storage.ReviewJob{Status: storage.JobStatusRebased, Verdict: strPtr("F")}, "Fail"},
 	}

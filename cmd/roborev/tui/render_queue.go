@@ -622,7 +622,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 
 // combinedStatus returns a display string that merges job status
 // with verdict: Queued, Running, Error, Canceled, Pass, Fail, or
-// Ready (for task/fix jobs that have no verdict).
+// Done (for task/fix jobs that have no verdict).
 func combinedStatus(job storage.ReviewJob) string {
 	switch job.Status {
 	case storage.JobStatusQueued:
@@ -641,7 +641,7 @@ func combinedStatus(job storage.ReviewJob) string {
 			}
 			return "Fail"
 		}
-		return "Ready"
+		return "Done"
 	default:
 		return string(job.Status)
 	}
