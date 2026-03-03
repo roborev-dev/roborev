@@ -295,6 +295,37 @@ func TestKiroReviewAgenticModeFromGlobal(t *testing.T) {
 	}
 }
 
+func TestKiroReviewStderrFallback(t *testing.T) {
+	skipIfWindows(t)
+
+	// kiro-cli exits 0 with review text on stderr, nothing on stdout.
+	script := NewScriptBuilder().
+		AddRaw(`echo "review on stderr" >&2`).
+		Build()
+	cmdPath := writeTempCommand(t, script)
+	a := NewKiroAgent(cmdPath)
+
+	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "review on stderr") {
+		t.Fatalf("expected stderr fallback, got: %q", result)
+	}
+}
+
+func TestKiroReviewPromptTooLarge(t *testing.T) {
+	a := NewKiroAgent("kiro-cli")
+	bigPrompt := strings.Repeat("x", maxPromptArgLen+1)
+	_, err := a.Review(context.Background(), t.TempDir(), "HEAD", bigPrompt, nil)
+	if err == nil {
+		t.Fatal("expected error for oversized prompt")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestKiroWithChaining(t *testing.T) {
 	a := NewKiroAgent("kiro-cli")
 	b := a.WithReasoning(ReasoningThorough).WithAgentic(true)

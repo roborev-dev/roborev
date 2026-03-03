@@ -7,18 +7,19 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 )
 
-// ansiEscape matches ANSI/VT100 terminal escape sequences.
-var ansiEscape = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[A-Za-z]|[^\[])`)
+// maxPromptArgLen is a conservative limit for passing prompts as
+// CLI arguments. macOS ARG_MAX is ~1 MB; we leave headroom for
+// the command name, flags, and environment.
+const maxPromptArgLen = 512 * 1024
 
 // stripKiroOutput removes Kiro's UI chrome (logo, tip box, model line, timing footer)
-// and ANSI escape codes, returning only the review text.
+// and terminal control sequences, returning only the review text.
 func stripKiroOutput(raw string) string {
-	s := ansiEscape.ReplaceAllString(raw, "")
+	s := stripTerminalControls(raw)
 
 	// Kiro prepends a splash screen and tip box before the response.
 	// The "> " prompt marker appears near the top; limit the search to avoid
@@ -106,10 +107,18 @@ func (a *KiroAgent) CommandLine() string {
 }
 
 func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if len(prompt) > maxPromptArgLen {
+		return "", fmt.Errorf(
+			"prompt too large for kiro-cli argv (%d bytes, max %d)",
+			len(prompt), maxPromptArgLen,
+		)
+	}
+
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 
 	// kiro-cli chat --no-interactive [--trust-all-tools] <prompt>
-	// The prompt is passed as a positional argument (kiro-cli does not read from stdin).
+	// The prompt is passed as a positional argument
+	// (kiro-cli does not support stdin).
 	args := a.buildArgs(agenticMode)
 	args = append(args, prompt)
 
@@ -118,17 +127,26 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd.Env = os.Environ()
 	cmd.WaitDelay = 5 * time.Second
 
-	// kiro-cli emits ANSI terminal escape codes that are not suitable for streaming
-	// through roborev's output writer. Capture stdout/stderr and return stripped text.
+	// kiro-cli emits ANSI terminal escape codes that are not
+	// suitable for streaming. Capture and return stripped text.
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("kiro failed: %w\nstderr: %s", err, stderr.String())
+		return "", fmt.Errorf(
+			"kiro failed: %w\nstderr: %s",
+			err, stderr.String(),
+		)
 	}
 
 	result := stripKiroOutput(stdout.String())
+	if len(result) == 0 {
+		// Some CLI tools emit review text on stderr.
+		result = strings.TrimSpace(
+			stripTerminalControls(stderr.String()),
+		)
+	}
 	if len(result) == 0 {
 		return "No review output generated", nil
 	}
