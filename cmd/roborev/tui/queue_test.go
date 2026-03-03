@@ -627,7 +627,7 @@ func TestTUIJobCellsContent(t *testing.T) {
 		)
 		cells := m.jobCells(job)
 
-		// cells order: ref, branch, repo, agent, status, queued, elapsed, closed
+		// cells order: ref, branch, repo, agent, queued, elapsed, status, closed
 		if !strings.Contains(cells[0], "abc1234") {
 			t.Errorf("Expected ref to contain abc1234, got %q", cells[0])
 		}
@@ -637,8 +637,8 @@ func TestTUIJobCellsContent(t *testing.T) {
 		if cells[3] != "test" {
 			t.Errorf("Expected agent 'test', got %q", cells[3])
 		}
-		if cells[4] != "Ready" {
-			t.Errorf("Expected status 'Ready', got %q", cells[4])
+		if cells[6] != "Ready" {
+			t.Errorf("Expected status 'Ready', got %q", cells[6])
 		}
 	})
 
@@ -658,8 +658,8 @@ func TestTUIJobCellsContent(t *testing.T) {
 		job.Closed = &handled
 
 		cells := m.jobCells(job)
-		if cells[4] != "Pass" {
-			t.Errorf("Expected status 'Pass', got %q", cells[4])
+		if cells[6] != "Pass" {
+			t.Errorf("Expected status 'Pass', got %q", cells[6])
 		}
 		if cells[7] != "yes" {
 			t.Errorf("Expected closed 'yes', got %q", cells[7])

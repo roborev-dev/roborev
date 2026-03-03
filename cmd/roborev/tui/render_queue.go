@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -94,9 +95,9 @@ const (
 	colBranch         // Branch name
 	colRepo           // Repository display name
 	colAgent          // Agent name
-	colStatus         // Job status (combined with verdict)
 	colQueued         // Enqueue timestamp
 	colElapsed        // Elapsed time
+	colStatus         // Job status (combined with verdict)
 	colHandled        // Done status
 	colCount          // total number of columns
 )
@@ -247,7 +248,7 @@ func (m model) renderQueueView() string {
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
-		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Status", "Queued", "Elapsed", "Closed"}
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "Closed"}
 		allFullRows := make([][]string, len(visibleJobList))
 		for i, job := range visibleJobList {
 			cells := m.jobCells(job)
@@ -616,7 +617,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		}
 	}
 
-	return []string{ref, branch, repo, agentName, status, enqueued, elapsed, handled}
+	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, handled}
 }
 
 // combinedStatus returns a display string that merges job status
@@ -706,7 +707,7 @@ func stripControlChars(s string) string {
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colStatus, colQueued, colElapsed, colHandled}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colHandled}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
@@ -856,11 +857,19 @@ func (m model) visibleColumns() []int {
 }
 
 // saveColumnOptions persists hidden columns, border settings, and column order to config.
+// Column order is only saved when it differs from the built-in default,
+// so future default changes take effect for users who haven't customized.
 func (m model) saveColumnOptions() tea.Cmd {
 	hidden := hiddenColumnsToNames(m.hiddenColumns)
 	borders := m.colBordersOn
-	colOrd := columnOrderToNames(m.columnOrder)
-	taskColOrd := taskColumnOrderToNames(m.taskColumnOrder)
+	var colOrd []string
+	if !slices.Equal(m.columnOrder, toggleableColumns) {
+		colOrd = columnOrderToNames(m.columnOrder)
+	}
+	var taskColOrd []string
+	if !slices.Equal(m.taskColumnOrder, taskToggleableColumns) {
+		taskColOrd = taskColumnOrderToNames(m.taskColumnOrder)
+	}
 	return func() tea.Msg {
 		cfg, err := config.LoadGlobal()
 		if err != nil {
