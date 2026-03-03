@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"strings"
@@ -53,6 +54,18 @@ func TestStripKiroOutputNoMarker(t *testing.T) {
 	got := stripKiroOutput(raw)
 	if got != "some output without marker" {
 		t.Errorf("unexpected result: %q", got)
+	}
+}
+
+func TestStripKiroOutputBareMarker(t *testing.T) {
+	// A bare ">" (no trailing space) followed by content on the next line.
+	raw := "chrome\n>\nreview content here\n"
+	got := stripKiroOutput(raw)
+	if !strings.Contains(got, "review content here") {
+		t.Errorf("expected review content, got: %q", got)
+	}
+	if strings.Contains(got, "chrome") {
+		t.Error("chrome should be stripped before the bare > marker")
 	}
 }
 
@@ -148,6 +161,27 @@ func TestKiroReviewSuccess(t *testing.T) {
 	}
 	if !strings.Contains(result, output) {
 		t.Fatalf("expected result to contain %q, got %q", output, result)
+	}
+}
+
+func TestKiroReviewWritesOutputWriter(t *testing.T) {
+	skipIfWindows(t)
+
+	output := "review findings here"
+	script := NewScriptBuilder().AddOutput(output).Build()
+	cmdPath := writeTempCommand(t, script)
+	a := NewKiroAgent(cmdPath)
+
+	var buf bytes.Buffer
+	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review", &buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, output) {
+		t.Fatalf("result missing output: %q", result)
+	}
+	if !strings.Contains(buf.String(), output) {
+		t.Fatalf("output writer missing content: %q", buf.String())
 	}
 }
 
