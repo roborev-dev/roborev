@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"time"
-	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
@@ -106,11 +105,7 @@ func formatSingleResult(
 	const truncSuffix = "\n\n...(truncated)"
 	maxLen := MaxCommentLen - len(truncSuffix)
 	if len(output) > MaxCommentLen {
-		cut := output[:maxLen]
-		for len(cut) > 0 && !utf8.ValidString(cut) {
-			cut = cut[:len(cut)-1]
-		}
-		output = cut + truncSuffix
+		output = TrimPartialRune(output[:maxLen]) + truncSuffix
 	}
 
 	return header + output + fmt.Sprintf(

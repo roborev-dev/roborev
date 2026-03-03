@@ -1,0 +1,71 @@
+package review
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestTrimPartialRune(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"ascii only", "hello", "hello"},
+		{
+			"clean emoji boundary",
+			"abc😀",
+			"abc😀",
+		},
+		{
+			"split 4-byte emoji after 1 byte",
+			"abc" + string([]byte{0xF0}),
+			"abc",
+		},
+		{
+			"split 4-byte emoji after 2 bytes",
+			"abc" + string([]byte{0xF0, 0x9F}),
+			"abc",
+		},
+		{
+			"split 4-byte emoji after 3 bytes",
+			"abc" + string([]byte{0xF0, 0x9F, 0x98}),
+			"abc",
+		},
+		{
+			"split 2-byte char after 1 byte",
+			"abc" + string([]byte{0xC3}),
+			"abc",
+		},
+		{
+			"interior invalid bytes preserved",
+			"a" + string([]byte{0xFF}) + "b",
+			"a" + string([]byte{0xFF}) + "b",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TrimPartialRune(tt.in)
+			if got != tt.want {
+				t.Errorf(
+					"TrimPartialRune(%q) = %q, want %q",
+					tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTrimPartialRune_NoFullStringScan(t *testing.T) {
+	// Verify that a string with interior invalid UTF-8 is NOT
+	// stripped down to empty — only the trailing boundary matters.
+	// This is the bug that utf8.ValidString would cause.
+	interior := strings.Repeat("x", 1000) +
+		string([]byte{0xFF}) +
+		strings.Repeat("y", 1000)
+	got := TrimPartialRune(interior)
+	if got != interior {
+		t.Errorf("interior invalid bytes should be preserved, "+
+			"got len %d want len %d", len(got), len(interior))
+	}
+}

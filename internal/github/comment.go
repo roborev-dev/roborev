@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/roborev-dev/roborev/internal/review"
 )
@@ -27,7 +26,7 @@ var execCommand = exec.CommandContext
 // env, when non-nil, is set on the subprocess (e.g. for GitHub App tokens).
 func FindExistingComment(ctx context.Context, ghRepo string, prNumber int, env []string) (int64, error) {
 	jqFilter := fmt.Sprintf(
-		`[.[] | select(.body | contains(%q)) | .id] | first // empty`,
+		`[.[] | select(.body | contains(%q)) | .id] | last // empty`,
 		CommentMarker,
 	)
 
@@ -48,22 +47,22 @@ func FindExistingComment(ctx context.Context, ghRepo string, prNumber int, env [
 	}
 
 	// With --paginate, --jq runs per page so stdout may contain
-	// multiple lines when several pages match. Use the first non-empty
-	// line (the oldest matching comment).
-	firstLine := ""
+	// multiple lines when several pages match. Use the last non-empty
+	// line (the newest matching comment — most likely writable by the
+	// current token).
+	lastLine := ""
 	for line := range strings.SplitSeq(stdout.String(), "\n") {
 		if s := strings.TrimSpace(line); s != "" {
-			firstLine = s
-			break
+			lastLine = s
 		}
 	}
-	if firstLine == "" {
+	if lastLine == "" {
 		return 0, nil
 	}
 
-	id, err := strconv.ParseInt(firstLine, 10, 64)
+	id, err := strconv.ParseInt(lastLine, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("parse comment ID %q: %w", firstLine, err)
+		return 0, fmt.Errorf("parse comment ID %q: %w", lastLine, err)
 	}
 	return id, nil
 }
@@ -76,11 +75,7 @@ func prepareBody(body string) string {
 	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
 	maxBody := review.MaxCommentLen - len(truncSuffix)
 	if len(body) > review.MaxCommentLen {
-		cut := body[:maxBody]
-		for len(cut) > 0 && !utf8.ValidString(cut) {
-			cut = cut[:len(cut)-1]
-		}
-		body = cut + truncSuffix
+		body = review.TrimPartialRune(body[:maxBody]) + truncSuffix
 	}
 	return body
 }

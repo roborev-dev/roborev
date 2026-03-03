@@ -269,16 +269,16 @@ func TestUpsertPRComment_EnvPassthrough(t *testing.T) {
 }
 
 func TestFindExistingComment_MultiLineOutput(t *testing.T) {
-	// When --paginate produces multiple IDs across pages, only the first
-	// non-empty line should be used.
+	// When --paginate produces multiple IDs across pages, the last
+	// non-empty line (newest comment) should be used.
 	setExecCommand(t, helperCmd("find_multi_line"))
 
 	id, err := FindExistingComment(context.Background(), "owner/repo", 1, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if id != 10 {
-		t.Fatalf("expected first ID 10, got %d", id)
+	if id != 30 {
+		t.Fatalf("expected last ID 30, got %d", id)
 	}
 }
 
@@ -414,6 +414,34 @@ func TestUpsertPRComment_PatchFailNon403ReturnsError(t *testing.T) {
 	}
 	if callCount != 2 {
 		t.Fatalf("expected 2 gh calls (find+patch), got %d", callCount)
+	}
+}
+
+func TestUpsertPRComment_MultipleIDs_PatchNewestFails403(t *testing.T) {
+	// When multiple marker comments exist and the newest one can't be
+	// patched (403 — different owner), fall back to creating a new comment.
+	callCount := 0
+	setExecCommand(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		switch callCount {
+		case 1:
+			// Find returns multiple IDs; newest (30) is selected.
+			return helperCmd("find_multi_line")(ctx, name, args...)
+		case 2:
+			// PATCH on ID 30 fails with 403.
+			return helperCmd("patch_fail_403")(ctx, name, args...)
+		default:
+			// Falls back to create.
+			return helperCmd("create_ok")(ctx, name, args...)
+		}
+	})
+
+	err := UpsertPRComment(context.Background(), "owner/repo", 1, "body", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("expected 3 gh calls (find+patch+create), got %d", callCount)
 	}
 }
 
