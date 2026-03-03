@@ -224,6 +224,37 @@ func TestGenerate(t *testing.T) {
 			},
 		},
 		{
+			name: "kilo gets multi-provider comment",
+			cfg: WorkflowConfig{
+				Agents: []string{"kilo"},
+			},
+			wantStrs: []string{
+				"@kilocode/cli@latest",
+				"ANTHROPIC_API_KEY",
+				"different model provider",
+				"default for kilo",
+			},
+			envChecks: func(t *testing.T, env map[string]string) {
+				if _, ok := env["ANTHROPIC_API_KEY"]; !ok {
+					t.Error("expected ANTHROPIC_API_KEY in env")
+				}
+			},
+		},
+		{
+			name: "kiro skipped from env entries",
+			cfg: WorkflowConfig{
+				Agents: []string{"kiro"},
+			},
+			wantStrs: []string{
+				"kiro.dev",
+			},
+			notWantStrs: []string{
+				"OPENAI_API_KEY",
+				"ANTHROPIC_API_KEY",
+				"AWS_ACCESS_KEY_ID",
+			},
+		},
+		{
 			name: "dedupes env vars",
 			cfg: WorkflowConfig{
 				Agents: []string{"claude-code", "opencode"},

@@ -36,6 +36,7 @@ func TestGhActionCmd(t *testing.T) {
 		expectError      bool
 		errorContains    string
 		expectedContains []string
+		notContains      []string
 	}{
 		{
 			name:             "default flags",
@@ -69,6 +70,27 @@ func TestGhActionCmd(t *testing.T) {
 			repoConfig:       "agent = \"gemini\"\n",
 			flags:            []string{"--agent", "codex"},
 			expectedContains: []string{"OPENAI_API_KEY"},
+		},
+		{
+			name:  "kilo gets multi-provider guidance",
+			flags: []string{"--agent", "kilo"},
+			expectedContains: []string{
+				"ANTHROPIC_API_KEY",
+				"@kilocode/cli@latest",
+				"different model provider",
+				"default for kilo",
+			},
+		},
+		{
+			name:  "kiro has no secret in env block",
+			flags: []string{"--agent", "kiro"},
+			expectedContains: []string{
+				"kiro.dev",
+			},
+			notContains: []string{
+				"OPENAI_API_KEY:",
+				"AWS_ACCESS_KEY_ID:",
+			},
 		},
 		{
 			name: "infers agents from repo CI config",
@@ -120,7 +142,8 @@ func TestGhActionCmd(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if len(tt.expectedContains) > 0 {
+			if len(tt.expectedContains) > 0 ||
+				len(tt.notContains) > 0 {
 				contentBytes, err := os.ReadFile(outPath)
 				if err != nil {
 					t.Fatalf("failed to read generated file: %v", err)
@@ -129,6 +152,11 @@ func TestGhActionCmd(t *testing.T) {
 				for _, expected := range tt.expectedContains {
 					if !strings.Contains(content, expected) {
 						t.Errorf("generated file missing expected content: %q", expected)
+					}
+				}
+				for _, bad := range tt.notContains {
+					if strings.Contains(content, bad) {
+						t.Errorf("generated file should not contain: %q", bad)
 					}
 				}
 			}
