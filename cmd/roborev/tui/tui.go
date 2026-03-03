@@ -452,7 +452,9 @@ func newModel(serverAddr string, opts ...option) model {
 			columnBorders = cfg.ColumnBorders
 
 			if migrateColumnConfig(cfg) {
-				_ = config.SaveGlobal(cfg)
+				if err := config.SaveGlobal(cfg); err != nil {
+					log.Printf("warning: failed to save migrated config: %v", err)
+				}
 			}
 
 			hiddenCols = parseHiddenColumns(cfg.HiddenColumns)
