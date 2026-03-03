@@ -32,7 +32,7 @@ func (m model) getVisibleJobs() []storage.ReviewJob {
 func (m model) queueHelpRows() [][]helpItem {
 	row1 := []helpItem{
 		{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"},
-		{"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}, {"o", "options"},
+		{"c", "comment"}, {"y", "copy"}, {"m", "commit"}, {"F", "fix"}, {"o", "options"},
 	}
 	row2 := []helpItem{
 		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "close"},
@@ -663,7 +663,10 @@ func combinedStatusColor(
 		return canceledStyle.GetForeground()
 	case storage.JobStatusDone, storage.JobStatusApplied,
 		storage.JobStatusRebased:
-		if job.Verdict != nil && *job.Verdict != "P" {
+		if job.Verdict == nil {
+			return readyStyle.GetForeground()
+		}
+		if *job.Verdict != "P" {
 			return failStyle.GetForeground()
 		}
 		return passStyle.GetForeground()

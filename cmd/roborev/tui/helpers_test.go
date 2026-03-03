@@ -517,11 +517,11 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 	// Real help row sets used by the TUI views.
 	helpSets := map[string][][]helpItem{
 		"queue": {
-			{{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"}, {"c", "comment"}, {"y", "copy"}, {"m", "commit msg"}, {"F", "fix"}},
+			{{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"}, {"c", "comment"}, {"y", "copy"}, {"m", "commit"}, {"F", "fix"}},
 			{{"↑/↓", "nav"}, {"enter", "review"}, {"a", "closed"}, {"f", "filter"}, {"h", "hide"}, {"T", "tasks"}, {"?", "help"}, {"q", "quit"}},
 		},
 		"review": {
-			{{"p", "prompt"}, {"c", "comment"}, {"m", "commit msg"}, {"a", "closed"}, {"y", "copy"}, {"F", "fix"}},
+			{{"p", "prompt"}, {"c", "comment"}, {"m", "commit"}, {"a", "closed"}, {"y", "copy"}, {"F", "fix"}},
 			{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
 		},
 		"filter": {

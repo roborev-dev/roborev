@@ -2243,7 +2243,7 @@ func TestCombinedStatusColor(t *testing.T) {
 		{"done pass", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("P")}, passStyle},
 		{"done fail", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("F")}, failStyle},
 		{"done unexpected verdict", storage.ReviewJob{Status: storage.JobStatusDone, Verdict: strPtr("X")}, failStyle},
-		{"done nil verdict", storage.ReviewJob{Status: storage.JobStatusDone}, passStyle},
+		{"done nil verdict", storage.ReviewJob{Status: storage.JobStatusDone}, readyStyle},
 		{"unknown status", storage.ReviewJob{Status: "unknown"}, queuedStyle},
 	}
 
