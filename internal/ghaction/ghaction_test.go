@@ -486,8 +486,8 @@ func TestAgentEnvVar(t *testing.T) {
 		{"gemini", "GOOGLE_API_KEY"},
 		{"copilot", "GITHUB_TOKEN"},
 		{"opencode", "ANTHROPIC_API_KEY"},
-		{"kiro", "OPENAI_API_KEY"},
-		{"kilo", "OPENAI_API_KEY"},
+		{"kiro", "GITHUB_TOKEN"},
+		{"kilo", "ANTHROPIC_API_KEY"},
 		{"droid", "OPENAI_API_KEY"},
 	}
 	for _, tt := range tests {

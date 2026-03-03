@@ -92,8 +92,12 @@ func AgentEnvVar(agentName string) string {
 		return "GOOGLE_API_KEY"
 	case "copilot":
 		return "GITHUB_TOKEN"
+	case "kiro":
+		// kiro-cli is not CI-compatible yet; use GITHUB_TOKEN
+		// so envEntries skips it (same as copilot).
+		return "GITHUB_TOKEN"
 	case "kilo":
-		return "OPENAI_API_KEY"
+		return "ANTHROPIC_API_KEY"
 	default:
 		return "OPENAI_API_KEY"
 	}
@@ -262,8 +266,8 @@ var workflowTemplate = `# roborev CI Review
 #
 # Required setup:
 {{- range .EnvEntries }}
-{{- if eq .Name "opencode" }}
-#   - Add a repository secret named "{{ .SecretName }}" (default for opencode).
+{{- if or (eq .Name "opencode") (eq .Name "kilo") }}
+#   - Add a repository secret named "{{ .SecretName }}" (default for {{ .Name }}).
 #     If you use a different model provider, replace with the appropriate key
 #     (e.g., OPENAI_API_KEY, GOOGLE_API_KEY) and update the env block below.
 {{- else }}
