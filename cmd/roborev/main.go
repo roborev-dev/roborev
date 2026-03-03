@@ -15,7 +15,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "roborev",
 		Short: "Automatic code review for git commits",
-		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor)",
+		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro)",
 	}
 
 	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "http://127.0.0.1:7373", "daemon server address")
