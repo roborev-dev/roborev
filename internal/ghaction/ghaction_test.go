@@ -35,6 +35,14 @@ func TestValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "valid kiro agent",
+			cfg:  WorkflowConfig{Agents: []string{"kiro"}},
+		},
+		{
+			name: "valid kilo agent",
+			cfg:  WorkflowConfig{Agents: []string{"kilo"}},
+		},
+		{
 			name:    "invalid agent",
 			cfg:     WorkflowConfig{Agents: []string{"evil; rm -rf /"}},
 			wantErr: "invalid agent",
@@ -324,6 +332,14 @@ func TestAgentInstallCmd(t *testing.T) {
 			wantPkg: "not available in CI",
 		},
 		{
+			agent:   "kiro",
+			wantPkg: "kiro.dev",
+		},
+		{
+			agent:   "kilo",
+			wantPkg: "@kilocode/cli@latest",
+		},
+		{
 			agent:   "droid",
 			wantPkg: "droid-cli",
 		},
@@ -470,6 +486,8 @@ func TestAgentEnvVar(t *testing.T) {
 		{"gemini", "GOOGLE_API_KEY"},
 		{"copilot", "GITHUB_TOKEN"},
 		{"opencode", "ANTHROPIC_API_KEY"},
+		{"kiro", "OPENAI_API_KEY"},
+		{"kilo", "OPENAI_API_KEY"},
 		{"droid", "OPENAI_API_KEY"},
 	}
 	for _, tt := range tests {

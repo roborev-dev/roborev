@@ -17,7 +17,8 @@ import (
 var (
 	allowedAgents = []string{
 		"codex", "claude-code", "gemini",
-		"copilot", "opencode", "cursor", "droid",
+		"copilot", "opencode", "cursor",
+		"kiro", "kilo", "droid",
 	}
 	safeVersionRE = regexp.MustCompile(
 		`^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$`)
@@ -91,6 +92,8 @@ func AgentEnvVar(agentName string) string {
 		return "GOOGLE_API_KEY"
 	case "copilot":
 		return "GITHUB_TOKEN"
+	case "kilo":
+		return "OPENAI_API_KEY"
 	default:
 		return "OPENAI_API_KEY"
 	}
@@ -113,6 +116,10 @@ func AgentInstallCmd(agentName string) string {
 	case "cursor":
 		return "echo 'Cursor agent is not available in CI" +
 			" environments; choose a different agent'"
+	case "kiro":
+		return "echo 'Install kiro-cli: see https://kiro.dev/'"
+	case "kilo":
+		return "npm install -g @kilocode/cli@latest"
 	case "droid":
 		return "pip install droid-cli || echo 'Note: droid" +
 			" agent may require additional setup; see" +
