@@ -411,6 +411,34 @@ func TestKiroReviewStderrPreferredOverStdoutNoise(t *testing.T) {
 	}
 }
 
+func TestKiroReviewStderrFallbackNoMarker(t *testing.T) {
+	skipIfWindows(t)
+
+	// stdout has noise without a marker; stderr has plain
+	// review text also without a marker. stderr should still
+	// be preferred over stdout noise.
+	script := NewScriptBuilder().
+		AddRaw(`echo "Loading model..."`).
+		AddRaw(`echo "review text without marker" >&2`).
+		Build()
+	cmdPath := writeTempCommand(t, script)
+	a := NewKiroAgent(cmdPath)
+
+	result, err := a.Review(
+		context.Background(), t.TempDir(),
+		"deadbeef", "review", nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "review text without marker") {
+		t.Fatalf(
+			"expected stderr fallback even without marker, got: %q",
+			result,
+		)
+	}
+}
+
 func TestKiroReviewPromptTooLarge(t *testing.T) {
 	a := NewKiroAgent("kiro-cli")
 	bigPrompt := strings.Repeat("x", maxPromptArgLen+1)
