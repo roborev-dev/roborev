@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -511,7 +512,7 @@ func (m model) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "s":
 		m.savePatchInputActive = true
-		m.savePatchInput = fmt.Sprintf("/%s/roborev-%d.patch", os.TempDir(), m.patchJobID)
+		m.savePatchInput = filepath.Join(os.TempDir(), fmt.Sprintf("roborev-%d.patch", m.patchJobID))
 		return m, nil
 	case "up", "k":
 		if m.patchScroll > 0 {
