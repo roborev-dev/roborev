@@ -653,6 +653,16 @@ func (m model) handleClipboardResultMsg(
 	return m, nil
 }
 
+// handleSavePatchResultMsg processes save-patch-to-file results.
+func (m model) handleSavePatchResultMsg(msg savePatchResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.err = fmt.Errorf("save patch failed: %w", msg.err)
+	} else {
+		m.setFlash("Saved to "+msg.path, 3*time.Second, viewPatch)
+	}
+	return m, nil
+}
+
 // handleReconnectMsg processes daemon reconnection attempts.
 func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	m.reconnecting = false

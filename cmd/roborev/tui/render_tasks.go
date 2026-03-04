@@ -495,9 +495,23 @@ func (m model) renderPatchView() string {
 		}
 	}
 
-	b.WriteString(renderHelpTable([][]helpItem{
-		{{"j/k/↑/↓", "scroll"}, {"esc", "back to tasks"}},
-	}, m.width))
+	if m.savePatchInputActive {
+		label := "Save to: "
+		inputWidth := max(m.width-len(label)-2, 10)
+		display := m.savePatchInput
+		if len(display) > inputWidth {
+			display = display[len(display)-inputWidth:]
+		}
+		display = display + strings.Repeat(" ", max(inputWidth-len(display), 0))
+		b.WriteString(helpStyle.Render(label) + display + "\x1b[K\n")
+		b.WriteString(renderHelpTable([][]helpItem{
+			{{"enter", "save"}, {"esc", "cancel"}},
+		}, m.width))
+	} else {
+		b.WriteString(renderHelpTable([][]helpItem{
+			{{"j/k/↑/↓", "scroll"}, {"s", "save"}, {"esc", "back to tasks"}},
+		}, m.width))
+	}
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }

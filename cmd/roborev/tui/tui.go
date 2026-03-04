@@ -369,14 +369,16 @@ type model struct {
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)
 
 	// Fix task state
-	fixJobs        []storage.ReviewJob // Fix jobs for tasks view
-	fixSelectedIdx int                 // Selected index in tasks view
-	fixPromptText  string              // Editable fix prompt text
-	fixPromptJobID int64               // Parent job ID for fix prompt modal
-	fixShowHelp    bool                // Show help overlay in tasks view
-	patchText      string              // Current patch text for patch viewer
-	patchScroll    int                 // Scroll offset in patch viewer
-	patchJobID     int64               // Job ID of the patch being viewed
+	fixJobs              []storage.ReviewJob // Fix jobs for tasks view
+	fixSelectedIdx       int                 // Selected index in tasks view
+	fixPromptText        string              // Editable fix prompt text
+	fixPromptJobID       int64               // Parent job ID for fix prompt modal
+	fixShowHelp          bool                // Show help overlay in tasks view
+	patchText            string              // Current patch text for patch viewer
+	patchScroll          int                 // Scroll offset in patch viewer
+	patchJobID           int64               // Job ID of the patch being viewed
+	savePatchInputActive bool                // Whether the save-filename input is visible
+	savePatchInput       string              // Current text in the save-filename input
 
 	// Inline fix panel (review view)
 	reviewFixPanelOpen    bool // true when fix panel is visible in review view
@@ -691,6 +693,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handlePatchResultMsg(msg)
 	case applyPatchResultMsg:
 		result, cmd = m.handleApplyPatchResultMsg(msg)
+	case savePatchResultMsg:
+		result, cmd = m.handleSavePatchResultMsg(msg)
 	case configSaveErrMsg:
 		m.colOptionsDirty = true
 		m.setFlash(

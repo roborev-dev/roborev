@@ -230,6 +230,11 @@ type patchMsg struct {
 	err   error
 }
 
+type savePatchResultMsg struct {
+	path string
+	err  error
+}
+
 // ClipboardWriter is an interface for clipboard operations (allows mocking in tests)
 type ClipboardWriter interface {
 	WriteText(text string) error
