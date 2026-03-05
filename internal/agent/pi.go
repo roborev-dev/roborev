@@ -128,7 +128,9 @@ func (a *PiAgent) Review(
 		tmpFile.Close()
 		return "", fmt.Errorf("write prompt to temp file: %w", err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		return "", fmt.Errorf("close temp prompt file: %w", err)
+	}
 
 	args := []string{"-p"} // Print response and exit
 	if a.Provider != "" {

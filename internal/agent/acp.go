@@ -1516,37 +1516,64 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config) (Agent, error)
 		if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
 			return acpAgent, nil
 		}
+		// ACP requested with an invalid configured command. Try canonical ACP next.
+		if canonicalACP, err := Get(defaultACPName); err == nil {
+			if commandAgent, ok := canonicalACP.(CommandAgent); !ok {
+				return canonicalACP, nil
+			} else if _, err := exec.LookPath(commandAgent.CommandName()); err == nil {
+				return canonicalACP, nil
+			}
+		}
+
+		// Finally fall back to normal auto-selection.
+		return GetAvailable("")
 	}
 
-	// Resolve the agent first
-	a, err := GetAvailable(preferred)
+	resolved, err := GetAvailable(preferred)
 	if err != nil {
 		return nil, err
 	}
+	if resolved.Name() == defaultACPName {
+		configured := configuredACPAgent(cfg)
+		if _, err := exec.LookPath(configured.CommandName()); err == nil {
+			return configured, nil
+		}
+		return resolved, nil
+	}
 
-	// Apply command overrides from config
+	// Apply command overrides from config.
+	// Clone agent instances before mutating to avoid contaminating the
+	// global registry — concurrent callers share those singletons.
 	if cfg != nil {
-		switch agent := a.(type) {
+		switch agent := resolved.(type) {
 		case *CodexAgent:
 			if cfg.CodexCmd != "" {
-				agent.Command = cfg.CodexCmd
+				clone := *agent
+				clone.Command = cfg.CodexCmd
+				resolved = &clone
 			}
 		case *ClaudeAgent:
 			if cfg.ClaudeCodeCmd != "" {
-				agent.Command = cfg.ClaudeCodeCmd
+				clone := *agent
+				clone.Command = cfg.ClaudeCodeCmd
+				resolved = &clone
 			}
 		case *CursorAgent:
 			if cfg.CursorCmd != "" {
-				agent.Command = cfg.CursorCmd
+				clone := *agent
+				clone.Command = cfg.CursorCmd
+				resolved = &clone
 			}
 		case *PiAgent:
 			if cfg.PiCmd != "" {
-				agent.Command = cfg.PiCmd
+				clone := *agent
+				clone.Command = cfg.PiCmd
+				resolved = &clone
 			}
 		}
 	}
 
-	return a, nil
+	return resolved, nil
 }
 
 func applyACPAgentConfigOverride(cfg *config.ACPAgentConfig, override *config.ACPAgentConfig) {
