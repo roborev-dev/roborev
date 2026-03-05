@@ -105,6 +105,20 @@ func SetAnthropicAPIKey(key string) {
 	anthropicAPIKey.Store(key)
 }
 
+// UnknownAgentError is returned when a requested agent name is not
+// in the registry and is not a recognized alias.
+type UnknownAgentError struct {
+	Name  string
+	Known []string
+}
+
+func (e *UnknownAgentError) Error() string {
+	return fmt.Errorf(
+		"unknown agent %q (known: %s)",
+		e.Name, strings.Join(e.Known, ", "),
+	).Error()
+}
+
 // aliases maps short names to full agent names
 var aliases = map[string]string{
 	"claude": "claude-code",
@@ -181,10 +195,10 @@ func GetAvailable(preferred string) (Agent, error) {
 		if _, ok := registry[preferred]; !ok {
 			known := Available()
 			sort.Strings(known)
-			return nil, fmt.Errorf(
-				"unknown agent %q (known: %s)",
-				preferred, strings.Join(known, ", "),
-			)
+			return nil, &UnknownAgentError{
+				Name:  preferred,
+				Known: known,
+			}
 		}
 	}
 

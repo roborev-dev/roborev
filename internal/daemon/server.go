@@ -606,9 +606,14 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve to an installed agent: if the configured agent isn't available,
 	// fall back through the chain (codex -> claude-code -> gemini -> ...).
-	// Fail fast with 503 if nothing is installed at all.
+	// Unknown agent names (typos) return 400; no agents at all returns 503.
 	if resolved, err := agent.GetAvailableWithConfig(agentName, cfg); err != nil {
-		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("no review agent available: %v", err))
+		var unknownErr *agent.UnknownAgentError
+		if errors.As(err, &unknownErr) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid agent: %v", err))
+		} else {
+			writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("no review agent available: %v", err))
+		}
 		return
 	} else {
 		agentName = resolved.Name()
@@ -1972,7 +1977,12 @@ func (s *Server) handleFixJob(w http.ResponseWriter, r *http.Request) {
 	reasoning := "standard"
 	agentName := config.ResolveAgentForWorkflow("", parentJob.RepoPath, cfg, "fix", reasoning)
 	if resolved, err := agent.GetAvailableWithConfig(agentName, cfg); err != nil {
-		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("no agent available: %v", err))
+		var unknownErr *agent.UnknownAgentError
+		if errors.As(err, &unknownErr) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid agent: %v", err))
+		} else {
+			writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("no agent available: %v", err))
+		}
 		return
 	} else {
 		agentName = resolved.Name()

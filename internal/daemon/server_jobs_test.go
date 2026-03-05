@@ -969,6 +969,12 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			mockBinaries: nil,
 			expectedCode: http.StatusServiceUnavailable,
 		},
+		{
+			name:         "unknown agent returns 400",
+			requestAgent: "typo-agent",
+			mockBinaries: nil,
+			expectedCode: http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {
