@@ -1379,7 +1379,11 @@ func WithExcludeJobType(jobType string) ListJobsOption {
 
 // WithRepoPrefix filters jobs to repos whose root_path starts with the given prefix.
 func WithRepoPrefix(prefix string) ListJobsOption {
-	return func(o *listJobsOptions) { o.repoPrefix = escapeLike(prefix) }
+	return func(o *listJobsOptions) {
+		// Trim trailing slash so LIKE "prefix/%"  doesn't become "prefix//%".
+		// Root prefix "/" trims to "" which disables the filter (all repos match).
+		o.repoPrefix = escapeLike(strings.TrimRight(prefix, "/"))
+	}
 }
 
 // escapeLike escapes SQL LIKE wildcards (% and _) in a literal string.

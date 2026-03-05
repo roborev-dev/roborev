@@ -1431,5 +1431,13 @@ func TestHandleListJobsSlashNormalization(t *testing.T) {
 				len(resp.Jobs),
 			)
 		}
+		for _, j := range resp.Jobs {
+			if !strings.HasPrefix(j.RepoPath, ws+"/") {
+				t.Errorf(
+					"Job %d repo_path %q should be under %s",
+					j.ID, j.RepoPath, ws,
+				)
+			}
+		}
 	})
 }

@@ -278,9 +278,13 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 	seedRepoWithJobs(t, db, ws+"/repo-y", 1, "ry")
 	seedRepoWithJobs(t, db, tmpDir+"/other-z", 1, "rz")
 
+	type repoEntry struct {
+		Name     string `json:"name"`
+		RootPath string `json:"root_path"`
+	}
 	type reposResponse struct {
-		Repos      []struct{ Name string } `json:"repos"`
-		TotalCount int                     `json:"total_count"`
+		Repos      []repoEntry `json:"repos"`
+		TotalCount int         `json:"total_count"`
 	}
 
 	t.Run("forward-slash prefix matches stored paths", func(t *testing.T) {
@@ -300,6 +304,16 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 		}
 		if response.TotalCount != 3 {
 			t.Errorf("Expected total_count 3, got %d", response.TotalCount)
+		}
+		names := make(map[string]bool)
+		for _, r := range response.Repos {
+			names[r.Name] = true
+		}
+		if !names["repo-x"] || !names["repo-y"] {
+			t.Errorf("Expected repo-x and repo-y, got %v", response.Repos)
+		}
+		if names["other-z"] {
+			t.Error("other-z should not be in prefix-filtered results")
 		}
 	})
 }

@@ -13,11 +13,13 @@ import (
 // GetOrCreateRepo finds or creates a repo by its root path.
 // If identity is provided, it will be stored; otherwise the identity field remains NULL.
 func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error) {
-	// Normalize path
+	// Normalize path to forward slashes for consistent storage
+	// across platforms (LIKE queries use '/' as separator).
 	absPath, err := filepath.Abs(rootPath)
 	if err != nil {
 		return nil, err
 	}
+	absPath = filepath.ToSlash(absPath)
 
 	// Extract optional identity
 	var repoIdentity string
@@ -92,6 +94,7 @@ func (db *DB) GetRepoByPath(rootPath string) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
+	absPath = filepath.ToSlash(absPath)
 
 	var repo Repo
 	var createdAt string
@@ -121,7 +124,9 @@ type listReposOptions struct {
 
 // WithRepoPathPrefix filters repos whose root_path starts with the given prefix.
 func WithRepoPathPrefix(prefix string) ListReposOption {
-	return func(o *listReposOptions) { o.prefix = prefix }
+	return func(o *listReposOptions) {
+		o.prefix = strings.TrimRight(prefix, "/")
+	}
 }
 
 // WithRepoBranch filters repos to those having jobs on the given branch.

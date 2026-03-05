@@ -1065,6 +1065,47 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 	})
 }
 
+func TestRootPrefixMatchesAllRepos(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	createRepo(t, db, "/a/repo1")
+	createRepo(t, db, "/b/repo2")
+
+	r1, _ := db.GetRepoByPath("/a/repo1")
+	c1 := createCommit(t, db, r1.ID, "r1")
+	enqueueJob(t, db, r1.ID, c1.ID, "r1")
+
+	r2, _ := db.GetRepoByPath("/b/repo2")
+	c2 := createCommit(t, db, r2.ID, "r2")
+	enqueueJob(t, db, r2.ID, c2.ID, "r2")
+
+	t.Run("root prefix returns all repos via ListJobs", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithRepoPrefix("/"))
+		if err != nil {
+			t.Fatalf("ListJobs failed: %v", err)
+		}
+		if len(jobs) != 2 {
+			t.Errorf("Expected 2 jobs with root prefix, got %d", len(jobs))
+		}
+	})
+
+	t.Run("root prefix returns all repos via ListReposWithReviewCounts", func(t *testing.T) {
+		repos, total, err := db.ListReposWithReviewCounts(
+			WithRepoPathPrefix("/"),
+		)
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
+		}
+		if len(repos) != 2 {
+			t.Errorf("Expected 2 repos with root prefix, got %d", len(repos))
+		}
+		if total != 2 {
+			t.Errorf("Expected total 2, got %d", total)
+		}
+	})
+}
+
 func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
