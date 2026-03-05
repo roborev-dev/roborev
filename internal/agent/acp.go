@@ -1485,6 +1485,10 @@ func isConfiguredACPAgentName(name string, cfg *config.Config) bool {
 		return false
 	}
 
+	// Exact match only — no alias resolution. This prevents collisions
+	// where an alias like "agent" → "cursor" would incorrectly route
+	// cursor requests to ACP. Callers pass rawPreferred (pre-alias) so
+	// `acp.name = "claude"` matches request "claude" but not "claude-code".
 	return rawName == configuredName
 }
 

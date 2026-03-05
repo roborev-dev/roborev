@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -400,19 +401,31 @@ func TestGetAvailableRejectsUnknownAgent(t *testing.T) {
 }
 
 func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
-	// "codex" is a registered agent but its binary is typically not
-	// installed in the test environment. GetAvailable should fall back
-	// to another available agent instead of returning an "unknown agent"
-	// error.
+	// Isolate registry: "codex" has a missing binary, "claude-code"
+	// has its binary on PATH. Request "codex" and verify fallback
+	// returns "claude-code" without an "unknown agent" error.
+	fakeBin := t.TempDir()
+	claudeBin := filepath.Join(fakeBin, "claude")
+	if err := os.WriteFile(claudeBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create fake claude binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
 	resolved, err := GetAvailable("codex")
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown agent") {
-			t.Fatalf("Known agent 'codex' should not produce unknown agent error: %v", err)
+			t.Fatalf("Known agent should not produce unknown agent error: %v", err)
 		}
-		// "no agents available" is acceptable in a minimal test env
-		return
+		t.Fatalf("Expected fallback, got error: %v", err)
 	}
-	if resolved == nil {
-		t.Fatal("Expected a non-nil agent")
+	if resolved.Name() != "claude-code" {
+		t.Fatalf("Expected fallback to 'claude-code', got %q", resolved.Name())
 	}
 }

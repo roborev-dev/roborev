@@ -1157,3 +1157,37 @@ func TestGetAvailableWithConfigUnknownAgentErrors(t *testing.T) {
 		t.Fatalf("Expected 'unknown agent' error, got: %v", err)
 	}
 }
+
+func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
+	// acp.name = "claude" should match request "claude" but NOT "claude-code".
+	// Requesting the canonical name should go to the real agent, not ACP.
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	claudePath := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create fake claude binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	cfg := &config.Config{
+		ACP: &config.ACPAgentConfig{
+			Name:    "claude",
+			Command: defaultACPCommand,
+		},
+	}
+
+	resolved, err := GetAvailableWithConfig("claude-code", cfg)
+	if err != nil {
+		t.Fatalf("GetAvailableWithConfig failed: %v", err)
+	}
+
+	if resolved.Name() == "acp" {
+		t.Fatalf("Request for 'claude-code' should not route to ACP when acp.name='claude'")
+	}
+	if resolved.Name() != "claude-code" {
+		t.Fatalf("Expected claude-code agent, got %q", resolved.Name())
+	}
+}
