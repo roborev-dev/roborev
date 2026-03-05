@@ -299,7 +299,7 @@ func (m model) renderQueueView() string {
 		fixedWidth := map[int]int{
 			colSel:     2,
 			colJobID:   idWidth,
-			colStatus:  8, // fits "Canceled" (8), "Running" (7), etc.
+			colStatus:  max(contentWidth[colStatus], 6), // "Status" header = 6, auto-sizes to content
 			colQueued:  12,
 			colElapsed: 8,
 			colPF:      3,                                       // "P/F" header = 3
