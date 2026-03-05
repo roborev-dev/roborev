@@ -97,7 +97,8 @@ const (
 	colAgent          // Agent name
 	colQueued         // Enqueue timestamp
 	colElapsed        // Elapsed time
-	colStatus         // Job status (combined with verdict)
+	colStatus         // Job status
+	colPF             // Pass/Fail verdict
 	colHandled        // Done status
 	colCount          // total number of columns
 )
@@ -248,7 +249,7 @@ func (m model) renderQueueView() string {
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
-		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "Closed"}
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed"}
 		allFullRows := make([][]string, len(visibleJobList))
 		for i, job := range visibleJobList {
 			cells := m.jobCells(job)
@@ -301,6 +302,7 @@ func (m model) renderQueueView() string {
 			colStatus:  8, // fits "Canceled" (8), "Running" (7), etc.
 			colQueued:  12,
 			colElapsed: 8,
+			colPF:      3,                                       // "P/F" header = 3
 			colHandled: max(contentWidth[colHandled], 6),        // "Closed" header = 6
 			colAgent:   min(max(contentWidth[colAgent], 5), 12), // "Agent" header = 5, cap at 12
 		}
@@ -491,7 +493,28 @@ func (m model) renderQueueView() string {
 					job := windowJobs[row]
 					switch logicalCol {
 					case colStatus:
-						s = s.Foreground(combinedStatusColor(job))
+						switch job.Status {
+						case storage.JobStatusQueued:
+							s = s.Foreground(queuedStyle.GetForeground())
+						case storage.JobStatusRunning:
+							s = s.Foreground(runningStyle.GetForeground())
+						case storage.JobStatusDone,
+							storage.JobStatusApplied,
+							storage.JobStatusRebased:
+							s = s.Foreground(doneStyle.GetForeground())
+						case storage.JobStatusFailed:
+							s = s.Foreground(failedStyle.GetForeground())
+						case storage.JobStatusCanceled:
+							s = s.Foreground(canceledStyle.GetForeground())
+						}
+					case colPF:
+						if job.Verdict != nil {
+							if *job.Verdict == "P" {
+								s = s.Foreground(passStyle.GetForeground())
+							} else {
+								s = s.Foreground(failStyle.GetForeground())
+							}
+						}
 					case colHandled:
 						if job.Closed != nil {
 							if *job.Closed {
@@ -575,8 +598,8 @@ func (m model) renderQueueView() string {
 }
 
 // jobCells returns plain text cell values for a job row.
-// Order: ref, branch, repo, agent, status, queued, elapsed, handled
-// (colRef through colHandled, 8 values).
+// Order: ref, branch, repo, agent, queued, elapsed, status, pf, handled
+// (colRef through colHandled, 9 values).
 func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
 	if !config.IsDefaultReviewType(job.ReviewType) {
@@ -606,7 +629,12 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		}
 	}
 
-	status := combinedStatus(job)
+	status := statusLabel(job)
+
+	verdict := "-"
+	if job.Verdict != nil {
+		verdict = *job.Verdict
+	}
 
 	handled := ""
 	if job.Closed != nil {
@@ -617,13 +645,11 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 		}
 	}
 
-	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, handled}
+	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled}
 }
 
-// combinedStatus returns a display string that merges job status
-// with verdict: Queued, Running, Error, Canceled, Pass, Fail, or
-// Done (for task/fix jobs that have no verdict).
-func combinedStatus(job storage.ReviewJob) string {
+// statusLabel returns a capitalized display label for the job status.
+func statusLabel(job storage.ReviewJob) string {
 	switch job.Status {
 	case storage.JobStatusQueued:
 		return "Queued"
@@ -635,43 +661,9 @@ func combinedStatus(job storage.ReviewJob) string {
 		return "Canceled"
 	case storage.JobStatusDone, storage.JobStatusApplied,
 		storage.JobStatusRebased:
-		if job.Verdict != nil {
-			if *job.Verdict == "P" {
-				return "Pass"
-			}
-			return "Fail"
-		}
 		return "Done"
 	default:
 		return string(job.Status)
-	}
-}
-
-// combinedStatusColor returns the foreground color for the
-// combined status column based on job state and verdict.
-func combinedStatusColor(
-	job storage.ReviewJob,
-) lipgloss.TerminalColor {
-	switch job.Status {
-	case storage.JobStatusQueued:
-		return queuedStyle.GetForeground()
-	case storage.JobStatusRunning:
-		return runningStyle.GetForeground()
-	case storage.JobStatusFailed:
-		return failedStyle.GetForeground()
-	case storage.JobStatusCanceled:
-		return canceledStyle.GetForeground()
-	case storage.JobStatusDone, storage.JobStatusApplied,
-		storage.JobStatusRebased:
-		if job.Verdict == nil {
-			return readyStyle.GetForeground()
-		}
-		if *job.Verdict != "P" {
-			return failStyle.GetForeground()
-		}
-		return passStyle.GetForeground()
-	default:
-		return queuedStyle.GetForeground()
 	}
 }
 
@@ -722,21 +714,28 @@ func migrateColumnConfig(cfg *config.Config) bool {
 		cfg.HiddenColumns = nil
 		dirty = true
 	}
-	// Old default order (status before queued) → reset
-	oldDefault := []string{
-		"ref", "branch", "repo", "agent",
-		"status", "queued", "elapsed", "closed",
+	// Old default orders → reset
+	oldDefaults := [][]string{
+		// status before queued (pre-rename)
+		{"ref", "branch", "repo", "agent",
+			"status", "queued", "elapsed", "closed"},
+		// combined status without pf column
+		{"ref", "branch", "repo", "agent",
+			"queued", "elapsed", "status", "closed"},
 	}
-	if slices.Equal(cfg.ColumnOrder, oldDefault) {
-		cfg.ColumnOrder = nil
-		dirty = true
+	for _, old := range oldDefaults {
+		if slices.Equal(cfg.ColumnOrder, old) {
+			cfg.ColumnOrder = nil
+			dirty = true
+			break
+		}
 	}
 	return dirty
 }
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colHandled}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
@@ -747,6 +746,7 @@ var columnNames = map[int]string{
 	colStatus:  "Status",
 	colQueued:  "Queued",
 	colElapsed: "Elapsed",
+	colPF:      "P/F",
 	colHandled: "Closed",
 }
 
@@ -759,6 +759,7 @@ var columnConfigNames = map[int]string{
 	colStatus:  "status",
 	colQueued:  "queued",
 	colElapsed: "elapsed",
+	colPF:      "pf",
 	colHandled: "closed",
 }
 
