@@ -739,6 +739,7 @@ type EnqueueOpts struct {
 	Branch       string
 	Agent        string
 	Model        string
+	Provider     string // e.g. "anthropic", "openai"
 	Reasoning    string
 	ReviewType   string // e.g. "security" — changes which system prompt is used
 	PatchID      string // Stable patch-id for rebase tracking
@@ -808,12 +809,12 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	}
 
 	result, err := db.Exec(`
-		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, reasoning,
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, agent, model, provider, reasoning,
 			status, job_type, review_type, patch_id, diff_content, prompt, agentic, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch),
-		opts.Agent, nullString(opts.Model), reasoning,
+		opts.Agent, nullString(opts.Model), nullString(opts.Provider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
 		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt,
 		nullString(opts.OutputPrefix), parentJobIDParam,
@@ -830,6 +831,7 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 		Branch:          opts.Branch,
 		Agent:           opts.Agent,
 		Model:           opts.Model,
+		Provider:        opts.Provider,
 		Reasoning:       reasoning,
 		JobType:         jobType,
 		ReviewType:      opts.ReviewType,
@@ -892,7 +894,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var commitSubject sql.NullString
 	var diffContent sql.NullString
 	var prompt sql.NullString
-	var model, branch sql.NullString
+	var model, provider, branch sql.NullString
 	var agenticInt int
 	var jobType sql.NullString
 	var reviewType sql.NullString
@@ -900,7 +902,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var patchID sql.NullString
 	var parentJobID sql.NullInt64
 	err = db.QueryRow(`
-		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.model, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.model, j.provider, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), j.job_type, j.review_type,
 		       j.output_prefix, j.patch_id, j.parent_job_id
 		FROM review_jobs j
@@ -909,7 +911,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		WHERE j.worker_id = ? AND j.status = 'running'
 		ORDER BY j.started_at DESC
 		LIMIT 1
-	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &job.Agent, &model, &job.Reasoning, &job.Status, &enqueuedAt,
+	`, workerID).Scan(&job.ID, &job.RepoID, &commitID, &job.GitRef, &branch, &job.Agent, &model, &provider, &job.Reasoning, &job.Status, &enqueuedAt,
 		&job.RepoPath, &job.RepoName, &commitSubject, &diffContent, &prompt, &agenticInt, &jobType, &reviewType,
 		&outputPrefix, &patchID, &parentJobID)
 	if err != nil {
@@ -930,6 +932,9 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	}
 	if model.Valid {
 		job.Model = model.String
+	}
+	if provider.Valid {
+		job.Provider = provider.String
 	}
 	if branch.Valid {
 		job.Branch = branch.String

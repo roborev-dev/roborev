@@ -402,6 +402,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a := baseAgent.WithReasoning(reasoningLevel).WithAgentic(job.Agentic).WithModel(job.Model)
 
+	// Apply provider if set and agent supports it (e.g. pi agent)
+	if job.Provider != "" {
+		if pa, ok := a.(*agent.PiAgent); ok {
+			a = pa.WithProvider(job.Provider)
+		}
+	}
+
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()
 	if agentName != job.Agent {

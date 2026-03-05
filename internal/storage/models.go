@@ -53,6 +53,7 @@ type ReviewJob struct {
 	Branch       string     `json:"branch,omitempty"`    // Branch name at time of job creation
 	Agent        string     `json:"agent"`
 	Model        string     `json:"model,omitempty"`     // Model to use (for opencode: provider/model format)
+	Provider     string     `json:"provider,omitempty"`  // Provider to use (e.g., anthropic, openai)
 	Reasoning    string     `json:"reasoning,omitempty"` // thorough, standard, fast (default: thorough)
 	JobType      string     `json:"job_type"`            // review, range, dirty, task
 	Status       JobStatus  `json:"status"`

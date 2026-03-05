@@ -1506,6 +1506,7 @@ func configuredACPAgent(cfg *config.Config) *ACPAgent {
 // GetAvailableWithConfig resolves an available agent while honoring runtime ACP config.
 // It treats cfg.ACP.Name as an alias for "acp" and applies cfg.ACP command/mode/model
 // at resolution time instead of package-init time.
+// It also applies command overrides for other agents (codex, claude, cursor, pi).
 func GetAvailableWithConfig(preferred string, cfg *config.Config) (Agent, error) {
 	rawPreferred := strings.TrimSpace(preferred)
 	preferred = resolveAlias(rawPreferred)
@@ -1515,31 +1516,37 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config) (Agent, error)
 		if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
 			return acpAgent, nil
 		}
-		// ACP requested with an invalid configured command. Try canonical ACP next.
-		if canonicalACP, err := Get(defaultACPName); err == nil {
-			if commandAgent, ok := canonicalACP.(CommandAgent); !ok {
-				return canonicalACP, nil
-			} else if _, err := exec.LookPath(commandAgent.CommandName()); err == nil {
-				return canonicalACP, nil
-			}
-		}
-
-		// Finally fall back to normal auto-selection.
-		return GetAvailable("")
 	}
 
-	resolved, err := GetAvailable(preferred)
+	// Resolve the agent first
+	a, err := GetAvailable(preferred)
 	if err != nil {
 		return nil, err
 	}
-	if resolved.Name() == defaultACPName {
-		configured := configuredACPAgent(cfg)
-		if _, err := exec.LookPath(configured.CommandName()); err == nil {
-			return configured, nil
+
+	// Apply command overrides from config
+	if cfg != nil {
+		switch agent := a.(type) {
+		case *CodexAgent:
+			if cfg.CodexCmd != "" {
+				agent.Command = cfg.CodexCmd
+			}
+		case *ClaudeAgent:
+			if cfg.ClaudeCodeCmd != "" {
+				agent.Command = cfg.ClaudeCodeCmd
+			}
+		case *CursorAgent:
+			if cfg.CursorCmd != "" {
+				agent.Command = cfg.CursorCmd
+			}
+		case *PiAgent:
+			if cfg.PiCmd != "" {
+				agent.Command = cfg.PiCmd
+			}
 		}
-		return resolved, nil
 	}
-	return resolved, nil
+
+	return a, nil
 }
 
 func applyACPAgentConfigOverride(cfg *config.ACPAgentConfig, override *config.ACPAgentConfig) {

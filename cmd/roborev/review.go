@@ -39,6 +39,7 @@ func reviewCmd() *cobra.Command {
 		baseBranch string
 		since      string
 		local      bool
+		provider   string
 	)
 
 	cmd := &cobra.Command{
@@ -264,7 +265,7 @@ Examples:
 
 			// Handle --local mode: run agent directly without daemon
 			if local {
-				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, reasoning, reviewType, quiet)
+				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, provider, reasoning, reviewType, quiet)
 			}
 
 			// Build request body
@@ -274,6 +275,7 @@ Examples:
 				Branch:      branchName,
 				Agent:       agent,
 				Model:       model,
+				Provider:    provider,
 				Reasoning:   reasoning,
 				ReviewType:  reviewType,
 				DiffContent: diffContent,
@@ -336,7 +338,7 @@ Examples:
 
 	cmd.Flags().StringVar(&repoPath, "repo", "", "path to git repository (default: current directory)")
 	cmd.Flags().StringVar(&sha, "sha", "HEAD", "commit SHA to review (used when no positional args)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo)")
+	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, pi)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: thorough (default), standard, or fast")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
@@ -349,6 +351,7 @@ Examples:
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
 	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
 	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design) — changes system prompt")
+	cmd.Flags().StringVar(&provider, "provider", "", "provider for pi agent (e.g. anthropic, openai)")
 	registerAgentCompletion(cmd)
 	registerReasoningCompletion(cmd)
 
@@ -356,7 +359,7 @@ Examples:
 }
 
 // runLocalReview runs a review directly without the daemon
-func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, reasoning, reviewType string, quiet bool) error {
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, provider, reasoning, reviewType string, quiet bool) error {
 	// Load config
 	cfg, err := config.LoadGlobal()
 	if err != nil {
@@ -390,6 +393,13 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	// Configure agent with model and reasoning
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 	a = a.WithReasoning(reasoningLevel).WithModel(model)
+
+	// Configure provider for pi agent
+	if provider != "" {
+		if pa, ok := a.(*agent.PiAgent); ok {
+			a = pa.WithProvider(provider)
+		}
+	}
 
 	// Use consistent output writer, respecting --quiet
 	var out = cmd.OutOrStdout()

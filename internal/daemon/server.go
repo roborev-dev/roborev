@@ -460,6 +460,7 @@ type EnqueueRequest struct {
 	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
 	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/compact)
+	Provider     string `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
 }
 
 type ErrorResponse struct {
@@ -657,6 +658,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			Agentic:      req.Agentic,
 			Label:        gitRef, // Use git_ref as TUI label (run, analyze type, custom)
 			JobType:      req.JobType,
+			Provider:     req.Provider,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue prompt job: %v", err))
@@ -673,6 +675,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			Reasoning:   reasoning,
 			ReviewType:  req.ReviewType,
 			DiffContent: req.DiffContent,
+			Provider:    req.Provider,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue dirty job: %v", err))
@@ -715,6 +718,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			Model:      model,
 			Reasoning:  reasoning,
 			ReviewType: req.ReviewType,
+			Provider:   req.Provider,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))
@@ -754,6 +758,7 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 			Reasoning:  reasoning,
 			ReviewType: req.ReviewType,
 			PatchID:    patchID,
+			Provider:   req.Provider,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("enqueue job: %v", err))

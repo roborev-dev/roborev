@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   diff_content TEXT,
   output_prefix TEXT,
   job_type TEXT NOT NULL DEFAULT 'review',
-  review_type TEXT NOT NULL DEFAULT ''
+  review_type TEXT NOT NULL DEFAULT '',
+  provider TEXT
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -660,6 +661,18 @@ func (db *DB) migrate() error {
 		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reviews_verdict_bool ON reviews(verdict_bool)`)
 		if err != nil {
 			return fmt.Errorf("create idx_reviews_verdict_bool: %w", err)
+		}
+	}
+
+	// Migration: add provider column to review_jobs if missing
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'provider'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check provider column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN provider TEXT`)
+		if err != nil {
+			return fmt.Errorf("add provider column: %w", err)
 		}
 	}
 
