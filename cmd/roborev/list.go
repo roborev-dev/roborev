@@ -91,7 +91,7 @@ Examples:
 			} else if repoPath != "" {
 				params.Set("repo", repoPath)
 			}
-			if branch != "" && repoPrefix == "" {
+			if branch != "" && (repoPrefix == "" || cmd.Flags().Changed("branch")) {
 				params.Set("branch", branch)
 				params.Set("branch_include_empty", "true")
 			}
