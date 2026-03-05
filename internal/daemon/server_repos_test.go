@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -150,6 +151,50 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 		testutil.DecodeJSON(t, w, &response)
 		if response.TotalCount != 0 {
 			t.Errorf("Expected total_count 0 for nonexistent branch, got %d", response.TotalCount)
+		}
+	})
+}
+
+func TestHandleListReposWithPrefixFilter(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	// Create repos under a "workspace" parent and one outside it
+	workspace := filepath.Join(tmpDir, "workspace")
+	seedRepoWithJobs(t, db, filepath.Join(workspace, "repo1"), 3, "repo1")
+	seedRepoWithJobs(t, db, filepath.Join(workspace, "repo2"), 2, "repo2")
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "other-repo"), 1, "other")
+
+	type reposResponse struct {
+		Repos      []struct{ Name string } `json:"repos"`
+		TotalCount int                     `json:"total_count"`
+	}
+
+	t.Run("prefix returns only child repos", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/repos?prefix="+url.QueryEscape(workspace), nil)
+		w := httptest.NewRecorder()
+		server.handleListRepos(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response reposResponse
+		testutil.DecodeJSON(t, w, &response)
+		if len(response.Repos) != 2 {
+			t.Errorf("Expected 2 repos under workspace, got %d", len(response.Repos))
+		}
+		if response.TotalCount != 5 {
+			t.Errorf("Expected total_count 5, got %d", response.TotalCount)
+		}
+	})
+
+	t.Run("prefix excludes non-matching repos", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/repos?prefix="+url.QueryEscape(filepath.Join(tmpDir, "nonexistent")), nil)
+		w := httptest.NewRecorder()
+		server.handleListRepos(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response reposResponse
+		testutil.DecodeJSON(t, w, &response)
+		if len(response.Repos) != 0 {
+			t.Errorf("Expected 0 repos for nonexistent prefix, got %d", len(response.Repos))
 		}
 	})
 }

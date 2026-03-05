@@ -139,6 +139,35 @@ func (db *DB) ListReposWithReviewCounts() ([]RepoWithCount, int, error) {
 	return repos, totalCount, rows.Err()
 }
 
+// ListReposWithReviewCountsByPrefix returns repos whose root_path starts with the given prefix, with their job counts
+func (db *DB) ListReposWithReviewCountsByPrefix(prefix string) ([]RepoWithCount, int, error) {
+	escaped := escapeLike(prefix)
+	rows, err := db.Query(`
+		SELECT r.name, r.root_path, COUNT(rj.id) as job_count
+		FROM repos r
+		LEFT JOIN review_jobs rj ON rj.repo_id = r.id
+		WHERE r.root_path LIKE ? || '/%' ESCAPE '\'
+		GROUP BY r.id, r.name, r.root_path
+		ORDER BY r.name
+	`, escaped)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var repos []RepoWithCount
+	totalCount := 0
+	for rows.Next() {
+		var rc RepoWithCount
+		if err := rows.Scan(&rc.Name, &rc.RootPath, &rc.Count); err != nil {
+			return nil, 0, err
+		}
+		repos = append(repos, rc)
+		totalCount += rc.Count
+	}
+	return repos, totalCount, rows.Err()
+}
+
 // ListReposWithReviewCountsByBranch returns repos filtered by branch with their job counts
 // If branch is empty, returns all repos. Use "(none)" to filter for jobs without a branch.
 func (db *DB) ListReposWithReviewCountsByBranch(branch string) ([]RepoWithCount, int, error) {

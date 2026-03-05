@@ -815,6 +815,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	repo := r.URL.Query().Get("repo")
 	gitRef := r.URL.Query().Get("git_ref")
+	repoPrefix := r.URL.Query().Get("repo_prefix")
 
 	// Parse limit from query, default to 50, 0 means no limit
 	// Clamp to valid range: 0 (unlimited) or 1-10000
@@ -870,6 +871,9 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if exJobType := r.URL.Query().Get("exclude_job_type"); exJobType != "" {
 		listOpts = append(listOpts, storage.WithExcludeJobType(exJobType))
 	}
+	if repoPrefix != "" && repo == "" {
+		listOpts = append(listOpts, storage.WithRepoPrefix(repoPrefix))
+	}
 
 	jobs, err := s.db.ListJobs(status, repo, fetchLimit, offset, listOpts...)
 	if err != nil {
@@ -892,6 +896,9 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		} else {
 			statsOpts = append(statsOpts, storage.WithBranch(branch))
 		}
+	}
+	if repoPrefix != "" && repo == "" {
+		statsOpts = append(statsOpts, storage.WithRepoPrefix(repoPrefix))
 	}
 	stats, statsErr := s.db.CountJobStats(repo, statsOpts...)
 	if statsErr != nil {
@@ -918,7 +925,11 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	var totalCount int
 	var err error
 
-	if branch != "" {
+	prefix := r.URL.Query().Get("prefix")
+
+	if prefix != "" {
+		repos, totalCount, err = s.db.ListReposWithReviewCountsByPrefix(prefix)
+	} else if branch != "" {
 		repos, totalCount, err = s.db.ListReposWithReviewCountsByBranch(branch)
 	} else {
 		repos, totalCount, err = s.db.ListReposWithReviewCounts()

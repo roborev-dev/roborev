@@ -1340,6 +1340,7 @@ type listJobsOptions struct {
 	closed             *bool
 	jobType            string
 	excludeJobType     string
+	repoPrefix         string
 }
 
 // WithGitRef filters jobs by git ref.
@@ -1376,6 +1377,19 @@ func WithExcludeJobType(jobType string) ListJobsOption {
 	return func(o *listJobsOptions) { o.excludeJobType = jobType }
 }
 
+// WithRepoPrefix filters jobs to repos whose root_path starts with the given prefix.
+func WithRepoPrefix(prefix string) ListJobsOption {
+	return func(o *listJobsOptions) { o.repoPrefix = escapeLike(prefix) }
+}
+
+// escapeLike escapes SQL LIKE wildcards (% and _) in a literal string.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
+
 // ListJobs returns jobs with optional status, repo, branch, and closed filters.
 func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	query := `
@@ -1403,6 +1417,10 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	var o listJobsOptions
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if repoFilter == "" && o.repoPrefix != "" {
+		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '\\'")
+		args = append(args, o.repoPrefix)
 	}
 	if o.gitRef != "" {
 		conditions = append(conditions, "j.git_ref = ?")
@@ -1570,6 +1588,10 @@ func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats
 	var o listJobsOptions
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if repoFilter == "" && o.repoPrefix != "" {
+		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '\\'")
+		args = append(args, o.repoPrefix)
 	}
 	if o.branch != "" {
 		if o.branchIncludeEmpty {

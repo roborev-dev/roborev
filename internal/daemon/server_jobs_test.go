@@ -1301,3 +1301,71 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	// Create repos under a "workspace" parent and one outside it
+	workspace := filepath.Join(tmpDir, "workspace")
+	seedRepoWithJobs(t, db, filepath.Join(workspace, "repo-a"), 3, "repoA")
+	seedRepoWithJobs(t, db, filepath.Join(workspace, "repo-b"), 2, "repoB")
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "outside-repo"), 1, "outside")
+
+	t.Run("repo_prefix returns only child repos", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var resp struct {
+			Jobs  []storage.ReviewJob `json:"jobs"`
+			Stats storage.JobStats    `json:"stats"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		if len(resp.Jobs) != 5 {
+			t.Errorf("Expected 5 jobs under workspace prefix, got %d", len(resp.Jobs))
+		}
+		for _, j := range resp.Jobs {
+			if !strings.HasPrefix(j.RepoPath, workspace+"/") {
+				t.Errorf("Job repo_path %q does not start with workspace prefix", j.RepoPath)
+			}
+		}
+	})
+
+	t.Run("repo_prefix does not match parent directory itself", func(t *testing.T) {
+		// A repo AT the workspace path shouldn't match (must be a child)
+		seedRepoWithJobs(t, db, workspace, 1, "exact")
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var resp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		// Should still be 5 (not 6) - the exact workspace path match is excluded
+		if len(resp.Jobs) != 5 {
+			t.Errorf("Expected 5 jobs (excluding exact path match), got %d", len(resp.Jobs))
+		}
+	})
+
+	t.Run("repo param takes precedence over repo_prefix", func(t *testing.T) {
+		exactRepo := filepath.Join(workspace, "repo-a")
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo="+url.QueryEscape(exactRepo)+"&repo_prefix="+url.QueryEscape(workspace), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var resp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		if len(resp.Jobs) != 3 {
+			t.Errorf("Expected 3 jobs for exact repo (repo takes precedence), got %d", len(resp.Jobs))
+		}
+	})
+}

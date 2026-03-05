@@ -54,10 +54,12 @@ Examples:
 				}
 				// Default to HEAD
 				sha := "HEAD"
-				if root, err := git.GetRepoRoot("."); err == nil {
-					if resolved, err := git.ResolveSHA(root, sha); err == nil {
-						sha = resolved
-					}
+				root, rootErr := git.GetRepoRoot(".")
+				if rootErr != nil {
+					return fmt.Errorf("not in a git repository; use a job ID instead (e.g., roborev show 42)")
+				}
+				if resolved, err := git.ResolveSHA(root, sha); err == nil {
+					sha = resolved
 				}
 				queryURL = addr + "/api/review?sha=" + sha
 				displayRef = git.ShortSHA(sha)

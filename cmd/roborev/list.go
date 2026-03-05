@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -75,12 +76,22 @@ Examples:
 				branch = git.GetCurrentBranch(localRepoPath)
 			}
 
+			// Workspace mode: not in a git repo and no --repo specified
+			var repoPrefix string
+			if repoPath == "" && localRepoPath == "" {
+				if abs, err := filepath.Abs("."); err == nil {
+					repoPrefix = abs
+				}
+			}
+
 			// Build query URL
 			params := url.Values{}
-			if repoPath != "" {
+			if repoPrefix != "" {
+				params.Set("repo_prefix", repoPrefix)
+			} else if repoPath != "" {
 				params.Set("repo", repoPath)
 			}
-			if branch != "" {
+			if branch != "" && repoPrefix == "" {
 				params.Set("branch", branch)
 				params.Set("branch_include_empty", "true")
 			}
