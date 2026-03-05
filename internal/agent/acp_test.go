@@ -321,7 +321,7 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 		},
 	}
 
-	resolved, err := GetAvailableWithConfig("nonexistent-agent", cfg)
+	resolved, err := GetAvailableWithConfig("custom-acp", cfg)
 	if err != nil {
 		t.Fatalf("GetAvailableWithConfig failed: %v", err)
 	}
@@ -1112,4 +1112,48 @@ func TestReadTextFileWindow(t *testing.T) {
 			t.Fatalf("expected byte-limit error, got: %v", err)
 		}
 	})
+}
+
+func TestACPAliasCollisionFixed(t *testing.T) {
+	// When acp.name = "agent", requesting "cursor" should resolve to the
+	// real cursor agent, not to ACP via the "agent" → "cursor" alias.
+	// The cursor agent's binary is called "agent" (not "cursor").
+	fakeBin := t.TempDir()
+	agentBin := "agent"
+	if runtime.GOOS == "windows" {
+		agentBin += ".exe"
+	}
+	agentPath := filepath.Join(fakeBin, agentBin)
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create fake agent binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	cfg := &config.Config{
+		ACP: &config.ACPAgentConfig{
+			Name:    "agent",
+			Command: "acp-agent",
+		},
+	}
+
+	resolved, err := GetAvailableWithConfig("cursor", cfg)
+	if err != nil {
+		t.Fatalf("GetAvailableWithConfig failed: %v", err)
+	}
+
+	if resolved.Name() != "cursor" {
+		t.Fatalf("Expected cursor agent, got %q", resolved.Name())
+	}
+}
+
+func TestGetAvailableWithConfigUnknownAgentErrors(t *testing.T) {
+	cfg := &config.Config{}
+
+	_, err := GetAvailableWithConfig("typo-agent", cfg)
+	if err == nil {
+		t.Fatal("Expected error for unknown agent name")
+	}
+	if !strings.Contains(err.Error(), "unknown agent") {
+		t.Fatalf("Expected 'unknown agent' error, got: %v", err)
+	}
 }

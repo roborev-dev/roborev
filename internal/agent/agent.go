@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -172,6 +174,19 @@ func IsAvailable(name string) bool {
 func GetAvailable(preferred string) (Agent, error) {
 	// Resolve alias upfront for consistent comparisons
 	preferred = resolveAlias(preferred)
+
+	// Reject unknown agent names (typos, config mistakes).
+	// Known-but-unavailable agents still fall back below.
+	if preferred != "" {
+		if _, ok := registry[preferred]; !ok {
+			known := Available()
+			sort.Strings(known)
+			return nil, fmt.Errorf(
+				"unknown agent %q (known: %s)",
+				preferred, strings.Join(known, ", "),
+			)
+		}
+	}
 
 	// Try preferred agent first
 	if preferred != "" && IsAvailable(preferred) {

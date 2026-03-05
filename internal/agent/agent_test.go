@@ -388,3 +388,31 @@ func TestAgentReviewPassesModelFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestGetAvailableRejectsUnknownAgent(t *testing.T) {
+	_, err := GetAvailable("typo-agent")
+	if err == nil {
+		t.Fatal("Expected error for unknown agent name")
+	}
+	if !strings.Contains(err.Error(), "unknown agent") {
+		t.Fatalf("Expected 'unknown agent' error, got: %v", err)
+	}
+}
+
+func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
+	// "codex" is a registered agent but its binary is typically not
+	// installed in the test environment. GetAvailable should fall back
+	// to another available agent instead of returning an "unknown agent"
+	// error.
+	resolved, err := GetAvailable("codex")
+	if err != nil {
+		if strings.Contains(err.Error(), "unknown agent") {
+			t.Fatalf("Known agent 'codex' should not produce unknown agent error: %v", err)
+		}
+		// "no agents available" is acceptable in a minimal test env
+		return
+	}
+	if resolved == nil {
+		t.Fatal("Expected a non-nil agent")
+	}
+}
