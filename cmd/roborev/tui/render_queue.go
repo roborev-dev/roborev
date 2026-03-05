@@ -493,7 +493,9 @@ func (m model) renderQueueView() string {
 					job := windowJobs[row]
 					switch logicalCol {
 					case colStatus:
-						s = s.Foreground(statusColor(job.Status))
+						if c := statusColor(job.Status); c != nil {
+							s = s.Foreground(c)
+						}
 					case colPF:
 						if c := verdictColor(job.Verdict); c != nil {
 							s = s.Foreground(c)
@@ -667,7 +669,7 @@ func statusColor(
 	case storage.JobStatusCanceled:
 		return canceledStyle.GetForeground()
 	default:
-		return queuedStyle.GetForeground()
+		return nil
 	}
 }
 

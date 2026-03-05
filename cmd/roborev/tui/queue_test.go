@@ -2231,26 +2231,25 @@ func TestStatusLabel(t *testing.T) {
 
 func TestStatusColor(t *testing.T) {
 	tests := []struct {
-		name      string
-		status    storage.JobStatus
-		wantStyle lipgloss.Style
+		name   string
+		status storage.JobStatus
+		want   lipgloss.TerminalColor
 	}{
-		{"queued", storage.JobStatusQueued, queuedStyle},
-		{"running", storage.JobStatusRunning, runningStyle},
-		{"done", storage.JobStatusDone, doneStyle},
-		{"applied", storage.JobStatusApplied, doneStyle},
-		{"rebased", storage.JobStatusRebased, doneStyle},
-		{"failed", storage.JobStatusFailed, failedStyle},
-		{"canceled", storage.JobStatusCanceled, canceledStyle},
-		{"unknown", storage.JobStatus("unknown"), queuedStyle},
+		{"queued", storage.JobStatusQueued, queuedStyle.GetForeground()},
+		{"running", storage.JobStatusRunning, runningStyle.GetForeground()},
+		{"done", storage.JobStatusDone, doneStyle.GetForeground()},
+		{"applied", storage.JobStatusApplied, doneStyle.GetForeground()},
+		{"rebased", storage.JobStatusRebased, doneStyle.GetForeground()},
+		{"failed", storage.JobStatusFailed, failedStyle.GetForeground()},
+		{"canceled", storage.JobStatusCanceled, canceledStyle.GetForeground()},
+		{"unknown", storage.JobStatus("unknown"), nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := statusColor(tt.status)
-			want := tt.wantStyle.GetForeground()
-			if got != want {
-				t.Errorf("statusColor(%q) = %v, want %v", tt.status, got, want)
+			if got != tt.want {
+				t.Errorf("statusColor(%q) = %v, want %v", tt.status, got, tt.want)
 			}
 		})
 	}
