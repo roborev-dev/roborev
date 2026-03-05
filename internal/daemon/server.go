@@ -818,7 +818,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	gitRef := r.URL.Query().Get("git_ref")
 	repoPrefix := r.URL.Query().Get("repo_prefix")
 	if repoPrefix != "" {
-		repoPrefix = filepath.Clean(repoPrefix)
+		repoPrefix = filepath.ToSlash(filepath.Clean(repoPrefix))
 	}
 
 	// Parse limit from query, default to 50, 0 means no limit
@@ -925,7 +925,7 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	branch := r.URL.Query().Get("branch")
 	prefix := r.URL.Query().Get("prefix")
 	if prefix != "" {
-		prefix = filepath.Clean(prefix)
+		prefix = filepath.ToSlash(filepath.Clean(prefix))
 	}
 
 	var repoOpts []storage.ListReposOption

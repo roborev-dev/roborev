@@ -141,6 +141,39 @@ func TestShowOutputFormat(t *testing.T) {
 	}
 }
 
+func TestShowOutsideGitRepo(t *testing.T) {
+	t.Run("no args outside git repo returns guidance error", func(t *testing.T) {
+		nonGitDir := t.TempDir()
+		chdir(t, nonGitDir)
+
+		mockReviewDaemon(t, storage.Review{})
+
+		cmd := showCmd()
+		cmd.SetArgs([]string{})
+		err := cmd.Execute()
+		assertErrorContains(t, err, "not in a git repository")
+		assertErrorContains(t, err, "job ID")
+	})
+
+	t.Run("job ID outside git repo still works", func(t *testing.T) {
+		nonGitDir := t.TempDir()
+		chdir(t, nonGitDir)
+
+		getQuery := mockReviewDaemon(t, storage.Review{
+			ID: 1, JobID: 42, Output: "LGTM", Agent: "test",
+		})
+
+		output := runShowCmd(t, "--job", "42")
+		q := getQuery()
+		if !strings.Contains(q, "job_id=42") {
+			t.Errorf("expected job_id=42 in query, got: %s", q)
+		}
+		if !strings.Contains(output, "LGTM") {
+			t.Errorf("expected review output in result, got: %s", output)
+		}
+	})
+}
+
 func TestShowJSONOutput(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")

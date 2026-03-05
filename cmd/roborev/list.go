@@ -80,7 +80,7 @@ Examples:
 			var repoPrefix string
 			if repoPath == "" && localRepoPath == "" {
 				if abs, err := filepath.Abs("."); err == nil {
-					repoPrefix = abs
+					repoPrefix = filepath.ToSlash(abs)
 				}
 			}
 
