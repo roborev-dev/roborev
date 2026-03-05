@@ -285,8 +285,8 @@ func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
 func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
-	// Request an unavailable agent, codex should be used as fallback
-	selected, err := selectRefineAgent(nil, "nonexistent-agent", agent.ReasoningThorough, "")
+	// Request a known-but-unavailable agent, codex should be used as fallback
+	selected, err := selectRefineAgent(nil, "gemini", agent.ReasoningThorough, "")
 	if err != nil {
 		t.Fatalf("selectRefineAgent failed: %v", err)
 	}
