@@ -493,27 +493,10 @@ func (m model) renderQueueView() string {
 					job := windowJobs[row]
 					switch logicalCol {
 					case colStatus:
-						switch job.Status {
-						case storage.JobStatusQueued:
-							s = s.Foreground(queuedStyle.GetForeground())
-						case storage.JobStatusRunning:
-							s = s.Foreground(runningStyle.GetForeground())
-						case storage.JobStatusDone,
-							storage.JobStatusApplied,
-							storage.JobStatusRebased:
-							s = s.Foreground(doneStyle.GetForeground())
-						case storage.JobStatusFailed:
-							s = s.Foreground(failedStyle.GetForeground())
-						case storage.JobStatusCanceled:
-							s = s.Foreground(canceledStyle.GetForeground())
-						}
+						s = s.Foreground(statusColor(job.Status))
 					case colPF:
-						if job.Verdict != nil {
-							if *job.Verdict == "P" {
-								s = s.Foreground(passStyle.GetForeground())
-							} else {
-								s = s.Foreground(failStyle.GetForeground())
-							}
+						if c := verdictColor(job.Verdict); c != nil {
+							s = s.Foreground(c)
 						}
 					case colHandled:
 						if job.Closed != nil {
@@ -665,6 +648,41 @@ func statusLabel(job storage.ReviewJob) string {
 	default:
 		return string(job.Status)
 	}
+}
+
+// statusColor returns the foreground color for the Status column.
+func statusColor(
+	status storage.JobStatus,
+) lipgloss.TerminalColor {
+	switch status {
+	case storage.JobStatusQueued:
+		return queuedStyle.GetForeground()
+	case storage.JobStatusRunning:
+		return runningStyle.GetForeground()
+	case storage.JobStatusDone, storage.JobStatusApplied,
+		storage.JobStatusRebased:
+		return doneStyle.GetForeground()
+	case storage.JobStatusFailed:
+		return failedStyle.GetForeground()
+	case storage.JobStatusCanceled:
+		return canceledStyle.GetForeground()
+	default:
+		return queuedStyle.GetForeground()
+	}
+}
+
+// verdictColor returns the foreground color for the P/F column.
+// Returns nil when no color should be applied (nil verdict).
+func verdictColor(
+	verdict *string,
+) lipgloss.TerminalColor {
+	if verdict == nil {
+		return nil
+	}
+	if *verdict == "P" {
+		return passStyle.GetForeground()
+	}
+	return failStyle.GetForeground()
 }
 
 // commandLineForJob computes the representative agent command line from job parameters.

@@ -2229,6 +2229,62 @@ func TestStatusLabel(t *testing.T) {
 	}
 }
 
+func TestStatusColor(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    storage.JobStatus
+		wantStyle lipgloss.Style
+	}{
+		{"queued", storage.JobStatusQueued, queuedStyle},
+		{"running", storage.JobStatusRunning, runningStyle},
+		{"done", storage.JobStatusDone, doneStyle},
+		{"applied", storage.JobStatusApplied, doneStyle},
+		{"rebased", storage.JobStatusRebased, doneStyle},
+		{"failed", storage.JobStatusFailed, failedStyle},
+		{"canceled", storage.JobStatusCanceled, canceledStyle},
+		{"unknown", storage.JobStatus("unknown"), queuedStyle},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := statusColor(tt.status)
+			want := tt.wantStyle.GetForeground()
+			if got != want {
+				t.Errorf("statusColor(%q) = %v, want %v", tt.status, got, want)
+			}
+		})
+	}
+
+	// Error (failedStyle/orange) and Fail (failStyle/red) must be distinct
+	if failedStyle.GetForeground() == failStyle.GetForeground() {
+		t.Error("Error and Fail should have distinct colors")
+	}
+}
+
+func TestVerdictColor(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+
+	tests := []struct {
+		name    string
+		verdict *string
+		want    lipgloss.TerminalColor
+	}{
+		{"pass", strPtr("P"), passStyle.GetForeground()},
+		{"fail", strPtr("F"), failStyle.GetForeground()},
+		{"unexpected", strPtr("X"), failStyle.GetForeground()},
+		{"nil", nil, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := verdictColor(tt.verdict)
+			if got != tt.want {
+				t.Errorf("verdictColor() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClosedKeyShortcut(t *testing.T) {
 	boolPtr := func(b bool) *bool { return &b }
 
@@ -2338,6 +2394,30 @@ func TestMigrateColumnConfig(t *testing.T) {
 				t.Errorf("HiddenColumns = %v, want %v", cfg.HiddenColumns, tt.wantHidden)
 			}
 		})
+	}
+}
+
+func TestParseColumnOrderAppendsMissing(t *testing.T) {
+	// A custom order saved before the pf column existed should get
+	// pf appended automatically by resolveColumnOrder.
+	oldCustom := []string{"repo", "ref", "agent", "status", "queued", "elapsed", "branch", "closed"}
+	got := parseColumnOrder(oldCustom)
+
+	// Verify existing columns are in the user's order
+	wantPrefix := []int{colRepo, colRef, colAgent, colStatus, colQueued, colElapsed, colBranch, colHandled}
+	if !slices.Equal(got[:len(wantPrefix)], wantPrefix) {
+		t.Errorf("prefix = %v, want %v", got[:len(wantPrefix)], wantPrefix)
+	}
+
+	// pf must be appended exactly once
+	pfCount := 0
+	for _, c := range got {
+		if c == colPF {
+			pfCount++
+		}
+	}
+	if pfCount != 1 {
+		t.Errorf("expected pf to appear once, got %d in %v", pfCount, got)
 	}
 }
 
