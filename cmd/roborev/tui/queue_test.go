@@ -739,6 +739,71 @@ func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
 	}
 }
 
+func TestStatusColumnAutoWidth(t *testing.T) {
+	// The Status column should auto-size to the widest status label
+	// present in the visible jobs, with a floor of 6 (the "Status"
+	// header width). This saves horizontal space when no wide status
+	// labels (e.g. "Canceled") are present.
+	tests := []struct {
+		name      string
+		statuses  []storage.JobStatus
+		wantWidth int // expected content width (header included)
+	}{
+		{"done only", []storage.JobStatus{storage.JobStatusDone}, 6},                                          // "Done"=4, header=6
+		{"queued only", []storage.JobStatus{storage.JobStatusQueued}, 6},                                      // "Queued"=6, header=6
+		{"running", []storage.JobStatus{storage.JobStatusRunning}, 7},                                         // "Running"=7
+		{"canceled", []storage.JobStatus{storage.JobStatusCanceled}, 8},                                       // "Canceled"=8
+		{"mixed done and error", []storage.JobStatus{storage.JobStatusDone, storage.JobStatusFailed}, 6},      // max("Done"=4,"Error"=5,header=6)=6
+		{"mixed done and canceled", []storage.JobStatus{storage.JobStatusDone, storage.JobStatusCanceled}, 8}, // max("Done"=4,"Canceled"=8)=8
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModel("http://localhost", withExternalIODisabled())
+			m.width = 200
+			m.height = 30
+
+			jobs := make([]storage.ReviewJob, len(tt.statuses))
+			for i, s := range tt.statuses {
+				jobs[i] = makeJob(int64(i+1), withStatus(s), withRef("abc1234"), withRepoName("repo"), withAgent("test"))
+			}
+			m.jobs = jobs
+			m.selectedIdx = 0
+			m.selectedJobID = 1
+
+			output := m.renderQueueView()
+			lines := strings.Split(output, "\n")
+
+			// Find the header line (contains "Status" and "P/F")
+			var headerLine string
+			for _, line := range lines {
+				stripped := stripTestANSI(line)
+				if strings.Contains(stripped, "Status") && strings.Contains(stripped, "P/F") {
+					headerLine = stripped
+					break
+				}
+			}
+			if headerLine == "" {
+				t.Fatal("could not find header line with Status and P/F")
+			}
+
+			statusIdx := strings.Index(headerLine, "Status")
+			pfIdx := strings.Index(headerLine, "P/F")
+			if statusIdx < 0 || pfIdx < 0 || pfIdx <= statusIdx {
+				t.Fatalf("unexpected header layout: %q", headerLine)
+			}
+
+			// The gap between "Status" start and "P/F" start is
+			// the column width + inter-column spacing (1 char padding).
+			gap := pfIdx - statusIdx
+			gotWidth := gap - 1 // subtract 1 for inter-column spacing
+			if gotWidth != tt.wantWidth {
+				t.Errorf("Status column width = %d, want %d (header: %q)", gotWidth, tt.wantWidth, headerLine)
+			}
+		})
+	}
+}
+
 func TestTUIPaginationAppendMode(t *testing.T) {
 	m := newModel("http://localhost", withExternalIODisabled())
 
