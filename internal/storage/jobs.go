@@ -1408,7 +1408,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
 		       COALESCE(j.agentic, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
-		       j.parent_job_id
+		       j.parent_job_id, j.provider
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -1487,7 +1487,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	for rows.Next() {
 		var j ReviewJob
 		var enqueuedAt string
-		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
+		var startedAt, finishedAt, workerID, errMsg, prompt, output, sourceMachineID, jobUUID, model, branch, jobTypeStr, reviewTypeStr, patchIDStr, provider sql.NullString
 		var commitID sql.NullInt64
 		var commitSubject sql.NullString
 		var closed sql.NullInt64
@@ -1498,7 +1498,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &j.RetryCount,
 			&agentic, &j.RepoPath, &j.RepoName, &commitSubject, &closed, &output,
 			&sourceMachineID, &jobUUID, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
-			&parentJobID)
+			&parentJobID, &provider)
 		if err != nil {
 			return nil, err
 		}
@@ -1536,6 +1536,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 		if model.Valid {
 			j.Model = model.String
+		}
+		if provider.Valid {
+			j.Provider = provider.String
 		}
 		if jobTypeStr.Valid {
 			j.JobType = jobTypeStr.String
@@ -1632,11 +1635,11 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var parentJobID sql.NullInt64
 	var patch sql.NullString
 
-	var model, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
+	var model, provider, branch, jobTypeStr, reviewTypeStr, patchIDStr sql.NullString
 	err := db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
-		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type, j.patch_id,
+		       r.root_path, r.name, c.subject, j.model, j.provider, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.patch
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
@@ -1644,7 +1647,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		WHERE j.id = ?
 	`, id).Scan(&j.ID, &j.RepoID, &commitID, &j.GitRef, &branch, &j.Agent, &j.Reasoning, &j.Status, &enqueuedAt,
 		&startedAt, &finishedAt, &workerID, &errMsg, &prompt, &agentic,
-		&j.RepoPath, &j.RepoName, &commitSubject, &model, &jobTypeStr, &reviewTypeStr, &patchIDStr,
+		&j.RepoPath, &j.RepoName, &commitSubject, &model, &provider, &jobTypeStr, &reviewTypeStr, &patchIDStr,
 		&parentJobID, &patch)
 	if err != nil {
 		return nil, err
@@ -1677,6 +1680,9 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	}
 	if model.Valid {
 		j.Model = model.String
+	}
+	if provider.Valid {
+		j.Provider = provider.String
 	}
 	if jobTypeStr.Valid {
 		j.JobType = jobTypeStr.String
