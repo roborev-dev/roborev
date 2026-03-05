@@ -269,6 +269,41 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 	})
 }
 
+func TestHandleListReposSlashNormalization(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	// Store repos with forward-slash paths (matching ToSlash output)
+	ws := tmpDir + "/slash-ws"
+	seedRepoWithJobs(t, db, ws+"/repo-x", 2, "rx")
+	seedRepoWithJobs(t, db, ws+"/repo-y", 1, "ry")
+	seedRepoWithJobs(t, db, tmpDir+"/other-z", 1, "rz")
+
+	type reposResponse struct {
+		Repos      []struct{ Name string } `json:"repos"`
+		TotalCount int                     `json:"total_count"`
+	}
+
+	t.Run("forward-slash prefix matches stored paths", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/repos?prefix="+url.QueryEscape(ws), nil)
+		w := httptest.NewRecorder()
+		server.handleListRepos(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response reposResponse
+		testutil.DecodeJSON(t, w, &response)
+		if len(response.Repos) != 2 {
+			t.Errorf(
+				"Expected 2 repos with forward-slash prefix, got %d",
+				len(response.Repos),
+			)
+		}
+		if response.TotalCount != 3 {
+			t.Errorf("Expected total_count 3, got %d", response.TotalCount)
+		}
+	})
+}
+
 func TestHandleListBranches(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 

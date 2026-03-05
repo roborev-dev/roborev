@@ -1403,3 +1403,33 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleListJobsSlashNormalization(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+
+	// Store repos with forward-slash paths (matching ToSlash output)
+	ws := tmpDir + "/slash-ws"
+	seedRepoWithJobs(t, db, ws+"/repo-a", 2, "sa")
+	seedRepoWithJobs(t, db, ws+"/repo-b", 1, "sb")
+	seedRepoWithJobs(t, db, tmpDir+"/other-c", 1, "sc")
+
+	t.Run("forward-slash prefix matches stored paths", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/jobs?repo_prefix="+url.QueryEscape(ws), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var resp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		if len(resp.Jobs) != 3 {
+			t.Errorf(
+				"Expected 3 jobs with forward-slash prefix, got %d",
+				len(resp.Jobs),
+			)
+		}
+	})
+}
