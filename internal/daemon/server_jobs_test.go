@@ -1368,4 +1368,38 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 			t.Errorf("Expected 3 jobs for exact repo (repo takes precedence), got %d", len(resp.Jobs))
 		}
 	})
+
+	t.Run("repo_prefix trailing slash is normalized", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace+"/"), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var resp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		if len(resp.Jobs) != 5 {
+			t.Errorf("Expected 5 jobs with trailing-slash prefix, got %d", len(resp.Jobs))
+		}
+	})
+
+	t.Run("repo_prefix with dot-dot is normalized", func(t *testing.T) {
+		// workspace/../workspace should normalize to workspace
+		dotdotPrefix := workspace + "/../" + filepath.Base(workspace)
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(dotdotPrefix), nil)
+		w := httptest.NewRecorder()
+		server.handleListJobs(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var resp struct {
+			Jobs []storage.ReviewJob `json:"jobs"`
+		}
+		testutil.DecodeJSON(t, w, &resp)
+
+		if len(resp.Jobs) != 5 {
+			t.Errorf("Expected 5 jobs with dot-dot prefix, got %d", len(resp.Jobs))
+		}
+	})
 }

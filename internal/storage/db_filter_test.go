@@ -682,9 +682,9 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 	setJobBranch(t, db, job2.ID, "feature")
 
 	t.Run("filter by main branch", func(t *testing.T) {
-		repos, totalCount, err := db.ListReposWithReviewCountsByBranch("main")
+		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("main"))
 		if err != nil {
-			t.Fatalf("ListReposWithReviewCountsByBranch failed: %v", err)
+			t.Fatalf("ListReposWithReviewCounts(branch=main) failed: %v", err)
 		}
 		if len(repos) != 2 {
 			t.Errorf("Expected 2 repos with main branch, got %d", len(repos))
@@ -695,9 +695,9 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 	})
 
 	t.Run("filter by feature branch", func(t *testing.T) {
-		repos, totalCount, err := db.ListReposWithReviewCountsByBranch("feature")
+		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("feature"))
 		if err != nil {
-			t.Fatalf("ListReposWithReviewCountsByBranch failed: %v", err)
+			t.Fatalf("ListReposWithReviewCounts(branch=feature) failed: %v", err)
 		}
 		if len(repos) != 1 {
 			t.Errorf("Expected 1 repo with feature branch, got %d", len(repos))
@@ -712,9 +712,9 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 		commit4 := createCommit(t, db, repo1.ID, "jkl012")
 		enqueueJob(t, db, repo1.ID, commit4.ID, "jkl012")
 
-		repos, totalCount, err := db.ListReposWithReviewCountsByBranch("(none)")
+		repos, totalCount, err := db.ListReposWithReviewCounts(WithRepoBranch("(none)"))
 		if err != nil {
-			t.Fatalf("ListReposWithReviewCountsByBranch failed: %v", err)
+			t.Fatalf("ListReposWithReviewCounts(branch=(none)) failed: %v", err)
 		}
 		if len(repos) != 1 {
 			t.Errorf("Expected 1 repo with (none) branch, got %d", len(repos))
@@ -725,9 +725,9 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 	})
 
 	t.Run("empty filter returns all", func(t *testing.T) {
-		repos, _, err := db.ListReposWithReviewCountsByBranch("")
+		repos, _, err := db.ListReposWithReviewCounts()
 		if err != nil {
-			t.Fatalf("ListReposWithReviewCountsByBranch failed: %v", err)
+			t.Fatalf("ListReposWithReviewCounts() failed: %v", err)
 		}
 		if len(repos) != 2 {
 			t.Errorf("Expected 2 repos, got %d", len(repos))
@@ -984,6 +984,84 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		}
 		if len(jobs) != 1 {
 			t.Errorf("Expected 1 job under /tmp/other, got %d", len(jobs))
+		}
+	})
+}
+
+func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Create repos under workspace and one outside
+	r1 := createRepo(t, db, "/ws/repo-a")
+	r2 := createRepo(t, db, "/ws/repo-b")
+	r3 := createRepo(t, db, "/other/repo-c")
+
+	// repo-a: 2 jobs on main, 1 on feature
+	c1 := createCommit(t, db, r1.ID, "a1")
+	c2 := createCommit(t, db, r1.ID, "a2")
+	c3 := createCommit(t, db, r1.ID, "a3")
+	j1 := enqueueJob(t, db, r1.ID, c1.ID, "a1")
+	j2 := enqueueJob(t, db, r1.ID, c2.ID, "a2")
+	j3 := enqueueJob(t, db, r1.ID, c3.ID, "a3")
+	setJobBranch(t, db, j1.ID, "main")
+	setJobBranch(t, db, j2.ID, "main")
+	setJobBranch(t, db, j3.ID, "feature")
+
+	// repo-b: 1 job on main
+	c4 := createCommit(t, db, r2.ID, "b1")
+	j4 := enqueueJob(t, db, r2.ID, c4.ID, "b1")
+	setJobBranch(t, db, j4.ID, "main")
+
+	// repo-c (outside workspace): 1 job on main
+	c5 := createCommit(t, db, r3.ID, "c1")
+	j5 := enqueueJob(t, db, r3.ID, c5.ID, "c1")
+	setJobBranch(t, db, j5.ID, "main")
+
+	t.Run("prefix + branch filters both", func(t *testing.T) {
+		repos, total, err := db.ListReposWithReviewCounts(
+			WithRepoPathPrefix("/ws"),
+			WithRepoBranch("main"),
+		)
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
+		}
+		if len(repos) != 2 {
+			t.Errorf("Expected 2 repos under /ws with main, got %d", len(repos))
+		}
+		if total != 3 {
+			t.Errorf("Expected total 3 (2+1), got %d", total)
+		}
+	})
+
+	t.Run("prefix + feature branch", func(t *testing.T) {
+		repos, total, err := db.ListReposWithReviewCounts(
+			WithRepoPathPrefix("/ws"),
+			WithRepoBranch("feature"),
+		)
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
+		}
+		if len(repos) != 1 {
+			t.Errorf("Expected 1 repo, got %d", len(repos))
+		}
+		if total != 1 {
+			t.Errorf("Expected total 1, got %d", total)
+		}
+	})
+
+	t.Run("prefix only returns all branches", func(t *testing.T) {
+		repos, total, err := db.ListReposWithReviewCounts(
+			WithRepoPathPrefix("/ws"),
+		)
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
+		}
+		if len(repos) != 2 {
+			t.Errorf("Expected 2 repos under /ws, got %d", len(repos))
+		}
+		if total != 4 {
+			t.Errorf("Expected total 4 (3+1), got %d", total)
 		}
 	})
 }

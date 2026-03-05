@@ -197,6 +197,61 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 			t.Errorf("Expected 0 repos for nonexistent prefix, got %d", len(response.Repos))
 		}
 	})
+
+	// Set branches on workspace repos: repo1 jobs 1,2=main, 3=feature; repo2 jobs 4,5=main
+	setJobBranch(t, db, 1, "main")
+	setJobBranch(t, db, 2, "main")
+	setJobBranch(t, db, 3, "feature")
+	setJobBranch(t, db, 4, "main")
+	setJobBranch(t, db, 5, "main")
+
+	t.Run("prefix + branch combined filter", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/repos?prefix="+url.QueryEscape(workspace)+"&branch=main", nil)
+		w := httptest.NewRecorder()
+		server.handleListRepos(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response reposResponse
+		testutil.DecodeJSON(t, w, &response)
+		if len(response.Repos) != 2 {
+			t.Errorf("Expected 2 repos with prefix+branch=main, got %d", len(response.Repos))
+		}
+		if response.TotalCount != 4 {
+			t.Errorf("Expected total_count 4, got %d", response.TotalCount)
+		}
+	})
+
+	t.Run("prefix + feature branch narrows results", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/repos?prefix="+url.QueryEscape(workspace)+"&branch=feature", nil)
+		w := httptest.NewRecorder()
+		server.handleListRepos(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response reposResponse
+		testutil.DecodeJSON(t, w, &response)
+		if len(response.Repos) != 1 {
+			t.Errorf("Expected 1 repo with prefix+branch=feature, got %d", len(response.Repos))
+		}
+		if response.TotalCount != 1 {
+			t.Errorf("Expected total_count 1, got %d", response.TotalCount)
+		}
+	})
+
+	t.Run("prefix with trailing slash is normalized", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/repos?prefix="+url.QueryEscape(workspace+"/"), nil)
+		w := httptest.NewRecorder()
+		server.handleListRepos(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response reposResponse
+		testutil.DecodeJSON(t, w, &response)
+		if len(response.Repos) != 2 {
+			t.Errorf("Expected 2 repos with trailing-slash prefix, got %d", len(response.Repos))
+		}
+	})
 }
 
 func TestHandleListBranches(t *testing.T) {

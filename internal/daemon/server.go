@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -816,6 +817,9 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	repo := r.URL.Query().Get("repo")
 	gitRef := r.URL.Query().Get("git_ref")
 	repoPrefix := r.URL.Query().Get("repo_prefix")
+	if repoPrefix != "" {
+		repoPrefix = filepath.Clean(repoPrefix)
+	}
 
 	// Parse limit from query, default to 50, 0 means no limit
 	// Clamp to valid range: 0 (unlimited) or 1-10000
@@ -918,22 +922,20 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional branch filter
 	branch := r.URL.Query().Get("branch")
-
-	var repos []storage.RepoWithCount
-	var totalCount int
-	var err error
-
 	prefix := r.URL.Query().Get("prefix")
-
 	if prefix != "" {
-		repos, totalCount, err = s.db.ListReposWithReviewCountsByPrefix(prefix)
-	} else if branch != "" {
-		repos, totalCount, err = s.db.ListReposWithReviewCountsByBranch(branch)
-	} else {
-		repos, totalCount, err = s.db.ListReposWithReviewCounts()
+		prefix = filepath.Clean(prefix)
 	}
+
+	var repoOpts []storage.ListReposOption
+	if prefix != "" {
+		repoOpts = append(repoOpts, storage.WithRepoPathPrefix(prefix))
+	}
+	if branch != "" {
+		repoOpts = append(repoOpts, storage.WithRepoBranch(branch))
+	}
+	repos, totalCount, err := s.db.ListReposWithReviewCounts(repoOpts...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("list repos: %v", err))
 		return
