@@ -113,10 +113,10 @@ type UnknownAgentError struct {
 }
 
 func (e *UnknownAgentError) Error() string {
-	return fmt.Errorf(
+	return fmt.Sprintf(
 		"unknown agent %q (known: %s)",
 		e.Name, strings.Join(e.Known, ", "),
-	).Error()
+	)
 }
 
 // aliases maps short names to full agent names

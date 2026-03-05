@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -905,4 +906,96 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 				w.Code, w.Body.String())
 		}
 	})
+}
+
+func TestHandleFixJobAgentAvailability(t *testing.T) {
+	// Create shared git repo + completed parent review job.
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal("git not found in PATH")
+	}
+	gitOnlyDir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		wrapper := fmt.Sprintf("@\"%s\" %%*\r\n", gitPath)
+		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' \"$@\"\n", gitPath)
+		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		fixAgent     string
+		mockBinaries []string
+		expectedCode int
+	}{
+		{
+			name:         "unknown fix agent returns 400",
+			fixAgent:     "typo-agent",
+			mockBinaries: nil,
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "no agents available returns 503",
+			fixAgent:     "codex",
+			mockBinaries: nil,
+			expectedCode: http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, db, tmpDir := newTestServer(t)
+			server.configWatcher.Config().FixAgent = tt.fixAgent
+
+			repoDir := filepath.Join(tmpDir, "repo-fix-avail")
+			testutil.InitTestGitRepo(t, repoDir)
+			repo, _ := db.GetOrCreateRepo(repoDir)
+			commit, _ := db.GetOrCreateCommit(
+				repo.ID, "fix-avail-abc", "Author", "Subject", time.Now(),
+			)
+			reviewJob, _ := db.EnqueueJob(storage.EnqueueOpts{
+				RepoID:   repo.ID,
+				CommitID: commit.ID,
+				GitRef:   "fix-avail-abc",
+				Agent:    "test",
+			})
+			db.ClaimJob("w1")
+			db.CompleteJob(reviewJob.ID, "test", "prompt", "FAIL: issues found")
+
+			// Isolate PATH
+			mockDir := t.TempDir()
+			mockScript := "#!/bin/sh\nexit 0\n"
+			for _, bin := range tt.mockBinaries {
+				name := bin
+				content := mockScript
+				if runtime.GOOS == "windows" {
+					name = bin + ".cmd"
+					content = "@exit /b 0\r\n"
+				}
+				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			origPath := os.Getenv("PATH")
+			os.Setenv("PATH", mockDir+string(os.PathListSeparator)+gitOnlyDir)
+			t.Cleanup(func() { os.Setenv("PATH", origPath) })
+
+			req := testutil.MakeJSONRequest(
+				t, http.MethodPost, "/api/job/fix",
+				fixJobRequest{ParentJobID: reviewJob.ID},
+			)
+			w := httptest.NewRecorder()
+			server.handleFixJob(w, req)
+
+			if w.Code != tt.expectedCode {
+				t.Fatalf("Expected status %d, got %d: %s",
+					tt.expectedCode, w.Code, w.Body.String())
+			}
+		})
+	}
 }
