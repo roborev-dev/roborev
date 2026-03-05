@@ -40,7 +40,7 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 	cfg := config.DefaultConfig()
 	cfg.CI.Enabled = true
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
-	return &ciPollerHarness{DB: db, RepoPath: repoPath, Repo: repo, Cfg: cfg, Poller: p}
+	return &ciPollerHarness{DB: db, RepoPath: repo.RootPath, Repo: repo, Cfg: cfg, Poller: p}
 }
 
 // stubProcessPRGit wires up git stubs on the poller so processPR doesn't
@@ -782,8 +782,8 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 	if found.ID != repo.ID {
 		t.Errorf("found repo id %d, want %d", found.ID, repo.ID)
 	}
-	if found.RootPath != repoPath {
-		t.Errorf("found repo root_path %q, want %q", found.RootPath, repoPath)
+	if found.RootPath != repo.RootPath {
+		t.Errorf("found repo root_path %q, want %q", found.RootPath, repo.RootPath)
 	}
 }
 
@@ -1265,7 +1265,7 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 		t.Fatal("expected non-nil repo")
 	}
 
-	wantPath := filepath.Join(dataDir, "clones", "acme", "newrepo")
+	wantPath := filepath.ToSlash(filepath.Join(dataDir, "clones", "acme", "newrepo"))
 	if repo.RootPath != wantPath {
 		t.Errorf(
 			"repo.RootPath=%q, want %q", repo.RootPath, wantPath,
@@ -1331,9 +1331,9 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("findOrCloneRepo: %v", err)
 	}
-	if repo.RootPath != clonePath {
+	if repo.RootPath != filepath.ToSlash(clonePath) {
 		t.Errorf(
-			"repo.RootPath=%q, want %q", repo.RootPath, clonePath,
+			"repo.RootPath=%q, want %q", repo.RootPath, filepath.ToSlash(clonePath),
 		)
 	}
 }
@@ -1436,8 +1436,8 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 				t.Fatal("expected non-nil repo")
 			}
 			if tt.name == "empty dir is re-cloned" {
-				if repo.RootPath != clonePath {
-					t.Errorf("RootPath=%q, want %q", repo.RootPath, clonePath)
+				if repo.RootPath != filepath.ToSlash(clonePath) {
+					t.Errorf("RootPath=%q, want %q", repo.RootPath, filepath.ToSlash(clonePath))
 				}
 			}
 		})

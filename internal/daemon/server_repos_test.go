@@ -273,10 +273,10 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	// Store repos with forward-slash paths (matching ToSlash output)
-	ws := tmpDir + "/slash-ws"
+	ws := filepath.ToSlash(tmpDir) + "/slash-ws"
 	seedRepoWithJobs(t, db, ws+"/repo-x", 2, "rx")
 	seedRepoWithJobs(t, db, ws+"/repo-y", 1, "ry")
-	seedRepoWithJobs(t, db, tmpDir+"/other-z", 1, "rz")
+	seedRepoWithJobs(t, db, filepath.ToSlash(tmpDir)+"/other-z", 1, "rz")
 
 	type repoEntry struct {
 		Name     string `json:"name"`

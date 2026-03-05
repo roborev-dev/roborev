@@ -815,6 +815,9 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 	status := r.URL.Query().Get("status")
 	repo := r.URL.Query().Get("repo")
+	if repo != "" {
+		repo = filepath.ToSlash(filepath.Clean(repo))
+	}
 	gitRef := r.URL.Query().Get("git_ref")
 	repoPrefix := r.URL.Query().Get("repo_prefix")
 	if repoPrefix != "" {
@@ -997,7 +1000,7 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	var repoPaths []string
 	for _, p := range r.URL.Query()["repo"] {
 		if p != "" {
-			repoPaths = append(repoPaths, p)
+			repoPaths = append(repoPaths, filepath.ToSlash(filepath.Clean(p)))
 		}
 	}
 

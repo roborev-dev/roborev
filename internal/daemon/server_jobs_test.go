@@ -1326,8 +1326,9 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 		if len(resp.Jobs) != 5 {
 			t.Errorf("Expected 5 jobs under workspace prefix, got %d", len(resp.Jobs))
 		}
+		wsSlash := filepath.ToSlash(workspace) + "/"
 		for _, j := range resp.Jobs {
-			if !strings.HasPrefix(j.RepoPath, workspace+"/") {
+			if !strings.HasPrefix(j.RepoPath, wsSlash) {
 				t.Errorf("Job repo_path %q does not start with workspace prefix", j.RepoPath)
 			}
 		}
@@ -1408,10 +1409,10 @@ func TestHandleListJobsSlashNormalization(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	// Store repos with forward-slash paths (matching ToSlash output)
-	ws := tmpDir + "/slash-ws"
+	ws := filepath.ToSlash(tmpDir) + "/slash-ws"
 	seedRepoWithJobs(t, db, ws+"/repo-a", 2, "sa")
 	seedRepoWithJobs(t, db, ws+"/repo-b", 1, "sb")
-	seedRepoWithJobs(t, db, tmpDir+"/other-c", 1, "sc")
+	seedRepoWithJobs(t, db, filepath.ToSlash(tmpDir)+"/other-c", 1, "sc")
 
 	t.Run("forward-slash prefix matches stored paths", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet,
