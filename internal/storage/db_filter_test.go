@@ -987,6 +987,16 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		}
 	})
 
+	// Complete workspace jobs so CountJobStats has done counts to verify.
+	// repo1 (repo_one) job -> done, repo2 (repo%two) job -> done,
+	// repo3 (other) job -> done (outside prefix).
+	for range 3 {
+		claimed := claimJob(t, db, "w1")
+		if err := db.CompleteJob(claimed.ID, "codex", "p", "o"); err != nil {
+			t.Fatalf("CompleteJob failed: %v", err)
+		}
+	}
+
 	t.Run("CountJobStats with special-char prefix", func(t *testing.T) {
 		stats, err := db.CountJobStats(
 			"", WithRepoPrefix("/tmp/workspace"),
@@ -994,11 +1004,13 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CountJobStats failed: %v", err)
 		}
-		if stats.Done+stats.Open != 0 {
-			t.Errorf(
-				"Expected 0 done stats (jobs are queued), got done=%d open=%d",
-				stats.Done, stats.Open,
-			)
+		// 2 done jobs under /tmp/workspace (repo_one + repo%two),
+		// not 3 (repo3 is under /tmp/other).
+		if stats.Done != 2 {
+			t.Errorf("Expected 2 done under prefix, got %d", stats.Done)
+		}
+		if stats.Open != 2 {
+			t.Errorf("Expected 2 open under prefix, got %d", stats.Open)
 		}
 	})
 
