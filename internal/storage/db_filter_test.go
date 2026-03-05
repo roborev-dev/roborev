@@ -986,6 +986,71 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 			t.Errorf("Expected 1 job under /tmp/other, got %d", len(jobs))
 		}
 	})
+
+	t.Run("CountJobStats with special-char prefix", func(t *testing.T) {
+		stats, err := db.CountJobStats(
+			"", WithRepoPrefix("/tmp/workspace"),
+		)
+		if err != nil {
+			t.Fatalf("CountJobStats failed: %v", err)
+		}
+		if stats.Done+stats.Open != 0 {
+			t.Errorf(
+				"Expected 0 done stats (jobs are queued), got done=%d open=%d",
+				stats.Done, stats.Open,
+			)
+		}
+	})
+
+	t.Run("ListReposWithReviewCounts with special-char prefix", func(t *testing.T) {
+		repos, total, err := db.ListReposWithReviewCounts(
+			WithRepoPathPrefix("/tmp/workspace"),
+		)
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCounts failed: %v", err)
+		}
+		if len(repos) != 2 {
+			t.Errorf("Expected 2 repos, got %d", len(repos))
+		}
+		if total != 2 {
+			t.Errorf("Expected total 2, got %d", total)
+		}
+	})
+
+	t.Run("backslash in path does not cause SQL error", func(t *testing.T) {
+		// Verify that backslashes in paths are passed through correctly
+		// to LIKE (no longer escaped as ESCAPE char). The LIKE pattern
+		// uses '/' as separator so Windows-native paths with '\' won't
+		// match the prefix filter — on Windows, filepath.ToSlash should
+		// normalize paths before storage. This test ensures no SQL errors.
+		createRepo(t, db, `C:\Users\dev\workspace\project-a`)
+		rA, _ := db.GetRepoByPath(`C:\Users\dev\workspace\project-a`)
+		cA := createCommit(t, db, rA.ID, "win-a")
+		enqueueJob(t, db, rA.ID, cA.ID, "win-a")
+
+		// Should not error — the old '\' ESCAPE char would have
+		// caused invalid escape sequences with Windows paths.
+		_, err := db.ListJobs(
+			"", "", 50, 0, WithRepoPrefix(`C:\Users\dev\workspace`),
+		)
+		if err != nil {
+			t.Fatalf("ListJobs with backslash prefix should not error: %v", err)
+		}
+
+		_, err = db.CountJobStats(
+			"", WithRepoPrefix(`C:\Users\dev\workspace`),
+		)
+		if err != nil {
+			t.Fatalf("CountJobStats with backslash prefix should not error: %v", err)
+		}
+
+		_, _, err = db.ListReposWithReviewCounts(
+			WithRepoPathPrefix(`C:\Users\dev\workspace`),
+		)
+		if err != nil {
+			t.Fatalf("ListReposWithReviewCounts with backslash prefix should not error: %v", err)
+		}
+	})
 }
 
 func TestListReposWithCombinedPrefixAndBranch(t *testing.T) {

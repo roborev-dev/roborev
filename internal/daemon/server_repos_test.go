@@ -252,6 +252,21 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 			t.Errorf("Expected 2 repos with trailing-slash prefix, got %d", len(response.Repos))
 		}
 	})
+
+	t.Run("prefix with dot-dot is normalized", func(t *testing.T) {
+		dotdotPrefix := workspace + "/../" + filepath.Base(workspace)
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/repos?prefix="+url.QueryEscape(dotdotPrefix), nil)
+		w := httptest.NewRecorder()
+		server.handleListRepos(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+
+		var response reposResponse
+		testutil.DecodeJSON(t, w, &response)
+		if len(response.Repos) != 2 {
+			t.Errorf("Expected 2 repos with dot-dot prefix, got %d", len(response.Repos))
+		}
+	})
 }
 
 func TestHandleListBranches(t *testing.T) {

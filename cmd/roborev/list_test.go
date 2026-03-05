@@ -240,6 +240,34 @@ func TestListCommand(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "workspace mode suppresses auto-detected branch",
+			repoSetup: func(t *testing.T) repoSetupResult {
+				// Create a non-git parent dir (workspace mode)
+				parent := t.TempDir()
+				return repoSetupResult{
+					workingDir: parent,
+					repo:       nil,
+					extraArgs:  nil,
+				}
+			},
+			handler:      jobsHandler([]storage.ReviewJob{}, false),
+			wantQuery:    []string{"repo_prefix="},
+			notWantQuery: []string{"branch="},
+		},
+		{
+			name: "workspace mode honors explicit --branch",
+			repoSetup: func(t *testing.T) repoSetupResult {
+				parent := t.TempDir()
+				return repoSetupResult{
+					workingDir: parent,
+					repo:       nil,
+					extraArgs:  []string{"--branch", "main"},
+				}
+			},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantQuery: []string{"repo_prefix=", "branch=main", "branch_include_empty=true"},
+		},
 	}
 
 	for _, tc := range tests {
