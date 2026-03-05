@@ -548,3 +548,78 @@ func TestReviewInvalidArgsNoSideEffects(t *testing.T) {
 		}
 	}
 }
+
+func TestFindChildGitRepos(t *testing.T) {
+	parent := t.TempDir()
+
+	// Create a regular git repo (directory .git)
+	regularRepo := filepath.Join(parent, "regular")
+	os.Mkdir(regularRepo, 0755)
+	os.Mkdir(filepath.Join(regularRepo, ".git"), 0755)
+
+	// Create a worktree-style repo (.git is a file)
+	worktreeRepo := filepath.Join(parent, "worktree")
+	os.Mkdir(worktreeRepo, 0755)
+	os.WriteFile(
+		filepath.Join(worktreeRepo, ".git"),
+		[]byte("gitdir: /some/main/.git/worktrees/wt"),
+		0644,
+	)
+
+	// Create a non-repo directory (no .git at all)
+	plainDir := filepath.Join(parent, "plain")
+	os.Mkdir(plainDir, 0755)
+
+	// Create a hidden directory (should be skipped)
+	hiddenDir := filepath.Join(parent, ".hidden")
+	os.Mkdir(hiddenDir, 0755)
+	os.Mkdir(filepath.Join(hiddenDir, ".git"), 0755)
+
+	repos := findChildGitRepos(parent)
+
+	if len(repos) != 2 {
+		t.Fatalf("Expected 2 repos, got %d: %v", len(repos), repos)
+	}
+
+	found := make(map[string]bool)
+	for _, r := range repos {
+		found[r] = true
+	}
+	if !found["regular"] {
+		t.Error("Expected 'regular' in results")
+	}
+	if !found["worktree"] {
+		t.Error("Expected 'worktree' in results (has .git file)")
+	}
+	if found["plain"] {
+		t.Error("'plain' should not be in results")
+	}
+	if found[".hidden"] {
+		t.Error("'.hidden' should not be in results")
+	}
+}
+
+func TestFindChildGitReposHintPaths(t *testing.T) {
+	parent := t.TempDir()
+
+	// Create a regular git repo
+	repoDir := filepath.Join(parent, "my-repo")
+	os.Mkdir(repoDir, 0755)
+	os.Mkdir(filepath.Join(repoDir, ".git"), 0755)
+
+	// Run the review command against the parent dir (not a git repo)
+	// to verify the hint message contains full paths
+	_, _, err := executeReviewCmd("--repo", parent)
+	if err == nil {
+		t.Fatal("Expected error for non-git directory")
+	}
+
+	errMsg := err.Error()
+	expectedPath := filepath.Join(parent, "my-repo")
+	if !strings.Contains(errMsg, expectedPath) {
+		t.Errorf(
+			"Hint should contain full path %q, got: %s",
+			expectedPath, errMsg,
+		)
+	}
+}

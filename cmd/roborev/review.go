@@ -438,7 +438,7 @@ func findChildGitRepos(dir string) []string {
 			continue
 		}
 		gitDir := filepath.Join(dir, e.Name(), ".git")
-		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
+		if _, err := os.Stat(gitDir); err == nil {
 			repos = append(repos, e.Name())
 		}
 	}
