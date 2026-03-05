@@ -294,6 +294,7 @@ func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, err
 func (db *DB) RenameRepo(identifier, newName string) (int64, error) {
 	// Try to match by root_path first (absolute or relative), then by name
 	absPath, _ := filepath.Abs(identifier)
+	absPath = filepath.ToSlash(absPath)
 
 	// Try path match first
 	result, err := db.Exec(`UPDATE repos SET name = ? WHERE root_path = ?`, newName, absPath)
