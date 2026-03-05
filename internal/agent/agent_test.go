@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -405,7 +406,11 @@ func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
 	// has its binary on PATH. Request "codex" and verify fallback
 	// returns "claude-code" without an "unknown agent" error.
 	fakeBin := t.TempDir()
-	claudeBin := filepath.Join(fakeBin, "claude")
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	claudeBin := filepath.Join(fakeBin, binName)
 	if err := os.WriteFile(claudeBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("failed to create fake claude binary: %v", err)
 	}
