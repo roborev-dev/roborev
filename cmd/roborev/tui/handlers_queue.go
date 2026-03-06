@@ -197,7 +197,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "esc":
+	case "ctrl+d", "esc":
 		m.currentView = m.colOptionsReturnView
 		if m.colOptionsDirty {
 			m.colOptionsDirty = false
