@@ -642,12 +642,17 @@ func TestRedactWebhookURL(t *testing.T) {
 		{
 			name: "userinfo query and fragment are removed",
 			in:   "https://token:secret@example.com/services/team/webhook?api_key=123#frag",
-			want: "https://example.com/services/...",
+			want: "https://example.com/...",
 		},
 		{
-			name: "single path segment is preserved",
+			name: "single path segment is fully redacted",
 			in:   "https://example.com/webhook",
-			want: "https://example.com/webhook",
+			want: "https://example.com/...",
+		},
+		{
+			name: "no path is preserved as-is",
+			in:   "https://example.com",
+			want: "https://example.com",
 		},
 		{
 			name: "invalid URL is hidden",

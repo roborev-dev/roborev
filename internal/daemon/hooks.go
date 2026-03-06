@@ -334,13 +334,8 @@ func redactWebhookURL(raw string) string {
 		Host:   parsed.Host,
 	}
 
-	path := strings.Trim(parsed.EscapedPath(), "/")
-	if path != "" {
-		segments := strings.Split(path, "/")
-		redacted.Path = "/" + segments[0]
-		if len(segments) > 1 {
-			redacted.Path += "/..."
-		}
+	if p := parsed.EscapedPath(); p != "" && p != "/" {
+		redacted.Path = "/..."
 	}
 
 	return redacted.String()
