@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/roborev-dev/roborev/internal/agent"
 	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/daemon"
 	"github.com/roborev-dev/roborev/internal/git"
@@ -229,10 +230,14 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	agentName := config.ResolveAgentForWorkflow(
 		opts.agentName, repoRoot, cfg, "fix", reasoning,
 	)
-	// When the agent is explicitly overridden but the model is not,
-	// skip generic default_model (it's paired with default_agent).
+	// Resolve model locally for display; the daemon re-resolves with
+	// its own canonical-agent comparison to skip generic default_model
+	// when the agent was overridden on CLI.
+	configAgent := config.ResolveAgentForWorkflow("", repoRoot, cfg, "fix", reasoning)
+	cliAgentChanged := opts.agentName != "" &&
+		agent.CanonicalName(opts.agentName) != agent.CanonicalName(configAgent)
 	var model string
-	if opts.agentName != "" && opts.model == "" {
+	if cliAgentChanged && opts.model == "" {
 		model = config.ResolveWorkflowModel(repoRoot, cfg, "fix", reasoning)
 	} else {
 		model = config.ResolveModelForWorkflow(
@@ -258,7 +263,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	resolved.agentName = agentName
 	resolved.model = model
 	resolved.reasoning = reasoning
-	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, resolved, opts.agentName != "")
+	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, resolved)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
@@ -519,23 +524,22 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 	return sb.String()
 }
 
-func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions, agentOverridden bool) (*storage.ReviewJob, error) {
+func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
 	if branch == "" {
 		branch = git.GetCurrentBranch(repoRoot)
 	}
 
 	reqBody, err := json.Marshal(daemon.EnqueueRequest{
-		RepoPath:        repoRoot,
-		GitRef:          label,
-		Branch:          branch,
-		Agent:           opts.agentName,
-		Model:           opts.model,
-		Reasoning:       opts.reasoning,
-		CustomPrompt:    prompt,
-		OutputPrefix:    outputPrefix,
-		Agentic:         true,
-		JobType:         "compact",
-		AgentOverridden: agentOverridden,
+		RepoPath:     repoRoot,
+		GitRef:       label,
+		Branch:       branch,
+		Agent:        opts.agentName,
+		Model:        opts.model,
+		Reasoning:    opts.reasoning,
+		CustomPrompt: prompt,
+		OutputPrefix: outputPrefix,
+		Agentic:      true,
+		JobType:      "compact",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal enqueue request: %w", err)

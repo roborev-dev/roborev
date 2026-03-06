@@ -1518,10 +1518,9 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 	}
 }
 
-func TestRunFixWithSeenAbortsOnError(t *testing.T) {
+func TestRunFixWithSeenContinuesOnError(t *testing.T) {
 	// When processing multiple jobs and one fails, runFixWithSeen should
-	// abort instead of continuing to the next job. This prevents wasting
-	// time on subsequent jobs when the agent is broken (e.g., wrong model).
+	// print a warning and continue to the next job (best-effort).
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 
 	var processedJobs []int64
@@ -1571,27 +1570,35 @@ func TestRunFixWithSeenAbortsOnError(t *testing.T) {
 		}).
 		Build()
 
-	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 		return runFixWithSeen(cmd, []int64{10, 20, 30}, fixOptions{
 			agentName: "test",
 			reasoning: "fast",
 		}, nil)
 	})
 
-	// Should return an error (job 20 is not complete)
-	if err == nil {
-		t.Fatal("expected error when job fails, got nil")
-	}
-	if !strings.Contains(err.Error(), "error fixing job 20") {
-		t.Errorf("error should mention job 20, got: %v", err)
+	// Best-effort: no top-level error
+	if err != nil {
+		t.Fatalf("expected no error (best-effort), got: %v", err)
 	}
 
-	// Job 30 should NOT be processed (abort after job 20 fails)
+	// Warning should be printed for job 20
+	if !strings.Contains(out, "Warning: error fixing job 20") {
+		t.Errorf("expected warning about job 20, got:\n%s", out)
+	}
+
+	// All three jobs should be attempted (best-effort continues)
 	mu.Lock()
 	jobs := processedJobs
 	mu.Unlock()
-	if slices.Contains(jobs, int64(30)) {
-		t.Errorf("job 30 should not be processed after job 20 fails, got: %v", jobs)
+	if !slices.Contains(jobs, int64(10)) {
+		t.Errorf("job 10 should be processed, got: %v", jobs)
+	}
+	if !slices.Contains(jobs, int64(20)) {
+		t.Errorf("job 20 should be attempted, got: %v", jobs)
+	}
+	if !slices.Contains(jobs, int64(30)) {
+		t.Errorf("job 30 should be processed after job 20 fails, got: %v", jobs)
 	}
 }
 
@@ -1785,5 +1792,81 @@ model = "repo-default"
 			"expected empty model (repo generic should be skipped), got %q",
 			modelStr,
 		)
+	}
+}
+
+func TestResolveFixAgentSameAsDefault(t *testing.T) {
+	// When --agent matches the config default (even via alias),
+	// the generic default_model should still be applied because
+	// the agent is effectively unchanged.
+
+	tmpDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+
+	tests := []struct {
+		name         string
+		defaultAgent string
+		cliAgent     string
+		wantModel    string
+	}{
+		{
+			name:         "same agent uses default_model",
+			defaultAgent: "codex",
+			cliAgent:     "codex",
+			wantModel:    "gpt-5.4",
+		},
+		{
+			name:         "alias matches default uses default_model",
+			defaultAgent: "claude-code",
+			cliAgent:     "claude",
+			wantModel:    "gpt-5.4",
+		},
+		{
+			name:         "different agent skips default_model",
+			defaultAgent: "codex",
+			cliAgent:     "test",
+			wantModel:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgPath := filepath.Join(tmpDir, "config.toml")
+			cfgContent := fmt.Sprintf(
+				"default_agent = %q\ndefault_model = \"gpt-5.4\"\n",
+				tt.defaultAgent,
+			)
+			if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.LoadGlobal()
+			if err != nil {
+				t.Fatalf("LoadGlobal: %v", err)
+			}
+
+			reasoning := "fast"
+
+			// Simulate the canonical comparison from resolveFixAgent
+			configAgent := config.ResolveAgentForWorkflow(
+				"", tmpDir, cfg, "fix", reasoning,
+			)
+			cliAgentChanged := tt.cliAgent != "" &&
+				agent.CanonicalName(tt.cliAgent) != agent.CanonicalName(configAgent)
+
+			var modelStr string
+			if cliAgentChanged {
+				modelStr = config.ResolveWorkflowModel(
+					tmpDir, cfg, "fix", reasoning,
+				)
+			} else {
+				modelStr = config.ResolveModelForWorkflow(
+					"", tmpDir, cfg, "fix", reasoning,
+				)
+			}
+
+			if modelStr != tt.wantModel {
+				t.Errorf("model = %q, want %q", modelStr, tt.wantModel)
+			}
+		})
 	}
 }

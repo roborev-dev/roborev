@@ -447,21 +447,20 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 // API request/response types
 
 type EnqueueRequest struct {
-	RepoPath        string `json:"repo_path"`
-	CommitSHA       string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
-	GitRef          string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
-	Branch          string `json:"branch,omitempty"`     // Branch name at time of job creation
-	Agent           string `json:"agent,omitempty"`
-	Model           string `json:"model,omitempty"`            // Model to use (for opencode: provider/model format)
-	DiffContent     string `json:"diff_content,omitempty"`     // Pre-captured diff for dirty reviews
-	Reasoning       string `json:"reasoning,omitempty"`        // Reasoning level: thorough, standard, fast
-	ReviewType      string `json:"review_type,omitempty"`      // Review type (e.g., "security") — changes system prompt
-	CustomPrompt    string `json:"custom_prompt,omitempty"`    // Custom prompt for ad-hoc agent work
-	Agentic         bool   `json:"agentic,omitempty"`          // Enable agentic mode (allow file edits)
-	OutputPrefix    string `json:"output_prefix,omitempty"`    // Prefix to prepend to review output
-	JobType         string `json:"job_type,omitempty"`         // Explicit job type (review/range/dirty/task/compact)
-	Provider        string `json:"provider,omitempty"`         // Provider for pi agent (e.g., "anthropic")
-	AgentOverridden bool   `json:"agent_overridden,omitempty"` // Agent was explicitly chosen; skip generic model fallback
+	RepoPath     string `json:"repo_path"`
+	CommitSHA    string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
+	GitRef       string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
+	Branch       string `json:"branch,omitempty"`     // Branch name at time of job creation
+	Agent        string `json:"agent,omitempty"`
+	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
+	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
+	Reasoning    string `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
+	ReviewType   string `json:"review_type,omitempty"`   // Review type (e.g., "security") — changes system prompt
+	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
+	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
+	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/compact)
+	Provider     string `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
 }
 
 type ErrorResponse struct {
@@ -588,13 +587,6 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve reasoning level first (needed for agent/model resolution)
-	reasoning, err := config.ResolveReviewReasoning(req.Reasoning, repoRoot)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
 	// Map review_type to config workflow for agent/model resolution.
 	// "default" uses the standard "review" workflow; others use their own name.
 	// Compact jobs use the "fix" workflow since they're part of that pipeline.
@@ -603,6 +595,20 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		workflow = "fix"
 	} else if !config.IsDefaultReviewType(req.ReviewType) {
 		workflow = req.ReviewType
+	}
+
+	// Resolve reasoning level for the determined workflow.
+	// Compact jobs use fix reasoning (default "standard"), not review
+	// reasoning (default "thorough").
+	var reasoning string
+	if workflow == "fix" {
+		reasoning, err = config.ResolveFixReasoning(req.Reasoning, repoRoot)
+	} else {
+		reasoning, err = config.ResolveReviewReasoning(req.Reasoning, repoRoot)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	// Resolve agent for workflow at this reasoning level
@@ -625,12 +631,16 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve model for workflow at this reasoning level.
-	// When the agent was explicitly overridden (e.g. --agent on CLI)
-	// and no model was specified, only check workflow-specific model
-	// config. The generic default_model is paired with default_agent
-	// and may be incompatible with the overridden agent.
+	// When the requested agent differs from what config resolves by
+	// default, skip generic default_model — it's paired with the
+	// default agent and may be incompatible with the override.
+	configAgent := config.ResolveAgentForWorkflow(
+		"", repoRoot, cfg, workflow, reasoning,
+	)
+	agentChanged := req.Agent != "" &&
+		agent.CanonicalName(req.Agent) != agent.CanonicalName(configAgent)
 	var model string
-	if req.AgentOverridden && req.Model == "" {
+	if agentChanged && req.Model == "" {
 		model = config.ResolveWorkflowModel(
 			repoRoot, cfg, workflow, reasoning,
 		)

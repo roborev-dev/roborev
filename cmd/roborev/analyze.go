@@ -502,23 +502,16 @@ func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label
 		branch = opts.branch
 	}
 
-	// When --agent is passed on CLI but --model is not, signal the
-	// daemon to skip generic default_model fallback. The generic
-	// model is paired with default_agent and may be incompatible
-	// with the overridden agent.
-	agentOverridden := opts.agentName != "" && opts.model == ""
-
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
-		RepoPath:        repoRoot,
-		GitRef:          label, // Use analysis type name as the TUI label
-		Branch:          branch,
-		Agent:           opts.agentName,
-		Model:           opts.model,
-		Reasoning:       opts.reasoning,
-		CustomPrompt:    prompt,
-		OutputPrefix:    outputPrefix,
-		Agentic:         true, // Agentic mode needed for reading files when prompt exceeds size limit
-		AgentOverridden: agentOverridden,
+		RepoPath:     repoRoot,
+		GitRef:       label, // Use analysis type name as the TUI label
+		Branch:       branch,
+		Agent:        opts.agentName,
+		Model:        opts.model,
+		Reasoning:    opts.reasoning,
+		CustomPrompt: prompt,
+		OutputPrefix: outputPrefix,
+		Agentic:      true, // Agentic mode needed for reading files when prompt exceeds size limit
 	})
 
 	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
@@ -809,9 +802,11 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	// Resolve agent and model via fix workflow config.
 	// When the agent is explicitly overridden but the model is not,
 	// skip generic default_model (it's paired with default_agent).
-	cliAgent := agentName
+	configAgent := config.ResolveAgentForWorkflow("", repoPath, cfg, "fix", reasoning)
+	cliAgentChanged := agentName != "" &&
+		agent.CanonicalName(agentName) != agent.CanonicalName(configAgent)
 	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
-	if cliAgent != "" && model == "" {
+	if cliAgentChanged && model == "" {
 		model = config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
 	} else {
 		model = config.ResolveModelForWorkflow(model, repoPath, cfg, "fix", reasoning)

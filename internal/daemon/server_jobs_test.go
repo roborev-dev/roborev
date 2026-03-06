@@ -1430,6 +1430,130 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 	})
 }
 
+func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
+	// When the requested agent differs from config default, the generic
+	// default_model should be skipped. When they match (even via alias),
+	// default_model should apply.
+
+	repoDir := t.TempDir()
+	testutil.InitTestGitRepo(t, repoDir)
+	headSHA := testutil.GetHeadSHA(t, repoDir)
+
+	tests := []struct {
+		name         string
+		defaultAgent string
+		defaultModel string
+		reqAgent     string
+		reqModel     string
+		wantModel    string
+	}{
+		{
+			name:         "agent matches default: default_model applied",
+			defaultAgent: "test",
+			defaultModel: "gpt-5.4",
+			reqAgent:     "test",
+			wantModel:    "gpt-5.4",
+		},
+		{
+			name:         "agent differs: default_model skipped",
+			defaultAgent: "codex",
+			defaultModel: "gpt-5.4",
+			reqAgent:     "test",
+			wantModel:    "",
+		},
+		{
+			name:         "no agent override: default_model applied",
+			defaultAgent: "test",
+			defaultModel: "gpt-5.4",
+			reqAgent:     "",
+			wantModel:    "gpt-5.4",
+		},
+		{
+			name:         "explicit model always used",
+			defaultAgent: "codex",
+			defaultModel: "gpt-5.4",
+			reqAgent:     "test",
+			reqModel:     "my-model",
+			wantModel:    "my-model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, _ := testutil.OpenTestDBWithDir(t)
+			cfg := config.DefaultConfig()
+			cfg.DefaultAgent = tt.defaultAgent
+			cfg.DefaultModel = tt.defaultModel
+			server := NewServer(db, cfg, "")
+
+			reqData := EnqueueRequest{
+				RepoPath:  repoDir,
+				CommitSHA: headSHA,
+				Agent:     tt.reqAgent,
+				Model:     tt.reqModel,
+			}
+			req := testutil.MakeJSONRequest(
+				t, http.MethodPost, "/api/enqueue", reqData,
+			)
+			w := httptest.NewRecorder()
+			server.handleEnqueue(w, req)
+
+			if w.Code != http.StatusCreated {
+				t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var job storage.ReviewJob
+			testutil.DecodeJSON(t, w, &job)
+
+			if job.Model != tt.wantModel {
+				t.Errorf("model = %q, want %q", job.Model, tt.wantModel)
+			}
+		})
+	}
+}
+
+func TestHandleEnqueueCompactReasoning(t *testing.T) {
+	// Compact jobs should use fix reasoning defaults ("standard"),
+	// not review reasoning defaults ("thorough").
+
+	repoDir := t.TempDir()
+	testutil.InitTestGitRepo(t, repoDir)
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	server := NewServer(db, cfg, "")
+
+	reqData := EnqueueRequest{
+		RepoPath:     repoDir,
+		GitRef:       "compact-test",
+		Agent:        "test",
+		CustomPrompt: "consolidation prompt",
+		Agentic:      true,
+		JobType:      "compact",
+		// No explicit reasoning — should default to fix reasoning
+	}
+	req := testutil.MakeJSONRequest(
+		t, http.MethodPost, "/api/enqueue", reqData,
+	)
+	w := httptest.NewRecorder()
+	server.handleEnqueue(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var job storage.ReviewJob
+	testutil.DecodeJSON(t, w, &job)
+
+	// Fix reasoning default is "standard", review default is "thorough"
+	if job.Reasoning != "standard" {
+		t.Errorf(
+			"compact job reasoning = %q, want %q (fix default)",
+			job.Reasoning, "standard",
+		)
+	}
+}
+
 func TestHandleListJobsSlashNormalization(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
