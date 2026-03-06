@@ -184,8 +184,12 @@ func IsAvailable(name string) bool {
 
 // GetAvailable returns an available agent, trying the requested one first,
 // then falling back to alternatives. Returns error only if no agents available.
-// Supports aliases like "claude" for "claude-code"
-func GetAvailable(preferred string) (Agent, error) {
+// Supports aliases like "claude" for "claude-code".
+//
+// Optional backup agent names are tried after the preferred agent but
+// before the hardcoded fallback chain. This lets callers honor
+// default_backup_agent config without changing the global chain order.
+func GetAvailable(preferred string, backups ...string) (Agent, error) {
 	// Resolve alias upfront for consistent comparisons
 	preferred = resolveAlias(preferred)
 
@@ -205,6 +209,17 @@ func GetAvailable(preferred string) (Agent, error) {
 	// Try preferred agent first
 	if preferred != "" && IsAvailable(preferred) {
 		return Get(preferred)
+	}
+
+	// Try backup agents before the hardcoded fallback chain.
+	for _, b := range backups {
+		b = resolveAlias(b)
+		if b == "" || b == preferred {
+			continue
+		}
+		if _, ok := registry[b]; ok && IsAvailable(b) {
+			return Get(b)
+		}
 	}
 
 	// Fallback order: codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi

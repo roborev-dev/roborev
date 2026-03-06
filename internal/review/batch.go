@@ -89,10 +89,13 @@ func runSingle(
 	// is available; otherwise use the agent name as-is.
 	resolvedName := agentName
 	var model string
+	var backupAgent string
 	if cfg.GlobalConfig != nil {
 		resolvedName = config.ResolveAgentForWorkflow(
 			agentName, cfg.RepoPath,
 			cfg.GlobalConfig, workflow, cfg.Reasoning)
+		backupAgent = config.ResolveBackupAgentForWorkflow(
+			cfg.RepoPath, cfg.GlobalConfig, workflow)
 		model = config.ResolveModelForWorkflow(
 			"", cfg.RepoPath,
 			cfg.GlobalConfig, workflow, cfg.Reasoning)
@@ -107,7 +110,20 @@ func runSingle(
 			err = fmt.Errorf("no agents available (mock registry)")
 		}
 	} else {
-		resolvedAgent, err = agent.GetAvailableWithConfig(resolvedName, cfg.GlobalConfig)
+		resolvedAgent, err = agent.GetAvailableWithConfig(
+			resolvedName, cfg.GlobalConfig, backupAgent)
+	}
+
+	// Use backup model when the backup agent was selected
+	if err == nil && cfg.GlobalConfig != nil && backupAgent != "" {
+		preferred := config.ResolveAgentForWorkflow(
+			agentName, cfg.RepoPath,
+			cfg.GlobalConfig, workflow, cfg.Reasoning)
+		if agent.CanonicalName(resolvedAgent.Name()) == agent.CanonicalName(backupAgent) &&
+			agent.CanonicalName(resolvedAgent.Name()) != agent.CanonicalName(preferred) {
+			model = config.ResolveBackupModelForWorkflow(
+				cfg.RepoPath, cfg.GlobalConfig, workflow)
+		}
 	}
 
 	if err != nil {

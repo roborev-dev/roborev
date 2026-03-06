@@ -806,15 +806,25 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	cliAgentChanged := agentName != "" &&
 		agent.CanonicalName(agentName) != agent.CanonicalName(configAgent)
 	agentName = config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
-	if cliAgentChanged && model == "" {
+	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "fix")
+
+	a, err := agent.GetAvailableWithConfig(agentName, cfg, backupAgent)
+	if err != nil {
+		return fmt.Errorf("get agent: %w", err)
+	}
+
+	// Use backup model when the backup agent was selected and no
+	// explicit model was passed via CLI.
+	preferredForAnalyze := config.ResolveAgentForWorkflow(agentName, repoPath, cfg, "fix", reasoning)
+	usingBackup := backupAgent != "" &&
+		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgent) &&
+		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredForAnalyze)
+	if usingBackup && model == "" {
+		model = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
+	} else if cliAgentChanged && model == "" {
 		model = config.ResolveWorkflowModel(repoPath, cfg, "fix", reasoning)
 	} else {
 		model = config.ResolveModelForWorkflow(model, repoPath, cfg, "fix", reasoning)
-	}
-
-	a, err := agent.GetAvailableWithConfig(agentName, cfg)
-	if err != nil {
-		return fmt.Errorf("get agent: %w", err)
 	}
 
 	// Configure agent: agentic mode, with model and reasoning

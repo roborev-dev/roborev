@@ -434,3 +434,137 @@ func TestGetAvailableFallsBackForKnownUnavailable(t *testing.T) {
 		t.Fatalf("Expected fallback to 'claude-code', got %q", resolved.Name())
 	}
 }
+
+func TestGetAvailableTriesBackupBeforeChain(t *testing.T) {
+	// Setup: codex unavailable, gemini available, claude-code available.
+	// Without backup: GetAvailable("codex") → claude-code (first in chain).
+	// With backup "gemini": GetAvailable("codex", "gemini") → gemini.
+	fakeBin := t.TempDir()
+	for _, bin := range []string{"gemini", "claude"} {
+		name := bin
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		p := filepath.Join(fakeBin, name)
+		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("create fake %s binary: %v", bin, err)
+		}
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"gemini":      NewGeminiAgent(""),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	// With backup, should pick gemini (not claude-code from chain)
+	resolved, err := GetAvailable("codex", "gemini")
+	if err != nil {
+		t.Fatalf("expected fallback, got error: %v", err)
+	}
+	if resolved.Name() != "gemini" {
+		t.Fatalf("expected backup agent 'gemini', got %q", resolved.Name())
+	}
+
+	// Without backup, should still fall through to claude-code
+	resolved, err = GetAvailable("codex")
+	if err != nil {
+		t.Fatalf("expected fallback, got error: %v", err)
+	}
+	if resolved.Name() != "claude-code" {
+		t.Fatalf("expected chain fallback 'claude-code', got %q", resolved.Name())
+	}
+}
+
+func TestGetAvailableBackupSkipsDuplicateAndEmpty(t *testing.T) {
+	// Backup that matches preferred or is empty should be skipped.
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	p := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("create fake binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	// Backup same as preferred → skipped, falls through to chain
+	resolved, err := GetAvailable("codex", "codex", "")
+	if err != nil {
+		t.Fatalf("expected fallback, got error: %v", err)
+	}
+	if resolved.Name() != "claude-code" {
+		t.Fatalf("expected chain fallback 'claude-code', got %q", resolved.Name())
+	}
+}
+
+func TestGetAvailableBackupResolvesAliases(t *testing.T) {
+	// Backup "claude" should resolve to "claude-code" via alias.
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	p := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("create fake binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("codex", "claude")
+	if err != nil {
+		t.Fatalf("expected fallback, got error: %v", err)
+	}
+	if resolved.Name() != "claude-code" {
+		t.Fatalf("expected alias-resolved 'claude-code', got %q", resolved.Name())
+	}
+}
+
+func TestGetAvailableBackupUnavailableFallsToChain(t *testing.T) {
+	// Backup agent that is unavailable should be skipped, chain used.
+	fakeBin := t.TempDir()
+	binName := "claude"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	p := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("create fake binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":       NewCodexAgent("definitely-not-on-path"),
+		"gemini":      NewGeminiAgent("also-not-on-path"),
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	// Backup gemini is registered but unavailable → falls to chain
+	resolved, err := GetAvailable("codex", "gemini")
+	if err != nil {
+		t.Fatalf("expected fallback, got error: %v", err)
+	}
+	if resolved.Name() != "claude-code" {
+		t.Fatalf("expected chain fallback 'claude-code', got %q", resolved.Name())
+	}
+}

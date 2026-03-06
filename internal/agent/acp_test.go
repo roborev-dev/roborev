@@ -1191,3 +1191,33 @@ func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 		t.Fatalf("Expected claude-code agent, got %q", resolved.Name())
 	}
 }
+
+func TestGetAvailableWithConfigPassesBackupsThrough(t *testing.T) {
+	// When preferred is unavailable, backups should be tried before the chain.
+	fakeBin := t.TempDir()
+	binName := "gemini"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	geminiBin := filepath.Join(fakeBin, binName)
+	if err := os.WriteFile(geminiBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("create fake gemini binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"codex":  NewCodexAgent("definitely-not-on-path"),
+		"gemini": NewGeminiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{}
+	resolved, err := GetAvailableWithConfig("codex", cfg, "gemini")
+	if err != nil {
+		t.Fatalf("expected fallback, got error: %v", err)
+	}
+	if resolved.Name() != "gemini" {
+		t.Fatalf("expected backup agent 'gemini', got %q", resolved.Name())
+	}
+}

@@ -564,6 +564,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 		// Resolve agent through workflow config when not explicitly set
 		resolvedAgent := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, reasoning)
+		backupAgent := config.ResolveBackupAgentForWorkflow(repo.RootPath, cfg, workflow)
 		if p.agentResolverFn != nil {
 			name, err := p.agentResolverFn(resolvedAgent)
 			if err != nil {
@@ -571,15 +572,24 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 				return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 			}
 			resolvedAgent = name
-		} else if resolved, err := agent.GetAvailableWithConfig(resolvedAgent, cfg); err != nil {
+		} else if resolved, err := agent.GetAvailableWithConfig(resolvedAgent, cfg, backupAgent); err != nil {
 			rollback("No agent available — check agent config or quota")
 			return fmt.Errorf("no review agent available for type=%s: %w", rt, err)
 		} else {
 			resolvedAgent = resolved.Name()
 		}
 
-		// Resolve model through workflow config
-		resolvedModel := config.ResolveModelForWorkflow(cfg.CI.Model, repo.RootPath, cfg, workflow, reasoning)
+		// Use backup model when the backup agent was selected
+		preferredForWorkflow := config.ResolveAgentForWorkflow(ag, repo.RootPath, cfg, workflow, reasoning)
+		usingBackup := backupAgent != "" &&
+			agent.CanonicalName(resolvedAgent) == agent.CanonicalName(backupAgent) &&
+			agent.CanonicalName(resolvedAgent) != agent.CanonicalName(preferredForWorkflow)
+		var resolvedModel string
+		if usingBackup && cfg.CI.Model == "" {
+			resolvedModel = config.ResolveBackupModelForWorkflow(repo.RootPath, cfg, workflow)
+		} else {
+			resolvedModel = config.ResolveModelForWorkflow(cfg.CI.Model, repo.RootPath, cfg, workflow, reasoning)
+		}
 
 		job, err := p.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID:     repo.ID,

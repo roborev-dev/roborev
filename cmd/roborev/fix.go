@@ -326,11 +326,24 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 	}
 
 	agentName := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
-	modelStr := resolveFixModel(opts.agentName, opts.model, repoPath, cfg, reasoning)
+	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "fix")
 
-	a, err := agent.GetAvailableWithConfig(agentName, cfg)
+	a, err := agent.GetAvailableWithConfig(agentName, cfg, backupAgent)
 	if err != nil {
 		return nil, fmt.Errorf("get agent: %w", err)
+	}
+
+	// Use backup model when the backup agent was selected and no
+	// explicit model was passed via CLI.
+	preferredAgent := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "fix", reasoning)
+	usingBackup := backupAgent != "" &&
+		agent.CanonicalName(a.Name()) == agent.CanonicalName(backupAgent) &&
+		agent.CanonicalName(a.Name()) != agent.CanonicalName(preferredAgent)
+	var modelStr string
+	if usingBackup && opts.model == "" {
+		modelStr = config.ResolveBackupModelForWorkflow(repoPath, cfg, "fix")
+	} else {
+		modelStr = resolveFixModel(opts.agentName, opts.model, repoPath, cfg, reasoning)
 	}
 
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)

@@ -1507,7 +1507,10 @@ func configuredACPAgent(cfg *config.Config) *ACPAgent {
 // It treats cfg.ACP.Name as an alias for "acp" and applies cfg.ACP command/mode/model
 // at resolution time instead of package-init time.
 // It also applies command overrides for other agents (codex, claude, cursor, pi).
-func GetAvailableWithConfig(preferred string, cfg *config.Config) (Agent, error) {
+//
+// Optional backup agent names are tried after the preferred agent but
+// before the hardcoded fallback chain (see GetAvailable).
+func GetAvailableWithConfig(preferred string, cfg *config.Config, backups ...string) (Agent, error) {
 	rawPreferred := strings.TrimSpace(preferred)
 	preferred = resolveAlias(rawPreferred)
 
@@ -1525,11 +1528,11 @@ func GetAvailableWithConfig(preferred string, cfg *config.Config) (Agent, error)
 			}
 		}
 
-		// Finally fall back to normal auto-selection.
-		return GetAvailable("")
+		// Finally fall back to normal auto-selection (with backups).
+		return GetAvailable("", backups...)
 	}
 
-	resolved, err := GetAvailable(preferred)
+	resolved, err := GetAvailable(preferred, backups...)
 	if err != nil {
 		return nil, err
 	}

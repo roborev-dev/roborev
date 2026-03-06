@@ -355,6 +355,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 	// Resolve agent for refine workflow at this reasoning level
 	resolvedAgent := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "refine", resolvedReasoning)
+	backupAgent := config.ResolveBackupAgentForWorkflow(repoPath, cfg, "refine")
 	allowUnsafe := resolveAllowUnsafeAgents(opts.allowUnsafeAgents, opts.unsafeFlagChanged, cfg)
 	agent.SetAllowUnsafeAgents(allowUnsafe)
 	if cfg != nil {
@@ -365,7 +366,17 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	resolvedModel := config.ResolveModelForWorkflow(opts.model, repoPath, cfg, "refine", resolvedReasoning)
 
 	// Get the agent with configured reasoning level and model
-	addressAgent, err := selectRefineAgent(cfg, resolvedAgent, reasoningLevel, resolvedModel)
+	addressAgent, err := selectRefineAgent(cfg, resolvedAgent, reasoningLevel, resolvedModel, backupAgent)
+	if err == nil && backupAgent != "" && opts.model == "" {
+		preferredRefine := config.ResolveAgentForWorkflow(opts.agentName, repoPath, cfg, "refine", resolvedReasoning)
+		if agent.CanonicalName(addressAgent.Name()) == agent.CanonicalName(backupAgent) &&
+			agent.CanonicalName(addressAgent.Name()) != agent.CanonicalName(preferredRefine) {
+			bm := config.ResolveBackupModelForWorkflow(repoPath, cfg, "refine")
+			if bm != "" {
+				addressAgent = addressAgent.WithModel(bm)
+			}
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("no agent available: %w", err)
 	}
@@ -1149,8 +1160,8 @@ func verifyRepoState(
 	return nil
 }
 
-func selectRefineAgent(cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string) (agent.Agent, error) {
-	baseAgent, err := agent.GetAvailableWithConfig(resolvedAgent, cfg)
+func selectRefineAgent(cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, model string, backups ...string) (agent.Agent, error) {
+	baseAgent, err := agent.GetAvailableWithConfig(resolvedAgent, cfg, backups...)
 	if err != nil {
 		return nil, err
 	}
