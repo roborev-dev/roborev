@@ -237,6 +237,10 @@ func (m model) handleFixKey() (tea.Model, tea.Cmd) {
 	if m.currentView != viewQueue && m.currentView != viewReview {
 		return m, nil
 	}
+	if !m.tasksWorkflowEnabled() {
+		m.setFlash(m.tasksDisabledMessage(), 3*time.Second, m.currentView)
+		return m, nil
+	}
 
 	// Get the selected job
 	var job storage.ReviewJob
@@ -295,6 +299,14 @@ func (m model) handleReviewFixPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.reviewFixPanelFocused = false
 		return m, nil
 	case "enter":
+		if !m.tasksWorkflowEnabled() {
+			m.reviewFixPanelOpen = false
+			m.reviewFixPanelFocused = false
+			m.fixPromptText = ""
+			m.fixPromptJobID = 0
+			m.setFlash(m.tasksDisabledMessage(), 3*time.Second, viewReview)
+			return m, nil
+		}
 		jobID := m.fixPromptJobID
 		prompt := m.fixPromptText
 		m.reviewFixPanelOpen = false
@@ -331,6 +343,10 @@ func (m model) handleTabKey() (tea.Model, tea.Cmd) {
 
 // handleToggleTasksKey switches between queue and tasks view.
 func (m model) handleToggleTasksKey() (tea.Model, tea.Cmd) {
+	if !m.tasksWorkflowEnabled() {
+		m.setFlash(m.tasksDisabledMessage(), 3*time.Second, m.currentView)
+		return m, nil
+	}
 	if m.currentView == viewTasks {
 		m.currentView = viewQueue
 		return m, nil

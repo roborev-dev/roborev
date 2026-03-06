@@ -43,6 +43,10 @@ type HookConfig struct {
 	Type    string `toml:"type"`    // "beads" for built-in, empty for command
 }
 
+type AdvancedConfig struct {
+	TasksEnabled bool `toml:"tasks_enabled"` // Enables advanced TUI tasks workflow
+}
+
 // Config holds the daemon configuration
 type Config struct {
 	ServerAddr         string `toml:"server_addr"`
@@ -142,6 +146,9 @@ type Config struct {
 	ColumnBorders          bool     `toml:"column_borders"`    // Show ▕ separators between columns
 	ColumnOrder            []string `toml:"column_order"`      // Custom queue column display order
 	TaskColumnOrder        []string `toml:"task_column_order"` // Custom task column display order
+
+	// Advanced feature flags
+	Advanced AdvancedConfig `toml:"advanced"`
 
 	// ACP (Agent Client Protocol) configuration
 	ACP *ACPAgentConfig `toml:"acp"`

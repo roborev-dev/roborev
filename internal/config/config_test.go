@@ -1723,6 +1723,37 @@ func TestHideClosedDefaultPersistence(t *testing.T) {
 	}
 }
 
+func TestAdvancedTasksEnabledPersistence(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	cfg := &Config{}
+	cfg.Advanced.TasksEnabled = true
+	if err := SaveGlobal(cfg); err != nil {
+		t.Fatalf("SaveGlobal failed: %v", err)
+	}
+
+	loaded, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+	if !loaded.Advanced.TasksEnabled {
+		t.Error("Expected Advanced.TasksEnabled to be true")
+	}
+
+	loaded.Advanced.TasksEnabled = false
+	if err := SaveGlobal(loaded); err != nil {
+		t.Fatalf("SaveGlobal failed: %v", err)
+	}
+
+	reloaded, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+	if reloaded.Advanced.TasksEnabled {
+		t.Error("Expected Advanced.TasksEnabled to be false")
+	}
+}
+
 func TestHideAddressedDeprecatedMigration(t *testing.T) {
 	testenv.SetDataDir(t)
 

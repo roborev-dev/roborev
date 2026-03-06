@@ -335,6 +335,7 @@ func TestSetConfigKey(t *testing.T) {
 		{"String", "default_agent", "gemini", "gemini"},
 		{"Integer", "max_workers", "8", int64(8)},
 		{"Boolean", "sync.enabled", "true", true},
+		{"NestedBoolean", "advanced.tasks_enabled", "true", true},
 	}
 
 	for _, tt := range tests {
@@ -351,6 +352,7 @@ func TestSetConfigKey(t *testing.T) {
 		assertConfigValue(t, path, "default_agent", "gemini")
 		assertConfigValue(t, path, "max_workers", int64(8))
 		assertConfigValue(t, path, "sync.enabled", true)
+		assertConfigValue(t, path, "advanced.tasks_enabled", true)
 	})
 }
 

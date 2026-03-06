@@ -32,15 +32,23 @@ func (m model) getVisibleJobs() []storage.ReviewJob {
 func (m model) queueHelpRows() [][]helpItem {
 	row1 := []helpItem{
 		{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"},
-		{"c", "comment"}, {"y", "copy"}, {"m", "commit"}, {"F", "fix"}, {"o", "options"},
+		{"c", "comment"}, {"y", "copy"}, {"m", "commit"},
 	}
+	if m.tasksWorkflowEnabled() {
+		row1 = append(row1, helpItem{"F", "fix"})
+	}
+	row1 = append(row1, helpItem{"o", "options"})
 	row2 := []helpItem{
 		{"↑/↓", "nav"}, {"↵", "review"}, {"a", "close"},
 	}
 	if !m.lockedRepoFilter || !m.lockedBranchFilter {
 		row2 = append(row2, helpItem{"f", "filter"})
 	}
-	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"D", "focus"}, helpItem{"T", "tasks"}, helpItem{"?", "help"}, helpItem{"q", "quit"})
+	row2 = append(row2, helpItem{"h", "hide"}, helpItem{"D", "focus"})
+	if m.tasksWorkflowEnabled() {
+		row2 = append(row2, helpItem{"T", "tasks"})
+	}
+	row2 = append(row2, helpItem{"?", "help"}, helpItem{"q", "quit"})
 	return [][]helpItem{row1, row2}
 }
 func (m model) queueHelpLines() int {
@@ -906,12 +914,13 @@ func (m model) visibleColumns() []int {
 	return cols
 }
 
-// saveColumnOptions persists hidden columns, border settings, and column order to config.
+// saveColumnOptions persists table preferences and advanced task workflow state.
 // Column order is only saved when it differs from the built-in default,
 // so future default changes take effect for users who haven't customized.
 func (m model) saveColumnOptions() tea.Cmd {
 	hidden := hiddenColumnsToNames(m.hiddenColumns)
 	borders := m.colBordersOn
+	tasksEnabled := m.tasksWorkflowEnabled()
 	var colOrd []string
 	if !slices.Equal(m.columnOrder, toggleableColumns) {
 		colOrd = columnOrderToNames(m.columnOrder)
@@ -929,6 +938,7 @@ func (m model) saveColumnOptions() tea.Cmd {
 		cfg.ColumnBorders = borders
 		cfg.ColumnOrder = colOrd
 		cfg.TaskColumnOrder = taskColOrd
+		cfg.Advanced.TasksEnabled = tasksEnabled
 		if err := config.SaveGlobal(cfg); err != nil {
 			return configSaveErrMsg{err: fmt.Errorf("save config: %w", err)}
 		}
@@ -954,8 +964,8 @@ func (m model) renderColumnOptionsView() string {
 			prefix = "> "
 			line = selectedStyle.Render(line)
 		}
-		// Separator before "Column borders" item
-		if opt.id == colOptionBorders && i > 0 {
+		// Separator before settings/toggles
+		if (opt.id == colOptionBorders || opt.id == colOptionTasksWorkflow) && i > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString(prefix)
@@ -964,12 +974,8 @@ func (m model) renderColumnOptionsView() string {
 	}
 
 	b.WriteString("\n")
-	toggleHelp := helpItem{"space", "toggle"}
-	if m.colOptionsReturnView == viewTasks {
-		toggleHelp = helpItem{"space", "borders"}
-	}
 	helpRows := [][]helpItem{
-		{{"↑/↓", "navigate"}, {"j/k", "reorder"}, toggleHelp, {"esc", "close"}},
+		{{"↑/↓", "navigate"}, {"j/k", "reorder"}, {"space", "toggle"}, {"esc", "close"}},
 	}
 	b.WriteString(renderHelpTable(helpRows, m.width))
 

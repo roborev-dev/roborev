@@ -561,6 +561,57 @@ func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
 	}
 }
 
+func TestQueueHelpRowsTasksWorkflowToggle(t *testing.T) {
+	disabled := newModel(testServerAddr, withExternalIODisabled()).queueHelpRows()
+	if len(disabled) == 0 {
+		t.Fatal("expected queue help rows")
+	}
+	for _, row := range disabled {
+		for _, item := range row {
+			if item.key == "F" || item.key == "T" {
+				t.Fatalf("did not expect %q shortcut when tasks workflow is disabled", item.key)
+			}
+		}
+	}
+
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.tasksEnabled = true
+	enabled := m.queueHelpRows()
+	foundF := false
+	foundT := false
+	for _, row := range enabled {
+		for _, item := range row {
+			if item.key == "F" {
+				foundF = true
+			}
+			if item.key == "T" {
+				foundT = true
+			}
+		}
+	}
+	if !foundF || !foundT {
+		t.Fatalf("expected F and T shortcuts when tasks workflow is enabled, got %#v", enabled)
+	}
+}
+
+func TestHelpLinesShowDisabledTasksShortcuts(t *testing.T) {
+	disabled := strings.Join(helpLines(false), "\n")
+	if !strings.Contains(stripTestANSI(disabled), "Trigger fix for selected review (disabled)") {
+		t.Fatalf("expected disabled F entry in help, got:\n%s", stripTestANSI(disabled))
+	}
+	if !strings.Contains(stripTestANSI(disabled), "Open Tasks view (disabled)") {
+		t.Fatalf("expected disabled T entry in help, got:\n%s", stripTestANSI(disabled))
+	}
+	if !strings.Contains(stripTestANSI(disabled), "advanced.tasks_enabled = false") {
+		t.Fatalf("expected tasks config hint in help, got:\n%s", stripTestANSI(disabled))
+	}
+
+	enabled := strings.Join(helpLines(true), "\n")
+	if strings.Contains(stripTestANSI(enabled), "(disabled)") {
+		t.Fatalf("did not expect disabled markers when tasks workflow is enabled, got:\n%s", stripTestANSI(enabled))
+	}
+}
+
 func TestSanitizeForDisplay(t *testing.T) {
 	tests := []struct {
 		name     string

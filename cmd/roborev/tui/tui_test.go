@@ -16,6 +16,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/roborev-dev/roborev/internal/config"
 	"github.com/roborev-dev/roborev/internal/storage"
 	"github.com/roborev-dev/roborev/internal/version"
 )
@@ -898,6 +899,7 @@ func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 	m := newModel(testServerAddr, withExternalIODisabled())
 	m.currentView = viewQueue
+	m.tasksEnabled = true
 	m.jobs = []storage.ReviewJob{
 		{
 			ID:      10,
@@ -994,6 +996,59 @@ func TestTUIFixTriggerResultMsg(t *testing.T) {
 			t.Error("expected no cmd on error, got non-nil")
 		}
 	})
+}
+
+func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
+	setupTuiTestEnv(t)
+
+	m := newModel(testServerAddr, withExternalIODisabled())
+	m.currentView = viewQueue
+
+	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	updated := result.(model)
+	if updated.currentView != viewColumnOptions {
+		t.Fatalf("expected column options view, got %v", updated.currentView)
+	}
+
+	idx := -1
+	for i, opt := range updated.colOptionsList {
+		if opt.id == colOptionTasksWorkflow {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("expected tasks workflow option in column options")
+	}
+	updated.colOptionsIdx = idx
+
+	result, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	toggled := result.(model)
+	if !toggled.tasksEnabled {
+		t.Fatal("expected tasks workflow to be enabled after toggle")
+	}
+
+	result, cmd := toggled.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	closed := result.(model)
+	if closed.currentView != viewQueue {
+		t.Fatalf("expected to return to queue view, got %v", closed.currentView)
+	}
+	if cmd == nil {
+		t.Fatal("expected save command after closing column options")
+	}
+	if msg := cmd(); msg != nil {
+		if errMsg, ok := msg.(configSaveErrMsg); ok {
+			t.Fatalf("save config failed: %v", errMsg.err)
+		}
+	}
+
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal failed: %v", err)
+	}
+	if !cfg.Advanced.TasksEnabled {
+		t.Fatal("expected advanced.tasks_enabled to persist as true")
+	}
 }
 func TestTUISelection(t *testing.T) {
 	t.Run("MaintainedOnInsert", func(t *testing.T) {

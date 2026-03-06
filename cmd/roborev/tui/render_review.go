@@ -122,8 +122,11 @@ func (m model) renderReviewView() string {
 
 	// Help table rows
 	reviewHelpRows := [][]helpItem{
-		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit"}, {"a", "close"}, {"y", "copy"}, {"F", "fix"}},
+		{{"p", "prompt"}, {"c", "comment"}, {"m", "commit"}, {"a", "close"}, {"y", "copy"}},
 		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"?", "commands"}, {"esc", "back"}},
+	}
+	if m.tasksWorkflowEnabled() {
+		reviewHelpRows[0] = append(reviewHelpRows[0], helpItem{"F", "fix"})
 	}
 	helpLines := len(reflowHelpRows(reviewHelpRows, m.width))
 

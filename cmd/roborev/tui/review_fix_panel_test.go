@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,6 +17,7 @@ func TestReviewFixPanelOpenFromReview(t *testing.T) {
 		withReview(&storage.Review{JobID: 1, Job: &job}),
 		withTestJobs(job),
 		withSelection(0, 1),
+		withTasksEnabled(true),
 	)
 
 	got, _ := pressKey(m, 'F')
@@ -118,6 +120,7 @@ func TestReviewFixPanelEnterSubmitsAndNavigatesToTasks(t *testing.T) {
 		json.NewEncoder(w).Encode(storage.ReviewJob{ID: 1})
 	})
 	m.currentView = viewReview
+	m.tasksEnabled = true
 	m.reviewFixPanelOpen = true
 	m.reviewFixPanelFocused = true
 	m.fixPromptJobID = 1
@@ -157,6 +160,7 @@ func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
 	m.jobs = []storage.ReviewJob{job}
 	m.selectedIdx = 0
 	m.selectedJobID = 42
+	m.tasksEnabled = true
 
 	got, cmd := pressKey(m, 'F')
 
@@ -168,6 +172,27 @@ func TestFixKeyFromQueueFetchesReviewWithPendingFlag(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("Expected a fetch command to be returned")
+	}
+}
+
+func TestFixKeyDisabledShowsFlash(t *testing.T) {
+	job := makeJob(42)
+	m := initTestModel(
+		withCurrentView(viewQueue),
+		withTestJobs(job),
+		withSelection(0, 42),
+	)
+
+	got, cmd := pressKey(m, 'F')
+
+	if cmd != nil {
+		t.Error("Expected nil cmd when tasks workflow is disabled")
+	}
+	if got.reviewFixPanelPending {
+		t.Error("Expected reviewFixPanelPending to remain false")
+	}
+	if !strings.Contains(got.flashMessage, "Tasks workflow disabled") {
+		t.Errorf("expected disabled flash, got %q", got.flashMessage)
 	}
 }
 

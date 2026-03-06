@@ -80,13 +80,16 @@ type colWidthCache struct {
 	contentWidths map[int]int
 }
 
-// colOptionBorders is the sentinel ID for the borders toggle in the column options modal.
-const colOptionBorders = -1
+// Sentinel IDs for non-column toggles in the column options modal.
+const (
+	colOptionBorders       = -1
+	colOptionTasksWorkflow = -2
+)
 
 // columnOption represents an item in the column options modal.
-// id is a column constant (colRef..colHandled) or colOptionBorders.
+// id is a column constant (colRef..colHandled) or a sentinel option ID.
 type columnOption struct {
-	id      int    // column constant or colOptionBorders
+	id      int    // column constant or sentinel option ID
 	name    string // display label
 	enabled bool   // visible/on
 }

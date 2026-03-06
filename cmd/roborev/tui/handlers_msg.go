@@ -727,7 +727,7 @@ func (m model) handleTickMsg(
 		return m, tea.Batch(m.tick(), m.fetchStatus())
 	}
 	cmds := []tea.Cmd{m.tick(), m.fetchJobs(), m.fetchStatus()}
-	if m.currentView == viewTasks || m.hasActiveFixJobs() {
+	if m.tasksWorkflowEnabled() && (m.currentView == viewTasks || m.hasActiveFixJobs()) {
 		cmds = append(cmds, m.fetchFixJobs())
 	}
 	return m, tea.Batch(cmds...)

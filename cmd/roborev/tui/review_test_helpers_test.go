@@ -48,6 +48,10 @@ func withClipboard(c ClipboardWriter) testModelOption {
 	return func(m *model) { m.clipboard = c }
 }
 
+func withTasksEnabled(enabled bool) testModelOption {
+	return func(m *model) { m.tasksEnabled = enabled }
+}
+
 // --- Assertion helpers ---
 
 func assertFixPanelState(

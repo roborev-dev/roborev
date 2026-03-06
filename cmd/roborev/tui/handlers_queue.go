@@ -185,6 +185,11 @@ func (m model) handleColumnOptionsKey() (tea.Model, tea.Cmd) {
 		name:    "Column borders",
 		enabled: m.colBordersOn,
 	})
+	opts = append(opts, columnOption{
+		id:      colOptionTasksWorkflow,
+		name:    "Tasks workflow",
+		enabled: m.tasksWorkflowEnabled(),
+	})
 	m.colOptionsList = opts
 	m.colOptionsIdx = 0
 	m.currentView = viewColumnOptions
@@ -193,12 +198,15 @@ func (m model) handleColumnOptionsKey() (tea.Model, tea.Cmd) {
 
 func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	isColumn := func(idx int) bool {
-		return idx >= 0 && idx < len(m.colOptionsList) && m.colOptionsList[idx].id != colOptionBorders
+		return idx >= 0 && idx < len(m.colOptionsList) && m.colOptionsList[idx].id >= 0
 	}
 
 	switch msg.String() {
 	case "esc":
 		m.currentView = m.colOptionsReturnView
+		if m.currentView == viewTasks && !m.tasksWorkflowEnabled() {
+			m.currentView = viewQueue
+		}
 		if m.colOptionsDirty {
 			m.colOptionsDirty = false
 			return m, m.saveColumnOptions()
@@ -249,6 +257,10 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.colOptionsDirty = true
 				m.queueColGen++
 				m.taskColGen++
+			} else if opt.id == colOptionTasksWorkflow {
+				opt.enabled = !opt.enabled
+				m.tasksEnabled = opt.enabled
+				m.colOptionsDirty = true
 			} else if m.colOptionsReturnView == viewTasks {
 				// Tasks view: no visibility toggle (all columns always shown)
 				return m, nil
@@ -276,7 +288,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) syncColumnOrderFromOptions() {
 	order := make([]int, 0, len(m.colOptionsList))
 	for _, opt := range m.colOptionsList {
-		if opt.id != colOptionBorders {
+		if opt.id >= 0 {
 			order = append(order, opt.id)
 		}
 	}

@@ -364,6 +364,7 @@ type model struct {
 
 	distractionFree bool // hide status line, headers, footer, scroll indicator
 	clipboard       ClipboardWriter
+	tasksEnabled    bool // Enables advanced tasks workflow in the TUI
 
 	// Review view navigation
 	reviewFromView viewKind // View to return to when exiting review (queue or tasks)
@@ -433,6 +434,7 @@ func newModel(serverAddr string, opts ...option) model {
 	autoFilterRepo := false
 	tabWidth := 2
 	columnBorders := false
+	tasksEnabled := false
 	hiddenCols := map[int]bool{}
 	colOrder := parseColumnOrder(nil)
 	taskColOrder := parseTaskColumnOrder(nil)
@@ -452,6 +454,7 @@ func newModel(serverAddr string, opts ...option) model {
 				tabWidth = cfg.TabWidth
 			}
 			columnBorders = cfg.ColumnBorders
+			tasksEnabled = cfg.Advanced.TasksEnabled
 
 			if migrateColumnConfig(cfg) {
 				if err := config.SaveGlobal(cfg); err != nil {
@@ -516,6 +519,7 @@ func newModel(serverAddr string, opts ...option) model {
 		pendingReviewClosed: make(map[int64]pendingState), // Track pending closed changes (by review ID)
 		clipboard:           &realClipboard{},
 		mdCache:             newMarkdownCache(tabWidth),
+		tasksEnabled:        tasksEnabled,
 		colBordersOn:        columnBorders,
 		hiddenColumns:       hiddenCols,
 		columnOrder:         colOrder,
@@ -533,6 +537,14 @@ func (m model) Init() tea.Cmd {
 		m.fetchStatus(),
 		m.checkForUpdate(),
 	)
+}
+
+func (m model) tasksWorkflowEnabled() bool {
+	return m.tasksEnabled
+}
+
+func (m model) tasksDisabledMessage() string {
+	return "Tasks workflow disabled. Set advanced.tasks_enabled=true in global config to enable it."
 }
 
 // getDisplayName returns the display name for a repo, using the cache.

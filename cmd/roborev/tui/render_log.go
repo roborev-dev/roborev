@@ -104,7 +104,16 @@ func (m model) renderLogView() string {
 
 	return b.String()
 }
-func helpLines() []string {
+
+func formatHelpLine(key, desc string) string {
+	return fmt.Sprintf("  %-14s %s", key, desc)
+}
+
+func disabledHelpLine(key, desc string) string {
+	return statusStyle.Render(formatHelpLine(key, desc+" (disabled)"))
+}
+
+func helpLines(tasksEnabled bool) []string {
 	shortcuts := []struct {
 		group string
 		keys  []struct{ key, desc string }
@@ -129,9 +138,7 @@ func helpLines() []string {
 				{"y", "Copy review to clipboard"},
 				{"x", "Cancel running/queued job"},
 				{"r", "Re-run completed/failed job"},
-				{"F", "Trigger fix for selected review"},
 				{"o", "Column options (visibility, order, borders)"},
-				{"T", "Open Tasks view"},
 				{"D", "Toggle distraction-free mode"},
 			},
 		},
@@ -203,8 +210,27 @@ func helpLines() []string {
 	var lines []string
 	for i, g := range shortcuts {
 		lines = append(lines, "\x00group:"+g.group)
+		if g.group == "Tasks View" && !tasksEnabled {
+			lines = append(lines, statusStyle.Render("  advanced.tasks_enabled = false"))
+			for _, k := range g.keys {
+				lines = append(lines, disabledHelpLine(k.key, k.desc))
+			}
+			if i < len(shortcuts)-1 {
+				lines = append(lines, "")
+			}
+			continue
+		}
 		for _, k := range g.keys {
-			lines = append(lines, fmt.Sprintf("  %-14s %s", k.key, k.desc))
+			lines = append(lines, formatHelpLine(k.key, k.desc))
+		}
+		if g.group == "Actions" {
+			if tasksEnabled {
+				lines = append(lines, formatHelpLine("F", "Trigger fix for selected review"))
+				lines = append(lines, formatHelpLine("T", "Open Tasks view"))
+			} else {
+				lines = append(lines, disabledHelpLine("F", "Trigger fix for selected review"))
+				lines = append(lines, disabledHelpLine("T", "Open Tasks view"))
+			}
 		}
 		if i < len(shortcuts)-1 {
 			lines = append(lines, "")
@@ -215,7 +241,7 @@ func helpLines() []string {
 func (m model) helpMaxScroll() int {
 	reservedLines := 3 // title + blank + help hint
 	visibleLines := max(m.height-reservedLines, 5)
-	maxScroll := len(helpLines()) - visibleLines
+	maxScroll := len(helpLines(m.tasksWorkflowEnabled())) - visibleLines
 	if maxScroll < 0 {
 		return 0
 	}
@@ -227,7 +253,7 @@ func (m model) renderHelpView() string {
 	b.WriteString(titleStyle.Render("Keyboard Shortcuts"))
 	b.WriteString("\x1b[K\n\x1b[K\n")
 
-	allLines := helpLines()
+	allLines := helpLines(m.tasksWorkflowEnabled())
 
 	// Calculate visible area: title(1) + blank(1) + help(1)
 	reservedLines := 3
