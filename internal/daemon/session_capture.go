@@ -57,6 +57,10 @@ func (w *sessionCaptureWriter) capture(p []byte) {
 	var captured string
 
 	w.mu.Lock()
+	if w.sessionID != "" {
+		w.mu.Unlock()
+		return
+	}
 	if len(p) > 0 {
 		_, _ = w.buf.Write(p)
 	}
@@ -70,6 +74,7 @@ func (w *sessionCaptureWriter) capture(p []byte) {
 		w.buf.Next(idx + 1)
 		if sessionID := agent.ExtractSessionID(line); sessionID != "" {
 			w.sessionID = sessionID
+			w.buf.Reset()
 			captured = sessionID
 		}
 	}
