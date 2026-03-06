@@ -120,6 +120,44 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	}
 }
 
+func TestTUICtrlDQuitsFromReviewView(t *testing.T) {
+	job := makeJob(1)
+	m := initTestModel(
+		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 1, Job: &job}),
+		withReviewFromView(viewQueue),
+	)
+
+	got, cmd := pressSpecial(m, tea.KeyCtrlD)
+
+	assertView(t, got, viewReview)
+	if cmd == nil {
+		t.Fatal("Expected quit command")
+	}
+	assertMsgType[tea.QuitMsg](t, cmd())
+}
+
+func TestTUICtrlDQuitsFromCommentModal(t *testing.T) {
+	m := initTestModel(withCurrentView(viewKindComment))
+	m.commentFromView = viewQueue
+	m.commentText = "draft comment"
+	m.commentJobID = 42
+
+	got, cmd := pressSpecial(m, tea.KeyCtrlD)
+
+	assertView(t, got, viewKindComment)
+	if got.commentText != "draft comment" {
+		t.Errorf("Expected comment text to remain unchanged, got %q", got.commentText)
+	}
+	if got.commentJobID != 42 {
+		t.Errorf("Expected comment job ID to remain unchanged, got %d", got.commentJobID)
+	}
+	if cmd == nil {
+		t.Fatal("Expected quit command")
+	}
+	assertMsgType[tea.QuitMsg](t, cmd())
+}
+
 func TestFetchCommitMsgJobTypeDetection(t *testing.T) {
 	// Test that fetchCommitMsg correctly identifies job types and returns appropriate errors
 	// This is critical: Prompt field is populated for ALL jobs (stores review prompt),

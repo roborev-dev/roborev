@@ -11,6 +11,10 @@ import (
 
 // handleKeyMsg dispatches key events to view-specific handlers.
 func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+d" {
+		return m, tea.Quit
+	}
+
 	// Fix panel captures input when focused in review view
 	if m.currentView == viewReview && m.reviewFixPanelOpen && m.reviewFixPanelFocused {
 		return m.handleReviewFixPanelKey(msg)
