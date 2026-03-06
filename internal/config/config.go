@@ -40,7 +40,8 @@ func IsConfigParseError(err error) bool {
 type HookConfig struct {
 	Event   string `toml:"event"`   // "review.failed", "review.completed", "review.*"
 	Command string `toml:"command"` // shell command with {var} templates
-	Type    string `toml:"type"`    // "beads" for built-in, empty for command
+	Type    string `toml:"type"`    // "beads" or "webhook"; empty or "command" runs Command
+	URL     string `toml:"url"`     // webhook destination URL when Type is "webhook"
 }
 
 type AdvancedConfig struct {

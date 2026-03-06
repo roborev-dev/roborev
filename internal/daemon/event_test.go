@@ -16,6 +16,7 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		SHA:      "abc123",
 		Agent:    "claude-code",
 		Verdict:  "F",
+		Findings: "Missing input validation",
 	}
 
 	data, err := event.MarshalJSON()
@@ -40,6 +41,7 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		{"sha", "abc123"},
 		{"agent", "claude-code"},
 		{"verdict", "F"},
+		{"findings", "Missing input validation"},
 	}
 
 	if len(decoded) != len(tests) {

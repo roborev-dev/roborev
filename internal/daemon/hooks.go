@@ -1,13 +1,18 @@
 package daemon
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/roborev-dev/roborev/internal/config"
 	gitpkg "github.com/roborev-dev/roborev/internal/git"
@@ -144,6 +149,17 @@ func (hr *HookRunner) handleEvent(event Event) {
 			continue
 		}
 
+		if hook.Type == "webhook" {
+			if hook.URL == "" {
+				continue
+			}
+
+			fired++
+			hr.wg.Add(1)
+			go hr.postWebhook(hook.URL, event)
+			continue
+		}
+
 		cmd := resolveCommand(hook, event)
 		if cmd == "" {
 			continue
@@ -268,5 +284,39 @@ func (hr *HookRunner) runHook(command, workDir string) {
 	}
 	if len(output) > 0 {
 		hr.logger.Printf("Hook output (cmd=%q): %s", command, output)
+	}
+}
+
+func (hr *HookRunner) postWebhook(url string, event Event) {
+	defer hr.wg.Done()
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		hr.logger.Printf("Webhook error (url=%q): marshal event: %v", url, err)
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		hr.logger.Printf("Webhook error (url=%q): build request: %v", url, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		hr.logger.Printf("Webhook error (url=%q): %v", url, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if len(body) > 0 {
+			hr.logger.Printf("Webhook error (url=%q): status %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
+			return
+		}
+		hr.logger.Printf("Webhook error (url=%q): status %s", url, resp.Status)
 	}
 }

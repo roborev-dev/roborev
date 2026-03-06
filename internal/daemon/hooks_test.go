@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -509,6 +512,105 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 	hr.WaitUntilIdle()
 	if _, err := os.Stat(markerFile); err == nil {
 		t.Fatal("hook should not have fired for non-matching event")
+	}
+}
+
+func TestHookRunnerWebhookPostsEventJSON(t *testing.T) {
+	type webhookRequest struct {
+		header http.Header
+		event  map[string]any
+	}
+
+	reqCh := make(chan webhookRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode webhook payload: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		reqCh <- webhookRequest{header: r.Header.Clone(), event: payload}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{
+			{Event: "review.completed", Type: "webhook", URL: server.URL},
+		},
+	}
+
+	hr, broadcaster := setupRunner(t, cfg)
+	broadcaster.Broadcast(Event{
+		Type:     "review.completed",
+		TS:       time.Date(2026, 2, 25, 14, 30, 0, 0, time.UTC),
+		JobID:    42,
+		Repo:     "/Users/wesm/code/roborev",
+		RepoName: "roborev",
+		SHA:      "abc123def456",
+		Agent:    "claude-code",
+		Verdict:  "F",
+		Findings: "Missing validation in handler",
+	})
+
+	hr.WaitUntilIdle()
+
+	select {
+	case req := <-reqCh:
+		if got := req.header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("content-type = %q, want application/json", got)
+		}
+		if got := req.event["type"]; got != "review.completed" {
+			t.Fatalf("type = %v, want review.completed", got)
+		}
+		if got := req.event["ts"]; got != "2026-02-25T14:30:00Z" {
+			t.Fatalf("ts = %v, want 2026-02-25T14:30:00Z", got)
+		}
+		if got := req.event["job_id"]; got != float64(42) {
+			t.Fatalf("job_id = %v, want 42", got)
+		}
+		if got := req.event["findings"]; got != "Missing validation in handler" {
+			t.Fatalf("findings = %v, want webhook payload to include findings", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for webhook request")
+	}
+}
+
+func TestHookRunnerWebhookLogsHTTPError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := log.New(&buf, "", 0)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{
+			{Event: "review.failed", Type: "webhook", URL: server.URL},
+		},
+	}
+
+	hr := &HookRunner{cfgGetter: NewStaticConfig(cfg), logger: logger}
+	hr.handleEvent(Event{
+		Type:  "review.failed",
+		JobID: 7,
+		Repo:  t.TempDir(),
+		Error: "agent timeout",
+	})
+
+	hr.wg.Wait()
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "Webhook error") {
+		t.Fatalf("expected webhook error log, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "502 Bad Gateway") {
+		t.Fatalf("expected HTTP status in log, got %q", logOutput)
 	}
 }
 
