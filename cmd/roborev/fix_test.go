@@ -1518,14 +1518,8 @@ func TestFixBatchSkipsPassVerdict(t *testing.T) {
 	}
 }
 
-func TestRunFixWithSeenContinuesOnError(t *testing.T) {
-	// When processing multiple jobs and one fails, runFixWithSeen should
-	// print a warning and continue to the next job (best-effort).
-	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
-
-	var processedJobs []int64
-	var mu sync.Mutex
-
+func setupFixErrorMockDaemon(t *testing.T, processedJobs *[]int64, mu *sync.Mutex) {
+	t.Helper()
 	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
@@ -1540,7 +1534,7 @@ func TestRunFixWithSeenContinuesOnError(t *testing.T) {
 			var id int64
 			fmt.Sscanf(jobIDStr, "%d", &id)
 			mu.Lock()
-			processedJobs = append(processedJobs, id)
+			*processedJobs = append(*processedJobs, id)
 			mu.Unlock()
 
 			// Job 20 is "running" (not complete), which causes fixSingleJob
@@ -1569,36 +1563,76 @@ func TestRunFixWithSeenContinuesOnError(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}).
 		Build()
+}
 
-	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+func TestRunFixWithSeenExplicitAbortsOnError(t *testing.T) {
+	// Explicit job IDs (seen == nil): failure should return an error
+	// so the CLI exits non-zero for scripting/CI reliability.
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+
+	var processedJobs []int64
+	var mu sync.Mutex
+	setupFixErrorMockDaemon(t, &processedJobs, &mu)
+
+	_, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
 		return runFixWithSeen(cmd, []int64{10, 20, 30}, fixOptions{
 			agentName: "test",
 			reasoning: "fast",
 		}, nil)
 	})
 
-	// Best-effort: no top-level error
-	if err != nil {
-		t.Fatalf("expected no error (best-effort), got: %v", err)
+	if err == nil {
+		t.Fatal("expected error for explicit job IDs, got nil")
+	}
+	if !strings.Contains(err.Error(), "error fixing job 20") {
+		t.Errorf("error should mention job 20, got: %v", err)
 	}
 
-	// Warning should be printed for job 20
+	// Job 30 should NOT be processed (abort on explicit failure)
+	mu.Lock()
+	jobs := processedJobs
+	mu.Unlock()
+	if slices.Contains(jobs, int64(30)) {
+		t.Errorf("job 30 should not be processed after job 20 fails, got: %v", jobs)
+	}
+}
+
+func TestRunFixWithSeenDiscoveryContinuesOnError(t *testing.T) {
+	// Discovery mode (seen != nil): failure should warn and continue
+	// best-effort so the re-query loop processes remaining jobs.
+	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
+
+	var processedJobs []int64
+	var mu sync.Mutex
+	setupFixErrorMockDaemon(t, &processedJobs, &mu)
+
+	seen := make(map[int64]bool)
+	out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+		return runFixWithSeen(cmd, []int64{10, 20, 30}, fixOptions{
+			agentName: "test",
+			reasoning: "fast",
+		}, seen)
+	})
+
+	if err != nil {
+		t.Fatalf("expected no error in discovery mode, got: %v", err)
+	}
+
 	if !strings.Contains(out, "Warning: error fixing job 20") {
 		t.Errorf("expected warning about job 20, got:\n%s", out)
 	}
 
-	// All three jobs should be attempted (best-effort continues)
+	// All three jobs should be attempted
 	mu.Lock()
 	jobs := processedJobs
 	mu.Unlock()
-	if !slices.Contains(jobs, int64(10)) {
-		t.Errorf("job 10 should be processed, got: %v", jobs)
-	}
-	if !slices.Contains(jobs, int64(20)) {
-		t.Errorf("job 20 should be attempted, got: %v", jobs)
-	}
 	if !slices.Contains(jobs, int64(30)) {
-		t.Errorf("job 30 should be processed after job 20 fails, got: %v", jobs)
+		t.Errorf("job 30 should be processed in discovery mode, got: %v", jobs)
+	}
+
+	// Failed job should be marked as seen
+	if !seen[20] {
+		t.Error("job 20 should be marked as seen even after failure")
 	}
 }
 

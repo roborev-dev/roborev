@@ -387,13 +387,15 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 				}
 			}
 			if err != nil {
-				cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
-				// Mark as seen even on error to prevent infinite
-				// retries in the runFixOpen re-query loop.
+				// In discovery mode (seen != nil), log a warning and
+				// continue best-effort. For explicit job IDs (seen ==
+				// nil), return the error so the CLI exits non-zero.
 				if seen != nil {
+					cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
 					seen[jobID] = true
+					continue
 				}
-				continue
+				return fmt.Errorf("error fixing job %d: %w", jobID, err)
 			}
 		}
 		// Mark as seen so the re-query loop doesn't retry this job.
