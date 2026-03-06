@@ -258,7 +258,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	resolved.agentName = agentName
 	resolved.model = model
 	resolved.reasoning = reasoning
-	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, resolved)
+	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, resolved, opts.agentName != "")
 	if err != nil {
 		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
@@ -519,22 +519,23 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 	return sb.String()
 }
 
-func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
+func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions, agentOverridden bool) (*storage.ReviewJob, error) {
 	if branch == "" {
 		branch = git.GetCurrentBranch(repoRoot)
 	}
 
 	reqBody, err := json.Marshal(daemon.EnqueueRequest{
-		RepoPath:     repoRoot,
-		GitRef:       label,
-		Branch:       branch,
-		Agent:        opts.agentName,
-		Model:        opts.model,
-		Reasoning:    opts.reasoning,
-		CustomPrompt: prompt,
-		OutputPrefix: outputPrefix,
-		Agentic:      true,
-		JobType:      "compact",
+		RepoPath:        repoRoot,
+		GitRef:          label,
+		Branch:          branch,
+		Agent:           opts.agentName,
+		Model:           opts.model,
+		Reasoning:       opts.reasoning,
+		CustomPrompt:    prompt,
+		OutputPrefix:    outputPrefix,
+		Agentic:         true,
+		JobType:         "compact",
+		AgentOverridden: agentOverridden,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal enqueue request: %w", err)

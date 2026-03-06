@@ -501,16 +501,24 @@ func enqueueAnalysisJob(serverAddr string, repoRoot, prompt, outputPrefix, label
 	if opts.branch != "" && opts.branch != "HEAD" {
 		branch = opts.branch
 	}
+
+	// When --agent is passed on CLI but --model is not, signal the
+	// daemon to skip generic default_model fallback. The generic
+	// model is paired with default_agent and may be incompatible
+	// with the overridden agent.
+	agentOverridden := opts.agentName != "" && opts.model == ""
+
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
-		RepoPath:     repoRoot,
-		GitRef:       label, // Use analysis type name as the TUI label
-		Branch:       branch,
-		Agent:        opts.agentName,
-		Model:        opts.model,
-		Reasoning:    opts.reasoning,
-		CustomPrompt: prompt,
-		OutputPrefix: outputPrefix,
-		Agentic:      true, // Agentic mode needed for reading files when prompt exceeds size limit
+		RepoPath:        repoRoot,
+		GitRef:          label, // Use analysis type name as the TUI label
+		Branch:          branch,
+		Agent:           opts.agentName,
+		Model:           opts.model,
+		Reasoning:       opts.reasoning,
+		CustomPrompt:    prompt,
+		OutputPrefix:    outputPrefix,
+		Agentic:         true, // Agentic mode needed for reading files when prompt exceeds size limit
+		AgentOverridden: agentOverridden,
 	})
 
 	resp, err := http.Post(serverAddr+"/api/enqueue", "application/json", bytes.NewReader(reqBody))

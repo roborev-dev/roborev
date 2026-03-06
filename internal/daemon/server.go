@@ -447,20 +447,21 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 // API request/response types
 
 type EnqueueRequest struct {
-	RepoPath     string `json:"repo_path"`
-	CommitSHA    string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
-	GitRef       string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
-	Branch       string `json:"branch,omitempty"`     // Branch name at time of job creation
-	Agent        string `json:"agent,omitempty"`
-	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
-	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
-	Reasoning    string `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
-	ReviewType   string `json:"review_type,omitempty"`   // Review type (e.g., "security") — changes system prompt
-	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
-	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
-	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
-	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/compact)
-	Provider     string `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
+	RepoPath        string `json:"repo_path"`
+	CommitSHA       string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
+	GitRef          string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
+	Branch          string `json:"branch,omitempty"`     // Branch name at time of job creation
+	Agent           string `json:"agent,omitempty"`
+	Model           string `json:"model,omitempty"`            // Model to use (for opencode: provider/model format)
+	DiffContent     string `json:"diff_content,omitempty"`     // Pre-captured diff for dirty reviews
+	Reasoning       string `json:"reasoning,omitempty"`        // Reasoning level: thorough, standard, fast
+	ReviewType      string `json:"review_type,omitempty"`      // Review type (e.g., "security") — changes system prompt
+	CustomPrompt    string `json:"custom_prompt,omitempty"`    // Custom prompt for ad-hoc agent work
+	Agentic         bool   `json:"agentic,omitempty"`          // Enable agentic mode (allow file edits)
+	OutputPrefix    string `json:"output_prefix,omitempty"`    // Prefix to prepend to review output
+	JobType         string `json:"job_type,omitempty"`         // Explicit job type (review/range/dirty/task/compact)
+	Provider        string `json:"provider,omitempty"`         // Provider for pi agent (e.g., "anthropic")
+	AgentOverridden bool   `json:"agent_overridden,omitempty"` // Agent was explicitly chosen; skip generic model fallback
 }
 
 type ErrorResponse struct {
@@ -596,8 +597,11 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	// Map review_type to config workflow for agent/model resolution.
 	// "default" uses the standard "review" workflow; others use their own name.
+	// Compact jobs use the "fix" workflow since they're part of that pipeline.
 	workflow := "review"
-	if !config.IsDefaultReviewType(req.ReviewType) {
+	if req.JobType == "compact" {
+		workflow = "fix"
+	} else if !config.IsDefaultReviewType(req.ReviewType) {
 		workflow = req.ReviewType
 	}
 
@@ -620,8 +624,21 @@ func (s *Server) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		agentName = resolved.Name()
 	}
 
-	// Resolve model for workflow at this reasoning level
-	model := config.ResolveModelForWorkflow(req.Model, repoRoot, cfg, workflow, reasoning)
+	// Resolve model for workflow at this reasoning level.
+	// When the agent was explicitly overridden (e.g. --agent on CLI)
+	// and no model was specified, only check workflow-specific model
+	// config. The generic default_model is paired with default_agent
+	// and may be incompatible with the overridden agent.
+	var model string
+	if req.AgentOverridden && req.Model == "" {
+		model = config.ResolveWorkflowModel(
+			repoRoot, cfg, workflow, reasoning,
+		)
+	} else {
+		model = config.ResolveModelForWorkflow(
+			req.Model, repoRoot, cfg, workflow, reasoning,
+		)
+	}
 
 	// Check if this is a custom prompt, dirty review, range, or single commit
 	// Note: isPrompt is determined by whether custom_prompt is provided, not git_ref value

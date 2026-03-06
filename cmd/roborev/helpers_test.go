@@ -224,10 +224,18 @@ type MockServerOpts struct {
 	DoneAfterPolls int32
 	// ReviewOutput is the review text returned by /api/review.
 	ReviewOutput string
+	// JobStatusSequence is an optional sequence of job statuses to return on successive /api/jobs polls.
+	JobStatusSequence []storage.JobStatus
+	// JobError is an optional error string to return in the job response.
+	JobError string
+	// JobNotFound, if true, simulates a missing job (returns empty jobs array).
+	JobNotFound bool
 	// OnEnqueue is an optional callback for /api/enqueue requests.
 	OnEnqueue func(w http.ResponseWriter, r *http.Request)
 	// OnJobs is an optional callback for /api/jobs requests. If set, overrides default behavior.
 	OnJobs func(w http.ResponseWriter, r *http.Request)
+	// OnClose is an optional callback for /api/review/close requests.
+	OnClose func(w http.ResponseWriter, r *http.Request)
 }
 
 type mockServerHandler struct {
@@ -267,14 +275,33 @@ func (h *mockServerHandler) handleJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	count := atomic.AddInt32(&h.state.JobsCount, 1)
-	status := storage.JobStatusQueued
-	if count >= h.opts.DoneAfterPolls {
-		status = storage.JobStatusDone
+
+	if h.opts.JobNotFound {
+		json.NewEncoder(w).Encode(map[string]any{
+			"jobs": []storage.ReviewJob{},
+		})
+		return
 	}
+
+	var status storage.JobStatus
+	if len(h.opts.JobStatusSequence) > 0 {
+		idx := int(count) - 1
+		if idx >= len(h.opts.JobStatusSequence) {
+			idx = len(h.opts.JobStatusSequence) - 1
+		}
+		status = h.opts.JobStatusSequence[idx]
+	} else {
+		status = storage.JobStatusQueued
+		if count >= h.opts.DoneAfterPolls {
+			status = storage.JobStatusDone
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]any{
 		"jobs": []storage.ReviewJob{{
 			ID:     atomic.LoadInt64(&h.jobID),
 			Status: status,
+			Error:  h.opts.JobError,
 		}},
 	})
 }
@@ -311,6 +338,10 @@ func (h *mockServerHandler) handleClose(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	atomic.AddInt32(&h.state.CloseCount, 1)
+	if h.opts.OnClose != nil {
+		h.opts.OnClose(w, r)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
