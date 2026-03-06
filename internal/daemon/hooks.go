@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -287,18 +288,19 @@ func (hr *HookRunner) runHook(command, workDir string) {
 	}
 }
 
-func (hr *HookRunner) postWebhook(url string, event Event) {
+func (hr *HookRunner) postWebhook(webhookURL string, event Event) {
 	defer hr.wg.Done()
+	safeURL := redactWebhookURL(webhookURL)
 
 	payload, err := json.Marshal(event)
 	if err != nil {
-		hr.logger.Printf("Webhook error (url=%q): marshal event: %v", url, err)
+		hr.logger.Printf("Webhook error (url=%q): marshal event: %v", safeURL, err)
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(payload))
 	if err != nil {
-		hr.logger.Printf("Webhook error (url=%q): build request: %v", url, err)
+		hr.logger.Printf("Webhook error (url=%q): build request: %v", safeURL, err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -306,7 +308,7 @@ func (hr *HookRunner) postWebhook(url string, event Event) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		hr.logger.Printf("Webhook error (url=%q): %v", url, err)
+		hr.logger.Printf("Webhook error (url=%q): %v", safeURL, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -314,9 +316,32 @@ func (hr *HookRunner) postWebhook(url string, event Event) {
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		if len(body) > 0 {
-			hr.logger.Printf("Webhook error (url=%q): status %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
+			hr.logger.Printf("Webhook error (url=%q): status %s: %s", safeURL, resp.Status, strings.TrimSpace(string(body)))
 			return
 		}
-		hr.logger.Printf("Webhook error (url=%q): status %s", url, resp.Status)
+		hr.logger.Printf("Webhook error (url=%q): status %s", safeURL, resp.Status)
 	}
+}
+
+func redactWebhookURL(raw string) string {
+	parsed, err := neturl.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "<invalid webhook url>"
+	}
+
+	redacted := &neturl.URL{
+		Scheme: parsed.Scheme,
+		Host:   parsed.Host,
+	}
+
+	path := strings.Trim(parsed.EscapedPath(), "/")
+	if path != "" {
+		segments := strings.Split(path, "/")
+		redacted.Path = "/" + segments[0]
+		if len(segments) > 1 {
+			redacted.Path += "/..."
+		}
+	}
+
+	return redacted.String()
 }

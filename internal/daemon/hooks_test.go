@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -589,9 +590,18 @@ func TestHookRunnerWebhookLogsHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
+	webhookURL, err := neturl.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+	webhookURL.User = neturl.UserPassword("token", "secret")
+	webhookURL.Path = "/services/team/webhook"
+	webhookURL.RawQuery = "api_key=12345"
+	webhookURL.Fragment = "frag"
+
 	cfg := &config.Config{
 		Hooks: []config.HookConfig{
-			{Event: "review.failed", Type: "webhook", URL: server.URL},
+			{Event: "review.failed", Type: "webhook", URL: webhookURL.String()},
 		},
 	}
 
@@ -611,6 +621,47 @@ func TestHookRunnerWebhookLogsHTTPError(t *testing.T) {
 	}
 	if !strings.Contains(logOutput, "502 Bad Gateway") {
 		t.Fatalf("expected HTTP status in log, got %q", logOutput)
+	}
+	if strings.Contains(logOutput, "token") || strings.Contains(logOutput, "secret") {
+		t.Fatalf("expected credentials to be redacted from log, got %q", logOutput)
+	}
+	if strings.Contains(logOutput, "api_key") || strings.Contains(logOutput, "12345") || strings.Contains(logOutput, "frag") {
+		t.Fatalf("expected query string and fragment to be redacted from log, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "/services/...") {
+		t.Fatalf("expected redacted path in log, got %q", logOutput)
+	}
+}
+
+func TestRedactWebhookURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "userinfo query and fragment are removed",
+			in:   "https://token:secret@example.com/services/team/webhook?api_key=123#frag",
+			want: "https://example.com/services/...",
+		},
+		{
+			name: "single path segment is preserved",
+			in:   "https://example.com/webhook",
+			want: "https://example.com/webhook",
+		},
+		{
+			name: "invalid URL is hidden",
+			in:   "://token@example.com",
+			want: "<invalid webhook url>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := redactWebhookURL(tt.in); got != tt.want {
+				t.Fatalf("redactWebhookURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 
