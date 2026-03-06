@@ -628,8 +628,11 @@ func TestHookRunnerWebhookLogsHTTPError(t *testing.T) {
 	if strings.Contains(logOutput, "api_key") || strings.Contains(logOutput, "12345") || strings.Contains(logOutput, "frag") {
 		t.Fatalf("expected query string and fragment to be redacted from log, got %q", logOutput)
 	}
-	if !strings.Contains(logOutput, "/services/...") {
+	if !strings.Contains(logOutput, "/...") {
 		t.Fatalf("expected redacted path in log, got %q", logOutput)
+	}
+	if strings.Contains(logOutput, "/services") {
+		t.Fatalf("expected path segments to be fully redacted, got %q", logOutput)
 	}
 }
 
