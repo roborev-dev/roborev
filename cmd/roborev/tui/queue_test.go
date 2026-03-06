@@ -2014,10 +2014,17 @@ func TestColumnOptionsModalOpenClose(t *testing.T) {
 	if len(m2.colOptionsList) == 0 {
 		t.Fatal("expected non-empty colOptionsList")
 	}
-	// Last item should be "Column borders"
-	last := m2.colOptionsList[len(m2.colOptionsList)-1]
-	if last.id != -1 || last.name != "Column borders" {
-		t.Errorf("expected last item to be borders toggle, got id=%d name=%q", last.id, last.name)
+	// Trailing items should include the settings toggles.
+	if len(m2.colOptionsList) < 2 {
+		t.Fatalf("expected settings toggles at end of colOptionsList, got %d items", len(m2.colOptionsList))
+	}
+	borders := m2.colOptionsList[len(m2.colOptionsList)-2]
+	if borders.id != colOptionBorders || borders.name != "Column borders" {
+		t.Errorf("expected penultimate item to be borders toggle, got id=%d name=%q", borders.id, borders.name)
+	}
+	tasks := m2.colOptionsList[len(m2.colOptionsList)-1]
+	if tasks.id != colOptionTasksWorkflow || tasks.name != "Tasks workflow" {
+		t.Errorf("expected last item to be tasks workflow toggle, got id=%d name=%q", tasks.id, tasks.name)
 	}
 
 	// Press esc to close
