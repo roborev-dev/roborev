@@ -629,7 +629,8 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 		if agentError {
 			backupAgent := wp.resolveBackupAgent(job)
 			if backupAgent != "" && !wp.isAgentCoolingDown(backupAgent) {
-				failedOver, foErr := wp.db.FailoverJob(job.ID, workerID, backupAgent)
+				backupModel := wp.resolveBackupModel(job)
+				failedOver, foErr := wp.db.FailoverJob(job.ID, workerID, backupAgent, backupModel)
 				if foErr != nil {
 					log.Printf("[%s] Error attempting failover for job %d: %v", workerID, job.ID, foErr)
 				}
@@ -658,17 +659,26 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 	}
 }
 
+// failoverWorkflow returns the config workflow key for backup
+// agent/model resolution. Fix jobs map to "fix"; security/design
+// jobs use their ReviewType; everything else maps to "review".
+func failoverWorkflow(job *storage.ReviewJob) string {
+	if job.IsFixJob() {
+		return "fix"
+	}
+	if !config.IsDefaultReviewType(job.ReviewType) {
+		return job.ReviewType
+	}
+	return "review"
+}
+
 // resolveBackupAgent determines the backup agent for a job from config.
 // Returns the canonicalized backup agent name, or "" if none is
 // available or it's the same as the job's current agent.
 func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	cfg := wp.cfgGetter.Config()
-	workflow := "review"
-	if !config.IsDefaultReviewType(job.ReviewType) {
-		workflow = job.ReviewType
-	}
 	backup := config.ResolveBackupAgentForWorkflow(
-		job.RepoPath, cfg, workflow,
+		job.RepoPath, cfg, failoverWorkflow(job),
 	)
 	if backup == "" {
 		return ""
@@ -682,6 +692,15 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 		return ""
 	}
 	return resolved.Name()
+}
+
+// resolveBackupModel determines the backup model for a job from config.
+// Returns the configured backup model, or "" if none is set.
+func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
+	cfg := wp.cfgGetter.Config()
+	return config.ResolveBackupModelForWorkflow(
+		job.RepoPath, cfg, failoverWorkflow(job),
+	)
 }
 
 // broadcastFailed sends a review.failed event for a job
@@ -805,8 +824,9 @@ func (wp *WorkerPool) failoverOrFail(
 ) {
 	backupAgent := wp.resolveBackupAgent(job)
 	if backupAgent != "" && !wp.isAgentCoolingDown(backupAgent) {
+		backupModel := wp.resolveBackupModel(job)
 		failedOver, err := wp.db.FailoverJob(
-			job.ID, workerID, backupAgent,
+			job.ID, workerID, backupAgent, backupModel,
 		)
 		if err != nil {
 			log.Printf("[%s] Error attempting failover for job %d: %v",

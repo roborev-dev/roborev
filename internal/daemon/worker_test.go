@@ -683,6 +683,36 @@ func TestFailoverOrFail_FailsOverToBackup(t *testing.T) {
 	}
 }
 
+func TestFailoverOrFail_PassesBackupModel(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	// Configure backup agent AND backup model
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	cfg.DefaultBackupModel = "claude-sonnet"
+	tc.Pool = NewWorkerPool(tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil)
+
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	job.RepoPath = tc.TmpDir
+
+	tc.Pool.failoverOrFail(testWorkerID, job, "codex", "quota exhausted")
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if updated.Status != storage.JobStatusQueued {
+		t.Errorf("status=%q, want queued (failover)", updated.Status)
+	}
+	if updated.Agent != "test" {
+		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+	}
+	if updated.Model != "claude-sonnet" {
+		t.Errorf("model=%q, want claude-sonnet (backup model)", updated.Model)
+	}
+}
+
 func TestFailoverOrFail_NoBackupFailsWithQuotaPrefix(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
@@ -880,5 +910,92 @@ func TestResolveBackupAgent(t *testing.T) {
 				t.Errorf("resolveBackupAgent() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFailoverWorkflow_FixJob(t *testing.T) {
+	// Fix jobs should use "fix" workflow, not "review"
+	cfg := config.DefaultConfig()
+	cfg.FixBackupAgent = "test"
+	cfg.FixBackupModel = "fix-model"
+
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	job := &storage.ReviewJob{
+		Agent:    "codex",
+		RepoPath: t.TempDir(),
+		JobType:  storage.JobTypeFix,
+		// ReviewType is empty for fix jobs
+	}
+
+	gotAgent := pool.resolveBackupAgent(job)
+	if gotAgent != "test" {
+		t.Errorf("resolveBackupAgent(fix job) = %q, want %q", gotAgent, "test")
+	}
+
+	gotModel := pool.resolveBackupModel(job)
+	if gotModel != "fix-model" {
+		t.Errorf("resolveBackupModel(fix job) = %q, want %q", gotModel, "fix-model")
+	}
+}
+
+func TestFailoverWorkflow_FixJobDoesNotUseReviewBackup(t *testing.T) {
+	// A fix job should NOT pick up review_backup_agent/model
+	cfg := config.DefaultConfig()
+	cfg.ReviewBackupAgent = "test"
+	cfg.ReviewBackupModel = "review-model"
+
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	job := &storage.ReviewJob{
+		Agent:    "codex",
+		RepoPath: t.TempDir(),
+		JobType:  storage.JobTypeFix,
+	}
+
+	gotAgent := pool.resolveBackupAgent(job)
+	if gotAgent != "" {
+		t.Errorf("resolveBackupAgent(fix job) = %q, want empty (no fix-specific backup)", gotAgent)
+	}
+
+	gotModel := pool.resolveBackupModel(job)
+	if gotModel != "" {
+		t.Errorf("resolveBackupModel(fix job) = %q, want empty", gotModel)
+	}
+}
+
+func TestFailOrRetryInner_RetryExhaustedPassesBackupModel(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	cfg.DefaultBackupModel = "backup-model"
+	tc.Pool = NewWorkerPool(
+		tc.DB, NewStaticConfig(cfg), 1, tc.Broadcaster, nil, nil,
+	)
+
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	job.RepoPath = tc.TmpDir
+
+	// Exhaust retries
+	job = tc.exhaustRetries(t, job, testWorkerID, "codex")
+
+	// Final failure — retries exhausted, backup available
+	tc.Pool.failOrRetryInner(
+		testWorkerID, job, "codex",
+		"connection reset", true,
+	)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if updated.Status != storage.JobStatusQueued {
+		t.Errorf("status=%q, want queued (failover)", updated.Status)
+	}
+	if updated.Agent != "test" {
+		t.Errorf("agent=%q, want test (failover)", updated.Agent)
+	}
+	if updated.Model != "backup-model" {
+		t.Errorf("model=%q, want backup-model", updated.Model)
 	}
 }

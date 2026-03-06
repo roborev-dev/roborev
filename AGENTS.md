@@ -3,22 +3,166 @@
 ## Purpose
 
 This repo hosts roborev, a local daemon + CLI for AI-assisted code review. Use this guide to
-stay aligned with project conventions when reviewing code or addressing feedback.
+navigate the codebase quickly, understand subsystem boundaries, and avoid missing adjacent
+changes when working in a growing Go project.
 
-## Project Orientation
+## Start Here
 
-- CLI entry point: `cmd/roborev/main.go` (includes daemon via `roborev daemon run`)
-- HTTP API: `internal/daemon/server.go`
-- Worker pool + job processing: `internal/daemon/worker.go`
-- SQLite storage: `internal/storage/`
-- Agent interface + implementations: `internal/agent/`
-- Config loading/agent resolution: `internal/config/config.go`
+- Product behavior and user-facing workflows: `README.md`
+- CLI entry point and command registration: `cmd/roborev/main.go`
+- Command discovery: `rg '^func .*Cmd\(' cmd/roborev`
+- Daemon HTTP API and route wiring: `internal/daemon/server.go`
+- Worker pool and job execution: `internal/daemon/worker.go`
+- SQLite schema and migrations: `internal/storage/db.go`
+- Config loading and resolution: `internal/config/config.go`
+- Prompt construction: `internal/prompt/prompt.go`
+- TUI entry point: `cmd/roborev/tui/tui.go`
 
-Runtime:
-- Daemon listens on `127.0.0.1:7373` (auto-increment if busy)
-- Runtime info at `~/.roborev/daemon.json`
-- DB at `~/.roborev/reviews.db` (WAL mode)
-- Data dir override via `ROBOREV_DATA_DIR`
+## Architecture At A Glance
+
+```text
+CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
+                      |            |
+                      |            -> Hooks / Activity log / CI poller
+                      |
+                      -> SQLite DB <-> Sync worker <-> PostgreSQL (optional)
+```
+
+- The daemon is the long-lived control plane. Many CLI commands are thin HTTP clients.
+- Background daemon work must not modify the user's checked-out working tree.
+- Foreground agentic flows such as `roborev fix` and `roborev refine` may modify code.
+- Isolated background fix work uses temporary git worktrees and stores patches in the DB.
+
+## Package Map
+
+| Path | Purpose | Start with |
+|------|---------|------------|
+| `cmd/roborev/` | Cobra CLI commands and daemon-facing client logic | `main.go`, `review.go`, `fix.go`, `refine.go`, `analyze.go`, `daemon_cmd.go` |
+| `cmd/roborev/tui/` | Bubble Tea terminal UI | `tui.go`, `api.go`, `fetch.go`, `handlers.go`, `render_*.go` |
+| `internal/daemon/` | HTTP server, handlers, worker pool, SSE, hooks, runtime, CI poller | `server.go`, `worker.go`, `client.go`, `runtime.go`, `ci_poller.go` |
+| `internal/storage/` | SQLite models/queries/migrations, sync logic, PostgreSQL mirror | `db.go`, `models.go`, `jobs.go`, `reviews.go`, `sync.go`, `postgres.go` |
+| `internal/agent/` | Agent interface, registry, command-backed implementations, ACP support | `agent.go`, `codex.go`, `claude.go`, `acp.go`, `test_agent.go` |
+| `internal/config/` | Global config, repo config, validation, key metadata, resolve helpers | `config.go`, `keyval.go` |
+| `internal/prompt/` | Review prompt builder and template loading | `prompt.go`, `templates.go`, `prompt/analyze/` |
+| `internal/review/` | Daemon-free batch review, synthesis, comment sizing/formatting | `batch.go`, `synthesis.go`, `result.go` |
+| `internal/git/` | Shared git helpers for refs, diffs, branch logic, repo discovery | `git.go` |
+| `internal/worktree/` | Temporary worktree creation, patch capture/apply/check | `worktree.go` |
+| `internal/skills/` | Embedded Codex/Claude skill files and installer logic | `skills.go`, `internal/skills/claude/`, `internal/skills/codex/` |
+| `internal/streamfmt/` | Formatting streamed agent output for CLI and TUI | `streamfmt.go`, `render.go` |
+| `internal/githook/` | Hook install/upgrade logic | `githook.go` |
+| `internal/github/` | GitHub REST helpers used by CI/comment flows | `comment.go` |
+| `internal/ghaction/` | GitHub Actions integration | `ghaction.go` |
+| `internal/update/` | Self-update logic and release fetches | `update.go` |
+| `internal/testenv/` | Test environment setup helpers | `testenv.go` |
+| `internal/testutil/` | Temp git repos and shared test helpers | `git.go`, `testutil.go` |
+| `docs/plans/` | Design notes for larger features | open the matching date/topic file |
+| `skills/` | Human-readable skill docs shipped to agents | `README.md` and `roborev-*.md` |
+
+## Command Map
+
+- Review queueing and results: `review.go`, `wait.go`, `status.go`, `list.go`, `show.go`, `comment.go`, `compact.go`
+- Agentic fix flows: `fix.go`, `refine.go`, `run.go`, `analyze.go`
+- Daemon lifecycle and transport: `daemon_cmd.go`, `daemon_client.go`, `stream.go`, `log_cmd.go`
+- Repo/bootstrap/hooks: `init_cmd.go`, `hook.go`, `repo.go`, `remap.go`
+- Configuration and maintenance: `config_cmd.go`, `skills.go`, `update.go`, `version.go`, `check_agents.go`
+- Automation/integration: `ci.go`, `ghaction.go`, `sync.go`
+- TUI entry command: `tui_cmd.go`
+
+## Follow The Flow
+
+### Review path
+
+`roborev review` typically flows through:
+
+1. CLI validation and repo/ref resolution in `cmd/roborev/review.go`
+2. Daemon startup/runtime lookup in `cmd/roborev/daemon_cmd.go` and `cmd/roborev/daemon_client.go`
+3. `POST /api/enqueue` handled by `internal/daemon/server.go`
+4. Job persistence in `internal/storage/`
+5. Prompt building in `internal/prompt/prompt.go`
+6. Agent execution from `internal/agent/`
+7. Review/result persistence plus broadcasts/hooks in `internal/daemon/`
+
+### Fix path
+
+- `roborev fix` runs agents synchronously in the foreground from `cmd/roborev/fix.go`.
+- It often discovers candidate jobs through daemon APIs, but the actual code modification happens locally.
+- When behavior changes, inspect both the CLI-side flow and the job state transitions in storage.
+
+### Refine path
+
+- `roborev refine` is the automated review-fix-review loop in `cmd/roborev/refine.go`.
+- It uses `internal/worktree/` to keep agent work isolated before applying changes back.
+- If you touch refine behavior, also inspect branch validation, worktree patching, and re-review polling.
+
+### Analyze path
+
+- `roborev analyze` uses prompt templates from `internal/prompt/analyze/`.
+- It can enqueue analysis jobs, wait on them, and optionally pass results into a fix flow.
+- Changes here usually need command tests plus prompt/template coverage.
+
+### TUI path
+
+- TUI state/model setup: `cmd/roborev/tui/tui.go`
+- HTTP requests: `cmd/roborev/tui/api.go`
+- Background fetch/update logic: `cmd/roborev/tui/fetch.go`
+- Input handling: `cmd/roborev/tui/handlers*.go`
+- Rendering: `cmd/roborev/tui/render_*.go`
+- Filtering/search/tree state: `cmd/roborev/tui/filter*.go`
+
+## Change Impact Guide
+
+- CLI flag or output changes usually require updates in the command file, its tests, and sometimes `README.md`.
+- Daemon API changes usually require updates in `internal/daemon/server.go`, `internal/daemon/client.go`, CLI callers, TUI callers, and API/integration tests.
+- Worker/job lifecycle changes usually affect `internal/daemon/worker.go`, `internal/storage/jobs.go`, status/event broadcasting, cancellation, and rerun behavior.
+- Storage schema changes must stay minimal and need both SQLite and PostgreSQL consideration.
+- SQLite changes live in `internal/storage/db.go`; PostgreSQL schema/versioning lives in `internal/storage/postgres.go` plus `internal/storage/schemas/postgres_v*.sql`.
+- Config key changes usually touch `internal/config/config.go`, `internal/config/keyval.go`, `cmd/roborev/config_cmd.go`, and related tests.
+- Agent changes usually touch the adapter file, `internal/agent/agent.go` registry/fallback logic, and tests that use `test_agent.go`.
+- TUI changes rarely live in one file; expect to touch fetch, handlers, render, and tests together.
+- Hook behavior spans `cmd/roborev/init_cmd.go`, `internal/githook/`, and daemon hook execution in `internal/daemon/hooks.go`.
+- CI/sync work often crosses daemon, storage, and config packages. Do not patch only one side.
+
+## Runtime And Config Notes
+
+- Daemon default address: `127.0.0.1:7373` and auto-increments if busy.
+- Runtime info: `~/.roborev/daemon.json`
+- SQLite DB: `~/.roborev/reviews.db` using WAL mode
+- Data dir override: `ROBOREV_DATA_DIR`
+- Global config: `~/.roborev/config.toml`
+- Repo config: `.roborev.toml` at repo root
+- Config precedence is generally: CLI flags -> repo config -> global config -> defaults
+- Reasoning defaults: review = `thorough`, fix = `standard`, refine = `standard`
+- Repo config can include `review_guidelines`; prompt building pulls these into reviews
+- `roborev init` installs or upgrades git hooks; daemon startup warns about stale hooks
+- `roborev refine` is agentic and may run with unsafe capabilities depending on flags/config; use only on trusted code
+
+## Testing
+
+- After any Go code changes, run `go fmt ./...` and `go vet ./...` before committing.
+- Fast test pass: `go test ./...`
+- Integration tests: `go test -tags=integration ./...`
+- PostgreSQL tests: `go test -tags=postgres -v ./internal/storage/... -run Integration`
+- ACP smoke tests: use the `make test-acp-integration*` targets in `Makefile`
+- Useful build/install checks: `go build ./...`, `make install`, `make lint`
+
+Test conventions:
+
+- Prefer fast, isolated tests that use `t.TempDir()`.
+- Use the `test` agent path to avoid calling real AI agents.
+- Integration tests use `//go:build integration`.
+- PostgreSQL-only tests use `//go:build postgres`.
+- ACP adapter integration tests use `//go:build integration && acp`.
+- Shared helpers live in `internal/testenv/`, `internal/testutil/`, and package-local `*_test_helpers*.go`.
+
+## Search Shortcuts
+
+- Commands: `rg '^func .*Cmd\(' cmd/roborev`
+- Daemon handlers: `rg 'handle[A-Z]' internal/daemon`
+- Job state usage: `rg 'JobStatus|job_type|review_type' internal cmd/roborev`
+- Build tags: `rg '^//go:build' .`
+- Config resolution: `rg 'Resolve[A-Z]|LoadRepoConfig|LoadGlobal' internal/config`
+- Agent capability methods: `rg 'WithReasoning|WithAgentic|WithModel' internal/agent`
+- TUI view logic: `rg 'view[A-Z]|currentView|handle.*Key' cmd/roborev/tui`
 
 ## Development Preferences
 
@@ -27,8 +171,9 @@ Runtime:
 - No emojis in code or output (commit messages are fine).
 - Never amend commits; fixes should be new commits.
 - Never push/pull unless explicitly asked.
+- NEVER merge pull requests.
 - NEVER change git branches without explicit user confirmation. Always ask before switching, creating, or checking out branches.
-- Release builds use `CGO_ENABLED=0` (SQLite requires CGO locally).
+- Release builds use `CGO_ENABLED=0`.
 
 ## Workflow + Commits
 
@@ -37,29 +182,13 @@ Runtime:
 - When committing, stage ALL modified files related to the work (including formatting-only and ancillary updates).
 - Before committing, run `git diff` and `git status` to verify nothing is unintentionally left unstaged.
 
-## Go Change Requirements
-
-- After any Go code changes, run `go fmt ./...` and `go vet ./...` before committing.
-- Stage any resulting formatting or vet-driven follow-up edits as part of the same commit.
-
-## Testing
-
-- Tests should be fast and isolated; use `t.TempDir()`.
-- Use the `agent = "test"` path to avoid calling real AI agents.
-- Slow integration tests use `//go:build integration` and are excluded by default.
-- Suggested commands: `go test ./...` (unit), `go test -tags integration ./...` (all), `go build ./...`, `make install`.
-
-## Review/Refine Guidance
+## Review / Refine Guidance
 
 When reviewing or fixing issues:
+
 - Focus on correctness, concurrency safety, and error handling in daemon/worker code.
-- For storage changes, keep migrations minimal and validate schema/queries.
-- For API changes, preserve HTTP/JSON conventions (no gRPC).
+- For storage changes, keep migrations minimal and validate schema and queries.
+- For API changes, preserve HTTP/JSON conventions.
+- For daemon changes, preserve the rule that background jobs must not edit the checked-out working tree.
 - When addressing review feedback, update tests if behavior changes.
 - If diffs are large or truncated, inspect with `git show <sha>`.
-
-## Config + Runtime Notes
-
-- Config priority: CLI flags → `.roborev.toml` → `~/.roborev/config.toml`.
-- Reasoning defaults: reviews = thorough, refine = standard.
-- `roborev refine` runs agents without sandboxing; only use on trusted code.

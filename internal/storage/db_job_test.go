@@ -540,7 +540,7 @@ func TestFailoverJob(t *testing.T) {
 		claimJob(t, db, "worker-1")
 
 		// Failover should succeed
-		ok, err := db.FailoverJob(job.ID, "worker-1", "backup")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
@@ -588,7 +588,7 @@ func TestFailoverJob(t *testing.T) {
 
 		claimJob(t, db, "worker-1")
 
-		ok, err := db.FailoverJob(job.ID, "worker-1", "backup")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
@@ -605,6 +605,46 @@ func TestFailoverJob(t *testing.T) {
 		}
 	})
 
+	t.Run("sets backup model on failover", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		repo := createRepo(t, db, "/tmp/failover-bmodel")
+		commit := createCommit(t, db, repo.ID, "fo-bmodel")
+
+		job, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:   repo.ID,
+			CommitID: commit.ID,
+			GitRef:   "fo-bmodel",
+			Agent:    "primary",
+			Model:    "o3-mini",
+		})
+		if err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+
+		claimJob(t, db, "worker-1")
+
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "claude-sonnet")
+		if err != nil {
+			t.Fatalf("FailoverJob: %v", err)
+		}
+		if !ok {
+			t.Fatal("Expected failover to succeed")
+		}
+
+		updated, err := db.GetJobByID(job.ID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if updated.Model != "claude-sonnet" {
+			t.Errorf("Model = %q, want %q", updated.Model, "claude-sonnet")
+		}
+		if updated.Agent != "backup" {
+			t.Errorf("Agent = %q, want %q", updated.Agent, "backup")
+		}
+	})
+
 	t.Run("fails with empty backup agent", func(t *testing.T) {
 		db := openTestDB(t)
 		defer db.Close()
@@ -612,7 +652,7 @@ func TestFailoverJob(t *testing.T) {
 		_, _, job := createJobChain(t, db, "/tmp/failover-nobackup", "fo-no-backup")
 		claimJob(t, db, "worker-1")
 
-		ok, err := db.FailoverJob(job.ID, "worker-1", "")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "", "")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
@@ -639,7 +679,7 @@ func TestFailoverJob(t *testing.T) {
 		}
 		claimJob(t, db, "worker-1")
 
-		ok, err := db.FailoverJob(job.ID, "worker-1", "codex")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "codex", "")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
@@ -666,7 +706,7 @@ func TestFailoverJob(t *testing.T) {
 			t.Fatalf("EnqueueJob: %v", err)
 		}
 
-		ok, err := db.FailoverJob(job.ID, "worker-1", "backup")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
@@ -694,13 +734,13 @@ func TestFailoverJob(t *testing.T) {
 		claimJob(t, db, "worker-1")
 
 		// First failover: primary -> backup
-		db.FailoverJob(job.ID, "worker-1", "backup")
+		db.FailoverJob(job.ID, "worker-1", "backup", "")
 
 		// Reclaim, now agent is "backup"
 		claimJob(t, db, "worker-1")
 
 		// Second failover with same backup agent should fail (agent == backup)
-		ok, err := db.FailoverJob(job.ID, "worker-1", "backup")
+		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
 		if err != nil {
 			t.Fatalf("FailoverJob second attempt: %v", err)
 		}
@@ -728,7 +768,7 @@ func TestFailoverJob(t *testing.T) {
 		claimJob(t, db, "worker-1")
 
 		// A different worker should not be able to failover this job
-		ok, err := db.FailoverJob(job.ID, "worker-2", "backup")
+		ok, err := db.FailoverJob(job.ID, "worker-2", "backup", "")
 		if err != nil {
 			t.Fatalf("FailoverJob: %v", err)
 		}
